@@ -26,10 +26,14 @@ pub use services::{
     ProcessLogReadRequest, ProcessLogsChunk, ProcessManager, ProcessRunRequest, ProcessSummary,
     RuntimeStore, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCommsService,
     TeamCreateRequest, TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamInterruptAllResponse,
-    TeamJoinRequest, TeamListMessagesRequest, TeamListMessagesResponse, TeamMessageAck,
-    TeamRemoveMemberRequest, TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest,
-    TeamViewSnapshotRequest, TeamViewSnapshotResponse, TeamWithMembers, ToolGateway,
-    ToolInvokeRequest, WorktreeService,
+    TeamJoinRequest, TeamListMessagesRequest, TeamListMessagesResponse, TeamMemberSpawnRequest,
+    TeamMemberSpawnResponse, TeamMemberSpawnWorktreeInput, TeamMessageAck, TeamRemoveMemberRequest,
+    TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest,
+    TeamViewSnapshotResponse, TeamWithMembers, ToolGateway, ToolInvokeRequest,
+    WorktreeClaimRequest, WorktreeClaimResponse, WorktreeCleanupRequest, WorktreeCleanupResponse,
+    WorktreeCreateRequest, WorktreeCreateResponse, WorktreeMemberRemovedRequest,
+    WorktreeMemberRemovedResponse, WorktreeReleaseRequest, WorktreeReleaseResponse,
+    WorktreeService,
 };
 pub use state::{
     ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,

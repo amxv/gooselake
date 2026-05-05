@@ -665,7 +665,9 @@ name = "runtime-tools"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "rand",
  "runtime-core",
+ "runtime-store-sqlite",
  "serde",
  "serde_json",
  "tempfile",

@@ -114,6 +114,23 @@ impl RuntimeSessionManager {
             .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))
     }
 
+    pub async fn set_session_worktree_id(
+        &self,
+        session_id: &str,
+        worktree_id: Option<String>,
+    ) -> Result<SessionRecord, RuntimeError> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+        session.worktree_id = worktree_id;
+        session.updated_at = now_ms();
+        let updated = session.clone();
+        drop(sessions);
+        self.store.upsert_session(&updated)?;
+        Ok(updated)
+    }
+
     pub async fn provider_auth_status(
         &self,
         provider: ProviderKind,
@@ -210,31 +227,23 @@ impl RuntimeSessionManager {
             })
             .await?;
 
-        let mut updated = session.clone();
-        updated.status = "closed".to_string();
-        updated.closed_at = Some(now_ms());
-        updated.updated_at = now_ms();
-        updated.active_turn_id = None;
-        self.store.upsert_session(&updated)?;
+        self.finalize_session_close(
+            session_id,
+            reason.unwrap_or_else(|| "closed_by_request".to_string()),
+        )
+        .await
+    }
 
-        {
-            let mut sessions = self.sessions.write().await;
-            sessions.insert(session_id.to_string(), updated.clone());
-        }
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                session_id,
-                Some(session_id),
-                None,
-                "session.closed",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({
-                    "reason": reason.unwrap_or_else(|| "closed_by_request".to_string()),
-                }),
-            )
-            .await?;
-        Ok(updated)
+    pub async fn force_close_session(
+        &self,
+        session_id: &str,
+        reason: Option<String>,
+    ) -> Result<SessionRecord, RuntimeError> {
+        self.finalize_session_close(
+            session_id,
+            reason.unwrap_or_else(|| "closed_by_runtime_rollback".to_string()),
+        )
+        .await
     }
 
     pub async fn resume_session(
@@ -935,6 +944,37 @@ impl RuntimeSessionManager {
         Ok(record)
     }
 
+    async fn finalize_session_close(
+        &self,
+        session_id: &str,
+        reason: String,
+    ) -> Result<SessionRecord, RuntimeError> {
+        let session = self.get_session(session_id).await?;
+        let mut updated = session.clone();
+        updated.status = "closed".to_string();
+        updated.closed_at = Some(now_ms());
+        updated.updated_at = now_ms();
+        updated.active_turn_id = None;
+        self.store.upsert_session(&updated)?;
+
+        {
+            let mut sessions = self.sessions.write().await;
+            sessions.insert(session_id.to_string(), updated.clone());
+        }
+        let _ = self
+            .append_event(
+                RuntimeEventScope::Session,
+                session_id,
+                Some(session_id),
+                None,
+                "session.closed",
+                RuntimeEventCriticality::Critical,
+                serde_json::json!({ "reason": reason }),
+            )
+            .await?;
+        Ok(updated)
+    }
+
     fn allocate_id(&self, prefix: &str, suffix: &str) -> String {
         let seq = self.next_id.fetch_add(1, Ordering::Relaxed);
         format!("{prefix}_{suffix}_{}_{}", now_ms(), seq)
@@ -1024,7 +1064,8 @@ mod tests {
     use crate::{
         ManagedWorktreeClaimRecord, ManagedWorktreeRecord, ProcessRecord, ProviderMetadata,
         ProviderModel, ProviderSession, ProviderTurnAck, RuntimeProvider, TeamDeliveryRecord,
-        TeamMemberRecord, TeamMessageRecord, TeamRecord,
+        TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+        TeamOperationJournalRecord, TeamRecord,
     };
 
     #[derive(Default)]
@@ -1156,6 +1197,48 @@ mod tests {
 
         fn upsert_process(&self, _record: &ProcessRecord) -> Result<(), RuntimeError> {
             Ok(())
+        }
+
+        fn upsert_team_operation_journal(
+            &self,
+            _record: &TeamOperationJournalRecord,
+        ) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        fn append_team_operation_diagnostic(
+            &self,
+            _operation_id: Option<&str>,
+            _team_id: Option<&str>,
+            _code: &str,
+            _message: &str,
+            _payload: &Value,
+            _created_at: i64,
+        ) -> Result<TeamOperationDiagnosticRecord, RuntimeError> {
+            Ok(TeamOperationDiagnosticRecord {
+                id: 1,
+                operation_id: None,
+                team_id: None,
+                code: "stub".to_string(),
+                message: "stub".to_string(),
+                payload: serde_json::json!({}),
+                created_at: 0,
+            })
+        }
+
+        fn list_team_operation_journal(
+            &self,
+            _team_id: Option<&str>,
+        ) -> Result<Vec<TeamOperationJournalRecord>, RuntimeError> {
+            Ok(Vec::new())
+        }
+
+        fn list_team_operation_diagnostics(
+            &self,
+            _team_id: Option<&str>,
+            _operation_id: Option<&str>,
+        ) -> Result<Vec<TeamOperationDiagnosticRecord>, RuntimeError> {
+            Ok(Vec::new())
         }
 
         fn hydrate_runtime_state(&self) -> Result<crate::RuntimeHydratedState, RuntimeError> {

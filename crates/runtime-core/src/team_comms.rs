@@ -1933,7 +1933,8 @@ mod tests {
         ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata, ProviderModel,
         ProviderRegistry, ProviderResumeSessionRequest, ProviderSendTurnRequest, ProviderSession,
         ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest,
-        RuntimeProvider, RuntimeStore, SessionRecord, TurnRecord,
+        RuntimeProvider, RuntimeStore, SessionRecord, TeamOperationDiagnosticRecord,
+        TeamOperationJournalRecord, TurnRecord,
     };
 
     #[derive(Default)]
@@ -2112,6 +2113,71 @@ mod tests {
                 row.id.clone()
             });
             Ok(())
+        }
+
+        fn upsert_team_operation_journal(
+            &self,
+            record: &TeamOperationJournalRecord,
+        ) -> Result<(), RuntimeError> {
+            let mut hydrated = self.hydrated.lock().expect("hydrated lock");
+            Self::upsert_with_key(
+                &mut hydrated.team_operation_journal,
+                record.clone(),
+                |row| row.operation_id.clone(),
+            );
+            Ok(())
+        }
+
+        fn append_team_operation_diagnostic(
+            &self,
+            operation_id: Option<&str>,
+            team_id: Option<&str>,
+            code: &str,
+            message: &str,
+            payload: &Value,
+            created_at: i64,
+        ) -> Result<TeamOperationDiagnosticRecord, RuntimeError> {
+            let mut hydrated = self.hydrated.lock().expect("hydrated lock");
+            let id = i64::try_from(hydrated.team_operation_diagnostics.len()).unwrap_or(0) + 1;
+            let record = TeamOperationDiagnosticRecord {
+                id,
+                operation_id: operation_id.map(str::to_string),
+                team_id: team_id.map(str::to_string),
+                code: code.to_string(),
+                message: message.to_string(),
+                payload: payload.clone(),
+                created_at,
+            };
+            hydrated.team_operation_diagnostics.push(record.clone());
+            Ok(record)
+        }
+
+        fn list_team_operation_journal(
+            &self,
+            team_id: Option<&str>,
+        ) -> Result<Vec<TeamOperationJournalRecord>, RuntimeError> {
+            let hydrated = self.hydrated.lock().expect("hydrated lock");
+            let mut rows = hydrated.team_operation_journal.clone();
+            if let Some(team_id) = team_id {
+                rows.retain(|row| row.team_id == team_id);
+            }
+            Ok(rows)
+        }
+
+        fn list_team_operation_diagnostics(
+            &self,
+            team_id: Option<&str>,
+            operation_id: Option<&str>,
+        ) -> Result<Vec<TeamOperationDiagnosticRecord>, RuntimeError> {
+            let hydrated = self.hydrated.lock().expect("hydrated lock");
+            let mut rows = hydrated.team_operation_diagnostics.clone();
+            if let Some(team_id) = team_id {
+                rows.retain(|row| row.team_id.as_deref() == Some(team_id));
+            }
+            if let Some(operation_id) = operation_id {
+                rows.retain(|row| row.operation_id.as_deref() == Some(operation_id));
+            }
+            Ok(rows)
         }
 
         fn hydrate_runtime_state(&self) -> Result<crate::RuntimeHydratedState, RuntimeError> {

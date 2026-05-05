@@ -7,10 +7,12 @@ authors.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+rand.workspace = true
 runtime-core = { path = "../runtime-core" }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process"] }
 
 [dev-dependencies]
+runtime-store-sqlite = { path = "../runtime-store-sqlite" }
 tempfile = "3.23"

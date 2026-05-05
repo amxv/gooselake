@@ -7,7 +7,8 @@ use tokio::sync::broadcast;
 use crate::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
     ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState,
-    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamRecord, TurnRecord,
+    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
 
 #[async_trait]
@@ -52,6 +53,32 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<(), RuntimeError>;
 
     fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError>;
+
+    fn upsert_team_operation_journal(
+        &self,
+        record: &TeamOperationJournalRecord,
+    ) -> Result<(), RuntimeError>;
+
+    fn append_team_operation_diagnostic(
+        &self,
+        operation_id: Option<&str>,
+        team_id: Option<&str>,
+        code: &str,
+        message: &str,
+        payload: &Value,
+        created_at: i64,
+    ) -> Result<TeamOperationDiagnosticRecord, RuntimeError>;
+
+    fn list_team_operation_journal(
+        &self,
+        team_id: Option<&str>,
+    ) -> Result<Vec<TeamOperationJournalRecord>, RuntimeError>;
+
+    fn list_team_operation_diagnostics(
+        &self,
+        team_id: Option<&str>,
+        operation_id: Option<&str>,
+    ) -> Result<Vec<TeamOperationDiagnosticRecord>, RuntimeError>;
 
     fn hydrate_runtime_state(&self) -> Result<RuntimeHydratedState, RuntimeError>;
 }
@@ -399,4 +426,155 @@ pub trait TeamCommsService: Send + Sync {
 #[async_trait]
 pub trait WorktreeService: Send + Sync {
     async fn healthcheck(&self) -> Result<(), RuntimeError>;
+
+    async fn list_worktrees(&self) -> Result<Vec<ManagedWorktreeRecord>, RuntimeError>;
+
+    async fn get_worktree(&self, worktree_id: &str) -> Result<ManagedWorktreeRecord, RuntimeError>;
+
+    async fn create_worktree(
+        &self,
+        request: WorktreeCreateRequest,
+    ) -> Result<WorktreeCreateResponse, RuntimeError>;
+
+    async fn claim_worktree(
+        &self,
+        request: WorktreeClaimRequest,
+    ) -> Result<WorktreeClaimResponse, RuntimeError>;
+
+    async fn release_worktree(
+        &self,
+        request: WorktreeReleaseRequest,
+    ) -> Result<WorktreeReleaseResponse, RuntimeError>;
+
+    async fn cleanup_worktree(
+        &self,
+        request: WorktreeCleanupRequest,
+    ) -> Result<WorktreeCleanupResponse, RuntimeError>;
+
+    async fn spawn_team_member(
+        &self,
+        request: TeamMemberSpawnRequest,
+    ) -> Result<TeamMemberSpawnResponse, RuntimeError>;
+
+    async fn on_member_removed(
+        &self,
+        request: WorktreeMemberRemovedRequest,
+    ) -> Result<WorktreeMemberRemovedResponse, RuntimeError>;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeCreateRequest {
+    pub team_id: Option<String>,
+    pub source_session_id: String,
+    pub repo_root: Option<String>,
+    pub worktree_name: String,
+    pub branch_prefix: Option<String>,
+    pub base_ref: Option<String>,
+    pub deletion_policy: Option<String>,
+    pub run_init_script: Option<bool>,
+    pub created_by_session_id: Option<String>,
+    pub operation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeCreateResponse {
+    pub worktree: ManagedWorktreeRecord,
+    pub created: bool,
+    pub init_script_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeClaimRequest {
+    pub worktree_id: String,
+    pub session_id: String,
+    pub claim_role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeClaimResponse {
+    pub worktree: ManagedWorktreeRecord,
+    pub claim: ManagedWorktreeClaimRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeReleaseRequest {
+    pub worktree_id: String,
+    pub session_id: String,
+    pub cleanup_if_last_claim: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeReleaseResponse {
+    pub worktree: ManagedWorktreeRecord,
+    pub released_claim: ManagedWorktreeClaimRecord,
+    pub active_claim_count: usize,
+    pub cleanup: Option<WorktreeCleanupResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeCleanupRequest {
+    pub worktree_id: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeCleanupResponse {
+    pub worktree_id: String,
+    pub status: String,
+    pub deletion_policy: String,
+    pub active_claim_count: usize,
+    pub worktree_path_deleted: bool,
+    pub branch_deleted: bool,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberSpawnWorktreeInput {
+    pub mode: Option<String>,
+    pub name: Option<String>,
+    pub branch_prefix: Option<String>,
+    pub base_ref: Option<String>,
+    pub run_init_script: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberSpawnRequest {
+    pub team_id: String,
+    pub source_session_id: String,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub title: Option<String>,
+    pub prompt: Option<String>,
+    pub permission_mode: Option<String>,
+    pub metadata: Option<Value>,
+    pub worktree: Option<TeamMemberSpawnWorktreeInput>,
+    pub creator_agent_id: Option<String>,
+    pub creator_compaction_subscription: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberSpawnResponse {
+    pub operation_id: String,
+    pub team: TeamWithMembers,
+    pub spawned_session: SessionRecord,
+    pub spawned_member: TeamMemberRecord,
+    pub worktree: Option<ManagedWorktreeRecord>,
+    pub worktree_assignment_mode: String,
+    pub worktree_created_by_operation: bool,
+    pub onboarding: Value,
+    pub journal_stage: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeMemberRemovedRequest {
+    pub team_id: String,
+    pub agent_id: String,
+    pub removed_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeMemberRemovedResponse {
+    pub released_claims: Vec<ManagedWorktreeClaimRecord>,
+    pub cleanup_results: Vec<WorktreeCleanupResponse>,
+    pub diagnostics: Vec<TeamOperationDiagnosticRecord>,
 }

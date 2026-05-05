@@ -6,7 +6,8 @@ use runtime_core::{
     ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
     NewRuntimeEvent, ProcessRecord, RuntimeError, RuntimeEventCriticality, RuntimeEventRecord,
     RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord,
-    TeamMemberRecord, TeamMessageRecord, TeamRecord, TurnRecord,
+    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
+    TeamRecord, TurnRecord,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -916,6 +917,270 @@ impl SqliteRuntimeRepository {
         Ok(())
     }
 
+    pub fn upsert_team_operation_journal(
+        &self,
+        record: &TeamOperationJournalRecord,
+    ) -> Result<(), RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        connection
+            .execute(
+                "INSERT INTO team_operation_journal (
+                    operation_id, team_id, kind, stage, payload_json, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(operation_id) DO UPDATE SET
+                    team_id = excluded.team_id,
+                    kind = excluded.kind,
+                    stage = excluded.stage,
+                    payload_json = excluded.payload_json,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at",
+                params![
+                    record.operation_id,
+                    record.team_id,
+                    record.kind,
+                    record.stage,
+                    json_to_string(&record.payload)?,
+                    record.created_at,
+                    record.updated_at,
+                ],
+            )
+            .map_err(|error| db_error("failed upserting team operation journal row", error))?;
+        Ok(())
+    }
+
+    pub fn append_team_operation_diagnostic(
+        &self,
+        operation_id: Option<&str>,
+        team_id: Option<&str>,
+        code: &str,
+        message: &str,
+        payload: &Value,
+        created_at: i64,
+    ) -> Result<TeamOperationDiagnosticRecord, RuntimeError> {
+        let mut connection = open_connection(&self.database_path)?;
+        let transaction = connection.transaction().map_err(|error| {
+            db_error(
+                "failed to start team operation diagnostic transaction",
+                error,
+            )
+        })?;
+        transaction
+            .execute(
+                "INSERT INTO team_operation_diagnostics (
+                    operation_id, team_id, code, message, payload_json, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    operation_id,
+                    team_id,
+                    code.trim(),
+                    message.trim(),
+                    json_to_string(payload)?,
+                    created_at,
+                ],
+            )
+            .map_err(|error| db_error("failed inserting team operation diagnostic row", error))?;
+        let id = transaction.last_insert_rowid();
+        let row = transaction
+            .query_row(
+                "SELECT id, operation_id, team_id, code, message, payload_json, created_at
+                 FROM team_operation_diagnostics
+                 WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok(TeamOperationDiagnosticRecord {
+                        id: row.get(0)?,
+                        operation_id: row.get(1)?,
+                        team_id: row.get(2)?,
+                        code: row.get(3)?,
+                        message: row.get(4)?,
+                        payload: string_to_json(row.get(5)?)?,
+                        created_at: row.get(6)?,
+                    })
+                },
+            )
+            .map_err(|error| {
+                db_error(
+                    "failed loading inserted team operation diagnostic row",
+                    error,
+                )
+            })?;
+        transaction.commit().map_err(|error| {
+            db_error(
+                "failed committing team operation diagnostic transaction",
+                error,
+            )
+        })?;
+        Ok(row)
+    }
+
+    pub fn list_team_operation_journal(
+        &self,
+        team_id: Option<&str>,
+    ) -> Result<Vec<TeamOperationJournalRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        if let Some(team_id) = team_id {
+            let mut statement = connection
+                .prepare(
+                    "SELECT operation_id, team_id, kind, stage, payload_json, created_at, updated_at
+                     FROM team_operation_journal
+                     WHERE team_id = ?1
+                     ORDER BY updated_at ASC, operation_id ASC",
+                )
+                .map_err(|error| db_error("failed preparing scoped team operation journal query", error))?;
+            let rows = statement
+                .query_map(params![team_id], |row| {
+                    Ok(TeamOperationJournalRecord {
+                        operation_id: row.get(0)?,
+                        team_id: row.get(1)?,
+                        kind: row.get(2)?,
+                        stage: row.get(3)?,
+                        payload: string_to_json(row.get(4)?)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    })
+                })
+                .map_err(|error| {
+                    db_error("failed running scoped team operation journal query", error)
+                })?;
+            return collect_rows(rows);
+        }
+
+        let mut statement = connection
+            .prepare(
+                "SELECT operation_id, team_id, kind, stage, payload_json, created_at, updated_at
+                 FROM team_operation_journal
+                 ORDER BY updated_at ASC, operation_id ASC",
+            )
+            .map_err(|error| db_error("failed preparing team operation journal query", error))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(TeamOperationJournalRecord {
+                    operation_id: row.get(0)?,
+                    team_id: row.get(1)?,
+                    kind: row.get(2)?,
+                    stage: row.get(3)?,
+                    payload: string_to_json(row.get(4)?)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            })
+            .map_err(|error| db_error("failed running team operation journal query", error))?;
+        collect_rows(rows)
+    }
+
+    pub fn list_team_operation_diagnostics(
+        &self,
+        team_id: Option<&str>,
+        operation_id: Option<&str>,
+    ) -> Result<Vec<TeamOperationDiagnosticRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        match (team_id, operation_id) {
+            (Some(team_id), Some(operation_id)) => {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT id, operation_id, team_id, code, message, payload_json, created_at
+                         FROM team_operation_diagnostics
+                         WHERE team_id = ?1 AND operation_id = ?2
+                         ORDER BY id ASC",
+                    )
+                    .map_err(|error| {
+                        db_error("failed preparing team+operation diagnostics query", error)
+                    })?;
+                let rows = statement
+                    .query_map(params![team_id, operation_id], |row| {
+                        Ok(TeamOperationDiagnosticRecord {
+                            id: row.get(0)?,
+                            operation_id: row.get(1)?,
+                            team_id: row.get(2)?,
+                            code: row.get(3)?,
+                            message: row.get(4)?,
+                            payload: string_to_json(row.get(5)?)?,
+                            created_at: row.get(6)?,
+                        })
+                    })
+                    .map_err(|error| {
+                        db_error("failed running team+operation diagnostics query", error)
+                    })?;
+                collect_rows(rows)
+            }
+            (Some(team_id), None) => {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT id, operation_id, team_id, code, message, payload_json, created_at
+                         FROM team_operation_diagnostics
+                         WHERE team_id = ?1
+                         ORDER BY id ASC",
+                    )
+                    .map_err(|error| db_error("failed preparing team diagnostics query", error))?;
+                let rows = statement
+                    .query_map(params![team_id], |row| {
+                        Ok(TeamOperationDiagnosticRecord {
+                            id: row.get(0)?,
+                            operation_id: row.get(1)?,
+                            team_id: row.get(2)?,
+                            code: row.get(3)?,
+                            message: row.get(4)?,
+                            payload: string_to_json(row.get(5)?)?,
+                            created_at: row.get(6)?,
+                        })
+                    })
+                    .map_err(|error| db_error("failed running team diagnostics query", error))?;
+                collect_rows(rows)
+            }
+            (None, Some(operation_id)) => {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT id, operation_id, team_id, code, message, payload_json, created_at
+                         FROM team_operation_diagnostics
+                         WHERE operation_id = ?1
+                         ORDER BY id ASC",
+                    )
+                    .map_err(|error| {
+                        db_error("failed preparing operation diagnostics query", error)
+                    })?;
+                let rows = statement
+                    .query_map(params![operation_id], |row| {
+                        Ok(TeamOperationDiagnosticRecord {
+                            id: row.get(0)?,
+                            operation_id: row.get(1)?,
+                            team_id: row.get(2)?,
+                            code: row.get(3)?,
+                            message: row.get(4)?,
+                            payload: string_to_json(row.get(5)?)?,
+                            created_at: row.get(6)?,
+                        })
+                    })
+                    .map_err(|error| {
+                        db_error("failed running operation diagnostics query", error)
+                    })?;
+                collect_rows(rows)
+            }
+            (None, None) => {
+                let mut statement = connection
+                    .prepare(
+                        "SELECT id, operation_id, team_id, code, message, payload_json, created_at
+                         FROM team_operation_diagnostics
+                         ORDER BY id ASC",
+                    )
+                    .map_err(|error| db_error("failed preparing diagnostics query", error))?;
+                let rows = statement
+                    .query_map([], |row| {
+                        Ok(TeamOperationDiagnosticRecord {
+                            id: row.get(0)?,
+                            operation_id: row.get(1)?,
+                            team_id: row.get(2)?,
+                            code: row.get(3)?,
+                            message: row.get(4)?,
+                            payload: string_to_json(row.get(5)?)?,
+                            created_at: row.get(6)?,
+                        })
+                    })
+                    .map_err(|error| db_error("failed running diagnostics query", error))?;
+                collect_rows(rows)
+            }
+        }
+    }
+
     pub fn upsert_credential(&self, record: &CredentialRecord) -> Result<(), RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         let transaction = connection
@@ -1280,6 +1545,71 @@ impl SqliteRuntimeRepository {
             collect_rows(rows)?
         };
 
+        let team_operation_journal = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT operation_id, team_id, kind, stage, payload_json, created_at, updated_at
+                     FROM team_operation_journal
+                     ORDER BY updated_at ASC, operation_id ASC",
+                )
+                .map_err(|error| {
+                    db_error("failed preparing team operation journal hydration query", error)
+                })?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok(TeamOperationJournalRecord {
+                        operation_id: row.get(0)?,
+                        team_id: row.get(1)?,
+                        kind: row.get(2)?,
+                        stage: row.get(3)?,
+                        payload: string_to_json(row.get(4)?)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    })
+                })
+                .map_err(|error| {
+                    db_error(
+                        "failed running team operation journal hydration query",
+                        error,
+                    )
+                })?;
+            collect_rows(rows)?
+        };
+
+        let team_operation_diagnostics = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, operation_id, team_id, code, message, payload_json, created_at
+                     FROM team_operation_diagnostics
+                     ORDER BY id ASC",
+                )
+                .map_err(|error| {
+                    db_error(
+                        "failed preparing team operation diagnostics hydration query",
+                        error,
+                    )
+                })?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok(TeamOperationDiagnosticRecord {
+                        id: row.get(0)?,
+                        operation_id: row.get(1)?,
+                        team_id: row.get(2)?,
+                        code: row.get(3)?,
+                        message: row.get(4)?,
+                        payload: string_to_json(row.get(5)?)?,
+                        created_at: row.get(6)?,
+                    })
+                })
+                .map_err(|error| {
+                    db_error(
+                        "failed running team operation diagnostics hydration query",
+                        error,
+                    )
+                })?;
+            collect_rows(rows)?
+        };
+
         let processes = {
             let mut statement = connection
                 .prepare(
@@ -1348,6 +1678,8 @@ impl SqliteRuntimeRepository {
             team_deliveries,
             managed_worktrees,
             managed_worktree_claims,
+            team_operation_journal,
+            team_operation_diagnostics,
             processes,
             credentials,
         })
@@ -1462,6 +1794,48 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_process(record)
+    }
+
+    fn upsert_team_operation_journal(
+        &self,
+        record: &TeamOperationJournalRecord,
+    ) -> Result<(), RuntimeError> {
+        self.repository.upsert_team_operation_journal(record)
+    }
+
+    fn append_team_operation_diagnostic(
+        &self,
+        operation_id: Option<&str>,
+        team_id: Option<&str>,
+        code: &str,
+        message: &str,
+        payload: &Value,
+        created_at: i64,
+    ) -> Result<TeamOperationDiagnosticRecord, RuntimeError> {
+        self.repository.append_team_operation_diagnostic(
+            operation_id,
+            team_id,
+            code,
+            message,
+            payload,
+            created_at,
+        )
+    }
+
+    fn list_team_operation_journal(
+        &self,
+        team_id: Option<&str>,
+    ) -> Result<Vec<TeamOperationJournalRecord>, RuntimeError> {
+        self.repository.list_team_operation_journal(team_id)
+    }
+
+    fn list_team_operation_diagnostics(
+        &self,
+        team_id: Option<&str>,
+        operation_id: Option<&str>,
+    ) -> Result<Vec<TeamOperationDiagnosticRecord>, RuntimeError> {
+        self.repository
+            .list_team_operation_diagnostics(team_id, operation_id)
     }
 
     fn hydrate_runtime_state(&self) -> Result<RuntimeHydratedState, RuntimeError> {

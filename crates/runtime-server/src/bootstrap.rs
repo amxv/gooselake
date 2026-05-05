@@ -10,7 +10,7 @@ use runtime_provider_claude::{ClaudeProviderConfig, ClaudeProviderStub};
 use runtime_provider_codex::{copy_codex_auth_file, CodexProvider, CodexProviderConfig};
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use runtime_tools::{
-    ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, StubWorktreeService,
+    ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeWorktreeService,
     WorktreeServiceConfig,
 };
 
@@ -116,17 +116,25 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
     )
     .context("failed to initialize team comms service")?;
 
+    let worktrees = RuntimeWorktreeService::new(
+        store.clone(),
+        runtime.clone(),
+        team_comms.clone(),
+        WorktreeServiceConfig {
+            enabled: config.worktrees.enabled,
+            root_dir: config.resolve_worktree_root().display().to_string(),
+            init_script_path: config.worktrees.init_script_path.display().to_string(),
+            deletion_policy_default: config.worktrees.deletion_policy_default.clone(),
+        },
+    )
+    .context("failed to initialize worktree service")?;
+
     let services = RuntimeServices {
         store: store.clone(),
         tool_gateway,
         process_manager,
         team_comms,
-        worktrees: Arc::new(StubWorktreeService::new(WorktreeServiceConfig {
-            enabled: config.worktrees.enabled,
-            root_dir: config.resolve_worktree_root().display().to_string(),
-            init_script_path: config.worktrees.init_script_path.display().to_string(),
-            deletion_policy_default: config.worktrees.deletion_policy_default.clone(),
-        })),
+        worktrees,
     };
 
     let app = RuntimeApp::new(

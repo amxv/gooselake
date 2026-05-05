@@ -286,6 +286,8 @@ pub struct RuntimeHydratedState {
     pub team_deliveries: Vec<TeamDeliveryRecord>,
     pub managed_worktrees: Vec<ManagedWorktreeRecord>,
     pub managed_worktree_claims: Vec<ManagedWorktreeClaimRecord>,
+    pub team_operation_journal: Vec<TeamOperationJournalRecord>,
+    pub team_operation_diagnostics: Vec<TeamOperationDiagnosticRecord>,
     pub processes: Vec<ProcessRecord>,
     pub credentials: Vec<CredentialRecord>,
 }

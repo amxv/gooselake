@@ -142,6 +142,53 @@ impl RuntimeSessionManager {
         adapter.auth_status().await
     }
 
+    pub async fn provider_auth_set_api_key(
+        &self,
+        provider: ProviderKind,
+        api_key: String,
+    ) -> Result<ProviderAuthStatus, RuntimeError> {
+        let adapter = self
+            .providers
+            .get(provider)
+            .ok_or_else(|| RuntimeError::ProviderNotRegistered(provider.as_str().to_string()))?;
+        adapter.auth_set_api_key(api_key).await
+    }
+
+    pub async fn provider_auth_import_json(
+        &self,
+        provider: ProviderKind,
+        auth_json: Value,
+    ) -> Result<ProviderAuthStatus, RuntimeError> {
+        let adapter = self
+            .providers
+            .get(provider)
+            .ok_or_else(|| RuntimeError::ProviderNotRegistered(provider.as_str().to_string()))?;
+        adapter.auth_import_json(auth_json).await
+    }
+
+    pub async fn provider_auth_import_json_text(
+        &self,
+        provider: ProviderKind,
+        auth_json_text: String,
+    ) -> Result<ProviderAuthStatus, RuntimeError> {
+        let adapter = self
+            .providers
+            .get(provider)
+            .ok_or_else(|| RuntimeError::ProviderNotRegistered(provider.as_str().to_string()))?;
+        adapter.auth_import_json_text(auth_json_text).await
+    }
+
+    pub async fn provider_auth_logout(
+        &self,
+        provider: ProviderKind,
+    ) -> Result<ProviderAuthStatus, RuntimeError> {
+        let adapter = self
+            .providers
+            .get(provider)
+            .ok_or_else(|| RuntimeError::ProviderNotRegistered(provider.as_str().to_string()))?;
+        adapter.auth_logout().await
+    }
+
     pub async fn create_session(
         &self,
         input: CreateSessionInput,
@@ -760,7 +807,18 @@ impl RuntimeSessionManager {
                 .await;
             match result {
                 Ok(turn_result) => {
-                    let _ = manager.apply_terminal_result(turn_result).await;
+                    if let Err(error) = manager.apply_terminal_result(turn_result).await {
+                        if std::env::var("GG_CLAUDE_SMOKE_DEBUG")
+                            .ok()
+                            .map(|value| value.trim() == "1")
+                            .unwrap_or(false)
+                        {
+                            eprintln!(
+                                "[runtime-core] failed to apply terminal turn result for session_id={} turn_id={}: {}",
+                                session_id, turn_id, error
+                            );
+                        }
+                    }
                 }
                 Err(error) => {
                     let _ = manager

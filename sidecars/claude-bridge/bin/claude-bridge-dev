@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BRIDGE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "Claude bridge launcher requires bun on PATH." >&2
+  exit 1
+fi
+
+if [[ ! -d "${BRIDGE_ROOT}/node_modules/@anthropic-ai/claude-agent-sdk" ]]; then
+  bun install --cwd "${BRIDGE_ROOT}" >/dev/null
+fi
+
+exec bun run --cwd "${BRIDGE_ROOT}" src/main.ts "$@"

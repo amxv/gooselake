@@ -1,0 +1,21 @@
+[package]
+name = "gg-mcp-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+publish = false
+
+[dependencies]
+rmcp = { version = "0.15.0", features = ["server", "client", "transport-io", "transport-child-process", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+axum = { version = "0.8", features = ["json"] }
+
+[workspace]

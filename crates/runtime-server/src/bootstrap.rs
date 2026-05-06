@@ -1,20 +1,23 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use crate::config::{ResolvedAuth, RuntimeServerConfig};
 use anyhow::{Context, Result};
 use runtime_core::{
     EventQueueLimits, ProcessLimits, ProviderRegistry, RuntimeApp, RuntimeServices,
     RuntimeSessionManager, RuntimeStore, RuntimeTeamCommsConfig, RuntimeTeamCommsService,
     WorktreeSettings,
 };
-use runtime_provider_claude::{ClaudeProviderConfig, ClaudeProviderStub};
+use runtime_provider_claude::{
+    standalone_claude_bridge_command_path, standalone_gg_mcp_server_command_path,
+    ClaudeGgMcpConfig, ClaudeProvider, ClaudeProviderConfig,
+};
 use runtime_provider_codex::{copy_codex_auth_file, CodexProvider, CodexProviderConfig};
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use runtime_tools::{
     ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeWorktreeService,
     WorktreeServiceConfig,
 };
-
-use crate::config::{ResolvedAuth, RuntimeServerConfig};
 
 #[derive(Clone)]
 pub struct BootstrappedRuntime {
@@ -58,12 +61,51 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         }
     }
 
-    let claude_provider = Arc::new(ClaudeProviderStub::new(ClaudeProviderConfig {
+    let (claude_bridge_command, claude_bridge_args) = resolve_claude_bridge_launch();
+    let mut claude_bridge_env = BTreeMap::new();
+    if let Some(override_config_dir) = std::env::var("GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        claude_bridge_env.insert("CLAUDE_CONFIG_DIR".to_string(), override_config_dir);
+    }
+    if let Some(override_home) = std::env::var("GG_CLAUDE_BRIDGE_HOME")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        claude_bridge_env.insert("HOME".to_string(), override_home);
+    }
+    let mcp_gateway_url = format!(
+        "{}/v1/mcp",
+        config.server.public_base_url.trim_end_matches('/')
+    );
+    let claude_provider = Arc::new(ClaudeProvider::new(ClaudeProviderConfig {
         enabled: config.providers.claude.enabled,
         config_dir: config.resolve_provider_dir("claude").join("config"),
-        bridge_command: "claude-bridge".to_string(),
+        bridge_command: claude_bridge_command,
+        bridge_args: claude_bridge_args,
         max_bridges: config.providers.claude.max_instances,
         max_sessions_per_bridge: config.providers.claude.max_sessions_per_instance,
+        request_timeout_ms: 30_000,
+        default_wait_timeout_ms: 300_000,
+        heartbeat_interval_ms: 10_000,
+        heartbeat_failure_threshold: 3,
+        gg_mcp: ClaudeGgMcpConfig {
+            enabled: true,
+            server_name: "gg".to_string(),
+            command: std::env::var("GG_MCP_SERVER_PATH").unwrap_or_else(|_| {
+                standalone_gg_mcp_server_command_path()
+                    .display()
+                    .to_string()
+            }),
+            args: Vec::new(),
+            enable_process_tools: config.processes.enabled,
+            gateway_url: Some(mcp_gateway_url),
+            gateway_token: Some(auth.bearer_token.clone()),
+        },
+        bridge_env: claude_bridge_env,
     }));
 
     let mut provider_registry = ProviderRegistry::new();
@@ -173,6 +215,27 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
     })
 }
 
+fn resolve_claude_bridge_launch() -> (String, Vec<String>) {
+    if let Ok(command) = std::env::var("GG_CLAUDE_BRIDGE_COMMAND") {
+        let trimmed = command.trim();
+        if !trimmed.is_empty() {
+            if let Ok(raw_args) = std::env::var("GG_CLAUDE_BRIDGE_ARGS_JSON") {
+                if let Ok(args) = serde_json::from_str::<Vec<String>>(raw_args.as_str()) {
+                    return (trimmed.to_string(), args);
+                }
+            }
+            return (trimmed.to_string(), Vec::new());
+        }
+    }
+
+    (
+        standalone_claude_bridge_command_path()
+            .display()
+            .to_string(),
+        Vec::new(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +289,29 @@ mod tests {
             runtime.app.worktree_settings.deletion_policy_default,
             "retain_on_last_claim"
         );
+    }
+
+    #[test]
+    fn default_standalone_gg_mcp_path_is_branch_owned() {
+        let path = standalone_gg_mcp_server_command_path();
+        assert!(path.ends_with("sidecars/gg-mcp-server/bin/gg-mcp-server-dev"));
+        assert!(path.exists(), "expected repo-owned gg-mcp launcher");
+        assert!(
+            !path.to_string_lossy().contains("CARGO_MANIFEST_DIR"),
+            "default path should not bake build-time source-tree locations"
+        );
+    }
+
+    #[test]
+    fn default_standalone_claude_bridge_path_is_branch_owned() {
+        let (command, args) = resolve_claude_bridge_launch();
+        assert!(command.ends_with("sidecars/claude-bridge/bin/claude-bridge-dev"));
+        assert!(
+            std::path::Path::new(command.as_str()).exists(),
+            "expected repo-owned claude launcher"
+        );
+        assert!(args.is_empty());
+        assert!(!command.ends_with("src/main.ts"));
+        assert!(!command.contains("CARGO_MANIFEST_DIR"));
     }
 }

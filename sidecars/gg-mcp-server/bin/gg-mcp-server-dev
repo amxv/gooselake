@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MCP_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+MANIFEST_PATH="${MCP_ROOT}/Cargo.toml"
+
+pick_latest_existing() {
+  local latest=""
+  local candidate=""
+  while IFS= read -r candidate; do
+    if [[ -z "${latest}" ]]; then
+      latest="${candidate}"
+      continue
+    fi
+    if [[ "${candidate}" -nt "${latest}" ]]; then
+      latest="${candidate}"
+    fi
+  done
+  if [[ -n "${latest}" ]]; then
+    printf '%s\n' "${latest}"
+  fi
+}
+
+if [[ -n "${GG_MCP_SERVER_DEV_BIN:-}" ]] && [[ -x "${GG_MCP_SERVER_DEV_BIN}" ]]; then
+  exec "${GG_MCP_SERVER_DEV_BIN}" "$@"
+fi
+
+if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+  TARGET_BIN="${CARGO_TARGET_DIR}/debug/gg-mcp-server"
+  if [[ -x "${TARGET_BIN}" ]]; then
+    exec "${TARGET_BIN}" "$@"
+  fi
+fi
+
+WORKSPACE_TARGET_BIN="${MCP_ROOT}/../../target/debug/gg-mcp-server"
+if [[ -x "${WORKSPACE_TARGET_BIN}" ]]; then
+  exec "${WORKSPACE_TARGET_BIN}" "$@"
+fi
+
+if [[ -n "${HOME:-}" ]] && [[ -d "${HOME}/Library/Caches/cargo-build" ]]; then
+  CACHED_BIN="$(find "${HOME}/Library/Caches/cargo-build" -type f -name gg-mcp-server -path '*/debug/gg-mcp-server' -perm -111 2>/dev/null | pick_latest_existing || true)"
+  if [[ -n "${CACHED_BIN}" ]] && [[ -x "${CACHED_BIN}" ]]; then
+    exec "${CACHED_BIN}" "$@"
+  fi
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "gg-mcp-server launcher requires cargo on PATH." >&2
+  exit 1
+fi
+
+exec cargo run --manifest-path "${MANIFEST_PATH}" -- "$@"

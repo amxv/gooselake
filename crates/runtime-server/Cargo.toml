@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-axum.workspace = true
+axum = { workspace = true, features = ["multipart"] }
 http.workspace = true
 rand.workspace = true
 runtime-core = { path = "../runtime-core" }

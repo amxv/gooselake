@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -47,6 +47,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/providers", get(list_providers))
         .route("/providers/{provider}/models", get(list_provider_models))
         .route("/providers/codex/auth/status", get(codex_auth_status))
+        .route("/providers/claude/auth/status", get(claude_auth_status))
+        .route("/providers/claude/auth/api-key", post(claude_auth_api_key))
+        .route(
+            "/providers/claude/auth/import-json",
+            post(claude_auth_import_json),
+        )
+        .route(
+            "/providers/claude/auth/import-file",
+            post(claude_auth_import_file),
+        )
+        .route("/providers/claude/auth/logout", post(claude_auth_logout))
         .route("/version", get(version))
         .route("/events", get(replay_global_events))
         .route("/events/stream", get(stream_global_events))
@@ -198,6 +209,107 @@ async fn codex_auth_status(
     let status = state
         .runtime
         .provider_auth_status(ProviderKind::Codex)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(status))
+}
+
+async fn claude_auth_status(
+    State(state): State<AppState>,
+) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
+    let status = state
+        .runtime
+        .provider_auth_status(ProviderKind::Claude)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(status))
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeApiKeyRequest {
+    api_key: String,
+}
+
+async fn claude_auth_api_key(
+    State(state): State<AppState>,
+    Json(input): Json<ClaudeApiKeyRequest>,
+) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
+    let status = state
+        .runtime
+        .provider_auth_set_api_key(ProviderKind::Claude, input.api_key)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(status))
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeAuthImportJsonRequest {
+    auth_json: Option<Value>,
+    auth_json_text: Option<String>,
+}
+
+async fn claude_auth_import_json(
+    State(state): State<AppState>,
+    Json(input): Json<ClaudeAuthImportJsonRequest>,
+) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
+    if let Some(auth_json) = input.auth_json {
+        let status = state
+            .runtime
+            .provider_auth_import_json(ProviderKind::Claude, auth_json)
+            .await
+            .map_err(ApiError::from)?;
+        return Ok(Json(status));
+    }
+    if let Some(auth_json_text) = input.auth_json_text {
+        let status = state
+            .runtime
+            .provider_auth_import_json_text(ProviderKind::Claude, auth_json_text)
+            .await
+            .map_err(ApiError::from)?;
+        return Ok(Json(status));
+    }
+    Err(ApiError::bad_request(
+        "expected auth_json or auth_json_text".to_string(),
+    ))
+}
+
+async fn claude_auth_import_file(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| ApiError::bad_request(format!("invalid multipart payload: {error}")))?
+    {
+        let name = field.name().unwrap_or_default().to_string();
+        if name != "file" {
+            continue;
+        }
+        let bytes = field.bytes().await.map_err(|error| {
+            ApiError::bad_request(format!("failed reading upload field: {error}"))
+        })?;
+        let auth_json_text = String::from_utf8(bytes.to_vec()).map_err(|error| {
+            ApiError::bad_request(format!("uploaded file is not utf-8: {error}"))
+        })?;
+        let status = state
+            .runtime
+            .provider_auth_import_json_text(ProviderKind::Claude, auth_json_text)
+            .await
+            .map_err(ApiError::from)?;
+        return Ok(Json(status));
+    }
+    Err(ApiError::bad_request(
+        "multipart field 'file' is required".to_string(),
+    ))
+}
+
+async fn claude_auth_logout(
+    State(state): State<AppState>,
+) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
+    let status = state
+        .runtime
+        .provider_auth_logout(ProviderKind::Claude)
         .await
         .map_err(ApiError::from)?;
     Ok(Json(status))
@@ -1572,6 +1684,9 @@ mod tests {
         ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest,
         RuntimeProvider, RuntimeStore, RuntimeTeamCommsConfig, RuntimeTeamCommsService,
     };
+    use runtime_provider_claude::{
+        standalone_claude_bridge_command_path, standalone_gg_mcp_server_command_path,
+    };
     use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
     use runtime_tools::{
         ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeWorktreeService,
@@ -1605,6 +1720,11 @@ mod tests {
         state: Mutex<TestProviderState>,
     }
 
+    #[derive(Default)]
+    struct TestClaudeProvider {
+        state: Mutex<TestProviderState>,
+    }
+
     impl TestProvider {
         fn extract_text(input: &[serde_json::Value]) -> String {
             for item in input {
@@ -1616,6 +1736,12 @@ mod tests {
                 }
             }
             "empty".to_string()
+        }
+    }
+
+    impl TestClaudeProvider {
+        fn extract_text(input: &[serde_json::Value]) -> String {
+            TestProvider::extract_text(input)
         }
     }
 
@@ -1807,6 +1933,190 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl RuntimeProvider for TestClaudeProvider {
+        fn kind(&self) -> ProviderKind {
+            ProviderKind::Claude
+        }
+
+        fn metadata(&self) -> ProviderMetadata {
+            ProviderMetadata {
+                kind: ProviderKind::Claude,
+                display_name: "Test Claude".to_string(),
+                enabled: true,
+            }
+        }
+
+        async fn healthcheck(&self) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        async fn list_models(&self) -> Result<Vec<ProviderModel>, RuntimeError> {
+            Ok(vec![ProviderModel {
+                id: "test-claude-model".to_string(),
+                display_name: "Test Claude Model".to_string(),
+            }])
+        }
+
+        async fn auth_status(&self) -> Result<ProviderAuthStatus, RuntimeError> {
+            Ok(ProviderAuthStatus {
+                authenticated: true,
+                mode: Some("test".to_string()),
+                detail: None,
+            })
+        }
+
+        async fn create_session(
+            &self,
+            req: ProviderCreateSessionRequest,
+        ) -> Result<ProviderSession, RuntimeError> {
+            let mut state = self.state.lock().await;
+            state.sessions.insert(
+                req.runtime_session_id.clone(),
+                TestProviderSession {
+                    provider_session_ref: format!("test-claude-thread-{}", req.runtime_session_id),
+                    ..Default::default()
+                },
+            );
+            Ok(ProviderSession {
+                runtime_session_id: req.runtime_session_id.clone(),
+                provider_session_ref: format!("test-claude-thread-{}", req.runtime_session_id),
+                canonical_provider_session_ref: Some(format!(
+                    "claude-canonical-{}",
+                    req.runtime_session_id
+                )),
+            })
+        }
+
+        async fn resume_session(
+            &self,
+            req: ProviderResumeSessionRequest,
+        ) -> Result<ProviderSession, RuntimeError> {
+            let mut state = self.state.lock().await;
+            let session = state
+                .sessions
+                .entry(req.runtime_session_id.clone())
+                .or_default();
+            session.provider_session_ref = req.provider_session_ref.clone();
+            Ok(ProviderSession {
+                runtime_session_id: req.runtime_session_id,
+                provider_session_ref: req.provider_session_ref,
+                canonical_provider_session_ref: req.canonical_provider_session_ref,
+            })
+        }
+
+        async fn send_turn(
+            &self,
+            req: ProviderSendTurnRequest,
+        ) -> Result<ProviderTurnAck, RuntimeError> {
+            let mut state = self.state.lock().await;
+            let session = state
+                .sessions
+                .get_mut(req.runtime_session_id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::NotFound(format!("test session {}", req.runtime_session_id))
+                })?;
+
+            if let Some(approval_id) = req.approval_id.clone() {
+                session.pending.insert(approval_id, req.clone());
+                return Ok(ProviderTurnAck {
+                    runtime_session_id: req.runtime_session_id,
+                    turn_id: req.turn_id,
+                });
+            }
+
+            let user_text = Self::extract_text(req.input.as_slice());
+            session.completed.insert(
+                req.turn_id.clone(),
+                ProviderTurnResult {
+                    runtime_session_id: req.runtime_session_id.clone(),
+                    turn_id: req.turn_id.clone(),
+                    status: ProviderTurnStatus::Completed,
+                    usage: Some(
+                        serde_json::json!({ "last_message": format!("claude:{user_text}") }),
+                    ),
+                    error: None,
+                },
+            );
+
+            Ok(ProviderTurnAck {
+                runtime_session_id: req.runtime_session_id,
+                turn_id: req.turn_id,
+            })
+        }
+
+        async fn interrupt_turn(
+            &self,
+            _req: ProviderInterruptTurnRequest,
+        ) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        async fn respond_approval(
+            &self,
+            req: ProviderApprovalResponseRequest,
+        ) -> Result<(), RuntimeError> {
+            let decision = ApprovalDecision::parse(req.decision.as_str())?;
+            let mut state = self.state.lock().await;
+            let session = state
+                .sessions
+                .get_mut(req.runtime_session_id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::NotFound(format!("test session {}", req.runtime_session_id))
+                })?;
+
+            let pending = session
+                .pending
+                .remove(req.approval_id.as_str())
+                .ok_or_else(|| RuntimeError::NotFound(format!("approval {}", req.approval_id)))?;
+            if decision == ApprovalDecision::Decline {
+                session.completed.insert(
+                    req.turn_id.clone(),
+                    ProviderTurnResult {
+                        runtime_session_id: req.runtime_session_id,
+                        turn_id: req.turn_id,
+                        status: ProviderTurnStatus::Interrupted,
+                        usage: None,
+                        error: Some(serde_json::json!({ "message": "declined" })),
+                    },
+                );
+            } else {
+                let user_text = Self::extract_text(pending.input.as_slice());
+                session.completed.insert(
+                    req.turn_id.clone(),
+                    ProviderTurnResult {
+                        runtime_session_id: pending.runtime_session_id,
+                        turn_id: pending.turn_id,
+                        status: ProviderTurnStatus::Completed,
+                        usage: Some(
+                            serde_json::json!({ "last_message": format!("claude:{user_text}") }),
+                        ),
+                        error: None,
+                    },
+                );
+            }
+            Ok(())
+        }
+
+        async fn wait_for_turn(
+            &self,
+            req: ProviderWaitTurnRequest,
+        ) -> Result<ProviderTurnResult, RuntimeError> {
+            let state = self.state.lock().await;
+            let session = state
+                .sessions
+                .get(req.runtime_session_id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::NotFound(format!("test session {}", req.runtime_session_id))
+                })?;
+            session
+                .completed
+                .get(req.turn_id.as_str())
+                .cloned()
+                .ok_or_else(|| RuntimeError::NotFound(format!("test turn {}", req.turn_id)))
+        }
+    }
+
     async fn build_test_router() -> (Router, String, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
@@ -1891,6 +2201,103 @@ mod tests {
         .expect("build app");
         app.initialize().await.expect("initialize app");
         let bearer_token = "test-token".to_string();
+
+        let router = build_router(AppState {
+            app: Arc::new(app),
+            runtime,
+            bearer_token: bearer_token.clone(),
+            public_base_url: "http://localhost:8080".to_string(),
+        });
+
+        (router, bearer_token, temp_dir)
+    }
+
+    async fn build_mixed_provider_test_router() -> (Router, String, tempfile::TempDir) {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: temp_dir.path().join("runtime.sqlite3"),
+        }));
+        store.initialize().await.expect("initialize store");
+
+        let mut registry = runtime_core::ProviderRegistry::new();
+        registry
+            .register(Arc::new(TestProvider::default()))
+            .expect("register codex test provider");
+        registry
+            .register(Arc::new(TestClaudeProvider::default()))
+            .expect("register claude test provider");
+        let provider_registry = Arc::new(registry);
+        let runtime = Arc::new(
+            RuntimeSessionManager::new(store.clone(), provider_registry.clone(), 512)
+                .expect("build runtime"),
+        );
+        let process_manager = RuntimeProcessManager::new(
+            store.clone(),
+            ProcessManagerConfig {
+                enabled: true,
+                max_concurrent: 1,
+                default_timeout_ms: 60_000,
+                max_output_bytes_per_process: 100_000,
+                allow_shell: false,
+                completed_retention_ms: 600_000,
+                output_event_sample_bytes: 8 * 1024,
+                log_dir: temp_dir.path().join("process-logs"),
+            },
+        )
+        .await
+        .expect("process manager");
+        let tool_gateway = Arc::new(RuntimeToolGateway::new(process_manager.clone()));
+        let team_comms = RuntimeTeamCommsService::new(
+            store.clone(),
+            runtime.clone(),
+            RuntimeTeamCommsConfig {
+                enabled: true,
+                max_pending_deliveries: 1_000,
+            },
+        )
+        .expect("team comms");
+        let worktrees = RuntimeWorktreeService::new(
+            store.clone(),
+            runtime.clone(),
+            team_comms.clone(),
+            WorktreeServiceConfig {
+                enabled: true,
+                root_dir: temp_dir.path().join("worktrees").display().to_string(),
+                init_script_path: ".agents/gg/worktree-init.sh".to_string(),
+                deletion_policy_default: "delete_on_last_claim".to_string(),
+            },
+        )
+        .expect("worktree service");
+
+        let app = runtime_core::RuntimeApp::new(
+            provider_registry.clone(),
+            runtime_core::RuntimeServices {
+                store: store.clone(),
+                tool_gateway,
+                process_manager,
+                team_comms,
+                worktrees,
+            },
+            runtime_core::EventQueueLimits {
+                live_queue_capacity: 512,
+                critical_queue_capacity: 512,
+                team_queue_capacity: 512,
+            },
+            runtime_core::ProcessLimits {
+                max_concurrent: 1,
+                default_timeout_ms: 60_000,
+                max_output_bytes_per_process: 100_000,
+            },
+            runtime_core::WorktreeSettings {
+                enabled: true,
+                root_dir: temp_dir.path().join("worktrees").display().to_string(),
+                init_script_path: ".agents/gg/worktree-init.sh".to_string(),
+                deletion_policy_default: "delete_on_last_claim".to_string(),
+            },
+        )
+        .expect("build app");
+        app.initialize().await.expect("initialize app");
+        let bearer_token = "mixed-provider-token".to_string();
 
         let router = build_router(AppState {
             app: Arc::new(app),
@@ -2460,6 +2867,737 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(authorized.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn claude_auth_endpoints_are_runtime_managed() {
+        let prior_bridge_home_override = std::env::var_os("GG_CLAUDE_BRIDGE_HOME");
+        let prior_bridge_config_override = std::env::var_os("GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR");
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let isolated_bridge_home = temp_dir.path().join("isolated-bridge-home");
+        let isolated_bridge_config = temp_dir.path().join("isolated-bridge-config");
+        std::fs::create_dir_all(isolated_bridge_home.as_path()).expect("create isolated home dir");
+        std::fs::create_dir_all(isolated_bridge_config.as_path())
+            .expect("create isolated config dir");
+        std::env::set_var(
+            "GG_CLAUDE_BRIDGE_HOME",
+            isolated_bridge_home.display().to_string(),
+        );
+        std::env::set_var(
+            "GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR",
+            isolated_bridge_config.display().to_string(),
+        );
+
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = temp_dir.path().to_path_buf();
+        config.providers.codex.enabled = false;
+        config.providers.claude.enabled = true;
+        let claude_provider_dir = config.resolve_provider_dir("claude");
+        let claude_credentials_path = claude_provider_dir
+            .join("home")
+            .join(".claude")
+            .join(".credentials.json");
+        let claude_config_path = claude_provider_dir.join("config").join(".claude.json");
+
+        let bootstrapped = bootstrap_runtime(config).await.expect("bootstrap");
+        let token = bootstrapped.auth.bearer_token.clone();
+        let router = build_router(AppState {
+            app: bootstrapped.app,
+            runtime: bootstrapped.runtime,
+            bearer_token: token.clone(),
+            public_base_url: bootstrapped.public_base_url,
+        });
+
+        let initial_status = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/providers/claude/auth/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("initial status response");
+        assert_eq!(initial_status.status(), StatusCode::OK);
+        let initial_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(initial_status.into_body(), usize::MAX)
+                .await
+                .expect("initial status body"),
+        )
+        .expect("initial status json");
+        assert_eq!(initial_json["authenticated"], false);
+
+        let api_key_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/providers/claude/auth/api-key")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({ "api_key": "sk-ant-test-123" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("api-key response");
+        assert_eq!(api_key_response.status(), StatusCode::OK);
+        let api_key_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(api_key_response.into_body(), usize::MAX)
+                .await
+                .expect("api-key body"),
+        )
+        .expect("api-key json");
+        assert_eq!(api_key_json["authenticated"], true);
+        assert_eq!(api_key_json["mode"], "api_key");
+
+        let import_json_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/providers/claude/auth/import-json")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "auth_json": {
+                                "credentials_json": {
+                                    "claudeAiOauth": {
+                                        "accessToken": "runtime-managed-auth",
+                                        "refreshToken": "runtime-managed-auth"
+                                    }
+                                },
+                                "config_json": {
+                                    "projects": {}
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("import-json response");
+        assert_eq!(import_json_response.status(), StatusCode::OK);
+        let import_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(import_json_response.into_body(), usize::MAX)
+                .await
+                .expect("import-json body"),
+        )
+        .expect("import-json json");
+        assert_eq!(import_json["authenticated"], true);
+        assert_eq!(import_json["mode"], "claude_code_oauth");
+        assert!(claude_credentials_path.exists());
+        assert!(claude_config_path.exists());
+
+        let boundary = "phase7boundary";
+        let multipart_body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"auth_bundle.json\"\r\nContent-Type: application/json\r\n\r\n{{\"credentials_json\":{{\"claudeAiOauth\":{{\"accessToken\":\"multipart-import\",\"refreshToken\":\"multipart-import\"}}}},\"config_json\":{{\"projects\":{{}}}}}}\r\n--{boundary}--\r\n"
+        );
+        let import_file_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/providers/claude/auth/import-file")
+                    .header(
+                        header::CONTENT_TYPE,
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(multipart_body))
+                    .unwrap(),
+            )
+            .await
+            .expect("import-file response");
+        assert_eq!(import_file_response.status(), StatusCode::OK);
+
+        let logout_response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/providers/claude/auth/logout")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("logout response");
+        assert_eq!(logout_response.status(), StatusCode::OK);
+        let logout_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(logout_response.into_body(), usize::MAX)
+                .await
+                .expect("logout body"),
+        )
+        .expect("logout json");
+        assert_eq!(logout_json["authenticated"], false);
+        assert!(!claude_credentials_path.exists());
+        assert!(!claude_config_path.exists());
+
+        match prior_bridge_home_override {
+            Some(value) => std::env::set_var("GG_CLAUDE_BRIDGE_HOME", value),
+            None => std::env::remove_var("GG_CLAUDE_BRIDGE_HOME"),
+        }
+        match prior_bridge_config_override {
+            Some(value) => std::env::set_var("GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR", value),
+            None => std::env::remove_var("GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Claude auth sources at ~/.claude/.credentials.json and ~/.gg/claude/.claude.json (or ~/.claude.json fallback)"]
+    async fn ignored_real_claude_http_smoke_exercises_mcp_with_gg_mcp_enabled() {
+        let prior_bridge_home_override = std::env::var_os("GG_CLAUDE_BRIDGE_HOME");
+        let prior_bridge_config_override = std::env::var_os("GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR");
+        std::env::remove_var("GG_CLAUDE_BRIDGE_HOME");
+        std::env::remove_var("GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR");
+
+        let home_dir = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .expect("HOME must be set for Claude smoke");
+        let credentials_source_path = std::env::var("GG_CLAUDE_SMOKE_CREDENTIALS_SOURCE")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| home_dir.join(".claude").join(".credentials.json"));
+        let config_source_path = std::env::var("GG_CLAUDE_SMOKE_CONFIG_SOURCE")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                let gg_claude_config = home_dir.join(".gg").join("claude").join(".claude.json");
+                if gg_claude_config.exists() {
+                    gg_claude_config
+                } else {
+                    home_dir.join(".claude.json")
+                }
+            });
+        assert!(
+            credentials_source_path.exists(),
+            "Claude smoke credentials source path must exist: {}",
+            credentials_source_path.display()
+        );
+        assert!(
+            config_source_path.exists(),
+            "Claude smoke config source path must exist: {}",
+            config_source_path.display()
+        );
+
+        let claude_bridge_command_path = standalone_claude_bridge_command_path();
+        let gg_mcp_command_path = standalone_gg_mcp_server_command_path();
+        assert!(
+            claude_bridge_command_path.exists(),
+            "branch-owned Claude bridge launcher is missing at {}",
+            claude_bridge_command_path.display()
+        );
+        assert!(
+            gg_mcp_command_path.exists(),
+            "branch-owned gg-mcp-server launcher is missing at {}",
+            gg_mcp_command_path.display()
+        );
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = temp_dir.path().to_path_buf();
+        config.providers.codex.enabled = false;
+        config.providers.claude.enabled = true;
+        config.processes.enabled = true;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind smoke listener");
+        let listen_addr = listener.local_addr().expect("smoke listener addr");
+        config.server.public_base_url = format!("http://{listen_addr}");
+
+        let bootstrapped = bootstrap_runtime(config).await.expect("bootstrap");
+        let token = bootstrapped.auth.bearer_token.clone();
+        let router = build_router(AppState {
+            app: bootstrapped.app,
+            runtime: bootstrapped.runtime,
+            bearer_token: token.clone(),
+            public_base_url: bootstrapped.public_base_url,
+        });
+        let smoke_server_router = router.clone();
+        let smoke_server_handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, smoke_server_router).await;
+        });
+
+        let auth_status_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/providers/claude/auth/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("auth status response");
+        assert_eq!(auth_status_response.status(), StatusCode::OK);
+        let auth_status_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(auth_status_response.into_body(), usize::MAX)
+                .await
+                .expect("auth status body"),
+        )
+        .expect("auth status json");
+        assert_eq!(
+            auth_status_json["authenticated"],
+            true,
+            "Claude auth status should be authenticated for canonical-path smoke setup; credentials_source_path={} config_source_path={} detail={}",
+            credentials_source_path.display(),
+            config_source_path.display(),
+            auth_status_json["detail"]
+        );
+
+        let smoke_model = std::env::var("GG_CLAUDE_SMOKE_MODEL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "claude-sonnet-4-5".to_string());
+        let smoke_permission_mode = std::env::var("GG_CLAUDE_SMOKE_PERMISSION_MODE")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "bypassPermissions".to_string());
+        let smoke_cwd = std::env::current_dir()
+            .expect("current dir")
+            .display()
+            .to_string();
+
+        let create_session_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "claude",
+                            "model": smoke_model,
+                            "cwd": smoke_cwd,
+                            "permission_mode": smoke_permission_mode,
+                            "metadata": {}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create session response");
+        assert_eq!(create_session_response.status(), StatusCode::OK);
+        let create_session_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(create_session_response.into_body(), usize::MAX)
+                .await
+                .expect("create session body"),
+        )
+        .expect("create session json");
+        let session_id = create_session_json["id"]
+            .as_str()
+            .expect("session id")
+            .to_string();
+
+        let marker_path = temp_dir.path().join("mcp-smoke-marker.txt");
+        let tool_prompt = format!(
+            "Use tool gg_process_run to execute this exact command and nothing else: touch {}\nAfter the tool call, reply with exactly: MCP_SMOKE_DONE",
+            marker_path.display()
+        );
+
+        let send_turn_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/sessions/{session_id}/turns"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "input": [
+                                {
+                                    "type": "text",
+                                    "text": tool_prompt,
+                                }
+                            ],
+                            "expected_turn_id": null,
+                            "permission_mode": null
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("send turn response");
+        assert_eq!(send_turn_response.status(), StatusCode::OK);
+        let send_turn_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(send_turn_response.into_body(), usize::MAX)
+                .await
+                .expect("send turn body"),
+        )
+        .expect("send turn json");
+        let turn_id = send_turn_json["turn_id"]
+            .as_str()
+            .expect("turn id")
+            .to_string();
+
+        let max_wait_secs = std::env::var("GG_CLAUDE_SMOKE_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(300);
+        let deadline = std::time::Instant::now() + Duration::from_secs(max_wait_secs.max(30));
+        let mut saw_terminal_event = false;
+        let mut terminal_last_message: Option<String> = None;
+        let mut accepted_approvals = std::collections::BTreeSet::new();
+        let mut event_cursor: Option<i64> = None;
+        let smoke_debug = std::env::var("GG_CLAUDE_SMOKE_DEBUG")
+            .ok()
+            .map(|value| value.trim() == "1")
+            .unwrap_or(false);
+        let mut recent_matching_events: std::collections::VecDeque<String> =
+            std::collections::VecDeque::new();
+        while std::time::Instant::now() < deadline {
+            let events_response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/v1/sessions/{session_id}/events?after_seq={}",
+                            event_cursor.unwrap_or(0)
+                        ))
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .expect("session events response");
+            assert_eq!(events_response.status(), StatusCode::OK);
+            let events_json: serde_json::Value = serde_json::from_slice(
+                &to_bytes(events_response.into_body(), usize::MAX)
+                    .await
+                    .expect("session events body"),
+            )
+            .expect("session events json");
+
+            let events = events_json
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect::<Vec<_>>();
+            if let Some(last_seq) = events
+                .iter()
+                .filter_map(|event| event.get("seq").and_then(serde_json::Value::as_i64))
+                .max()
+            {
+                event_cursor = Some(last_seq);
+            }
+
+            for event in events {
+                let kind = event
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let event_seq = event
+                    .get("seq")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or_default();
+                if smoke_debug {
+                    let event_turn_id = event
+                        .get("turn_id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("<none>");
+                    eprintln!(
+                        "[claude-smoke] session_event seq={} kind={} turn_id={}",
+                        event_seq, kind, event_turn_id
+                    );
+                }
+                let is_matching_turn = event
+                    .get("turn_id")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| value == turn_id);
+                if !is_matching_turn {
+                    continue;
+                }
+                let summary = format!("{event_seq}:{kind}");
+                recent_matching_events.push_back(summary.clone());
+                while recent_matching_events.len() > 24 {
+                    let _ = recent_matching_events.pop_front();
+                }
+                if smoke_debug {
+                    eprintln!("[claude-smoke] event {summary}");
+                }
+                if kind == "approval.requested" {
+                    if let Some(approval_id) = event
+                        .get("payload")
+                        .and_then(|payload| {
+                            payload
+                                .get("approval_id")
+                                .or_else(|| payload.get("approvalId"))
+                        })
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        if !accepted_approvals.contains(approval_id) {
+                            let approval_response = router
+                                .clone()
+                                .oneshot(
+                                    Request::builder()
+                                        .method("POST")
+                                        .uri(format!(
+                                            "/v1/sessions/{session_id}/approvals/{approval_id}"
+                                        ))
+                                        .header(header::CONTENT_TYPE, "application/json")
+                                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                                        .body(Body::from(
+                                            serde_json::json!({
+                                                "decision": "accept",
+                                                "payload": null,
+                                            })
+                                            .to_string(),
+                                        ))
+                                        .unwrap(),
+                                )
+                                .await
+                                .expect("approval response");
+                            assert_eq!(approval_response.status(), StatusCode::OK);
+                            accepted_approvals.insert(approval_id.to_string());
+                            if smoke_debug {
+                                eprintln!("[claude-smoke] accepted approval_id={approval_id}");
+                            }
+                        }
+                    }
+                }
+                if matches!(kind, "turn.completed" | "turn.failed" | "turn.interrupted") {
+                    saw_terminal_event = true;
+                    terminal_last_message = event
+                        .get("payload")
+                        .and_then(|payload| payload.get("usage"))
+                        .and_then(|usage| usage.get("last_message"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string);
+                    break;
+                }
+            }
+
+            if saw_terminal_event {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        let session_snapshot_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/sessions/{session_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("session snapshot response");
+        let session_snapshot_status = session_snapshot_response.status();
+        let session_snapshot: serde_json::Value = serde_json::from_slice(
+            &to_bytes(session_snapshot_response.into_body(), usize::MAX)
+                .await
+                .expect("session snapshot body"),
+        )
+        .unwrap_or(serde_json::json!({
+            "error": "failed to parse session snapshot body",
+        }));
+        assert!(
+            saw_terminal_event,
+            "Claude turn did not reach terminal state; recent_events={:?}; approvals_accepted={:?}; session_status_code={}; session_snapshot={}",
+            recent_matching_events,
+            accepted_approvals,
+            session_snapshot_status,
+            session_snapshot
+        );
+        assert!(
+            marker_path.exists(),
+            "expected Claude MCP tool call to create marker file {}",
+            marker_path.display()
+        );
+        if let Some(last_message) = terminal_last_message.as_deref() {
+            assert!(
+                last_message.contains("MCP_SMOKE_DONE"),
+                "Claude terminal message did not acknowledge MCP flow: {last_message}"
+            );
+        }
+
+        let close_response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/sessions/{session_id}/close"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("close response");
+        assert_eq!(close_response.status(), StatusCode::OK);
+        smoke_server_handle.abort();
+        match prior_bridge_home_override {
+            Some(value) => std::env::set_var("GG_CLAUDE_BRIDGE_HOME", value),
+            None => std::env::remove_var("GG_CLAUDE_BRIDGE_HOME"),
+        }
+        match prior_bridge_config_override {
+            Some(value) => std::env::set_var("GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR", value),
+            None => std::env::remove_var("GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR"),
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_provider_team_flow_uses_shared_runtime_services() {
+        let (router, token, _temp_dir) = build_mixed_provider_test_router().await;
+
+        let codex_session_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "codex",
+                            "model": "test-model",
+                            "cwd": null,
+                            "permission_mode": null,
+                            "metadata": {}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create codex session");
+        assert_eq!(codex_session_response.status(), StatusCode::OK);
+        let codex_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(codex_session_response.into_body(), usize::MAX)
+                .await
+                .expect("codex body"),
+        )
+        .expect("codex json");
+        let codex_session_id = codex_json["id"].as_str().expect("codex session id");
+
+        let claude_session_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "claude",
+                            "model": "test-claude-model",
+                            "cwd": null,
+                            "permission_mode": null,
+                            "metadata": {}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create claude session");
+        assert_eq!(claude_session_response.status(), StatusCode::OK);
+        let claude_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(claude_session_response.into_body(), usize::MAX)
+                .await
+                .expect("claude body"),
+        )
+        .expect("claude json");
+        let claude_session_id = claude_json["id"].as_str().expect("claude session id");
+
+        let create_team_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/teams")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "mixed-provider-team",
+                            "lead_agent_id": codex_session_id,
+                            "member_agent_ids": []
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create team");
+        assert_eq!(create_team_response.status(), StatusCode::OK);
+        let create_team_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(create_team_response.into_body(), usize::MAX)
+                .await
+                .expect("create team body"),
+        )
+        .expect("create team json");
+        let team_id = create_team_json["team"]["id"].as_str().expect("team id");
+
+        let join_member_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/teams/{team_id}/members"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "agent_id": claude_session_id,
+                            "title": "Claude Teammate"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("join member");
+        assert_eq!(join_member_response.status(), StatusCode::OK);
+
+        let send_direct_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/teams/{team_id}/messages"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "sender_agent_id": codex_session_id,
+                            "recipient_agent_id": claude_session_id,
+                            "input": [{"type":"text","text":"hello mixed provider"}],
+                            "priority": "normal",
+                            "policy": "non_interrupting"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("send direct");
+        assert_eq!(send_direct_response.status(), StatusCode::OK);
+        let direct_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(send_direct_response.into_body(), usize::MAX)
+                .await
+                .expect("send direct body"),
+        )
+        .expect("send direct json");
+        assert_eq!(
+            direct_json["message"]["team_id"].as_str(),
+            Some(team_id),
+            "team comms should accept mixed-provider sender/recipient sessions"
+        );
     }
 
     #[tokio::test]

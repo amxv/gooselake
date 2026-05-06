@@ -191,6 +191,36 @@ pub trait RuntimeProvider: Send + Sync {
         ))
     }
 
+    async fn auth_set_api_key(&self, _api_key: String) -> Result<ProviderAuthStatus, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider auth api_key is not supported".to_string(),
+        ))
+    }
+
+    async fn auth_import_json(
+        &self,
+        _auth_json: Value,
+    ) -> Result<ProviderAuthStatus, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider auth import_json is not supported".to_string(),
+        ))
+    }
+
+    async fn auth_import_json_text(
+        &self,
+        _auth_json_text: String,
+    ) -> Result<ProviderAuthStatus, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider auth import_json_text is not supported".to_string(),
+        ))
+    }
+
+    async fn auth_logout(&self) -> Result<ProviderAuthStatus, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider auth logout is not supported".to_string(),
+        ))
+    }
+
     async fn create_session(
         &self,
         _req: ProviderCreateSessionRequest,

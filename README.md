@@ -375,10 +375,24 @@ claude login
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 cp "$HOME/.local/runtime-server.toml.example" ./runtime-server.toml
+gg-runtime-server --check-config --config ./runtime-server.toml
 gg-runtime-server --config ./runtime-server.toml
 ```
 
 That is the default path. Change config only when you need different bind addresses, auth settings, or data locations.
+
+### VPS always-on path (recommended for Linux host deploys)
+
+```bash
+./scripts/upgrade-runtime.sh latest
+cp "$HOME/.local/share/gg-runtime/current/runtime-server.toml.example" "$HOME/.config/gg-runtime/runtime-server.toml"
+./scripts/preflight-runtime.sh --config "$HOME/.config/gg-runtime/runtime-server.toml" --runtime-bin "$HOME/.local/share/gg-runtime/current/bin/gg-runtime-server"
+```
+
+Then install the systemd user unit from:
+
+- `~/.local/share/gg-runtime/current/deploy/systemd/gg-runtime.service.example`
+- `~/.local/share/gg-runtime/current/deploy/systemd/gg-runtime.env.example`
 
 ## What A Frontend Talks To
 

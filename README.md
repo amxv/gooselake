@@ -1,106 +1,251 @@
 # GG Runtime
 
-`gg-runtime-server` is a standalone agent runtime you can deploy on a laptop, a VPS, or a dedicated machine and then drive from any frontend over HTTP and SSE.
+Most agent products start the same way:
 
-The interesting part is not "another AI wrapper." The interesting part is that this repo treats agent execution as real systems infrastructure:
+- wire a model provider into a frontend
+- stream some tokens
+- add a few tools
+- bolt on persistence later
 
-- agents run against actual provider CLIs and bridges, not toy mocks
-- session state and events are durable and replayable through SQLite
-- frontends connect over a stable network contract instead of embedding provider logic
-- team messaging, worktrees, processes, and MCP tooling live in the runtime instead of being reimplemented per app
-- Codex and Claude share one runtime model, so a UI can target one backend instead of two separate stacks
+That works right up until you want the agent to do real work on a real machine.
 
-If you want to build agent products where the UI is replaceable but the runtime is persistent, observable, and deployable, that is what this project is for.
+Then the shape of the problem changes.
 
-## Why This Is Cool
+You do not just need "chat with tools." You need:
 
-Most agent apps mix three concerns into one codebase:
-
-- frontend state
-- provider integration
-- machine orchestration
-
-That gets messy fast. This project splits those apart cleanly.
-
-`gg-runtime-server` is the machine-side control plane. It owns:
-
-- provider sessions
-- turn execution
-- event streaming
-- auth staging
+- durable sessions
+- reconnectable event streams
+- machine-local auth
+- processes that outlive a browser tab
+- worktrees and filesystem actions
 - team communication
+- provider-specific quirks hidden behind one contract
+
+That is what `gg-runtime-server` is for.
+
+It is a standalone runtime you can deploy on a laptop, a VPS, or a dedicated machine, then drive from any frontend over HTTP and SSE.
+
+Instead of putting agent logic inside your UI, you move the hard part into a machine-side runtime.
+
+## The Story
+
+The project exists because frontend-first agent architectures usually collapse under their own success.
+
+At first, everything feels simple:
+
+```mermaid
+flowchart LR
+  UI[Frontend App] --> Provider[Provider SDK / CLI]
+  UI --> LocalState[In-memory state]
+```
+
+Then you need more:
+
+- a second provider
+- resumable sessions
+- background execution
+- real filesystem work
+- team messaging
+- process management
+- durable history
+- a second client
+
+Now the app looks more like this:
+
+```mermaid
+flowchart TD
+  UI[Frontend] --> ProviderA[Codex integration]
+  UI --> ProviderB[Claude integration]
+  UI --> Sessions[Session state]
+  UI --> Events[Streaming logic]
+  UI --> Auth[Auth handling]
+  UI --> Tools[Tool routing]
+  UI --> Teams[Team state]
+  UI --> Worktrees[Worktree logic]
+  UI --> Proc[Process management]
+```
+
+That architecture is fragile. Every new UI ends up rebuilding the same runtime concerns.
+
+This repo takes the opposite approach:
+
+```mermaid
+flowchart LR
+  UI1[Desktop UI]
+  UI2[Web App]
+  UI3[CLI]
+  UI4[Ops Console]
+
+  UI1 --> Runtime[GG Runtime]
+  UI2 --> Runtime
+  UI3 --> Runtime
+  UI4 --> Runtime
+
+  Runtime --> Codex[Codex]
+  Runtime --> Claude[Claude]
+  Runtime --> SQLite[(SQLite)]
+  Runtime --> MCP[MCP Sidecar]
+  Runtime --> Machine[Processes / Worktrees / Filesystem]
+```
+
+The runtime becomes the durable backend product. The UI becomes a client.
+
+That is the whole bet.
+
+## Why This Project Is Interesting
+
+The cool part is not just that it talks to Codex and Claude.
+
+The cool part is that it treats agent execution as infrastructure:
+
+- providers are adapters, not app architecture
+- events are durable and replayable
+- long-running work belongs to the runtime, not the browser tab
+- machine operations are first-class
+- frontend apps can stay thin
+
+In practice, that means you can build a serious agent application once at the runtime layer, then expose it through multiple products without rewriting the hard parts.
+
+## What The Runtime Actually Owns
+
+`gg-runtime-server` is the control plane for agent work on a machine.
+
+It owns:
+
+- provider-backed sessions
+- turn execution
+- persistent event history
+- SSE fanout
+- auth staging and provider readiness
 - process execution
-- managed worktrees
+- team messaging and deliveries
+- worktree allocation and lifecycle
 - MCP tool plumbing
 
-That means you can build multiple clients on top of the same runtime:
+The UI does not need to know how Codex auth is staged, how Claude is bridged, or how a worktree is claimed. It just speaks HTTP and SSE.
 
-- a desktop UI
-- a web app
-- an internal ops dashboard
-- a CLI
-- a thin mobile companion
+## Mental Model
 
-without rewriting the hard part each time.
+Think of the system like this:
+
+```mermaid
+flowchart TD
+  Client[Frontend / CLI / API Consumer]
+  HTTP[HTTP API]
+  SSE[SSE Streams]
+  Core[Runtime Core]
+  Store[(SQLite Store)]
+  CodexP[Codex Provider]
+  ClaudeP[Claude Provider]
+  MCP[GG MCP Server]
+  Bridge[Claude Bridge]
+  Host[Host Machine]
+
+  Client --> HTTP
+  Client --> SSE
+  HTTP --> Core
+  SSE --> Core
+  Core <--> Store
+  Core --> CodexP
+  Core --> ClaudeP
+  Core --> MCP
+  ClaudeP --> Bridge
+  CodexP --> Host
+  ClaudeP --> Host
+  MCP --> Host
+```
+
+The important boundary is between the client and the runtime, not between the client and the model provider.
 
 ## What You Get
 
-### Unified provider runtime
+### One runtime model across providers
 
 Today the runtime supports:
 
 - Codex
 - Claude
 
-Both providers map into the same runtime concepts for sessions, turns, events, approvals, terminal assistant output, and recovery.
+Those providers are normalized into one shared model for:
 
-### Durable event model
+- sessions
+- turns
+- streamed events
+- approvals
+- terminal assistant output
+- recovery and replay
 
-Events are stored in SQLite and exposed over HTTP/SSE, which gives you:
+That matters because frontends should not have to learn different lifecycle semantics per provider.
+
+### Durable, replayable sessions
+
+Events are stored in SQLite and streamed over SSE.
+
+That gives you:
 
 - reconnectable UIs
 - replayable session history
-- a clean separation between backend execution and frontend rendering
-- a usable debugging trail when something goes wrong
+- better debugging
+- less frontend guesswork
+- a backend that can keep running while clients disconnect and reconnect
 
-### Real machine orchestration
+### Real machine-side execution
 
-This is built for agents that do actual work on a machine, including:
+This runtime is built for agents that actually operate on a machine, including:
 
-- spawning provider-backed sessions
-- running MCP tools through a dedicated sidecar
-- team messaging and delivery tracking
-- process execution
-- worktree allocation and lifecycle management
+- filesystem work
+- provider session execution
+- MCP tool calls
+- process management
+- worktree operations
+- team-style coordination flows
 
-### Deployable product boundary
+It is much closer to a control plane than a chatbot server.
 
-The runtime is shipped as one bundle:
+### A deployable product boundary
+
+The runtime ships as one bundle:
 
 - `bin/gg-runtime-server`
 - `sidecars/claude-bridge/claude-bridge`
 - `sidecars/gg-mcp-server/gg-mcp-server`
 
-That bundle is the backend product. Your UI is a separate concern.
+That bundle is the backend product. Your UI is not where the business logic has to live anymore.
 
 ## Architecture
 
-High level shape:
+Repository shape:
 
 - `crates/runtime-server`: HTTP/SSE server and bootstrap layer
-- `crates/runtime-core`: runtime state machine, orchestration, teams, events
+- `crates/runtime-core`: runtime state machine, orchestration, events, teams
 - `crates/runtime-store-sqlite`: durable state and event storage
-- `crates/runtime-provider-codex`: Codex provider adapter
-- `crates/runtime-provider-claude`: Claude provider adapter
-- `crates/runtime-tools`: shared tool/runtime process support
+- `crates/runtime-provider-codex`: Codex adapter
+- `crates/runtime-provider-claude`: Claude adapter
+- `crates/runtime-tools`: shared runtime tooling/process support
 - `sidecars/claude-bridge`: Claude bridge process
 - `sidecars/gg-mcp-server`: MCP sidecar process
 
-The sidecars are intentional. They keep provider-specific and MCP-specific behavior behind stable process boundaries instead of contaminating the main server.
+Why sidecars exist:
+
+```mermaid
+flowchart LR
+  Runtime[Runtime Server]
+  Bridge[Claude Bridge]
+  MCP[GG MCP Server]
+  SDK[Claude SDK behavior]
+  Tools[Tool execution boundary]
+
+  Runtime --> Bridge
+  Runtime --> MCP
+  Bridge --> SDK
+  MCP --> Tools
+```
+
+They keep unstable or provider-specific behavior isolated behind stable process boundaries.
 
 ## Quick Start
 
-### Install release bundle
+### Install the release bundle
 
 ```bash
 ./scripts/install-runtime.sh latest
@@ -113,7 +258,7 @@ curl -fsSL https://raw.githubusercontent.com/amxv/gg-agent-runtime/main/scripts/
   bash -s -- latest
 ```
 
-Only set `GG_RUNTIME_REPO` if you intentionally want to install from a fork:
+Only set `GG_RUNTIME_REPO` if you intentionally want a fork:
 
 ```bash
 GG_RUNTIME_REPO=owner/repo ./scripts/install-runtime.sh latest
@@ -134,7 +279,7 @@ cp "$HOME/.local/runtime-server.toml.example" ./runtime-server.toml
 gg-runtime-server --config ./runtime-server.toml
 ```
 
-That is the default path. You do not need to customize config unless you want different bind addresses, auth settings, or data locations.
+That is the default path. Change config only when you need different bind addresses, auth settings, or data locations.
 
 ## What A Frontend Talks To
 
@@ -142,7 +287,7 @@ The runtime exposes:
 
 - JSON HTTP endpoints for lifecycle actions
 - SSE streams for live event delivery
-- OpenAPI output for the public route surface
+- OpenAPI for the route surface
 
 Important routes:
 
@@ -157,7 +302,26 @@ Important routes:
 - `/v1/worktrees/*`
 - `/v1/mcp/*`
 
-This is the core design bet of the repo: your application should talk to a runtime service, not directly to provider CLIs.
+Simple shape:
+
+```mermaid
+sequenceDiagram
+  participant UI as Frontend
+  participant RT as GG Runtime
+  participant P as Provider
+  participant DB as SQLite
+
+  UI->>RT: POST /v1/sessions
+  RT->>DB: persist session
+  RT-->>UI: session created
+  UI->>RT: POST /v1/sessions/:id/turns
+  RT->>P: execute turn
+  P-->>RT: events / final output
+  RT->>DB: persist events
+  RT-->>UI: SSE stream + final response
+```
+
+This is the design goal in one sentence: your application should talk to a runtime service, not directly to provider CLIs.
 
 ## Auth Model
 
@@ -213,7 +377,9 @@ and publishes `gg-runtime-<platform>-<arch>.tar.gz` assets on `v*` tags.
 
 ## Status
 
-This is a real deployable runtime, not a sketch repo. The branch that landed this extracted:
+This repo is already beyond the "prototype with ambition" stage.
+
+It includes:
 
 - provider-backed sessions
 - durable event replay
@@ -221,6 +387,8 @@ This is a real deployable runtime, not a sketch repo. The branch that landed thi
 - worktree lifecycle support
 - MCP sidecar support
 - real Codex and Claude validation
-- release packaging and docs
+- release packaging
+- deploy docs
+- generated OpenAPI
 
-The natural next layer on top of this repo is better clients, not more backend reinvention.
+The obvious next step is not "make another backend." The obvious next step is to build better clients on top of this one.

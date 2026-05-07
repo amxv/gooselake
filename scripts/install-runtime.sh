@@ -109,6 +109,10 @@ install -m 0644 "${PACKAGE_DIR}/runtime-server.toml.example" "${INSTALL_ROOT}/ru
 install -m 0644 "${PACKAGE_DIR}/openapi.yaml" "${INSTALL_ROOT}/openapi.yaml"
 install -m 0644 "${PACKAGE_DIR}/README.md" "${INSTALL_ROOT}/README.md"
 /bin/cp -R "${PACKAGE_DIR}/docs/." "${INSTALL_ROOT}/docs/"
+if [[ -d "${PACKAGE_DIR}/deploy" ]]; then
+  mkdir -p "${INSTALL_ROOT}/deploy"
+  /bin/cp -R "${PACKAGE_DIR}/deploy/." "${INSTALL_ROOT}/deploy/"
+fi
 
 cat <<EOF
 Installed GG Runtime to ${INSTALL_ROOT}
@@ -121,6 +125,17 @@ Next steps:
 3. Login providers on this machine:
    codex login
    claude login
-4. Start server:
+4. Validate config:
+   ${INSTALL_ROOT}/bin/gg-runtime-server --check-config --config ./runtime-server.toml
+5. Start server:
    ${INSTALL_ROOT}/bin/gg-runtime-server --config ./runtime-server.toml
 EOF
+
+if [[ -d "${INSTALL_ROOT}/deploy/systemd" ]]; then
+  cat <<EOF
+
+Optional systemd templates:
+  ${INSTALL_ROOT}/deploy/systemd/gg-runtime.service.example
+  ${INSTALL_ROOT}/deploy/systemd/gg-runtime.env.example
+EOF
+fi

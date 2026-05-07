@@ -70,6 +70,7 @@ ARCHIVE_PATH="${ROOT_DIR}/${OUTPUT_DIR}/${PACKAGE_NAME}.tar.gz"
 mkdir -p "${PACKAGE_ROOT}/bin"
 mkdir -p "${PACKAGE_ROOT}/sidecars/claude-bridge"
 mkdir -p "${PACKAGE_ROOT}/sidecars/gg-mcp-server"
+mkdir -p "${PACKAGE_ROOT}/deploy"
 mkdir -p "${ROOT_DIR}/${OUTPUT_DIR}"
 
 pushd "${ROOT_DIR}" >/dev/null
@@ -97,6 +98,7 @@ cp examples/runtime-server.toml "${PACKAGE_ROOT}/runtime-server.toml.example"
 cp README.md "${PACKAGE_ROOT}/README.md"
 cp openapi/runtime-server-openapi.yaml "${PACKAGE_ROOT}/openapi.yaml"
 /bin/cp -R docs "${PACKAGE_ROOT}/docs"
+/bin/cp -R deploy "${PACKAGE_ROOT}/deploy"
 
 chmod +x "${PACKAGE_ROOT}/bin/gg-runtime-server"
 chmod +x "${PACKAGE_ROOT}/sidecars/gg-mcp-server/gg-mcp-server"

@@ -12,15 +12,29 @@ async fn main() -> Result<()> {
     init_tracing();
 
     let cli = parse_cli()?;
-    if let CliCommand::WriteOpenApi { path } = cli {
-        write_openapi_artifact(path.as_path())
-            .with_context(|| format!("failed to write {}", path.display()))?;
-        tracing::info!(path = %path.display(), "wrote generated OpenAPI artifact");
-        return Ok(());
-    }
-
-    let CliCommand::Serve { config_path } = cli else {
-        return Err(anyhow!("unsupported CLI command"));
+    let config_path = match cli {
+        CliCommand::WriteOpenApi { path } => {
+            write_openapi_artifact(path.as_path())
+                .with_context(|| format!("failed to write {}", path.display()))?;
+            tracing::info!(path = %path.display(), "wrote generated OpenAPI artifact");
+            return Ok(());
+        }
+        CliCommand::CheckConfig { config_path } => {
+            let config = RuntimeServerConfig::load(config_path.as_deref())?;
+            config.ensure_data_dirs()?;
+            let auth = config.bootstrap_auth()?;
+            tracing::info!(
+                root_dir = %config.resolve_root_dir().display(),
+                sqlite_path = %config.resolve_sqlite_path().display(),
+                providers_dir = %config.resolve_data_path(&config.data.providers_dir).display(),
+                logs_dir = %config.resolve_data_path(&config.data.logs_dir).display(),
+                worktrees_dir = %config.resolve_worktree_root().display(),
+                token_source = %describe_auth_source(&auth.source),
+                "config check passed"
+            );
+            return Ok(());
+        }
+        CliCommand::Serve { config_path } => config_path,
     };
     let config = RuntimeServerConfig::load(config_path.as_deref())?;
     let bootstrapped = bootstrap_runtime(config).await?;
@@ -71,12 +85,14 @@ fn init_tracing() {
 enum CliCommand {
     Serve { config_path: Option<PathBuf> },
     WriteOpenApi { path: PathBuf },
+    CheckConfig { config_path: Option<PathBuf> },
 }
 
 fn parse_cli() -> Result<CliCommand> {
     let mut args = std::env::args().skip(1);
     let mut config_path = None;
     let mut write_openapi_path = None;
+    let mut check_config = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--config" => {
@@ -91,13 +107,24 @@ fn parse_cli() -> Result<CliCommand> {
                 });
                 write_openapi_path = Some(path);
             }
+            "--check-config" => {
+                check_config = true;
+            }
             other => {
                 return Err(anyhow!("unknown argument: {other}"));
             }
         }
     }
+    if check_config && write_openapi_path.is_some() {
+        return Err(anyhow!(
+            "--check-config cannot be combined with --write-openapi"
+        ));
+    }
     if let Some(path) = write_openapi_path {
         return Ok(CliCommand::WriteOpenApi { path });
+    }
+    if check_config {
+        return Ok(CliCommand::CheckConfig { config_path });
     }
     Ok(CliCommand::Serve { config_path })
 }

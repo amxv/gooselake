@@ -344,10 +344,18 @@ You want the provider weirdness and MCP weirdness in boxes with labels, not leak
 
 ## Quick Start
 
+### Command Runner
+
+Most operational commands in this repo are exposed through `make`:
+
+```bash
+make help
+```
+
 ### Install the release bundle
 
 ```bash
-./scripts/install-runtime.sh latest
+make install
 ```
 
 Or directly from GitHub:
@@ -360,7 +368,7 @@ curl -fsSL https://raw.githubusercontent.com/amxv/gg-agent-runtime/main/scripts/
 Only set `GG_RUNTIME_REPO` if you intentionally want a fork:
 
 ```bash
-GG_RUNTIME_REPO=owner/repo ./scripts/install-runtime.sh latest
+GG_RUNTIME_REPO=owner/repo make install
 ```
 
 ### Login providers on the machine
@@ -383,16 +391,19 @@ That is the default path. Change config only when you need different bind addres
 
 ### VPS always-on path (recommended for Linux host deploys)
 
+One command:
+
 ```bash
-./scripts/upgrade-runtime.sh latest
-cp "$HOME/.local/share/gg-runtime/current/runtime-server.toml.example" "$HOME/.config/gg-runtime/runtime-server.toml"
-./scripts/preflight-runtime.sh --config "$HOME/.config/gg-runtime/runtime-server.toml" --runtime-bin "$HOME/.local/share/gg-runtime/current/bin/gg-runtime-server"
+make vps-deploy
 ```
 
-Then install the systemd user unit from:
+With post-start API verification:
 
-- `~/.local/share/gg-runtime/current/deploy/systemd/gg-runtime.service.example`
-- `~/.local/share/gg-runtime/current/deploy/systemd/gg-runtime.env.example`
+```bash
+make vps-deploy BASE_URL="http://127.0.0.1:8080" TOKEN="$GG_RUNTIME_TOKEN"
+```
+
+Manual runbook and troubleshooting are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## What A Frontend Talks To
 
@@ -467,7 +478,7 @@ not from runtime route introspection. That is a deliberate tradeoff and is docum
 If you want to build from source instead of downloading a release bundle:
 
 ```bash
-./scripts/install-from-source.sh
+make install-source
 ```
 
 ## Release Pipeline

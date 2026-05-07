@@ -87,6 +87,10 @@ install -m 0644 "${PACKAGE_DIR}/runtime-server.toml.example" "${INSTALL_ROOT}/ru
 install -m 0644 "${PACKAGE_DIR}/openapi.yaml" "${INSTALL_ROOT}/openapi.yaml"
 install -m 0644 "${PACKAGE_DIR}/README.md" "${INSTALL_ROOT}/README.md"
 /bin/cp -R "${PACKAGE_DIR}/docs/." "${INSTALL_ROOT}/docs/"
+if [[ -d "${PACKAGE_DIR}/deploy" ]]; then
+  mkdir -p "${INSTALL_ROOT}/deploy"
+  /bin/cp -R "${PACKAGE_DIR}/deploy/." "${INSTALL_ROOT}/deploy/"
+fi
 
 cat <<EOF
 Installed from source to ${INSTALL_ROOT}
@@ -96,5 +100,15 @@ Next steps:
 2. cp "${INSTALL_ROOT}/runtime-server.toml.example" ./runtime-server.toml
 3. codex login
 4. claude login
-5. gg-runtime-server --config ./runtime-server.toml
+5. gg-runtime-server --check-config --config ./runtime-server.toml
+6. gg-runtime-server --config ./runtime-server.toml
 EOF
+
+if [[ -d "${INSTALL_ROOT}/deploy/systemd" ]]; then
+  cat <<EOF
+
+Optional systemd templates:
+  ${INSTALL_ROOT}/deploy/systemd/gg-runtime.service.example
+  ${INSTALL_ROOT}/deploy/systemd/gg-runtime.env.example
+EOF
+fi

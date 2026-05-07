@@ -27,6 +27,7 @@ make help
 - [Install Guide](./INSTALL.md)
 - [Deployment Guide](./DEPLOYMENT.md)
 - [API Guide](./API.md)
+- [API Doc Sync Workflow](./API_DOC_SYNC.md)
 - [Endpoint Catalog](./API_ENDPOINTS.md)
 - [Architecture](./ARCHITECTURE.md)
 
@@ -35,3 +36,4 @@ make help
 - Generated OpenAPI artifact: [`openapi/runtime-server-openapi.yaml`](../openapi/runtime-server-openapi.yaml)
 - Public OpenAPI endpoint: `GET /openapi.yaml`
 - Authenticated OpenAPI endpoint: `GET /v1/openapi.yaml`
+- Sync helpers: `make api-docs-refresh`, `make api-docs-status`, `make api-docs-check`

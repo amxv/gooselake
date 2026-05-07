@@ -156,8 +156,22 @@ How OpenAPI is produced today:
 Regenerate artifact in repo:
 
 ```bash
-cargo run -p runtime-server --bin gg-runtime-server -- --write-openapi
+make api-docs-refresh
 ```
+
+Review sync-relevant file changes:
+
+```bash
+make api-docs-status
+```
+
+Fail fast when API files changed but docs files did not:
+
+```bash
+make api-docs-check
+```
+
+Workflow reference: [API Doc Sync Workflow](./API_DOC_SYNC.md)
 
 What this gives you reliably:
 - route path coverage

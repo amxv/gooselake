@@ -466,7 +466,14 @@ Team orchestration is already a first-class runtime API here. The MCP-facing tea
 Regenerate it with:
 
 ```bash
-cargo run -p runtime-server --bin gg-runtime-server -- --write-openapi
+make api-docs-refresh
+```
+
+Review API/doc sync status:
+
+```bash
+make api-docs-status
+make api-docs-check
 ```
 
 The OpenAPI file is generated from maintained source parsing in
@@ -500,6 +507,7 @@ and publishes `gg-runtime-<platform>-<arch>.tar.gz` assets on `v*` tags.
 - Install: [docs/INSTALL.md](docs/INSTALL.md)
 - Deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - API: [docs/API.md](docs/API.md)
+- API Doc Sync Workflow: [docs/API_DOC_SYNC.md](docs/API_DOC_SYNC.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Config template: [examples/runtime-server.toml](examples/runtime-server.toml)
 

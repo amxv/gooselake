@@ -52,6 +52,18 @@ preflight-http: ## Run deployment preflight checks including HTTP (requires BASE
 check-config: ## Validate runtime config via gg-runtime-server --check-config
 	"$(RUNTIME_BIN)" --check-config --config "$(CONFIG)"
 
+.PHONY: api-docs-refresh
+api-docs-refresh: ## Regenerate runtime OpenAPI artifact from source
+	./scripts/api-doc-sync.sh refresh
+
+.PHONY: api-docs-status
+api-docs-status: ## Show API/docs sync-relevant file status
+	./scripts/api-doc-sync.sh status
+
+.PHONY: api-docs-check
+api-docs-check: ## Fail if API files changed without corresponding docs changes
+	./scripts/api-doc-sync.sh check
+
 .PHONY: vps-deploy
 vps-deploy: ## One-command VPS deploy (upgrade + preflight + systemd enable/start)
 	./scripts/deploy-vps.sh --version "$(VERSION)" --config "$(CONFIG)" --service "$(SERVICE)" --scope "$(SCOPE)" $(if $(BASE_URL),--base-url "$(BASE_URL)") $(if $(TOKEN),--token "$(TOKEN)")

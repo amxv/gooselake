@@ -1,5 +1,13 @@
 # GG Runtime
 
+Most agent products start with the wrong center of gravity.
+
+They start in the UI.
+
+You wire a provider into a frontend, stream a few tokens, add a tool or two, and it feels like progress.
+
+For a while, it is.
+
 Most agent products start the same way:
 
 - wire a model provider into a frontend
@@ -7,9 +15,13 @@ Most agent products start the same way:
 - add a few tools
 - bolt on persistence later
 
-That works right up until you want the agent to do real work on a real machine.
+That works right up until you want the agent to stop being a demo and start being a system.
 
-Then the shape of the problem changes.
+The moment an agent has to do real work on a real machine, the problem changes completely.
+
+Now you are not building "chat."
+
+You are building a runtime.
 
 You do not just need "chat with tools." You need:
 
@@ -21,15 +33,19 @@ You do not just need "chat with tools." You need:
 - team communication
 - provider-specific quirks hidden behind one contract
 
-That is what `gg-runtime-server` is for.
+That is the moment this project becomes relevant.
+
+`gg-runtime-server` exists for that moment.
 
 It is a standalone runtime you can deploy on a laptop, a VPS, or a dedicated machine, then drive from any frontend over HTTP and SSE.
 
-Instead of putting agent logic inside your UI, you move the hard part into a machine-side runtime.
+Instead of burying agent behavior inside your UI, you move the hard part into a machine-side runtime that can persist, recover, stream, and keep working even when the client disappears.
 
 ## The Story
 
 The project exists because frontend-first agent architectures usually collapse under their own success.
+
+They do not fail because they were foolish. They fail because they actually started to matter.
 
 At first, everything feels simple:
 
@@ -65,7 +81,7 @@ flowchart TD
   UI --> Proc[Process management]
 ```
 
-That architecture is fragile. Every new UI ends up rebuilding the same runtime concerns.
+That architecture is fragile. Every new product surface ends up rebuilding the same runtime concerns.
 
 This repo takes the opposite approach:
 
@@ -92,6 +108,8 @@ The runtime becomes the durable backend product. The UI becomes a client.
 
 That is the whole bet.
 
+And it is a strong bet, because the runtime is where the complexity was going to end up anyway.
+
 ## Why This Project Is Interesting
 
 The cool part is not just that it talks to Codex and Claude.
@@ -104,7 +122,12 @@ The cool part is that it treats agent execution as infrastructure:
 - machine operations are first-class
 - frontend apps can stay thin
 
-In practice, that means you can build a serious agent application once at the runtime layer, then expose it through multiple products without rewriting the hard parts.
+In practice, that means you can build a serious agent system once at the runtime layer, then expose it through multiple products without rewriting the hard parts.
+
+That is the difference between:
+
+- "our app has an agent feature"
+- and "we have an agent platform we can keep building on"
 
 ## What The Runtime Actually Owns
 
@@ -122,7 +145,9 @@ It owns:
 - worktree allocation and lifecycle
 - MCP tool plumbing
 
-The UI does not need to know how Codex auth is staged, how Claude is bridged, or how a worktree is claimed. It just speaks HTTP and SSE.
+The UI does not need to know how Codex auth is staged, how Claude is bridged, how provider quirks are normalized, or how a worktree is claimed. It just speaks HTTP and SSE.
+
+That boundary is what makes the architecture reusable.
 
 ## Mental Model
 
@@ -157,6 +182,8 @@ flowchart TD
 
 The important boundary is between the client and the runtime, not between the client and the model provider.
 
+That sounds subtle, but it changes everything. Once that boundary is real, your frontend stops owning orchestration logic it was never meant to carry.
+
 ## What You Get
 
 ### One runtime model across providers
@@ -176,6 +203,8 @@ Those providers are normalized into one shared model for:
 - recovery and replay
 
 That matters because frontends should not have to learn different lifecycle semantics per provider.
+
+The provider layer should be replaceable. The runtime contract should be stable.
 
 ### Durable, replayable sessions
 
@@ -202,6 +231,8 @@ This runtime is built for agents that actually operate on a machine, including:
 
 It is much closer to a control plane than a chatbot server.
 
+That is the right mental category for this repo.
+
 ### A deployable product boundary
 
 The runtime ships as one bundle:
@@ -211,6 +242,8 @@ The runtime ships as one bundle:
 - `sidecars/gg-mcp-server/gg-mcp-server`
 
 That bundle is the backend product. Your UI is not where the business logic has to live anymore.
+
+If you are building multiple agent applications, or even one serious one, that separation pays for itself fast.
 
 ## Architecture
 
@@ -323,6 +356,8 @@ sequenceDiagram
 
 This is the design goal in one sentence: your application should talk to a runtime service, not directly to provider CLIs.
 
+That keeps your frontend simpler, your backend more honest, and your system much easier to evolve.
+
 ## Auth Model
 
 - Codex: machine login via `codex login`, with staged runtime auth support from `~/.gg/codex/auth.json`
@@ -392,3 +427,5 @@ It includes:
 - generated OpenAPI
 
 The obvious next step is not "make another backend." The obvious next step is to build better clients on top of this one.
+
+If this project works, it should make future agent applications feel lighter, because the heavy machinery already lives here.

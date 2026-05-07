@@ -18,10 +18,10 @@ When any of these change:
 ## Skill For API Doc Sync
 
 Use the local skill at:
-- `gg/skills/runtime-api-doc-sync/SKILL.md`
+- `.agents/skills/runtime-api-doc-sync/SKILL.md`
 
 Invoke it explicitly in prompts when doing API work, for example:
-- `Use $runtime-api-doc-sync at gg/skills/runtime-api-doc-sync to keep docs in sync with this API change.`
+- `Use $runtime-api-doc-sync at .agents/skills/runtime-api-doc-sync to keep docs in sync with this API change.`
 
 ## Scope Reminder
 

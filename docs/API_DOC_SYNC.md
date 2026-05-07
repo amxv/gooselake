@@ -48,7 +48,7 @@ Docs-signal files:
 ## Agent Skill
 
 Reusable local skill:
-- `gg/skills/runtime-api-doc-sync/SKILL.md`
+- `.agents/skills/runtime-api-doc-sync/SKILL.md`
 
 Example invocation in an agent prompt:
-- `Use $runtime-api-doc-sync at gg/skills/runtime-api-doc-sync to keep docs synced with this API change.`
+- `Use $runtime-api-doc-sync at .agents/skills/runtime-api-doc-sync to keep docs synced with this API change.`

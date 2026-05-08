@@ -98,7 +98,7 @@ cp examples/runtime-server.toml "${PACKAGE_ROOT}/runtime-server.toml.example"
 cp README.md "${PACKAGE_ROOT}/README.md"
 cp openapi/runtime-server-openapi.yaml "${PACKAGE_ROOT}/openapi.yaml"
 /bin/cp -R docs "${PACKAGE_ROOT}/docs"
-/bin/cp -R deploy "${PACKAGE_ROOT}/deploy"
+/bin/cp -R deploy/. "${PACKAGE_ROOT}/deploy/"
 
 chmod +x "${PACKAGE_ROOT}/bin/gg-runtime-server"
 chmod +x "${PACKAGE_ROOT}/sidecars/gg-mcp-server/gg-mcp-server"

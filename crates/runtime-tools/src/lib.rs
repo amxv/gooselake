@@ -2615,16 +2615,24 @@ impl WorktreeService for RuntimeWorktreeService {
             .as_ref()
             .map(|row| row.worktree_cwd.clone())
             .or_else(|| source_session.cwd.clone());
+        let resolved_permission_mode = request
+            .permission_mode
+            .clone()
+            .or(source_session.permission_mode.clone())
+            .or_else(|| {
+                if provider == ProviderKind::Codex && worktree_record.is_some() {
+                    Some("full_auto".to_string())
+                } else {
+                    None
+                }
+            });
         let spawned_session = match self
             .runtime
             .create_session(CreateSessionInput {
                 provider,
                 model: request.model.clone().or(source_session.model.clone()),
                 cwd: spawn_cwd,
-                permission_mode: request
-                    .permission_mode
-                    .clone()
-                    .or(source_session.permission_mode.clone()),
+                permission_mode: resolved_permission_mode,
                 metadata: request.metadata.clone(),
             })
             .await
@@ -3968,6 +3976,74 @@ mod tests {
         assert_eq!(
             spawn.worktree.as_ref().expect("spawn worktree").id,
             existing.worktree.id
+        );
+        assert_eq!(
+            spawn.spawned_session.permission_mode.as_deref(),
+            Some("full_auto")
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_worktree_inherits_source_permission_mode_when_present() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: temp_dir.path().join("runtime.sqlite3"),
+        }));
+        store.initialize().await.expect("init store");
+        let (runtime, team_comms) = build_runtime_and_team_comms(store.clone()).await;
+        let service = RuntimeWorktreeService::new(
+            store.clone(),
+            runtime.clone(),
+            team_comms.clone(),
+            WorktreeServiceConfig {
+                enabled: true,
+                root_dir: temp_dir.path().join("worktrees").display().to_string(),
+                init_script_path: ".agents/gg/worktree-init.sh".to_string(),
+                deletion_policy_default: "delete_on_last_claim".to_string(),
+            },
+        )
+        .expect("build worktree service");
+
+        let repo_dir = temp_dir.path().join("repo");
+        setup_git_repo(repo_dir.as_path());
+        let source = runtime
+            .create_session(CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: Some("test-model".to_string()),
+                cwd: Some(repo_dir.display().to_string()),
+                permission_mode: Some("danger-full-access".to_string()),
+                metadata: Some(serde_json::json!({ "suite": "runtime_tools_phase6" })),
+            })
+            .await
+            .expect("create source session with permission mode");
+        let team_id = create_test_team(team_comms.as_ref(), source.id.as_str()).await;
+
+        let spawn = service
+            .spawn_team_member(TeamMemberSpawnRequest {
+                team_id,
+                source_session_id: source.id,
+                provider: None,
+                model: None,
+                title: Some("Inherited Mode Worker".to_string()),
+                prompt: Some("Do work".to_string()),
+                permission_mode: None,
+                metadata: None,
+                worktree: Some(TeamMemberSpawnWorktreeInput {
+                    mode: Some("create".to_string()),
+                    name: Some("inherited-mode-worker".to_string()),
+                    branch_prefix: None,
+                    base_ref: None,
+                    run_init_script: Some(false),
+                }),
+                creator_agent_id: None,
+                creator_compaction_subscription: None,
+            })
+            .await
+            .expect("spawn with inherited source mode");
+
+        assert_eq!(
+            spawn.spawned_session.permission_mode.as_deref(),
+            Some("danger-full-access")
         );
     }
 

@@ -669,7 +669,12 @@ impl RuntimeSessionManager {
         })?;
         let turn_id = self.allocate_id("turn", provider_kind.as_str());
         let now = now_ms();
-        let requires_approval = input.permission_mode.as_deref() == Some("require_approval");
+        let effective_permission_mode = input
+            .permission_mode
+            .clone()
+            .or_else(|| session.permission_mode.clone());
+        let requires_approval =
+            effective_permission_mode.as_deref() == Some("require_approval");
         let approval_id = if requires_approval {
             Some(self.allocate_id("apr", provider_kind.as_str()))
         } else {
@@ -682,7 +687,7 @@ impl RuntimeSessionManager {
             turn_id: turn_id.clone(),
             input: input.input.clone(),
             expected_turn_id: input.expected_turn_id.clone(),
-            permission_mode: input.permission_mode.clone(),
+            permission_mode: effective_permission_mode.clone(),
             approval_id: approval_id.clone(),
         };
         let ack_result = self
@@ -1774,6 +1779,84 @@ mod tests {
         )
     }
 
+    #[derive(Default)]
+    struct PermissionCaptureProvider {
+        sent_permission_modes: Arc<Mutex<Vec<Option<String>>>>,
+    }
+
+    #[async_trait]
+    impl RuntimeProvider for PermissionCaptureProvider {
+        fn kind(&self) -> ProviderKind {
+            ProviderKind::Codex
+        }
+
+        fn metadata(&self) -> ProviderMetadata {
+            ProviderMetadata {
+                kind: ProviderKind::Codex,
+                display_name: "Permission Capture".to_string(),
+                enabled: true,
+            }
+        }
+
+        async fn healthcheck(&self) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        async fn create_session(
+            &self,
+            req: ProviderCreateSessionRequest,
+        ) -> Result<ProviderSession, RuntimeError> {
+            Ok(ProviderSession {
+                runtime_session_id: req.runtime_session_id.clone(),
+                provider_session_ref: format!("capture:{}", req.runtime_session_id),
+                canonical_provider_session_ref: None,
+            })
+        }
+
+        async fn send_turn(
+            &self,
+            req: ProviderSendTurnRequest,
+        ) -> Result<ProviderTurnAck, RuntimeError> {
+            self.sent_permission_modes
+                .lock()
+                .expect("permission capture mutex")
+                .push(req.permission_mode.clone());
+            Ok(ProviderTurnAck {
+                runtime_session_id: req.runtime_session_id,
+                turn_id: req.turn_id,
+            })
+        }
+
+        async fn wait_for_turn(
+            &self,
+            req: ProviderWaitTurnRequest,
+        ) -> Result<ProviderTurnResult, RuntimeError> {
+            Ok(ProviderTurnResult {
+                runtime_session_id: req.runtime_session_id,
+                turn_id: req.turn_id,
+                status: ProviderTurnStatus::Completed,
+                usage: None,
+                error: None,
+            })
+        }
+    }
+
+    fn manager_with_permission_capture_provider(
+    ) -> (Arc<RuntimeSessionManager>, Arc<Mutex<Vec<Option<String>>>>) {
+        let provider = PermissionCaptureProvider::default();
+        let captured = Arc::clone(&provider.sent_permission_modes);
+        let mut registry = ProviderRegistry::new();
+        registry
+            .register(Arc::new(provider))
+            .expect("register provider");
+        let store = Arc::new(MockStore::default());
+        let manager = Arc::new(
+            RuntimeSessionManager::new(store, Arc::new(registry), 256)
+                .expect("build runtime manager"),
+        );
+        (manager, captured)
+    }
+
     #[test]
     fn assistant_text_extraction_supports_snake_and_camel_fields() {
         let usage_snake = serde_json::json!({ "last_message": "snake" });
@@ -1989,6 +2072,40 @@ mod tests {
             )
             .await;
         assert!(matches!(second, Err(RuntimeError::Io(_))));
+    }
+
+    #[tokio::test]
+    async fn send_turn_inherits_session_permission_mode_when_turn_omits_it() {
+        let (manager, captured_permission_modes) = manager_with_permission_capture_provider();
+        let session = manager
+            .create_session(CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: Some("full_auto".to_string()),
+                metadata: None,
+            })
+            .await
+            .expect("create session");
+
+        let _ = manager
+            .send_turn(
+                session.id.as_str(),
+                SendTurnInput {
+                    input: vec![serde_json::json!({"type":"text","text":"inherit mode"})],
+                    expected_turn_id: None,
+                    permission_mode: None,
+                },
+            )
+            .await
+            .expect("send turn");
+
+        let captured = captured_permission_modes
+            .lock()
+            .expect("captured permission modes")
+            .clone();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].as_deref(), Some("full_auto"));
     }
 
     #[tokio::test]

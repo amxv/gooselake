@@ -635,6 +635,7 @@ dependencies = [
  "async-trait",
  "runtime-core",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

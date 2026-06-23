@@ -242,6 +242,35 @@ curl -fsS -X POST \
 - agent startup or stdio IO failure
 - an ACP `session/request_permission` request, which is unsupported in v1 and intentionally fails the turn
 
+### 10. Optional ignored real ACP smoke test
+
+The repo includes an ignored runtime-server smoke test for machines that already have a working ACP agent command:
+
+- required: `GG_ACP_SMOKE_COMMAND`
+- optional: `GG_ACP_SMOKE_ARGS_JSON` as a JSON string array, for example `["serve","--stdio"]`
+- optional: `GG_ACP_SMOKE_ENV_JSON` as a JSON object of string environment pairs
+- optional: `GG_ACP_SMOKE_TIMEOUT_SECONDS`
+- optional: `GG_ACP_SMOKE_DEBUG=1`
+
+Exact command:
+
+```bash
+GG_ACP_SMOKE_COMMAND=/absolute/path/to/your-acp-agent \
+GG_ACP_SMOKE_ARGS_JSON='["serve","--stdio"]' \
+cargo test -p runtime-server ignored_real_acp -- --ignored --nocapture
+```
+
+What it verifies:
+- ACP auth status route is reachable with the configured command
+- the runtime can create an ACP session in a temporary cwd
+- a deterministic prompt reaches `turn.completed`
+- terminal assistant text is persisted in session events and the session transcript metadata
+
+Keep expectations narrow for v1:
+- the smoke does not assume remote ACP transport
+- the smoke does not exercise runtime-managed ACP auth mutations
+- the smoke does not require ACP permission-request support
+
 ## Logging and Troubleshooting
 
 ### Service logs (systemd)

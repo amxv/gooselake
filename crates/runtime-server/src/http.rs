@@ -2521,10 +2521,8 @@ mod tests {
             req: ProviderCreateSessionRequest,
         ) -> Result<ProviderSession, RuntimeError> {
             let provider_session_ref = format!("test-acp-thread-{}", req.runtime_session_id);
-            let canonical_provider_session_ref = Some(format!(
-                "test-acp-canonical-{}",
-                req.runtime_session_id
-            ));
+            let canonical_provider_session_ref =
+                Some(format!("test-acp-canonical-{}", req.runtime_session_id));
             let mut state = self.state.lock().await;
             state.sessions.insert(
                 req.runtime_session_id.clone(),
@@ -2897,6 +2895,63 @@ for raw_line in sys.stdin:
         send({{"jsonrpc": "2.0", "id": msg["id"], "result": {{"sessionId": session_id}}}})
     elif method == "session/resume":
         send({{"jsonrpc": "2.0", "id": msg["id"], "result": {{}}}})
+    elif method == "session/prompt":
+        session_id = msg["params"]["sessionId"]
+        prompt = msg["params"].get("prompt", [])
+        prompt_text = " ".join(
+            block.get("text", "")
+            for block in prompt
+            if isinstance(block, dict) and block.get("type") == "text"
+        ).strip()
+        send({{
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {{
+                "sessionId": session_id,
+                "update": {{
+                    "sessionUpdate": "agent_message_chunk",
+                    "messageId": "msg_http_1",
+                    "content": {{
+                        "type": "text",
+                        "text": "Echo: "
+                    }}
+                }}
+            }}
+        }})
+        send({{
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {{
+                "sessionId": session_id,
+                "update": {{
+                    "sessionUpdate": "agent_message_chunk",
+                    "messageId": "msg_http_1",
+                    "content": {{
+                        "type": "text",
+                        "text": prompt_text
+                    }}
+                }}
+            }}
+        }})
+        send({{
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {{
+                "sessionId": session_id,
+                "update": {{
+                    "sessionUpdate": "usage_update",
+                    "used": 3,
+                    "size": 16
+                }}
+            }}
+        }})
+        send({{
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {{
+                "stopReason": "end_turn"
+            }}
+        }})
     elif method == "session/close":
         send({{"jsonrpc": "2.0", "id": msg["id"], "result": {{}}}})
 "#
@@ -3624,11 +3679,9 @@ for raw_line in sys.stdin:
             serde_json::from_slice(status_body.as_ref()).expect("acp auth status json");
         assert_eq!(status_json["authenticated"], false);
         assert_eq!(status_json["mode"], "agent_managed");
-        assert!(
-            status_json["detail"]
-                .as_str()
-                .is_some_and(|detail| detail.contains("agent-managed"))
-        );
+        assert!(status_json["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("agent-managed")));
 
         let diagnostics_response = router
             .oneshot(
@@ -3657,6 +3710,212 @@ for raw_line in sys.stdin:
         assert_eq!(acp_entry["healthy"], true);
         assert_eq!(acp_entry["auth_status"]["mode"], "agent_managed");
         assert!(acp_entry["auth_error"].is_null());
+    }
+
+    #[tokio::test]
+    async fn acp_provider_public_surfaces_support_list_models_session_replay_and_stream() {
+        let fake_agent = fake_acp_agent_with_request_log();
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = temp_dir.path().to_path_buf();
+        config.server.public_base_url = "http://127.0.0.1:8787".to_string();
+        config.providers.codex.enabled = false;
+        config.providers.claude.enabled = false;
+        config.providers.acp.enabled = true;
+        config.providers.acp.command = Some("python3".to_string());
+        config.providers.acp.args = vec![fake_agent.script_path.display().to_string()];
+
+        let bootstrapped = bootstrap_runtime(config).await.expect("bootstrap");
+        let token = bootstrapped.auth.bearer_token.clone();
+        let router = build_router(AppState {
+            app: bootstrapped.app,
+            runtime: bootstrapped.runtime,
+            bearer_token: token.clone(),
+            public_base_url: bootstrapped.public_base_url,
+            startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
+        });
+
+        let providers_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/providers")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("providers response");
+        assert_eq!(providers_response.status(), StatusCode::OK);
+        let providers_json: Value = serde_json::from_slice(
+            &to_bytes(providers_response.into_body(), usize::MAX)
+                .await
+                .expect("providers body"),
+        )
+        .expect("providers json");
+        let providers = providers_json["providers"]
+            .as_array()
+            .expect("providers array");
+        assert!(providers
+            .iter()
+            .any(|entry| entry["kind"].as_str() == Some("acp")));
+
+        let models_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/providers/acp/models")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("models response");
+        assert_eq!(models_response.status(), StatusCode::OK);
+        let models_json: Value = serde_json::from_slice(
+            &to_bytes(models_response.into_body(), usize::MAX)
+                .await
+                .expect("models body"),
+        )
+        .expect("models json");
+        assert_eq!(models_json["provider"].as_str(), Some("acp"));
+        assert_eq!(
+            models_json["models"].as_array().map(Vec::len),
+            Some(0),
+            "ACP model list is allowed to be empty in v1"
+        );
+
+        let create_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "acp",
+                            "cwd": "/tmp/acp-http-surface",
+                            "permission_mode": null,
+                            "metadata": {}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create response");
+        assert_eq!(create_response.status(), StatusCode::OK);
+        let create_json: Value = serde_json::from_slice(
+            &to_bytes(create_response.into_body(), usize::MAX)
+                .await
+                .expect("create body"),
+        )
+        .expect("create json");
+        let session_id = create_json["id"].as_str().expect("session id").to_string();
+
+        let send_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/sessions/{session_id}/turns"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "input": [{"type":"text","text":"runtime acp http"}],
+                            "expected_turn_id": null,
+                            "permission_mode": null
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("send response");
+        assert_eq!(send_response.status(), StatusCode::OK);
+
+        let mut events = Vec::<runtime_core::RuntimeEventRecord>::new();
+        for _ in 0..40 {
+            let events_response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/v1/sessions/{session_id}/events"))
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .expect("events response");
+            assert_eq!(events_response.status(), StatusCode::OK);
+            events = serde_json::from_slice(
+                &to_bytes(events_response.into_body(), usize::MAX)
+                    .await
+                    .expect("events body"),
+            )
+            .expect("events json");
+            if events.iter().any(|event| event.kind == "turn.completed") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let completed = events
+            .iter()
+            .find(|event| event.kind == "turn.completed")
+            .expect("turn.completed event");
+        let assistant_text = completed
+            .payload
+            .get("assistant_text")
+            .or_else(|| {
+                completed
+                    .payload
+                    .get("usage")
+                    .and_then(|usage| usage.get("last_message"))
+            })
+            .and_then(Value::as_str);
+        assert_eq!(assistant_text, Some("Echo: runtime acp http"));
+        let replay_cursor = events
+            .iter()
+            .find(|event| event.kind == "turn.started")
+            .map(|event| event.seq.saturating_sub(1))
+            .expect("turn.started seq");
+
+        let stream_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v1/sessions/{session_id}/events/stream?after_seq={replay_cursor}"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("stream response");
+        assert_eq!(stream_response.status(), StatusCode::OK);
+        let mut data_stream = stream_response.into_body().into_data_stream();
+        let mut sse_payload = String::new();
+        for _ in 0..8 {
+            let next = timeout(Duration::from_secs(1), data_stream.next()).await;
+            match next {
+                Ok(Some(Ok(chunk))) => {
+                    sse_payload.push_str(String::from_utf8_lossy(chunk.as_ref()).as_ref());
+                    if sse_payload.contains("event: turn.completed")
+                        && sse_payload.contains("Echo: runtime acp http")
+                    {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        assert!(sse_payload.contains("event: turn.started"));
+        assert!(sse_payload.contains("event: turn.completed"));
+        assert!(sse_payload.contains("Echo: runtime acp http"));
     }
 
     #[tokio::test]
@@ -4315,6 +4574,277 @@ for raw_line in sys.stdin:
     }
 
     #[tokio::test]
+    #[ignore = "real ACP smoke test: requires GG_ACP_SMOKE_COMMAND and optional GG_ACP_SMOKE_ARGS_JSON/GG_ACP_SMOKE_ENV_JSON"]
+    async fn ignored_real_acp_http_smoke_turn_completes() {
+        let smoke_command = std::env::var("GG_ACP_SMOKE_COMMAND")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .expect("GG_ACP_SMOKE_COMMAND must be set for ACP smoke");
+        let smoke_args = std::env::var("GG_ACP_SMOKE_ARGS_JSON")
+            .ok()
+            .map(|raw| {
+                serde_json::from_str::<Vec<String>>(raw.as_str())
+                    .expect("GG_ACP_SMOKE_ARGS_JSON must be a JSON string array")
+            })
+            .unwrap_or_default();
+        let smoke_env = std::env::var("GG_ACP_SMOKE_ENV_JSON")
+            .ok()
+            .map(|raw| {
+                serde_json::from_str::<std::collections::BTreeMap<String, String>>(raw.as_str())
+                    .expect("GG_ACP_SMOKE_ENV_JSON must be a JSON object of string pairs")
+            })
+            .unwrap_or_default();
+        let smoke_debug = std::env::var("GG_ACP_SMOKE_DEBUG")
+            .ok()
+            .map(|value| value.trim() == "1")
+            .unwrap_or(false);
+
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = temp_dir.path().to_path_buf();
+        config.providers.codex.enabled = false;
+        config.providers.claude.enabled = false;
+        config.providers.acp.enabled = true;
+        config.providers.acp.command = Some(smoke_command.clone());
+        config.providers.acp.args = smoke_args.clone();
+        config.providers.acp.env = smoke_env;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind smoke listener");
+        let listen_addr = listener.local_addr().expect("smoke listener addr");
+        config.server.public_base_url = format!("http://{listen_addr}");
+
+        let bootstrapped = bootstrap_runtime(config).await.expect("bootstrap");
+        let token = bootstrapped.auth.bearer_token.clone();
+        let router = build_router(AppState {
+            app: bootstrapped.app,
+            runtime: bootstrapped.runtime,
+            bearer_token: token.clone(),
+            public_base_url: bootstrapped.public_base_url,
+            startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
+        });
+        let smoke_server_router = router.clone();
+        let smoke_server_handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, smoke_server_router).await;
+        });
+
+        let auth_status_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/providers/acp/auth/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("auth status response");
+        assert_eq!(auth_status_response.status(), StatusCode::OK);
+
+        let smoke_cwd = temp_dir.path().join("smoke-cwd");
+        std::fs::create_dir_all(smoke_cwd.as_path()).expect("create smoke cwd");
+        let completion_token = "ACP_HTTP_SMOKE_OK_39142";
+        let create_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "acp",
+                            "cwd": smoke_cwd.display().to_string(),
+                            "permission_mode": null,
+                            "metadata": {"smoke":"real_acp_http"}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create session response");
+        assert_eq!(create_response.status(), StatusCode::OK);
+        let create_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(create_response.into_body(), usize::MAX)
+                .await
+                .expect("create body"),
+        )
+        .expect("create json");
+        let session_id = create_json["id"].as_str().expect("session id").to_string();
+
+        let send_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/sessions/{session_id}/turns"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "input": [{
+                                "type": "text",
+                                "text": format!("Reply with exactly {completion_token}")
+                            }],
+                            "expected_turn_id": null,
+                            "permission_mode": null
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("send turn response");
+        assert_eq!(send_response.status(), StatusCode::OK);
+        let send_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(send_response.into_body(), usize::MAX)
+                .await
+                .expect("send body"),
+        )
+        .expect("send json");
+        let turn_id = send_json["turn_id"].as_str().expect("turn id").to_string();
+
+        let max_wait_secs = std::env::var("GG_ACP_SMOKE_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(180);
+        let deadline = std::time::Instant::now() + Duration::from_secs(max_wait_secs.max(30));
+        let mut terminal_event: Option<Value> = None;
+        let mut event_cursor: Option<i64> = None;
+        while std::time::Instant::now() < deadline {
+            let events_response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/v1/sessions/{session_id}/events?after_seq={}",
+                            event_cursor.unwrap_or(0)
+                        ))
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .expect("events response");
+            assert_eq!(events_response.status(), StatusCode::OK);
+            let events_json: Vec<Value> = serde_json::from_slice(
+                &to_bytes(events_response.into_body(), usize::MAX)
+                    .await
+                    .expect("events body"),
+            )
+            .expect("events json");
+
+            if let Some(last_seq) = events_json
+                .iter()
+                .filter_map(|event| event.get("seq").and_then(Value::as_i64))
+                .max()
+            {
+                event_cursor = Some(last_seq);
+            }
+
+            for event in events_json {
+                if event.get("turn_id").and_then(Value::as_str) != Some(turn_id.as_str()) {
+                    continue;
+                }
+                if smoke_debug {
+                    eprintln!(
+                        "[acp-smoke] seq={} kind={}",
+                        event.get("seq").and_then(Value::as_i64).unwrap_or_default(),
+                        event
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                    );
+                }
+                if matches!(
+                    event.get("kind").and_then(Value::as_str),
+                    Some("turn.completed" | "turn.failed" | "turn.interrupted")
+                ) {
+                    terminal_event = Some(event);
+                    break;
+                }
+            }
+
+            if terminal_event.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        let terminal_event = terminal_event.expect("ACP smoke turn should reach terminal state");
+        assert_eq!(
+            terminal_event.get("kind").and_then(Value::as_str),
+            Some("turn.completed")
+        );
+        let terminal_text = terminal_event
+            .get("payload")
+            .and_then(|payload| payload.get("assistant_text"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                terminal_event
+                    .get("payload")
+                    .and_then(|payload| payload.get("usage"))
+                    .and_then(|usage| usage.get("last_message"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        assert!(
+            terminal_text.contains(completion_token),
+            "ACP smoke terminal text missing expected token; text={terminal_text}"
+        );
+
+        let session_snapshot_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/sessions/{session_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("session snapshot response");
+        assert_eq!(session_snapshot_response.status(), StatusCode::OK);
+        let session_snapshot: serde_json::Value = serde_json::from_slice(
+            &to_bytes(session_snapshot_response.into_body(), usize::MAX)
+                .await
+                .expect("session snapshot body"),
+        )
+        .expect("session snapshot json");
+        let transcript_text = session_snapshot["metadata"]["session_transcript"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            transcript_text.contains(completion_token),
+            "ACP smoke transcript missing expected token; transcript={transcript_text}"
+        );
+
+        let close_response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/sessions/{session_id}/close"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("close response");
+        assert_eq!(close_response.status(), StatusCode::OK);
+        smoke_server_handle.abort();
+    }
+
+    #[tokio::test]
     async fn mixed_provider_team_flow_uses_shared_runtime_services() {
         let (router, token, _temp_dir, _acp_provider) = build_mixed_provider_test_router().await;
 
@@ -4823,11 +5353,9 @@ for raw_line in sys.stdin:
                 .and_then(|servers| servers.first())
                 .expect("gg mcp server");
             assert_eq!(gg_server["serverName"].as_str(), Some("gg"));
-            assert!(
-                gg_server["command"]
-                    .as_str()
-                    .is_some_and(|command| command.contains("gg-mcp-server"))
-            );
+            assert!(gg_server["command"]
+                .as_str()
+                .is_some_and(|command| command.contains("gg-mcp-server")));
             assert_eq!(
                 gg_server["env"]["GG_MCP_CALLER_AGENT_ID"].as_str(),
                 Some(session_id.as_str())
@@ -7664,8 +8192,8 @@ for raw_line in sys.stdin:
     }
 
     #[tokio::test]
-    async fn phase6_spawn_acp_member_with_created_worktree_assigns_runtime_cwd_and_cleanup_on_remove()
-    {
+    async fn phase6_spawn_acp_member_with_created_worktree_assigns_runtime_cwd_and_cleanup_on_remove(
+    ) {
         let (router, token, temp_dir, acp_provider) = build_mixed_provider_test_router().await;
         let repo_dir = temp_dir.path().join("repo");
         std::fs::create_dir_all(&repo_dir).expect("create repo dir");
@@ -8021,7 +8549,10 @@ for raw_line in sys.stdin:
             .as_str()
             .expect("spawned session id")
             .to_string();
-        assert_eq!(spawn_json["worktree_assignment_mode"].as_str(), Some("reused"));
+        assert_eq!(
+            spawn_json["worktree_assignment_mode"].as_str(),
+            Some("reused")
+        );
         assert_eq!(
             spawn_json["worktree"]["id"].as_str(),
             Some(existing_worktree_id.as_str())
@@ -8032,7 +8563,10 @@ for raw_line in sys.stdin:
             .iter()
             .find(|session| session.runtime_session_id == spawned_session_id)
             .expect("captured ACP reused session");
-        assert_eq!(acp_spawn.cwd.as_deref(), Some(existing_worktree_cwd.as_str()));
+        assert_eq!(
+            acp_spawn.cwd.as_deref(),
+            Some(existing_worktree_cwd.as_str())
+        );
     }
 
     #[tokio::test]

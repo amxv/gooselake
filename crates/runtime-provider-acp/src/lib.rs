@@ -1561,10 +1561,10 @@ impl RuntimeProvider for AcpProvider {
     }
 }
 
-    #[cfg(test)]
-    mod tests {
-        use std::fs;
-        use std::path::PathBuf;
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
 
     use runtime_core::RuntimeProvider;
     use serde_json::{json, Value};
@@ -1787,6 +1787,85 @@ for raw_line in sys.stdin:
             continue
         if "split" in text:
             finish_prompt(session_id, request_id, "end_turn", ["Hello ", "world"])
+            continue
+        if "tooling" in text:
+            send({{
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {{
+                    "sessionId": session_id,
+                    "update": {{
+                        "sessionUpdate": "agent_message_chunk",
+                        "messageId": "msg_tool_1",
+                        "content": {{
+                            "type": "text",
+                            "text": "First line."
+                        }}
+                    }}
+                }}
+            }})
+            send({{
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {{
+                    "sessionId": session_id,
+                    "update": {{
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "tool_1",
+                        "toolName": "gg_ping"
+                    }}
+                }}
+            }})
+            send({{
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {{
+                    "sessionId": session_id,
+                    "update": {{
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "tool_1",
+                        "status": "completed"
+                    }}
+                }}
+            }})
+            send({{
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {{
+                    "sessionId": session_id,
+                    "update": {{
+                        "sessionUpdate": "agent_message_chunk",
+                        "messageId": "msg_tool_2",
+                        "content": {{
+                            "type": "text",
+                            "text": "Second line."
+                        }}
+                    }}
+                }}
+            }})
+            send({{
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {{
+                    "sessionId": session_id,
+                    "update": {{
+                        "sessionUpdate": "usage_update",
+                        "used": 11,
+                        "size": 128,
+                        "cost": {{
+                            "amount": 0.02,
+                            "currency": "USD"
+                        }}
+                    }}
+                }}
+            }})
+            send({{
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {{
+                    "stopReason": "end_turn"
+                }}
+            }})
             continue
         finish_prompt(session_id, request_id, "end_turn", [f"Echo: {{text}}"])
     elif method == "session/cancel":
@@ -2303,6 +2382,70 @@ for raw_line in sys.stdin:
             .and_then(|value| value.get("message"))
             .and_then(Value::as_str)
             .is_some_and(|message| message.contains("connection closed")));
+    }
+
+    #[tokio::test]
+    async fn real_adapter_contract_preserves_ordered_updates_in_terminal_usage() {
+        let harness = FakeAgentHarness::new("normal");
+        let provider = harness.provider();
+        provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_tooling".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect("create");
+
+        provider
+            .send_turn(runtime_core::ProviderSendTurnRequest {
+                runtime_session_id: "sess_tooling".to_string(),
+                turn_id: "turn_tooling".to_string(),
+                input: vec![json!({"type":"text","text":"tooling please"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                approval_id: None,
+            })
+            .await
+            .expect("send");
+
+        let result = provider
+            .wait_for_turn(runtime_core::ProviderWaitTurnRequest {
+                runtime_session_id: "sess_tooling".to_string(),
+                turn_id: "turn_tooling".to_string(),
+                timeout_ms: Some(5_000),
+            })
+            .await
+            .expect("wait");
+        assert_eq!(result.status, runtime_core::ProviderTurnStatus::Completed);
+        let usage = result.usage.expect("usage");
+        assert_eq!(
+            usage.get("last_message").and_then(Value::as_str),
+            Some("First line.\n\nSecond line.")
+        );
+        assert_eq!(
+            usage.get("assistant_text").and_then(Value::as_str),
+            Some("First line.\n\nSecond line.")
+        );
+        assert_eq!(
+            usage.pointer("/usage_update/used").and_then(Value::as_i64),
+            Some(11)
+        );
+        let tool_calls = usage
+            .get("tool_calls")
+            .and_then(Value::as_array)
+            .expect("tool calls");
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(
+            tool_calls[0].get("toolCallId").and_then(Value::as_str),
+            Some("tool_1")
+        );
+        assert_eq!(
+            tool_calls[0].get("sessionUpdate").and_then(Value::as_str),
+            Some("tool_call_update")
+        );
     }
 
     #[tokio::test]

@@ -5352,25 +5352,30 @@ for raw_line in sys.stdin:
                 .as_array()
                 .and_then(|servers| servers.first())
                 .expect("gg mcp server");
-            assert_eq!(gg_server["serverName"].as_str(), Some("gg"));
+            assert_eq!(gg_server["name"].as_str(), Some("gg"));
             assert!(gg_server["command"]
                 .as_str()
                 .is_some_and(|command| command.contains("gg-mcp-server")));
+            let env = gg_server["env"]
+                .as_array()
+                .expect("gg mcp env array")
+                .iter()
+                .filter_map(|entry| {
+                    Some((
+                        entry.get("name")?.as_str()?.to_string(),
+                        entry.get("value")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect::<std::collections::BTreeMap<_, _>>();
+            assert_eq!(env.get("GG_MCP_CALLER_AGENT_ID"), Some(&session_id));
             assert_eq!(
-                gg_server["env"]["GG_MCP_CALLER_AGENT_ID"].as_str(),
-                Some(session_id.as_str())
+                env.get("GG_MCP_GATEWAY_URL"),
+                Some(&"http://127.0.0.1:8787/v1/mcp".to_string())
             );
+            assert_eq!(env.get("GG_MCP_GATEWAY_TOKEN"), Some(&token));
             assert_eq!(
-                gg_server["env"]["GG_MCP_GATEWAY_URL"].as_str(),
-                Some("http://127.0.0.1:8787/v1/mcp")
-            );
-            assert_eq!(
-                gg_server["env"]["GG_MCP_GATEWAY_TOKEN"].as_str(),
-                Some(token.as_str())
-            );
-            assert_eq!(
-                gg_server["env"]["GG_MCP_ENABLE_PROCESS_TOOLS"].as_str(),
-                Some("1")
+                env.get("GG_MCP_ENABLE_PROCESS_TOOLS"),
+                Some(&"1".to_string())
             );
         }
     }

@@ -251,28 +251,51 @@ impl AcpProvider {
         }
     }
 
+    fn max_session_capacity(&self) -> usize {
+        self.inner
+            .config
+            .max_instances
+            .saturating_mul(self.inner.config.max_sessions_per_instance)
+    }
+
+    async fn ensure_session_capacity_available(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<(), RuntimeError> {
+        let capacity = self.max_session_capacity();
+        let sessions = self.inner.sessions.read().await;
+        if sessions.contains_key(runtime_session_id) || sessions.len() < capacity {
+            return Ok(());
+        }
+
+        Err(RuntimeError::InvalidState(format!(
+            "acp session capacity exceeded ({capacity} total sessions from max_instances={} * max_sessions_per_instance={})",
+            self.inner.config.max_instances, self.inner.config.max_sessions_per_instance
+        )))
+    }
+
     fn build_gg_mcp_server_config(&self, runtime_session_id: &str) -> Option<Value> {
         if !self.inner.config.gg_mcp_enabled {
             return None;
         }
 
-        let mut env = serde_json::Map::new();
-        env.insert(
-            "GG_MCP_ENABLE_PROCESS_TOOLS".to_string(),
-            Value::String(if self.inner.config.gg_mcp_enable_process_tools {
-                "1".to_string()
+        let mut env = Vec::new();
+        env.push(json!({
+            "name": "GG_MCP_ENABLE_PROCESS_TOOLS",
+            "value": if self.inner.config.gg_mcp_enable_process_tools {
+                "1"
             } else {
-                "0".to_string()
-            }),
-        );
-        env.insert(
-            "GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID".to_string(),
-            Value::String("1".to_string()),
-        );
-        env.insert(
-            "GG_MCP_CALLER_AGENT_ID".to_string(),
-            Value::String(runtime_session_id.to_string()),
-        );
+                "0"
+            },
+        }));
+        env.push(json!({
+            "name": "GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID",
+            "value": "1",
+        }));
+        env.push(json!({
+            "name": "GG_MCP_CALLER_AGENT_ID",
+            "value": runtime_session_id,
+        }));
         if let Some(gateway_url) = self
             .inner
             .config
@@ -281,10 +304,10 @@ impl AcpProvider {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            env.insert(
-                "GG_MCP_GATEWAY_URL".to_string(),
-                Value::String(gateway_url.to_string()),
-            );
+            env.push(json!({
+                "name": "GG_MCP_GATEWAY_URL",
+                "value": gateway_url,
+            }));
         }
         if let Some(gateway_token) = self
             .inner
@@ -294,32 +317,32 @@ impl AcpProvider {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            env.insert(
-                "GG_MCP_GATEWAY_TOKEN".to_string(),
-                Value::String(gateway_token.to_string()),
-            );
+            env.push(json!({
+                "name": "GG_MCP_GATEWAY_TOKEN",
+                "value": gateway_token,
+            }));
         }
         if let Some(home) = std::env::var_os("HOME")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
         {
-            env.insert(
-                "HOME".to_string(),
-                Value::String(home.display().to_string()),
-            );
+            env.push(json!({
+                "name": "HOME",
+                "value": home.display().to_string(),
+            }));
         }
         if let Some(cargo_home) = std::env::var_os("CARGO_HOME")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
         {
-            env.insert(
-                "CARGO_HOME".to_string(),
-                Value::String(cargo_home.display().to_string()),
-            );
+            env.push(json!({
+                "name": "CARGO_HOME",
+                "value": cargo_home.display().to_string(),
+            }));
         }
 
         Some(json!({
-            "serverName": self.inner.config.gg_mcp_server_name,
+            "name": self.inner.config.gg_mcp_server_name,
             "command": self.inner.config.gg_mcp_command,
             "args": self.inner.config.gg_mcp_args,
             "env": env,
@@ -555,8 +578,9 @@ impl AcpProvider {
 
         let status = match stop_reason.as_deref() {
             Some("cancelled") => ProviderTurnStatus::Interrupted,
-            Some("end_turn") | Some("max_tokens") | Some("max_turn_requests") | Some("refusal") => {
-                ProviderTurnStatus::Completed
+            Some("end_turn") => ProviderTurnStatus::Completed,
+            Some("max_tokens") | Some("max_turn_requests") | Some("refusal") => {
+                ProviderTurnStatus::Failed
             }
             Some(_other) => ProviderTurnStatus::Failed,
             None => ProviderTurnStatus::Failed,
@@ -834,31 +858,6 @@ impl AcpConnection {
                             }
                         };
 
-                        if let Some(id_key) = message_id_key(&message) {
-                            let responder = {
-                                let mut pending = connection.pending_requests.lock().await;
-                                pending.remove(id_key.as_str())
-                            };
-                            if let Some(responder) = responder {
-                                if let Some(error) = message.get("error") {
-                                    let _ = responder.send(Err(RuntimeError::ProtocolViolation(
-                                        format!(
-                                            "acp request {} failed: {}",
-                                            id_key,
-                                            jsonrpc_error_message(error)
-                                        ),
-                                    )));
-                                } else if let Some(result) = message.get("result") {
-                                    let _ = responder.send(Ok(result.clone()));
-                                } else {
-                                    let _ = responder.send(Err(RuntimeError::ProtocolViolation(
-                                        format!("acp response {} missing result and error", id_key),
-                                    )));
-                                }
-                                continue;
-                            }
-                        }
-
                         match message.get("method").and_then(Value::as_str) {
                             Some("session/update") => {
                                 let session_id = message
@@ -900,8 +899,35 @@ impl AcpConnection {
                                     let _ =
                                         provider.fail_permission_request(session_id.as_str()).await;
                                 }
+                                continue;
                             }
-                            _ => {}
+                            Some(_) => continue,
+                            None => {}
+                        }
+
+                        if let Some(id_key) = message_id_key(&message) {
+                            let responder = {
+                                let mut pending = connection.pending_requests.lock().await;
+                                pending.remove(id_key.as_str())
+                            };
+                            if let Some(responder) = responder {
+                                if let Some(error) = message.get("error") {
+                                    let _ = responder.send(Err(RuntimeError::ProtocolViolation(
+                                        format!(
+                                            "acp request {} failed: {}",
+                                            id_key,
+                                            jsonrpc_error_message(error)
+                                        ),
+                                    )));
+                                } else if let Some(result) = message.get("result") {
+                                    let _ = responder.send(Ok(result.clone()));
+                                } else {
+                                    let _ = responder.send(Err(RuntimeError::ProtocolViolation(
+                                        format!("acp response {} missing result and error", id_key),
+                                    )));
+                                }
+                                continue;
+                            }
                         }
                     }
                     Ok(None) => {
@@ -1186,6 +1212,8 @@ impl RuntimeProvider for AcpProvider {
         &self,
         req: ProviderCreateSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
+        self.ensure_session_capacity_available(req.runtime_session_id.as_str())
+            .await?;
         let connection = self.ensure_connection().await?;
         let cwd = Self::resolve_session_cwd(req.cwd.as_deref())?;
         let response = connection
@@ -1231,6 +1259,8 @@ impl RuntimeProvider for AcpProvider {
         &self,
         req: ProviderResumeSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
+        self.ensure_session_capacity_available(req.runtime_session_id.as_str())
+            .await?;
         let connection = self.ensure_connection().await?;
         let capabilities = connection.capabilities.read().await.clone();
         let cwd = Self::resolve_session_cwd(req.cwd.as_deref())?;
@@ -1735,6 +1765,31 @@ for raw_line in sys.stdin:
             continue
         if "crash" in text:
             os._exit(9)
+        if "permission collision" in text:
+            permission_id = request_id
+            PENDING_PERMISSIONS[session_id] = {{
+                "permission_id": permission_id,
+                "prompt_request_id": request_id
+            }}
+            send({{
+                "jsonrpc": "2.0",
+                "id": permission_id,
+                "method": "session/request_permission",
+                "params": {{
+                    "sessionId": session_id,
+                    "toolCall": {{
+                        "toolCallId": "call_permission_collision"
+                    }},
+                    "options": [
+                        {{
+                            "optionId": "allow-once",
+                            "name": "Allow once",
+                            "kind": "allow_once"
+                        }}
+                    ]
+                }}
+            }})
+            continue
         if "permission" in text:
             permission_id = request_id + 1000 if isinstance(request_id, int) else 1000
             PENDING_PERMISSIONS[session_id] = {{
@@ -1787,6 +1842,15 @@ for raw_line in sys.stdin:
             continue
         if "split" in text:
             finish_prompt(session_id, request_id, "end_turn", ["Hello ", "world"])
+            continue
+        if "refusal" in text:
+            finish_prompt(session_id, request_id, "refusal", ["Refused."])
+            continue
+        if "max tokens" in text:
+            finish_prompt(session_id, request_id, "max_tokens", ["Stopped for token limit."])
+            continue
+        if "max turns" in text:
+            finish_prompt(session_id, request_id, "max_turn_requests", ["Stopped for turn limit."])
             continue
         if "tooling" in text:
             send({{
@@ -1889,56 +1953,53 @@ for raw_line in sys.stdin:
         gateway_url: Option<&str>,
         gateway_token: Option<&str>,
     ) -> Value {
-        let mut env = serde_json::Map::new();
-        env.insert(
-            "GG_MCP_ENABLE_PROCESS_TOOLS".to_string(),
-            Value::String(if enable_process_tools {
-                "1".to_string()
-            } else {
-                "0".to_string()
+        let mut env = vec![
+            json!({
+                "name": "GG_MCP_ENABLE_PROCESS_TOOLS",
+                "value": if enable_process_tools { "1" } else { "0" },
             }),
-        );
-        env.insert(
-            "GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID".to_string(),
-            Value::String("1".to_string()),
-        );
-        env.insert(
-            "GG_MCP_CALLER_AGENT_ID".to_string(),
-            Value::String(runtime_session_id.to_string()),
-        );
+            json!({
+                "name": "GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID",
+                "value": "1",
+            }),
+            json!({
+                "name": "GG_MCP_CALLER_AGENT_ID",
+                "value": runtime_session_id,
+            }),
+        ];
         if let Some(url) = gateway_url {
-            env.insert(
-                "GG_MCP_GATEWAY_URL".to_string(),
-                Value::String(url.to_string()),
-            );
+            env.push(json!({
+                "name": "GG_MCP_GATEWAY_URL",
+                "value": url,
+            }));
         }
         if let Some(token) = gateway_token {
-            env.insert(
-                "GG_MCP_GATEWAY_TOKEN".to_string(),
-                Value::String(token.to_string()),
-            );
+            env.push(json!({
+                "name": "GG_MCP_GATEWAY_TOKEN",
+                "value": token,
+            }));
         }
         if let Some(home) = std::env::var_os("HOME")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
         {
-            env.insert(
-                "HOME".to_string(),
-                Value::String(home.display().to_string()),
-            );
+            env.push(json!({
+                "name": "HOME",
+                "value": home.display().to_string(),
+            }));
         }
         if let Some(cargo_home) = std::env::var_os("CARGO_HOME")
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
         {
-            env.insert(
-                "CARGO_HOME".to_string(),
-                Value::String(cargo_home.display().to_string()),
-            );
+            env.push(json!({
+                "name": "CARGO_HOME",
+                "value": cargo_home.display().to_string(),
+            }));
         }
 
         json!({
-            "serverName": "gg",
+            "name": "gg",
             "command": "gg-mcp-server",
             "args": ["--stdio"],
             "env": env,
@@ -2167,12 +2228,18 @@ for raw_line in sys.stdin:
             .await
             .expect("resume");
 
-        let script = fs::read_to_string(harness.script_path.as_path()).expect("script");
-        assert!(script.contains("session/new"));
-        assert!(script.contains("session/resume"));
-
-        let request_log = harness.provider_dir.join("instances");
-        assert!(request_log.exists());
+        let server = provider
+            .build_gg_mcp_server_config("sess_create")
+            .expect("gg mcp server config");
+        assert_eq!(
+            server,
+            expected_gg_mcp_server(
+                "sess_create",
+                true,
+                Some("http://127.0.0.1:8787/v1/mcp"),
+                Some("acp-token")
+            )
+        );
     }
 
     #[tokio::test]
@@ -2294,6 +2361,138 @@ for raw_line in sys.stdin:
             .and_then(|value| value.get("message"))
             .and_then(Value::as_str)
             .is_some_and(|message| message.contains("request_permission")));
+    }
+
+    #[tokio::test]
+    async fn real_adapter_contract_fails_permission_request_id_collisions_clearly() {
+        let harness = FakeAgentHarness::new("normal");
+        let provider = harness.provider();
+        provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_permission_collision".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect("create");
+
+        provider
+            .send_turn(runtime_core::ProviderSendTurnRequest {
+                runtime_session_id: "sess_permission_collision".to_string(),
+                turn_id: "turn_permission_collision".to_string(),
+                input: vec![json!({"type":"text","text":"permission collision please"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                approval_id: None,
+            })
+            .await
+            .expect("send");
+
+        let result = provider
+            .wait_for_turn(runtime_core::ProviderWaitTurnRequest {
+                runtime_session_id: "sess_permission_collision".to_string(),
+                turn_id: "turn_permission_collision".to_string(),
+                timeout_ms: Some(5_000),
+            })
+            .await
+            .expect("wait");
+        assert_eq!(result.status, runtime_core::ProviderTurnStatus::Failed);
+        assert!(result
+            .error
+            .as_ref()
+            .and_then(|value| value.get("message"))
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("request_permission")));
+    }
+
+    #[tokio::test]
+    async fn real_adapter_contract_maps_non_happy_stop_reasons_to_failed() {
+        let harness = FakeAgentHarness::new("normal");
+        let provider = harness.provider();
+        provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_stop_reasons".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect("create");
+
+        for (turn_id, prompt_text, stop_reason) in [
+            ("turn_refusal", "refusal please", "refusal"),
+            ("turn_max_tokens", "max tokens please", "max_tokens"),
+            ("turn_max_turns", "max turns please", "max_turn_requests"),
+        ] {
+            provider
+                .send_turn(runtime_core::ProviderSendTurnRequest {
+                    runtime_session_id: "sess_stop_reasons".to_string(),
+                    turn_id: turn_id.to_string(),
+                    input: vec![json!({"type":"text","text":prompt_text})],
+                    expected_turn_id: None,
+                    permission_mode: None,
+                    approval_id: None,
+                })
+                .await
+                .expect("send");
+
+            let result = provider
+                .wait_for_turn(runtime_core::ProviderWaitTurnRequest {
+                    runtime_session_id: "sess_stop_reasons".to_string(),
+                    turn_id: turn_id.to_string(),
+                    timeout_ms: Some(5_000),
+                })
+                .await
+                .expect("wait");
+            assert_eq!(result.status, runtime_core::ProviderTurnStatus::Failed);
+            let usage = result.usage.expect("usage");
+            assert_eq!(
+                usage.get("stop_reason").and_then(Value::as_str),
+                Some(stop_reason)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn create_session_enforces_configured_capacity() {
+        let harness = FakeAgentHarness::new("normal");
+        let provider = AcpProvider::new(AcpProviderConfig {
+            enabled: true,
+            provider_dir: harness.provider_dir.clone(),
+            command: Some("python3".to_string()),
+            args: vec![harness.script_path.display().to_string()],
+            max_instances: 1,
+            max_sessions_per_instance: 1,
+            ..AcpProviderConfig::default()
+        });
+
+        provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_capacity_1".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect("create first");
+
+        let error = provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_capacity_2".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect_err("capacity exceeded");
+        assert!(error
+            .to_string()
+            .contains("acp session capacity exceeded (1 total sessions"));
     }
 
     #[tokio::test]

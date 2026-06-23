@@ -2035,7 +2035,9 @@ mod tests {
         WorktreeServiceConfig,
     };
     use std::collections::HashMap;
+    use std::fs;
     use std::path::Path;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::sync::Mutex;
     use tokio::time::{timeout, Duration};
@@ -2067,6 +2069,21 @@ mod tests {
         state: Mutex<TestProviderState>,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct CapturedProviderSessionOpen {
+        runtime_session_id: String,
+        cwd: Option<String>,
+        provider_session_ref: String,
+        canonical_provider_session_ref: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct TestAcpProvider {
+        state: Mutex<TestProviderState>,
+        created_sessions: Mutex<Vec<CapturedProviderSessionOpen>>,
+        resumed_sessions: Mutex<Vec<CapturedProviderSessionOpen>>,
+    }
+
     impl TestProvider {
         fn extract_text(input: &[serde_json::Value]) -> String {
             for item in input {
@@ -2084,6 +2101,16 @@ mod tests {
     impl TestClaudeProvider {
         fn extract_text(input: &[serde_json::Value]) -> String {
             TestProvider::extract_text(input)
+        }
+    }
+
+    impl TestAcpProvider {
+        fn extract_text(input: &[serde_json::Value]) -> String {
+            TestProvider::extract_text(input)
+        }
+
+        async fn created_sessions(&self) -> Vec<CapturedProviderSessionOpen> {
+            self.created_sessions.lock().await.clone()
         }
     }
 
@@ -2459,6 +2486,160 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl RuntimeProvider for TestAcpProvider {
+        fn kind(&self) -> ProviderKind {
+            ProviderKind::Acp
+        }
+
+        fn metadata(&self) -> ProviderMetadata {
+            ProviderMetadata {
+                kind: ProviderKind::Acp,
+                display_name: "Test ACP".to_string(),
+                enabled: true,
+            }
+        }
+
+        async fn healthcheck(&self) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        async fn list_models(&self) -> Result<Vec<ProviderModel>, RuntimeError> {
+            Ok(Vec::new())
+        }
+
+        async fn auth_status(&self) -> Result<ProviderAuthStatus, RuntimeError> {
+            Ok(ProviderAuthStatus {
+                authenticated: false,
+                mode: Some("agent_managed".to_string()),
+                detail: Some("Test ACP provider".to_string()),
+            })
+        }
+
+        async fn create_session(
+            &self,
+            req: ProviderCreateSessionRequest,
+        ) -> Result<ProviderSession, RuntimeError> {
+            let provider_session_ref = format!("test-acp-thread-{}", req.runtime_session_id);
+            let canonical_provider_session_ref = Some(format!(
+                "test-acp-canonical-{}",
+                req.runtime_session_id
+            ));
+            let mut state = self.state.lock().await;
+            state.sessions.insert(
+                req.runtime_session_id.clone(),
+                TestProviderSession {
+                    provider_session_ref: provider_session_ref.clone(),
+                    ..Default::default()
+                },
+            );
+            drop(state);
+            self.created_sessions
+                .lock()
+                .await
+                .push(CapturedProviderSessionOpen {
+                    runtime_session_id: req.runtime_session_id.clone(),
+                    cwd: req.cwd.clone(),
+                    provider_session_ref: provider_session_ref.clone(),
+                    canonical_provider_session_ref: canonical_provider_session_ref.clone(),
+                });
+            Ok(ProviderSession {
+                runtime_session_id: req.runtime_session_id,
+                provider_session_ref,
+                canonical_provider_session_ref,
+            })
+        }
+
+        async fn resume_session(
+            &self,
+            req: ProviderResumeSessionRequest,
+        ) -> Result<ProviderSession, RuntimeError> {
+            let mut state = self.state.lock().await;
+            let session = state
+                .sessions
+                .entry(req.runtime_session_id.clone())
+                .or_default();
+            session.provider_session_ref = req.provider_session_ref.clone();
+            drop(state);
+            self.resumed_sessions
+                .lock()
+                .await
+                .push(CapturedProviderSessionOpen {
+                    runtime_session_id: req.runtime_session_id.clone(),
+                    cwd: req.cwd.clone(),
+                    provider_session_ref: req.provider_session_ref.clone(),
+                    canonical_provider_session_ref: req.canonical_provider_session_ref.clone(),
+                });
+            Ok(ProviderSession {
+                runtime_session_id: req.runtime_session_id,
+                provider_session_ref: req.provider_session_ref,
+                canonical_provider_session_ref: req.canonical_provider_session_ref,
+            })
+        }
+
+        async fn send_turn(
+            &self,
+            req: ProviderSendTurnRequest,
+        ) -> Result<ProviderTurnAck, RuntimeError> {
+            let mut state = self.state.lock().await;
+            let session = state
+                .sessions
+                .get_mut(req.runtime_session_id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::NotFound(format!("test session {}", req.runtime_session_id))
+                })?;
+
+            let user_text = Self::extract_text(req.input.as_slice());
+            session.completed.insert(
+                req.turn_id.clone(),
+                ProviderTurnResult {
+                    runtime_session_id: req.runtime_session_id.clone(),
+                    turn_id: req.turn_id.clone(),
+                    status: ProviderTurnStatus::Completed,
+                    usage: Some(serde_json::json!({ "last_message": format!("acp:{user_text}") })),
+                    error: None,
+                },
+            );
+
+            Ok(ProviderTurnAck {
+                runtime_session_id: req.runtime_session_id,
+                turn_id: req.turn_id,
+            })
+        }
+
+        async fn interrupt_turn(
+            &self,
+            _req: ProviderInterruptTurnRequest,
+        ) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        async fn respond_approval(
+            &self,
+            _req: ProviderApprovalResponseRequest,
+        ) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+
+        async fn wait_for_turn(
+            &self,
+            req: ProviderWaitTurnRequest,
+        ) -> Result<ProviderTurnResult, RuntimeError> {
+            let state = self.state.lock().await;
+            let session = state
+                .sessions
+                .get(req.runtime_session_id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::NotFound(format!("test session {}", req.runtime_session_id))
+                })?;
+            session
+                .completed
+                .get(req.turn_id.as_str())
+                .cloned()
+                .ok_or_else(|| RuntimeError::NotFound(format!("test turn {}", req.turn_id)))
+        }
+    }
+
     async fn build_test_router() -> (Router, String, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
@@ -2555,7 +2736,8 @@ mod tests {
         (router, bearer_token, temp_dir)
     }
 
-    async fn build_mixed_provider_test_router() -> (Router, String, tempfile::TempDir) {
+    async fn build_mixed_provider_test_router(
+    ) -> (Router, String, tempfile::TempDir, Arc<TestAcpProvider>) {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
             database_path: temp_dir.path().join("runtime.sqlite3"),
@@ -2563,12 +2745,16 @@ mod tests {
         store.initialize().await.expect("initialize store");
 
         let mut registry = runtime_core::ProviderRegistry::new();
+        let acp_provider = Arc::new(TestAcpProvider::default());
         registry
             .register(Arc::new(TestProvider::default()))
             .expect("register codex test provider");
         registry
             .register(Arc::new(TestClaudeProvider::default()))
             .expect("register claude test provider");
+        registry
+            .register(acp_provider.clone())
+            .expect("register acp test provider");
         let provider_registry = Arc::new(registry);
         let runtime = Arc::new(
             RuntimeSessionManager::new(store.clone(), provider_registry.clone(), 512)
@@ -2650,7 +2836,87 @@ mod tests {
             startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
         });
 
-        (router, bearer_token, temp_dir)
+        (router, bearer_token, temp_dir, acp_provider)
+    }
+
+    struct FakeAcpAgentScript {
+        _temp_dir: tempfile::TempDir,
+        script_path: PathBuf,
+        log_path: PathBuf,
+    }
+
+    fn fake_acp_agent_with_request_log() -> FakeAcpAgentScript {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let script_path = temp_dir.path().join("fake_acp_http_agent.py");
+        let log_path = temp_dir.path().join("acp-agent-requests.jsonl");
+        fs::write(
+            script_path.as_path(),
+            format!(
+                r#"#!/usr/bin/env python3
+import json
+import os
+import sys
+
+LOG_PATH = {log_path:?}
+NEXT_SESSION_ID = 1
+
+def write_log(obj):
+    with open(LOG_PATH, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(obj) + "\n")
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+for raw_line in sys.stdin:
+    line = raw_line.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    write_log(msg)
+    method = msg.get("method")
+    if method == "initialize":
+        send({{
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {{
+                "protocolVersion": 1,
+                "agentCapabilities": {{
+                    "loadSession": True,
+                    "sessionCapabilities": {{
+                        "close": {{}},
+                        "resume": {{}}
+                    }}
+                }},
+                "authMethods": []
+            }}
+        }})
+    elif method == "session/new":
+        session_id = f"sess_{{NEXT_SESSION_ID}}"
+        NEXT_SESSION_ID += 1
+        send({{"jsonrpc": "2.0", "id": msg["id"], "result": {{"sessionId": session_id}}}})
+    elif method == "session/resume":
+        send({{"jsonrpc": "2.0", "id": msg["id"], "result": {{}}}})
+    elif method == "session/close":
+        send({{"jsonrpc": "2.0", "id": msg["id"], "result": {{}}}})
+"#
+            ),
+        )
+        .expect("write fake acp agent");
+        FakeAcpAgentScript {
+            _temp_dir: temp_dir,
+            script_path,
+            log_path,
+        }
+    }
+
+    fn read_logged_jsonl(path: &Path) -> Vec<serde_json::Value> {
+        let contents = fs::read_to_string(path).expect("read jsonl");
+        contents
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("jsonl line"))
+            .collect()
     }
 
     #[tokio::test]
@@ -4050,7 +4316,7 @@ mod tests {
 
     #[tokio::test]
     async fn mixed_provider_team_flow_uses_shared_runtime_services() {
-        let (router, token, _temp_dir) = build_mixed_provider_test_router().await;
+        let (router, token, _temp_dir, _acp_provider) = build_mixed_provider_test_router().await;
 
         let codex_session_response = router
             .clone()
@@ -4164,6 +4430,57 @@ mod tests {
             .expect("join member");
         assert_eq!(join_member_response.status(), StatusCode::OK);
 
+        let acp_session_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "acp",
+                            "cwd": null,
+                            "permission_mode": null,
+                            "metadata": {}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create acp session");
+        assert_eq!(acp_session_response.status(), StatusCode::OK);
+        let acp_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(acp_session_response.into_body(), usize::MAX)
+                .await
+                .expect("acp body"),
+        )
+        .expect("acp json");
+        let acp_session_id = acp_json["id"].as_str().expect("acp session id");
+
+        let join_acp_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/teams/{team_id}/members"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "agent_id": acp_session_id,
+                            "title": "ACP Teammate"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("join acp member");
+        assert_eq!(join_acp_response.status(), StatusCode::OK);
+
         let send_direct_response = router
             .clone()
             .oneshot(
@@ -4198,6 +4515,336 @@ mod tests {
             Some(team_id),
             "team comms should accept mixed-provider sender/recipient sessions"
         );
+
+        let broadcast_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/teams/{team_id}/broadcasts"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "sender_agent_id": acp_session_id,
+                            "input": [{"type":"text","text":"hello whole team"}],
+                            "priority": "normal",
+                            "policy": "non_interrupting"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("broadcast");
+        assert_eq!(broadcast_response.status(), StatusCode::OK);
+        let broadcast_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(broadcast_response.into_body(), usize::MAX)
+                .await
+                .expect("broadcast body"),
+        )
+        .expect("broadcast json");
+        assert_eq!(
+            broadcast_json["message"]["team_id"].as_str(),
+            Some(team_id),
+            "team comms should accept ACP broadcasts without provider-specific branching"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_process_acp_session_can_use_runtime_process_gateway_and_ownership_rules() {
+        let (router, token, _temp_dir, _acp_provider) = build_mixed_provider_test_router().await;
+
+        let acp_session_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "acp",
+                            "cwd": null,
+                            "permission_mode": null,
+                            "metadata": {}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create acp session");
+        assert_eq!(acp_session_response.status(), StatusCode::OK);
+        let acp_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(acp_session_response.into_body(), usize::MAX)
+                .await
+                .expect("acp body"),
+        )
+        .expect("acp json");
+        let acp_session_id = acp_json["id"].as_str().expect("acp session id").to_string();
+
+        let codex_session_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "codex",
+                            "model": "test-model",
+                            "cwd": null,
+                            "permission_mode": null,
+                            "metadata": {}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create codex session");
+        assert_eq!(codex_session_response.status(), StatusCode::OK);
+        let codex_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(codex_session_response.into_body(), usize::MAX)
+                .await
+                .expect("codex body"),
+        )
+        .expect("codex json");
+        let codex_session_id = codex_json["id"]
+            .as_str()
+            .expect("codex session id")
+            .to_string();
+
+        let invoke_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/mcp/invoke")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "namespace": "gg_process",
+                            "tool_name": "gg_process_run",
+                            "caller_agent_id": acp_session_id,
+                            "invocation_id": "acp_inv_1",
+                            "args": {
+                                "command": "echo acp_mcp_process"
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("invoke");
+        assert_eq!(invoke_response.status(), StatusCode::OK);
+        let invoke_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(invoke_response.into_body(), usize::MAX)
+                .await
+                .expect("invoke body"),
+        )
+        .expect("invoke json");
+        assert_eq!(invoke_json["ok"].as_bool(), Some(true));
+        let process_id = invoke_json
+            .pointer("/result/process/process_id")
+            .and_then(serde_json::Value::as_str)
+            .expect("process id")
+            .to_string();
+
+        let mut done = false;
+        for _ in 0..80 {
+            let get_response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!(
+                            "/v1/processes/{process_id}?session_id={acp_session_id}"
+                        ))
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .expect("owner get process");
+            assert_eq!(get_response.status(), StatusCode::OK);
+            let process_json: serde_json::Value = serde_json::from_slice(
+                &to_bytes(get_response.into_body(), usize::MAX)
+                    .await
+                    .expect("get body"),
+            )
+            .expect("process json");
+            let status = process_json
+                .pointer("/process/status")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if matches!(status, "completed" | "failed" | "timed_out" | "killed") {
+                done = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(done, "ACP-owned process did not reach terminal state");
+
+        let unauthorized_get = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v1/processes/{process_id}?session_id={codex_session_id}"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("unauthorized get");
+        assert_eq!(unauthorized_get.status(), StatusCode::BAD_REQUEST);
+
+        let unauthorized_logs = router
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v1/processes/{process_id}/logs?session_id={codex_session_id}&stream=stdout"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("unauthorized logs");
+        assert_eq!(unauthorized_logs.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
+        let fake_agent = fake_acp_agent_with_request_log();
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = temp_dir.path().to_path_buf();
+        config.server.public_base_url = "http://127.0.0.1:8787".to_string();
+        config.providers.codex.enabled = false;
+        config.providers.claude.enabled = false;
+        config.providers.acp.enabled = true;
+        config.providers.acp.command = Some("python3".to_string());
+        config.providers.acp.args = vec![fake_agent.script_path.display().to_string()];
+
+        let bootstrapped = bootstrap_runtime(config).await.expect("bootstrap");
+        let token = bootstrapped.auth.bearer_token.clone();
+        let router = build_router(AppState {
+            app: bootstrapped.app,
+            runtime: bootstrapped.runtime,
+            bearer_token: token.clone(),
+            public_base_url: bootstrapped.public_base_url,
+            startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
+        });
+
+        let create_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "acp",
+                            "cwd": "/tmp/acp-create",
+                            "permission_mode": null,
+                            "metadata": {}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create acp session");
+        assert_eq!(create_response.status(), StatusCode::OK);
+        let create_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(create_response.into_body(), usize::MAX)
+                .await
+                .expect("create body"),
+        )
+        .expect("create json");
+        let session_id = create_json["id"].as_str().expect("session id").to_string();
+
+        let close_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/sessions/{session_id}/close"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("close");
+        assert_eq!(close_response.status(), StatusCode::OK);
+
+        let resume_response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/sessions/{session_id}/resume"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from("{}".to_string()))
+                    .unwrap(),
+            )
+            .await
+            .expect("resume");
+        assert_eq!(resume_response.status(), StatusCode::OK);
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let requests = read_logged_jsonl(fake_agent.log_path.as_path());
+        let create_request = requests
+            .iter()
+            .find(|entry| entry["method"].as_str() == Some("session/new"))
+            .expect("session/new request");
+        let resume_request = requests
+            .iter()
+            .find(|entry| entry["method"].as_str() == Some("session/resume"))
+            .expect("session/resume request");
+
+        for (entry, expected_cwd) in [
+            (create_request, "/tmp/acp-create"),
+            (resume_request, "/tmp/acp-create"),
+        ] {
+            assert_eq!(entry["params"]["cwd"].as_str(), Some(expected_cwd));
+            let gg_server = entry["params"]["mcpServers"]
+                .as_array()
+                .and_then(|servers| servers.first())
+                .expect("gg mcp server");
+            assert_eq!(gg_server["serverName"].as_str(), Some("gg"));
+            assert!(
+                gg_server["command"]
+                    .as_str()
+                    .is_some_and(|command| command.contains("gg-mcp-server"))
+            );
+            assert_eq!(
+                gg_server["env"]["GG_MCP_CALLER_AGENT_ID"].as_str(),
+                Some(session_id.as_str())
+            );
+            assert_eq!(
+                gg_server["env"]["GG_MCP_GATEWAY_URL"].as_str(),
+                Some("http://127.0.0.1:8787/v1/mcp")
+            );
+            assert_eq!(
+                gg_server["env"]["GG_MCP_GATEWAY_TOKEN"].as_str(),
+                Some(token.as_str())
+            );
+            assert_eq!(
+                gg_server["env"]["GG_MCP_ENABLE_PROCESS_TOOLS"].as_str(),
+                Some("1")
+            );
+        }
     }
 
     #[tokio::test]
@@ -7014,6 +7661,378 @@ mod tests {
             spawn_json["worktree"]["id"].as_str(),
             Some(existing_worktree_id.as_str())
         );
+    }
+
+    #[tokio::test]
+    async fn phase6_spawn_acp_member_with_created_worktree_assigns_runtime_cwd_and_cleanup_on_remove()
+    {
+        let (router, token, temp_dir, acp_provider) = build_mixed_provider_test_router().await;
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).expect("create repo dir");
+        std::fs::write(repo_dir.join("README.md"), "phase6 acp\n").expect("write readme");
+        let init_status = std::process::Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .arg(repo_dir.as_os_str())
+            .status()
+            .expect("git init");
+        assert!(init_status.success(), "git init should succeed");
+        let add_status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_dir.as_os_str())
+            .args(["add", "."])
+            .status()
+            .expect("git add");
+        assert!(add_status.success(), "git add should succeed");
+        let commit_status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_dir.as_os_str())
+            .args([
+                "-c",
+                "user.name=GG Runtime",
+                "-c",
+                "user.email=runtime@example.com",
+                "commit",
+                "-m",
+                "init",
+            ])
+            .status()
+            .expect("git commit");
+        assert!(commit_status.success(), "git commit should succeed");
+
+        let lead_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "codex",
+                            "model": "test-model",
+                            "cwd": repo_dir.display().to_string(),
+                            "metadata": {"suite":"phase6-acp"}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create lead session");
+        assert_eq!(lead_response.status(), StatusCode::OK);
+        let lead_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(lead_response.into_body(), usize::MAX)
+                .await
+                .expect("lead body"),
+        )
+        .expect("lead json");
+        let lead_session_id = lead_json["id"].as_str().expect("lead id").to_string();
+
+        let create_team_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/teams")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Phase6 ACP Team",
+                            "lead_agent_id": lead_session_id,
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create team");
+        assert_eq!(create_team_response.status(), StatusCode::OK);
+        let create_team_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(create_team_response.into_body(), usize::MAX)
+                .await
+                .expect("team body"),
+        )
+        .expect("team json");
+        let team_id = create_team_json["team"]["id"]
+            .as_str()
+            .expect("team id")
+            .to_string();
+
+        let spawn_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/teams/{team_id}/members/spawn"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "source_session_id": lead_session_id,
+                            "provider": "acp",
+                            "title": "Phase 6 ACP Implementer",
+                            "prompt": "Implement phase 6 for ACP.",
+                            "worktree": {
+                                "mode": "create",
+                                "name": "phase6-acp-worker",
+                                "run_init_script": false
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("spawn response");
+        assert_eq!(spawn_response.status(), StatusCode::OK);
+        let spawn_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(spawn_response.into_body(), usize::MAX)
+                .await
+                .expect("spawn body"),
+        )
+        .expect("spawn json");
+        let spawned_session_id = spawn_json["spawned_session"]["id"]
+            .as_str()
+            .expect("spawned session id")
+            .to_string();
+        let worktree_id = spawn_json["worktree"]["id"]
+            .as_str()
+            .expect("worktree id")
+            .to_string();
+        let worktree_cwd = spawn_json["worktree"]["worktree_cwd"]
+            .as_str()
+            .expect("worktree cwd")
+            .to_string();
+        assert!(Path::new(worktree_cwd.as_str()).exists());
+
+        let created_sessions = acp_provider.created_sessions().await;
+        let acp_spawn = created_sessions
+            .iter()
+            .find(|session| session.runtime_session_id == spawned_session_id)
+            .expect("captured ACP spawned session");
+        assert_eq!(acp_spawn.cwd.as_deref(), Some(worktree_cwd.as_str()));
+
+        let remove_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/v1/teams/{team_id}/members/{spawned_session_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("remove response");
+        assert_eq!(remove_response.status(), StatusCode::OK);
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let cleanup_response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/worktrees/{worktree_id}/cleanup"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("cleanup response");
+        assert_eq!(cleanup_response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn phase6_spawn_acp_member_use_existing_mode_reuses_existing_worktree() {
+        let (router, token, temp_dir, acp_provider) = build_mixed_provider_test_router().await;
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).expect("create repo dir");
+        std::fs::write(repo_dir.join("README.md"), "phase6 acp use_existing\n")
+            .expect("write readme");
+        let init_status = std::process::Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .arg(repo_dir.as_os_str())
+            .status()
+            .expect("git init");
+        assert!(init_status.success(), "git init should succeed");
+        let add_status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_dir.as_os_str())
+            .args(["add", "."])
+            .status()
+            .expect("git add");
+        assert!(add_status.success(), "git add should succeed");
+        let commit_status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo_dir.as_os_str())
+            .args([
+                "-c",
+                "user.name=GG Runtime",
+                "-c",
+                "user.email=runtime@example.com",
+                "commit",
+                "-m",
+                "init",
+            ])
+            .status()
+            .expect("git commit");
+        assert!(commit_status.success(), "git commit should succeed");
+
+        let lead_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/sessions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider": "codex",
+                            "model": "test-model",
+                            "cwd": repo_dir.display().to_string(),
+                            "metadata": {"suite":"phase6-acp"}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create lead session");
+        assert_eq!(lead_response.status(), StatusCode::OK);
+        let lead_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(lead_response.into_body(), usize::MAX)
+                .await
+                .expect("lead body"),
+        )
+        .expect("lead json");
+        let lead_session_id = lead_json["id"].as_str().expect("lead id").to_string();
+
+        let create_team_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/teams")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Phase6 ACP Existing Team",
+                            "lead_agent_id": lead_session_id,
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create team");
+        assert_eq!(create_team_response.status(), StatusCode::OK);
+        let create_team_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(create_team_response.into_body(), usize::MAX)
+                .await
+                .expect("team body"),
+        )
+        .expect("team json");
+        let team_id = create_team_json["team"]["id"]
+            .as_str()
+            .expect("team id")
+            .to_string();
+
+        let create_worktree_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/worktrees")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "team_id": team_id,
+                            "source_session_id": lead_session_id,
+                            "worktree_name": "phase6-acp-existing-worker",
+                            "branch_prefix": "gg",
+                            "run_init_script": false,
+                            "deletion_policy": "retain_on_last_claim",
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create worktree response");
+        assert_eq!(create_worktree_response.status(), StatusCode::OK);
+        let create_worktree_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(create_worktree_response.into_body(), usize::MAX)
+                .await
+                .expect("create worktree body"),
+        )
+        .expect("create worktree json");
+        let existing_worktree_id = create_worktree_json["worktree"]["id"]
+            .as_str()
+            .expect("existing worktree id")
+            .to_string();
+        let existing_worktree_cwd = create_worktree_json["worktree"]["worktree_cwd"]
+            .as_str()
+            .expect("existing worktree cwd")
+            .to_string();
+
+        let spawn_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/teams/{team_id}/members/spawn"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "source_session_id": lead_session_id,
+                            "provider": "acp",
+                            "title": "Phase 6 ACP Existing",
+                            "prompt": "Use existing worktree.",
+                            "worktree": {
+                                "mode": "use_existing",
+                                "name": "phase6-acp-existing-worker",
+                                "branch_prefix": "gg",
+                                "run_init_script": false
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("spawn response");
+        assert_eq!(spawn_response.status(), StatusCode::OK);
+        let spawn_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(spawn_response.into_body(), usize::MAX)
+                .await
+                .expect("spawn body"),
+        )
+        .expect("spawn json");
+        let spawned_session_id = spawn_json["spawned_session"]["id"]
+            .as_str()
+            .expect("spawned session id")
+            .to_string();
+        assert_eq!(spawn_json["worktree_assignment_mode"].as_str(), Some("reused"));
+        assert_eq!(
+            spawn_json["worktree"]["id"].as_str(),
+            Some(existing_worktree_id.as_str())
+        );
+
+        let created_sessions = acp_provider.created_sessions().await;
+        let acp_spawn = created_sessions
+            .iter()
+            .find(|session| session.runtime_session_id == spawned_session_id)
+            .expect("captured ACP reused session");
+        assert_eq!(acp_spawn.cwd.as_deref(), Some(existing_worktree_cwd.as_str()));
     }
 
     #[tokio::test]

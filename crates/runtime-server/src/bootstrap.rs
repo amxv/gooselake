@@ -110,7 +110,7 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
             }),
             args: Vec::new(),
             enable_process_tools: config.processes.enabled,
-            gateway_url: Some(mcp_gateway_url),
+            gateway_url: Some(mcp_gateway_url.clone()),
             gateway_token: Some(auth.bearer_token.clone()),
         },
         bridge_env: claude_bridge_env,
@@ -127,6 +127,17 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         transport: config.providers.acp.transport.clone(),
         request_timeout_secs: config.providers.acp.request_timeout_secs,
         wait_timeout_secs: config.providers.acp.wait_timeout_secs,
+        gg_mcp_enabled: true,
+        gg_mcp_server_name: "gg".to_string(),
+        gg_mcp_command: std::env::var("GG_MCP_SERVER_PATH").unwrap_or_else(|_| {
+            standalone_gg_mcp_server_command_path()
+                .display()
+                .to_string()
+        }),
+        gg_mcp_args: Vec::new(),
+        gg_mcp_enable_process_tools: config.processes.enabled,
+        gg_mcp_gateway_url: Some(mcp_gateway_url.clone()),
+        gg_mcp_gateway_token: Some(auth.bearer_token.clone()),
     }));
 
     let mut provider_registry = ProviderRegistry::new();

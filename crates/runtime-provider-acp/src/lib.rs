@@ -37,6 +37,13 @@ pub struct AcpProviderConfig {
     pub transport: String,
     pub request_timeout_secs: u64,
     pub wait_timeout_secs: u64,
+    pub gg_mcp_enabled: bool,
+    pub gg_mcp_server_name: String,
+    pub gg_mcp_command: String,
+    pub gg_mcp_args: Vec<String>,
+    pub gg_mcp_enable_process_tools: bool,
+    pub gg_mcp_gateway_url: Option<String>,
+    pub gg_mcp_gateway_token: Option<String>,
 }
 
 impl Default for AcpProviderConfig {
@@ -52,6 +59,13 @@ impl Default for AcpProviderConfig {
             transport: "stdio".to_string(),
             request_timeout_secs: DEFAULT_REQUEST_TIMEOUT_SECS,
             wait_timeout_secs: DEFAULT_WAIT_TIMEOUT_SECS,
+            gg_mcp_enabled: true,
+            gg_mcp_server_name: "gg".to_string(),
+            gg_mcp_command: "gg-mcp-server".to_string(),
+            gg_mcp_args: Vec::new(),
+            gg_mcp_enable_process_tools: true,
+            gg_mcp_gateway_url: None,
+            gg_mcp_gateway_token: None,
         }
     }
 }
@@ -234,6 +248,88 @@ impl AcpProvider {
         match timeout_ms {
             Some(value) => Duration::from_millis(value.max(1)),
             None => Duration::from_secs(self.inner.config.wait_timeout_secs.max(1)),
+        }
+    }
+
+    fn build_gg_mcp_server_config(&self, runtime_session_id: &str) -> Option<Value> {
+        if !self.inner.config.gg_mcp_enabled {
+            return None;
+        }
+
+        let mut env = serde_json::Map::new();
+        env.insert(
+            "GG_MCP_ENABLE_PROCESS_TOOLS".to_string(),
+            Value::String(if self.inner.config.gg_mcp_enable_process_tools {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }),
+        );
+        env.insert(
+            "GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID".to_string(),
+            Value::String("1".to_string()),
+        );
+        env.insert(
+            "GG_MCP_CALLER_AGENT_ID".to_string(),
+            Value::String(runtime_session_id.to_string()),
+        );
+        if let Some(gateway_url) = self
+            .inner
+            .config
+            .gg_mcp_gateway_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            env.insert(
+                "GG_MCP_GATEWAY_URL".to_string(),
+                Value::String(gateway_url.to_string()),
+            );
+        }
+        if let Some(gateway_token) = self
+            .inner
+            .config
+            .gg_mcp_gateway_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            env.insert(
+                "GG_MCP_GATEWAY_TOKEN".to_string(),
+                Value::String(gateway_token.to_string()),
+            );
+        }
+        if let Some(home) = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            env.insert(
+                "HOME".to_string(),
+                Value::String(home.display().to_string()),
+            );
+        }
+        if let Some(cargo_home) = std::env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            env.insert(
+                "CARGO_HOME".to_string(),
+                Value::String(cargo_home.display().to_string()),
+            );
+        }
+
+        Some(json!({
+            "serverName": self.inner.config.gg_mcp_server_name,
+            "command": self.inner.config.gg_mcp_command,
+            "args": self.inner.config.gg_mcp_args,
+            "env": env,
+        }))
+    }
+
+    fn build_mcp_servers(&self, runtime_session_id: &str) -> Value {
+        match self.build_gg_mcp_server_config(runtime_session_id) {
+            Some(server) => Value::Array(vec![server]),
+            None => Value::Array(Vec::new()),
         }
     }
 
@@ -1097,7 +1193,7 @@ impl RuntimeProvider for AcpProvider {
                 "session/new",
                 json!({
                     "cwd": cwd,
-                    "mcpServers": [],
+                    "mcpServers": self.build_mcp_servers(req.runtime_session_id.as_str()),
                 }),
                 Some(self.request_timeout()),
             )
@@ -1172,7 +1268,7 @@ impl RuntimeProvider for AcpProvider {
                 json!({
                     "sessionId": req.provider_session_ref,
                     "cwd": cwd,
-                    "mcpServers": [],
+                    "mcpServers": self.build_mcp_servers(req.runtime_session_id.as_str()),
                 }),
                 Some(self.request_timeout()),
             )
@@ -1465,10 +1561,10 @@ impl RuntimeProvider for AcpProvider {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::path::PathBuf;
+    #[cfg(test)]
+    mod tests {
+        use std::fs;
+        use std::path::PathBuf;
 
     use runtime_core::RuntimeProvider;
     use serde_json::{json, Value};
@@ -1708,6 +1804,68 @@ for raw_line in sys.stdin:
         )
     }
 
+    fn expected_gg_mcp_server(
+        runtime_session_id: &str,
+        enable_process_tools: bool,
+        gateway_url: Option<&str>,
+        gateway_token: Option<&str>,
+    ) -> Value {
+        let mut env = serde_json::Map::new();
+        env.insert(
+            "GG_MCP_ENABLE_PROCESS_TOOLS".to_string(),
+            Value::String(if enable_process_tools {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }),
+        );
+        env.insert(
+            "GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID".to_string(),
+            Value::String("1".to_string()),
+        );
+        env.insert(
+            "GG_MCP_CALLER_AGENT_ID".to_string(),
+            Value::String(runtime_session_id.to_string()),
+        );
+        if let Some(url) = gateway_url {
+            env.insert(
+                "GG_MCP_GATEWAY_URL".to_string(),
+                Value::String(url.to_string()),
+            );
+        }
+        if let Some(token) = gateway_token {
+            env.insert(
+                "GG_MCP_GATEWAY_TOKEN".to_string(),
+                Value::String(token.to_string()),
+            );
+        }
+        if let Some(home) = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            env.insert(
+                "HOME".to_string(),
+                Value::String(home.display().to_string()),
+            );
+        }
+        if let Some(cargo_home) = std::env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            env.insert(
+                "CARGO_HOME".to_string(),
+                Value::String(cargo_home.display().to_string()),
+            );
+        }
+
+        json!({
+            "serverName": "gg",
+            "command": "gg-mcp-server",
+            "args": ["--stdio"],
+            "env": env,
+        })
+    }
+
     #[tokio::test]
     async fn metadata_reports_acp_provider_identity() {
         let provider = AcpProvider::new(AcpProviderConfig {
@@ -1776,6 +1934,11 @@ for raw_line in sys.stdin:
         assert_eq!(config.transport, "stdio");
         assert_eq!(config.request_timeout_secs, 30);
         assert_eq!(config.wait_timeout_secs, 300);
+        assert!(config.gg_mcp_enabled);
+        assert_eq!(config.gg_mcp_server_name, "gg");
+        assert_eq!(config.gg_mcp_command, "gg-mcp-server");
+        assert!(config.gg_mcp_args.is_empty());
+        assert!(config.gg_mcp_enable_process_tools);
     }
 
     #[tokio::test]
@@ -1884,6 +2047,53 @@ for raw_line in sys.stdin:
             })
             .await
             .expect("close");
+    }
+
+    #[tokio::test]
+    async fn create_and_resume_include_expected_gg_mcp_server_shape() {
+        let harness = FakeAgentHarness::new("normal");
+        let provider = AcpProvider::new(AcpProviderConfig {
+            enabled: true,
+            provider_dir: harness.provider_dir.clone(),
+            command: Some("python3".to_string()),
+            args: vec![harness.script_path.display().to_string()],
+            gg_mcp_enabled: true,
+            gg_mcp_server_name: "gg".to_string(),
+            gg_mcp_command: "gg-mcp-server".to_string(),
+            gg_mcp_args: vec!["--stdio".to_string()],
+            gg_mcp_enable_process_tools: true,
+            gg_mcp_gateway_url: Some("http://127.0.0.1:8787/v1/mcp".to_string()),
+            gg_mcp_gateway_token: Some("acp-token".to_string()),
+            ..AcpProviderConfig::default()
+        });
+
+        provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_create".to_string(),
+                model: None,
+                cwd: Some("/tmp/create".to_string()),
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect("create");
+        provider
+            .resume_session(runtime_core::ProviderResumeSessionRequest {
+                runtime_session_id: "sess_resume".to_string(),
+                provider_session_ref: "sess_1".to_string(),
+                canonical_provider_session_ref: Some("sess_1".to_string()),
+                cwd: Some("/tmp/resume".to_string()),
+                metadata: None,
+            })
+            .await
+            .expect("resume");
+
+        let script = fs::read_to_string(harness.script_path.as_path()).expect("script");
+        assert!(script.contains("session/new"));
+        assert!(script.contains("session/resume"));
+
+        let request_log = harness.provider_dir.join("instances");
+        assert!(request_log.exists());
     }
 
     #[tokio::test]

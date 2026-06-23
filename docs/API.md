@@ -53,6 +53,10 @@ The runtime now exposes three provider identities:
 - `claude`
 - `acp`
 
+Current built-in provider catalogs:
+- `codex`: `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`
+- `claude`: `claude-sonnet-4-6`, `claude-opus-4-8`, `claude-haiku-4-5`
+
 Current ACP v1 behavior is intentionally narrow:
 - `GET /v1/providers/acp/auth/status` is the only ACP auth route in the first landing.
 - ACP auth remains agent-managed. The runtime reports readiness/config state but does not expose ACP logout, API-key, JSON import, or file import mutations in v1.

@@ -460,12 +460,16 @@ impl RuntimeProvider for CodexProvider {
     async fn list_models(&self) -> Result<Vec<ProviderModel>, RuntimeError> {
         Ok(vec![
             ProviderModel {
-                id: "gpt-5.2-codex".to_string(),
-                display_name: "GPT-5.2 Codex".to_string(),
+                id: "gpt-5.5".to_string(),
+                display_name: "GPT 5.5".to_string(),
             },
             ProviderModel {
                 id: "gpt-5.4".to_string(),
-                display_name: "GPT-5.4".to_string(),
+                display_name: "GPT 5.4".to_string(),
+            },
+            ProviderModel {
+                id: "gpt-5.4-mini".to_string(),
+                display_name: "GPT 5.4 Mini".to_string(),
             },
         ])
     }

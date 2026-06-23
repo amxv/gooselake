@@ -618,7 +618,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "runtime-core"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "rand",
@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-provider-acp"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "runtime-core",
@@ -642,7 +642,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-provider-claude"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "runtime-core",
@@ -656,7 +656,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-provider-codex"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "runtime-core",
@@ -668,7 +668,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-server"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -694,7 +694,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-store-sqlite"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "runtime-core",
@@ -707,7 +707,7 @@ dependencies = [
 
 [[package]]
 name = "runtime-tools"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "rand",

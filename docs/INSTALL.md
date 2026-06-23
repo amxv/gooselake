@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/amxv/gg-agent-runtime/main/scripts/
 Install a pinned version:
 
 ```bash
-make install VERSION=v0.1.0
+make install VERSION=v0.1.2
 ```
 
 Only set `GG_RUNTIME_REPO` if you want to install from a fork or alternate repo:

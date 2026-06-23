@@ -9,7 +9,7 @@ Usage:
   scripts/upgrade-runtime.sh [version]
 
 Arguments:
-  version     Release tag (for example: v0.1.0). Defaults to "latest".
+  version     Release tag (for example: v0.1.2). Defaults to "latest".
 
 Environment:
   GG_RUNTIME_REPO            GitHub repo in owner/name form.
@@ -22,7 +22,7 @@ Environment:
 
 Examples:
   ./scripts/upgrade-runtime.sh latest
-  GG_RUNTIME_RELEASES_ROOT=/opt/gg-runtime ./scripts/upgrade-runtime.sh v0.1.0
+  GG_RUNTIME_RELEASES_ROOT=/opt/gg-runtime ./scripts/upgrade-runtime.sh v0.1.2
   GG_RUNTIME_SYSTEMD_SERVICE=gg-runtime.service ./scripts/upgrade-runtime.sh latest
 USAGE
 }

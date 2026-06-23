@@ -43,7 +43,7 @@ fn build_openapi_yaml() -> String {
     out.push_str("openapi: 3.1.0\n");
     out.push_str("info:\n");
     out.push_str("  title: GG Standalone Agent Runtime API\n");
-    out.push_str("  version: 0.1.0\n");
+    out.push_str("  version: 0.1.2\n");
     out.push_str(
         "  summary: Single-user hosted runtime for Codex/Claude/ACP sessions, teams, processes, worktrees, and SSE streams\n",
     );

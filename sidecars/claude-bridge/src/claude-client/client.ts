@@ -574,6 +574,22 @@ export class ClaudeClient {
           supportsVision: true,
           supportsToolCalling: true,
         },
+        {
+          value: 'claude-opus-4-8',
+          displayName: 'Claude Opus 4.8',
+          supportsEffort: true,
+          supportedEffortLevels: ['low', 'medium', 'high'],
+          supportsVision: true,
+          supportsToolCalling: true,
+        },
+        {
+          value: 'claude-haiku-4-5',
+          displayName: 'Claude Haiku 4.5',
+          supportsEffort: true,
+          supportedEffortLevels: ['low', 'medium', 'high'],
+          supportsVision: true,
+          supportsToolCalling: true,
+        },
       ]
     }
 

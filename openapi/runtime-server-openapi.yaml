@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: GG Standalone Agent Runtime API
-  version: 0.1.0
+  version: 0.1.2
   summary: Single-user hosted runtime for Codex/Claude/ACP sessions, teams, processes, worktrees, and SSE streams
 servers:
   - url: http://localhost:8080

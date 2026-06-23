@@ -9,7 +9,7 @@ Usage:
   scripts/install-runtime.sh [version]
 
 Arguments:
-  version     Release tag (for example: v0.1.0). Defaults to "latest".
+  version     Release tag (for example: v0.1.2). Defaults to "latest".
 
 Environment:
   GG_RUNTIME_REPO          GitHub repo in owner/name form.
@@ -19,7 +19,7 @@ Environment:
 
 Examples:
   ./scripts/install-runtime.sh latest
-  GG_RUNTIME_INSTALL_ROOT=/opt/gg-runtime ./scripts/install-runtime.sh v0.1.0
+  GG_RUNTIME_INSTALL_ROOT=/opt/gg-runtime ./scripts/install-runtime.sh v0.1.2
   GG_RUNTIME_REPO=owner/repo ./scripts/install-runtime.sh latest
 EOF
 }

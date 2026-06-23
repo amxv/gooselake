@@ -180,6 +180,22 @@ describe('claude client bridge behavior', () => {
         supportsVision: true,
         supportsToolCalling: true,
       },
+      {
+        value: 'claude-opus-4-8',
+        displayName: 'Claude Opus 4.8',
+        supportsEffort: true,
+        supportedEffortLevels: ['low', 'medium', 'high'],
+        supportsVision: true,
+        supportsToolCalling: true,
+      },
+      {
+        value: 'claude-haiku-4-5',
+        displayName: 'Claude Haiku 4.5',
+        supportsEffort: true,
+        supportedEffortLevels: ['low', 'medium', 'high'],
+        supportsVision: true,
+        supportsToolCalling: true,
+      },
     ])
   })
 
@@ -188,8 +204,8 @@ describe('claude client bridge behavior', () => {
       mode: 'sdk',
       sdkSupportedModels: async () => [
         {
-          value: ' claude-opus-4-6 ',
-          displayName: ' Claude Opus 4.6 ',
+          value: ' claude-opus-4-8 ',
+          displayName: ' Claude Opus 4.8 ',
           supportsEffort: true,
           supportedEffortLevels: ['HIGH', ' medium ', ''],
           supportsVision: true,
@@ -206,8 +222,8 @@ describe('claude client bridge behavior', () => {
     const models = await client.supportedModels()
     expect(models).toEqual([
       {
-        value: 'claude-opus-4-6',
-        displayName: 'Claude Opus 4.6',
+        value: 'claude-opus-4-8',
+        displayName: 'Claude Opus 4.8',
         supportsEffort: true,
         supportedEffortLevels: ['high', 'medium'],
         supportsVision: true,

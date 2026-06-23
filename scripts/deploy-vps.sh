@@ -33,7 +33,7 @@ Environment:
 
 Examples:
   ./scripts/deploy-vps.sh
-  ./scripts/deploy-vps.sh --version v0.1.0 --base-url http://127.0.0.1:8080 --token "$GG_RUNTIME_TOKEN"
+  ./scripts/deploy-vps.sh --version v0.1.2 --base-url http://127.0.0.1:8080 --token "$GG_RUNTIME_TOKEN"
   GG_RUNTIME_RELEASES_ROOT=/opt/gg-runtime ./scripts/deploy-vps.sh --scope system --service gg-runtime.service
 USAGE
 }

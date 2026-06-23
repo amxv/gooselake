@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: GG Standalone Agent Runtime API
   version: 0.1.0
-  summary: Single-user hosted runtime for Codex/Claude sessions, teams, processes, worktrees, and SSE streams
+  summary: Single-user hosted runtime for Codex/Claude/ACP sessions, teams, processes, worktrees, and SSE streams
 servers:
   - url: http://localhost:8080
 security:
@@ -284,6 +284,16 @@ paths:
   /v1/providers:
     get:
       summary: List providers
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v1/providers/acp/auth/status:
+    get:
+      summary: ACP auth status
       responses:
         "200":
           description: JSON response

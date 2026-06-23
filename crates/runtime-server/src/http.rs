@@ -50,6 +50,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/providers", get(list_providers))
         .route("/providers/{provider}/models", get(list_provider_models))
         .route("/providers/codex/auth/status", get(codex_auth_status))
+        .route("/providers/acp/auth/status", get(acp_auth_status))
         .route("/providers/claude/auth/status", get(claude_auth_status))
         .route("/providers/claude/auth/api-key", post(claude_auth_api_key))
         .route(
@@ -224,20 +225,28 @@ async fn list_provider_models(
 async fn codex_auth_status(
     State(state): State<AppState>,
 ) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
-    let status = state
-        .runtime
-        .provider_auth_status(ProviderKind::Codex)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(status))
+    provider_auth_status_response(&state, ProviderKind::Codex).await
+}
+
+async fn acp_auth_status(
+    State(state): State<AppState>,
+) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
+    provider_auth_status_response(&state, ProviderKind::Acp).await
 }
 
 async fn claude_auth_status(
     State(state): State<AppState>,
 ) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
+    provider_auth_status_response(&state, ProviderKind::Claude).await
+}
+
+async fn provider_auth_status_response(
+    state: &AppState,
+    provider: ProviderKind,
+) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
     let status = state
         .runtime
-        .provider_auth_status(ProviderKind::Claude)
+        .provider_auth_status(provider)
         .await
         .map_err(ApiError::from)?;
     Ok(Json(status))
@@ -3286,6 +3295,102 @@ mod tests {
             serde_json::from_slice(recovery_body.as_ref()).expect("recovery json");
         assert!(recovery_json.get("startup").is_some());
         assert!(recovery_json.get("active_anomalies").is_some());
+    }
+
+    #[tokio::test]
+    async fn acp_auth_status_returns_not_found_when_provider_is_not_registered() {
+        let (router, token, _temp_dir) = build_test_router().await;
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/providers/acp/auth/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("acp auth status response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("acp auth status body");
+        let json: Value = serde_json::from_slice(body.as_ref()).expect("acp auth status json");
+        assert_eq!(json["error"], "acp");
+    }
+
+    #[tokio::test]
+    async fn acp_auth_status_and_diagnostics_are_exposed_when_provider_is_registered() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = temp_dir.path().to_path_buf();
+        config.providers.codex.enabled = false;
+        config.providers.claude.enabled = false;
+        config.providers.acp.enabled = true;
+        config.providers.acp.command = Some("fake-acp-agent".to_string());
+
+        let bootstrapped = bootstrap_runtime(config).await.expect("bootstrap");
+        let token = bootstrapped.auth.bearer_token.clone();
+        let router = build_router(AppState {
+            app: bootstrapped.app,
+            runtime: bootstrapped.runtime,
+            bearer_token: token.clone(),
+            public_base_url: bootstrapped.public_base_url,
+            startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
+        });
+
+        let status_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/providers/acp/auth/status")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("acp auth status response");
+        assert_eq!(status_response.status(), StatusCode::OK);
+        let status_body = to_bytes(status_response.into_body(), usize::MAX)
+            .await
+            .expect("acp auth status body");
+        let status_json: Value =
+            serde_json::from_slice(status_body.as_ref()).expect("acp auth status json");
+        assert_eq!(status_json["authenticated"], false);
+        assert_eq!(status_json["mode"], "agent_managed");
+        assert!(
+            status_json["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("agent-managed"))
+        );
+
+        let diagnostics_response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/diagnostics/providers")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("provider diagnostics response");
+        assert_eq!(diagnostics_response.status(), StatusCode::OK);
+        let diagnostics_body = to_bytes(diagnostics_response.into_body(), usize::MAX)
+            .await
+            .expect("provider diagnostics body");
+        let diagnostics_json: Value =
+            serde_json::from_slice(diagnostics_body.as_ref()).expect("provider diagnostics json");
+        let acp_entry = diagnostics_json["providers"]
+            .as_array()
+            .and_then(|providers| {
+                providers
+                    .iter()
+                    .find(|entry| entry["provider"].as_str() == Some("acp"))
+            })
+            .expect("acp provider diagnostics entry");
+        assert_eq!(acp_entry["healthy"], true);
+        assert_eq!(acp_entry["auth_status"]["mode"], "agent_managed");
+        assert!(acp_entry["auth_error"].is_null());
     }
 
     #[tokio::test]

@@ -38,13 +38,26 @@ Reference: [Endpoint Catalog](./API_ENDPOINTS.md)
 
 Top-level groups:
 - Runtime/meta: health, version, OpenAPI, diagnostics
-- Providers/auth: provider list/models and Codex/Claude auth status/update endpoints
+- Providers/auth: provider list/models plus Codex, Claude, and ACP auth endpoints
 - Sessions: create/list/get/resume/close, turns, approvals
 - Teams/comms: team lifecycle, message delivery, retries, snapshots, interrupts
 - Processes: run/list/get/logs/kill, process event replay + streaming
 - Worktrees: create/list/get/claim/release/cleanup
 - Runtime events: global replay + global stream
 - MCP gateway: capabilities + invoke
+
+## Provider Notes
+
+The runtime now exposes three provider identities:
+- `codex`
+- `claude`
+- `acp`
+
+Current ACP v1 behavior is intentionally narrow:
+- `GET /v1/providers/acp/auth/status` is the only ACP auth route in the first landing.
+- ACP auth remains agent-managed. The runtime reports readiness/config state but does not expose ACP logout, API-key, JSON import, or file import mutations in v1.
+- `GET /v1/providers/acp/models` may return an empty list. ACP model selection can be session-config driven by the configured ACP agent rather than a provider-global catalog.
+- ACP permission requests are unsupported in v1. If an ACP agent issues `session/request_permission` during a turn, the runtime fails that active turn with a clear unsupported error instead of creating an approval flow.
 
 ## SSE and Replay Model
 
@@ -141,6 +154,9 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 ```bash
 curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v1/providers/codex/auth/status"
+
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/providers/acp/auth/status"
 
 curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v1/providers/claude/auth/status"

@@ -45,7 +45,7 @@ fn build_openapi_yaml() -> String {
     out.push_str("  title: GG Standalone Agent Runtime API\n");
     out.push_str("  version: 0.1.0\n");
     out.push_str(
-        "  summary: Single-user hosted runtime for Codex/Claude sessions, teams, processes, worktrees, and SSE streams\n",
+        "  summary: Single-user hosted runtime for Codex/Claude/ACP sessions, teams, processes, worktrees, and SSE streams\n",
     );
     out.push_str("servers:\n");
     out.push_str("  - url: http://localhost:8080\n");
@@ -93,6 +93,7 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
             "List models for provider".to_string()
         }
         (HttpMethod::Get, "/v1/providers/codex/auth/status") => "Codex auth status".to_string(),
+        (HttpMethod::Get, "/v1/providers/acp/auth/status") => "ACP auth status".to_string(),
         (HttpMethod::Get, "/v1/providers/claude/auth/status") => "Claude auth status".to_string(),
         (HttpMethod::Post, "/v1/providers/claude/auth/api-key") => "Set Claude API key".to_string(),
         (HttpMethod::Post, "/v1/providers/claude/auth/import-json") => {
@@ -436,6 +437,7 @@ mod tests {
         assert!(yaml.contains("  /v1/sessions/{session_id}/events/stream:"));
         assert!(yaml.contains("  /v1/teams/{team_id}/messages:"));
         assert!(yaml.contains("  /v1/mcp/invoke:"));
+        assert!(yaml.contains("  /v1/providers/acp/auth/status:"));
         assert!(yaml.contains("  /openapi.yaml:"));
     }
 }

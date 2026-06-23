@@ -23,11 +23,18 @@ Auth legend:
 - `GET /v1/providers` (Bearer)
 - `GET /v1/providers/{provider}/models` (Bearer)
 - `GET /v1/providers/codex/auth/status` (Bearer)
+- `GET /v1/providers/acp/auth/status` (Bearer)
 - `GET /v1/providers/claude/auth/status` (Bearer)
 - `POST /v1/providers/claude/auth/api-key` (Bearer)
 - `POST /v1/providers/claude/auth/import-json` (Bearer)
 - `POST /v1/providers/claude/auth/import-file` (Bearer, `multipart/form-data`, field `file`)
 - `POST /v1/providers/claude/auth/logout` (Bearer)
+
+Provider behavior notes:
+- ACP v1 exposes only `GET /v1/providers/acp/auth/status` for auth. No ACP logout, API-key, JSON import, or file import routes are implemented.
+- ACP auth status is agent-managed. The response reports configuration/readiness, not runtime-owned credentials.
+- `GET /v1/providers/acp/models` may return an empty list because ACP model selection can be driven by session-scoped agent config.
+- ACP permission requests are unsupported in v1 and fail the active turn clearly if an ACP agent requests them.
 
 ## Sessions
 

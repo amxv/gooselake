@@ -328,6 +328,12 @@ impl AcpProvider {
         }
     }
 
+    async fn current_connection(&self) -> Option<Arc<AcpConnection>> {
+        let slot = self.inner.connection.lock().await;
+        slot.clone()
+            .filter(|connection| !connection.closed.load(Ordering::SeqCst))
+    }
+
     async fn reap_connection_if_current_and_closed(&self, current: &Arc<AcpConnection>) {
         let should_reap = {
             let slot = self.inner.connection.lock().await;
@@ -1712,23 +1718,25 @@ impl RuntimeProvider for AcpProvider {
             .await;
         }
 
-        let connection = self.ensure_connection().await?;
-        let capabilities = connection.capabilities.read().await.clone();
-        if capabilities.close_session {
-            let _ = connection
-                .send_request(
-                    "session/close",
-                    json!({
-                        "sessionId": provider_session_ref,
-                    }),
-                    Some(self.request_timeout()),
-                )
-                .await?;
-        }
-
         let mut sessions = self.inner.sessions.write().await;
         sessions.remove(req.runtime_session_id.as_str());
         drop(sessions);
+
+        if let Some(connection) = self.current_connection().await {
+            let capabilities = connection.capabilities.read().await.clone();
+            if capabilities.close_session {
+                let _ = connection
+                    .send_request(
+                        "session/close",
+                        json!({
+                            "sessionId": provider_session_ref,
+                        }),
+                        Some(self.request_timeout()),
+                    )
+                    .await;
+            }
+        }
+
         self.shutdown_connection_if_idle().await;
         Ok(())
     }
@@ -2097,6 +2105,18 @@ for raw_line in sys.stdin:
             finish_prompt(session_id, pending["request_id"], "cancelled", ["Cancelled by client."])
     elif method == "session/close":
         session_id = msg["params"]["sessionId"]
+        if MODE == "hang_close":
+            continue
+        if MODE == "error_close":
+            send({{
+                "jsonrpc": "2.0",
+                "id": msg["id"],
+                "error": {{
+                    "code": -32001,
+                    "message": "close failed"
+                }}
+            }})
+            continue
         PENDING_PROMPTS.pop(session_id, None)
         PENDING_PERMISSIONS.pop(session_id, None)
         SESSIONS.pop(session_id, None)
@@ -2741,6 +2761,133 @@ for raw_line in sys.stdin:
             .expect("close");
 
         assert!(provider.inner.connection.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn close_session_succeeds_after_connection_death_without_respawn() {
+        let harness = FakeAgentHarness::new("normal");
+        let provider = harness.provider();
+
+        provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_close_dead_connection".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect("create");
+
+        provider
+            .send_turn(runtime_core::ProviderSendTurnRequest {
+                runtime_session_id: "sess_close_dead_connection".to_string(),
+                turn_id: "turn_close_dead_connection".to_string(),
+                input: vec![json!({"type":"text","text":"crash now"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                approval_id: None,
+            })
+            .await
+            .expect("send");
+
+        let _ = provider
+            .wait_for_turn(runtime_core::ProviderWaitTurnRequest {
+                runtime_session_id: "sess_close_dead_connection".to_string(),
+                turn_id: "turn_close_dead_connection".to_string(),
+                timeout_ms: Some(5_000),
+            })
+            .await
+            .expect("wait after crash");
+
+        provider
+            .close_session(runtime_core::ProviderCloseSessionRequest {
+                runtime_session_id: "sess_close_dead_connection".to_string(),
+                reason: Some("cleanup after crash".to_string()),
+            })
+            .await
+            .expect("close after connection death");
+
+        assert!(provider.inner.connection.lock().await.is_none());
+        assert!(!provider
+            .inner
+            .sessions
+            .read()
+            .await
+            .contains_key("sess_close_dead_connection"));
+    }
+
+    #[tokio::test]
+    async fn close_session_ignores_close_rpc_timeout_after_local_cleanup() {
+        let harness = FakeAgentHarness::new("hang_close");
+        let provider = AcpProvider::new(AcpProviderConfig {
+            enabled: true,
+            provider_dir: harness.provider_dir.clone(),
+            command: Some("python3".to_string()),
+            args: vec![harness.script_path.display().to_string()],
+            request_timeout_secs: 1,
+            ..AcpProviderConfig::default()
+        });
+
+        provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_hang_close".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect("create");
+
+        provider
+            .close_session(runtime_core::ProviderCloseSessionRequest {
+                runtime_session_id: "sess_hang_close".to_string(),
+                reason: Some("close timeout".to_string()),
+            })
+            .await
+            .expect("close should still succeed");
+
+        assert!(provider.inner.connection.lock().await.is_none());
+        assert!(!provider
+            .inner
+            .sessions
+            .read()
+            .await
+            .contains_key("sess_hang_close"));
+    }
+
+    #[tokio::test]
+    async fn close_session_ignores_close_rpc_error_after_local_cleanup() {
+        let harness = FakeAgentHarness::new("error_close");
+        let provider = harness.provider();
+
+        provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_error_close".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect("create");
+
+        provider
+            .close_session(runtime_core::ProviderCloseSessionRequest {
+                runtime_session_id: "sess_error_close".to_string(),
+                reason: Some("close error".to_string()),
+            })
+            .await
+            .expect("close should still succeed");
+
+        assert!(provider.inner.connection.lock().await.is_none());
+        assert!(!provider
+            .inner
+            .sessions
+            .read()
+            .await
+            .contains_key("sess_error_close"));
     }
 
     #[tokio::test]

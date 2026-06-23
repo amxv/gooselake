@@ -68,6 +68,7 @@ flowchart LR
 Then you need more:
 
 - a second provider
+- then a third
 - resumable sessions
 - background execution
 - real filesystem work
@@ -82,6 +83,7 @@ Now the app looks more like this:
 flowchart TD
   UI[Frontend] --> ProviderA[Codex integration]
   UI --> ProviderB[Claude integration]
+  UI --> ProviderC[ACP integration]
   UI --> Sessions[Session state]
   UI --> Events[Streaming logic]
   UI --> Auth[Auth handling]
@@ -111,6 +113,7 @@ flowchart LR
 
   Runtime --> Codex[Codex]
   Runtime --> Claude[Claude]
+  Runtime --> ACP[ACP]
   Runtime --> SQLite[(SQLite)]
   Runtime --> MCP[MCP Sidecar]
   Runtime --> Machine[Processes / Worktrees / Filesystem]
@@ -124,7 +127,7 @@ And it is a strong bet, because the runtime is where the complexity was going to
 
 ## Why This Project Is Interesting
 
-The cool part is not just that it talks to Codex and Claude.
+The cool part is not just that it talks to Codex, Claude, and ACP.
 
 The cool part is that it treats agent execution as infrastructure:
 
@@ -159,7 +162,7 @@ It owns:
 - worktree allocation and lifecycle
 - MCP tool plumbing
 
-The UI does not need to know how Codex auth is staged, how Claude is bridged, how provider quirks are normalized, or how a worktree is claimed. It just speaks HTTP and SSE.
+The UI does not need to know how Codex auth is staged, how Claude is bridged, how ACP agents are launched over stdio, how provider quirks are normalized, or how a worktree is claimed. It just speaks HTTP and SSE.
 
 That boundary is what makes the architecture reusable.
 
@@ -178,6 +181,7 @@ flowchart TD
   Store[(SQLite Store)]
   CodexP[Codex Provider]
   ClaudeP[Claude Provider]
+  AcpP[ACP Provider]
   MCP[GG MCP Server]
   Bridge[Claude Bridge]
   Host[Host Machine]
@@ -189,10 +193,12 @@ flowchart TD
   Core <--> Store
   Core --> CodexP
   Core --> ClaudeP
+  Core --> AcpP
   Core --> MCP
   ClaudeP --> Bridge
   CodexP --> Host
   ClaudeP --> Host
+  AcpP --> Host
   MCP --> Host
 ```
 
@@ -210,6 +216,7 @@ Today the runtime supports:
 
 - Codex
 - Claude
+- ACP
 
 Those providers are normalized into one shared model for:
 
@@ -224,7 +231,7 @@ That matters because frontends should not have to learn different lifecycle sema
 
 The provider layer should be replaceable. The runtime contract should be stable.
 
-Codex and Claude are different dialects. The runtime is the interpreter with a durable transcript.
+Codex, Claude, and ACP are different dialects. The runtime is the interpreter with a durable transcript.
 
 ### Durable, replayable sessions
 
@@ -272,7 +279,7 @@ The runtime does not just let one user talk to one model. It has a native agent 
 - claim worktrees
 - coordinate live work across one shared runtime
 
-And it does that without caring whether a given agent is running on Codex or Claude.
+And it does that without caring whether a given agent is running on Codex, Claude, or ACP.
 
 That is a bigger deal than it sounds.
 
@@ -316,6 +323,7 @@ Repository shape:
 - `crates/runtime-store-sqlite`: durable state and event storage
 - `crates/runtime-provider-codex`: Codex adapter
 - `crates/runtime-provider-claude`: Claude adapter
+- `crates/runtime-provider-acp`: ACP stdio adapter
 - `crates/runtime-tools`: shared runtime tooling/process support
 - `sidecars/claude-bridge`: Claude bridge process
 - `sidecars/gg-mcp-server`: MCP sidecar process
@@ -378,6 +386,11 @@ codex login
 claude login
 ```
 
+ACP is different in the first release:
+- configure an ACP-compatible agent command in `runtime-server.toml`
+- ACP transport is stdio only in v1
+- ACP auth is agent-managed in v1, so there is no runtime ACP login/import flow
+
 ### Start the runtime
 
 ```bash
@@ -388,6 +401,18 @@ gg-runtime-server --config ./runtime-server.toml
 ```
 
 That is the default path. Change config only when you need different bind addresses, auth settings, or data locations.
+
+To enable ACP in the same config:
+
+```toml
+[providers.acp]
+enabled = true
+command = "/absolute/path/to/your-acp-agent"
+args = ["serve", "--stdio"]
+transport = "stdio"
+```
+
+Optional environment variables for the ACP agent can be set under `[providers.acp.env]`.
 
 ### VPS always-on path (recommended for Linux host deploys)
 
@@ -456,6 +481,13 @@ Team orchestration is already a first-class runtime API here. The MCP-facing tea
 - Codex: machine login via `codex login`, with staged runtime auth support from `~/.gg/codex/auth.json`
 - Claude default: `host_machine`, which uses machine login material
 - Claude optional: `runtime_managed`, which lets the runtime own imported auth/config files
+- ACP: configured agent command over stdio, with auth handled by the agent itself in v1
+
+ACP first-release limits:
+- no streamable HTTP ACP transport; `transport = "stdio"` is the only supported mode
+- no runtime ACP logout/API-key/import routes
+- no runtime-managed ACP auth mutations
+- ACP permission requests are unsupported in v1 and fail the active turn clearly if the agent sends `session/request_permission`
 
 ## OpenAPI
 
@@ -522,7 +554,7 @@ It includes:
 - team/comms flows
 - worktree lifecycle support
 - MCP sidecar support
-- real Codex and Claude validation
+- real Codex, Claude, and ACP validation
 - release packaging
 - deploy docs
 - generated OpenAPI

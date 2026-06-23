@@ -14,6 +14,7 @@ Prereqs on host:
 - `curl`
 - `tar`
 - provider CLIs you want to use (`codex`, `claude`)
+- an ACP-compatible agent command if you want to enable ACP
 
 Install latest release to `~/.local`:
 
@@ -50,6 +51,27 @@ claude login
 gg-runtime-server --check-config --config ./runtime-server.toml
 gg-runtime-server --config ./runtime-server.toml
 ```
+
+If you want ACP enabled in the first release, edit `./runtime-server.toml` before the config check:
+
+```toml
+[providers.acp]
+enabled = true
+command = "/absolute/path/to/your-acp-agent"
+args = ["serve", "--stdio"]
+transport = "stdio"
+request_timeout_secs = 30
+wait_timeout_secs = 300
+
+[providers.acp.env]
+# ACP_AGENT_API_TOKEN = "replace-if-your-agent-needs-it"
+```
+
+ACP install notes:
+- only stdio transport is supported in v1; streamable HTTP ACP transport is not supported
+- ACP auth is agent-managed in v1; there is no runtime ACP login, API-key import, JSON import, or logout flow
+- `GET /v1/providers/acp/models` may return an empty list because ACP model selection can be session-scoped inside the configured agent
+- ACP permission requests are unsupported in v1 and fail the active turn if the agent sends `session/request_permission`
 
 ## Staged Install for VPS (Recommended for Always-On)
 
@@ -121,3 +143,7 @@ Additional deploy artifacts shipped in release/install bundle:
 ```
 
 This allows starting `gg-runtime-server` without additional bridge path overrides and gives a baseline systemd unit for VPS deployment.
+
+Release packaging note:
+- the first ACP landing does not ship an ACP sidecar binary in the release bundle
+- ACP runs the configured external agent command directly over stdio

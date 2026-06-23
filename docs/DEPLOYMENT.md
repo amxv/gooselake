@@ -17,6 +17,7 @@ Use this for Linux VPS and most serious always-on setups.
 Why this is the default today:
 - runtime is designed around host filesystem/process access
 - provider login flows (`codex login`, `claude login`) are machine-native
+- ACP in the first landing also assumes host execution because the runtime launches a configured ACP agent command over stdio
 - sidecar path discovery already matches release bundle layout
 - lower operational complexity than container profile for current architecture
 
@@ -60,6 +61,7 @@ On the VPS:
 - `curl`
 - `tar`
 - provider CLIs you plan to use (`codex`, `claude`)
+- an ACP-compatible agent command if you plan to enable ACP
 - `systemd --user` available for your account
 
 ### 2. Install runtime as staged releases
@@ -90,6 +92,7 @@ For VPS use, set:
 - explicit `auth.token` (recommended for stable automation)
 - absolute `data.root_dir` for persistent state
 - localhost bind unless intentionally exposed behind proxy
+- ACP `providers.acp.command`/`args`/`env` if ACP is enabled
 
 Example (edit your config accordingly):
 
@@ -109,12 +112,34 @@ logs_dir = "logs"
 providers_dir = "providers"
 ```
 
+ACP example block for that same config:
+
+```toml
+[providers.acp]
+enabled = true
+command = "/usr/local/bin/your-acp-agent"
+args = ["serve", "--stdio"]
+transport = "stdio"
+request_timeout_secs = 30
+wait_timeout_secs = 300
+
+[providers.acp.env]
+# ACP_AGENT_API_TOKEN = "replace-if-required-by-your-agent"
+```
+
+ACP deployment constraints in v1:
+- only stdio transport is supported; streamable HTTP ACP transport is not supported
+- auth is agent-managed; runtime exposes status only and does not provide ACP login/logout/import mutations
+- ACP permission requests are unsupported in v1 and fail the active turn clearly
+
 ### 4. Login providers on the host
 
 ```bash
 codex login
 claude login
 ```
+
+For ACP, there is no runtime login step in v1. Instead, ensure the configured ACP agent command starts successfully on the host and that any agent-specific environment variables are present in `[providers.acp.env]` or the systemd environment file.
 
 ### 5. Install systemd user unit
 
@@ -158,6 +183,65 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/diagnostics"
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/diagnostics/providers"
 ```
 
+### 9. Verify ACP end to end
+
+Use this smoke runbook after enabling ACP in config:
+
+1. Confirm provider registration:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/providers"
+```
+
+2. Check ACP auth/config status:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/providers/acp/auth/status"
+```
+
+Expected v1 shape:
+- `mode` is typically `agent_managed` when the command is configured
+- `mode` may be `not_configured`, `invalid_config`, or `disabled` when setup is incomplete
+
+3. Check ACP model listing behavior:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/providers/acp/models"
+```
+
+An empty list is valid in v1 because ACP model selection can be session-scoped inside the configured agent.
+
+4. Create an ACP session:
+
+```bash
+SESSION_JSON=$(curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"acp"}' \
+  "$BASE_URL/v1/sessions")
+
+SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.id')
+```
+
+5. Send a test turn:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"input":[{"type":"text","text":"Reply with the word ok."}]}' \
+  "$BASE_URL/v1/sessions/$SESSION_ID/turns"
+```
+
+6. If the turn fails, inspect likely ACP-specific causes:
+- `acp command is not configured`
+- unsupported transport value other than `stdio`
+- agent startup or stdio IO failure
+- an ACP `session/request_permission` request, which is unsupported in v1 and intentionally fails the turn
+
 ## Logging and Troubleshooting
 
 ### Service logs (systemd)
@@ -188,7 +272,9 @@ This log plane is distinct from systemd journal logs.
 - verify host login material: rerun `codex login` and/or `claude login`
 - check auth status endpoints:
   - `/v1/providers/codex/auth/status`
+  - `/v1/providers/acp/auth/status`
   - `/v1/providers/claude/auth/status`
+- for ACP specifically, verify `providers.acp.command`, `providers.acp.args`, and `providers.acp.env`; the runtime does not mutate ACP credentials in v1
 
 3. Sidecar/binary layout errors
 - verify staged release layout under `current/` includes:
@@ -243,6 +329,8 @@ codex login
 claude login
 gg-runtime-server --config ./runtime-server.toml
 ```
+
+If you want ACP locally, enable `[providers.acp]`, point `command`/`args` at your ACP agent, and keep `transport = "stdio"`.
 
 If you want always-on local behavior on Linux, you can still run the same `gg-runtime.service` unit model above.
 

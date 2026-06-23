@@ -31,11 +31,13 @@ max_instances = 4
 max_sessions_per_instance = 4
 # command = "/absolute/path/to/your-acp-agent"
 # args = ["serve", "--stdio"]
+# ACP v1 supports stdio transport only. Streamable HTTP is not supported yet.
 transport = "stdio"
 request_timeout_secs = 30
 wait_timeout_secs = 300
 
 [providers.acp.env]
+# ACP auth is agent-managed in v1. Put any agent-specific env vars here.
 # EXAMPLE_ENV = "value"
 
 # Claude auth mode:

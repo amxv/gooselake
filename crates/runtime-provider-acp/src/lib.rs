@@ -111,10 +111,6 @@ impl AcpActiveTurnState {
 #[derive(Debug, Default)]
 struct AcpSessionState {
     provider_session_ref: String,
-    canonical_provider_session_ref: Option<String>,
-    cwd: Option<String>,
-    model: Option<String>,
-    permission_mode: Option<String>,
     active_turn: Option<AcpActiveTurnState>,
     pending_approvals: HashMap<String, PendingApprovalTurn>,
     completed_turns: HashMap<String, ProviderTurnResult>,
@@ -137,6 +133,21 @@ struct AcpProviderInner {
     config: AcpProviderConfig,
     connection: Mutex<Option<Arc<AcpConnection>>>,
     sessions: RwLock<HashMap<String, AcpSessionState>>,
+}
+
+impl Drop for AcpProviderInner {
+    fn drop(&mut self) {
+        let Ok(mut slot) = self.connection.try_lock() else {
+            return;
+        };
+        let Some(connection) = slot.take() else {
+            return;
+        };
+        let Ok(mut child) = connection.child.try_lock() else {
+            return;
+        };
+        let _ = child.start_kill();
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -258,20 +269,75 @@ impl AcpProvider {
             .saturating_mul(self.inner.config.max_sessions_per_instance)
     }
 
-    async fn ensure_session_capacity_available(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<(), RuntimeError> {
-        let capacity = self.max_session_capacity();
-        let sessions = self.inner.sessions.read().await;
-        if sessions.contains_key(runtime_session_id) || sessions.len() < capacity {
+    async fn reserve_session_slot(&self, runtime_session_id: &str) -> Result<(), RuntimeError> {
+        let mut sessions = self.inner.sessions.write().await;
+        if sessions.contains_key(runtime_session_id) {
             return Ok(());
         }
 
-        Err(RuntimeError::InvalidState(format!(
-            "acp session capacity exceeded ({capacity} total sessions from max_instances={} * max_sessions_per_instance={})",
-            self.inner.config.max_instances, self.inner.config.max_sessions_per_instance
-        )))
+        let capacity = self.max_session_capacity();
+        if sessions.len() >= capacity {
+            return Err(RuntimeError::InvalidState(format!(
+                "acp session capacity exceeded ({capacity} total sessions from max_instances={} * max_sessions_per_instance={})",
+                self.inner.config.max_instances, self.inner.config.max_sessions_per_instance
+            )));
+        }
+
+        sessions.insert(runtime_session_id.to_string(), AcpSessionState::default());
+        Ok(())
+    }
+
+    async fn release_session_slot(&self, runtime_session_id: &str) {
+        let mut sessions = self.inner.sessions.write().await;
+        sessions.remove(runtime_session_id);
+    }
+
+    async fn activate_reserved_session(
+        &self,
+        runtime_session_id: &str,
+        provider_session_ref: String,
+    ) -> Result<(), RuntimeError> {
+        let mut sessions = self.inner.sessions.write().await;
+        let session = sessions.get_mut(runtime_session_id).ok_or_else(|| {
+            RuntimeError::InvalidState(format!(
+                "reserved acp session {} disappeared before activation",
+                runtime_session_id
+            ))
+        })?;
+        session.provider_session_ref = provider_session_ref;
+        Ok(())
+    }
+
+    async fn shutdown_connection(&self, kill_if_running: bool) {
+        let connection = {
+            let mut slot = self.inner.connection.lock().await;
+            slot.take()
+        };
+        if let Some(connection) = connection {
+            connection.shutdown(kill_if_running).await;
+        }
+    }
+
+    async fn shutdown_connection_if_idle(&self) {
+        let is_idle = {
+            let sessions = self.inner.sessions.read().await;
+            sessions.is_empty()
+        };
+        if is_idle {
+            self.shutdown_connection(true).await;
+        }
+    }
+
+    async fn reap_connection_if_current_and_closed(&self, current: &Arc<AcpConnection>) {
+        let should_reap = {
+            let slot = self.inner.connection.lock().await;
+            slot.as_ref()
+                .is_some_and(|active| Arc::ptr_eq(active, current))
+                && current.closed.load(Ordering::SeqCst)
+        };
+        if should_reap {
+            self.shutdown_connection(false).await;
+        }
     }
 
     fn build_gg_mcp_server_config(&self, runtime_session_id: &str) -> Option<Value> {
@@ -948,6 +1014,9 @@ impl AcpConnection {
                     }
                 }
             }
+            provider
+                .reap_connection_if_current_and_closed(&connection)
+                .await;
         });
     }
 
@@ -1082,6 +1151,27 @@ impl AcpConnection {
             let _ = sender.send(Err(RuntimeError::ProtocolViolation(message.clone())));
         }
     }
+
+    async fn shutdown(&self, kill_if_running: bool) {
+        self.closed.store(true, Ordering::SeqCst);
+        {
+            let mut pending = self.pending_requests.lock().await;
+            for (_, sender) in pending.drain() {
+                let _ = sender.send(Err(RuntimeError::Io(
+                    "acp connection shutting down".to_string(),
+                )));
+            }
+        }
+        {
+            let mut stdin = self.stdin.lock().await;
+            let _ = stdin.flush().await;
+        }
+        let mut child = self.child.lock().await;
+        if kill_if_running {
+            let _ = child.start_kill();
+        }
+        let _ = child.wait().await;
+    }
 }
 
 fn message_id_key(message: &Value) -> Option<String> {
@@ -1212,10 +1302,24 @@ impl RuntimeProvider for AcpProvider {
         &self,
         req: ProviderCreateSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
-        self.ensure_session_capacity_available(req.runtime_session_id.as_str())
+        self.reserve_session_slot(req.runtime_session_id.as_str())
             .await?;
-        let connection = self.ensure_connection().await?;
-        let cwd = Self::resolve_session_cwd(req.cwd.as_deref())?;
+        let connection = match self.ensure_connection().await {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.release_session_slot(req.runtime_session_id.as_str())
+                    .await;
+                return Err(error);
+            }
+        };
+        let cwd = match Self::resolve_session_cwd(req.cwd.as_deref()) {
+            Ok(cwd) => cwd,
+            Err(error) => {
+                self.release_session_slot(req.runtime_session_id.as_str())
+                    .await;
+                return Err(error);
+            }
+        };
         let response = connection
             .send_request(
                 "session/new",
@@ -1225,7 +1329,15 @@ impl RuntimeProvider for AcpProvider {
                 }),
                 Some(self.request_timeout()),
             )
-            .await?;
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                self.release_session_slot(req.runtime_session_id.as_str())
+                    .await;
+                return Err(error);
+            }
+        };
         let provider_session_ref = response
             .get("sessionId")
             .and_then(Value::as_str)
@@ -1234,19 +1346,26 @@ impl RuntimeProvider for AcpProvider {
                 RuntimeError::ProtocolViolation(
                     "acp session/new response missing sessionId".to_string(),
                 )
-            })?;
-
-        let state = AcpSessionState {
-            provider_session_ref: provider_session_ref.clone(),
-            canonical_provider_session_ref: Some(provider_session_ref.clone()),
-            cwd: Some(cwd),
-            model: req.model,
-            permission_mode: req.permission_mode,
-            ..Default::default()
+            });
+        let provider_session_ref = match provider_session_ref {
+            Ok(provider_session_ref) => provider_session_ref,
+            Err(error) => {
+                self.release_session_slot(req.runtime_session_id.as_str())
+                    .await;
+                return Err(error);
+            }
         };
-
-        let mut sessions = self.inner.sessions.write().await;
-        sessions.insert(req.runtime_session_id.clone(), state);
+        if let Err(error) = self
+            .activate_reserved_session(
+                req.runtime_session_id.as_str(),
+                provider_session_ref.clone(),
+            )
+            .await
+        {
+            self.release_session_slot(req.runtime_session_id.as_str())
+                .await;
+            return Err(error);
+        }
 
         Ok(ProviderSession {
             runtime_session_id: req.runtime_session_id,
@@ -1259,37 +1378,46 @@ impl RuntimeProvider for AcpProvider {
         &self,
         req: ProviderResumeSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
-        self.ensure_session_capacity_available(req.runtime_session_id.as_str())
+        self.reserve_session_slot(req.runtime_session_id.as_str())
             .await?;
-        let connection = self.ensure_connection().await?;
+        let connection = match self.ensure_connection().await {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.release_session_slot(req.runtime_session_id.as_str())
+                    .await;
+                return Err(error);
+            }
+        };
         let capabilities = connection.capabilities.read().await.clone();
-        let cwd = Self::resolve_session_cwd(req.cwd.as_deref())?;
+        let cwd = match Self::resolve_session_cwd(req.cwd.as_deref()) {
+            Ok(cwd) => cwd,
+            Err(error) => {
+                self.release_session_slot(req.runtime_session_id.as_str())
+                    .await;
+                return Err(error);
+            }
+        };
         let method = if capabilities.resume_session {
             "session/resume"
         } else if capabilities.load_session {
             "session/load"
         } else {
+            self.release_session_slot(req.runtime_session_id.as_str())
+                .await;
             return Err(RuntimeError::Unsupported(
                 "acp agent does not advertise session resume or load support".to_string(),
             ));
         };
-
+        if let Err(error) = self
+            .activate_reserved_session(
+                req.runtime_session_id.as_str(),
+                req.provider_session_ref.clone(),
+            )
+            .await
         {
-            let mut sessions = self.inner.sessions.write().await;
-            sessions.insert(
-                req.runtime_session_id.clone(),
-                AcpSessionState {
-                    provider_session_ref: req.provider_session_ref.clone(),
-                    canonical_provider_session_ref: req
-                        .canonical_provider_session_ref
-                        .clone()
-                        .or_else(|| Some(req.provider_session_ref.clone())),
-                    cwd: Some(cwd.clone()),
-                    model: None,
-                    permission_mode: None,
-                    ..Default::default()
-                },
-            );
+            self.release_session_slot(req.runtime_session_id.as_str())
+                .await;
+            return Err(error);
         }
 
         let response = connection
@@ -1305,8 +1433,8 @@ impl RuntimeProvider for AcpProvider {
             .await;
 
         if let Err(error) = response {
-            let mut sessions = self.inner.sessions.write().await;
-            sessions.remove(req.runtime_session_id.as_str());
+            self.release_session_slot(req.runtime_session_id.as_str())
+                .await;
             return Err(error);
         }
 
@@ -1587,6 +1715,8 @@ impl RuntimeProvider for AcpProvider {
 
         let mut sessions = self.inner.sessions.write().await;
         sessions.remove(req.runtime_session_id.as_str());
+        drop(sessions);
+        self.shutdown_connection_if_idle().await;
         Ok(())
     }
 }
@@ -1636,6 +1766,7 @@ mod tests {
 import json
 import os
 import sys
+import time
 
 MODE = {mode:?}
 SESSIONS = {{}}
@@ -1731,6 +1862,8 @@ for raw_line in sys.stdin:
             result["agentCapabilities"]["sessionCapabilities"]["resume"] = {{}}
         send({{"jsonrpc": "2.0", "id": msg["id"], "result": result}})
     elif method == "session/new":
+        if MODE == "slow_create":
+            time.sleep(0.2)
         session_id = f"sess_{{NEXT_SESSION_ID}}"
         NEXT_SESSION_ID += 1
         SESSIONS[session_id] = {{}}
@@ -2493,6 +2626,96 @@ for raw_line in sys.stdin:
         assert!(error
             .to_string()
             .contains("acp session capacity exceeded (1 total sessions"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_create_session_enforces_configured_capacity() {
+        let harness = FakeAgentHarness::new("slow_create");
+        let provider = AcpProvider::new(AcpProviderConfig {
+            enabled: true,
+            provider_dir: harness.provider_dir.clone(),
+            command: Some("python3".to_string()),
+            args: vec![harness.script_path.display().to_string()],
+            max_instances: 1,
+            max_sessions_per_instance: 1,
+            ..AcpProviderConfig::default()
+        });
+
+        let provider_a = provider.clone();
+        let provider_b = provider.clone();
+
+        let create_a = tokio::spawn(async move {
+            provider_a
+                .create_session(runtime_core::ProviderCreateSessionRequest {
+                    runtime_session_id: "sess_capacity_a".to_string(),
+                    model: None,
+                    cwd: None,
+                    permission_mode: None,
+                    metadata: None,
+                })
+                .await
+        });
+        let create_b = tokio::spawn(async move {
+            provider_b
+                .create_session(runtime_core::ProviderCreateSessionRequest {
+                    runtime_session_id: "sess_capacity_b".to_string(),
+                    model: None,
+                    cwd: None,
+                    permission_mode: None,
+                    metadata: None,
+                })
+                .await
+        });
+
+        let result_a = create_a.await.expect("task a");
+        let result_b = create_b.await.expect("task b");
+        let successes = [result_a.is_ok(), result_b.is_ok()]
+            .into_iter()
+            .filter(|value| *value)
+            .count();
+        let failures = [result_a, result_b]
+            .into_iter()
+            .filter_map(Result::err)
+            .collect::<Vec<_>>();
+
+        assert_eq!(successes, 1, "exactly one concurrent create should succeed");
+        assert_eq!(
+            failures.len(),
+            1,
+            "exactly one concurrent create should fail"
+        );
+        assert!(failures[0]
+            .to_string()
+            .contains("acp session capacity exceeded (1 total sessions"));
+    }
+
+    #[tokio::test]
+    async fn close_session_shuts_down_idle_connection() {
+        let harness = FakeAgentHarness::new("normal");
+        let provider = harness.provider();
+
+        let created = provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_idle_close".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect("create");
+        assert!(created.provider_session_ref.starts_with("sess_"));
+        assert!(provider.inner.connection.lock().await.is_some());
+
+        provider
+            .close_session(runtime_core::ProviderCloseSessionRequest {
+                runtime_session_id: "sess_idle_close".to_string(),
+                reason: Some("idle close".to_string()),
+            })
+            .await
+            .expect("close");
+
+        assert!(provider.inner.connection.lock().await.is_none());
     }
 
     #[tokio::test]

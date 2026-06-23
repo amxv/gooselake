@@ -897,8 +897,21 @@ impl AcpConnection {
                 }),
                 Some(provider.request_timeout()),
             )
-            .await?;
-        let capabilities = parse_initialize_capabilities(&init_result)?;
+            .await;
+        let init_result = match init_result {
+            Ok(init_result) => init_result,
+            Err(error) => {
+                connection.shutdown(true).await;
+                return Err(error);
+            }
+        };
+        let capabilities = match parse_initialize_capabilities(&init_result) {
+            Ok(capabilities) => capabilities,
+            Err(error) => {
+                connection.shutdown(true).await;
+                return Err(error);
+            }
+        };
         *connection.capabilities.write().await = capabilities;
 
         Ok(connection)
@@ -1725,6 +1738,7 @@ impl RuntimeProvider for AcpProvider {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use runtime_core::RuntimeProvider;
     use serde_json::{json, Value};
@@ -1735,16 +1749,19 @@ mod tests {
         _temp_dir: tempfile::TempDir,
         provider_dir: PathBuf,
         script_path: PathBuf,
+        pid_path: PathBuf,
     }
 
     impl FakeAgentHarness {
         fn new(mode: &str) -> Self {
             let temp_dir = tempfile::tempdir().expect("temp dir");
             let script_path = temp_dir.path().join("fake_acp_agent.py");
+            let pid_path = temp_dir.path().join("fake_acp_agent.pid");
             fs::write(script_path.as_path(), fake_agent_script(mode)).expect("write script");
             Self {
                 provider_dir: temp_dir.path().join("provider"),
                 script_path,
+                pid_path,
                 _temp_dir: temp_dir,
             }
         }
@@ -1769,10 +1786,14 @@ import sys
 import time
 
 MODE = {mode:?}
+PID_PATH = os.path.join(os.path.dirname(__file__), "fake_acp_agent.pid")
 SESSIONS = {{}}
 PENDING_PROMPTS = {{}}
 PENDING_PERMISSIONS = {{}}
 NEXT_SESSION_ID = 1
+
+with open(PID_PATH, "w", encoding="utf-8") as pid_file:
+    pid_file.write(str(os.getpid()))
 
 def send(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
@@ -1848,6 +1869,8 @@ for raw_line in sys.stdin:
 
     method = msg.get("method")
     if method == "initialize":
+        if MODE == "hang_initialize":
+            continue
         result = {{
             "protocolVersion": 1,
             "agentCapabilities": {{
@@ -1858,6 +1881,8 @@ for raw_line in sys.stdin:
             }},
             "authMethods": []
         }}
+        if MODE == "bad_protocol":
+            result["protocolVersion"] = 999
         if MODE != "load_only":
             result["agentCapabilities"]["sessionCapabilities"]["resume"] = {{}}
         send({{"jsonrpc": "2.0", "id": msg["id"], "result": result}})
@@ -2715,6 +2740,77 @@ for raw_line in sys.stdin:
             .await
             .expect("close");
 
+        assert!(provider.inner.connection.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn create_session_failure_during_initialize_cleans_up_connection_and_child() {
+        let harness = FakeAgentHarness::new("hang_initialize");
+        let provider = AcpProvider::new(AcpProviderConfig {
+            enabled: true,
+            provider_dir: harness.provider_dir.clone(),
+            command: Some("python3".to_string()),
+            args: vec![harness.script_path.display().to_string()],
+            request_timeout_secs: 1,
+            ..AcpProviderConfig::default()
+        });
+
+        let error = provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_hang_initialize".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect_err("initialize timeout should fail");
+        assert!(error
+            .to_string()
+            .contains("timed out waiting for acp response to initialize"));
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert!(provider.inner.connection.lock().await.is_none());
+
+        let pid = fs::read_to_string(harness.pid_path.as_path())
+            .expect("pid file")
+            .trim()
+            .parse::<u32>()
+            .expect("pid");
+        let alive = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status()
+            .expect("kill -0 status")
+            .success();
+        assert!(!alive, "initialize-timeout child should have been reaped");
+    }
+
+    #[tokio::test]
+    async fn bad_protocol_initialize_cleans_up_connection_and_child() {
+        let harness = FakeAgentHarness::new("bad_protocol");
+        let provider = AcpProvider::new(AcpProviderConfig {
+            enabled: true,
+            provider_dir: harness.provider_dir.clone(),
+            command: Some("python3".to_string()),
+            args: vec![harness.script_path.display().to_string()],
+            ..AcpProviderConfig::default()
+        });
+
+        let error = provider
+            .create_session(runtime_core::ProviderCreateSessionRequest {
+                runtime_session_id: "sess_bad_protocol".to_string(),
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            })
+            .await
+            .expect_err("bad protocol should fail");
+        assert!(error.to_string().contains("acp protocol version mismatch"));
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(provider.inner.connection.lock().await.is_none());
     }
 

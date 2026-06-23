@@ -673,8 +673,7 @@ impl RuntimeSessionManager {
             .permission_mode
             .clone()
             .or_else(|| session.permission_mode.clone());
-        let requires_approval =
-            effective_permission_mode.as_deref() == Some("require_approval");
+        let requires_approval = effective_permission_mode.as_deref() == Some("require_approval");
         let approval_id = if requires_approval {
             Some(self.allocate_id("apr", provider_kind.as_str()))
         } else {

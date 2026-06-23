@@ -4,6 +4,7 @@ members = [
   "crates/runtime-store-sqlite",
   "crates/runtime-provider-codex",
   "crates/runtime-provider-claude",
+  "crates/runtime-provider-acp",
   "crates/runtime-tools",
   "crates/runtime-server",
 ]

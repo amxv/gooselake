@@ -15,6 +15,7 @@ axum = { workspace = true, features = ["multipart"] }
 http.workspace = true
 rand.workspace = true
 runtime-core = { path = "../runtime-core" }
+runtime-provider-acp = { path = "../runtime-provider-acp" }
 runtime-provider-claude = { path = "../runtime-provider-claude" }
 runtime-provider-codex = { path = "../runtime-provider-codex" }
 runtime-store-sqlite = { path = "../runtime-store-sqlite" }

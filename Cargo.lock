@@ -629,6 +629,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime-provider-acp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "runtime-core",
+ "serde",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "runtime-provider-claude"
 version = "0.1.0"
 dependencies = [
@@ -664,6 +675,7 @@ dependencies = [
  "http",
  "rand",
  "runtime-core",
+ "runtime-provider-acp",
  "runtime-provider-claude",
  "runtime-provider-codex",
  "runtime-store-sqlite",

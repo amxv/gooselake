@@ -1,0 +1,15 @@
+[package]
+name = "runtime-provider-acp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+runtime-core = { path = "../runtime-core" }
+serde.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tempfile = "3.23"

@@ -9,6 +9,7 @@ use crate::RuntimeError;
 pub enum ProviderKind {
     Codex,
     Claude,
+    Acp,
 }
 
 impl ProviderKind {
@@ -16,6 +17,7 @@ impl ProviderKind {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::Acp => "acp",
         }
     }
 
@@ -23,6 +25,7 @@ impl ProviderKind {
         match value.trim().to_ascii_lowercase().as_str() {
             "codex" => Some(Self::Codex),
             "claude" => Some(Self::Claude),
+            "acp" => Some(Self::Acp),
             _ => None,
         }
     }
@@ -276,5 +279,21 @@ pub trait RuntimeProvider: Send + Sync {
         Err(RuntimeError::Unsupported(
             "provider close_session is not supported".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProviderKind;
+
+    #[test]
+    fn provider_kind_as_str_includes_acp() {
+        assert_eq!(ProviderKind::Acp.as_str(), "acp");
+    }
+
+    #[test]
+    fn provider_kind_from_str_parses_acp_case_insensitively() {
+        assert_eq!(ProviderKind::from_str("acp"), Some(ProviderKind::Acp));
+        assert_eq!(ProviderKind::from_str(" ACP "), Some(ProviderKind::Acp));
     }
 }

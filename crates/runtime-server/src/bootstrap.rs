@@ -8,6 +8,7 @@ use runtime_core::{
     RuntimeSessionManager, RuntimeStore, RuntimeTeamCommsConfig, RuntimeTeamCommsService,
     StartupRecoverySummary, WorktreeSettings,
 };
+use runtime_provider_acp::{AcpProvider, AcpProviderConfig};
 use runtime_provider_claude::{
     standalone_claude_bridge_command_path, standalone_gg_mcp_server_command_path,
     ClaudeGgMcpConfig, ClaudeProvider, ClaudeProviderConfig,
@@ -115,6 +116,19 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         bridge_env: claude_bridge_env,
     }));
 
+    let acp_provider = Arc::new(AcpProvider::new(AcpProviderConfig {
+        enabled: config.providers.acp.enabled,
+        provider_dir: config.resolve_provider_dir("acp"),
+        max_instances: config.providers.acp.max_instances,
+        max_sessions_per_instance: config.providers.acp.max_sessions_per_instance,
+        command: config.providers.acp.command.clone(),
+        args: config.providers.acp.args.clone(),
+        env: config.providers.acp.env.clone(),
+        transport: config.providers.acp.transport.clone(),
+        request_timeout_secs: config.providers.acp.request_timeout_secs,
+        wait_timeout_secs: config.providers.acp.wait_timeout_secs,
+    }));
+
     let mut provider_registry = ProviderRegistry::new();
     if config.providers.codex.enabled {
         provider_registry
@@ -125,6 +139,11 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         provider_registry
             .register(claude_provider)
             .context("failed to register claude provider")?;
+    }
+    if config.providers.acp.enabled {
+        provider_registry
+            .register(acp_provider)
+            .context("failed to register acp provider")?;
     }
 
     let provider_registry = Arc::new(provider_registry);
@@ -284,6 +303,7 @@ mod tests {
         config.data.root_dir = temp_dir.path().to_path_buf();
         config.providers.codex.enabled = false;
         config.providers.claude.enabled = false;
+        config.providers.acp.enabled = false;
 
         let result = bootstrap_runtime(config).await;
         assert!(result.is_err(), "bootstrap should fail");
@@ -296,9 +316,27 @@ mod tests {
         config.data.root_dir = temp_dir.path().to_path_buf();
         config.providers.codex.enabled = true;
         config.providers.claude.enabled = false;
+        config.providers.acp.enabled = false;
 
         let runtime = bootstrap_runtime(config).await.expect("bootstrap");
         assert_eq!(runtime.app.provider_registry.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_registers_only_acp_when_enabled_alone() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = temp_dir.path().to_path_buf();
+        config.providers.codex.enabled = false;
+        config.providers.claude.enabled = false;
+        config.providers.acp.enabled = true;
+
+        let runtime = bootstrap_runtime(config).await.expect("bootstrap");
+        assert_eq!(runtime.app.provider_registry.len(), 1);
+        let providers = runtime.app.provider_registry.metadata();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].kind.as_str(), "acp");
+        assert!(providers[0].enabled);
     }
 
     #[tokio::test]
@@ -421,5 +459,33 @@ mod tests {
         assert!(args.is_empty());
         assert!(!command.ends_with("src/main.ts"));
         assert!(!command.contains("CARGO_MANIFEST_DIR"));
+    }
+
+    #[tokio::test]
+    async fn bootstrap_wires_acp_provider_config_from_server_config() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = temp_dir.path().to_path_buf();
+        config.providers.codex.enabled = false;
+        config.providers.claude.enabled = false;
+        config.providers.acp.enabled = true;
+        config.providers.acp.transport = "http".to_string();
+
+        let runtime = bootstrap_runtime(config.clone()).await.expect("bootstrap");
+
+        let expected_dir = config.resolve_provider_dir("acp");
+        let status = runtime
+            .startup_recovery
+            .provider_status
+            .iter()
+            .find(|status| status.provider == "acp")
+            .expect("acp provider status");
+
+        assert!(!status.healthy);
+        assert!(status
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("transport 'http'")));
+        assert!(expected_dir.is_absolute());
     }
 }

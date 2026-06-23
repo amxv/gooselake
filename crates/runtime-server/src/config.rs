@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
@@ -217,6 +218,7 @@ impl Default for DataConfig {
 pub struct ProvidersConfig {
     pub codex: ProviderConfig,
     pub claude: ProviderConfig,
+    pub acp: AcpServerProviderConfig,
     pub claude_auth_mode: String,
 }
 
@@ -233,6 +235,7 @@ impl Default for ProvidersConfig {
                 max_instances: 4,
                 max_sessions_per_instance: 4,
             },
+            acp: AcpServerProviderConfig::default(),
             claude_auth_mode: "host_machine".to_string(),
         }
     }
@@ -252,6 +255,36 @@ impl Default for ProviderConfig {
             enabled: true,
             max_instances: 1,
             max_sessions_per_instance: 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AcpServerProviderConfig {
+    pub enabled: bool,
+    pub max_instances: usize,
+    pub max_sessions_per_instance: usize,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub transport: String,
+    pub request_timeout_secs: u64,
+    pub wait_timeout_secs: u64,
+}
+
+impl Default for AcpServerProviderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_instances: 4,
+            max_sessions_per_instance: 4,
+            command: None,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            transport: "stdio".to_string(),
+            request_timeout_secs: 30,
+            wait_timeout_secs: 300,
         }
     }
 }
@@ -356,6 +389,10 @@ mod tests {
         assert_eq!(config.events.live_queue_capacity, 4096);
         assert!(config.providers.codex.enabled);
         assert!(config.providers.claude.enabled);
+        assert!(!config.providers.acp.enabled);
+        assert_eq!(config.providers.acp.transport, "stdio");
+        assert_eq!(config.providers.acp.request_timeout_secs, 30);
+        assert_eq!(config.providers.acp.wait_timeout_secs, 300);
         assert_eq!(config.providers.claude_auth_mode, "host_machine");
         assert_eq!(config.processes.max_concurrent, 32);
         assert!(config.worktrees.enabled);
@@ -409,6 +446,16 @@ mod tests {
     }
 
     #[test]
+    fn resolve_provider_dir_supports_acp() {
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = PathBuf::from("tmp/runtime-relative-root");
+
+        let resolved_provider_dir = config.resolve_provider_dir("acp");
+        assert!(resolved_provider_dir.is_absolute());
+        assert!(resolved_provider_dir.ends_with("providers/acp"));
+    }
+
+    #[test]
     fn resolve_relative_paths_from_config_file_directory() {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let config_path = temp_dir.path().join("runtime-server.toml");
@@ -429,6 +476,14 @@ root_dir = ".gg-runtime"
         assert_eq!(
             config.resolve_worktree_root(),
             temp_dir.path().join(".gg-runtime").join("worktrees")
+        );
+        assert_eq!(
+            config.resolve_provider_dir("acp"),
+            temp_dir
+                .path()
+                .join(".gg-runtime")
+                .join("providers")
+                .join("acp")
         );
     }
 }

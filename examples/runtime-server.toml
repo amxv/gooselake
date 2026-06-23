@@ -24,6 +24,20 @@ enabled = true
 max_instances = 4
 max_sessions_per_instance = 4
 
+[providers.acp]
+# Disabled by default until an ACP agent command is configured.
+enabled = false
+max_instances = 4
+max_sessions_per_instance = 4
+# command = "/absolute/path/to/your-acp-agent"
+# args = ["serve", "--stdio"]
+transport = "stdio"
+request_timeout_secs = 30
+wait_timeout_secs = 300
+
+[providers.acp.env]
+# EXAMPLE_ENV = "value"
+
 # Claude auth mode:
 # - "host_machine" (default): use host credentials from machine login flow (`claude login`)
 # - "runtime_managed": use runtime-managed credential/config paths by default

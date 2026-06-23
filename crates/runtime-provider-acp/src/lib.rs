@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -9,11 +10,21 @@ use runtime_core::{
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_PROVIDER_DIR: &str = ".gg-runtime/providers/acp";
+const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_WAIT_TIMEOUT_SECS: u64 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcpProviderConfig {
     pub enabled: bool,
     pub provider_dir: PathBuf,
+    pub max_instances: usize,
+    pub max_sessions_per_instance: usize,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub transport: String,
+    pub request_timeout_secs: u64,
+    pub wait_timeout_secs: u64,
 }
 
 impl Default for AcpProviderConfig {
@@ -21,6 +32,14 @@ impl Default for AcpProviderConfig {
         Self {
             enabled: false,
             provider_dir: PathBuf::from(DEFAULT_PROVIDER_DIR),
+            max_instances: 4,
+            max_sessions_per_instance: 4,
+            command: None,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            transport: "stdio".to_string(),
+            request_timeout_secs: DEFAULT_REQUEST_TIMEOUT_SECS,
+            wait_timeout_secs: DEFAULT_WAIT_TIMEOUT_SECS,
         }
     }
 }
@@ -51,12 +70,46 @@ impl AcpProvider {
         self.inner.config.provider_dir.as_path()
     }
 
+    pub fn config(&self) -> &AcpProviderConfig {
+        &self.inner.config
+    }
+
     fn runtime_subdirs(&self) -> [PathBuf; 3] {
         [
             self.provider_dir().to_path_buf(),
             self.provider_dir().join("instances"),
             self.provider_dir().join("sessions"),
         ]
+    }
+
+    fn validate_config(&self) -> Result<(), RuntimeError> {
+        if self.inner.config.transport.trim() != "stdio" {
+            return Err(RuntimeError::Configuration(format!(
+                "acp transport '{}' is unsupported; expected stdio",
+                self.inner.config.transport
+            )));
+        }
+        if self.inner.config.max_instances == 0 {
+            return Err(RuntimeError::Configuration(
+                "acp max_instances must be greater than zero".to_string(),
+            ));
+        }
+        if self.inner.config.max_sessions_per_instance == 0 {
+            return Err(RuntimeError::Configuration(
+                "acp max_sessions_per_instance must be greater than zero".to_string(),
+            ));
+        }
+        if self.inner.config.request_timeout_secs == 0 {
+            return Err(RuntimeError::Configuration(
+                "acp request_timeout_secs must be greater than zero".to_string(),
+            ));
+        }
+        if self.inner.config.wait_timeout_secs == 0 {
+            return Err(RuntimeError::Configuration(
+                "acp wait_timeout_secs must be greater than zero".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -78,6 +131,7 @@ impl RuntimeProvider for AcpProvider {
         if !self.inner.config.enabled {
             return Err(RuntimeError::Bootstrap("acp provider disabled".to_string()));
         }
+        self.validate_config()?;
 
         for dir in self.runtime_subdirs() {
             tokio::fs::create_dir_all(&dir).await.map_err(|error| {
@@ -98,10 +152,15 @@ impl RuntimeProvider for AcpProvider {
     async fn auth_status(&self) -> Result<ProviderAuthStatus, RuntimeError> {
         Ok(ProviderAuthStatus {
             authenticated: false,
-            mode: Some("not_supported".to_string()),
-            detail: Some(
-                "ACP auth is not implemented yet; Phase 1 exposes only skeleton status".to_string(),
-            ),
+            mode: Some("not_configured".to_string()),
+            detail: Some(match self.inner.config.command.as_deref() {
+                Some(command) if !command.trim().is_empty() => format!(
+                    "ACP auth is not implemented yet; configured command '{}' will be used in a later phase",
+                    command.trim()
+                ),
+                _ => "ACP command is not configured yet; auth and protocol lifecycle are not implemented in this phase"
+                    .to_string(),
+            }),
         })
     }
 }
@@ -178,11 +237,41 @@ mod tests {
 
         let status = provider.auth_status().await.expect("auth status");
         assert!(!status.authenticated);
-        assert_eq!(status.mode.as_deref(), Some("not_supported"));
+        assert_eq!(status.mode.as_deref(), Some("not_configured"));
         assert!(status
             .detail
             .as_deref()
-            .is_some_and(|detail| detail.contains("not implemented yet")));
+            .is_some_and(|detail| detail.contains("not configured yet")));
+    }
+
+    #[test]
+    fn default_config_matches_phase_two_server_contract() {
+        let config = AcpProviderConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.max_instances, 4);
+        assert_eq!(config.max_sessions_per_instance, 4);
+        assert!(config.command.is_none());
+        assert_eq!(config.transport, "stdio");
+        assert_eq!(config.request_timeout_secs, 30);
+        assert_eq!(config.wait_timeout_secs, 300);
+    }
+
+    #[tokio::test]
+    async fn healthcheck_rejects_non_stdio_transport() {
+        let provider = AcpProvider::new(AcpProviderConfig {
+            enabled: true,
+            transport: "http".to_string(),
+            ..AcpProviderConfig::default()
+        });
+
+        let error = provider
+            .healthcheck()
+            .await
+            .expect_err("unsupported transport");
+        assert_eq!(
+            error.to_string(),
+            "configuration error: acp transport 'http' is unsupported; expected stdio"
+        );
     }
 
     #[tokio::test]

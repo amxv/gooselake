@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## Project Working Directory
+
+The canonical working directory for this repo is:
+- `~/code/amxv/gg-agent-runtime`
+
+For future team agents, attach/use this project path as the working directory unless the user explicitly provides a different worktree or path.
+
 ## API Docs Sync Expectations
 
 When you touch runtime API behavior, treat docs as part of the same change.

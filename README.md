@@ -2,15 +2,11 @@
 
 gooselake is an air traffic control tower for machine agents, not a chat widget with ambition problems.
 
-That line sounds a little rude, but it is also the cleanest way to explain the repo.
+That line is a little rude, but it is also the cleanest way to explain the repo.
 
-Most agent products start with the wrong center of gravity.
+Most agent products start with the wrong center of gravity: the UI.
 
-They start in the UI.
-
-You wire a provider into a frontend, stream a few tokens, add a tool or two, and it feels like progress.
-
-For a while, it is.
+You wire a provider into a frontend, stream a few tokens, add a tool or two, and it feels like progress, at least for a while.
 
 Most agent products start the same way:
 

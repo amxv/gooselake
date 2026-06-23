@@ -39,7 +39,6 @@ gooselake skips the accident.
 
 That is the moment this project becomes relevant.
 
-`gg-runtime-server` exists for that moment.
 
 It is a standalone runtime you can deploy on a laptop, a VPS, or a dedicated machine, then drive from any frontend over HTTP and SSE.
 

@@ -292,24 +292,39 @@ p {
   color: var(--ink);
 }
 
-.docs-teaser__grid {
+.docs-teaser__grid,
+.docs-index__cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 2rem;
 }
 
-.docs-teaser__card {
+.docs-index__group {
+  margin-top: 3rem;
+  margin-bottom: 3rem;
+}
+
+.docs-index__group-head {
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.5rem;
+}
+
+.docs-teaser__card,
+.docs-index__card {
   padding: 2rem;
   border: 1px solid var(--line);
   border-radius: 4px;
   display: block;
 }
 
-.docs-teaser__card:hover {
+.docs-teaser__card:hover,
+.docs-index__card:hover {
   background: #f9f9f9;
 }
 
-.docs-teaser__card span {
+.docs-teaser__card span,
+.docs-index__card span {
   display: block;
   font-size: 0.75rem;
   color: var(--muted);
@@ -318,12 +333,20 @@ p {
   margin-bottom: 1rem;
 }
 
-.docs-teaser__card h3 {
-  font-size: 1.25rem;
+.docs-index__card span {
+  margin-top: 1.5rem;
+  margin-bottom: 0;
+  color: var(--ink);
+}
+
+.docs-teaser__card h3,
+.docs-index__card h2 {
+  font-size: 1.125rem;
   margin-bottom: 0.5rem;
 }
 
-.docs-teaser__card p {
+.docs-teaser__card p,
+.docs-index__card p {
   color: var(--muted);
   font-size: 0.95rem;
 }
@@ -506,6 +529,7 @@ p {
   .proof-grid,
   .capability-band__grid,
   .docs-teaser__grid,
+  .docs-index__cards,
   .site-footer__inner {
     grid-template-columns: 1fr;
     gap: 2rem;

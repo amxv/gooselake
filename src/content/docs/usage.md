@@ -1,51 +1,73 @@
 ---
 title: Usage model
-description: Learn how frontends, operators, and runtime APIs fit together in daily use.
+description: Learn how clients, operators, and provider sessions interact with the runtime during daily use.
 order: 3
 category: Core Concepts
 summary: A practical view of how consumers talk to the runtime and what the runtime is expected to own.
 ---
 
-## The thin-client pattern
+## Thin clients
 
-The healthiest way to use Gooselake is to keep clients deliberately thin.
+A healthy Gooselake client focuses on:
 
-A client should focus on:
+- listing sessions
+- creating turns
+- rendering event streams
+- showing approvals
+- displaying process logs and worktree state
+- surfacing provider diagnostics
 
-- presenting session state
-- initiating turns
-- rendering stream updates
-- surfacing approvals and operator controls
+The client should not own the truth of whether a turn is running, which worktree is claimed, or whether a team message was delivered. Those are runtime records.
 
-The runtime should own the behavior that must remain true even when the client disconnects.
+## HTTP for commands, SSE for flow
 
-## HTTP for control, SSE for flow
+Use HTTP for explicit actions:
 
-Gooselake exposes HTTP endpoints for command and control, with SSE for the event stream that clients consume in real time.
+- create a session
+- send a turn
+- respond to an approval
+- start or kill a process
+- create or release a worktree
+- send a team message
 
-That combination gives you:
+Use SSE for state flow:
 
-- explicit request boundaries
-- low-friction stream consumption
-- reconnectable delivery
-- a clean separation between control messages and event playback
+- global event timeline
+- session events
+- team events
+- process events
 
-## A practical frontend stance
+This keeps command boundaries clear while making reconnects simple.
 
-When building on top of the runtime, prefer this question:
+## Provider readiness before product work
 
-> Can the UI disappear right now without corrupting the session’s truth?
+Before building a UI feature around a provider, check readiness:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers"
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/diagnostics/providers"
+```
+
+A provider that is registered but unauthenticated is a setup problem, not a frontend state problem.
+
+## The frontend question
+
+Ask this when adding client logic:
+
+> Can the UI disappear right now without corrupting the session's truth?
 
 If the answer is no, too much orchestration has leaked into the client.
 
-## Good uses of the runtime
+## Good usage
 
-- A desktop client that launches and observes turns against the same host over time.
-- A web app that reconnects to a live session and can replay missing events.
-- An internal operator console that needs to inspect agent state without reimplementing provider integrations.
+- A desktop app that reconnects to the same machine-side session after restart.
+- A web UI that renders replayed events before showing live output.
+- An ops console that inspects provider, process, worktree, and recovery diagnostics.
+- A multi-agent surface that renders delivery records instead of pretending messages are instant.
 
-## Bad uses of the runtime
+## Bad usage
 
-- Treating it like a token proxy while session truth still lives in React state.
-- Hiding long-running machine operations behind a frontend lifecycle.
-- Building one-off provider logic in the UI and using the runtime only for whatever is convenient that day.
+- Treating the runtime as a token proxy while state lives in React.
+- Hiding long-running host work behind a browser lifecycle.
+- Building provider-specific session semantics into every client.
+- Recreating team delivery state in local UI stores.

@@ -1,18 +1,16 @@
 ---
 title: Core concepts
-description: Understand the runtime boundary, the event model, and the relationship between clients, providers, and the host machine.
+description: Understand the runtime boundary, event model, provider abstraction, and host-owned execution model.
 order: 2
 category: Core Concepts
-summary: The mental model for why the runtime exists and where its responsibilities begin and end.
+summary: The mental model for why the runtime exists and which responsibilities belong inside it.
 ---
 
 ## The central boundary
 
-The important system boundary is not between your client and a model provider.
+The important boundary is not between a React component and a model provider. It is between a client and the runtime.
 
-It is between your client and the runtime.
-
-Once that boundary is real, the frontend stops owning concerns it is bad at carrying:
+Once that boundary is real, clients stop owning concerns they are bad at carrying:
 
 - provider auth staging
 - stream lifetime
@@ -20,44 +18,51 @@ Once that boundary is real, the frontend stops owning concerns it is bad at carr
 - process lifetime
 - worktree and filesystem control
 - recovery after disconnects
+- team message delivery state
 
-## Clients are remote controls
+The client renders and controls. The runtime remembers and executes.
 
-A browser, desktop UI, CLI, or ops console should all be able to speak to the same runtime contract. They are different cockpits, not different engines.
+## Sessions are runtime objects
 
-This makes the UI replaceable and lets agent behavior survive client churn.
+A session is a durable runtime record with a provider, status, model, cwd, metadata, provider refs, active turn, optional worktree, and timestamps.
+
+Provider sessions can disappear or change shape. The runtime session ID remains the API identity that clients should use.
+
+## Turns are asynchronous
+
+Sending a turn accepts work and returns a runtime turn ID. Terminal output arrives later through stored records and events. That distinction is why SSE matters: the request starts the work; the stream explains what happened.
+
+## Events are receipts
+
+Runtime events are stored in SQLite and scoped by session, team, process, worktree, or system. They are replayable before live streaming starts.
+
+That gives clients a simple reconnect strategy:
+
+1. remember the last event sequence seen
+2. reconnect with `after_seq`
+3. replay missed events
+4. continue live
 
 ## Providers are adapters
 
-Gooselake supports multiple provider backends, but the product architecture should not be rewritten every time a provider adds a feature or changes a transport detail.
+Codex, Claude, and ACP have different transports, auth assumptions, model catalogs, and turn semantics. Gooselake normalizes them behind one provider contract for sessions, turns, approvals, interrupts, close, and terminal results.
 
-The runtime absorbs those differences and exposes a stable operating model for:
+The UI should not become a switch statement for every provider quirk.
 
-- sessions
-- turns
-- approvals
-- streamed assistant output
-- recovery and replay
+## Host work is first-class
 
-## Events are durable receipts
+The runtime is designed for agents that operate on the host machine:
 
-When sessions are persisted and streamed from the runtime, the system can explain what happened:
+- spawning background processes
+- writing logs
+- claiming git worktrees
+- using repo cwd values
+- routing MCP tools back into runtime services
 
-- which turn started
-- which output was emitted
-- whether a tool ran
-- what delivery state a team message reached
-- what the operator needs to replay or inspect later
+If the host is where the work happens, the host is where durable control should live.
 
-That is a major difference from frontend state that quietly disappears when the tab reloads.
+## Teams are transport, not roleplay
 
-## Machine-side work is first-class
+Gooselake models team communication as records and deliveries. Messages have senders, recipients, priority, policy, image paths, correlation IDs, idempotency keys, delivery state, retries, cancellation, and replayable events.
 
-The runtime is designed for agents that operate on the machine itself. That includes:
-
-- filesystem mutations
-- process management
-- worktree allocation
-- tool routing through MCP sidecars
-
-If the host is where the work occurs, the host is where the control plane should live.
+That turns multi-agent coordination into inspectable runtime behavior rather than hidden prompt glue.

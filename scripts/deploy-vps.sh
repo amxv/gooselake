@@ -130,7 +130,7 @@ run_systemctl() {
 
 if [[ "${SKIP_UPGRADE}" -eq 0 ]]; then
   echo "[1/6] Activating release ${VERSION}"
-  GG_RUNTIME_REPO="${GG_RUNTIME_REPO:-amxv/gg-agent-runtime}" \
+  GG_RUNTIME_REPO="${GG_RUNTIME_REPO:-amxv/gooselake}" \
   GG_RUNTIME_RELEASES_ROOT="${RELEASES_ROOT}" \
   "${UPGRADE_SCRIPT}" "${VERSION}"
 else

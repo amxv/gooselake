@@ -1,7 +1,8 @@
 export const docCategories = [
   "Start Here",
   "Core Concepts",
-  "Operator Workflows"
+  "Operator Workflows",
+  "Reference"
 ] as const;
 
 export const primaryNav = [

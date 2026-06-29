@@ -6,29 +6,46 @@ category: Operator Workflows
 summary: Where to look in the repo when you need code, API behavior, deployment assets, or deeper operational detail.
 ---
 
-## The code layout
+## Code layout
 
-The repository is organized around the runtime and its sidecars:
+- `crates/runtime-core` defines provider contracts, runtime records, session orchestration, and team comms.
+- `crates/runtime-server` owns config, bootstrap, HTTP/SSE routes, diagnostics, and OpenAPI generation.
+- `crates/runtime-store-sqlite` persists runtime records.
+- `crates/runtime-provider-*` implement provider adapters.
+- `crates/runtime-tools` implements process, worktree, MCP gateway, and spawn services.
+- `sidecars/claude-bridge` isolates Claude SDK/CLI behavior.
+- `sidecars/gg-mcp-server` exposes MCP tools that call back into the runtime gateway.
+- `docs` is the detailed operator and contributor manual.
+- `src/content/docs` is the docs website content.
 
-- `crates/` contains the core runtime, providers, storage layers, and server.
-- `sidecars/` contains companion integrations such as the MCP server and Claude bridge.
-- `docs/` contains deeper engineering and operator documentation.
-- `openapi/` contains the generated runtime OpenAPI artifact.
-- `deploy/` contains systemd and deployment scaffolding.
+## High-value docs
 
-## High-value docs already in the repo
+- `docs/INSTALL.md` for local install and release install.
+- `docs/CONFIGURATION.md` for every config section and environment override.
+- `docs/PROVIDERS.md` for Codex, Claude, and ACP setup.
+- `docs/API.md` and `docs/API_ENDPOINTS.md` for HTTP/SSE usage.
+- `docs/OPERATIONS.md` for health checks, recovery, process/worktree/team runbooks.
+- `docs/ARCHITECTURE.md` for internal structure.
+- `docs/MCP_AND_SIDECARS.md` for bridge and MCP boundaries.
 
-Once you are past first-contact onboarding, these repo docs matter most:
+## Implementation reading order
 
-- `docs/INSTALL.md` for install and local run details
-- `docs/DEPLOYMENT.md` for VPS and service deployment
-- `docs/API.md` and `docs/API_ENDPOINTS.md` for runtime surface area
-- `docs/ARCHITECTURE.md` for internal structure and reasoning
+1. Start at `crates/runtime-server/src/bootstrap.rs` to see how the app is composed.
+2. Read `crates/runtime-core/src/provider.rs` for the provider contract.
+3. Read `crates/runtime-core/src/runtime.rs` for session/turn orchestration.
+4. Read `crates/runtime-core/src/team_comms.rs` for team message delivery behavior.
+5. Read `crates/runtime-tools/src/lib.rs` for processes, worktrees, and spawn flows.
+6. Read the provider crate you are changing.
+7. Read `crates/runtime-server/src/http.rs` for API shape.
 
-## Suggested reading order
+## API change rule
 
-1. Start with the site pages in this docs area.
-2. Move to the repo docs for the specific operating concern you have.
-3. Read the relevant crate or sidecar source once you are changing behavior.
+When route behavior changes, update code, OpenAPI, and human docs together:
 
-That sequence keeps orientation lightweight without leaving engineers shallow when they need exact behavior.
+```bash
+make api-docs-refresh
+make api-docs-status
+make api-docs-check
+```
+
+OpenAPI alone is not enough because many JSON schemas are intentionally broad today.

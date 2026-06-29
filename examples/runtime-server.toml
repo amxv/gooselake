@@ -14,6 +14,12 @@ sqlite_path = "runtime.sqlite3"
 logs_dir = "logs"
 providers_dir = "providers"
 
+[providers]
+# Claude auth mode:
+# - "host_machine" (default): use host credentials from machine login flow (`claude login`)
+# - "runtime_managed": use runtime-managed credential/config paths by default
+claude_auth_mode = "host_machine"
+
 [providers.codex]
 enabled = true
 max_instances = 4
@@ -39,11 +45,6 @@ wait_timeout_secs = 300
 [providers.acp.env]
 # ACP auth is agent-managed in v1. Put any agent-specific env vars here.
 # EXAMPLE_ENV = "value"
-
-# Claude auth mode:
-# - "host_machine" (default): use host credentials from machine login flow (`claude login`)
-# - "runtime_managed": use runtime-managed credential/config paths by default
-claude_auth_mode = "host_machine"
 
 [events]
 live_queue_capacity = 4096

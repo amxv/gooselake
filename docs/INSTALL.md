@@ -25,7 +25,7 @@ make install
 Or run directly from GitHub without cloning:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/amxv/gg-agent-runtime/main/scripts/install-runtime.sh | \
+curl -fsSL https://raw.githubusercontent.com/amxv/gooselake/main/scripts/install-runtime.sh | \
   bash -s -- latest
 ```
 
@@ -35,7 +35,7 @@ Install a pinned version:
 make install VERSION=v0.1.2
 ```
 
-Only set `GG_RUNTIME_REPO` if you want to install from a fork or alternate repo:
+Only set `GG_RUNTIME_REPO` if you want to install from a fork or alternate repo. The default repo is `amxv/gooselake`:
 
 ```bash
 GG_RUNTIME_REPO=owner/repo make install
@@ -147,3 +147,9 @@ This allows starting `gg-runtime-server` without additional bridge path override
 Release packaging note:
 - the first ACP landing does not ship an ACP sidecar binary in the release bundle
 - ACP runs the configured external agent command directly over stdio
+
+## Related references
+
+- [Configuration Reference](./CONFIGURATION.md)
+- [Provider Guide](./PROVIDERS.md)
+- [Operations Runbook](./OPERATIONS.md)

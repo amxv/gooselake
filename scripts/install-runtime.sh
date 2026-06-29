@@ -13,7 +13,7 @@ Arguments:
 
 Environment:
   GG_RUNTIME_REPO          GitHub repo in owner/name form.
-                           Default: amxv/gg-agent-runtime.
+                           Default: amxv/gooselake.
                            If set, overrides the default.
   GG_RUNTIME_INSTALL_ROOT  Install prefix. Default: ~/.local
 
@@ -37,7 +37,7 @@ detect_repo() {
     echo "${GG_RUNTIME_REPO}"
     return
   fi
-  echo "amxv/gg-agent-runtime"
+  echo "amxv/gooselake"
 }
 
 REPO="$(detect_repo || true)"

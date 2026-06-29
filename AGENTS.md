@@ -3,7 +3,7 @@
 ## Project Working Directory
 
 The canonical working directory for this repo is:
-- `~/code/amxv/gg-agent-runtime`
+- `~/code/amxv/gooselake`
 
 For future team agents, attach/use this project path as the working directory unless the user explicitly provides a different worktree or path.
 

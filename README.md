@@ -364,7 +364,7 @@ make install
 Or directly from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/amxv/gg-agent-runtime/main/scripts/install-runtime.sh | \
+curl -fsSL https://raw.githubusercontent.com/amxv/gooselake/main/scripts/install-runtime.sh | \
   bash -s -- latest
 ```
 
@@ -531,11 +531,17 @@ and publishes `gg-runtime-<platform>-<arch>.tar.gz` assets on `v*` tags.
 
 ## Docs
 
+- Docs index: [docs/README.md](docs/README.md)
 - Install: [docs/INSTALL.md](docs/INSTALL.md)
+- Configuration: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+- Providers: [docs/PROVIDERS.md](docs/PROVIDERS.md)
 - Deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - API: [docs/API.md](docs/API.md)
-- API Doc Sync Workflow: [docs/API_DOC_SYNC.md](docs/API_DOC_SYNC.md)
+- Endpoint catalog: [docs/API_ENDPOINTS.md](docs/API_ENDPOINTS.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- MCP and Sidecars: [docs/MCP_AND_SIDECARS.md](docs/MCP_AND_SIDECARS.md)
+- API Doc Sync Workflow: [docs/API_DOC_SYNC.md](docs/API_DOC_SYNC.md)
 - Config template: [examples/runtime-server.toml](examples/runtime-server.toml)
 
 ## Status

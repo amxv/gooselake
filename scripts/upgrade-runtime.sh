@@ -13,7 +13,7 @@ Arguments:
 
 Environment:
   GG_RUNTIME_REPO            GitHub repo in owner/name form.
-                             Default: amxv/gg-agent-runtime.
+                             Default: amxv/gooselake.
   GG_RUNTIME_RELEASES_ROOT   Root directory for staged releases.
                              Default: ~/.local/share/gg-runtime
   GG_RUNTIME_SYSTEMD_SERVICE Optional systemd service name to restart
@@ -33,7 +33,7 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 VERSION="${1:-latest}"
-REPO="${GG_RUNTIME_REPO:-amxv/gg-agent-runtime}"
+REPO="${GG_RUNTIME_REPO:-amxv/gooselake}"
 RELEASES_ROOT="${GG_RUNTIME_RELEASES_ROOT:-${HOME}/.local/share/gg-runtime}"
 RELEASES_DIR="${RELEASES_ROOT}/releases"
 CURRENT_LINK="${RELEASES_ROOT}/current"

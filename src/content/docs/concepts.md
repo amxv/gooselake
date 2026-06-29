@@ -1,7 +1,7 @@
 ---
 title: Core concepts
 description: Understand the runtime boundary, event model, provider abstraction, and host-owned execution model.
-order: 2
+order: 3
 category: Core Concepts
 summary: The mental model for why the runtime exists and which responsibilities belong inside it.
 ---

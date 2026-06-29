@@ -12,9 +12,10 @@ API_SIGNAL_FILES=(
 )
 
 DOC_SIGNAL_FILES=(
-  "docs/API.md"
-  "docs/API_DOC_SYNC.md"
-  "docs/README.md"
+  "src/content/docs/api.md"
+  "src/content/docs/endpoint-catalog.md"
+  "src/content/docs/api-doc-sync.md"
+  "src/content/docs/overview.md"
   "README.md"
 )
 
@@ -35,7 +36,7 @@ run_refresh() {
     cargo run -p runtime-server --bin gg-runtime-server -- --write-openapi "${OPENAPI_ARTIFACT_PATH}"
   )
   echo "Regenerated ${OPENAPI_ARTIFACT_REL}"
-  echo "Next: run './scripts/api-doc-sync.sh status' and update docs if needed."
+  echo "Next: run './scripts/api-doc-sync.sh status' and update src/content/docs if needed."
 }
 
 show_status() {
@@ -70,7 +71,7 @@ run_check() {
   if [[ -z "${docs_changed}" ]]; then
     echo "API-signal files changed, but no docs-signal files changed."
     echo "Run: make api-docs-refresh"
-    echo "Then update docs/API.md (and docs index links if needed)."
+    echo "Then update src/content/docs/api.md (and docs index links if needed)."
     return 1
   fi
 

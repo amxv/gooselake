@@ -1,4 +1,10 @@
-# Architecture
+---
+title: "Architecture"
+description: "Understand the runtime control-plane boundary, core crates, provider adapters, sidecars, persistence, events, and recovery model."
+order: 7
+category: "Core Concepts"
+summary: "A deeper system map for contributors and operators."
+---
 
 Gooselake is a host-side control plane for machine agents. The core architectural decision is that clients talk to the runtime, not directly to provider CLIs or provider SDKs.
 
@@ -235,7 +241,7 @@ Sidecars are integration boundaries, not separate sources of truth.
 - GG MCP server exposes tools to providers, then calls back into the runtime gateway.
 - ACP does not ship a runtime-owned sidecar; the configured ACP command is launched directly over stdio.
 
-For details, see [MCP and Sidecars](./MCP_AND_SIDECARS.md).
+For details, see [MCP and Sidecars](/docs/mcp-and-sidecars).
 
 ## API server
 

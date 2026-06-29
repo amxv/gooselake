@@ -1,10 +1,16 @@
-# Endpoint Catalog
+---
+title: "Endpoint catalog"
+description: "Browse the implemented runtime HTTP and SSE route surface, including public routes, bearer-protected routes, and provider-specific endpoints."
+order: 11
+category: "Reference"
+summary: "A route-by-route catalog derived from the current server implementation."
+---
 
 This catalog tracks the currently implemented HTTP/SSE surface from runtime code.
 
 Source references:
-- [`crates/runtime-server/src/http.rs`](../crates/runtime-server/src/http.rs)
-- [`openapi/runtime-server-openapi.yaml`](../openapi/runtime-server-openapi.yaml)
+- [`crates/runtime-server/src/http.rs`](https://github.com/amxv/gooselake/blob/main/crates/runtime-server/src/http.rs)
+- [`openapi/runtime-server-openapi.yaml`](https://github.com/amxv/gooselake/blob/main/openapi/runtime-server-openapi.yaml)
 
 Auth legend:
 - `Public`: no bearer token

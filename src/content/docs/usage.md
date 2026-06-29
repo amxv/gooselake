@@ -1,7 +1,7 @@
 ---
 title: Usage model
 description: Learn how clients, operators, and provider sessions interact with the runtime during daily use.
-order: 3
+order: 4
 category: Core Concepts
 summary: A practical view of how consumers talk to the runtime and what the runtime is expected to own.
 ---

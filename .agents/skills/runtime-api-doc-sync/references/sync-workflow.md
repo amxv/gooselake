@@ -14,12 +14,13 @@ API-signal files:
 - `openapi/runtime-server-openapi.yaml`
 
 Docs-signal files:
-- `docs/API.md`
-- `docs/API_DOC_SYNC.md`
-- `docs/README.md`
+- `src/content/docs/api.md`
+- `src/content/docs/endpoint-catalog.md`
+- `src/content/docs/api-doc-sync.md`
+- `src/content/docs/overview.md`
 - `README.md`
 
 ## Guardrail
 
 OpenAPI generation is intentionally broad for many request/response payloads (`JsonObject`).
-When behavior changes are not fully reflected in the schema snapshot, still update narrative docs in `docs/API.md`.
+When behavior changes are not fully reflected in the schema snapshot, still update narrative docs in `src/content/docs/api.md`.

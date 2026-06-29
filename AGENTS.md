@@ -19,7 +19,7 @@ API-impacting edits include (at minimum):
 When any of these change:
 1. Run `make api-docs-refresh` to regenerate the OpenAPI artifact.
 2. Review API/doc deltas with `make api-docs-status`.
-3. Update docs under `docs/` (usually `docs/API.md`, and docs index links if needed).
+3. Update the Astro docs source under `src/content/docs/` (usually `src/content/docs/api.md`, and docs index links if needed).
 4. Run `make api-docs-check` before finishing.
 
 ## Skill For API Doc Sync
@@ -34,4 +34,4 @@ Invoke it explicitly in prompts when doing API work, for example:
 
 The generated OpenAPI in this repo intentionally uses broad `JsonObject` schemas for much of the surface.
 Do not assume the OpenAPI artifact fully captures every request/response nuance.
-When runtime behavior changes but schema breadth hides it, update narrative docs in `docs/API.md` anyway.
+When runtime behavior changes but schema breadth hides it, update narrative docs in `src/content/docs/api.md` anyway.

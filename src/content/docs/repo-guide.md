@@ -1,7 +1,7 @@
 ---
 title: Repo guide
 description: Use the repository layout and existing docs to move from orientation into implementation and operations.
-order: 5
+order: 6
 category: Operator Workflows
 summary: Where to look in the repo when you need code, API behavior, deployment assets, or deeper operational detail.
 ---
@@ -15,18 +15,17 @@ summary: Where to look in the repo when you need code, API behavior, deployment 
 - `crates/runtime-tools` implements process, worktree, MCP gateway, and spawn services.
 - `sidecars/claude-bridge` isolates Claude SDK/CLI behavior.
 - `sidecars/gg-mcp-server` exposes MCP tools that call back into the runtime gateway.
-- `docs` is the detailed operator and contributor manual.
-- `src/content/docs` is the docs website content.
+- `src/content/docs` is the canonical docs source for the Astro website and release-bundle Markdown docs.
 
 ## High-value docs
 
-- `docs/INSTALL.md` for local install and release install.
-- `docs/CONFIGURATION.md` for every config section and environment override.
-- `docs/PROVIDERS.md` for Codex, Claude, and ACP setup.
-- `docs/API.md` and `docs/API_ENDPOINTS.md` for HTTP/SSE usage.
-- `docs/OPERATIONS.md` for health checks, recovery, process/worktree/team runbooks.
-- `docs/ARCHITECTURE.md` for internal structure.
-- `docs/MCP_AND_SIDECARS.md` for bridge and MCP boundaries.
+- [Install](/docs/install) for local install and release install.
+- [Configuration](/docs/configuration) for every config section and environment override.
+- [Providers](/docs/providers) for Codex, Claude, and ACP setup.
+- [API guide](/docs/api) and [Endpoint catalog](/docs/endpoint-catalog) for HTTP/SSE usage.
+- [Operations](/docs/operations) for health checks, recovery, process/worktree/team runbooks.
+- [Architecture](/docs/architecture) for internal structure.
+- [MCP and sidecars](/docs/mcp-and-sidecars) for bridge and MCP boundaries.
 
 ## Implementation reading order
 

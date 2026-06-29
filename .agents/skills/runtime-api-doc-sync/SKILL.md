@@ -1,6 +1,6 @@
 ---
 name: runtime-api-doc-sync
-description: Keep GG Runtime API documentation synchronized with route/code changes and OpenAPI artifact updates. Use when editing runtime HTTP routes, OpenAPI generation logic, or API-facing behavior so `openapi/` and `docs/` stay aligned.
+description: Keep GG Runtime API documentation synchronized with route/code changes and OpenAPI artifact updates. Use when editing runtime HTTP routes, OpenAPI generation logic, or API-facing behavior so `openapi/` and `src/content/docs/` stay aligned.
 ---
 
 # Runtime API Doc Sync
@@ -38,10 +38,12 @@ Inspect API and docs files in one place before finalizing edits.
 
 ## 4) Update narrative docs
 
-Update docs under `docs/` to reflect real behavior changes.
+Update the Astro docs source under `src/content/docs/` to reflect real behavior changes.
 At minimum, verify:
-- `docs/API.md`
-- `docs/README.md`
+- `src/content/docs/api.md`
+- `src/content/docs/endpoint-catalog.md`
+- `src/content/docs/api-doc-sync.md`
+- `src/content/docs/overview.md`
 
 If discoverability changed, also update root `README.md` docs links.
 

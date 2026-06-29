@@ -1,4 +1,10 @@
-# Deployment Guide
+---
+title: "Deployment guide"
+description: "Deploy Gooselake as a host-side service with staged releases, systemd, reverse proxies, provider auth, and upgrade/rollback paths."
+order: 14
+category: "Operator Workflows"
+summary: "The production-oriented deployment and service runbook."
+---
 
 ## Command Runner
 
@@ -13,7 +19,7 @@ make help
 
 For the current architecture, the recommended production shape is a host install rather than a container-first deployment. Keep the release bundle replaceable, keep config and state outside the release directory, bind to localhost behind a reverse proxy, and run provider login/config steps on the same host that will execute agent work.
 
-Detailed config behavior is documented in [Configuration Reference](./CONFIGURATION.md). Provider setup is documented in [Provider Guide](./PROVIDERS.md). Day-two checks are documented in [Operations Runbook](./OPERATIONS.md).
+Detailed config behavior is documented in [Configuration Reference](/docs/configuration). Provider setup is documented in [Provider Guide](/docs/providers). Day-two checks are documented in [Operations Runbook](/docs/operations).
 
 ## Deployment Modes
 

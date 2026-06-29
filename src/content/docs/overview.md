@@ -1,8 +1,14 @@
-# Gooselake documentation
+---
+title: "Documentation overview"
+description: "The full documentation map for Gooselake: setup, architecture, API, providers, operations, deployment, and release workflows."
+order: 0
+category: "Start Here"
+summary: "Use this as the canonical guide map for the runtime."
+---
 
 Gooselake is a machine-side runtime for durable agent work. It exposes HTTP control APIs, replayable SSE event streams, provider-backed sessions, process/worktree services, team communication, and MCP sidecar plumbing from one host-owned control plane.
 
-Use this directory as the operating manual for the runtime. The website under `src/content/docs/` is the guided front door; these Markdown files are the deeper source-controlled reference.
+Use this Astro docs collection as the operating manual for the runtime. `src/content/docs/` is the single source of truth for both the docs website and the release-bundle Markdown docs.
 
 ## Start here
 
@@ -31,23 +37,23 @@ make help
 
 ### New operator
 
-1. [Install Guide](./INSTALL.md)
-2. [Configuration Reference](./CONFIGURATION.md)
-3. [Provider Guide](./PROVIDERS.md)
-4. [Operations Runbook](./OPERATIONS.md)
+1. [Install Guide](/docs/install)
+2. [Configuration Reference](/docs/configuration)
+3. [Provider Guide](/docs/providers)
+4. [Operations Runbook](/docs/operations)
 
 ### Frontend or API client builder
 
-1. [API Guide](./API.md)
-2. [Endpoint Catalog](./API_ENDPOINTS.md)
-3. [Architecture](./ARCHITECTURE.md)
-4. [MCP and Sidecars](./MCP_AND_SIDECARS.md)
+1. [API Guide](/docs/api)
+2. [Endpoint Catalog](/docs/endpoint-catalog)
+3. [Architecture](/docs/architecture)
+4. [MCP and Sidecars](/docs/mcp-and-sidecars)
 
 ### Runtime contributor
 
-1. [Architecture](./ARCHITECTURE.md)
-2. [Provider Guide](./PROVIDERS.md)
-3. [API Doc Sync Workflow](./API_DOC_SYNC.md)
+1. [Architecture](/docs/architecture)
+2. [Provider Guide](/docs/providers)
+3. [API Doc Sync Workflow](/docs/api-doc-sync)
 4. `crates/runtime-core/src/*`, `crates/runtime-server/src/http.rs`, and the provider crate you are changing.
 
 ## What the runtime owns
@@ -85,7 +91,7 @@ Gooselake is intentionally not just a token proxy. The server owns the pieces th
 
 ## API artifacts
 
-- Generated OpenAPI artifact: [`openapi/runtime-server-openapi.yaml`](../openapi/runtime-server-openapi.yaml)
+- Generated OpenAPI artifact: [`openapi/runtime-server-openapi.yaml`](https://github.com/amxv/gooselake/blob/main/openapi/runtime-server-openapi.yaml)
 - Public OpenAPI endpoint: `GET /openapi.yaml`
 - Authenticated OpenAPI endpoint: `GET /v1/openapi.yaml`
 - Sync helpers: `make api-docs-refresh`, `make api-docs-status`, `make api-docs-check`

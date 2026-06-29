@@ -1,4 +1,10 @@
-# Install Guide
+---
+title: "Install guide"
+description: "Install Gooselake from a release artifact or from source, including service files, provider CLIs, upgrades, and bundle layout."
+order: 2
+category: "Start Here"
+summary: "The complete install path for local machines and Linux hosts."
+---
 
 ## Command Runner
 
@@ -150,6 +156,6 @@ Release packaging note:
 
 ## Related references
 
-- [Configuration Reference](./CONFIGURATION.md)
-- [Provider Guide](./PROVIDERS.md)
-- [Operations Runbook](./OPERATIONS.md)
+- [Configuration Reference](/docs/configuration)
+- [Provider Guide](/docs/providers)
+- [Operations Runbook](/docs/operations)

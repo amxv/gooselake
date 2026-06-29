@@ -1,4 +1,10 @@
-# API Doc Sync Workflow
+---
+title: "API doc sync workflow"
+description: "Keep the generated OpenAPI artifact and human API docs synchronized when runtime route behavior changes."
+order: 15
+category: "Reference"
+summary: "The guardrail for API changes that need documentation changes."
+---
 
 Use this when changing runtime API behavior.
 
@@ -36,23 +42,23 @@ API-signal files:
 Docs-signal files:
 
 - `README.md`
-- `docs/README.md`
-- `docs/API.md`
-- `docs/API_ENDPOINTS.md`
-- `docs/API_DOC_SYNC.md`
-- `docs/ARCHITECTURE.md`
-- `docs/CONFIGURATION.md`
-- `docs/PROVIDERS.md`
-- `docs/OPERATIONS.md`
-- `docs/MCP_AND_SIDECARS.md`
+- `/docs/overview`
+- `/docs/api`
+- `/docs/endpoint-catalog`
+- `/docs/api-doc-sync`
+- `/docs/architecture`
+- `/docs/configuration`
+- `/docs/providers`
+- `/docs/operations`
+- `/docs/mcp-and-sidecars`
 - `src/content/docs/*.md`
 
 ## Suggested PR checklist
 
 1. Regenerate OpenAPI (`make api-docs-refresh`).
 2. Inspect API/docs diff (`make api-docs-status`).
-3. Update `docs/API.md` for route behavior changes.
-4. Update `docs/API_ENDPOINTS.md` for endpoint/query/auth changes.
+3. Update `/docs/api` for route behavior changes.
+4. Update `/docs/endpoint-catalog` for endpoint/query/auth changes.
 5. Update deeper narrative docs when behavior affects configuration, providers, architecture, MCP, or operations.
 6. Update website docs under `src/content/docs/` when user-facing onboarding changes.
 7. Run sync check (`make api-docs-check`).

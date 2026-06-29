@@ -423,7 +423,8 @@ With post-start API verification:
 make vps-deploy BASE_URL="http://127.0.0.1:8080" TOKEN="$GG_RUNTIME_TOKEN"
 ```
 
-Manual runbook and troubleshooting are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Manual runbook and troubleshooting are documented in the Astro docs source at
+[`src/content/docs/deployment.md`](src/content/docs/deployment.md).
 
 ## What A Frontend Talks To
 
@@ -531,17 +532,19 @@ and publishes `gg-runtime-<platform>-<arch>.tar.gz` assets on `v*` tags.
 
 ## Docs
 
-- Docs index: [docs/README.md](docs/README.md)
-- Install: [docs/INSTALL.md](docs/INSTALL.md)
-- Configuration: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
-- Providers: [docs/PROVIDERS.md](docs/PROVIDERS.md)
-- Deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
-- Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
-- API: [docs/API.md](docs/API.md)
-- Endpoint catalog: [docs/API_ENDPOINTS.md](docs/API_ENDPOINTS.md)
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- MCP and Sidecars: [docs/MCP_AND_SIDECARS.md](docs/MCP_AND_SIDECARS.md)
-- API Doc Sync Workflow: [docs/API_DOC_SYNC.md](docs/API_DOC_SYNC.md)
+- Docs site source: [`src/content/docs`](src/content/docs)
+- Overview: [`src/content/docs/overview.md`](src/content/docs/overview.md)
+- Setup: [`src/content/docs/setup.md`](src/content/docs/setup.md)
+- Install: [`src/content/docs/install.md`](src/content/docs/install.md)
+- Configuration: [`src/content/docs/configuration.md`](src/content/docs/configuration.md)
+- Providers: [`src/content/docs/providers.md`](src/content/docs/providers.md)
+- Deployment: [`src/content/docs/deployment.md`](src/content/docs/deployment.md)
+- Operations: [`src/content/docs/operations.md`](src/content/docs/operations.md)
+- API guide: [`src/content/docs/api.md`](src/content/docs/api.md)
+- Endpoint catalog: [`src/content/docs/endpoint-catalog.md`](src/content/docs/endpoint-catalog.md)
+- Architecture: [`src/content/docs/architecture.md`](src/content/docs/architecture.md)
+- MCP and Sidecars: [`src/content/docs/mcp-and-sidecars.md`](src/content/docs/mcp-and-sidecars.md)
+- API Doc Sync Workflow: [`src/content/docs/api-doc-sync.md`](src/content/docs/api-doc-sync.md)
 - Config template: [examples/runtime-server.toml](examples/runtime-server.toml)
 
 ## Status

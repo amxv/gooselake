@@ -46,7 +46,7 @@ mode = "static_bearer"
 token = "replace-with-local-token"
 ```
 
-The full configuration reference lives in the repo at `docs/CONFIGURATION.md`.
+The full configuration reference lives in [Configuration](/docs/configuration).
 
 ## Login providers
 

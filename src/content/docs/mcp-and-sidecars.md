@@ -1,4 +1,10 @@
-# MCP and Sidecars
+---
+title: "MCP and sidecars"
+description: "Understand how Gooselake uses sidecar processes for Claude bridge behavior and the bundled MCP tool server."
+order: 12
+category: "Operator Workflows"
+summary: "The boundary between the core runtime, provider bridges, and MCP tools."
+---
 
 Gooselake uses sidecars to keep provider-specific and tool-protocol behavior outside the core HTTP server process.
 

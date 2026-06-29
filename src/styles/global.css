@@ -500,19 +500,25 @@ p {
 }
 
 .docs-codeblock__copy {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.82);
   cursor: pointer;
   font: inherit;
-  font-size: 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
   line-height: 1;
-  padding: 0.4rem 0.65rem;
+  padding: 0;
   transition:
     background 140ms ease,
     border-color 140ms ease,
-    color 140ms ease;
+    color 140ms ease,
+    transform 140ms ease;
 }
 
 .docs-codeblock__copy:hover,
@@ -533,7 +539,7 @@ p {
 }
 
 .docs-codeblock__fullscreen {
-  min-width: max-content;
+  font-size: 1.05rem;
 }
 
 body.has-docs-expanded-diagram {

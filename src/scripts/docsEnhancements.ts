@@ -1,4 +1,14 @@
 const COPY_RESET_MS = 1600;
+const ICON_COPY = "⧉";
+const ICON_CHECK = "✓";
+const ICON_EXPAND = "⛶";
+const ICON_CLOSE = "×";
+
+function setIconButton(button: HTMLButtonElement, icon: string, label: string) {
+  button.textContent = icon;
+  button.setAttribute("aria-label", label);
+  button.title = label;
+}
 
 function getCodeLanguage(pre: HTMLPreElement, code: HTMLElement | null) {
   const dataLanguage = pre.dataset.language;
@@ -21,7 +31,7 @@ function labelForLanguage(language: string) {
 }
 
 async function copyText(text: string, button: HTMLButtonElement) {
-  const originalLabel = button.textContent ?? "Copy";
+  const originalLabel = button.getAttribute("aria-label") ?? "Copy code block";
 
   try {
     if (navigator.clipboard?.writeText) {
@@ -38,16 +48,16 @@ async function copyText(text: string, button: HTMLButtonElement) {
       textarea.remove();
     }
 
-    button.textContent = "Copied";
+    setIconButton(button, ICON_CHECK, "Copied");
     button.classList.add("is-copied");
   } catch (error) {
     console.warn("Unable to copy code block", error);
-    button.textContent = "Failed";
+    setIconButton(button, "!", "Copy failed");
     button.classList.add("is-failed");
   }
 
   window.setTimeout(() => {
-    button.textContent = originalLabel;
+    setIconButton(button, ICON_COPY, originalLabel);
     button.classList.remove("is-copied", "is-failed");
   }, COPY_RESET_MS);
 }
@@ -64,12 +74,12 @@ function setExpandedDiagram(wrapper: HTMLElement, active: boolean) {
 function setExpandButtonState(wrapper: HTMLElement, button: HTMLButtonElement) {
   const isActive = wrapper.classList.contains("is-expanded");
 
-  button.textContent = isActive ? "Close" : "Full screen";
-  button.setAttribute("aria-pressed", String(isActive));
-  button.setAttribute(
-    "aria-label",
+  setIconButton(
+    button,
+    isActive ? ICON_CLOSE : ICON_EXPAND,
     isActive ? "Close expanded Mermaid diagram" : "Expand Mermaid diagram to full screen"
   );
+  button.setAttribute("aria-pressed", String(isActive));
 }
 
 function addDiagramExpandButton(wrapper: HTMLElement, actions: HTMLElement) {
@@ -121,8 +131,7 @@ function enhanceCodeBlocks() {
     const copyButton = document.createElement("button");
     copyButton.className = "docs-codeblock__copy";
     copyButton.type = "button";
-    copyButton.textContent = "Copy";
-    copyButton.setAttribute("aria-label", `Copy ${labelForLanguage(language)} code block`);
+    setIconButton(copyButton, ICON_COPY, `Copy ${labelForLanguage(language)} code block`);
     copyButton.addEventListener("click", () => copyText(source, copyButton));
 
     actions.append(copyButton);

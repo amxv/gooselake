@@ -52,6 +52,47 @@ async function copyText(text: string, button: HTMLButtonElement) {
   }, COPY_RESET_MS);
 }
 
+function hasExpandedDiagram() {
+  return Boolean(document.querySelector(".docs-codeblock--diagram.is-expanded"));
+}
+
+function setExpandedDiagram(wrapper: HTMLElement, active: boolean) {
+  wrapper.classList.toggle("is-expanded", active);
+  document.body.classList.toggle("has-docs-expanded-diagram", hasExpandedDiagram());
+}
+
+function setExpandButtonState(wrapper: HTMLElement, button: HTMLButtonElement) {
+  const isActive = wrapper.classList.contains("is-expanded");
+
+  button.textContent = isActive ? "Close" : "Full screen";
+  button.setAttribute("aria-pressed", String(isActive));
+  button.setAttribute(
+    "aria-label",
+    isActive ? "Close expanded Mermaid diagram" : "Expand Mermaid diagram to full screen"
+  );
+}
+
+function addDiagramExpandButton(wrapper: HTMLElement, actions: HTMLElement) {
+  const expandButton = document.createElement("button");
+  expandButton.className = "docs-codeblock__copy docs-codeblock__fullscreen";
+  expandButton.type = "button";
+  setExpandButtonState(wrapper, expandButton);
+
+  expandButton.addEventListener("click", () => {
+    setExpandedDiagram(wrapper, !wrapper.classList.contains("is-expanded"));
+    setExpandButtonState(wrapper, expandButton);
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !wrapper.classList.contains("is-expanded")) return;
+
+    setExpandedDiagram(wrapper, false);
+    setExpandButtonState(wrapper, expandButton);
+  });
+
+  actions.prepend(expandButton);
+}
+
 function enhanceCodeBlocks() {
   const blocks = document.querySelectorAll<HTMLPreElement>(".docs-copy pre:not([data-docs-enhanced])");
   const mermaidNodes: HTMLElement[] = [];
@@ -74,6 +115,9 @@ function enhanceCodeBlocks() {
     languageLabel.className = "docs-codeblock__language";
     languageLabel.textContent = labelForLanguage(language);
 
+    const actions = document.createElement("div");
+    actions.className = "docs-codeblock__actions";
+
     const copyButton = document.createElement("button");
     copyButton.className = "docs-codeblock__copy";
     copyButton.type = "button";
@@ -81,7 +125,13 @@ function enhanceCodeBlocks() {
     copyButton.setAttribute("aria-label", `Copy ${labelForLanguage(language)} code block`);
     copyButton.addEventListener("click", () => copyText(source, copyButton));
 
-    header.append(languageLabel, copyButton);
+    actions.append(copyButton);
+
+    if (isMermaid) {
+      addDiagramExpandButton(wrapper, actions);
+    }
+
+    header.append(languageLabel, actions);
     pre.before(wrapper);
     wrapper.append(header);
 

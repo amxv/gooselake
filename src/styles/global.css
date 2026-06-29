@@ -16,7 +16,7 @@
 
 html {
   scroll-behavior: smooth;
-  font-size: 16px;
+  font-size: 14px;
 }
 
 body {
@@ -148,13 +148,13 @@ p {
 }
 
 .hero h1 {
-  font-size: 3.5rem;
+  font-size: 2.75rem;
   margin-top: 1rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
 .hero__lede {
-  font-size: 1.25rem;
+  font-size: 1.125rem;
   color: var(--muted);
   max-width: 32rem;
   line-height: 1.5;
@@ -214,15 +214,15 @@ p {
 .section-heading h2,
 .split-section h2,
 .capability-band h2 {
-  font-size: 2.5rem;
-  margin-top: 0.75rem;
-  margin-bottom: 1.25rem;
+  font-size: 2rem;
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
 }
 
 .section-heading p,
 .split-section p,
 .capability-band p {
-  font-size: 1.125rem;
+  font-size: 1rem;
   color: var(--muted);
   line-height: 1.5;
 }
@@ -241,13 +241,13 @@ p {
 }
 
 .proof-card h3 {
-  font-size: 1.25rem;
-  margin-bottom: 0.75rem;
+  font-size: 1.125rem;
+  margin-bottom: 0.5rem;
 }
 
 .proof-card p {
   color: var(--muted);
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
 
 .split-section {
@@ -382,14 +382,14 @@ p {
 }
 
 .docs-hero h1 {
-  font-size: 3rem;
+  font-size: 2.25rem;
   margin-bottom: 1rem;
 }
 
 .docs-hero p {
-  font-size: 1.25rem;
+  font-size: 1.125rem;
   color: var(--muted);
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
 }
 
 .docs-copy h2,
@@ -399,13 +399,13 @@ p {
 }
 
 .docs-copy h2 {
-  font-size: 2rem;
+  font-size: 1.5rem;
   border-bottom: 1px solid var(--line);
   padding-bottom: 0.5rem;
 }
 
 .docs-copy h3 {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
 }
 
 .docs-copy p,
@@ -454,7 +454,7 @@ p {
 }
 
 .closing-note p {
-  font-size: 2rem;
+  font-size: 1.5rem;
   max-width: 40rem;
   margin: 0 auto;
   font-weight: 500;
@@ -517,11 +517,11 @@ p {
     display: none;
   }
   .hero h1 {
-    font-size: 2.5rem;
+    font-size: 2rem;
   }
   .section-heading h2,
   .split-section h2,
   .capability-band h2 {
-    font-size: 2rem;
+    font-size: 1.5rem;
   }
 }

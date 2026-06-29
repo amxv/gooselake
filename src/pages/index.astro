@@ -1,6 +1,7 @@
 ---
-import BaseLayout from "../layouts/BaseLayout.astro";
+import BaseLayout from "zuedocs/layouts/BaseLayout.astro";
 import { getCollection } from "astro:content";
+import { primaryNav, siteConfig } from "../data/docs";
 
 const docs = (await getCollection("docs")).sort((a, b) => a.data.order - b.data.order);
 
@@ -33,6 +34,8 @@ const audience = [
 <BaseLayout
   title="Gooselake | Agent runtime control tower"
   description="Gooselake is a machine-side runtime for durable agent sessions, provider abstraction, streaming control, and real execution."
+  siteConfig={siteConfig}
+  primaryNav={primaryNav}
 >
   <section class="hero shell">
     <div class="hero__copy">

@@ -1,7 +1,7 @@
 ---
 import { getCollection } from "astro:content";
-import BaseLayout from "../../layouts/BaseLayout.astro";
-import { docCategories } from "../../data/docs";
+import BaseLayout from "zuedocs/layouts/BaseLayout.astro";
+import { docCategories, primaryNav, siteConfig } from "../../data/docs";
 
 const entries = (await getCollection("docs")).sort((a, b) => a.data.order - b.data.order);
 const grouped = docCategories.map((category) => ({
@@ -13,6 +13,8 @@ const grouped = docCategories.map((category) => ({
 <BaseLayout
   title="Gooselake Docs"
   description="Read the setup, concepts, and workflows behind the Gooselake runtime."
+  siteConfig={siteConfig}
+  primaryNav={primaryNav}
 >
   <section class="shell docs-index-hero">
     <p class="section-label">Documentation</p>

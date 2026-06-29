@@ -1,0 +1,153 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { getCollection } from "astro:content";
+
+const docs = (await getCollection("docs")).sort((a, b) => a.data.order - b.data.order);
+
+const proofPoints = [
+  {
+    title: "Durable sessions",
+    body: "Persist turns and replay event history instead of forcing the frontend to guess what happened after a disconnect."
+  },
+  {
+    title: "Provider abstraction",
+    body: "Normalize Codex, Claude, and ACP behind one runtime contract so the UI does not become a museum of provider quirks."
+  },
+  {
+    title: "Machine-side execution",
+    body: "Keep processes, worktrees, filesystem actions, and MCP tool wiring on the host where they belong."
+  },
+  {
+    title: "Team coordination",
+    body: "Support multi-agent communication and delivery semantics without inventing another browser-tab-only orchestration layer."
+  }
+];
+
+const audience = [
+  "Product teams building serious agent interfaces that cannot depend on a browser tab staying alive.",
+  "Platform and infra engineers who want a reusable runtime contract instead of repeating orchestration logic in every client.",
+  "Operator-heavy workflows where agents need file access, process control, recovery, and receipts."
+];
+---
+
+<BaseLayout
+  title="Gooselake | Agent runtime control tower"
+  description="Gooselake is a machine-side runtime for durable agent sessions, provider abstraction, streaming control, and real execution."
+>
+  <section class="hero shell">
+    <div class="hero__copy">
+      <p class="section-label">Machine-side agent infrastructure</p>
+      <h1>
+        Stop treating agent orchestration like frontend garnish.
+      </h1>
+      <p class="hero__lede">
+        Gooselake is the runtime layer for agents that need to persist, recover,
+        stream, coordinate, and keep working after the client disappears. The UI
+        becomes a remote control. The runtime becomes the engine room.
+      </p>
+      <div class="hero__actions">
+        <a class="button button--solid" href="/docs/setup">Read the quick start</a>
+        <a class="button button--ghost" href="/docs">Explore the docs</a>
+      </div>
+    </div>
+    <aside class="hero__panel">
+      <p class="hero__panel-label">Why it exists</p>
+      <ul class="hero__signal-list">
+        <li>Frontend-first agent stacks quietly turn into distributed systems.</li>
+        <li>Sessions, streams, approvals, and process lifetime belong near the machine.</li>
+        <li>Provider churn should not rewrite your product architecture every quarter.</li>
+      </ul>
+      <div class="hero__terminal">
+        <span>$ control-plane</span>
+        <span>providers: codex / claude / acp</span>
+        <span>state: sqlite-backed / replayable</span>
+        <span>execution: processes / tools / worktrees</span>
+      </div>
+    </aside>
+  </section>
+
+  <section class="shell section-grid">
+    <div class="section-heading">
+      <p class="section-label">What Gooselake is</p>
+      <h2>An air traffic control tower for machine agents.</h2>
+      <p>
+        It owns the hard parts that surface once an agent stops being a demo:
+        event durability, reconnectable streams, auth staging, process lifetime,
+        machine operations, and cross-provider normalization.
+      </p>
+    </div>
+    <div class="proof-grid">
+      {proofPoints.map((item) => (
+        <article class="proof-card">
+          <h3>{item.title}</h3>
+          <p>{item.body}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="shell split-section">
+    <div>
+      <p class="section-label">Who it is for</p>
+      <h2>Teams building agent systems with operational consequences.</h2>
+    </div>
+    <div class="stack-list">
+      {audience.map((item) => (
+        <article class="stack-list__item">
+          <p>{item}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="shell capability-band">
+    <div class="capability-band__intro">
+      <p class="section-label">Core capabilities</p>
+      <h2>The runtime owns what the product will eventually depend on anyway.</h2>
+    </div>
+    <div class="capability-band__grid">
+      <div>
+        <p class="capability-title">Execution</p>
+        <p>Provider-backed turns, terminal output, approvals, and recovery paths.</p>
+      </div>
+      <div>
+        <p class="capability-title">Transport</p>
+        <p>HTTP control APIs, SSE fanout, replayable histories, and reconnect-safe clients.</p>
+      </div>
+      <div>
+        <p class="capability-title">Host operations</p>
+        <p>Processes, worktrees, filesystem actions, and MCP sidecar plumbing.</p>
+      </div>
+      <div>
+        <p class="capability-title">Coordination</p>
+        <p>Team messaging, delivery semantics, and machine-local operational boundaries.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="shell docs-teaser">
+    <div class="section-heading">
+      <p class="section-label">Docs map</p>
+      <h2>A docs area built for first contact, not just API archaeology.</h2>
+      <p>
+        Start with setup, then move through concepts and operator workflows to
+        understand how the runtime behaves once it is doing real work.
+      </p>
+    </div>
+    <div class="docs-teaser__grid">
+      {docs.map((entry) => (
+        <a class="docs-teaser__card" href={`/docs/${entry.id}`}>
+          <span>{entry.data.category}</span>
+          <h3>{entry.data.title}</h3>
+          <p>{entry.data.summary ?? entry.data.description}</p>
+        </a>
+      ))}
+    </div>
+  </section>
+  <section class="shell closing-note">
+    <p>
+      Gooselake is what you build when you stop pretending the browser is the
+      right place to host runtime truth.
+    </p>
+  </section>
+</BaseLayout>

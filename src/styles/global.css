@@ -459,6 +459,120 @@ p {
   margin: 1.5rem 0;
 }
 
+.docs-codeblock {
+  margin: 1.5rem 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ink);
+}
+
+.docs-copy .docs-codeblock pre {
+  margin: 0;
+  border-radius: 0;
+  border: 0;
+}
+
+.docs-codeblock__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  background: #151515;
+}
+
+.docs-codeblock__language {
+  color: rgba(255, 255, 255, 0.68);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.docs-codeblock__copy {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0.4rem 0.65rem;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.docs-codeblock__copy:hover,
+.docs-codeblock__copy:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.32);
+  color: #fff;
+}
+
+.docs-codeblock__copy.is-copied {
+  background: #fff;
+  color: var(--ink);
+}
+
+.docs-codeblock__copy.is-failed {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.42);
+}
+
+.docs-codeblock--diagram {
+  background: #fff;
+}
+
+.docs-codeblock--diagram .docs-codeblock__header {
+  border-bottom: 1px solid var(--line);
+  background: #f8f8f8;
+}
+
+.docs-codeblock--diagram .docs-codeblock__language {
+  color: var(--muted);
+}
+
+.docs-codeblock--diagram .docs-codeblock__copy {
+  border-color: var(--line);
+  background: #fff;
+  color: var(--muted);
+}
+
+.docs-codeblock--diagram .docs-codeblock__copy:hover,
+.docs-codeblock--diagram .docs-codeblock__copy:focus-visible,
+.docs-codeblock--diagram .docs-codeblock__copy.is-copied {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.docs-mermaid {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 1.5rem;
+}
+
+.docs-mermaid svg {
+  height: auto;
+  max-width: 100%;
+}
+
+.docs-mermaid.is-error {
+  display: block;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
 .docs-copy pre code {
   background: transparent;
   padding: 0;
@@ -469,6 +583,74 @@ p {
   padding: 1rem 1.5rem;
   border-left: 2px solid var(--ink);
   background: #f9f9f9;
+}
+
+.docs-table {
+  margin: 1.75rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.docs-table:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.docs-copy table {
+  width: 100%;
+  min-width: 36rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.docs-copy thead th {
+  background: #f7f7f7;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.docs-copy th,
+.docs-copy td {
+  padding: 0.8rem 0.95rem;
+  text-align: left;
+  vertical-align: top;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.docs-copy th:last-child,
+.docs-copy td:last-child {
+  border-right: 0;
+}
+
+.docs-copy tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.docs-copy tbody tr:nth-child(even) {
+  background: #fbfbfb;
+}
+
+.docs-copy td p,
+.docs-copy th p,
+.docs-copy td li,
+.docs-copy th li {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.docs-copy td :last-child,
+.docs-copy th :last-child {
+  margin-bottom: 0;
+}
+
+.docs-copy td code,
+.docs-copy th code {
+  white-space: nowrap;
 }
 
 .closing-note {

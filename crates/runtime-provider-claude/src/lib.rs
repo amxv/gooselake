@@ -1234,8 +1234,8 @@ impl RuntimeProvider for ClaudeProvider {
         }
         Ok(vec![
             ProviderModel {
-                id: "claude-sonnet-4-6".to_string(),
-                display_name: "Claude Sonnet 4.6".to_string(),
+                id: "claude-sonnet-5".to_string(),
+                display_name: "Claude Sonnet 5".to_string(),
             },
             ProviderModel {
                 id: "claude-opus-4-8".to_string(),
@@ -3844,7 +3844,7 @@ for raw_line in sys.stdin:
         let created = provider
             .create_session(ProviderCreateSessionRequest {
                 runtime_session_id: "sess-create".to_string(),
-                model: Some("claude-sonnet-4-6".to_string()),
+                model: Some("claude-sonnet-5".to_string()),
                 cwd: Some("/tmp/project".to_string()),
                 permission_mode: Some("default".to_string()),
                 metadata: None,
@@ -4149,7 +4149,7 @@ for raw_line in sys.stdin:
         let session = manager
             .create_session(CreateSessionInput {
                 provider: ProviderKind::Claude,
-                model: Some("claude-sonnet-4-6".to_string()),
+                model: Some("claude-sonnet-5".to_string()),
                 cwd: Some("/tmp/runtime".to_string()),
                 permission_mode: None,
                 metadata: None,
@@ -4257,7 +4257,7 @@ for raw_line in sys.stdin:
         let created = provider
             .create_session(ProviderCreateSessionRequest {
                 runtime_session_id: "smoke-claude-runtime-session".to_string(),
-                model: Some("claude-sonnet-4-6".to_string()),
+                model: Some("claude-sonnet-5".to_string()),
                 cwd: Some(
                     std::env::current_dir()
                         .expect("current dir")

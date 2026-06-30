@@ -29,7 +29,7 @@ describe('sdk runtime supported model discovery', () => {
       query: (params: { options: Record<string, unknown> }) => {
         queryCalls.push(params.options)
         return {
-          supportedModels: async () => [{ value: 'claude-sonnet-4-6' }],
+          supportedModels: async () => [{ value: 'claude-sonnet-5' }],
           interrupt: async () => undefined,
         }
       },
@@ -42,7 +42,7 @@ describe('sdk runtime supported model discovery', () => {
     sdkRuntime.resetSdkRuntimeCachesForTests()
 
     const supportedModels = await sdkRuntime.getSdkSupportedModels()
-    expect(supportedModels).toEqual([{ value: 'claude-sonnet-4-6' }])
+    expect(supportedModels).toEqual([{ value: 'claude-sonnet-5' }])
     expect(queryCalls).toHaveLength(1)
     expect(queryCalls[0]?.pathToClaudeCodeExecutable).toBe(
       fakeClaudeExecutablePath

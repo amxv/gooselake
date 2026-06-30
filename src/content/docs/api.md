@@ -210,7 +210,7 @@ Provider IDs:
 Model catalogs:
 
 - Codex: `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`
-- Claude: `claude-sonnet-4-6`, `claude-opus-4-8`, `claude-haiku-4-5`
+- Claude: `claude-sonnet-5`, `claude-opus-4-8`, `claude-haiku-4-5`
 - ACP: can return an empty list because model selection can be session-scoped inside the configured agent
 
 Auth status examples:

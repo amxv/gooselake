@@ -567,8 +567,8 @@ export class ClaudeClient {
     if (this.mode !== 'sdk') {
       return [
         {
-          value: 'claude-sonnet-4-6',
-          displayName: 'Claude Sonnet 4.6',
+          value: 'claude-sonnet-5',
+          displayName: 'Claude Sonnet 5',
           supportsEffort: true,
           supportedEffortLevels: ['low', 'medium', 'high'],
           supportsVision: true,

@@ -357,7 +357,7 @@ async fn stdio_server_proxies_gg_team_status_to_gateway() -> Result<(), Box<dyn 
     let auth_token = "integration_token";
     let gateway_state = stub_gateway_state(
         auth_token,
-        vec!["claude-sonnet-4.6".to_string(), "gpt-5".to_string()],
+        vec!["claude-sonnet-5".to_string(), "gpt-5".to_string()],
     );
     let app = Router::new()
         .route("/capabilities", get(capabilities_stub))
@@ -420,7 +420,7 @@ async fn stdio_server_accepts_per_call_caller_metadata_when_required()
     let auth_token = "integration_token";
     let gateway_state = stub_gateway_state(
         auth_token,
-        vec!["claude-sonnet-4.6".to_string(), "gpt-5".to_string()],
+        vec!["claude-sonnet-5".to_string(), "gpt-5".to_string()],
     );
     let app = Router::new()
         .route("/capabilities", get(capabilities_stub))
@@ -480,7 +480,7 @@ async fn stdio_server_rejects_missing_per_call_caller_metadata_when_required()
     let auth_token = "integration_token";
     let gateway_state = stub_gateway_state(
         auth_token,
-        vec!["claude-sonnet-4.6".to_string(), "gpt-5".to_string()],
+        vec!["claude-sonnet-5".to_string(), "gpt-5".to_string()],
     );
     let app = Router::new()
         .route("/capabilities", get(capabilities_stub))
@@ -566,7 +566,7 @@ async fn stdio_server_handles_high_volume_gateway_invocations()
     let auth_token = "integration_token";
     let gateway_state = stub_gateway_state(
         auth_token,
-        vec!["claude-sonnet-4.6".to_string(), "gpt-5".to_string()],
+        vec!["claude-sonnet-5".to_string(), "gpt-5".to_string()],
     );
     let app = Router::new()
         .route("/capabilities", get(capabilities_stub))
@@ -623,7 +623,7 @@ async fn stdio_server_surfaces_gateway_unauthorized_envelope()
     let auth_token = "integration_token";
     let gateway_state = stub_gateway_state(
         auth_token,
-        vec!["claude-sonnet-4.6".to_string(), "gpt-5".to_string()],
+        vec!["claude-sonnet-5".to_string(), "gpt-5".to_string()],
     );
     let app = Router::new()
         .route("/capabilities", get(capabilities_stub))
@@ -728,7 +728,7 @@ async fn stdio_server_injects_model_presets_into_team_manage_metadata_on_initial
     let auth_token = "integration_token";
     let gateway_state = stub_gateway_state(
         auth_token,
-        vec!["claude-sonnet-4.6".to_string(), "gpt-5".to_string()],
+        vec!["claude-sonnet-5".to_string(), "gpt-5".to_string()],
     );
     let capabilities_calls = Arc::clone(&gateway_state.capabilities_calls);
     let app = Router::new()
@@ -793,7 +793,7 @@ async fn stdio_server_injects_model_presets_into_team_manage_metadata_on_initial
         "expected unsubscribed guidance in initial gg_team_manage description"
     );
     assert!(
-        initial_description.contains("Available model_preset values: claude-sonnet-4.6, gpt-5."),
+        initial_description.contains("Available model_preset values: claude-sonnet-5, gpt-5."),
         "tools/list should include model preset values from capabilities; got {initial_description}"
     );
     assert!(
@@ -809,8 +809,8 @@ async fn stdio_server_injects_model_presets_into_team_manage_metadata_on_initial
         .ok_or("gg_team_manage.model_preset schema should be present")?;
     let initial_model_preset_schema_json = serde_json::to_string(initial_model_preset_schema)?;
     assert!(
-        initial_model_preset_schema_json.contains("claude-sonnet-4.6"),
-        "expected model_preset enum to include claude-sonnet-4.6"
+        initial_model_preset_schema_json.contains("claude-sonnet-5"),
+        "expected model_preset enum to include claude-sonnet-5"
     );
     assert!(
         initial_model_preset_schema_json.contains("gpt-5"),
@@ -848,7 +848,7 @@ async fn stdio_server_injects_model_presets_into_team_manage_metadata_on_initial
         .as_deref()
         .ok_or("gg_team_manage description missing after first tool call")?;
     assert!(
-        description.contains("Available model_preset values: claude-sonnet-4.6, gpt-5."),
+        description.contains("Available model_preset values: claude-sonnet-5, gpt-5."),
         "expected dynamic model_preset values after tools/call; got {description}"
     );
 

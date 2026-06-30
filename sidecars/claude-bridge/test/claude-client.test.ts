@@ -173,8 +173,8 @@ describe('claude client bridge behavior', () => {
     const models = await client.supportedModels()
     expect(models).toEqual([
       {
-        value: 'claude-sonnet-4-6',
-        displayName: 'Claude Sonnet 4.6',
+        value: 'claude-sonnet-5',
+        displayName: 'Claude Sonnet 5',
         supportsEffort: true,
         supportedEffortLevels: ['low', 'medium', 'high'],
         supportsVision: true,
@@ -2332,7 +2332,7 @@ function createSdkQueryModelWindowUsageStub() {
           cache_read_input_tokens: 2_779_492,
         },
         modelUsage: {
-          'claude-sonnet-4-6': {
+          'claude-sonnet-5': {
             inputTokens: 12_000,
             outputTokens: 400,
             cacheReadInputTokens: 16_000,
@@ -2377,7 +2377,7 @@ function createSdkQueryMissingUsageSecondTurnStub() {
           session_id: 'sdk_session_cache',
           result: 'first turn',
           modelUsage: {
-            'claude-sonnet-4-6': {
+            'claude-sonnet-5': {
               inputTokens: 9_000,
               outputTokens: 200,
               cacheReadInputTokens: 5_000,

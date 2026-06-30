@@ -538,7 +538,7 @@ mod tests {
     #[test]
     fn team_manage_description_includes_model_presets_when_available() {
         let description =
-            build_team_manage_description(&["claude-sonnet-4.6".to_string(), "gpt-5".to_string()]);
+            build_team_manage_description(&["claude-sonnet-5".to_string(), "gpt-5".to_string()]);
         assert!(description.contains("optional `worktree_name`"));
         assert!(description.contains("optional `image_paths`"));
         assert!(description.contains("optional `use_existing_worktree`"));
@@ -550,7 +550,7 @@ mod tests {
         assert!(description.contains("runtime-owned"));
         assert!(description.contains("ui_command"));
         assert!(description.contains("[\"agent_1\", \"agent_2\"]"));
-        assert!(description.contains("Available model_preset values: claude-sonnet-4.6, gpt-5."));
+        assert!(description.contains("Available model_preset values: claude-sonnet-5, gpt-5."));
     }
 
     #[test]

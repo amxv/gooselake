@@ -42,7 +42,7 @@ Example session creation:
 curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"provider":"claude","model":"claude-sonnet-4-6","cwd":"/workspace/repo"}' \
+  -d '{"provider":"claude","model":"claude-sonnet-5","cwd":"/workspace/repo"}' \
   "$BASE_URL/v1/sessions"
 ```
 
@@ -89,7 +89,7 @@ Claude runs through the runtime-owned Claude bridge sidecar. The Rust provider t
 
 `GET /v1/providers/claude/models` returns:
 
-- `claude-sonnet-4-6`
+- `claude-sonnet-5`
 - `claude-opus-4-8`
 - `claude-haiku-4-5`
 

@@ -1,6 +1,7 @@
 ---
 import { getCollection } from "astro:content";
 import BaseLayout from "zuedocs/layouts/BaseLayout.astro";
+import DocsPageActions from "zuedocs/components/DocsPageActions.astro";
 import { docCategories, primaryNav, siteConfig } from "../../data/docs";
 
 const entries = (await getCollection("docs")).sort((a, b) => a.data.order - b.data.order);
@@ -17,8 +18,13 @@ const grouped = docCategories.map((category) => ({
   primaryNav={primaryNav}
 >
   <section class="shell docs-index-hero">
-    <p class="section-label">Documentation</p>
-    <h1>Learn the runtime before you wire a UI on top of it.</h1>
+    <div class="docs-index-hero__head">
+      <div>
+        <p class="section-label">Documentation</p>
+        <h1>Learn the runtime before you wire a UI on top of it.</h1>
+      </div>
+      <DocsPageActions />
+    </div>
     <p>
       This docs area is organized for a new visitor: how to start, what mental
       model to adopt, and which workflows matter once agents are doing
@@ -44,3 +50,8 @@ const grouped = docCategories.map((category) => ({
     ))}
   </section>
 </BaseLayout>
+
+
+<script>
+  import "zuedocs/docsEnhancements";
+</script>

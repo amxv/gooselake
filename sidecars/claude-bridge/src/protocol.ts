@@ -68,7 +68,7 @@ export interface SessionCreateParams {
   systemPrompt?: string | null
   allowedTools?: string[]
   disallowedTools?: string[]
-  thinkingEffort?: 'low' | 'medium' | 'high' | 'max'
+  thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   ggMcpServer?: {
     serverName?: string
     callerAgentId?: string
@@ -141,7 +141,7 @@ export interface SessionSupportedCommandsParams {
   systemPrompt?: string | null
   allowedTools?: string[]
   disallowedTools?: string[]
-  thinkingEffort?: 'low' | 'medium' | 'high' | 'max'
+  thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   forceRefresh?: boolean
   ggMcpServer?: {
     serverName?: string

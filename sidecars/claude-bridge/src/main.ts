@@ -247,16 +247,16 @@ function asNullableString(value: unknown): string | null | undefined {
 
 function asOptionalThinkingEffort(
   value: unknown
-): 'low' | 'medium' | 'high' | 'max' | undefined {
+): 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined {
   if (value === undefined || value === null) {
     return undefined
   }
-  if (value === 'low' || value === 'medium' || value === 'high' || value === 'max') {
+  if (value === 'low' || value === 'medium' || value === 'high' || value === 'xhigh' || value === 'max') {
     return value
   }
   throw new BridgeError(
     'BAD_REQUEST',
-    'thinkingEffort must be one of: low, medium, high, max'
+    'thinkingEffort must be one of: low, medium, high, xhigh, max'
   )
 }
 

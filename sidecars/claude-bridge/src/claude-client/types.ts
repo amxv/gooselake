@@ -122,7 +122,7 @@ export interface ClaudeSessionOptions {
   systemPrompt?: string | null
   allowedTools?: string[]
   disallowedTools?: string[]
-  thinkingEffort?: 'low' | 'medium' | 'high' | 'max'
+  thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   ggMcpServer?: GgMcpServerConfig
 }
 

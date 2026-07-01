@@ -52,6 +52,23 @@ const STREAM_CLOSED_TOOL_RESULT = 'Stream closed'
 const GG_TEAM_TOOL_IN_FLIGHT_DENY_MESSAGE =
   'Another gg_team tool call is already in flight for this session. Retry this tool call after the current call completes.'
 
+
+function normalizeSupportedEffortLevels(
+  modelValue: string,
+  rawLevels: unknown[]
+): string[] {
+  if (
+    modelValue === 'claude-sonnet-5' ||
+    modelValue === 'claude-opus-4-8'
+  ) {
+    return ['low', 'medium', 'high', 'xhigh', 'max']
+  }
+
+  return rawLevels
+    .filter(level => typeof level === 'string' && level.trim().length > 0)
+    .map(level => level.trim().toLowerCase())
+}
+
 export class ClaudeClient {
   private readonly sessions = new Map<string, SessionState>()
   private nextSession = 1
@@ -570,7 +587,7 @@ export class ClaudeClient {
           value: 'claude-sonnet-5',
           displayName: 'Claude Sonnet 5',
           supportsEffort: true,
-          supportedEffortLevels: ['low', 'medium', 'high'],
+          supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
           supportsVision: true,
           supportsToolCalling: true,
         },
@@ -578,7 +595,7 @@ export class ClaudeClient {
           value: 'claude-opus-4-8',
           displayName: 'Claude Opus 4.8',
           supportsEffort: true,
-          supportedEffortLevels: ['low', 'medium', 'high'],
+          supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
           supportsVision: true,
           supportsToolCalling: true,
         },
@@ -601,29 +618,31 @@ export class ClaudeClient {
       this.sdkSupportedModelsOverride
     )
     return supportedModels
-      .map(model => ({
-        value: typeof model?.value === 'string' ? model.value.trim() : '',
-        displayName:
-          typeof model?.displayName === 'string'
-            ? model.displayName.trim()
-            : '',
-        supportsEffort: Boolean(model?.supportsEffort),
-        supportedEffortLevels: Array.isArray(model?.supportedEffortLevels)
-          ? model.supportedEffortLevels
-              .filter(
-                level => typeof level === 'string' && level.trim().length > 0
-              )
-              .map(level => level.trim().toLowerCase())
-          : [],
-        supportsVision:
-          typeof model?.supportsVision === 'boolean'
-            ? model.supportsVision
-            : undefined,
-        supportsToolCalling:
-          typeof model?.supportsToolCalling === 'boolean'
-            ? model.supportsToolCalling
-            : undefined,
-      }))
+      .map(model => {
+        const value = typeof model?.value === 'string' ? model.value.trim() : ''
+        return {
+          value,
+          displayName:
+            typeof model?.displayName === 'string'
+              ? model.displayName.trim()
+              : '',
+          supportsEffort: Boolean(model?.supportsEffort),
+          supportedEffortLevels: normalizeSupportedEffortLevels(
+            value,
+            Array.isArray(model?.supportedEffortLevels)
+              ? model.supportedEffortLevels
+              : []
+          ),
+          supportsVision:
+            typeof model?.supportsVision === 'boolean'
+              ? model.supportsVision
+              : undefined,
+          supportsToolCalling:
+            typeof model?.supportsToolCalling === 'boolean'
+              ? model.supportsToolCalling
+              : undefined,
+        }
+      })
       .filter(model => model.value.length > 0)
       .map(model => ({
         ...model,

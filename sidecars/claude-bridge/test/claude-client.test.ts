@@ -189,6 +189,14 @@ describe('claude client bridge behavior', () => {
         supportsToolCalling: true,
       },
       {
+        value: 'claude-fable-5',
+        displayName: 'Claude Fable 5',
+        supportsEffort: true,
+        supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+        supportsVision: true,
+        supportsToolCalling: true,
+      },
+      {
         value: 'claude-haiku-4-5',
         displayName: 'Claude Haiku 4.5',
         supportsEffort: true,

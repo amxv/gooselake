@@ -1242,6 +1242,10 @@ impl RuntimeProvider for ClaudeProvider {
                 display_name: "Claude Opus 4.8".to_string(),
             },
             ProviderModel {
+                id: "claude-fable-5".to_string(),
+                display_name: "Claude Fable 5".to_string(),
+            },
+            ProviderModel {
                 id: "claude-haiku-4-5".to_string(),
                 display_name: "Claude Haiku 4.5".to_string(),
             },

@@ -91,6 +91,7 @@ Claude runs through the runtime-owned Claude bridge sidecar. The Rust provider t
 
 - `claude-sonnet-5`
 - `claude-opus-4-8`
+- `claude-fable-5`
 - `claude-haiku-4-5`
 
 ### Auth modes

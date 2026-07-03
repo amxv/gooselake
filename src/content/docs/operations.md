@@ -1,8 +1,8 @@
 ---
 title: "Operations runbook"
 description: "Run health checks, inspect recovery, debug providers, manage processes and worktrees, and recover runtime state after restarts."
-order: 13
-category: "Operator Workflows"
+order: 51
+category: "Operators"
 summary: "Day-two commands and troubleshooting for real agent work."
 ---
 

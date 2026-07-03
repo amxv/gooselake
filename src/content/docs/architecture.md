@@ -1,8 +1,8 @@
 ---
 title: "Architecture"
 description: "Understand the runtime control-plane boundary, core crates, provider adapters, sidecars, persistence, events, and recovery model."
-order: 7
-category: "Core Concepts"
+order: 13
+category: "Mental Model"
 summary: "A deeper system map for contributors and operators."
 ---
 

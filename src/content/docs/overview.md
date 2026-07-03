@@ -1,126 +1,104 @@
 ---
 title: "Documentation overview"
-description: "The full documentation map for Gooselake: setup, architecture, API, providers, operations, deployment, and release workflows."
+description: "The full documentation map for Gooselake: setup, mental model, runtime services, client APIs, operations, deployment, and reference material."
 order: 0
 category: "Start Here"
-summary: "Use this as the canonical guide map for the runtime."
+summary: "Use this page as the map for the runtime manual."
 ---
 
-Gooselake is a machine-side runtime for durable agent work. It exposes HTTP control APIs, replayable SSE event streams, provider-backed sessions, process/worktree services, team communication, and MCP sidecar plumbing from one host-owned control plane.
+Gooselake is a machine-side runtime for durable agent work. Think of it as an **air traffic control tower** for coding agents: clients ask for flights, providers fly the planes, and the runtime keeps the flight plan, radio log, runway state, crash reports, and replayable black-box recorder.
 
-Use this Astro docs collection as the operating manual for the runtime. `src/content/docs/` is the single source of truth for both the docs website and the release-bundle Markdown docs.
+The important shift is that the UI is not the runtime. A desktop app, web console, local script, or future CLI can disappear without losing the truth of the work. The runtime owns provider sessions, turn execution, event history, process execution, worktrees, team communication, diagnostics, and recovery.
 
-## Start here
+## What to read first
 
-Install and run locally:
+If you are new, read in this order:
 
-```bash
-make install
-cp "$HOME/.local/runtime-server.toml.example" ./runtime-server.toml
-gg-runtime-server --check-config --config ./runtime-server.toml
-gg-runtime-server --config ./runtime-server.toml
-```
-
-Deploy to a Linux VPS with staged releases and a systemd service:
-
-```bash
-make vps-deploy
-```
-
-Show every repo task:
-
-```bash
-make help
-```
+1. [Setup](/docs/setup) — run the server and make the first authenticated request.
+2. [Core concepts](/docs/concepts) — learn the vocabulary: sessions, turns, events, providers, teams, processes, and worktrees.
+3. [Runtime lifecycle](/docs/runtime-lifecycle) — follow one turn through the system.
+4. [Events and recovery](/docs/events-and-recovery) — understand replay, cursors, and startup reconciliation.
+5. [CLI and command runner](/docs/cli) — learn what the current command-line surface actually is.
 
 ## Reading paths
 
 ### New operator
 
-1. [Install Guide](/docs/install)
-2. [Configuration Reference](/docs/configuration)
-3. [Provider Guide](/docs/providers)
-4. [Operations Runbook](/docs/operations)
+Start with [Setup](/docs/setup), then [Install guide](/docs/install), [Configuration reference](/docs/configuration), [Operations runbook](/docs/operations), and [Troubleshooting](/docs/troubleshooting).
 
-### Frontend or API client builder
+You are trying to answer: **is the runtime healthy, authenticated, provider-ready, and recoverable after a restart?**
 
-1. [API Guide](/docs/api)
-2. [Endpoint Catalog](/docs/endpoint-catalog)
-3. [Architecture](/docs/architecture)
-4. [MCP and Sidecars](/docs/mcp-and-sidecars)
+### Frontend, API, or CLI builder
+
+Start with [Usage model](/docs/usage), [Client design guide](/docs/client-design), [API guide](/docs/api), [Endpoint catalog](/docs/endpoint-catalog), and [Events and recovery](/docs/events-and-recovery).
+
+You are trying to build a thin client. The runtime should hold the hard state; your client should render it.
 
 ### Runtime contributor
 
-1. [Architecture](/docs/architecture)
-2. [Provider Guide](/docs/providers)
-3. [API Doc Sync Workflow](/docs/api-doc-sync)
-4. `crates/runtime-core/src/*`, `crates/runtime-server/src/http.rs`, and the provider crate you are changing.
+Start with [Architecture](/docs/architecture), [Repo guide](/docs/repo-guide), [Provider guide](/docs/providers), [MCP and sidecars](/docs/mcp-and-sidecars), and [API doc sync workflow](/docs/api-doc-sync).
+
+You are trying to change implementation without breaking the runtime contract.
+
+## The docs map
+
+### Start Here
+
+- [Setup](/docs/setup): first local runtime loop.
+- [Install guide](/docs/install): release and source install paths.
+- [CLI and command runner](/docs/cli): current binary, flags, Make targets, and scripts.
+
+### Mental Model
+
+- [Core concepts](/docs/concepts): the big ideas in plain language.
+- [Runtime lifecycle](/docs/runtime-lifecycle): how a session and turn move through the runtime.
+- [Events and recovery](/docs/events-and-recovery): the event ledger and restart behavior.
+- [Architecture](/docs/architecture): crates, sidecars, persistence, and boundaries.
+
+### Runtime Services
+
+- [Provider guide](/docs/providers): Codex, Claude, and ACP behind the shared provider contract.
+- [Teams and comms](/docs/teams): durable team messages, deliveries, retries, and spawn.
+- [Processes](/docs/processes): runtime-managed host commands and logs.
+- [Worktrees](/docs/worktrees): managed Git workspaces, claims, and cleanup.
+- [MCP and sidecars](/docs/mcp-and-sidecars): Claude bridge and the bundled MCP sidecar.
+
+### Client Builders
+
+- [Usage model](/docs/usage): how thin clients should use the runtime.
+- [Client design guide](/docs/client-design): UI and automation patterns that fit the runtime.
+- [API guide](/docs/api): practical HTTP/SSE examples.
+
+### Operators
+
+- [Configuration reference](/docs/configuration): every config section.
+- [Operations runbook](/docs/operations): day-two commands.
+- [Deployment guide](/docs/deployment): VPS/systemd-oriented deployment.
+- [Security model](/docs/security): bearer auth, local trust, process execution, and provider credentials.
+- [Troubleshooting](/docs/troubleshooting): common failure playbooks.
+
+### Reference
+
+- [Endpoint catalog](/docs/endpoint-catalog): route-by-route API surface.
+- [Repo guide](/docs/repo-guide): where the implementation lives.
+- [API doc sync workflow](/docs/api-doc-sync): how API docs stay synchronized with code.
+- [Changelog](/docs/changelog): tagged release notes.
 
 ## What the runtime owns
 
-Gooselake is intentionally not just a token proxy. The server owns the pieces that have to survive browser refreshes, process restarts, provider differences, and multi-agent workflows:
+Gooselake owns these responsibilities because clients are poor places to keep them:
 
-- provider registry and provider-backed sessions
-- normalized turn lifecycle
-- durable event history in SQLite
-- replay-first SSE streams
-- runtime bearer authentication
-- startup recovery and diagnostics
-- Codex, Claude, and ACP provider adapters
-- Claude and MCP sidecar process boundaries
-- host process execution and logs
-- managed git worktree creation, claims, releases, and cleanup
-- team membership, direct messages, broadcasts, deliveries, retries, cancellation, and interrupts
+- provider-backed sessions and opaque provider references
+- one-active-turn session coordination
+- durable turns, approvals, and terminal states
+- replayable session/team/process/global events
+- provider auth staging and provider readiness checks
+- process execution and bounded log capture
+- team messages, deliveries, retries, cancellation, and spawn operations
+- managed worktree creation, claims, release, and cleanup
+- diagnostics and startup recovery summaries
+- MCP gateway calls that are tied back to an active runtime session
 
-## Repo map
+## What it does not try to be
 
-| Path | Purpose |
-| --- | --- |
-| `crates/runtime-core` | Provider trait, session manager, event model, team comms traits, and shared records. |
-| `crates/runtime-server` | Config, bootstrap composition root, HTTP/SSE routes, OpenAPI generation, and binary entrypoint. |
-| `crates/runtime-store-sqlite` | Durable SQLite implementation for sessions, turns, approvals, events, teams, worktrees, and processes. |
-| `crates/runtime-provider-codex` | Codex provider adapter and auth staging behavior. |
-| `crates/runtime-provider-claude` | Claude provider adapter, Claude bridge integration, auth import/status flows, and GG MCP injection. |
-| `crates/runtime-provider-acp` | ACP v1 stdio provider adapter. |
-| `crates/runtime-tools` | Runtime process manager, MCP tool gateway, worktree service, team spawn workflow. |
-| `sidecars/claude-bridge` | Bun/TypeScript bridge around Claude Code SDK behavior. |
-| `sidecars/gg-mcp-server` | MCP server exposing `gg_*` tools that call back into the runtime gateway. |
-| `openapi/runtime-server-openapi.yaml` | Generated route artifact. |
-| `deploy/systemd` | Example systemd service and env files. |
-| `examples/runtime-server.toml` | Full baseline config template. |
-
-## API artifacts
-
-- Generated OpenAPI artifact: [`openapi/runtime-server-openapi.yaml`](https://github.com/amxv/gooselake/blob/main/openapi/runtime-server-openapi.yaml)
-- Public OpenAPI endpoint: `GET /openapi.yaml`
-- Authenticated OpenAPI endpoint: `GET /v1/openapi.yaml`
-- Sync helpers: `make api-docs-refresh`, `make api-docs-status`, `make api-docs-check`
-
-## Command reference
-
-| Command | Use |
-| --- | --- |
-| `make install` | Install the latest release bundle into `~/.local`. |
-| `make install VERSION=v0.1.2` | Install a pinned release. |
-| `make install-source` | Build and install from the current checkout. |
-| `make upgrade` | Stage a release under `~/.local/share/gg-runtime/releases` and atomically update `current`. |
-| `make vps-deploy` | Run the host install, preflight, systemd enable/start flow. |
-| `make preflight` | Validate config, binary layout, and filesystem expectations without HTTP checks. |
-| `make preflight-http BASE_URL=... TOKEN=...` | Run filesystem and HTTP preflight checks. |
-| `make service-status` | Show systemd service status. |
-| `make service-logs` | Follow service logs. |
-| `make service-restart` | Restart the service. |
-| `make api-docs-refresh` | Regenerate OpenAPI. |
-| `make api-docs-check` | Ensure API changes were accompanied by doc changes. |
-
-## Important constraints to remember
-
-- `/v1/**` routes require `Authorization: Bearer <token>`.
-- `GET /health` and `GET /openapi.yaml` are public.
-- SSE streams replay first, then attach to live events.
-- `after_seq` takes precedence over `Last-Event-ID` on stream endpoints.
-- ACP v1 is stdio-only and agent-managed for auth.
-- ACP `session/request_permission` is intentionally unsupported in v1 and fails the active turn clearly.
-- Claude can use host-machine credentials or runtime-managed imported auth files.
-- Codex auth is staged from the host `~/.gg/codex/auth.json` when available.
-- The MCP gateway requires an active caller session; closed or failed caller sessions are rejected.
+Gooselake is not a multi-tenant SaaS backend, a hosted OAuth broker, or a universal model abstraction layer. It is intentionally a **host-owned runtime** for powerful machine work. SQLite, local provider credentials, process execution, and real filesystem access are features of that stance, not accidents.

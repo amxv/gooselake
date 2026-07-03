@@ -2,7 +2,7 @@
 title: Setup
 description: Install Gooselake, run the runtime locally, and verify the first control-plane loop.
 order: 1
-category: Start Here
+category: "Start Here"
 summary: Install the runtime, create a config, check provider readiness, and launch the service.
 ---
 

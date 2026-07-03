@@ -1,73 +1,96 @@
 ---
-title: Usage model
-description: Learn how clients, operators, and provider sessions interact with the runtime during daily use.
-order: 4
-category: Core Concepts
-summary: A practical view of how consumers talk to the runtime and what the runtime is expected to own.
+title: "Usage model"
+description: "Learn how clients, operators, scripts, and provider sessions interact with the runtime during daily use."
+order: 20
+category: "Client Builders"
+summary: "A practical view of how consumers talk to the runtime and what the runtime owns."
 ---
+
+Gooselake usage has two halves:
+
+- clients send commands over HTTP
+- clients learn what happened through records and replayable events
+
+That split is the core product shape. HTTP is the steering wheel. Events are the dashboard and black-box recorder.
 
 ## Thin clients
 
-A healthy Gooselake client focuses on:
+A healthy Gooselake client focuses on presentation and user intent:
 
-- listing sessions
-- creating turns
-- rendering event streams
-- showing approvals
-- displaying process logs and worktree state
-- surfacing provider diagnostics
+- list sessions
+- create sessions
+- send turns
+- render event streams
+- show approvals
+- display process logs
+- show worktree state
+- surface team messages and deliveries
+- expose diagnostics
 
-The client should not own the truth of whether a turn is running, which worktree is claimed, or whether a team message was delivered. Those are runtime records.
+The runtime should own the hard state: active turns, provider refs, event cursors, delivery state, process status, and cleanup policy.
 
 ## HTTP for commands, SSE for flow
 
-Use HTTP for explicit actions:
+Commands are ordinary HTTP requests:
 
-- create a session
-- send a turn
-- respond to an approval
-- start or kill a process
-- create or release a worktree
-- send a team message
+```bash
+curl -X POST "$BASE_URL/v1/sessions"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{"provider":"codex","model":"gpt-5.5"}'
+```
 
-Use SSE for state flow:
+Flow comes from events:
 
-- global event timeline
-- session events
-- team events
-- process events
+```bash
+curl -N "$BASE_URL/v1/events/stream" "${AUTH[@]}"
+```
 
-This keeps command boundaries clear while making reconnects simple.
+A client should not assume a `POST` response is the final story. It is usually the start of a durable workflow.
 
 ## Provider readiness before product work
 
-Before building a UI feature around a provider, check readiness:
+Before creating product UI around a provider, check:
 
 ```bash
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers"
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/diagnostics/providers"
+curl "$BASE_URL/v1/providers" "${AUTH[@]}"
+curl "$BASE_URL/v1/diagnostics/providers" "${AUTH[@]}"
 ```
 
-A provider that is registered but unauthenticated is a setup problem, not a frontend state problem.
+Then check provider-specific auth status when needed:
+
+```bash
+curl "$BASE_URL/v1/providers/codex/auth/status" "${AUTH[@]}"
+curl "$BASE_URL/v1/providers/claude/auth/status" "${AUTH[@]}"
+curl "$BASE_URL/v1/providers/acp/auth/status" "${AUTH[@]}"
+```
 
 ## The frontend question
 
-Ask this when adding client logic:
+Ask this for every feature:
 
-> Can the UI disappear right now without corrupting the session's truth?
+> If the UI disappears right now, can the runtime still explain what happened?
 
-If the answer is no, too much orchestration has leaked into the client.
+If the answer is no, move more responsibility into runtime records/events or fetch more state from the runtime.
 
 ## Good usage
 
-- A desktop app that reconnects to the same machine-side session after restart.
-- A web UI that renders replayed events before showing live output.
-- An ops console that inspects provider, process, worktree, and recovery diagnostics.
-- A multi-agent surface that renders delivery records instead of pretending messages are instant.
+- Create a session, then store only the runtime session ID in the client.
+- Send a turn, then follow events until terminal state.
+- Replay events after reconnect before opening a live stream.
+- Show pending approvals as durable runtime objects.
+- Treat team deliveries as separate from messages.
+- Read process logs for exact output.
+- Inspect diagnostics before retrying failed operations.
 
 ## Bad usage
 
-- Treating the runtime as a token proxy while state lives in React.
-- Hiding long-running host work behind a browser lifecycle.
-- Building provider-specific session semantics into every client.
-- Recreating team delivery state in local UI stores.
+- Store provider-native session references in client state.
+- Treat a turn request as completed just because the HTTP request returned.
+- Hide runtime errors behind generic toast messages.
+- Assume process output events contain full logs.
+- Delete worktrees without checking active claims.
+- Build one-off provider behavior into clients instead of using the provider abstraction.
+
+## Client examples
+
+A shell script, desktop UI, web dashboard, and future first-party CLI should all use the same runtime contract. That is the point of the control-plane boundary.
+
+For design patterns, see [Client design guide](/docs/client-design). For route details, see [API guide](/docs/api) and [Endpoint catalog](/docs/endpoint-catalog).

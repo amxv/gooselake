@@ -1,170 +1,144 @@
 ---
 title: "Provider guide"
 description: "Configure and diagnose Codex, Claude, and ACP behind the shared Gooselake runtime provider contract."
-order: 9
-category: "Reference"
+order: 30
+category: "Runtime Services"
 summary: "Provider setup, models, auth behavior, and capability differences."
 ---
 
-Gooselake normalizes provider-specific execution behind the `RuntimeProvider` trait in `crates/runtime-core/src/provider.rs`. Clients create sessions and turns against the runtime; the runtime dispatches to Codex, Claude, or ACP and persists normalized records/events.
+Gooselake treats providers like replaceable engines behind one cockpit. Codex, Claude, and ACP can have different native protocols, but clients should still create runtime sessions, send runtime turns, and read runtime events.
+
+The shared contract lives in `crates/runtime-core/src/provider.rs` as the `RuntimeProvider` trait.
 
 ## Shared provider contract
 
-Every provider adapter is expected to map its native lifecycle into the runtime contract:
+Every provider adapter maps its native lifecycle into the runtime contract:
 
 - `metadata()` exposes `kind`, `display_name`, and enabled state.
-- `healthcheck()` verifies the provider can be used at runtime bootstrap/diagnostics time.
-- `list_models()` returns a provider catalog when the provider has one.
+- `healthcheck()` verifies the provider can be used.
+- `list_models()` returns a model catalog when the provider has one.
 - `auth_status()` reports readiness/auth state when implemented.
-- `create_session()` opens provider state for a runtime session.
-- `resume_session()` reconnects runtime state to provider state after restart.
-- `send_turn()` starts a turn.
-- `wait_for_turn()` resolves terminal status and output.
-- `interrupt_turn()` requests interruption.
+- `create_session()` opens provider-backed work.
+- `resume_session()` reconnects provider state to runtime state.
+- `send_turn()` dispatches a turn.
+- `wait_for_turn()` returns terminal turn results.
+- `interrupt_turn()` stops active work when supported.
 - `respond_approval()` forwards approval decisions when supported.
-- `close_session()` tears down provider session state.
+- `close_session()` closes provider-side state.
 
-The runtime persists the canonical `SessionRecord`, `TurnRecord`, `ApprovalRecord`, and `RuntimeEventRecord`; provider-specific references are stored as provider refs, not used as client-facing primary IDs.
+Trait defaults return unsupported for features a provider does not implement. That lets new providers be added incrementally.
 
 ## Provider IDs
 
-Use these string values in API requests:
+Provider IDs accepted by the runtime:
 
-| Provider | API value | Crate |
-| --- | --- | --- |
-| Codex | `codex` | `crates/runtime-provider-codex` |
-| Claude | `claude` | `crates/runtime-provider-claude` |
-| ACP | `acp` | `crates/runtime-provider-acp` |
+| Provider | ID |
+| --- | --- |
+| Codex | `codex` |
+| Claude | `claude` |
+| ACP | `acp` |
 
-Example session creation:
-
-```bash
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"provider":"claude","model":"claude-sonnet-5","cwd":"/workspace/repo"}' \
-  "$BASE_URL/v1/sessions"
-```
+Provider IDs are parsed case-insensitively after trimming.
 
 ## Codex
 
-Codex is a host-machine provider. The runtime launches provider work with a staged Codex home.
+Codex is configured through the Codex provider adapter.
 
 ### Models
 
-`GET /v1/providers/codex/models` returns:
+The current Codex model catalog includes:
 
 - `gpt-5.5`
 - `gpt-5.4`
 - `gpt-5.4-mini`
 
-### Auth
-
-Expected operator setup:
+Check the running server rather than hardcoding:
 
 ```bash
-codex login
+curl "$BASE_URL/v1/providers/codex/models" "${AUTH[@]}"
 ```
 
-At runtime bootstrap, if `$HOME/.gg/codex/auth.json` exists, the server copies it into the runtime provider directory:
+### Auth
 
-```text
-<data.root_dir>/providers/codex/home/auth.json
+Codex auth is staged from host credentials into the runtime's provider data area. This keeps runtime execution isolated from the normal host config path while still using the logged-in host as the source.
+
+Inspect status:
+
+```bash
+curl "$BASE_URL/v1/providers/codex/auth/status" "${AUTH[@]}"
 ```
-
-`GET /v1/providers/codex/auth/status` reports whether that staged auth file exists and where `CODEX_HOME` is being used.
 
 ### Runtime behavior
 
-- Session creation accepts `model`, `cwd`, `permission_mode`, and metadata.
-- Turn sends can override `permission_mode`.
-- Runtime approval gating can be used with `permission_mode = "require_approval"`.
-- Startup recovery attempts to resume sessions with stored provider refs; failed resumes mark the session failed with a clear failure code.
+Codex sessions use runtime-owned IDs. Provider-specific session references are persisted as opaque provider refs. If a provider-side session disappears but refs exist, the runtime may attempt resume before retrying dispatch.
 
 ## Claude
 
-Claude runs through the runtime-owned Claude bridge sidecar. The Rust provider talks to `sidecars/claude-bridge`, and the bridge isolates Claude SDK/CLI behavior from the runtime server process.
+Claude uses the Claude provider adapter plus the bundled Claude bridge sidecar.
 
 ### Models
 
-`GET /v1/providers/claude/models` returns:
+The current Claude model catalog includes:
 
 - `claude-sonnet-5`
 - `claude-opus-4-8`
 - `claude-fable-5`
 - `claude-haiku-4-5`
 
-### Auth modes
-
-Configured by `[providers].claude_auth_mode` or `GG_CLAUDE_AUTH_MODE`.
-
-| Mode | Use when | Behavior |
-| --- | --- | --- |
-| `host_machine` | The machine already has Claude login material. | The bridge can use host-visible Claude config. Runtime-managed OAuth files and API key fallback are also considered. |
-| `runtime_managed` | You want runtime-owned imported credentials/config. | Runtime-managed files are preferred; bridge overrides are considered when explicitly configured. |
-
-Recommended local path:
+Check:
 
 ```bash
-claude login
-curl -fsS -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/v1/providers/claude/auth/status"
+curl "$BASE_URL/v1/providers/claude/models" "${AUTH[@]}"
 ```
+
+### Auth modes
+
+Claude supports two auth modes:
+
+- `host_machine`: use host-machine credentials.
+- `runtime_managed`: manage auth through runtime API endpoints.
 
 Runtime-managed auth endpoints:
 
 ```bash
 # API key
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"api_key":"sk-ant-..."}' \
-  "$BASE_URL/v1/providers/claude/auth/api-key"
+curl -X POST "$BASE_URL/v1/providers/claude/auth/api-key"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{"api_key":"..."}'
 
 # JSON import
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @claude-auth.json \
-  "$BASE_URL/v1/providers/claude/auth/import-json"
+curl -X POST "$BASE_URL/v1/providers/claude/auth/import-json"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{"auth_json":{}}'
 
 # File upload
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@claude-auth.json" \
-  "$BASE_URL/v1/providers/claude/auth/import-file"
+curl -X POST "$BASE_URL/v1/providers/claude/auth/import-file"   "${AUTH[@]}"   -F "file=@claude-auth.json"
 
 # Logout runtime-managed Claude auth
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/v1/providers/claude/auth/logout"
+curl -X POST "$BASE_URL/v1/providers/claude/auth/logout" "${AUTH[@]}"
+```
+
+Inspect status:
+
+```bash
+curl "$BASE_URL/v1/providers/claude/auth/status" "${AUTH[@]}"
 ```
 
 ### GG MCP injection
 
-Claude sessions are created/resumed with a GG MCP server configuration. The runtime builds:
-
-- gateway URL: `<server.public_base_url>/v1/mcp`
-- gateway token: runtime bearer token
-- caller agent ID: runtime session ID
-- MCP command: discovered bundled `gg-mcp-server`, or `GG_MCP_SERVER_PATH` override
-
-That lets Claude call runtime-owned tools while preserving session/caller ownership.
+Claude sessions can receive GG MCP tool configuration through the bridge path. This allows provider-side tool calls to call back into the runtime gateway when enabled.
 
 ## ACP
 
-ACP is an external agent-provider integration over stdio. The runtime launches the configured agent command and maps ACP prompt/update behavior into the runtime turn model.
+ACP is configured as an external stdio agent process. It is useful when an agent implements the Agent Client Protocol and can be driven by Gooselake as another provider.
 
 ### Configuration
+
+ACP is disabled by default. A typical config shape:
 
 ```toml
 [providers.acp]
 enabled = true
-command = "/absolute/path/to/acp-agent"
-args = ["serve", "--stdio"]
-transport = "stdio"
-request_timeout_secs = 30
-wait_timeout_secs = 300
+command = "agent-command"
+args = ["--stdio"]
+request_timeout_secs = 120
+wait_timeout_secs = 3600
 
 [providers.acp.env]
 # Agent-specific environment goes here.
@@ -172,50 +146,38 @@ wait_timeout_secs = 300
 
 ### Auth
 
-ACP auth is agent-managed in v1. The runtime reports configuration state through:
+ACP auth is agent-managed. Gooselake can expose auth status if the configured ACP provider reports it, but it does not provide a universal login flow for arbitrary ACP agents.
+
+Inspect:
 
 ```bash
-curl -fsS -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/v1/providers/acp/auth/status"
+curl "$BASE_URL/v1/providers/acp/auth/status" "${AUTH[@]}"
 ```
 
-Typical modes:
-
-- `disabled`: provider is disabled.
-- `invalid_config`: provider config is malformed.
-- `not_configured`: provider is enabled but no command is configured.
-- `agent_managed`: an ACP stdio agent command is configured; auth negotiation is delegated to that agent.
+If ACP is not registered, provider-specific ACP routes return not-found behavior.
 
 ### Models
 
-`GET /v1/providers/acp/models` can return `[]`. ACP model selection may be inside the configured agent or session config rather than a global runtime catalog.
+ACP model catalogs may be empty. Some ACP agents expose model choices through session config rather than provider-global lists.
 
 ### Current limitations
 
-- `transport = "stdio"` only.
-- No runtime ACP API-key import, JSON import, file import, or logout endpoints.
-- ACP `session/request_permission` is not bridged into runtime approvals yet. If an ACP agent sends that request, the active turn fails with a clear unsupported error.
+ACP permission requests do not map cleanly to Gooselake's current pre-dispatch approval model. Unsupported provider-originated permission requests should be treated as a provider capability limitation rather than a client bug.
 
 ## Choosing a provider
 
-| Situation | Best provider posture |
-| --- | --- |
-| You want the runtime to drive Codex CLI sessions on the host. | Enable Codex and run `codex login` on the host first. |
-| You want Claude Code sessions with host credentials. | Enable Claude, keep `claude_auth_mode = "host_machine"`, run `claude login`. |
-| You want imported/runtime-owned Claude credentials. | Enable Claude and set `claude_auth_mode = "runtime_managed"`. |
-| You have an ACP-compatible coding agent. | Enable ACP with an absolute `command` and stdio args. |
-| You are testing the runtime API without real providers. | Disable providers you do not have configured, but at least one provider must remain enabled. |
+Use Codex or Claude when you want the built-in provider integrations. Use ACP when you want to bring an external ACP-compatible agent behind the same runtime API.
+
+The best client design avoids branching deeply on provider. Branch for provider selection and provider-specific auth screens; rely on runtime sessions, turns, events, approvals, teams, processes, and worktrees everywhere else.
 
 ## Diagnostics
 
-Provider-level checks:
+Useful endpoints:
 
 ```bash
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers"
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/diagnostics/providers"
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers/codex/auth/status"
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers/claude/auth/status"
-curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers/acp/auth/status"
+curl "$BASE_URL/v1/providers" "${AUTH[@]}"
+curl "$BASE_URL/v1/diagnostics/providers" "${AUTH[@]}"
+curl "$BASE_URL/v1/providers/{provider}/models" "${AUTH[@]}"
 ```
 
-When diagnosing provider failures, check both the auth endpoint and the server logs. Many provider problems are not HTTP bugs; they are missing host credentials, bad sidecar paths, bad `public_base_url`, or an ACP command that cannot start under the service environment.
+Provider diagnostics should be the first stop before blaming sessions or clients.

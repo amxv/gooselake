@@ -1,8 +1,8 @@
 ---
 title: Operator workflows
 description: The workflows that matter once Gooselake is running real agent work on a real machine.
-order: 5
-category: Operator Workflows
+order: 55
+category: "Operators"
 summary: A field guide to the repeatable motions around sessions, execution, teams, worktrees, and recovery.
 ---
 

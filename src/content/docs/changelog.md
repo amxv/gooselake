@@ -2,7 +2,7 @@
 title: Changelog
 description: "Release notes for Gooselake."
 order: 99
-category: Reference
+category: "Reference"
 summary: Version-by-version changes for the Gooselake runtime.
 ---
 

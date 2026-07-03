@@ -1,8 +1,8 @@
 ---
 title: "Deployment guide"
 description: "Deploy Gooselake as a host-side service with staged releases, systemd, reverse proxies, provider auth, and upgrade/rollback paths."
-order: 14
-category: "Operator Workflows"
+order: 52
+category: "Operators"
 summary: "The production-oriented deployment and service runbook."
 ---
 

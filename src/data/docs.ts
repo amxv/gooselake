@@ -13,7 +13,7 @@ export const siteConfig = {
     {
       title: "What this site covers",
       text:
-        "Product framing, getting started steps, core concepts, and the operator workflows that matter once an agent graduates from demo mode."
+        "A practical operating manual: the mental model, local setup, runtime services, client-building guidance, deployment, and reference material."
     },
     {
       title: "Author",
@@ -26,8 +26,10 @@ export const siteConfig = {
 
 export const docCategories = [
   "Start Here",
-  "Core Concepts",
-  "Operator Workflows",
+  "Mental Model",
+  "Runtime Services",
+  "Client Builders",
+  "Operators",
   "Reference"
 ] as const;
 

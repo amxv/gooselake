@@ -1,7 +1,7 @@
 ---
 title: "Endpoint catalog"
 description: "Browse the implemented runtime HTTP and SSE route surface, including public routes, bearer-protected routes, and provider-specific endpoints."
-order: 11
+order: 70
 category: "Reference"
 summary: "A route-by-route catalog derived from the current server implementation."
 ---

@@ -1,8 +1,8 @@
 ---
 title: "API guide"
 description: "Use the Gooselake HTTP and SSE API for sessions, turns, events, approvals, providers, processes, worktrees, teams, diagnostics, and MCP gateway calls."
-order: 10
-category: "Reference"
+order: 22
+category: "Client Builders"
 summary: "The human-facing API guide for building clients on top of the runtime."
 ---
 

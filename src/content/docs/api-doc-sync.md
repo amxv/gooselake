@@ -1,7 +1,7 @@
 ---
 title: "API doc sync workflow"
 description: "Keep the generated OpenAPI artifact and human API docs synchronized when runtime route behavior changes."
-order: 15
+order: 81
 category: "Reference"
 summary: "The guardrail for API changes that need documentation changes."
 ---

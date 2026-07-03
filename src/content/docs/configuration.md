@@ -1,8 +1,8 @@
 ---
 title: "Configuration reference"
 description: "Configure server binding, auth, data paths, providers, events, processes, worktrees, sidecars, and environment overrides."
-order: 8
-category: "Reference"
+order: 50
+category: "Operators"
 summary: "Every supported runtime config section in one place."
 ---
 

@@ -10,16 +10,17 @@ use runtime_core::{
     ProcessDetails, ProcessGetRequest, ProcessKillRequest, ProcessListRequest,
     ProcessLogReadRequest, ProcessLogsChunk, ProcessManager, ProcessRecord, ProcessRunRequest,
     ProcessSummary, ProviderKind, RuntimeError, RuntimeEventCriticality, RuntimeEventScope,
-    RuntimeSessionManager, RuntimeStore, TeamBroadcastRequest, TeamCancelMessageRequest,
-    TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
-    TeamInterruptAllRequest, TeamInterruptAllResponse, TeamJoinRequest, TeamListMessagesRequest,
-    TeamListMessagesResponse, TeamMemberSpawnRequest, TeamMemberSpawnResponse, TeamMessageAck,
-    TeamRemoveMemberRequest, TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest,
-    TeamViewSnapshotRequest, TeamViewSnapshotResponse, TeamWithMembers, ToolGateway,
-    ToolInvokeRequest, WorktreeClaimRequest, WorktreeClaimResponse, WorktreeCleanupRequest,
-    WorktreeCleanupResponse, WorktreeCreateRequest, WorktreeCreateResponse,
-    WorktreeMemberRemovedRequest, WorktreeMemberRemovedResponse, WorktreeReleaseRequest,
-    WorktreeReleaseResponse, WorktreeService,
+    RuntimeSessionManager, RuntimeStore, SessionRecord, TeamBroadcastRequest,
+    TeamCancelMessageRequest, TeamCommsService, TeamCreateRequest, TeamDeliveryRecord,
+    TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamInterruptAllResponse, TeamJoinRequest,
+    TeamListMessagesRequest, TeamListMessagesResponse, TeamMemberRecord, TeamMemberSpawnRequest,
+    TeamMemberSpawnResponse, TeamMessageAck, TeamMessageRecord, TeamRemoveMemberRequest,
+    TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest,
+    TeamViewSnapshotResponse, TeamWithMembers, ToolGateway, ToolInvokeRequest,
+    WorktreeClaimRequest, WorktreeClaimResponse, WorktreeCleanupRequest, WorktreeCleanupResponse,
+    WorktreeCreateRequest, WorktreeCreateResponse, WorktreeMemberRemovedRequest,
+    WorktreeMemberRemovedResponse, WorktreeReleaseRequest, WorktreeReleaseResponse,
+    WorktreeService,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -868,6 +869,7 @@ impl Clone for RuntimeProcessManager {
 
 pub struct RuntimeToolGateway {
     process_manager: Arc<RuntimeProcessManager>,
+    runtime: Option<Arc<RuntimeSessionManager>>,
     team_comms: Arc<dyn TeamCommsService>,
     worktrees: Arc<dyn WorktreeService>,
     team_policy: TeamMcpPolicy,
@@ -875,6 +877,7 @@ pub struct RuntimeToolGateway {
 
 pub struct RuntimeToolGatewayDeps {
     pub process_manager: Arc<RuntimeProcessManager>,
+    pub runtime: Option<Arc<RuntimeSessionManager>>,
     pub team_comms: Arc<dyn TeamCommsService>,
     pub worktrees: Arc<dyn WorktreeService>,
     pub team_policy: TeamMcpPolicy,
@@ -901,6 +904,7 @@ impl RuntimeToolGateway {
     pub fn new(deps: RuntimeToolGatewayDeps) -> Self {
         Self {
             process_manager: deps.process_manager,
+            runtime: deps.runtime,
             team_comms: deps.team_comms,
             worktrees: deps.worktrees,
             team_policy: deps.team_policy,
@@ -910,6 +914,7 @@ impl RuntimeToolGateway {
     pub fn process_only_for_tests(process_manager: Arc<RuntimeProcessManager>) -> Self {
         Self::new(RuntimeToolGatewayDeps {
             process_manager,
+            runtime: None,
             team_comms: Arc::new(StubTeamCommsService::new(TeamCommsConfig {
                 enabled: true,
                 max_pending_deliveries: 1_000,
@@ -1070,23 +1075,189 @@ impl RuntimeToolGateway {
             });
         }
 
-        let tool_name = request.tool_name.trim();
-        match tool_name {
-            GG_TEAM_STATUS | GG_TEAM_MESSAGE | GG_TEAM_MANAGE => json!({
-                "ok": false,
-                "error": {
-                    "code": "not_implemented",
-                    "message": format!("{tool_name} is not implemented by this runtime phase")
-                }
-            }),
-            _ => json!({
-                "ok": false,
-                "error": {
-                    "code": "bad_request",
-                    "message": format!("Unsupported gg_team tool: {tool_name}")
-                }
-            }),
+        let tool_name = request.tool_name.trim().to_string();
+        let args = match request.args {
+            Value::Object(map) => map,
+            _ => {
+                return team_tool_error("bad_request", "tool args must be an object");
+            }
+        };
+
+        let result = match tool_name.as_str() {
+            GG_TEAM_STATUS => {
+                self.invoke_team_status(request.caller_session_id.as_str(), &args)
+                    .await
+            }
+            GG_TEAM_MESSAGE => {
+                self.invoke_team_message(
+                    request.caller_session_id.as_str(),
+                    request.invocation_id,
+                    &args,
+                )
+                .await
+            }
+            GG_TEAM_MANAGE => Err(TeamToolFailure::new(
+                "not_implemented",
+                "gg_team_manage is not implemented by this runtime phase",
+            )),
+            _ => Err(TeamToolFailure::new(
+                "bad_request",
+                format!("Unsupported gg_team tool: {}", tool_name),
+            )),
+        };
+
+        match result {
+            Ok(result) => json!({ "ok": true, "result": result }),
+            Err(error) => team_tool_error(error.code, error.message),
         }
+    }
+
+    async fn invoke_team_status(
+        &self,
+        caller_session_id: &str,
+        args: &serde_json::Map<String, Value>,
+    ) -> Result<Value, TeamToolFailure> {
+        reject_team_tool_fields(
+            args,
+            &["caller_agent_id", "sender", "sender_agent_id", "agent_id"],
+        )?;
+        let team_id = required_string_arg(args, "team_id")?;
+        let team = self
+            .team_comms
+            .get_team(team_id.as_str())
+            .await
+            .map_err(TeamToolFailure::from_runtime)?;
+        ensure_team_member(&team, caller_session_id)?;
+        let messages = self
+            .team_comms
+            .list_messages(TeamListMessagesRequest {
+                team_id: team.team.id.clone(),
+                cursor: None,
+                limit: Some(100),
+            })
+            .await
+            .map(|page| page.messages)
+            .unwrap_or_default();
+
+        let mut members = Vec::with_capacity(team.members.len());
+        for member in &team.members {
+            members.push(self.status_member_row(member, &messages).await);
+        }
+
+        Ok(json!({
+            "team_id": team.team.id,
+            "lead_agent_id": team.team.lead_agent_id,
+            "generated_at_ms": now_ms(),
+            "members": members,
+        }))
+    }
+
+    async fn status_member_row(
+        &self,
+        member: &TeamMemberRecord,
+        messages: &[TeamMessageRecord],
+    ) -> Value {
+        let session = match self.runtime.as_ref() {
+            Some(runtime) => runtime.get_session(member.agent_id.as_str()).await.ok(),
+            None => None,
+        };
+        let worktree = match member.worktree_id.as_deref() {
+            Some(worktree_id) => self.worktrees.get_worktree(worktree_id).await.ok(),
+            None => None,
+        };
+        let last_message = latest_message_for_member(member.agent_id.as_str(), messages);
+        let last_message_at = last_message.map(|message| message.created_at).unwrap_or(0);
+        let session_updated_at = session
+            .as_ref()
+            .map(|session| session.updated_at)
+            .unwrap_or(0);
+        let state = status_state_for_session(session.as_ref());
+
+        json!({
+            "agent_id": member.agent_id,
+            "session_id": member.agent_id,
+            "title": member.title,
+            "state": state,
+            "last_activity_at_ms": member.joined_at.max(session_updated_at).max(last_message_at),
+            "last_message": last_message.map(member_last_message_output),
+            "context_window_remaining_percentage": Value::Null,
+            "worktree_cwd": worktree.as_ref().map(|record| record.worktree_cwd.clone()),
+            "worktree_name": worktree.as_ref().map(|record| record.worktree_name.clone()),
+            "added_by": member.added_by,
+        })
+    }
+
+    async fn invoke_team_message(
+        &self,
+        caller_session_id: &str,
+        invocation_id: Option<String>,
+        args: &serde_json::Map<String, Value>,
+    ) -> Result<Value, TeamToolFailure> {
+        reject_team_tool_fields(args, &["caller_agent_id", "sender", "sender_agent_id"])?;
+        let team_id = required_string_arg(args, "team_id")?;
+        let recipient_agent_id = required_string_arg(args, "recipient_agent_id")?;
+        let message = required_string_arg(args, "message")?;
+        let image_paths = optional_string_array_arg(args, "image_paths")?;
+        let image_count = image_paths.len();
+        let input = json!([{ "type": "text", "text": message }]);
+
+        let (scope, ack) = if recipient_agent_id.eq_ignore_ascii_case("broadcast") {
+            let ack = self
+                .team_comms
+                .broadcast(TeamBroadcastRequest {
+                    team_id,
+                    sender_agent_id: caller_session_id.to_string(),
+                    input,
+                    image_paths: image_paths.clone(),
+                    priority: "normal".to_string(),
+                    policy: "non_interrupting".to_string(),
+                    include_sender: false,
+                    correlation_id: None,
+                    idempotency_key: invocation_id,
+                })
+                .await
+                .map_err(TeamToolFailure::from_runtime)?;
+            ("broadcast", ack)
+        } else {
+            let ack = self
+                .team_comms
+                .send_direct(TeamSendDirectRequest {
+                    team_id,
+                    sender_agent_id: caller_session_id.to_string(),
+                    recipient_agent_id,
+                    input,
+                    image_paths: image_paths.clone(),
+                    priority: "normal".to_string(),
+                    policy: "non_interrupting".to_string(),
+                    correlation_id: None,
+                    reply_to_message_id: None,
+                    idempotency_key: invocation_id,
+                })
+                .await
+                .map_err(TeamToolFailure::from_runtime)?;
+            ("direct", ack)
+        };
+
+        let mut delivery_ids = ack
+            .deliveries
+            .iter()
+            .map(|delivery| delivery.id.clone())
+            .collect::<Vec<_>>();
+        delivery_ids.sort();
+
+        let mut result = json!({
+            "message_id": ack.message.id,
+            "delivery_ids": delivery_ids,
+            "recipient_count": ack.deliveries.len(),
+            "scope": scope,
+            "image_count": image_count,
+        });
+        if image_count > 0 {
+            if let Some(object) = result.as_object_mut() {
+                object.insert("image_paths".to_string(), json!(image_paths));
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -1163,6 +1334,175 @@ fn namespace_matches_tool(namespace: &str, tool_name: &str) -> bool {
         "gg_team" => tool_name.starts_with("gg_team_"),
         _ => false,
     }
+}
+
+#[derive(Debug)]
+struct TeamToolFailure {
+    code: &'static str,
+    message: String,
+}
+
+impl TeamToolFailure {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    fn from_runtime(error: RuntimeError) -> Self {
+        let code = match error {
+            RuntimeError::InvalidState(_) => "unauthorized",
+            RuntimeError::NotFound(_) => "not_found",
+            RuntimeError::Unsupported(_) => "feature_disabled",
+            _ => "tool_failed",
+        };
+        Self::new(code, error.to_string())
+    }
+}
+
+fn team_tool_error(code: impl AsRef<str>, message: impl AsRef<str>) -> Value {
+    json!({
+        "ok": false,
+        "error": {
+            "code": code.as_ref(),
+            "message": message.as_ref(),
+        }
+    })
+}
+
+fn reject_team_tool_fields(
+    args: &serde_json::Map<String, Value>,
+    rejected_fields: &[&str],
+) -> Result<(), TeamToolFailure> {
+    for field in rejected_fields {
+        if args.contains_key(*field) {
+            return Err(TeamToolFailure::new(
+                "bad_request",
+                format!("{field} is supplied by gateway metadata and cannot be provided in args"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn required_string_arg(
+    args: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<String, TeamToolFailure> {
+    let value = args
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| TeamToolFailure::new("bad_request", format!("{field} is required")))?;
+    Ok(value.to_string())
+}
+
+fn optional_string_array_arg(
+    args: &serde_json::Map<String, Value>,
+    field: &'static str,
+) -> Result<Vec<String>, TeamToolFailure> {
+    let Some(value) = args.get(field) else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(TeamToolFailure::new(
+            "bad_request",
+            format!("{field} must be an array of non-empty strings"),
+        ));
+    };
+    values
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    TeamToolFailure::new(
+                        "bad_request",
+                        format!("{field} must contain only non-empty strings"),
+                    )
+                })
+        })
+        .collect()
+}
+
+fn ensure_team_member(
+    team: &TeamWithMembers,
+    caller_session_id: &str,
+) -> Result<(), TeamToolFailure> {
+    if team
+        .members
+        .iter()
+        .any(|member| member.agent_id == caller_session_id)
+    {
+        return Ok(());
+    }
+    Err(TeamToolFailure::new(
+        "unauthorized",
+        format!(
+            "agent {} is not a member of team {}",
+            caller_session_id, team.team.id
+        ),
+    ))
+}
+
+fn status_state_for_session(session: Option<&SessionRecord>) -> &'static str {
+    match session {
+        Some(session) if session.status == "failed" => "errored",
+        Some(session) if session.active_turn_id.is_some() => "working",
+        Some(session) if session.status == "closed" => "closed",
+        Some(_) => "idle",
+        None => "unknown",
+    }
+}
+
+fn latest_message_for_member<'a>(
+    agent_id: &str,
+    messages: &'a [TeamMessageRecord],
+) -> Option<&'a TeamMessageRecord> {
+    messages
+        .iter()
+        .filter(|message| {
+            message.sender_agent_id == agent_id
+                || message
+                    .recipient_agent_ids
+                    .as_array()
+                    .map(|recipients| {
+                        recipients
+                            .iter()
+                            .any(|value| value.as_str() == Some(agent_id))
+                    })
+                    .unwrap_or(false)
+        })
+        .max_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.id.cmp(&right.id))
+        })
+}
+
+fn member_last_message_output(message: &TeamMessageRecord) -> Value {
+    json!({
+        "message_id": message.id,
+        "scope": message.scope,
+        "sender_agent_id": message.sender_agent_id,
+        "created_at_ms": message.created_at,
+        "text": message_text(&message.input),
+    })
+}
+
+fn message_text(input: &Value) -> Option<String> {
+    if let Some(text) = input.as_str() {
+        return Some(text.to_string());
+    }
+    input
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 #[derive(Debug)]
@@ -3386,6 +3726,7 @@ mod tests {
 
         RuntimeToolGateway::new(RuntimeToolGatewayDeps {
             process_manager,
+            runtime: None,
             team_comms: Arc::new(StubTeamCommsService::new(TeamCommsConfig {
                 enabled: true,
                 max_pending_deliveries: 1_000,
@@ -3398,6 +3739,87 @@ mod tests {
             })),
             team_policy: policy,
         })
+    }
+
+    async fn build_team_gateway_fixture() -> (
+        RuntimeToolGateway,
+        Arc<RuntimeSessionManager>,
+        Arc<RuntimeTeamCommsService>,
+        tempfile::TempDir,
+    ) {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: temp_dir.path().join("runtime.sqlite3"),
+        }));
+        store.initialize().await.expect("initialize store");
+        let (runtime, team_comms) = build_runtime_and_team_comms(store.clone()).await;
+        let process_manager = RuntimeProcessManager::new(
+            store.clone(),
+            ProcessManagerConfig {
+                enabled: true,
+                max_concurrent: 1,
+                default_timeout_ms: 60_000,
+                max_output_bytes_per_process: 100_000,
+                allow_shell: false,
+                completed_retention_ms: 600_000,
+                output_event_sample_bytes: 8 * 1024,
+                log_dir: temp_dir.path().join("process-logs"),
+            },
+        )
+        .await
+        .expect("process manager");
+        let worktrees = RuntimeWorktreeService::new(
+            store,
+            runtime.clone(),
+            team_comms.clone(),
+            WorktreeServiceConfig {
+                enabled: true,
+                root_dir: temp_dir.path().join("worktrees").display().to_string(),
+                init_script_path: ".agents/gg/worktree-init.sh".to_string(),
+                deletion_policy_default: "delete_on_last_claim".to_string(),
+            },
+        )
+        .expect("worktree service");
+        let gateway = RuntimeToolGateway::new(RuntimeToolGatewayDeps {
+            process_manager,
+            runtime: Some(runtime.clone()),
+            team_comms: team_comms.clone(),
+            worktrees,
+            team_policy: TeamMcpPolicy::default(),
+        });
+        (gateway, runtime, team_comms, temp_dir)
+    }
+
+    async fn create_team_gateway_sessions(
+        runtime: &RuntimeSessionManager,
+        team_comms: &RuntimeTeamCommsService,
+        temp_dir: &tempfile::TempDir,
+        member_count: usize,
+    ) -> (Vec<SessionRecord>, String) {
+        let mut sessions = Vec::new();
+        for idx in 0..member_count {
+            let cwd = temp_dir.path().join(format!("session-{idx}"));
+            std::fs::create_dir_all(&cwd).expect("create session cwd");
+            sessions.push(create_test_session(runtime, cwd.to_string_lossy().as_ref()).await);
+        }
+        let lead_id = sessions.first().expect("lead session").id.clone();
+        let member_ids = sessions
+            .iter()
+            .skip(1)
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        let team_id = team_comms
+            .create_team(TeamCreateRequest {
+                name: "MCP Team".to_string(),
+                lead_agent_id: lead_id,
+                member_agent_ids: member_ids,
+                created_by: Some("test".to_string()),
+            })
+            .await
+            .expect("create team")
+            .team
+            .id;
+        (sessions, team_id)
     }
 
     #[test]
@@ -3523,6 +3945,286 @@ mod tests {
             .await
             .expect_err("namespace mismatch");
         assert!(matches!(error, RuntimeError::InvalidState(_)));
+    }
+
+    #[tokio::test]
+    async fn team_status_gateway_invoke_returns_member_rows() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 2).await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_STATUS.to_string(),
+                caller_session_id: sessions[0].id.clone(),
+                invocation_id: None,
+                args: json!({ "team_id": team_id }),
+            })
+            .await
+            .expect("status invoke");
+
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true));
+        let result = response.get("result").expect("result");
+        assert_eq!(
+            result.get("team_id").and_then(Value::as_str),
+            Some(team_id.as_str())
+        );
+        assert_eq!(
+            result.get("lead_agent_id").and_then(Value::as_str),
+            Some(sessions[0].id.as_str())
+        );
+        let members = result
+            .get("members")
+            .and_then(Value::as_array)
+            .expect("members");
+        assert_eq!(members.len(), 2);
+        assert!(members.iter().any(|member| {
+            member.get("agent_id").and_then(Value::as_str) == Some(sessions[0].id.as_str())
+                && member.get("state").and_then(Value::as_str).is_some()
+                && member
+                    .get("last_activity_at_ms")
+                    .and_then(Value::as_i64)
+                    .is_some()
+        }));
+    }
+
+    #[tokio::test]
+    async fn sidecar_forwarded_team_status_payload_executes() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 1).await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: "gg_team_status".to_string(),
+                caller_session_id: sessions[0].id.clone(),
+                invocation_id: Some("toolu_status_1".to_string()),
+                args: json!({ "team_id": team_id }),
+            })
+            .await
+            .expect("status invoke");
+
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            response
+                .get("result")
+                .and_then(|result| result.get("members"))
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn team_status_unauthorized_for_non_member() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 1).await;
+        let outsider =
+            create_test_session(&runtime, temp_dir.path().to_string_lossy().as_ref()).await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_STATUS.to_string(),
+                caller_session_id: outsider.id,
+                invocation_id: None,
+                args: json!({ "team_id": team_id }),
+            })
+            .await
+            .expect("status invoke");
+
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            response
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_str),
+            Some("unauthorized")
+        );
+        assert!(!sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn team_status_rejects_spoofing_fields() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 1).await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_STATUS.to_string(),
+                caller_session_id: sessions[0].id.clone(),
+                invocation_id: None,
+                args: json!({ "team_id": team_id, "sender_agent_id": "sess_spoof" }),
+            })
+            .await
+            .expect("status invoke");
+
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            response
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_str),
+            Some("bad_request")
+        );
+    }
+
+    #[tokio::test]
+    async fn team_message_direct_gateway_invoke_creates_delivery_and_event() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 2).await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_MESSAGE.to_string(),
+                caller_session_id: sessions[0].id.clone(),
+                invocation_id: Some("msg_direct_1".to_string()),
+                args: json!({
+                    "team_id": team_id,
+                    "recipient_agent_id": sessions[1].id,
+                    "message": "direct hello",
+                    "image_paths": ["/tmp/image-a.png"]
+                }),
+            })
+            .await
+            .expect("message invoke");
+
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true));
+        let result = response.get("result").expect("result");
+        assert_eq!(result.get("scope").and_then(Value::as_str), Some("direct"));
+        assert_eq!(
+            result.get("recipient_count").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(result.get("image_count").and_then(Value::as_u64), Some(1));
+        let message_id = result
+            .get("message_id")
+            .and_then(Value::as_str)
+            .expect("message_id");
+        let page = team_comms
+            .list_messages(TeamListMessagesRequest {
+                team_id: team_id.clone(),
+                cursor: None,
+                limit: Some(10),
+            })
+            .await
+            .expect("list messages");
+        assert!(page.messages.iter().any(|message| message.id == message_id));
+        let events = team_comms
+            .replay_team_events(team_id.as_str(), None, 100)
+            .expect("team events");
+        assert!(events
+            .iter()
+            .any(|event| event.kind == "team_message.created"));
+    }
+
+    #[tokio::test]
+    async fn team_message_broadcast_gateway_invoke_excludes_sender() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 3).await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_MESSAGE.to_string(),
+                caller_session_id: sessions[0].id.clone(),
+                invocation_id: Some("msg_broadcast_1".to_string()),
+                args: json!({
+                    "team_id": team_id,
+                    "recipient_agent_id": "broadcast",
+                    "message": "broadcast hello"
+                }),
+            })
+            .await
+            .expect("message invoke");
+
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true));
+        let result = response.get("result").expect("result");
+        assert_eq!(
+            result.get("scope").and_then(Value::as_str),
+            Some("broadcast")
+        );
+        assert_eq!(
+            result.get("recipient_count").and_then(Value::as_u64),
+            Some(2)
+        );
+        let delivery_ids = result
+            .get("delivery_ids")
+            .and_then(Value::as_array)
+            .expect("delivery ids");
+        assert_eq!(delivery_ids.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn team_message_rejects_blank_inputs() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 2).await;
+
+        for args in [
+            json!({ "team_id": "", "recipient_agent_id": sessions[1].id, "message": "hi" }),
+            json!({ "team_id": team_id, "recipient_agent_id": "", "message": "hi" }),
+            json!({ "team_id": team_id, "recipient_agent_id": sessions[1].id, "message": " " }),
+        ] {
+            let response = gateway
+                .invoke_tool(ToolInvokeRequest {
+                    namespace: Some("gg_team".to_string()),
+                    tool_name: GG_TEAM_MESSAGE.to_string(),
+                    caller_session_id: sessions[0].id.clone(),
+                    invocation_id: None,
+                    args,
+                })
+                .await
+                .expect("message invoke");
+            assert_eq!(response.get("ok").and_then(Value::as_bool), Some(false));
+            assert_eq!(
+                response
+                    .get("error")
+                    .and_then(|error| error.get("code"))
+                    .and_then(Value::as_str),
+                Some("bad_request")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn team_message_rejects_spoofed_sender_fields() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 2).await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_MESSAGE.to_string(),
+                caller_session_id: sessions[0].id.clone(),
+                invocation_id: None,
+                args: json!({
+                    "team_id": team_id,
+                    "recipient_agent_id": sessions[1].id,
+                    "message": "hi",
+                    "sender_agent_id": sessions[1].id
+                }),
+            })
+            .await
+            .expect("message invoke");
+
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            response
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_str),
+            Some("bad_request")
+        );
     }
 
     #[derive(Default)]

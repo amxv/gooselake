@@ -220,6 +220,7 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
     .context("failed to initialize worktree service")?;
     let tool_gateway = Arc::new(RuntimeToolGateway::new(RuntimeToolGatewayDeps {
         process_manager: process_manager.clone(),
+        runtime: Some(runtime.clone()),
         team_comms: team_comms.clone(),
         worktrees: worktrees.clone(),
         team_policy: TeamMcpPolicy {

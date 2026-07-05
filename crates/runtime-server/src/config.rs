@@ -14,6 +14,7 @@ pub struct RuntimeServerConfig {
     pub providers: ProvidersConfig,
     pub events: EventsConfig,
     pub processes: ProcessesConfig,
+    pub teams: TeamsConfig,
     pub worktrees: WorktreesConfig,
     #[serde(skip)]
     config_file_dir: Option<PathBuf>,
@@ -28,6 +29,7 @@ impl Default for RuntimeServerConfig {
             providers: ProvidersConfig::default(),
             events: EventsConfig::default(),
             processes: ProcessesConfig::default(),
+            teams: TeamsConfig::default(),
             worktrees: WorktreesConfig::default(),
             config_file_dir: None,
         }
@@ -331,6 +333,24 @@ impl Default for ProcessesConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct TeamsConfig {
+    pub enabled: bool,
+    pub non_lead_can_add_members: bool,
+    pub non_lead_can_remove_members: bool,
+}
+
+impl Default for TeamsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            non_lead_can_add_members: false,
+            non_lead_can_remove_members: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct WorktreesConfig {
     pub enabled: bool,
     pub root_dir: PathBuf,
@@ -395,6 +415,28 @@ mod tests {
         assert_eq!(config.providers.acp.wait_timeout_secs, 300);
         assert_eq!(config.providers.claude_auth_mode, "host_machine");
         assert_eq!(config.processes.max_concurrent, 32);
+        assert!(config.teams.enabled);
+        assert!(!config.teams.non_lead_can_add_members);
+        assert!(!config.teams.non_lead_can_remove_members);
+        assert!(config.worktrees.enabled);
+    }
+
+    #[test]
+    fn teams_config_parses_mcp_policy() {
+        let config = toml::from_str::<RuntimeServerConfig>(
+            r#"
+[teams]
+enabled = false
+non_lead_can_add_members = true
+non_lead_can_remove_members = true
+"#,
+        )
+        .expect("parse config");
+
+        assert!(!config.teams.enabled);
+        assert!(config.teams.non_lead_can_add_members);
+        assert!(config.teams.non_lead_can_remove_members);
+        assert!(config.processes.enabled);
         assert!(config.worktrees.enabled);
     }
 

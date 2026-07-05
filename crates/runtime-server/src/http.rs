@@ -2669,7 +2669,9 @@ mod tests {
         )
         .await
         .expect("process manager");
-        let tool_gateway = Arc::new(RuntimeToolGateway::new(process_manager.clone()));
+        let tool_gateway = Arc::new(RuntimeToolGateway::process_only_for_tests(
+            process_manager.clone(),
+        ));
         let team_comms = RuntimeTeamCommsService::new(
             store.clone(),
             runtime.clone(),
@@ -2773,7 +2775,9 @@ mod tests {
         )
         .await
         .expect("process manager");
-        let tool_gateway = Arc::new(RuntimeToolGateway::new(process_manager.clone()));
+        let tool_gateway = Arc::new(RuntimeToolGateway::process_only_for_tests(
+            process_manager.clone(),
+        ));
         let team_comms = RuntimeTeamCommsService::new(
             store.clone(),
             runtime.clone(),

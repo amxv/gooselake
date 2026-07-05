@@ -368,6 +368,9 @@ Important constraints:
 - `caller_agent_id` is required, also accepts camelCase `callerAgentId`.
 - `invocation_id` is optional, also accepts camelCase `invocationId`.
 - closed/failed caller sessions are rejected with `400`.
+- `namespace`, when present, must match the tool prefix. `gg_process` accepts `gg_process_*`; `gg_team` accepts `gg_team_*`.
+
+`GET /v1/mcp/capabilities` reports the enabled GG tool namespaces and tool names. Process tools advertise under `gg_process`. Team MCP tools advertise under `gg_team` when the runtime team MCP policy is enabled, including `gg_team_status`, `gg_team_message`, and `gg_team_manage`. The same response includes `ggTeamManagePermissions` so agents can see whether non-lead members may add or remove team members through MCP. If team MCP is disabled, team tools are omitted from capabilities and direct `gg_team_*` invocations return an `ok:false` envelope with `feature_disabled`.
 
 Example:
 

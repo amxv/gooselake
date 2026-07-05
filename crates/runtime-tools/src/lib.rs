@@ -31,6 +31,9 @@ const GG_PROCESS_RUN: &str = "gg_process_run";
 const GG_PROCESS_STATUS: &str = "gg_process_status";
 const GG_PROCESS_LOGS: &str = "gg_process_logs";
 const GG_PROCESS_KILL: &str = "gg_process_kill";
+const GG_TEAM_STATUS: &str = "gg_team_status";
+const GG_TEAM_MESSAGE: &str = "gg_team_message";
+const GG_TEAM_MANAGE: &str = "gg_team_manage";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessManagerConfig {
@@ -865,11 +868,64 @@ impl Clone for RuntimeProcessManager {
 
 pub struct RuntimeToolGateway {
     process_manager: Arc<RuntimeProcessManager>,
+    team_comms: Arc<dyn TeamCommsService>,
+    worktrees: Arc<dyn WorktreeService>,
+    team_policy: TeamMcpPolicy,
+}
+
+pub struct RuntimeToolGatewayDeps {
+    pub process_manager: Arc<RuntimeProcessManager>,
+    pub team_comms: Arc<dyn TeamCommsService>,
+    pub worktrees: Arc<dyn WorktreeService>,
+    pub team_policy: TeamMcpPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TeamMcpPolicy {
+    pub enabled: bool,
+    pub non_lead_can_add_members: bool,
+    pub non_lead_can_remove_members: bool,
+}
+
+impl Default for TeamMcpPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            non_lead_can_add_members: false,
+            non_lead_can_remove_members: false,
+        }
+    }
 }
 
 impl RuntimeToolGateway {
-    pub fn new(process_manager: Arc<RuntimeProcessManager>) -> Self {
-        Self { process_manager }
+    pub fn new(deps: RuntimeToolGatewayDeps) -> Self {
+        Self {
+            process_manager: deps.process_manager,
+            team_comms: deps.team_comms,
+            worktrees: deps.worktrees,
+            team_policy: deps.team_policy,
+        }
+    }
+
+    pub fn process_only_for_tests(process_manager: Arc<RuntimeProcessManager>) -> Self {
+        Self::new(RuntimeToolGatewayDeps {
+            process_manager,
+            team_comms: Arc::new(StubTeamCommsService::new(TeamCommsConfig {
+                enabled: true,
+                max_pending_deliveries: 1_000,
+            })),
+            worktrees: Arc::new(StubWorktreeService::new(WorktreeServiceConfig {
+                enabled: true,
+                root_dir: String::new(),
+                init_script_path: String::new(),
+                deletion_policy_default: "delete_on_last_claim".to_string(),
+            })),
+            team_policy: TeamMcpPolicy::default(),
+        })
+    }
+
+    pub fn team_policy(&self) -> &TeamMcpPolicy {
+        &self.team_policy
     }
 
     async fn invoke_process_tool(&self, request: ToolInvokeRequest) -> Value {
@@ -1002,11 +1058,42 @@ impl RuntimeToolGateway {
             }),
         }
     }
+
+    async fn invoke_team_tool(&self, request: ToolInvokeRequest) -> Value {
+        if !self.team_policy.enabled {
+            return json!({
+                "ok": false,
+                "error": {
+                    "code": "feature_disabled",
+                    "message": "gg_team MCP tools are disabled"
+                }
+            });
+        }
+
+        let tool_name = request.tool_name.trim();
+        match tool_name {
+            GG_TEAM_STATUS | GG_TEAM_MESSAGE | GG_TEAM_MANAGE => json!({
+                "ok": false,
+                "error": {
+                    "code": "not_implemented",
+                    "message": format!("{tool_name} is not implemented by this runtime phase")
+                }
+            }),
+            _ => json!({
+                "ok": false,
+                "error": {
+                    "code": "bad_request",
+                    "message": format!("Unsupported gg_team tool: {tool_name}")
+                }
+            }),
+        }
+    }
 }
 
 #[async_trait]
 impl ToolGateway for RuntimeToolGateway {
     async fn healthcheck(&self) -> Result<(), RuntimeError> {
+        let _ = (&self.team_comms, &self.worktrees);
         self.process_manager.healthcheck().await
     }
 
@@ -1029,6 +1116,9 @@ impl ToolGateway for RuntimeToolGateway {
         if request.tool_name.starts_with("gg_process_") {
             return Ok(self.invoke_process_tool(request).await);
         }
+        if request.tool_name.starts_with("gg_team_") {
+            return Ok(self.invoke_team_tool(request).await);
+        }
 
         Ok(json!({
             "ok": false,
@@ -1040,12 +1130,28 @@ impl ToolGateway for RuntimeToolGateway {
     }
 
     async fn capabilities(&self) -> Result<Value, RuntimeError> {
+        let mut supported_namespaces = vec!["gg_process"];
+        let mut tools = vec![
+            GG_PROCESS_RUN,
+            GG_PROCESS_STATUS,
+            GG_PROCESS_LOGS,
+            GG_PROCESS_KILL,
+        ];
+        if self.team_policy.enabled {
+            supported_namespaces.push("gg_team");
+            tools.extend([GG_TEAM_STATUS, GG_TEAM_MESSAGE, GG_TEAM_MANAGE]);
+        }
         Ok(json!({
             "ok": true,
             "result": {
                 "ggProcessEnabled": self.process_manager.config.enabled,
-                "supportedNamespaces": ["gg_process"],
-                "tools": [GG_PROCESS_RUN, GG_PROCESS_STATUS, GG_PROCESS_LOGS, GG_PROCESS_KILL],
+                "ggTeamEnabled": self.team_policy.enabled,
+                "ggTeamManagePermissions": {
+                    "nonLeadCanAddMembers": self.team_policy.non_lead_can_add_members,
+                    "nonLeadCanRemoveMembers": self.team_policy.non_lead_can_remove_members,
+                },
+                "supportedNamespaces": supported_namespaces,
+                "tools": tools,
             }
         }))
     }
@@ -1054,6 +1160,7 @@ impl ToolGateway for RuntimeToolGateway {
 fn namespace_matches_tool(namespace: &str, tool_name: &str) -> bool {
     match namespace.trim() {
         "gg_process" => tool_name.starts_with("gg_process_"),
+        "gg_team" => tool_name.starts_with("gg_team_"),
         _ => false,
     }
 }
@@ -3056,7 +3163,7 @@ mod tests {
         RuntimeProvider, RuntimeTeamCommsConfig, RuntimeTeamCommsService, SessionRecord,
         TeamCreateRequest, TeamDeliveryRecord, TeamMemberRecord, TeamMemberSpawnRequest,
         TeamMemberSpawnWorktreeInput, TeamMessageRecord, TeamOperationDiagnosticRecord,
-        TeamOperationJournalRecord, TeamRecord, TurnRecord, WorktreeClaimRequest,
+        TeamOperationJournalRecord, TeamRecord, ToolGateway, TurnRecord, WorktreeClaimRequest,
         WorktreeCreateRequest, WorktreeReleaseRequest,
     };
     use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
@@ -3253,6 +3360,169 @@ mod tests {
             .expect("create team")
             .team
             .id
+    }
+
+    async fn build_test_tool_gateway(policy: TeamMcpPolicy) -> RuntimeToolGateway {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: temp_dir.path().join("runtime.sqlite3"),
+        }));
+        store.initialize().await.expect("initialize store");
+        let process_manager = RuntimeProcessManager::new(
+            store,
+            ProcessManagerConfig {
+                enabled: true,
+                max_concurrent: 1,
+                default_timeout_ms: 60_000,
+                max_output_bytes_per_process: 100_000,
+                allow_shell: false,
+                completed_retention_ms: 600_000,
+                output_event_sample_bytes: 8 * 1024,
+                log_dir: temp_dir.path().join("process-logs"),
+            },
+        )
+        .await
+        .expect("process manager");
+
+        RuntimeToolGateway::new(RuntimeToolGatewayDeps {
+            process_manager,
+            team_comms: Arc::new(StubTeamCommsService::new(TeamCommsConfig {
+                enabled: true,
+                max_pending_deliveries: 1_000,
+            })),
+            worktrees: Arc::new(StubWorktreeService::new(WorktreeServiceConfig {
+                enabled: true,
+                root_dir: temp_dir.path().join("worktrees").display().to_string(),
+                init_script_path: ".agents/gg/worktree-init.sh".to_string(),
+                deletion_policy_default: "delete_on_last_claim".to_string(),
+            })),
+            team_policy: policy,
+        })
+    }
+
+    #[test]
+    fn gateway_namespace_validation_accepts_gg_team_tools() {
+        assert!(namespace_matches_tool("gg_team", GG_TEAM_STATUS));
+        assert!(namespace_matches_tool(" gg_team ", GG_TEAM_MESSAGE));
+        assert!(!namespace_matches_tool("gg_process", GG_TEAM_STATUS));
+        assert!(!namespace_matches_tool("unsupported", GG_TEAM_STATUS));
+    }
+
+    #[tokio::test]
+    async fn gateway_capabilities_include_team_tools_when_enabled() {
+        let gateway = build_test_tool_gateway(TeamMcpPolicy {
+            enabled: true,
+            non_lead_can_add_members: true,
+            non_lead_can_remove_members: false,
+        })
+        .await;
+
+        let capabilities = gateway.capabilities().await.expect("capabilities");
+        let result = capabilities.get("result").expect("result");
+        assert_eq!(
+            result.get("ggTeamEnabled").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            result
+                .get("ggTeamManagePermissions")
+                .and_then(|value| value.get("nonLeadCanAddMembers"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            result
+                .get("ggTeamManagePermissions")
+                .and_then(|value| value.get("nonLeadCanRemoveMembers"))
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        let namespaces = result
+            .get("supportedNamespaces")
+            .and_then(Value::as_array)
+            .expect("namespaces");
+        assert!(namespaces.iter().any(|value| value == "gg_team"));
+        let tools = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .expect("tools");
+        assert!(tools.iter().any(|value| value == GG_TEAM_STATUS));
+        assert!(tools.iter().any(|value| value == GG_TEAM_MESSAGE));
+        assert!(tools.iter().any(|value| value == GG_TEAM_MANAGE));
+    }
+
+    #[tokio::test]
+    async fn gateway_capabilities_omit_team_tools_when_disabled() {
+        let gateway = build_test_tool_gateway(TeamMcpPolicy {
+            enabled: false,
+            non_lead_can_add_members: true,
+            non_lead_can_remove_members: true,
+        })
+        .await;
+
+        let capabilities = gateway.capabilities().await.expect("capabilities");
+        let result = capabilities.get("result").expect("result");
+        assert_eq!(
+            result.get("ggTeamEnabled").and_then(Value::as_bool),
+            Some(false)
+        );
+        let namespaces = result
+            .get("supportedNamespaces")
+            .and_then(Value::as_array)
+            .expect("namespaces");
+        assert!(!namespaces.iter().any(|value| value == "gg_team"));
+        let tools = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .expect("tools");
+        assert!(!tools.iter().any(|value| value == GG_TEAM_STATUS));
+        assert!(!tools.iter().any(|value| value == GG_TEAM_MESSAGE));
+        assert!(!tools.iter().any(|value| value == GG_TEAM_MANAGE));
+    }
+
+    #[tokio::test]
+    async fn gateway_rejects_disabled_team_tool_with_feature_disabled() {
+        let gateway = build_test_tool_gateway(TeamMcpPolicy {
+            enabled: false,
+            non_lead_can_add_members: false,
+            non_lead_can_remove_members: false,
+        })
+        .await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_STATUS.to_string(),
+                caller_session_id: "sess_caller".to_string(),
+                invocation_id: None,
+                args: json!({ "team_id": "team_1" }),
+            })
+            .await
+            .expect("invoke");
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            response
+                .get("error")
+                .and_then(|value| value.get("code"))
+                .and_then(Value::as_str),
+            Some("feature_disabled")
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_rejects_team_tool_under_process_namespace() {
+        let gateway = build_test_tool_gateway(TeamMcpPolicy::default()).await;
+        let error = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_process".to_string()),
+                tool_name: GG_TEAM_STATUS.to_string(),
+                caller_session_id: "sess_caller".to_string(),
+                invocation_id: None,
+                args: json!({ "team_id": "team_1" }),
+            })
+            .await
+            .expect_err("namespace mismatch");
+        assert!(matches!(error, RuntimeError::InvalidState(_)));
     }
 
     #[derive(Default)]

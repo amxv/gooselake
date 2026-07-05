@@ -8,6 +8,16 @@ summary: Version-by-version changes for the Gooselake runtime.
 
 This changelog tracks code and product changes in Gooselake. It intentionally skips docs-site-only updates.
 
+## 0.1.4 — 2026-07-06
+
+- Added runtime-backed `gg_team_status`, `gg_team_message`, and `gg_team_manage` MCP tools.
+- Added configurable team MCP policy for lead and non-lead manage permissions.
+- Added config-driven model presets for spawned team agents.
+- Added team image attachment handling for messages and spawned agents, with explicit unsupported-provider errors where needed.
+- Surfaced context-window remaining percentage in team status where provider/runtime state supports it.
+- Aligned Codex, Claude, ACP, and the bundled `gg-mcp-server` sidecar around the shared runtime MCP gateway.
+- Expanded MCP acceptance coverage and documented HTTP/MCP team control-plane behavior.
+
 ## 0.1.3 — 2026-07-03
 
 - Switched the project license to Apache 2.0.

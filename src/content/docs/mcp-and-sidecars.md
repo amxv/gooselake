@@ -110,7 +110,7 @@ Codex, Claude, and ACP sessions all use the bundled `gg-mcp-server` path when MC
 The MCP sidecar uses environment values such as:
 
 ```bash
-GG_MCP_GATEWAY_URL="http://127.0.0.1:8080/v1/mcp/invoke"
+GG_MCP_GATEWAY_URL="http://127.0.0.1:8080/v1/mcp"
 GG_MCP_GATEWAY_TOKEN="..."
 GG_MCP_CALLER_AGENT_ID="sess_codex_..."
 GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID="1"

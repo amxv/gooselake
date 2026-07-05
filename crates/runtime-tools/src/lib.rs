@@ -1417,9 +1417,37 @@ impl RuntimeToolGateway {
         args: &serde_json::Map<String, Value>,
     ) -> Result<Value, TeamToolFailure> {
         reject_team_tool_fields(args, &["caller_agent_id", "sender", "sender_agent_id"])?;
+        reject_team_tool_fields_with_message(
+            args,
+            &[
+                "agent_id",
+                "model",
+                "unsubscribe_from_compaction_notifications",
+            ],
+            |field| format!("{field} is not supported by gg_team_manage"),
+        )?;
         let team_id = required_string_arg(args, "team_id")?;
-        let remove_agent_ids = optional_string_array_arg(args, "remove_agent_ids")?;
-        if !remove_agent_ids.is_empty() {
+        if args.contains_key("remove_agent_ids") {
+            reject_team_tool_fields_with_message(
+                args,
+                &[
+                    "title",
+                    "prompt",
+                    "image_paths",
+                    "model_preset",
+                    "worktree_name",
+                    "use_existing_worktree",
+                    "creator_compaction_subscription",
+                ],
+                |field| format!("{field} cannot be provided when remove_agent_ids is provided"),
+            )?;
+            let remove_agent_ids = optional_string_array_arg(args, "remove_agent_ids")?;
+            if remove_agent_ids.is_empty() {
+                return Err(TeamToolFailure::new(
+                    "bad_request",
+                    "remove_agent_ids must contain at least one agent id",
+                ));
+            }
             return self
                 .invoke_team_manage_remove(caller_session_id, team_id, remove_agent_ids)
                 .await;
@@ -1904,11 +1932,21 @@ fn reject_team_tool_fields(
     args: &serde_json::Map<String, Value>,
     rejected_fields: &[&str],
 ) -> Result<(), TeamToolFailure> {
+    reject_team_tool_fields_with_message(args, rejected_fields, |field| {
+        format!("{field} is supplied by gateway metadata and cannot be provided in args")
+    })
+}
+
+fn reject_team_tool_fields_with_message(
+    args: &serde_json::Map<String, Value>,
+    rejected_fields: &[&str],
+    message_for_field: impl Fn(&str) -> String,
+) -> Result<(), TeamToolFailure> {
     for field in rejected_fields {
         if args.contains_key(*field) {
             return Err(TeamToolFailure::new(
                 "bad_request",
-                format!("{field} is supplied by gateway metadata and cannot be provided in args"),
+                message_for_field(field),
             ));
         }
     }
@@ -2220,6 +2258,19 @@ fn member_last_message_output(message: &TeamMessageRecord) -> Value {
 fn message_text(input: &Value) -> Option<String> {
     if let Some(text) = input.as_str() {
         return Some(text.to_string());
+    }
+    if let Some(items) = input.as_array() {
+        let text = items
+            .iter()
+            .filter_map(|item| {
+                if let Some(text) = item.as_str() {
+                    return Some(text);
+                }
+                item.get("text").and_then(Value::as_str)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return (!text.is_empty()).then_some(text);
     }
     input
         .get("text")
@@ -4765,6 +4816,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn team_status_last_message_extracts_array_text_input() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 2).await;
+        team_comms
+            .send_direct(TeamSendDirectRequest {
+                team_id: team_id.clone(),
+                sender_agent_id: sessions[0].id.clone(),
+                recipient_agent_id: sessions[1].id.clone(),
+                input: json!([
+                    {
+                        "type": "text",
+                        "text": "array text body"
+                    }
+                ]),
+                image_paths: Vec::new(),
+                priority: "normal".to_string(),
+                policy: "non_interrupting".to_string(),
+                correlation_id: None,
+                reply_to_message_id: None,
+                idempotency_key: None,
+            })
+            .await
+            .expect("send direct");
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_STATUS.to_string(),
+                caller_session_id: sessions[0].id.clone(),
+                invocation_id: None,
+                args: json!({ "team_id": team_id }),
+            })
+            .await
+            .expect("status invoke");
+
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true));
+        let member = response
+            .get("result")
+            .and_then(|result| result.get("members"))
+            .and_then(Value::as_array)
+            .and_then(|members| {
+                members.iter().find(|member| {
+                    member.get("agent_id").and_then(Value::as_str) == Some(sessions[1].id.as_str())
+                })
+            })
+            .expect("recipient member");
+        assert_eq!(
+            member
+                .get("last_message")
+                .and_then(|message| message.get("text"))
+                .and_then(Value::as_str),
+            Some("array text body")
+        );
+    }
+
+    #[tokio::test]
     async fn sidecar_forwarded_team_status_payload_executes() {
         let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
         let (sessions, team_id) =
@@ -5048,6 +5156,152 @@ mod tests {
         );
         let team = team_comms.get_team(team_id.as_str()).await.expect("team");
         assert_eq!(team.members.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn team_manage_remove_rejects_empty_remove_agent_ids_without_spawning() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 1).await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_MANAGE.to_string(),
+                caller_session_id: sessions[0].id.clone(),
+                invocation_id: Some("manage_empty_remove".to_string()),
+                args: json!({
+                    "team_id": team_id,
+                    "remove_agent_ids": []
+                }),
+            })
+            .await
+            .expect("empty remove invoke");
+
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            response
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_str),
+            Some("bad_request")
+        );
+        assert!(response
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("remove_agent_ids")));
+        let team = team_comms.get_team(team_id.as_str()).await.expect("team");
+        assert_eq!(team.members.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn team_manage_remove_rejects_add_only_fields() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 2).await;
+
+        for field in [
+            "title",
+            "prompt",
+            "image_paths",
+            "model_preset",
+            "worktree_name",
+            "use_existing_worktree",
+            "creator_compaction_subscription",
+        ] {
+            let mut args = serde_json::Map::new();
+            args.insert("team_id".to_string(), json!(team_id.clone()));
+            args.insert(
+                "remove_agent_ids".to_string(),
+                json!([sessions[1].id.clone()]),
+            );
+            args.insert(field.to_string(), json!("invalid"));
+            if field == "image_paths" {
+                args.insert(field.to_string(), json!(["/tmp/image.png"]));
+            } else if field == "use_existing_worktree" {
+                args.insert(field.to_string(), json!(true));
+            }
+
+            let response = gateway
+                .invoke_tool(ToolInvokeRequest {
+                    namespace: Some("gg_team".to_string()),
+                    tool_name: GG_TEAM_MANAGE.to_string(),
+                    caller_session_id: sessions[0].id.clone(),
+                    invocation_id: Some(format!("manage_remove_rejects_{field}")),
+                    args: Value::Object(args),
+                })
+                .await
+                .expect("remove invoke");
+
+            assert_eq!(response.get("ok").and_then(Value::as_bool), Some(false));
+            assert_eq!(
+                response
+                    .get("error")
+                    .and_then(|error| error.get("code"))
+                    .and_then(Value::as_str),
+                Some("bad_request")
+            );
+            assert!(
+                response
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains(field)),
+                "error message should mention rejected field {field}: {response}"
+            );
+        }
+
+        let team = team_comms.get_team(team_id.as_str()).await.expect("team");
+        assert_eq!(team.members.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn team_manage_rejects_legacy_fields_without_side_effects() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 1).await;
+
+        for field in [
+            "agent_id",
+            "model",
+            "unsubscribe_from_compaction_notifications",
+        ] {
+            let mut args = serde_json::Map::new();
+            args.insert("team_id".to_string(), json!(team_id.clone()));
+            args.insert(field.to_string(), json!("legacy"));
+
+            let response = gateway
+                .invoke_tool(ToolInvokeRequest {
+                    namespace: Some("gg_team".to_string()),
+                    tool_name: GG_TEAM_MANAGE.to_string(),
+                    caller_session_id: sessions[0].id.clone(),
+                    invocation_id: Some(format!("manage_rejects_legacy_{field}")),
+                    args: Value::Object(args),
+                })
+                .await
+                .expect("legacy invoke");
+
+            assert_eq!(response.get("ok").and_then(Value::as_bool), Some(false));
+            assert_eq!(
+                response
+                    .get("error")
+                    .and_then(|error| error.get("code"))
+                    .and_then(Value::as_str),
+                Some("bad_request")
+            );
+            assert!(
+                response
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains(field)),
+                "error message should mention legacy field {field}: {response}"
+            );
+        }
+
+        let team = team_comms.get_team(team_id.as_str()).await.expect("team");
+        assert_eq!(team.members.len(), 1);
     }
 
     #[tokio::test]

@@ -2420,6 +2420,45 @@ for raw_line in sys.stdin:
         );
     }
 
+    #[test]
+    fn gg_mcp_server_config_can_disable_process_tools_without_disabling_team_tools() {
+        let provider = AcpProvider::new(AcpProviderConfig {
+            enabled: true,
+            command: Some("agent".to_string()),
+            gg_mcp_enabled: true,
+            gg_mcp_server_name: "gg".to_string(),
+            gg_mcp_command: "gg-mcp-server".to_string(),
+            gg_mcp_args: vec!["--stdio".to_string()],
+            gg_mcp_enable_process_tools: false,
+            gg_mcp_gateway_url: Some("http://127.0.0.1:8787/v1/mcp".to_string()),
+            gg_mcp_gateway_token: Some("acp-token".to_string()),
+            ..AcpProviderConfig::default()
+        });
+
+        let server = provider
+            .build_gg_mcp_server_config("sess-team-only")
+            .expect("gg mcp server config");
+        assert_eq!(server["name"].as_str(), Some("gg"));
+        assert_eq!(server["command"].as_str(), Some("gg-mcp-server"));
+        let env = server["env"].as_array().expect("env array");
+        assert!(env.iter().any(|entry| {
+            entry["name"].as_str() == Some("GG_MCP_ENABLE_PROCESS_TOOLS")
+                && entry["value"].as_str() == Some("0")
+        }));
+        assert!(env.iter().any(|entry| {
+            entry["name"].as_str() == Some("GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID")
+                && entry["value"].as_str() == Some("1")
+        }));
+        assert!(env.iter().any(|entry| {
+            entry["name"].as_str() == Some("GG_MCP_CALLER_AGENT_ID")
+                && entry["value"].as_str() == Some("sess-team-only")
+        }));
+        assert!(env.iter().any(|entry| {
+            entry["name"].as_str() == Some("GG_MCP_GATEWAY_URL")
+                && entry["value"].as_str() == Some("http://127.0.0.1:8787/v1/mcp")
+        }));
+    }
+
     #[tokio::test]
     async fn real_adapter_contract_load_based_resume_is_supported() {
         let harness = FakeAgentHarness::new("load_only");

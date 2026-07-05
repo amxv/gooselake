@@ -63,20 +63,39 @@ The runtime gateway requires a caller session identity. Tool calls should be att
 
 ## Current gateway scope
 
-The current runtime MCP gateway is intentionally narrower than the full HTTP API. It primarily exposes the `gg_process` namespace:
+The runtime MCP gateway is intentionally narrower than the full HTTP API. It exposes provider-safe control namespaces that are backed by the same runtime services used by HTTP:
 
-- run process
-- get process status
-- read process logs
-- kill process
+- `gg_process`: run a process, get status, read logs, and kill a process
+- `gg_team`: inspect team status, send direct/broadcast team messages, and add/remove team members
 
-Team and worktree services are first-class runtime HTTP APIs, but not every one of those operations is currently exposed through the runtime MCP gateway. Use `/v1/mcp/capabilities` to inspect what the running server supports:
+Use `/v1/mcp/capabilities` to inspect what the running server supports:
 
 ```bash
 curl "$BASE_URL/v1/mcp/capabilities" "${AUTH[@]}"
 ```
 
-This distinction matters for technical accuracy: Gooselake has team/worktree runtime services, but the current MCP gateway should not be described as a complete mirror of all runtime services.
+Capabilities include `supportedNamespaces`, `tools`, `ggProcessEnabled`, `ggTeamEnabled`, and `ggTeamManagePermissions`. Team tools are listed only when team MCP is enabled. If disabled, `gg_team_*` calls return an `ok:false` envelope with `feature_disabled`.
+
+The team MCP surface is:
+
+- `gg_team_status`: returns lead/member status for teams where the caller is an active member.
+- `gg_team_message`: sends direct messages or broadcasts. Use `recipient_agent_id: "broadcast"` for broadcast fanout; the sender is excluded by default.
+- `gg_team_manage`: add one member when `remove_agent_ids` is absent, or remove one or more members when `remove_agent_ids` is present.
+
+`gg_team` calls share the same underlying team services as HTTP routes. Messages create normal team message, delivery, and event records. Member add/remove operations use the runtime spawn, join, remove, worktree assignment, and cleanup services.
+
+Agent-initiated membership management is governed by runtime team policy:
+
+```toml
+[teams]
+enabled = true
+non_lead_can_add_members = false
+non_lead_can_remove_members = false
+```
+
+The team lead can add and remove members by default. Non-lead members can use `gg_team_manage` add/remove only when the matching policy flag is enabled. This policy applies to MCP-initiated membership control; authenticated HTTP team administration remains the client/human control plane.
+
+Codex, Claude, and ACP sessions all use the bundled `gg-mcp-server` path when MCP is enabled, so `gg_process` and `gg_team` behavior is provider-agnostic. Providers inject caller identity into the sidecar environment or per-call metadata; the model-authored tool arguments are not trusted for caller identity.
 
 ## MCP environment
 
@@ -92,6 +111,8 @@ GG_MCP_ENABLE_PROCESS_TOOLS="1"
 
 The exact environment is assembled by provider integration code when MCP tools are injected into a session.
 
+When `GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID=1`, the sidecar requires caller identity per tool call. This lets a shared MCP server process safely serve different runtime sessions. `GG_MCP_ENABLE_PROCESS_TOOLS=0` hides `gg_process` tools without disabling the unified server or the team tool path.
+
 ## Failure modes
 
 Common MCP failures:
@@ -102,6 +123,9 @@ Common MCP failures:
 - tool namespace is unsupported
 - process ownership does not match caller session
 - process tools are disabled in config
+- team MCP tools are disabled in config
+- caller is not a team member
+- non-lead caller is denied by `gg_team_manage` policy
 - sidecar binary is missing from the release/source layout
 
 Start with:

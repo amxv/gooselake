@@ -4045,6 +4045,36 @@ for raw_line in sys.stdin:
         );
     }
 
+    #[test]
+    fn gg_mcp_server_config_can_disable_process_tools_without_disabling_team_tools() {
+        let harness = FakeClaudeBridgeHarness::new("normal");
+        let provider = harness.provider(ClaudeGgMcpConfig {
+            enabled: true,
+            server_name: "gg".to_string(),
+            command: "gg-mcp-server".to_string(),
+            args: vec!["--stdio".to_string()],
+            enable_process_tools: false,
+            gateway_url: Some("http://127.0.0.1:8787/v1/mcp".to_string()),
+            gateway_token: Some("bridge-token".to_string()),
+        });
+
+        let server = provider.build_gg_mcp_server_session_config("sess-team-only");
+        assert_eq!(server["serverName"].as_str(), Some("gg"));
+        assert_eq!(server["callerAgentId"].as_str(), Some("sess-team-only"));
+        assert_eq!(
+            server["env"]["GG_MCP_ENABLE_PROCESS_TOOLS"].as_str(),
+            Some("0")
+        );
+        assert_eq!(
+            server["env"]["GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID"].as_str(),
+            Some("1")
+        );
+        assert_eq!(
+            server["env"]["GG_MCP_GATEWAY_URL"].as_str(),
+            Some("http://127.0.0.1:8787/v1/mcp")
+        );
+    }
+
     #[tokio::test]
     async fn create_and_resume_retry_with_gg_mcp_when_bridge_requires_it() {
         let harness = FakeClaudeBridgeHarness::new("require_gg_mcp");

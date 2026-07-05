@@ -13,7 +13,9 @@ use runtime_provider_claude::{
     standalone_claude_bridge_command_path, standalone_gg_mcp_server_command_path,
     ClaudeGgMcpConfig, ClaudeProvider, ClaudeProviderConfig,
 };
-use runtime_provider_codex::{copy_codex_auth_file, CodexProvider, CodexProviderConfig};
+use runtime_provider_codex::{
+    copy_codex_auth_file, CodexGgMcpConfig, CodexProvider, CodexProviderConfig,
+};
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use runtime_tools::{
     ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeToolGatewayDeps,
@@ -49,6 +51,22 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         home_dir: codex_home.clone(),
         max_transports: config.providers.codex.max_instances,
         max_sessions_per_transport: config.providers.codex.max_sessions_per_instance,
+        gg_mcp: CodexGgMcpConfig {
+            enabled: true,
+            server_name: "gg".to_string(),
+            command: std::env::var("GG_MCP_SERVER_PATH").unwrap_or_else(|_| {
+                standalone_gg_mcp_server_command_path()
+                    .display()
+                    .to_string()
+            }),
+            args: Vec::new(),
+            enable_process_tools: config.processes.enabled,
+            gateway_url: Some(format!(
+                "{}/v1/mcp",
+                config.server.public_base_url.trim_end_matches('/')
+            )),
+            gateway_token: Some(auth.bearer_token.clone()),
+        },
     }));
 
     if config.providers.codex.enabled {

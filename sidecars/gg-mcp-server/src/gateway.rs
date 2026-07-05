@@ -13,6 +13,7 @@ pub(crate) struct GatewayClient {
 pub(crate) struct TeamModelPresetCapabilitySnapshot {
     pub(crate) revision: u64,
     pub(crate) presets: Vec<String>,
+    pub(crate) team_tools_enabled: bool,
 }
 
 #[derive(Clone)]
@@ -101,8 +102,21 @@ impl GatewayClient {
             .pointer("/result/ggTeamModelPresetsRevision")
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        let team_tools_enabled = parsed
+            .pointer("/result/supportedNamespaces")
+            .and_then(Value::as_array)
+            .map(|namespaces| {
+                namespaces
+                    .iter()
+                    .any(|namespace| namespace.as_str() == Some("gg_team"))
+            })
+            .unwrap_or(false);
 
-        Ok(TeamModelPresetCapabilitySnapshot { revision, presets })
+        Ok(TeamModelPresetCapabilitySnapshot {
+            revision,
+            presets,
+            team_tools_enabled,
+        })
     }
 
     pub(crate) async fn invoke_tool(

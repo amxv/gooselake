@@ -24,6 +24,32 @@ pub struct CodexProviderConfig {
     pub home_dir: PathBuf,
     pub max_transports: usize,
     pub max_sessions_per_transport: usize,
+    pub gg_mcp: CodexGgMcpConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexGgMcpConfig {
+    pub enabled: bool,
+    pub server_name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub enable_process_tools: bool,
+    pub gateway_url: Option<String>,
+    pub gateway_token: Option<String>,
+}
+
+impl Default for CodexGgMcpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            server_name: "gg".to_string(),
+            command: "gg-mcp-server".to_string(),
+            args: Vec::new(),
+            enable_process_tools: true,
+            gateway_url: None,
+            gateway_token: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +106,33 @@ impl CodexProvider {
 
     fn codex_auth_path(&self) -> PathBuf {
         self.inner.config.home_dir.join("auth.json")
+    }
+
+    fn codex_config_path(&self) -> PathBuf {
+        self.inner.config.home_dir.join("config.toml")
+    }
+
+    fn write_gg_mcp_config_for_session(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<(), RuntimeError> {
+        if !self.inner.config.gg_mcp.enabled {
+            return Ok(());
+        }
+        std::fs::create_dir_all(&self.inner.config.home_dir).map_err(|error| {
+            RuntimeError::Io(format!(
+                "failed to create codex home {}: {error}",
+                self.inner.config.home_dir.display()
+            ))
+        })?;
+        let config = format_codex_gg_mcp_config(&self.inner.config.gg_mcp, runtime_session_id);
+        let config_path = self.codex_config_path();
+        std::fs::write(config_path.as_path(), config).map_err(|error| {
+            RuntimeError::Io(format!(
+                "failed to write codex MCP config {}: {error}",
+                config_path.display()
+            ))
+        })
     }
 
     fn build_turn_prompt(input: &[Value]) -> String {
@@ -180,6 +233,7 @@ impl CodexProvider {
                 ))
             })?;
         }
+        self.write_gg_mcp_config_for_session(runtime_session_id)?;
 
         let mut command = Command::new("codex");
         command.env("CODEX_HOME", self.inner.config.home_dir.as_os_str());
@@ -424,6 +478,92 @@ fn absolutize_path(path: &Path) -> PathBuf {
         Ok(cwd) => cwd.join(path),
         Err(_) => path.to_path_buf(),
     }
+}
+
+fn format_codex_gg_mcp_config(config: &CodexGgMcpConfig, runtime_session_id: &str) -> String {
+    let server_name = config.server_name.trim();
+    let server_name = if server_name.is_empty() {
+        "gg"
+    } else {
+        server_name
+    };
+    let mut output = String::new();
+    output.push_str(format!("[mcp_servers.{}]\n", toml_key_segment(server_name)).as_str());
+    output.push_str(format!("command = {}\n", toml_string(config.command.as_str())).as_str());
+    output.push_str("args = [");
+    for (index, arg) in config.args.iter().enumerate() {
+        if index > 0 {
+            output.push_str(", ");
+        }
+        output.push_str(toml_string(arg).as_str());
+    }
+    output.push_str("]\n\n");
+    output.push_str(format!("[mcp_servers.{}.env]\n", toml_key_segment(server_name)).as_str());
+    output.push_str(
+        format!(
+            "GG_MCP_ENABLE_PROCESS_TOOLS = {}\n",
+            toml_string(if config.enable_process_tools {
+                "1"
+            } else {
+                "0"
+            })
+        )
+        .as_str(),
+    );
+    output.push_str("GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID = \"1\"\n");
+    output.push_str(
+        format!(
+            "GG_MCP_CALLER_AGENT_ID = {}\n",
+            toml_string(runtime_session_id)
+        )
+        .as_str(),
+    );
+    if let Some(gateway_url) = config
+        .gateway_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        output.push_str(format!("GG_MCP_GATEWAY_URL = {}\n", toml_string(gateway_url)).as_str());
+    }
+    if let Some(gateway_token) = config
+        .gateway_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        output
+            .push_str(format!("GG_MCP_GATEWAY_TOKEN = {}\n", toml_string(gateway_token)).as_str());
+    }
+    output
+}
+
+fn toml_key_segment(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return value.to_string();
+    }
+    toml_string(value)
+}
+
+fn toml_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            ch if ch.is_control() => escaped.push_str(format!("\\u{:04x}", ch as u32).as_str()),
+            ch => escaped.push(ch),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 #[async_trait]
@@ -893,6 +1033,7 @@ mod tests {
             home_dir: PathBuf::from("tmp/relative-codex-home"),
             max_transports: 1,
             max_sessions_per_transport: 1,
+            gg_mcp: CodexGgMcpConfig::default(),
         });
         assert!(
             provider.inner.config.home_dir.is_absolute(),
@@ -924,6 +1065,7 @@ mod tests {
             home_dir: temp_dir.path().join("codex-home"),
             max_transports: 1,
             max_sessions_per_transport: 1,
+            gg_mcp: CodexGgMcpConfig::default(),
         });
 
         provider
@@ -977,5 +1119,48 @@ mod tests {
             })
             .await;
         assert!(matches!(second, Err(RuntimeError::Io(_))));
+    }
+
+    #[test]
+    fn codex_gg_mcp_config_includes_gateway_and_caller_identity() {
+        let rendered = format_codex_gg_mcp_config(
+            &CodexGgMcpConfig {
+                enabled: true,
+                server_name: "gg".to_string(),
+                command: "/opt/gg-runtime/sidecars/gg-mcp-server/gg-mcp-server".to_string(),
+                args: vec!["--stdio".to_string()],
+                enable_process_tools: true,
+                gateway_url: Some("http://127.0.0.1:8787/v1/mcp".to_string()),
+                gateway_token: Some("codex-token".to_string()),
+            },
+            "sess_codex",
+        );
+
+        assert!(rendered.contains("[mcp_servers.gg]"));
+        assert!(
+            rendered.contains("command = \"/opt/gg-runtime/sidecars/gg-mcp-server/gg-mcp-server\"")
+        );
+        assert!(rendered.contains("args = [\"--stdio\"]"));
+        assert!(rendered.contains("[mcp_servers.gg.env]"));
+        assert!(rendered.contains("GG_MCP_ENABLE_PROCESS_TOOLS = \"1\""));
+        assert!(rendered.contains("GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID = \"1\""));
+        assert!(rendered.contains("GG_MCP_CALLER_AGENT_ID = \"sess_codex\""));
+        assert!(rendered.contains("GG_MCP_GATEWAY_URL = \"http://127.0.0.1:8787/v1/mcp\""));
+        assert!(rendered.contains("GG_MCP_GATEWAY_TOKEN = \"codex-token\""));
+    }
+
+    #[test]
+    fn codex_gg_mcp_config_can_disable_process_tools_without_hiding_team_server() {
+        let rendered = format_codex_gg_mcp_config(
+            &CodexGgMcpConfig {
+                enable_process_tools: false,
+                ..CodexGgMcpConfig::default()
+            },
+            "sess_codex",
+        );
+
+        assert!(rendered.contains("[mcp_servers.gg]"));
+        assert!(rendered.contains("GG_MCP_ENABLE_PROCESS_TOOLS = \"0\""));
+        assert!(rendered.contains("GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID = \"1\""));
     }
 }

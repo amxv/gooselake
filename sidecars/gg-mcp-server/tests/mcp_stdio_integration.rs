@@ -21,6 +21,7 @@ use tokio::process::Command;
 struct StubGatewayState {
     expected_auth_header: String,
     model_presets: Vec<String>,
+    team_tools_enabled: bool,
     capabilities_calls: Arc<AtomicUsize>,
 }
 
@@ -28,6 +29,7 @@ fn stub_gateway_state(auth_token: &str, model_presets: Vec<String>) -> StubGatew
     StubGatewayState {
         expected_auth_header: format!("Bearer {auth_token}"),
         model_presets,
+        team_tools_enabled: true,
         capabilities_calls: Arc::new(AtomicUsize::new(0)),
     }
 }
@@ -316,6 +318,56 @@ async fn stdio_server_hides_process_tools_when_disabled() -> Result<(), Box<dyn 
     assert_eq!(payload["error"]["code"], json!("feature_disabled"));
 
     let _ = service.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn stdio_server_hides_team_tools_when_gateway_capabilities_omit_team_namespace()
+-> Result<(), Box<dyn std::error::Error>> {
+    let auth_token = "integration_token";
+    let mut gateway_state = stub_gateway_state(auth_token, Vec::new());
+    gateway_state.team_tools_enabled = false;
+    let app = Router::new()
+        .route("/capabilities", get(capabilities_stub))
+        .route("/invoke", post(invoke_stub))
+        .with_state(gateway_state);
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let gateway_addr = listener.local_addr()?;
+    let gateway_handle = tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            panic!("Stub gateway exited unexpectedly: {error}");
+        }
+    });
+
+    let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
+    let service = ()
+        .serve(TokioChildProcess::new(
+            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+                command.env("GG_MCP_GATEWAY_URL", gateway_url);
+                command.env("GG_MCP_GATEWAY_TOKEN", auth_token);
+                command.env("GG_MCP_CALLER_AGENT_ID", "sess_mcp_disabled_team");
+            }),
+        )?)
+        .await?;
+
+    let tools = service.peer().list_tools(None).await?;
+    let tool_names = tools
+        .tools
+        .iter()
+        .map(|tool| tool.name.as_ref().to_string())
+        .collect::<Vec<_>>();
+    assert!(
+        !tool_names.iter().any(|name| name.starts_with("gg_team_")),
+        "gg_team_* tools should be omitted when runtime capabilities omit gg_team, got {:?}",
+        tool_names
+    );
+    assert!(
+        tool_names.contains(&"gg_process_status".to_string()),
+        "non-team tools should remain listed"
+    );
+
+    let _ = service.cancel().await?;
+    gateway_handle.abort();
     Ok(())
 }
 
@@ -906,6 +958,11 @@ async fn capabilities_stub(
                 "ggProcessEnabled": true,
                 "ggTeamModelPresetsRevision": 1,
                 "ggTeamModelPresets": state.model_presets,
+                "supportedNamespaces": if state.team_tools_enabled {
+                    json!(["gg_process", "gg_team"])
+                } else {
+                    json!(["gg_process"])
+                },
             }
         })),
     )

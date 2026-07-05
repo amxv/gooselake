@@ -13,11 +13,13 @@ use runtime_provider_claude::{
     standalone_claude_bridge_command_path, standalone_gg_mcp_server_command_path,
     ClaudeGgMcpConfig, ClaudeProvider, ClaudeProviderConfig,
 };
-use runtime_provider_codex::{copy_codex_auth_file, CodexProvider, CodexProviderConfig};
+use runtime_provider_codex::{
+    copy_codex_auth_file, CodexGgMcpConfig, CodexProvider, CodexProviderConfig,
+};
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use runtime_tools::{
-    ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeWorktreeService,
-    WorktreeServiceConfig,
+    ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeToolGatewayDeps,
+    RuntimeWorktreeService, TeamMcpPolicy, WorktreeServiceConfig,
 };
 
 #[derive(Clone)]
@@ -49,6 +51,22 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         home_dir: codex_home.clone(),
         max_transports: config.providers.codex.max_instances,
         max_sessions_per_transport: config.providers.codex.max_sessions_per_instance,
+        gg_mcp: CodexGgMcpConfig {
+            enabled: true,
+            server_name: "gg".to_string(),
+            command: std::env::var("GG_MCP_SERVER_PATH").unwrap_or_else(|_| {
+                standalone_gg_mcp_server_command_path()
+                    .display()
+                    .to_string()
+            }),
+            args: Vec::new(),
+            enable_process_tools: config.processes.enabled,
+            gateway_url: Some(format!(
+                "{}/v1/mcp",
+                config.server.public_base_url.trim_end_matches('/')
+            )),
+            gateway_token: Some(auth.bearer_token.clone()),
+        },
     }));
 
     if config.providers.codex.enabled {
@@ -196,7 +214,6 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
             recovered_processes.join(", ")
         ));
     }
-    let tool_gateway = Arc::new(RuntimeToolGateway::new(process_manager.clone()));
     let team_comms = RuntimeTeamCommsService::new(
         store.clone(),
         runtime.clone(),
@@ -219,6 +236,17 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         },
     )
     .context("failed to initialize worktree service")?;
+    let tool_gateway = Arc::new(RuntimeToolGateway::new(RuntimeToolGatewayDeps {
+        process_manager: process_manager.clone(),
+        runtime: Some(runtime.clone()),
+        team_comms: team_comms.clone(),
+        worktrees: worktrees.clone(),
+        team_policy: TeamMcpPolicy {
+            enabled: config.teams.enabled,
+            non_lead_can_add_members: config.teams.non_lead_can_add_members,
+            non_lead_can_remove_members: config.teams.non_lead_can_remove_members,
+        },
+    }));
     let retried_deferred_deliveries = team_comms
         .recover_startup_deferred_deliveries()
         .await
@@ -375,6 +403,50 @@ mod tests {
             runtime.app.worktree_settings.deletion_policy_default,
             "retain_on_last_claim"
         );
+    }
+
+    #[tokio::test]
+    async fn bootstrap_wires_team_mcp_config_policy_into_tool_gateway() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let mut config = RuntimeServerConfig::default();
+        config.data.root_dir = temp_dir.path().to_path_buf();
+        config.teams.non_lead_can_add_members = true;
+        config.teams.non_lead_can_remove_members = false;
+
+        let runtime = bootstrap_runtime(config).await.expect("bootstrap");
+        let capabilities = runtime
+            .app
+            .services
+            .tool_gateway
+            .capabilities()
+            .await
+            .expect("capabilities");
+        let result = capabilities.get("result").expect("result");
+        assert_eq!(
+            result
+                .get("ggTeamEnabled")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            result
+                .get("ggTeamManagePermissions")
+                .and_then(|value| value.get("nonLeadCanAddMembers"))
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            result
+                .get("ggTeamManagePermissions")
+                .and_then(|value| value.get("nonLeadCanRemoveMembers"))
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        let namespaces = result
+            .get("supportedNamespaces")
+            .and_then(serde_json::Value::as_array)
+            .expect("namespaces");
+        assert!(namespaces.iter().any(|value| value == "gg_team"));
     }
 
     #[tokio::test]

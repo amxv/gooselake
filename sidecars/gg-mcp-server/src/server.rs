@@ -167,7 +167,17 @@ impl GgMcpServer {
             tools.retain(|tool| !tool.name.as_ref().starts_with("gg_process_"));
         }
 
-        self.refresh_team_model_presets_cache_for_list().await;
+        self.refresh_team_capabilities_cache_for_list().await;
+        if self
+            .team_model_presets_cache
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|snapshot| !snapshot.team_tools_enabled)
+        {
+            tools.retain(|tool| !tool.name.as_ref().starts_with("gg_team_"));
+            return tools;
+        }
         let model_presets = self.resolve_team_model_presets().await;
         if let Some(tool) = tools
             .iter_mut()
@@ -189,7 +199,7 @@ impl GgMcpServer {
             .unwrap_or_default()
     }
 
-    async fn refresh_team_model_presets_cache_for_list(&self) {
+    async fn refresh_team_capabilities_cache_for_list(&self) {
         let Some(gateway_client) = self.get_or_init_gateway_client().await else {
             return;
         };
@@ -774,6 +784,7 @@ mod tests {
                 TeamModelPresetCapabilitySnapshot {
                     revision: 5,
                     presets: vec!["planner".to_string(), "designer".to_string()],
+                    team_tools_enabled: true,
                 },
             ))),
         };
@@ -828,6 +839,38 @@ mod tests {
         assert!(properties.contains_key("target_agent_id"));
         assert!(properties.contains_key("line"));
         assert!(properties.contains_key("anchor"));
+    }
+
+    #[tokio::test]
+    async fn tools_list_hides_team_tools_when_cached_capabilities_disable_team_namespace() {
+        let server = GgMcpServer {
+            tool_router: GgMcpServer::tool_router(),
+            gateway_client_config: None,
+            gateway_client: Arc::new(tokio::sync::RwLock::new(None)),
+            process_tools_enabled: true,
+            team_call_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            team_model_presets_cache: Arc::new(tokio::sync::RwLock::new(Some(
+                TeamModelPresetCapabilitySnapshot {
+                    revision: 1,
+                    presets: Vec::new(),
+                    team_tools_enabled: false,
+                },
+            ))),
+        };
+
+        let tools = server.tools_with_runtime_metadata().await;
+        assert!(
+            !tools
+                .iter()
+                .any(|tool| tool.name.as_ref().starts_with("gg_team_")),
+            "gg_team tools should be omitted when runtime capabilities omit gg_team"
+        );
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool.name.as_ref() == "gg_process_status"),
+            "non-team tools should remain listed"
+        );
     }
 
     #[tokio::test]

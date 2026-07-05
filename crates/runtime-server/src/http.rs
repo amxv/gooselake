@@ -2031,8 +2031,8 @@ mod tests {
     };
     use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
     use runtime_tools::{
-        ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeWorktreeService,
-        WorktreeServiceConfig,
+        ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeToolGatewayDeps,
+        RuntimeWorktreeService, TeamMcpPolicy, WorktreeServiceConfig,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -2639,6 +2639,12 @@ mod tests {
     }
 
     async fn build_test_router() -> (Router, String, tempfile::TempDir) {
+        build_test_router_with_team_policy(TeamMcpPolicy::default()).await
+    }
+
+    async fn build_test_router_with_team_policy(
+        team_policy: TeamMcpPolicy,
+    ) -> (Router, String, tempfile::TempDir) {
         let temp_dir = tempfile::tempdir().expect("temp dir");
         let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
             database_path: temp_dir.path().join("runtime.sqlite3"),
@@ -2669,7 +2675,6 @@ mod tests {
         )
         .await
         .expect("process manager");
-        let tool_gateway = Arc::new(RuntimeToolGateway::new(process_manager.clone()));
         let team_comms = RuntimeTeamCommsService::new(
             store.clone(),
             runtime.clone(),
@@ -2692,6 +2697,13 @@ mod tests {
             },
         )
         .expect("worktree service");
+        let tool_gateway = Arc::new(RuntimeToolGateway::new(RuntimeToolGatewayDeps {
+            process_manager: process_manager.clone(),
+            runtime: Some(runtime.clone()),
+            team_comms: team_comms.clone(),
+            worktrees: worktrees.clone(),
+            team_policy,
+        }));
 
         let app = runtime_core::RuntimeApp::new(
             provider_registry.clone(),
@@ -2773,7 +2785,6 @@ mod tests {
         )
         .await
         .expect("process manager");
-        let tool_gateway = Arc::new(RuntimeToolGateway::new(process_manager.clone()));
         let team_comms = RuntimeTeamCommsService::new(
             store.clone(),
             runtime.clone(),
@@ -2795,6 +2806,13 @@ mod tests {
             },
         )
         .expect("worktree service");
+        let tool_gateway = Arc::new(RuntimeToolGateway::new(RuntimeToolGatewayDeps {
+            process_manager: process_manager.clone(),
+            runtime: Some(runtime.clone()),
+            team_comms: team_comms.clone(),
+            worktrees: worktrees.clone(),
+            team_policy: TeamMcpPolicy::default(),
+        }));
 
         let app = runtime_core::RuntimeApp::new(
             provider_registry.clone(),
@@ -5510,6 +5528,422 @@ for raw_line in sys.stdin:
             combined.contains("phase4_mcp_runtime_path"),
             "expected process output in logs, got {combined}"
         );
+    }
+
+    #[tokio::test]
+    async fn mcp_invoke_team_tools_share_http_team_services() {
+        let (router, token, temp_dir) = build_test_router().await;
+        let session_cwd = temp_dir.path().join("mcp-team-cwd");
+        std::fs::create_dir_all(&session_cwd).expect("create mcp team cwd");
+
+        let create_session = |label: &'static str| {
+            let router = router.clone();
+            let token = token.clone();
+            let cwd = session_cwd.display().to_string();
+            async move {
+                let response = router
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/v1/sessions")
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::from(
+                                serde_json::json!({
+                                    "provider": "codex",
+                                    "model": "test-model",
+                                    "cwd": cwd,
+                                    "metadata": {"suite": "mcp_team", "label": label}
+                                })
+                                .to_string(),
+                            ))
+                            .unwrap(),
+                    )
+                    .await
+                    .expect("create session");
+                assert_eq!(response.status(), StatusCode::OK);
+                let body: serde_json::Value = serde_json::from_slice(
+                    &to_bytes(response.into_body(), usize::MAX)
+                        .await
+                        .expect("session body"),
+                )
+                .expect("session json");
+                body["id"].as_str().expect("session id").to_string()
+            }
+        };
+
+        let lead_session_id = create_session("lead").await;
+        let member_session_id = create_session("member").await;
+        let observer_session_id = create_session("observer").await;
+
+        let create_team_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/teams")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "MCP Team Parity",
+                            "lead_agent_id": lead_session_id,
+                            "member_agent_ids": [member_session_id, observer_session_id],
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create team");
+        assert_eq!(create_team_response.status(), StatusCode::OK);
+        let create_team_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(create_team_response.into_body(), usize::MAX)
+                .await
+                .expect("team body"),
+        )
+        .expect("team json");
+        let team_id = create_team_json["team"]["id"]
+            .as_str()
+            .expect("team id")
+            .to_string();
+
+        let invoke = |caller_agent_id: String,
+                      tool_name: &'static str,
+                      invocation_id: Option<&'static str>,
+                      args: serde_json::Value| {
+            let router = router.clone();
+            let token = token.clone();
+            async move {
+                let response = router
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/v1/mcp/invoke")
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::from(
+                                serde_json::json!({
+                                    "namespace": "gg_team",
+                                    "tool_name": tool_name,
+                                    "caller_agent_id": caller_agent_id,
+                                    "invocation_id": invocation_id,
+                                    "args": args,
+                                })
+                                .to_string(),
+                            ))
+                            .unwrap(),
+                    )
+                    .await
+                    .expect("mcp invoke");
+                assert_eq!(response.status(), StatusCode::OK);
+                serde_json::from_slice::<serde_json::Value>(
+                    &to_bytes(response.into_body(), usize::MAX)
+                        .await
+                        .expect("mcp body"),
+                )
+                .expect("mcp json")
+            }
+        };
+
+        let status_json = invoke(
+            lead_session_id.clone(),
+            "gg_team_status",
+            None,
+            serde_json::json!({ "team_id": team_id.clone() }),
+        )
+        .await;
+        assert_eq!(status_json["ok"].as_bool(), Some(true));
+        assert_eq!(
+            status_json["result"]["members"].as_array().map(Vec::len),
+            Some(3)
+        );
+
+        let direct_json = invoke(
+            lead_session_id.clone(),
+            "gg_team_message",
+            Some("mcp_direct_1"),
+            serde_json::json!({
+                "team_id": team_id.clone(),
+                "recipient_agent_id": member_session_id,
+                "message": "hello direct",
+            }),
+        )
+        .await;
+        assert_eq!(direct_json["ok"].as_bool(), Some(true));
+        assert_eq!(direct_json["result"]["scope"].as_str(), Some("direct"));
+        assert_eq!(direct_json["result"]["recipient_count"].as_u64(), Some(1));
+
+        let broadcast_json = invoke(
+            lead_session_id.clone(),
+            "gg_team_message",
+            Some("mcp_broadcast_1"),
+            serde_json::json!({
+                "team_id": team_id.clone(),
+                "recipient_agent_id": "broadcast",
+                "message": "hello broadcast",
+            }),
+        )
+        .await;
+        assert_eq!(broadcast_json["ok"].as_bool(), Some(true));
+        assert_eq!(
+            broadcast_json["result"]["scope"].as_str(),
+            Some("broadcast")
+        );
+        assert_eq!(
+            broadcast_json["result"]["recipient_count"].as_u64(),
+            Some(2)
+        );
+
+        let non_lead_status_json = invoke(
+            member_session_id.clone(),
+            "gg_team_status",
+            None,
+            serde_json::json!({ "team_id": team_id.clone() }),
+        )
+        .await;
+        assert_eq!(non_lead_status_json["ok"].as_bool(), Some(true));
+
+        let non_lead_message_json = invoke(
+            member_session_id.clone(),
+            "gg_team_message",
+            Some("mcp_non_lead_message_1"),
+            serde_json::json!({
+                "team_id": team_id.clone(),
+                "recipient_agent_id": lead_session_id.clone(),
+                "message": "non-lead message still allowed",
+            }),
+        )
+        .await;
+        assert_eq!(non_lead_message_json["ok"].as_bool(), Some(true));
+
+        let non_lead_manage_json = invoke(
+            member_session_id,
+            "gg_team_manage",
+            Some("mcp_non_lead_add_denied_1"),
+            serde_json::json!({
+                "team_id": team_id.clone(),
+                "title": "Denied MCP Spawn",
+            }),
+        )
+        .await;
+        assert_eq!(non_lead_manage_json["ok"].as_bool(), Some(false));
+        assert_eq!(
+            non_lead_manage_json["error"]["code"].as_str(),
+            Some("unauthorized")
+        );
+
+        let add_json = invoke(
+            lead_session_id.clone(),
+            "gg_team_manage",
+            Some("mcp_add_1"),
+            serde_json::json!({
+                "team_id": team_id.clone(),
+                "title": "MCP Spawned",
+            }),
+        )
+        .await;
+        assert_eq!(
+            add_json["ok"].as_bool(),
+            Some(true),
+            "unexpected add response: {add_json}"
+        );
+        assert_eq!(add_json["result"]["operation"].as_str(), Some("add"));
+        let spawned_agent_id = add_json["result"]["spawned_agent_id"]
+            .as_str()
+            .expect("spawned agent id")
+            .to_string();
+
+        let remove_json = invoke(
+            lead_session_id,
+            "gg_team_manage",
+            None,
+            serde_json::json!({
+                "team_id": team_id,
+                "remove_agent_ids": [spawned_agent_id],
+            }),
+        )
+        .await;
+        assert_eq!(remove_json["ok"].as_bool(), Some(true));
+        assert_eq!(remove_json["result"]["operation"].as_str(), Some("remove"));
+        assert_eq!(remove_json["result"]["removed_count"].as_u64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn mcp_invoke_team_manage_policy_enabled_and_add_idempotency_are_http_visible() {
+        let (router, token, temp_dir) = build_test_router_with_team_policy(TeamMcpPolicy {
+            enabled: true,
+            non_lead_can_add_members: true,
+            non_lead_can_remove_members: true,
+        })
+        .await;
+        let session_cwd = temp_dir.path().join("mcp-team-policy-cwd");
+        std::fs::create_dir_all(&session_cwd).expect("create mcp team cwd");
+
+        let create_session = |label: &'static str| {
+            let router = router.clone();
+            let token = token.clone();
+            let cwd = session_cwd.display().to_string();
+            async move {
+                let response = router
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri("/v1/sessions")
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .body(Body::from(
+                                serde_json::json!({
+                                    "provider": "codex",
+                                    "model": "test-model",
+                                    "cwd": cwd,
+                                    "metadata": {"suite": "mcp_team_policy", "label": label}
+                                })
+                                .to_string(),
+                            ))
+                            .unwrap(),
+                    )
+                    .await
+                    .expect("create session");
+                assert_eq!(response.status(), StatusCode::OK);
+                let body: serde_json::Value = serde_json::from_slice(
+                    &to_bytes(response.into_body(), usize::MAX)
+                        .await
+                        .expect("session body"),
+                )
+                .expect("session json");
+                body["id"].as_str().expect("session id").to_string()
+            }
+        };
+
+        let lead_session_id = create_session("lead").await;
+        let non_lead_session_id = create_session("non-lead").await;
+        let removable_session_id = create_session("removable").await;
+
+        let create_team_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/teams")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "MCP Team Policy",
+                            "lead_agent_id": lead_session_id.clone(),
+                            "member_agent_ids": [non_lead_session_id.clone(), removable_session_id.clone()],
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("create team");
+        assert_eq!(create_team_response.status(), StatusCode::OK);
+        let create_team_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(create_team_response.into_body(), usize::MAX)
+                .await
+                .expect("team body"),
+        )
+        .expect("team json");
+        let team_id = create_team_json["team"]["id"]
+            .as_str()
+            .expect("team id")
+            .to_string();
+
+        let invoke =
+            |caller_agent_id: String, invocation_id: &'static str, args: serde_json::Value| {
+                let router = router.clone();
+                let token = token.clone();
+                async move {
+                    let response = router
+                        .oneshot(
+                            Request::builder()
+                                .method("POST")
+                                .uri("/v1/mcp/invoke")
+                                .header(header::CONTENT_TYPE, "application/json")
+                                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                                .body(Body::from(
+                                    serde_json::json!({
+                                        "namespace": "gg_team",
+                                        "tool_name": "gg_team_manage",
+                                        "caller_agent_id": caller_agent_id,
+                                        "invocation_id": invocation_id,
+                                        "args": args,
+                                    })
+                                    .to_string(),
+                                ))
+                                .unwrap(),
+                        )
+                        .await
+                        .expect("mcp invoke");
+                    assert_eq!(response.status(), StatusCode::OK);
+                    serde_json::from_slice::<serde_json::Value>(
+                        &to_bytes(response.into_body(), usize::MAX)
+                            .await
+                            .expect("mcp body"),
+                    )
+                    .expect("mcp json")
+                }
+            };
+
+        let add_args = serde_json::json!({
+            "team_id": team_id.clone(),
+            "title": "Non-lead Spawn",
+        });
+        let first_add = invoke(
+            non_lead_session_id.clone(),
+            "mcp_policy_add_once",
+            add_args.clone(),
+        )
+        .await;
+        let replayed_add =
+            invoke(non_lead_session_id.clone(), "mcp_policy_add_once", add_args).await;
+        assert_eq!(first_add["ok"].as_bool(), Some(true));
+        assert_eq!(replayed_add["ok"].as_bool(), Some(true));
+        assert_eq!(
+            first_add["result"]["spawned_agent_id"].as_str(),
+            replayed_add["result"]["spawned_agent_id"].as_str(),
+            "same caller + invocation id should return cached add result"
+        );
+
+        let list_after_add_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/teams/{team_id}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("get team after add");
+        assert_eq!(list_after_add_response.status(), StatusCode::OK);
+        let list_after_add_json: serde_json::Value = serde_json::from_slice(
+            &to_bytes(list_after_add_response.into_body(), usize::MAX)
+                .await
+                .expect("team after add body"),
+        )
+        .expect("team after add json");
+        assert_eq!(
+            list_after_add_json["members"].as_array().map(Vec::len),
+            Some(4),
+            "duplicate add invocation must not create a second member"
+        );
+
+        let remove_json = invoke(
+            non_lead_session_id,
+            "mcp_policy_remove_once",
+            serde_json::json!({
+                "team_id": team_id.clone(),
+                "remove_agent_ids": [removable_session_id],
+            }),
+        )
+        .await;
+        assert_eq!(remove_json["ok"].as_bool(), Some(true));
+        assert_eq!(remove_json["result"]["operation"].as_str(), Some("remove"));
+        assert_eq!(remove_json["result"]["removed_count"].as_u64(), Some(1));
     }
 
     #[tokio::test]

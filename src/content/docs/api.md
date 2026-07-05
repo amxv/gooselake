@@ -354,6 +354,8 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 
 Team delivery fields make multi-agent coordination inspectable: `pending`, `deferred`, `injecting`, `injected`, `failed`, or `cancelled` states are stored as records and replayed through team events.
 
+HTTP routes and MCP team tools use the same underlying team services. A team created through `POST /v1/teams` is immediately visible to `gg_team_status`; messages sent through `gg_team_message` create the same message, delivery, and event records as `POST /v1/teams/{team_id}/messages` and `POST /v1/teams/{team_id}/broadcasts`; members added or removed through `gg_team_manage` use the same spawn, join, remove, worktree assignment, and cleanup paths as the HTTP team/member endpoints.
+
 ## MCP gateway
 
 Routes:
@@ -368,6 +370,37 @@ Important constraints:
 - `caller_agent_id` is required, also accepts camelCase `callerAgentId`.
 - `invocation_id` is optional, also accepts camelCase `invocationId`.
 - closed/failed caller sessions are rejected with `400`.
+- `namespace`, when present, must match the tool prefix. `gg_process` accepts `gg_process_*`; `gg_team` accepts `gg_team_*`.
+
+`GET /v1/mcp/capabilities` reports the enabled GG tool namespaces and tool names:
+
+- `gg_process`: `gg_process_run`, `gg_process_status`, `gg_process_logs`, `gg_process_kill`
+- `gg_team`: `gg_team_status`, `gg_team_message`, `gg_team_manage`
+
+Team MCP tools advertise under `gg_team` when the runtime team MCP policy is enabled. The same response includes `ggTeamManagePermissions` so agents can see whether non-lead members may add or remove team members through MCP. If team MCP is disabled, team tools are omitted from capabilities and direct `gg_team_*` invocations return an `ok:false` envelope with `feature_disabled`.
+
+`gg_team_status` returns a team/member snapshot for an active team member. `gg_team_message` sends direct messages or broadcasts by setting `recipient_agent_id` to a member id or `"broadcast"`. `gg_team_manage` adds one member when `remove_agent_ids` is absent, and removes one or more members when `remove_agent_ids` is present.
+
+Agent-initiated membership management is configurable in runtime config:
+
+```toml
+[teams]
+enabled = true
+non_lead_can_add_members = false
+non_lead_can_remove_members = false
+```
+
+The lead can add and remove members by default. Non-lead members can use `gg_team_manage` add/remove only when the matching flag is enabled. This policy gates MCP-initiated membership control; authenticated HTTP team administration remains the human/client control plane.
+
+Codex, Claude, and ACP provider sessions all receive the bundled `gg-mcp-server` configuration when enabled. The sidecar forwards provider tool calls to this gateway, so `gg_process` and `gg_team` behavior is provider-agnostic and uses the same success/error envelope across providers:
+
+```json
+{"ok":true,"result":{}}
+```
+
+```json
+{"ok":false,"error":{"code":"unauthorized","message":"..."}}
+```
 
 Example:
 

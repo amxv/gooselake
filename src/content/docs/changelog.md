@@ -8,6 +8,10 @@ summary: Version-by-version changes for the Gooselake runtime.
 
 This changelog tracks code and product changes in Gooselake. It intentionally skips docs-site-only updates.
 
+## 0.1.5 — 2026-07-06
+
+- Maintenance release. No direct code behavior changes beyond release preparation.
+
 ## 0.1.4 — 2026-07-06
 
 - Added runtime-backed `gg_team_status`, `gg_team_message`, and `gg_team_manage` MCP tools.

@@ -19,14 +19,14 @@ jobs:
             platform: linux
             arch: x86_64
             bun_target: bun-linux-x64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+            bun_target: bun-linux-arm64
           - os: macos-14
             platform: darwin
             arch: arm64
             bun_target: bun-darwin-arm64
-          - os: macos-13
-            platform: darwin
-            arch: x86_64
-            bun_target: bun-darwin-x64
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout

@@ -525,8 +525,8 @@ The repo includes a GitHub Actions release workflow:
 It builds release bundles for:
 
 - Linux x86_64
+- Linux arm64
 - macOS arm64
-- macOS x86_64
 
 and publishes `gg-runtime-<platform>-<arch>.tar.gz` assets on `v*` tags.
 

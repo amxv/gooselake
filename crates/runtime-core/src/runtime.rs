@@ -400,6 +400,26 @@ impl RuntimeSessionManager {
             .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))
     }
 
+    pub async fn list_session_turns(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<TurnRecord>, RuntimeError> {
+        self.get_session(session_id).await?;
+        let turns = self.turns.read().await;
+        let mut rows = turns
+            .values()
+            .filter(|turn| turn.session_id == session_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        rows.sort_by(|left, right| {
+            left.started_at
+                .cmp(&right.started_at)
+                .then_with(|| left.completed_at.cmp(&right.completed_at))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(rows)
+    }
+
     pub async fn set_session_worktree_id(
         &self,
         session_id: &str,

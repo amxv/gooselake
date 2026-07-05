@@ -337,6 +337,7 @@ pub struct TeamsConfig {
     pub enabled: bool,
     pub non_lead_can_add_members: bool,
     pub non_lead_can_remove_members: bool,
+    pub model_presets: Vec<TeamModelPresetConfig>,
 }
 
 impl Default for TeamsConfig {
@@ -345,8 +346,52 @@ impl Default for TeamsConfig {
             enabled: true,
             non_lead_can_add_members: false,
             non_lead_can_remove_members: false,
+            model_presets: default_team_model_presets(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TeamModelPresetConfig {
+    pub name: String,
+    pub provider: Option<String>,
+    pub model: String,
+    pub thinking_effort: Option<String>,
+}
+
+impl Default for TeamModelPresetConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            provider: None,
+            model: String::new(),
+            thinking_effort: None,
+        }
+    }
+}
+
+fn default_team_model_presets() -> Vec<TeamModelPresetConfig> {
+    [
+        ("planner", None, "gpt-5.5", Some("high")),
+        ("designer", Some("claude"), "claude-opus-4-8", Some("high")),
+        ("frontend", None, "gpt-5.5", Some("high")),
+        ("fast", Some("codex"), "gpt-5.4-mini", Some("low")),
+        ("codex", Some("codex"), "gpt-5.5", Some("high")),
+        ("deep", Some("claude"), "claude-opus-4-8", Some("high")),
+        ("opus", Some("claude"), "claude-opus-4-8", Some("high")),
+        ("sonnet", Some("claude"), "claude-sonnet-5", Some("high")),
+    ]
+    .into_iter()
+    .map(
+        |(name, provider, model, thinking_effort)| TeamModelPresetConfig {
+            name: name.to_string(),
+            provider: provider.map(str::to_string),
+            model: model.to_string(),
+            thinking_effort: thinking_effort.map(str::to_string),
+        },
+    )
+    .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -418,6 +463,11 @@ mod tests {
         assert!(config.teams.enabled);
         assert!(!config.teams.non_lead_can_add_members);
         assert!(!config.teams.non_lead_can_remove_members);
+        assert!(config
+            .teams
+            .model_presets
+            .iter()
+            .any(|preset| preset.name == "deep"));
         assert!(config.worktrees.enabled);
     }
 
@@ -429,6 +479,12 @@ mod tests {
 enabled = false
 non_lead_can_add_members = true
 non_lead_can_remove_members = true
+
+[[teams.model_presets]]
+name = "reviewer"
+provider = "claude"
+model = "claude-sonnet-5"
+thinking_effort = "high"
 "#,
         )
         .expect("parse config");
@@ -436,6 +492,8 @@ non_lead_can_remove_members = true
         assert!(!config.teams.enabled);
         assert!(config.teams.non_lead_can_add_members);
         assert!(config.teams.non_lead_can_remove_members);
+        assert_eq!(config.teams.model_presets.len(), 1);
+        assert_eq!(config.teams.model_presets[0].name, "reviewer");
         assert!(config.processes.enabled);
         assert!(config.worktrees.enabled);
     }

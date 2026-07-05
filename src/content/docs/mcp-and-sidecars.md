@@ -74,13 +74,13 @@ Use `/v1/mcp/capabilities` to inspect what the running server supports:
 curl "$BASE_URL/v1/mcp/capabilities" "${AUTH[@]}"
 ```
 
-Capabilities include `supportedNamespaces`, `tools`, `ggProcessEnabled`, `ggTeamEnabled`, and `ggTeamManagePermissions`. Team tools are listed only when team MCP is enabled. If disabled, `gg_team_*` calls return an `ok:false` envelope with `feature_disabled`.
+Capabilities include `supportedNamespaces`, `tools`, `ggProcessEnabled`, `ggTeamEnabled`, `ggTeamManagePermissions`, and `ggTeamModelPresets`. Team tools are listed only when team MCP is enabled. If disabled, `gg_team_*` calls return an `ok:false` envelope with `feature_disabled`.
 
 The team MCP surface is:
 
-- `gg_team_status`: returns lead/member status for teams where the caller is an active member.
-- `gg_team_message`: sends direct messages or broadcasts. Use `recipient_agent_id: "broadcast"` for broadcast fanout; the sender is excluded by default.
-- `gg_team_manage`: add one member when `remove_agent_ids` is absent, or remove one or more members when `remove_agent_ids` is present.
+- `gg_team_status`: returns lead/member status for teams where the caller is an active member, including context-window remaining percentage when provider usage exposes enough data.
+- `gg_team_message`: sends direct messages or broadcasts. Use `recipient_agent_id: "broadcast"` for broadcast fanout; the sender is excluded by default. Optional `image_paths` are stored and delivered as image input items for supported providers.
+- `gg_team_manage`: add one member when `remove_agent_ids` is absent, or remove one or more members when `remove_agent_ids` is present. Add mode accepts configured `model_preset` names and optional `image_paths` for the spawned member onboarding message when the selected provider supports image attachments.
 
 `gg_team` calls share the same underlying team services as HTTP routes. Messages create normal team message, delivery, and event records. Member add/remove operations use the runtime spawn, join, remove, worktree assignment, and cleanup services.
 
@@ -91,9 +91,17 @@ Agent-initiated membership management is governed by runtime team policy:
 enabled = true
 non_lead_can_add_members = false
 non_lead_can_remove_members = false
+
+[[teams.model_presets]]
+name = "deep"
+provider = "claude"
+model = "claude-opus-4-8"
+thinking_effort = "high"
 ```
 
-The team lead can add and remove members by default. Non-lead members can use `gg_team_manage` add/remove only when the matching policy flag is enabled. This policy applies to MCP-initiated membership control; authenticated HTTP team administration remains the client/human control plane.
+The team lead can add and remove members by default. Non-lead members can use `gg_team_manage` add/remove only when the matching policy flag is enabled. This policy applies to MCP-initiated membership control; authenticated HTTP team administration remains the client/human control plane. Context-window percentage is derived from persisted turn usage; Codex and Claude can report it after completed turns, while ACP reports `null` unless its configured agent emits compatible context-window usage.
+
+Codex and Claude sessions can receive team image attachments through the runtime input path. ACP image attachments are not modeled by this runtime yet, so `gg_team_message` and `gg_team_manage` calls that include `image_paths` for ACP recipients or spawned ACP sessions return `unsupported_provider_images`.
 
 Codex, Claude, and ACP sessions all use the bundled `gg-mcp-server` path when MCP is enabled, so `gg_process` and `gg_team` behavior is provider-agnostic. Providers inject caller identity into the sidecar environment or per-call metadata; the model-authored tool arguments are not trusted for caller identity.
 

@@ -214,6 +214,36 @@ Do not set these to zero. The runtime validates positive capacities at startup.
 
 Process records, lifecycle events, and log paths are persisted. HTTP process access can be scoped with `session_id`; MCP process calls are scoped to the caller session.
 
+## `[teams]`
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `true` | Enables the MCP `gg_team` namespace. HTTP team administration remains available to authenticated clients. |
+| `non_lead_can_add_members` | `false` | Allows non-lead team members to add teammates through `gg_team_manage`. |
+| `non_lead_can_remove_members` | `false` | Allows non-lead team members to remove teammates through `gg_team_manage`. |
+| `model_presets` | built-in presets | User-friendly model shortcuts advertised through `ggTeamModelPresets` and accepted by `gg_team_manage` add mode. |
+
+Model presets are configured as repeated `[[teams.model_presets]]` tables. `name` is what agents pass as `model_preset`; `model` is the provider model id; `provider` is optional and is inferred for common Codex `gpt-*` and Claude `claude-*` model ids; `thinking_effort` is optional and is passed to the spawned session metadata.
+
+```toml
+[teams]
+enabled = true
+non_lead_can_add_members = false
+non_lead_can_remove_members = false
+
+[[teams.model_presets]]
+name = "fast"
+provider = "codex"
+model = "gpt-5.4-mini"
+thinking_effort = "low"
+
+[[teams.model_presets]]
+name = "deep"
+provider = "claude"
+model = "claude-opus-4-8"
+thinking_effort = "high"
+```
+
 ## `[worktrees]`
 
 | Key | Default | Meaning |

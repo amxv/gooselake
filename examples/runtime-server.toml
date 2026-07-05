@@ -58,6 +58,23 @@ default_timeout_ms = 600000
 max_output_bytes_per_process = 20000000
 allow_shell = true
 
+[teams]
+enabled = true
+non_lead_can_add_members = false
+non_lead_can_remove_members = false
+
+[[teams.model_presets]]
+name = "fast"
+provider = "codex"
+model = "gpt-5.4-mini"
+thinking_effort = "low"
+
+[[teams.model_presets]]
+name = "deep"
+provider = "claude"
+model = "claude-opus-4-8"
+thinking_effort = "high"
+
 [worktrees]
 enabled = true
 root_dir = "worktrees"

@@ -19,7 +19,7 @@ use runtime_provider_codex::{
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use runtime_tools::{
     ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeToolGatewayDeps,
-    RuntimeWorktreeService, TeamMcpPolicy, WorktreeServiceConfig,
+    RuntimeWorktreeService, TeamMcpPolicy, TeamModelPreset, WorktreeServiceConfig,
 };
 
 #[derive(Clone)]
@@ -246,6 +246,17 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
             non_lead_can_add_members: config.teams.non_lead_can_add_members,
             non_lead_can_remove_members: config.teams.non_lead_can_remove_members,
         },
+        team_model_presets: config
+            .teams
+            .model_presets
+            .iter()
+            .map(|preset| TeamModelPreset {
+                name: preset.name.clone(),
+                provider: preset.provider.clone(),
+                model: preset.model.clone(),
+                thinking_effort: preset.thinking_effort.clone(),
+            })
+            .collect(),
     }));
     let retried_deferred_deliveries = team_comms
         .recover_startup_deferred_deliveries()

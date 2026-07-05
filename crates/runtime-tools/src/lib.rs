@@ -875,6 +875,7 @@ pub struct RuntimeToolGateway {
     team_comms: Arc<dyn TeamCommsService>,
     worktrees: Arc<dyn WorktreeService>,
     team_policy: TeamMcpPolicy,
+    team_model_presets: ModelPresetCatalog,
     team_manage_add_idempotency: Arc<Mutex<HashMap<String, ManageAddIdempotencyEntry>>>,
 }
 
@@ -884,6 +885,7 @@ pub struct RuntimeToolGatewayDeps {
     pub team_comms: Arc<dyn TeamCommsService>,
     pub worktrees: Arc<dyn WorktreeService>,
     pub team_policy: TeamMcpPolicy,
+    pub team_model_presets: Vec<TeamModelPreset>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -891,6 +893,28 @@ pub struct TeamMcpPolicy {
     pub enabled: bool,
     pub non_lead_can_add_members: bool,
     pub non_lead_can_remove_members: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TeamModelPreset {
+    pub name: String,
+    pub provider: Option<String>,
+    pub model: String,
+    pub thinking_effort: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedModelPreset {
+    name: String,
+    provider: ProviderKind,
+    model: String,
+    thinking_effort: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ModelPresetCatalog {
+    presets_by_name: BTreeMap<String, ResolvedModelPreset>,
+    preset_names: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -909,6 +933,105 @@ impl Default for TeamMcpPolicy {
     }
 }
 
+impl ModelPresetCatalog {
+    fn from_presets(presets: Vec<TeamModelPreset>) -> Self {
+        let mut presets_by_name = BTreeMap::new();
+        let mut preset_names = Vec::new();
+        for preset in presets {
+            let normalized_name = normalize_model_preset_name(preset.name.as_str());
+            let model = preset.model.trim().to_string();
+            if normalized_name.is_empty() || model.is_empty() {
+                continue;
+            }
+            if presets_by_name.contains_key(normalized_name.as_str()) {
+                continue;
+            }
+            let provider = preset
+                .provider
+                .as_deref()
+                .and_then(ProviderKind::from_str)
+                .or_else(|| infer_provider_for_model(model.as_str()))
+                .unwrap_or(ProviderKind::Codex);
+            preset_names.push(normalized_name.clone());
+            presets_by_name.insert(
+                normalized_name.clone(),
+                ResolvedModelPreset {
+                    name: normalized_name,
+                    provider,
+                    model,
+                    thinking_effort: preset
+                        .thinking_effort
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string),
+                },
+            );
+        }
+        Self {
+            presets_by_name,
+            preset_names,
+        }
+    }
+
+    fn resolve(&self, name: &str) -> Option<ResolvedModelPreset> {
+        self.presets_by_name
+            .get(normalize_model_preset_name(name).as_str())
+            .cloned()
+    }
+
+    fn all_names(&self) -> Vec<String> {
+        self.preset_names.clone()
+    }
+}
+
+fn default_team_model_presets() -> Vec<TeamModelPreset> {
+    [
+        ("planner", None, "gpt-5.5", Some("high")),
+        ("designer", Some("claude"), "claude-opus-4-8", Some("high")),
+        ("frontend", None, "gpt-5.5", Some("high")),
+        ("fast", Some("codex"), "gpt-5.4-mini", Some("low")),
+        ("codex", Some("codex"), "gpt-5.5", Some("high")),
+        ("deep", Some("claude"), "claude-opus-4-8", Some("high")),
+        ("opus", Some("claude"), "claude-opus-4-8", Some("high")),
+        ("sonnet", Some("claude"), "claude-sonnet-5", Some("high")),
+    ]
+    .into_iter()
+    .map(|(name, provider, model, thinking_effort)| TeamModelPreset {
+        name: name.to_string(),
+        provider: provider.map(str::to_string),
+        model: model.to_string(),
+        thinking_effort: thinking_effort.map(str::to_string),
+    })
+    .collect()
+}
+
+fn normalize_model_preset_name(value: &str) -> String {
+    let mut normalized = String::new();
+    let mut previous_was_separator = false;
+    for character in value.trim().to_ascii_lowercase().chars() {
+        if character.is_ascii_alphanumeric() {
+            normalized.push(character);
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            normalized.push('_');
+            previous_was_separator = true;
+        }
+    }
+    normalized.trim_matches('_').to_string()
+}
+
+fn infer_provider_for_model(model: &str) -> Option<ProviderKind> {
+    let model = model.trim().to_ascii_lowercase();
+    if model.starts_with("claude-") {
+        Some(ProviderKind::Claude)
+    } else if model.starts_with("gpt-") || model.starts_with("o") {
+        Some(ProviderKind::Codex)
+    } else {
+        None
+    }
+}
+
 impl RuntimeToolGateway {
     pub fn new(deps: RuntimeToolGatewayDeps) -> Self {
         Self {
@@ -917,6 +1040,7 @@ impl RuntimeToolGateway {
             team_comms: deps.team_comms,
             worktrees: deps.worktrees,
             team_policy: deps.team_policy,
+            team_model_presets: ModelPresetCatalog::from_presets(deps.team_model_presets),
             team_manage_add_idempotency: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -936,11 +1060,16 @@ impl RuntimeToolGateway {
                 deletion_policy_default: "delete_on_last_claim".to_string(),
             })),
             team_policy: TeamMcpPolicy::default(),
+            team_model_presets: default_team_model_presets(),
         })
     }
 
     pub fn team_policy(&self) -> &TeamMcpPolicy {
         &self.team_policy
+    }
+
+    pub fn team_model_preset_names(&self) -> Vec<String> {
+        self.team_model_presets.all_names()
     }
 
     async fn invoke_process_tool(&self, request: ToolInvokeRequest) -> Value {
@@ -1194,7 +1323,7 @@ impl RuntimeToolGateway {
             "state": state,
             "last_activity_at_ms": member.joined_at.max(session_updated_at).max(last_message_at),
             "last_message": last_message.map(member_last_message_output),
-            "context_window_remaining_percentage": Value::Null,
+            "context_window_remaining_percentage": self.context_window_remaining_percentage(member.agent_id.as_str()).await,
             "worktree_cwd": worktree.as_ref().map(|record| record.worktree_cwd.clone()),
             "worktree_name": worktree.as_ref().map(|record| record.worktree_name.clone()),
             "added_by": member.added_by,
@@ -1212,6 +1341,13 @@ impl RuntimeToolGateway {
         let recipient_agent_id = required_string_arg(args, "recipient_agent_id")?;
         let message = required_string_arg(args, "message")?;
         let image_paths = optional_string_array_arg(args, "image_paths")?;
+        self.ensure_team_message_images_supported(
+            caller_session_id,
+            team_id.as_str(),
+            recipient_agent_id.as_str(),
+            &image_paths,
+        )
+        .await?;
         let image_count = image_paths.len();
         let input = json!([{ "type": "text", "text": message }]);
 
@@ -1337,22 +1473,31 @@ impl RuntimeToolGateway {
 
         let title = optional_string_arg(args, "title")?;
         let prompt = optional_string_arg(args, "prompt")?;
-        let model_preset = optional_string_arg(args, "model_preset")?;
-        if model_preset.is_some() {
-            return Err(TeamToolFailure::new(
-                "bad_request",
-                "model_preset is not supported by this runtime gateway; omit it to inherit the caller session model",
-            ));
-        }
         let image_paths = optional_string_array_arg(args, "image_paths")?;
-        if !image_paths.is_empty() {
-            return Err(TeamToolFailure::new(
-                "bad_request",
-                "image_paths are not supported for gg_team_manage add in this runtime gateway",
-            ));
-        }
+        let resolved_model_preset = match optional_string_arg(args, "model_preset")? {
+            Some(model_preset) => {
+                let Some(resolved) = self.team_model_presets.resolve(model_preset.as_str()) else {
+                    return Err(TeamToolFailure::new(
+                        "unknown_model_preset",
+                        format!(
+                            "Unknown model_preset `{}` for gg_team_manage. Available presets: {}",
+                            model_preset,
+                            self.team_model_presets.all_names().join(", ")
+                        ),
+                    ));
+                };
+                Some(resolved)
+            }
+            None => None,
+        };
         let creator_compaction_subscription =
             optional_creator_compaction_subscription_arg(args, "creator_compaction_subscription")?;
+        self.ensure_manage_add_images_supported(
+            caller_session_id,
+            resolved_model_preset.as_ref(),
+            &image_paths,
+        )
+        .await?;
         let worktree_name = optional_string_arg(args, "worktree_name")?;
         let use_existing_worktree =
             optional_bool_arg(args, "use_existing_worktree")?.unwrap_or(false);
@@ -1373,18 +1518,23 @@ impl RuntimeToolGateway {
             base_ref: None,
             run_init_script: None,
         });
+        let metadata = build_manage_add_metadata(resolved_model_preset.as_ref(), &image_paths);
 
         let spawn = self
             .worktrees
             .spawn_team_member(TeamMemberSpawnRequest {
                 team_id: team_id.clone(),
                 source_session_id: caller_session_id.to_string(),
-                provider: None,
-                model: None,
+                provider: resolved_model_preset
+                    .as_ref()
+                    .map(|preset| preset.provider.as_str().to_string()),
+                model: resolved_model_preset
+                    .as_ref()
+                    .map(|preset| preset.model.clone()),
                 title,
                 prompt,
                 permission_mode: None,
-                metadata: None,
+                metadata,
                 worktree,
                 creator_agent_id: Some(caller_session_id.to_string()),
                 creator_compaction_subscription,
@@ -1405,6 +1555,8 @@ impl RuntimeToolGateway {
             "worktree_created_by_operation": spawn.worktree_created_by_operation,
             "onboarding": spawn.onboarding,
             "journal_stage": spawn.journal_stage,
+            "model_preset": resolved_model_preset.as_ref().map(|preset| preset.name.clone()),
+            "image_count": image_paths.len(),
         }))
     }
 
@@ -1512,6 +1664,86 @@ impl RuntimeToolGateway {
         ))
     }
 
+    async fn ensure_team_message_images_supported(
+        &self,
+        caller_session_id: &str,
+        team_id: &str,
+        recipient_agent_id: &str,
+        image_paths: &[String],
+    ) -> Result<(), TeamToolFailure> {
+        if image_paths.is_empty() {
+            return Ok(());
+        }
+        let Some(runtime) = self.runtime.as_ref() else {
+            return Ok(());
+        };
+
+        let team = self
+            .team_comms
+            .get_team(team_id)
+            .await
+            .map_err(TeamToolFailure::from_runtime)?;
+        ensure_team_member(&team, caller_session_id)?;
+
+        let recipient_ids = if recipient_agent_id.eq_ignore_ascii_case("broadcast") {
+            team.members
+                .iter()
+                .map(|member| member.agent_id.clone())
+                .filter(|agent_id| agent_id != caller_session_id)
+                .collect::<Vec<_>>()
+        } else {
+            vec![recipient_agent_id.to_string()]
+        };
+
+        for recipient_id in recipient_ids {
+            if let Ok(session) = runtime.get_session(recipient_id.as_str()).await {
+                reject_image_paths_for_provider(session.provider.as_str(), "gg_team_message")?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn ensure_manage_add_images_supported(
+        &self,
+        caller_session_id: &str,
+        resolved_model_preset: Option<&ResolvedModelPreset>,
+        image_paths: &[String],
+    ) -> Result<(), TeamToolFailure> {
+        if image_paths.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(preset) = resolved_model_preset {
+            return reject_image_paths_for_provider(preset.provider.as_str(), "gg_team_manage");
+        }
+
+        let Some(runtime) = self.runtime.as_ref() else {
+            return Ok(());
+        };
+        let session = runtime
+            .get_session(caller_session_id)
+            .await
+            .map_err(TeamToolFailure::from_runtime)?;
+        reject_image_paths_for_provider(session.provider.as_str(), "gg_team_manage")
+    }
+
+    async fn context_window_remaining_percentage(&self, session_id: &str) -> Value {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return Value::Null;
+        };
+        let Ok(turns) = runtime.list_session_turns(session_id).await else {
+            return Value::Null;
+        };
+        turns
+            .iter()
+            .rev()
+            .filter_map(|turn| turn.usage.as_ref())
+            .find_map(context_remaining_percentage_from_usage)
+            .map(|value| json!(value))
+            .unwrap_or(Value::Null)
+    }
+
     async fn begin_manage_add_idempotent_execution(
         &self,
         cache_key: &str,
@@ -1613,6 +1845,7 @@ impl ToolGateway for RuntimeToolGateway {
                     "nonLeadCanAddMembers": self.team_policy.non_lead_can_add_members,
                     "nonLeadCanRemoveMembers": self.team_policy.non_lead_can_remove_members,
                 },
+                "ggTeamModelPresets": self.team_model_presets.all_names(),
                 "supportedNamespaces": supported_namespaces,
                 "tools": tools,
             }
@@ -1786,6 +2019,127 @@ fn optional_creator_compaction_subscription_arg(
     }
 }
 
+fn build_manage_add_metadata(
+    preset: Option<&ResolvedModelPreset>,
+    image_paths: &[String],
+) -> Option<Value> {
+    let mut object = serde_json::Map::new();
+    if let Some(preset) = preset {
+        object.insert(
+            "model_preset".to_string(),
+            Value::String(preset.name.clone()),
+        );
+        if let Some(thinking_effort) = preset.thinking_effort.as_deref() {
+            object.insert(
+                "thinking_effort".to_string(),
+                Value::String(thinking_effort.to_string()),
+            );
+        }
+    }
+    if !image_paths.is_empty() {
+        object.insert(
+            "gg_team_manage_add_image_paths".to_string(),
+            Value::Array(image_paths.iter().cloned().map(Value::String).collect()),
+        );
+    }
+    if object.is_empty() {
+        None
+    } else {
+        Some(Value::Object(object))
+    }
+}
+
+fn context_remaining_percentage_from_usage(usage: &Value) -> Option<u8> {
+    let context_window = extract_u64_from_usage(
+        usage,
+        &[
+            "contextWindowSize",
+            "context_window_size",
+            "contextWindow",
+            "context_window",
+            "model_context_window",
+            "modelContextWindow",
+        ],
+    )
+    .or_else(|| {
+        usage
+            .get("raw_usage")
+            .and_then(extract_context_window_from_usage)
+    })?;
+    if context_window == 0 {
+        return None;
+    }
+
+    let total_tokens = extract_u64_from_usage(usage, &["last_total_tokens", "lastTotalTokens"])
+        .or_else(|| usage.get("last").and_then(extract_total_tokens_from_usage))
+        .or_else(|| {
+            usage
+                .get("last_token_usage")
+                .and_then(extract_total_tokens_from_usage)
+        })
+        .or_else(|| {
+            usage
+                .get("lastTokenUsage")
+                .and_then(extract_total_tokens_from_usage)
+        })
+        .or_else(|| extract_total_tokens_from_usage(usage))?;
+    let remaining_tokens = context_window.saturating_sub(total_tokens);
+    let remaining_percentage = (((remaining_tokens as f64) / (context_window as f64)) * 100.0)
+        .round()
+        .clamp(0.0, 100.0);
+    Some(remaining_percentage as u8)
+}
+
+fn extract_context_window_from_usage(usage: &Value) -> Option<u64> {
+    extract_u64_from_usage(
+        usage,
+        &[
+            "contextWindowSize",
+            "context_window_size",
+            "contextWindow",
+            "context_window",
+            "model_context_window",
+            "modelContextWindow",
+        ],
+    )
+}
+
+fn extract_total_tokens_from_usage(usage: &Value) -> Option<u64> {
+    extract_u64_from_usage(usage, &["total_tokens", "totalTokens", "total"]).or_else(|| {
+        if let Some(raw) = usage.get("raw_usage") {
+            if let Some(total) = extract_total_tokens_from_usage(raw) {
+                return Some(total);
+            }
+        }
+        let input = extract_u64_from_usage(usage, &["inputTokens", "input_tokens"])?;
+        let output = extract_u64_from_usage(usage, &["outputTokens", "output_tokens"]).unwrap_or(0);
+        let cache_creation = extract_u64_from_usage(
+            usage,
+            &["cacheCreationInputTokens", "cache_creation_input_tokens"],
+        )
+        .unwrap_or(0);
+        let cache_read =
+            extract_u64_from_usage(usage, &["cacheReadInputTokens", "cache_read_input_tokens"])
+                .unwrap_or(0);
+        Some(
+            input
+                .saturating_add(output)
+                .saturating_add(cache_creation)
+                .saturating_add(cache_read),
+        )
+    })
+}
+
+fn extract_u64_from_usage(usage: &Value, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| {
+        usage.get(*key).and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().and_then(|number| u64::try_from(number).ok()))
+        })
+    })
+}
+
 fn ensure_team_member(
     team: &TeamWithMembers,
     caller_session_id: &str,
@@ -1804,6 +2158,18 @@ fn ensure_team_member(
             caller_session_id, team.team.id
         ),
     ))
+}
+
+fn reject_image_paths_for_provider(provider: &str, tool_name: &str) -> Result<(), TeamToolFailure> {
+    match ProviderKind::from_str(provider) {
+        Some(ProviderKind::Acp) => Err(TeamToolFailure::new(
+            "unsupported_provider_images",
+            format!(
+                "{tool_name} image_paths are not supported for ACP provider sessions because ACP image attachment delivery is not modeled by this runtime yet"
+            ),
+        )),
+        _ => Ok(()),
+    }
 }
 
 fn status_state_for_session(session: Option<&SessionRecord>) -> &'static str {
@@ -3673,14 +4039,33 @@ impl WorktreeService for RuntimeWorktreeService {
             }
             text
         };
+        let onboarding_image_paths = request
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("gg_team_manage_add_image_paths"))
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let onboarding_input = vec![serde_json::json!({
+            "type": "text",
+            "text": onboarding_text,
+        })];
         let onboarding_ack = self
             .team_comms
             .send_direct(TeamSendDirectRequest {
                 team_id: team_id.clone(),
                 sender_agent_id: source_session.id.clone(),
                 recipient_agent_id: spawned_session.id.clone(),
-                input: serde_json::json!([{ "type": "text", "text": onboarding_text }]),
-                image_paths: Vec::new(),
+                input: serde_json::json!(onboarding_input),
+                image_paths: onboarding_image_paths,
                 priority: "normal".to_string(),
                 policy: "start_new_turn_only".to_string(),
                 correlation_id: Some(format!("spawn-onboarding:{operation_id}")),
@@ -3961,7 +4346,12 @@ mod tests {
                 runtime_session_id: req.runtime_session_id,
                 turn_id: req.turn_id,
                 status: ProviderTurnStatus::Completed,
-                usage: Some(serde_json::json!({ "last_message": "ok" })),
+                usage: Some(serde_json::json!({
+                    "last_message": "ok",
+                    "contextWindowSize": 1000,
+                    "inputTokens": 300,
+                    "outputTokens": 200,
+                })),
                 error: None,
             })
         }
@@ -4094,6 +4484,7 @@ mod tests {
                 deletion_policy_default: "delete_on_last_claim".to_string(),
             })),
             team_policy: policy,
+            team_model_presets: default_team_model_presets(),
         })
     }
 
@@ -4153,6 +4544,7 @@ mod tests {
             team_comms: team_comms.clone(),
             worktrees,
             team_policy,
+            team_model_presets: default_team_model_presets(),
         });
         (gateway, runtime, team_comms, temp_dir)
     }
@@ -4319,6 +4711,18 @@ mod tests {
         let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
         let (sessions, team_id) =
             create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 2).await;
+        runtime
+            .send_turn(
+                sessions[0].id.as_str(),
+                runtime_core::SendTurnInput {
+                    input: vec![json!({ "type": "text", "text": "collect usage" })],
+                    expected_turn_id: None,
+                    permission_mode: None,
+                },
+            )
+            .await
+            .expect("send turn");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let response = gateway
             .invoke_tool(ToolInvokeRequest {
@@ -4353,6 +4757,10 @@ mod tests {
                     .get("last_activity_at_ms")
                     .and_then(Value::as_i64)
                     .is_some()
+                && member
+                    .get("context_window_remaining_percentage")
+                    .and_then(Value::as_u64)
+                    == Some(50)
         }));
     }
 
@@ -4934,7 +5342,92 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn team_manage_add_rejects_unsupported_fields_and_does_not_cache_failure() {
+    async fn team_manage_add_resolves_model_preset_and_forwards_images() {
+        let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
+        let (sessions, team_id) =
+            create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 1).await;
+
+        let response = gateway
+            .invoke_tool(ToolInvokeRequest {
+                namespace: Some("gg_team".to_string()),
+                tool_name: GG_TEAM_MANAGE.to_string(),
+                caller_session_id: sessions[0].id.clone(),
+                invocation_id: Some("manage_add_fast_with_image".to_string()),
+                args: json!({
+                    "team_id": team_id,
+                    "model_preset": "fast",
+                    "image_paths": ["/tmp/reference.png"]
+                }),
+            })
+            .await
+            .expect("add with preset and image");
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true));
+        let result = response.get("result").expect("result");
+        assert_eq!(
+            result.get("model_preset").and_then(Value::as_str),
+            Some("fast")
+        );
+        assert_eq!(result.get("image_count").and_then(Value::as_u64), Some(1));
+        let spawned = result
+            .get("spawned_session")
+            .and_then(Value::as_object)
+            .expect("spawned session");
+        assert_eq!(
+            spawned.get("model").and_then(Value::as_str),
+            Some("gpt-5.4-mini")
+        );
+        assert_eq!(
+            spawned
+                .get("metadata")
+                .and_then(|metadata| metadata.get("thinking_effort"))
+                .and_then(Value::as_str),
+            Some("low")
+        );
+        let onboarding_message_id = result
+            .get("onboarding")
+            .and_then(|onboarding| onboarding.get("message_id"))
+            .and_then(Value::as_str)
+            .expect("onboarding message id");
+        let messages = team_comms
+            .list_messages(TeamListMessagesRequest {
+                team_id: team_id.clone(),
+                cursor: None,
+                limit: Some(10),
+            })
+            .await
+            .expect("list messages");
+        let onboarding = messages
+            .messages
+            .iter()
+            .find(|message| message.id == onboarding_message_id)
+            .expect("onboarding message");
+        assert_eq!(
+            onboarding
+                .image_paths
+                .as_array()
+                .and_then(|paths| paths.first())
+                .and_then(Value::as_str),
+            Some("/tmp/reference.png")
+        );
+        let spawned_agent_id = result
+            .get("spawned_agent_id")
+            .and_then(Value::as_str)
+            .expect("spawned agent id");
+        let turns = runtime
+            .list_session_turns(spawned_agent_id)
+            .await
+            .expect("spawned turns");
+        assert!(turns
+            .iter()
+            .flat_map(|turn| turn.input.as_array().into_iter().flatten())
+            .any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("image")
+                    && item.get("path").and_then(Value::as_str) == Some("/tmp/reference.png")
+            }));
+    }
+
+    #[tokio::test]
+    async fn team_manage_add_rejects_unknown_model_preset_and_does_not_cache_failure() {
         let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
         let (sessions, team_id) =
             create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 1).await;
@@ -4947,7 +5440,7 @@ mod tests {
                 invocation_id: Some("manage_add_retry_after_failure".to_string()),
                 args: json!({
                     "team_id": team_id,
-                    "model_preset": "opus"
+                    "model_preset": "missing-preset"
                 }),
             })
             .await
@@ -4958,7 +5451,7 @@ mod tests {
                 .get("error")
                 .and_then(|error| error.get("code"))
                 .and_then(Value::as_str),
-            Some("bad_request")
+            Some("unknown_model_preset")
         );
 
         let retried = gateway

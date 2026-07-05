@@ -1962,6 +1962,19 @@ fn build_injected_input(message: &TeamMessageRecord, recipient_agent_id: &str) -
     if let Value::Array(items) = message.input.clone() {
         input.extend(items);
     }
+    if let Value::Array(paths) = &message.image_paths {
+        input.extend(paths.iter().filter_map(|path| {
+            path.as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|path| {
+                    serde_json::json!({
+                        "type": "image",
+                        "path": path,
+                    })
+                })
+        }));
+    }
     input.push(serde_json::json!({
         "type": "text",
         "text": suffix,
@@ -2409,6 +2422,52 @@ mod tests {
             .await
             .expect("create session")
             .id
+    }
+
+    #[tokio::test]
+    async fn direct_message_image_paths_are_injected_as_image_items() {
+        let store = Arc::new(TestStore::default());
+        let (runtime, service) = build_runtime_and_service(store, 0);
+        let lead = create_test_session(&runtime).await;
+        let member = create_test_session(&runtime).await;
+
+        let team = service
+            .create_team(TeamCreateRequest {
+                name: "Image Team".to_string(),
+                lead_agent_id: lead.clone(),
+                member_agent_ids: vec![member.clone()],
+                created_by: Some("test".to_string()),
+            })
+            .await
+            .expect("create team");
+
+        service
+            .send_direct(TeamSendDirectRequest {
+                team_id: team.team.id,
+                sender_agent_id: lead,
+                recipient_agent_id: member.clone(),
+                input: serde_json::json!([{ "type": "text", "text": "please inspect" }]),
+                image_paths: vec!["/tmp/reference.png".to_string()],
+                priority: "normal".to_string(),
+                policy: "non_interrupting".to_string(),
+                correlation_id: None,
+                reply_to_message_id: None,
+                idempotency_key: None,
+            })
+            .await
+            .expect("send direct with image");
+
+        let turns = runtime
+            .list_session_turns(member.as_str())
+            .await
+            .expect("member turns");
+        assert!(turns
+            .iter()
+            .flat_map(|turn| turn.input.as_array().into_iter().flatten())
+            .any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("image")
+                    && item.get("path").and_then(Value::as_str) == Some("/tmp/reference.png")
+            }));
     }
 
     #[tokio::test]

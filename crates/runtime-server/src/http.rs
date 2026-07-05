@@ -2032,7 +2032,7 @@ mod tests {
     use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
     use runtime_tools::{
         ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeToolGatewayDeps,
-        RuntimeWorktreeService, TeamMcpPolicy, WorktreeServiceConfig,
+        RuntimeWorktreeService, TeamMcpPolicy, TeamModelPreset, WorktreeServiceConfig,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -2045,6 +2045,23 @@ mod tests {
 
     use crate::bootstrap::bootstrap_runtime;
     use crate::config::RuntimeServerConfig;
+
+    fn test_team_model_presets() -> Vec<TeamModelPreset> {
+        vec![
+            TeamModelPreset {
+                name: "fast".to_string(),
+                provider: Some("codex".to_string()),
+                model: "gpt-5.4-mini".to_string(),
+                thinking_effort: Some("low".to_string()),
+            },
+            TeamModelPreset {
+                name: "deep".to_string(),
+                provider: Some("claude".to_string()),
+                model: "claude-opus-4-8".to_string(),
+                thinking_effort: Some("high".to_string()),
+            },
+        ]
+    }
 
     #[derive(Default)]
     struct TestProviderState {
@@ -2703,6 +2720,7 @@ mod tests {
             team_comms: team_comms.clone(),
             worktrees: worktrees.clone(),
             team_policy,
+            team_model_presets: test_team_model_presets(),
         }));
 
         let app = runtime_core::RuntimeApp::new(
@@ -2812,6 +2830,7 @@ mod tests {
             team_comms: team_comms.clone(),
             worktrees: worktrees.clone(),
             team_policy: TeamMcpPolicy::default(),
+            team_model_presets: test_team_model_presets(),
         }));
 
         let app = runtime_core::RuntimeApp::new(

@@ -377,9 +377,11 @@ Important constraints:
 - `gg_process`: `gg_process_run`, `gg_process_status`, `gg_process_logs`, `gg_process_kill`
 - `gg_team`: `gg_team_status`, `gg_team_message`, `gg_team_manage`
 
-Team MCP tools advertise under `gg_team` when the runtime team MCP policy is enabled. The same response includes `ggTeamManagePermissions` so agents can see whether non-lead members may add or remove team members through MCP. If team MCP is disabled, team tools are omitted from capabilities and direct `gg_team_*` invocations return an `ok:false` envelope with `feature_disabled`.
+Team MCP tools advertise under `gg_team` when the runtime team MCP policy is enabled. The same response includes `ggTeamManagePermissions` so agents can see whether non-lead members may add or remove team members through MCP, and `ggTeamModelPresets` so agents can discover user-friendly `model_preset` names for `gg_team_manage` add mode. If team MCP is disabled, team tools are omitted from capabilities and direct `gg_team_*` invocations return an `ok:false` envelope with `feature_disabled`.
 
-`gg_team_status` returns a team/member snapshot for an active team member. `gg_team_message` sends direct messages or broadcasts by setting `recipient_agent_id` to a member id or `"broadcast"`. `gg_team_manage` adds one member when `remove_agent_ids` is absent, and removes one or more members when `remove_agent_ids` is present.
+`gg_team_status` returns a team/member snapshot for an active team member. Member rows include activity state, last team-message context, managed-worktree metadata, `added_by`, and `context_window_remaining_percentage`. The percentage is derived from persisted provider usage when usage includes a context-window size and token counts. Codex and Claude sessions can report it after completed turns with usage; ACP remains `null` unless the configured ACP agent emits compatible usage data.
+
+`gg_team_message` sends direct messages or broadcasts by setting `recipient_agent_id` to a member id or `"broadcast"`. Optional `image_paths` are stored with the message and delivered as image input items for supported providers. `gg_team_manage` adds one member when `remove_agent_ids` is absent, and removes one or more members when `remove_agent_ids` is present. Add mode accepts optional `model_preset` and `image_paths`; selected presets set the spawned session provider/model and metadata, and add-mode images are attached to the canonical onboarding message. ACP image attachments are not modeled by this runtime yet; team MCP calls that would send `image_paths` to ACP sessions return an `unsupported_provider_images` error instead of dropping the attachment.
 
 Agent-initiated membership management is configurable in runtime config:
 
@@ -388,6 +390,12 @@ Agent-initiated membership management is configurable in runtime config:
 enabled = true
 non_lead_can_add_members = false
 non_lead_can_remove_members = false
+
+[[teams.model_presets]]
+name = "fast"
+provider = "codex"
+model = "gpt-5.4-mini"
+thinking_effort = "low"
 ```
 
 The lead can add and remove members by default. Non-lead members can use `gg_team_manage` add/remove only when the matching flag is enabled. This policy gates MCP-initiated membership control; authenticated HTTP team administration remains the human/client control plane.

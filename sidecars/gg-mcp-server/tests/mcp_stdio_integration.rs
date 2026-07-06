@@ -1,46 +1,25 @@
 use std::net::Ipv4Addr;
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::{Arc, atomic::Ordering};
 
-use axum::extract::State;
-use axum::http::header::AUTHORIZATION;
-use axum::http::{HeaderMap, StatusCode};
+use axum::Router;
 use axum::routing::{get, post};
-use axum::{Json, Router};
 use rmcp::{
     ServiceExt,
     model::CallToolRequestParams,
     transport::{ConfigureCommandExt, TokioChildProcess},
 };
 use serde_json::{Value, json};
-use tokio::process::Command;
 
-#[derive(Clone)]
-struct StubGatewayState {
-    expected_auth_header: String,
-    model_presets: Vec<String>,
-    team_tools_enabled: bool,
-    capabilities_calls: Arc<AtomicUsize>,
-}
+mod support;
 
-fn stub_gateway_state(auth_token: &str, model_presets: Vec<String>) -> StubGatewayState {
-    StubGatewayState {
-        expected_auth_header: format!("Bearer {auth_token}"),
-        model_presets,
-        team_tools_enabled: true,
-        capabilities_calls: Arc::new(AtomicUsize::new(0)),
-    }
-}
+use support::{
+    capabilities_stub, extract_json_payload, invoke_non_json_stub, invoke_stub, mcp_server_command,
+    stub_gateway_state,
+};
 
 #[tokio::test]
 async fn stdio_server_lists_tools_and_calls_gg_ping() -> Result<(), Box<dyn std::error::Error>> {
-    let service = ()
-        .serve(TokioChildProcess::new(Command::new(env!(
-            "CARGO_BIN_EXE_gg-mcp-server"
-        )))?)
-        .await?;
+    let service = ().serve(TokioChildProcess::new(mcp_server_command())?).await?;
 
     let tools = service.peer().list_tools(None).await?;
     let tool_names = tools
@@ -75,11 +54,7 @@ async fn stdio_server_lists_tools_and_calls_gg_ping() -> Result<(), Box<dyn std:
 
 #[tokio::test]
 async fn stdio_server_lists_pruned_gg_team_surface() -> Result<(), Box<dyn std::error::Error>> {
-    let service = ()
-        .serve(TokioChildProcess::new(Command::new(env!(
-            "CARGO_BIN_EXE_gg-mcp-server"
-        )))?)
-        .await?;
+    let service = ().serve(TokioChildProcess::new(mcp_server_command())?).await?;
 
     let tools = service.peer().list_tools(None).await?;
     let tool_names = tools
@@ -142,11 +117,7 @@ async fn stdio_server_lists_pruned_gg_team_surface() -> Result<(), Box<dyn std::
 #[tokio::test]
 async fn stdio_server_exposes_team_message_schema_with_optional_image_paths()
 -> Result<(), Box<dyn std::error::Error>> {
-    let service = ()
-        .serve(TokioChildProcess::new(Command::new(env!(
-            "CARGO_BIN_EXE_gg-mcp-server"
-        )))?)
-        .await?;
+    let service = ().serve(TokioChildProcess::new(mcp_server_command())?).await?;
 
     let tools = service.peer().list_tools(None).await?;
     let team_message_tool = tools
@@ -210,11 +181,7 @@ async fn stdio_server_exposes_team_message_schema_with_optional_image_paths()
 #[tokio::test]
 async fn stdio_server_exposes_team_manage_schema_without_legacy_unsubscribe_flag()
 -> Result<(), Box<dyn std::error::Error>> {
-    let service = ()
-        .serve(TokioChildProcess::new(Command::new(env!(
-            "CARGO_BIN_EXE_gg-mcp-server"
-        )))?)
-        .await?;
+    let service = ().serve(TokioChildProcess::new(mcp_server_command())?).await?;
 
     let tools = service.peer().list_tools(None).await?;
     let team_manage_tool = tools
@@ -282,11 +249,11 @@ async fn stdio_server_exposes_team_manage_schema_without_legacy_unsubscribe_flag
 async fn stdio_server_hides_process_tools_when_disabled() -> Result<(), Box<dyn std::error::Error>>
 {
     let service = ()
-        .serve(TokioChildProcess::new(
-            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
                 command.env("GG_MCP_ENABLE_PROCESS_TOOLS", "0");
-            }),
-        )?)
+            },
+        ))?)
         .await?;
 
     let tools = service.peer().list_tools(None).await?;
@@ -341,13 +308,13 @@ async fn stdio_server_hides_team_tools_when_gateway_capabilities_omit_team_names
 
     let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
     let service = ()
-        .serve(TokioChildProcess::new(
-            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
                 command.env("GG_MCP_GATEWAY_URL", gateway_url);
                 command.env("GG_MCP_GATEWAY_TOKEN", auth_token);
                 command.env("GG_MCP_CALLER_AGENT_ID", "sess_mcp_disabled_team");
-            }),
-        )?)
+            },
+        ))?)
         .await?;
 
     let tools = service.peer().list_tools(None).await?;
@@ -374,11 +341,7 @@ async fn stdio_server_hides_team_tools_when_gateway_capabilities_omit_team_names
 #[tokio::test]
 async fn stdio_server_rejects_unknown_fields_for_gg_team_status()
 -> Result<(), Box<dyn std::error::Error>> {
-    let service = ()
-        .serve(TokioChildProcess::new(Command::new(env!(
-            "CARGO_BIN_EXE_gg-mcp-server"
-        )))?)
-        .await?;
+    let service = ().serve(TokioChildProcess::new(mcp_server_command())?).await?;
 
     let result = service
         .peer()
@@ -425,13 +388,13 @@ async fn stdio_server_proxies_gg_team_status_to_gateway() -> Result<(), Box<dyn 
 
     let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
     let service = ()
-        .serve(TokioChildProcess::new(
-            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
                 command.env("GG_MCP_GATEWAY_URL", gateway_url);
                 command.env("GG_MCP_GATEWAY_TOKEN", auth_token);
                 command.env("GG_MCP_CALLER_AGENT_ID", "sess_mcp_integration");
-            }),
-        )?)
+            },
+        ))?)
         .await?;
 
     let result = service
@@ -488,13 +451,13 @@ async fn stdio_server_accepts_per_call_caller_metadata_when_required()
 
     let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
     let service = ()
-        .serve(TokioChildProcess::new(
-            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
                 command.env("GG_MCP_GATEWAY_URL", gateway_url);
                 command.env("GG_MCP_GATEWAY_TOKEN", auth_token);
                 command.env("GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID", "1");
-            }),
-        )?)
+            },
+        ))?)
         .await?;
 
     for expected_caller in ["sess_dynamic_a", "sess_dynamic_b"] {
@@ -548,13 +511,13 @@ async fn stdio_server_rejects_missing_per_call_caller_metadata_when_required()
 
     let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
     let service = ()
-        .serve(TokioChildProcess::new(
-            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
                 command.env("GG_MCP_GATEWAY_URL", gateway_url);
                 command.env("GG_MCP_GATEWAY_TOKEN", auth_token);
                 command.env("GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID", "1");
-            }),
-        )?)
+            },
+        ))?)
         .await?;
 
     let result = service
@@ -583,11 +546,7 @@ async fn stdio_server_rejects_missing_per_call_caller_metadata_when_required()
 #[tokio::test]
 async fn stdio_server_returns_backend_unavailable_when_gateway_missing()
 -> Result<(), Box<dyn std::error::Error>> {
-    let service = ()
-        .serve(TokioChildProcess::new(Command::new(env!(
-            "CARGO_BIN_EXE_gg-mcp-server"
-        )))?)
-        .await?;
+    let service = ().serve(TokioChildProcess::new(mcp_server_command())?).await?;
 
     let result = service
         .peer()
@@ -634,13 +593,13 @@ async fn stdio_server_handles_high_volume_gateway_invocations()
 
     let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
     let service = ()
-        .serve(TokioChildProcess::new(
-            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
                 command.env("GG_MCP_GATEWAY_URL", gateway_url);
                 command.env("GG_MCP_GATEWAY_TOKEN", auth_token);
                 command.env("GG_MCP_CALLER_AGENT_ID", "sess_mcp_stress");
-            }),
-        )?)
+            },
+        ))?)
         .await?;
 
     for index in 0..100 {
@@ -691,13 +650,13 @@ async fn stdio_server_surfaces_gateway_unauthorized_envelope()
 
     let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
     let service = ()
-        .serve(TokioChildProcess::new(
-            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
                 command.env("GG_MCP_GATEWAY_URL", gateway_url);
                 command.env("GG_MCP_GATEWAY_TOKEN", "invalid_token");
                 command.env("GG_MCP_CALLER_AGENT_ID", "sess_mcp_auth_failure");
-            }),
-        )?)
+            },
+        ))?)
         .await?;
 
     let result = service
@@ -741,13 +700,13 @@ async fn stdio_server_returns_backend_unavailable_for_non_json_gateway_response(
 
     let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
     let service = ()
-        .serve(TokioChildProcess::new(
-            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
                 command.env("GG_MCP_GATEWAY_URL", gateway_url);
                 command.env("GG_MCP_GATEWAY_TOKEN", "integration_token");
                 command.env("GG_MCP_CALLER_AGENT_ID", "sess_mcp_non_json_gateway");
-            }),
-        )?)
+            },
+        ))?)
         .await?;
 
     let result = service
@@ -797,13 +756,13 @@ async fn stdio_server_injects_model_presets_into_team_manage_metadata_on_initial
 
     let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
     let service = ()
-        .serve(TokioChildProcess::new(
-            Command::new(env!("CARGO_BIN_EXE_gg-mcp-server")).configure(|command| {
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
                 command.env("GG_MCP_GATEWAY_URL", gateway_url);
                 command.env("GG_MCP_GATEWAY_TOKEN", auth_token);
                 command.env("GG_MCP_CALLER_AGENT_ID", "sess_mcp_integration");
-            }),
-        )?)
+            },
+        ))?)
         .await?;
 
     let initial_tools = service.peer().list_tools(None).await?;
@@ -907,122 +866,4 @@ async fn stdio_server_injects_model_presets_into_team_manage_metadata_on_initial
     let _ = service.cancel().await?;
     gateway_handle.abort();
     Ok(())
-}
-
-async fn invoke_non_json_stub(
-    State(state): State<StubGatewayState>,
-    headers: HeaderMap,
-) -> (StatusCode, &'static str) {
-    let provided_auth = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    if provided_auth != state.expected_auth_header {
-        return (StatusCode::UNAUTHORIZED, "unauthorized");
-    }
-
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "gateway returned plain text",
-    )
-}
-
-async fn capabilities_stub(
-    State(state): State<StubGatewayState>,
-    headers: HeaderMap,
-) -> (StatusCode, Json<Value>) {
-    state.capabilities_calls.fetch_add(1, Ordering::SeqCst);
-    let provided_auth = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    if provided_auth != state.expected_auth_header {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": {
-                    "code": "unauthorized",
-                    "message": "invalid auth header",
-                }
-            })),
-        );
-    }
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "ok": true,
-            "result": {
-                "serverVersion": "integration-test",
-                "ggProcessEnabled": true,
-                "ggTeamModelPresetsRevision": 1,
-                "ggTeamModelPresets": state.model_presets,
-                "supportedNamespaces": if state.team_tools_enabled {
-                    json!(["gg_process", "gg_team"])
-                } else {
-                    json!(["gg_process"])
-                },
-            }
-        })),
-    )
-}
-
-async fn invoke_stub(
-    State(state): State<StubGatewayState>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> (StatusCode, Json<Value>) {
-    let provided_auth = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    if provided_auth != state.expected_auth_header {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "ok": false,
-                "error": {
-                    "code": "unauthorized",
-                    "message": "invalid auth header",
-                }
-            })),
-        );
-    }
-
-    let team_id = body
-        .get("args")
-        .and_then(|args| args.get("team_id"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let caller_agent_id = body
-        .get("caller_agent_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-
-    (
-        StatusCode::OK,
-        Json(json!({
-            "ok": true,
-            "result": {
-                "team_id": team_id,
-                "members": [
-                    {
-                        "agent_id": caller_agent_id,
-                        "role": "lead",
-                    }
-                ],
-            }
-        })),
-    )
-}
-
-fn extract_json_payload(content: &[rmcp::model::Content]) -> Result<Value, String> {
-    let first = content.first().ok_or("tool result content is empty")?;
-    let text = first
-        .raw
-        .as_text()
-        .map(|entry| entry.text.as_str())
-        .ok_or("tool result content is not text")?;
-    serde_json::from_str::<Value>(text).map_err(|error| format!("invalid json payload: {error}"))
 }

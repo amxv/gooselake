@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
@@ -7,10 +6,10 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use reqwest::Client;
 use serde::Serialize;
 
 use crate::config::{GoosetowerConfig, RuntimeSourceConfig};
+use crate::runtime::{GooselakeRuntimeClient, GooselakeRuntimeClientConfig};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -26,18 +25,11 @@ pub enum HealthStatus {
 }
 
 #[derive(Clone)]
-pub struct RuntimeHealthClient {
-    client: Client,
-}
+pub struct RuntimeHealthClient;
 
 impl RuntimeHealthClient {
     pub fn new() -> Self {
-        Self {
-            client: Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()
-                .expect("valid reqwest client"),
-        }
+        Self
     }
 
     async fn check_source(
@@ -49,7 +41,6 @@ impl RuntimeHealthClient {
             return RuntimeSourceStatus::from_source(source, "disabled", None, None);
         }
 
-        let base_url = source.base_url.trim_end_matches('/');
         let token = match config.resolve_runtime_auth(source) {
             Ok(token) => token,
             Err(error) => {
@@ -62,20 +53,13 @@ impl RuntimeHealthClient {
             }
         };
 
-        let health_url = format!("{base_url}/health");
-        let version_url = format!("{base_url}/v1/version");
-
-        let health_result = self.client.get(&health_url).send().await;
-        let health_response = match health_result {
-            Ok(response) if response.status().is_success() => response,
-            Ok(response) => {
-                return RuntimeSourceStatus::from_source(
-                    source,
-                    "unhealthy",
-                    None,
-                    Some(format!("health check returned {}", response.status())),
-                );
-            }
+        let runtime_client = match GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
+            source.source_id.clone(),
+            source.source_epoch.clone(),
+            source.base_url.clone(),
+            token,
+        )) {
+            Ok(client) => client,
             Err(error) => {
                 return RuntimeSourceStatus::from_source(
                     source,
@@ -85,30 +69,28 @@ impl RuntimeHealthClient {
                 );
             }
         };
-        drop(health_response);
 
-        let mut version_request = self.client.get(&version_url);
-        if let Some(token) = token {
-            version_request = version_request.bearer_auth(token);
-        }
-        match version_request.send().await {
-            Ok(response) if response.status().is_success() => {
-                let version_payload = response.json::<RuntimeVersionResponse>().await.ok();
-                RuntimeSourceStatus::from_source(
+        match runtime_client.health().await {
+            Ok(_) => {}
+            Err(error) => {
+                return RuntimeSourceStatus::from_source(
                     source,
-                    "healthy",
-                    version_payload.map(|payload| payload.version),
+                    "offline",
                     None,
-                )
+                    Some(error.to_string()),
+                );
             }
-            Ok(response) => RuntimeSourceStatus::from_source(
+        }
+
+        match runtime_client.version().await {
+            Ok(version_payload) => RuntimeSourceStatus::from_source(
                 source,
-                "unhealthy",
+                "healthy",
+                Some(version_payload.version),
                 None,
-                Some(format!("version check returned {}", response.status())),
             ),
             Err(error) => {
-                RuntimeSourceStatus::from_source(source, "offline", None, Some(error.to_string()))
+                RuntimeSourceStatus::from_source(source, "unhealthy", None, Some(error.to_string()))
             }
         }
     }
@@ -216,6 +198,7 @@ async fn list_sources(State(state): State<AppState>) -> Json<SourcesResponse> {
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeSourceStatus {
     source_id: String,
+    source_epoch: String,
     source_kind: String,
     base_url: String,
     enabled: bool,
@@ -235,6 +218,7 @@ impl RuntimeSourceStatus {
     ) -> Self {
         Self {
             source_id: source.source_id.clone(),
+            source_epoch: source.source_epoch.clone(),
             source_kind: source.source_kind.clone(),
             base_url: source.base_url.clone(),
             enabled: source.enabled,
@@ -245,11 +229,6 @@ impl RuntimeSourceStatus {
             error,
         }
     }
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct RuntimeVersionResponse {
-    version: String,
 }
 
 async fn bearer_auth(

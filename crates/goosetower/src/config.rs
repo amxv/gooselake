@@ -306,6 +306,7 @@ impl RuntimeRegistryConfig {
 #[serde(default)]
 pub struct RuntimeSourceConfig {
     pub source_id: String,
+    pub source_epoch: String,
     pub source_kind: String,
     pub base_url: String,
     pub bearer_token: Option<String>,
@@ -319,6 +320,7 @@ impl Default for RuntimeSourceConfig {
     fn default() -> Self {
         Self {
             source_id: "local".to_string(),
+            source_epoch: "static-0".to_string(),
             source_kind: GOOSELAKE_RUNTIME_SOURCE_KIND.to_string(),
             base_url: "http://127.0.0.1:8080".to_string(),
             bearer_token: None,
@@ -334,6 +336,12 @@ impl RuntimeSourceConfig {
     fn validate(&self) -> Result<()> {
         if self.source_id.trim().is_empty() {
             return Err(anyhow!("runtime source source_id cannot be empty"));
+        }
+        if self.source_epoch.trim().is_empty() {
+            return Err(anyhow!(
+                "runtime source {} source_epoch cannot be empty",
+                self.source_id
+            ));
         }
         if self.source_kind != GOOSELAKE_RUNTIME_SOURCE_KIND {
             return Err(anyhow!(

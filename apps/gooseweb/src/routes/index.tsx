@@ -230,7 +230,7 @@ function Index() {
     ensureRealtimeWorker();
     subscribeRealtime("board:window", "board", { window: "0:120" });
     subscribeRealtime("inbox:pending", "approval_inbox", { status: "pending" });
-    subscribeRealtime("sources:health", "source_health");
+    subscribeRealtime("sources:health", "fleet");
     subscribeRealtime("ledger:recent", "ledger", { window: "0:120" });
 
     return () => {

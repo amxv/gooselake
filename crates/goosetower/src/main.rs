@@ -43,8 +43,10 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("failed to bind {}", config.server.bind_address))?;
     let config = Arc::new(config);
+    let gateway = Arc::new(GatewayState::new(config.clone())?);
+    gateway.bootstrap_enabled_sources().await;
     let state = AppState {
-        gateway: Arc::new(GatewayState::new(config.clone())?),
+        gateway,
         config,
         api_bearer_token: Arc::from(api_auth.bearer_token),
         runtime_client: RuntimeHealthClient::new(),

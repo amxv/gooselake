@@ -81,6 +81,38 @@ impl GatewayState {
         })
     }
 
+    pub async fn bootstrap_enabled_sources(&self) {
+        for source in self
+            .config
+            .runtimes
+            .sources
+            .iter()
+            .filter(|source| source.enabled)
+        {
+            let result = async {
+                let client = runtime_client_from_source(&self.config, source)?;
+                let bootstrap =
+                    SourceBootstrap::from_runtime_client(&client, BootstrapOptions::default())
+                        .await
+                        .map_err(|error| anyhow!(error.to_string()))?;
+                self.materialized
+                    .write()
+                    .await
+                    .insert(source.source_id.clone(), bootstrap.state);
+                Result::<()>::Ok(())
+            }
+            .await;
+
+            if let Err(error) = result {
+                tracing::warn!(
+                    source_id = %source.source_id,
+                    error = %error,
+                    "failed to bootstrap runtime source"
+                );
+            }
+        }
+    }
+
     pub fn allowed_origins(&self) -> Result<Vec<String>> {
         self.config.allowed_gooseweb_origins()
     }

@@ -4,11 +4,15 @@ import {
   ActivityIcon,
   BotIcon,
   BoxesIcon,
+  ChevronDownIcon,
   ClipboardListIcon,
+  CircleIcon,
+  FolderIcon,
   InboxIcon,
   LayoutDashboardIcon,
   ListChecksIcon,
   PowerIcon,
+  PlusIcon,
   RadioIcon,
   ScrollTextIcon,
   SendIcon,
@@ -105,22 +109,6 @@ import {
   SelectValue
 } from "~/components/ui/select";
 import { Separator } from "~/components/ui/separator";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuBadge,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarRail
-} from "~/components/ui/sidebar";
 import {
   Table,
   TableBody,
@@ -325,185 +313,863 @@ function Index() {
     staleSourceIds.length > 0;
 
   return (
-    <SidebarProvider
-      className="h-svh overflow-hidden"
-      style={
-        {
-          "--sidebar-width": "12.5rem",
-          "--sidebar-width-icon": "3rem"
-        } as React.CSSProperties
-      }
-    >
-      <Sidebar collapsible="icon" variant="sidebar">
-        <SidebarHeader>
-          <div className="flex items-center gap-2 px-2 py-1">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-              GW
-            </div>
-            <div className="min-w-0 group-data-[collapsible=icon]:hidden">
-              <div className="truncate text-sm font-medium">Gooseweb</div>
-              <div className="truncate text-xs text-muted-foreground">
-                Goosetower V0
-              </div>
-            </div>
-          </div>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupLabel>Operate</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {NAV_ITEMS.map((item) => {
-                  const Icon = item.icon;
-                  const count =
-                    item.id === "inbox"
-                      ? approvals.filter((approval) => approval.status === "pending").length
-                      : undefined;
-                  return (
-                    <SidebarMenuItem key={item.id}>
-                      <SidebarMenuButton
-                        isActive={activeView === item.id}
-                        tooltip={item.label}
-                        onClick={() => setActiveView(item.id)}
-                      >
-                        <Icon />
-                        <span>{item.label}</span>
-                      </SidebarMenuButton>
-                      {count ? <SidebarMenuBadge>{count}</SidebarMenuBadge> : null}
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <ConnectionBadge connection={state.connection} />
-        </SidebarFooter>
-        <SidebarRail />
-      </Sidebar>
+    <div className="mission-shell h-svh overflow-hidden bg-background text-foreground">
+      <MissionChrome
+        state={state}
+        sources={sources}
+        subscriptionCount={activeSubscriptions.length}
+      />
+      <div className="mission-grid min-h-0">
+        <MissionRosterRail
+          activeView={activeView}
+          approvals={approvals}
+          rows={fleetRows}
+          sessions={sessions}
+          teams={teams}
+          processes={processes}
+          selectedRowId={selectedRow?.rowId ?? ""}
+          selectedSessionId={selectedSession?.sessionId ?? ""}
+          selectedTeamId={selectedTeam?.teamId ?? ""}
+          selectedApprovalId={selectedApproval?.approvalId ?? ""}
+          selectedProcessId={selectedProcess?.processId ?? ""}
+          sourceGapActive={sourceGapActive}
+          onViewChange={setActiveView}
+          onSelectRow={setSelectedRowId}
+          onSelectSession={setSelectedSessionId}
+          onSelectTeam={setSelectedTeamId}
+          onSelectApproval={setSelectedApprovalId}
+          onSelectProcess={setSelectedProcessId}
+        />
 
-      <SidebarInset className="h-svh min-w-0 overflow-hidden">
-        <div className="grid h-full min-h-0 grid-cols-[16rem_minmax(0,1fr)_18rem] bg-background">
-          <EntityList
+        <main className="mission-center min-w-0 overflow-hidden">
+          {sourceGapActive ? (
+            <Alert variant="destructive" className="mission-alert">
+              <ShieldAlertIcon />
+              <AlertTitle>Source state is not command-safe</AlertTitle>
+              <AlertDescription>
+                Destructive approvals and runtime mutations are disabled until
+                replay catches up or the source returns to a trusted state.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          <MissionWorkspace
+            state={state}
             activeView={activeView}
             rows={fleetRows}
             sessions={sessions}
             teams={teams}
             approvals={approvals}
             processes={processes}
-            selectedRowId={selectedRow?.rowId ?? ""}
-            selectedSessionId={selectedSession?.sessionId ?? ""}
-            selectedTeamId={selectedTeam?.teamId ?? ""}
-            selectedApprovalId={selectedApproval?.approvalId ?? ""}
-            selectedProcessId={selectedProcess?.processId ?? ""}
-            onSelectRow={setSelectedRowId}
-            onSelectSession={setSelectedSessionId}
-            onSelectTeam={setSelectedTeamId}
-            onSelectApproval={setSelectedApprovalId}
-            onSelectProcess={setSelectedProcessId}
-          />
-
-          <main className="flex min-w-0 flex-col overflow-hidden border-x">
-            <TopStatus
-              state={state}
-              sources={sources}
-              subscriptionCount={activeSubscriptions.length}
-            />
-            <Separator />
-            <div className="min-h-0 flex-1 overflow-hidden p-3">
-              {sourceGapActive ? (
-                <Alert variant="destructive" className="mb-3">
-                  <ShieldAlertIcon />
-                  <AlertTitle>Source state is not command-safe</AlertTitle>
-                  <AlertDescription>
-                    Destructive approvals and runtime mutations are disabled until
-                    replay catches up or the source returns to a trusted state.
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              {activeView === "board" ? (
-                <BoardPane
-                  rows={fleetRows}
-                  teams={teams}
-                  sources={sources}
-                  filters={filters}
-                  setFilters={setFilters}
-                  selectedRowId={selectedRow?.rowId ?? ""}
-                  setSelectedRowId={setSelectedRowId}
-                />
-              ) : null}
-              {activeView === "agents" ? (
-                <AgentPane
-                  sessions={sessions}
-                  approvals={approvals}
-                  processes={processes}
-                  selectedSession={selectedSession}
-                  selectedApproval={selectedApproval}
-                  setSelectedSessionId={setSelectedSessionId}
-                  sourceGapActive={sourceGapActive}
-                />
-              ) : null}
-              {activeView === "teams" ? (
-                <TeamPane
-                  teams={teams}
-                  selectedTeam={selectedTeam}
-                  setSelectedTeamId={setSelectedTeamId}
-                  pendingCommands={pendingCommands}
-                  sourceGapActive={sourceGapActive}
-                />
-              ) : null}
-              {activeView === "inbox" ? (
-                <InboxPane
-                  approvals={approvals}
-                  selectedApprovalId={selectedApproval?.approvalId ?? ""}
-                  setSelectedApprovalId={setSelectedApprovalId}
-                  sourceGapActive={sourceGapActive}
-                />
-              ) : null}
-              {activeView === "ledger" ? (
-                <LedgerPane events={ledgerEvents} sources={sources} />
-              ) : null}
-              {activeView === "fleet" ? (
-                <FleetPane
-                  sources={sources}
-                  rows={fleetRows}
-                  processes={processes}
-                  connection={state.connection}
-                />
-              ) : null}
-              {activeView === "playbooks" ? (
-                <PlaybooksPane
-                  selectedSession={selectedSession}
-                  selectedTeam={selectedTeam}
-                  sourceGapActive={sourceGapActive}
-                />
-              ) : null}
-              {activeView === "settings" ? (
-                <SettingsPane
-                  state={state}
-                  subscriptionCount={activeSubscriptions.length}
-                />
-              ) : null}
-            </div>
-          </main>
-
-          <Inspector
+            sources={sources}
+            filters={filters}
+            setFilters={setFilters}
             selectedRow={selectedRow}
             selectedSession={selectedSession}
             selectedTeam={selectedTeam}
             selectedApproval={selectedApproval}
-            selectedProcess={selectedProcess}
-            selectedWorktree={selectedWorktree}
-            sources={sources}
+            selectedRowId={selectedRow?.rowId ?? ""}
+            selectedApprovalId={selectedApproval?.approvalId ?? ""}
+            setSelectedRowId={setSelectedRowId}
+            setSelectedSessionId={setSelectedSessionId}
+            setSelectedTeamId={setSelectedTeamId}
+            setSelectedApprovalId={setSelectedApprovalId}
+            pendingCommands={pendingCommands}
+            ledgerEvents={ledgerEvents}
+            connection={state.connection}
+            subscriptionCount={activeSubscriptions.length}
+            sourceGapActive={sourceGapActive}
             staleSourceIds={staleSourceIds}
-            pendingCommandCount={pendingCommands.length}
+          />
+        </main>
+
+        <MissionProcessRail
+          processes={processes}
+          selectedProcess={selectedProcess}
+          selectedRow={selectedRow}
+          selectedSession={selectedSession}
+          selectedTeam={selectedTeam}
+          selectedApproval={selectedApproval}
+          selectedWorktree={selectedWorktree}
+          sources={sources}
+          staleSourceIds={staleSourceIds}
+          pendingCommandCount={pendingCommands.length}
+          sourceGapActive={sourceGapActive}
+          onSelectProcess={setSelectedProcessId}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MissionChrome({
+  state,
+  sources,
+  subscriptionCount
+}: {
+  readonly state: GoosewebSnapshot;
+  readonly sources: readonly SourceHealthView[];
+  readonly subscriptionCount: number;
+}) {
+  const source = sources[0];
+  return (
+    <header className="mission-chrome">
+      <div className="mission-window-buttons" aria-hidden="true">
+        <span className="mission-dot mission-dot-red" />
+        <span className="mission-dot mission-dot-yellow" />
+        <span className="mission-dot mission-dot-green" />
+      </div>
+      <div className="mission-chrome-tools">
+        <Button size="icon-sm" type="button" variant="ghost">
+          <FolderIcon />
+        </Button>
+        <Button size="icon-sm" type="button" variant="ghost">
+          <SquareIcon />
+        </Button>
+        <Button size="icon-sm" type="button" variant="ghost">
+          <ChevronDownIcon />
+        </Button>
+      </div>
+      <div className="mission-titlebar">
+        <span className="mission-titlebar-slot" />
+      </div>
+      <div className="mission-chrome-status">
+        <ConnectionBadge connection={state.connection} />
+        <MetricChip label="source" value={source?.displayName || source?.sourceId || "none"} />
+        <MetricChip label="seq" value={state.cursor.gatewaySeq.toString()} />
+        <MetricChip label="subs" value={String(subscriptionCount)} />
+      </div>
+    </header>
+  );
+}
+
+function MissionRosterRail({
+  activeView,
+  approvals,
+  rows,
+  sessions,
+  teams,
+  processes,
+  selectedRowId,
+  selectedSessionId,
+  selectedTeamId,
+  selectedApprovalId,
+  selectedProcessId,
+  sourceGapActive,
+  onViewChange,
+  onSelectRow,
+  onSelectSession,
+  onSelectTeam,
+  onSelectApproval,
+  onSelectProcess
+}: {
+  readonly activeView: WorkspaceView;
+  readonly approvals: readonly ApprovalView[];
+  readonly rows: readonly FleetRowView[];
+  readonly sessions: readonly SessionView[];
+  readonly teams: readonly TeamView[];
+  readonly processes: readonly ProcessView[];
+  readonly selectedRowId: string;
+  readonly selectedSessionId: string;
+  readonly selectedTeamId: string;
+  readonly selectedApprovalId: string;
+  readonly selectedProcessId: string;
+  readonly sourceGapActive: boolean;
+  readonly onViewChange: (view: WorkspaceView) => void;
+  readonly onSelectRow: (id: string) => void;
+  readonly onSelectSession: (id: string) => void;
+  readonly onSelectTeam: (id: string) => void;
+  readonly onSelectApproval: (id: string) => void;
+  readonly onSelectProcess: (id: string) => void;
+}) {
+  const items = getEntityItems({
+    activeView,
+    rows,
+    sessions,
+    teams,
+    approvals,
+    processes,
+    selectedRowId,
+    selectedSessionId,
+    selectedTeamId,
+    selectedApprovalId,
+    selectedProcessId,
+    onSelectRow,
+    onSelectSession,
+    onSelectTeam,
+    onSelectApproval,
+    onSelectProcess
+  });
+  const visibleItems = items.slice(0, 9);
+
+  return (
+    <aside className="mission-roster">
+      <div className="mission-roster-scroll">
+        <div className="mission-nav-grid">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const count =
+              item.id === "inbox"
+                ? approvals.filter((approval) => approval.status === "pending").length
+                : item.id === "fleet"
+                  ? processes.filter((process) => process.status === "running").length
+                  : undefined;
+            return (
+              <Button
+                className="mission-nav-button"
+                key={item.id}
+                type="button"
+                variant={activeView === item.id ? "secondary" : "ghost"}
+                onClick={() => onViewChange(item.id)}
+              >
+                <Icon data-icon="inline-start" />
+                <span className="truncate">{item.label}</span>
+                {count ? <Badge variant="outline">{count}</Badge> : null}
+              </Button>
+            );
+          })}
+        </div>
+
+        <Separator className="mission-separator" />
+
+        <div className="mission-rail-section">
+          <div className="mission-section-label">
+            <span>{sidebarTitle(activeView)}</span>
+            <Badge variant={sourceGapActive ? "destructive" : "outline"}>
+              {items.length}
+            </Badge>
+          </div>
+          <div className="mission-roster-list">
+            {visibleItems.length === 0 ? (
+              <EmptyBlock title="No entities" detail="Waiting for realtime snapshots." />
+            ) : (
+              visibleItems.map((item) => (
+                <button
+                  className={cn(
+                    "mission-roster-card",
+                    item.selected && "mission-roster-card-active"
+                  )}
+                  key={item.id}
+                  type="button"
+                  onClick={item.onClick}
+                >
+                  <span className="mission-roster-card-main">
+                    <span className="truncate text-[0.95rem] font-medium">
+                      {item.title}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {item.meta}
+                    </span>
+                  </span>
+                  <span className="mission-roster-card-side">
+                    <StatusBadge status={item.status} />
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mission-roster-actions">
+        <Button type="button" variant="outline">
+          <PlusIcon data-icon="inline-start" />
+          Add Agent to Team
+        </Button>
+        <Button type="button" variant="outline" onClick={() => onViewChange("teams")}>
+          <RadioIcon data-icon="inline-start" />
+          Team Comms
+        </Button>
+        <Button type="button" variant="outline" onClick={() => onViewChange("settings")}>
+          <ClipboardListIcon data-icon="inline-start" />
+          Docs
+        </Button>
+      </div>
+    </aside>
+  );
+}
+
+function MissionWorkspace({
+  state,
+  activeView,
+  rows,
+  sessions,
+  teams,
+  approvals,
+  processes,
+  sources,
+  filters,
+  setFilters,
+  selectedRow,
+  selectedSession,
+  selectedTeam,
+  selectedApproval,
+  selectedRowId,
+  selectedApprovalId,
+  setSelectedRowId,
+  setSelectedSessionId,
+  setSelectedTeamId,
+  setSelectedApprovalId,
+  pendingCommands,
+  ledgerEvents,
+  connection,
+  subscriptionCount,
+  sourceGapActive,
+  staleSourceIds
+}: {
+  readonly state: GoosewebSnapshot;
+  readonly activeView: WorkspaceView;
+  readonly rows: readonly FleetRowView[];
+  readonly sessions: readonly SessionView[];
+  readonly teams: readonly TeamView[];
+  readonly approvals: readonly ApprovalView[];
+  readonly processes: readonly ProcessView[];
+  readonly sources: readonly SourceHealthView[];
+  readonly filters: BoardFilters;
+  readonly setFilters: (filters: BoardFilters) => void;
+  readonly selectedRow?: FleetRowView;
+  readonly selectedSession?: SessionView;
+  readonly selectedTeam?: TeamView;
+  readonly selectedApproval?: ApprovalView;
+  readonly selectedRowId: string;
+  readonly selectedApprovalId: string;
+  readonly setSelectedRowId: (id: string) => void;
+  readonly setSelectedSessionId: (id: string) => void;
+  readonly setSelectedTeamId: (id: string) => void;
+  readonly setSelectedApprovalId: (id: string) => void;
+  readonly pendingCommands: readonly PendingCommandState[];
+  readonly ledgerEvents: readonly LedgerEvent[];
+  readonly connection: ConnectionState;
+  readonly subscriptionCount: number;
+  readonly sourceGapActive: boolean;
+  readonly staleSourceIds: readonly string[];
+}) {
+  const [composerText, setComposerText] = useState("");
+
+  function submitComposer(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedSession || !composerText.trim() || sourceGapActive) {
+      return;
+    }
+    sendRealtimeCommand(
+      makeCommand("session", selectedSession.sessionId, "sendTurn", {
+        sessionId: selectedSession.sessionId,
+        text: composerText.trim()
+      })
+    );
+    setComposerText("");
+  }
+
+  return (
+    <section className="mission-workspace">
+      <div className="mission-workspace-tab" aria-hidden="true" />
+      <div className="mission-workspace-header">
+        <div>
+          <div className="mission-kicker">
+            Thinking
+            <ChevronDownIcon />
+          </div>
+          <h1>{workspaceTitle(activeView, selectedRow, selectedSession, selectedTeam)}</h1>
+        </div>
+        <div className="mission-header-metrics">
+          <ConnectionBadge connection={connection} />
+          <MetricChip label="subs" value={String(subscriptionCount)} />
+          <MetricChip label="stale" value={staleSourceIds.length ? staleSourceIds.join(", ") : "none"} />
+        </div>
+      </div>
+
+      <ScrollArea className="mission-workspace-scroll">
+        <div className="mission-worklog">
+          <WorklogNarrative
+            activeView={activeView}
+            selectedRow={selectedRow}
+            selectedSession={selectedSession}
+            selectedTeam={selectedTeam}
+            selectedApproval={selectedApproval}
+            processes={processes}
+            sourceGapActive={sourceGapActive}
+          />
+          <InlineToolStack
+            rows={rows}
+            approvals={approvals}
+            teams={teams}
+            processes={processes}
+            sources={sources}
+          />
+          <div className="mission-embedded-pane">
+            <MissionViewBody
+              state={state}
+              activeView={activeView}
+              rows={rows}
+              sessions={sessions}
+              teams={teams}
+              approvals={approvals}
+              processes={processes}
+              sources={sources}
+              filters={filters}
+              setFilters={setFilters}
+              selectedRowId={selectedRowId}
+              selectedSession={selectedSession}
+              selectedTeam={selectedTeam}
+              selectedApproval={selectedApproval}
+              selectedApprovalId={selectedApprovalId}
+              setSelectedRowId={setSelectedRowId}
+              setSelectedSessionId={setSelectedSessionId}
+              setSelectedTeamId={setSelectedTeamId}
+              setSelectedApprovalId={setSelectedApprovalId}
+              pendingCommands={pendingCommands}
+              ledgerEvents={ledgerEvents}
+              connection={connection}
+              subscriptionCount={subscriptionCount}
+              sourceGapActive={sourceGapActive}
+            />
+          </div>
+        </div>
+      </ScrollArea>
+
+      <form className="mission-composer" onSubmit={submitComposer}>
+        <Textarea
+          aria-label="Mission composer"
+          value={composerText}
+          onChange={(event) => setComposerText(event.target.value)}
+          placeholder=""
+          rows={4}
+        />
+        <div className="mission-composer-tray">
+          <div className="mission-composer-tools">
+            <Button size="icon-sm" type="button" variant="ghost">
+              <PlusIcon />
+            </Button>
+            <SelectFilter
+              value={selectedSession?.model || "default"}
+              options={unique(["default", "medium", "high", selectedSession?.model || "default"])}
+              onChange={() => undefined}
+            />
+            <SelectFilter
+              value={selectedSession?.provider || "runtime"}
+              options={unique(["runtime", "codex", "claude", selectedSession?.provider || "runtime"])}
+              onChange={() => undefined}
+            />
+            <MetricChip label="target" value={selectedSession?.sessionId || "none"} />
+          </div>
+          <div className="mission-composer-actions">
+            <span className="mission-context-gauge">
+              <CircleIcon />
+              36% left
+            </span>
+            <Button
+              disabled={!composerText.trim() || !selectedSession || sourceGapActive}
+              size="icon-lg"
+              type="submit"
+              variant="secondary"
+            >
+              <SquareIcon />
+            </Button>
+          </div>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function MissionViewBody({
+  state,
+  activeView,
+  rows,
+  sessions,
+  teams,
+  approvals,
+  processes,
+  sources,
+  filters,
+  setFilters,
+  selectedRowId,
+  selectedSession,
+  selectedTeam,
+  selectedApproval,
+  selectedApprovalId,
+  setSelectedRowId,
+  setSelectedSessionId,
+  setSelectedTeamId,
+  setSelectedApprovalId,
+  pendingCommands,
+  ledgerEvents,
+  connection,
+  subscriptionCount,
+  sourceGapActive
+}: {
+  readonly state: GoosewebSnapshot;
+  readonly activeView: WorkspaceView;
+  readonly rows: readonly FleetRowView[];
+  readonly sessions: readonly SessionView[];
+  readonly teams: readonly TeamView[];
+  readonly approvals: readonly ApprovalView[];
+  readonly processes: readonly ProcessView[];
+  readonly sources: readonly SourceHealthView[];
+  readonly filters: BoardFilters;
+  readonly setFilters: (filters: BoardFilters) => void;
+  readonly selectedRowId: string;
+  readonly selectedSession?: SessionView;
+  readonly selectedTeam?: TeamView;
+  readonly selectedApproval?: ApprovalView;
+  readonly selectedApprovalId: string;
+  readonly setSelectedRowId: (id: string) => void;
+  readonly setSelectedSessionId: (id: string) => void;
+  readonly setSelectedTeamId: (id: string) => void;
+  readonly setSelectedApprovalId: (id: string) => void;
+  readonly pendingCommands: readonly PendingCommandState[];
+  readonly ledgerEvents: readonly LedgerEvent[];
+  readonly connection: ConnectionState;
+  readonly subscriptionCount: number;
+  readonly sourceGapActive: boolean;
+}) {
+  if (activeView === "agents") {
+    return (
+      <AgentPane
+        sessions={sessions}
+        approvals={approvals}
+        processes={processes}
+        selectedSession={selectedSession}
+        selectedApproval={selectedApproval}
+        setSelectedSessionId={setSelectedSessionId}
+        sourceGapActive={sourceGapActive}
+      />
+    );
+  }
+  if (activeView === "teams") {
+    return (
+      <TeamPane
+        teams={teams}
+        selectedTeam={selectedTeam}
+        setSelectedTeamId={setSelectedTeamId}
+        pendingCommands={pendingCommands}
+        sourceGapActive={sourceGapActive}
+      />
+    );
+  }
+  if (activeView === "inbox") {
+    return (
+      <InboxPane
+        approvals={approvals}
+        selectedApprovalId={selectedApprovalId}
+        setSelectedApprovalId={setSelectedApprovalId}
+        sourceGapActive={sourceGapActive}
+      />
+    );
+  }
+  if (activeView === "ledger") {
+    return <LedgerPane events={ledgerEvents} sources={sources} />;
+  }
+  if (activeView === "fleet") {
+    return (
+      <FleetPane
+        sources={sources}
+        rows={rows}
+        processes={processes}
+        connection={connection}
+      />
+    );
+  }
+  if (activeView === "playbooks") {
+    return (
+      <PlaybooksPane
+        selectedSession={selectedSession}
+        selectedTeam={selectedTeam}
+        sourceGapActive={sourceGapActive}
+      />
+    );
+  }
+  if (activeView === "settings") {
+    return <SettingsPane state={state} subscriptionCount={subscriptionCount} />;
+  }
+  return (
+    <BoardPane
+      rows={rows}
+      teams={teams}
+      sources={sources}
+      filters={filters}
+      setFilters={setFilters}
+      selectedRowId={selectedRowId}
+      setSelectedRowId={setSelectedRowId}
+    />
+  );
+}
+
+function WorklogNarrative({
+  activeView,
+  selectedRow,
+  selectedSession,
+  selectedTeam,
+  selectedApproval,
+  processes,
+  sourceGapActive
+}: {
+  readonly activeView: WorkspaceView;
+  readonly selectedRow?: FleetRowView;
+  readonly selectedSession?: SessionView;
+  readonly selectedTeam?: TeamView;
+  readonly selectedApproval?: ApprovalView;
+  readonly processes: readonly ProcessView[];
+  readonly sourceGapActive: boolean;
+}) {
+  const runningCount = processes.filter((process) => process.status === "running").length;
+  const codeValue = selectedRow?.sourceId || selectedSession?.sourceId || "source none";
+
+  return (
+    <div className="mission-narrative">
+      <p className="mission-muted-copy">
+        The board is centered on{" "}
+        <strong>{selectedRow?.title || selectedSession?.sessionId || selectedTeam?.name || activeView}</strong>
+        . Gooseweb is keeping the realtime worker, subscriptions, command queue,
+        approvals, and process visibility active while this operator surface is
+        rendered as a dense desktop control room.
+      </p>
+      <p className="mission-primary-copy">
+        The active workspace is <code>{activeView}</code>, the current source is{" "}
+        <code>{codeValue}</code>, and there {runningCount === 1 ? "is" : "are"}{" "}
+        <code>{runningCount}</code> running process{runningCount === 1 ? "" : "es"}.
+        {sourceGapActive
+          ? " Command mutation controls are guarded because the source is stale, offline, or replaying."
+          : " Command mutation controls are available for the selected runtime entity."}
+      </p>
+      {selectedApproval ? (
+        <p className="mission-primary-copy">
+          Approval context is in scope:{" "}
+          <code>{selectedApproval.summary || selectedApproval.approvalId}</code>{" "}
+          is currently <code>{selectedApproval.status}</code> with risk{" "}
+          <code>{selectedApproval.risk || "unknown"}</code>.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function InlineToolStack({
+  rows,
+  approvals,
+  teams,
+  processes,
+  sources
+}: {
+  readonly rows: readonly FleetRowView[];
+  readonly approvals: readonly ApprovalView[];
+  readonly teams: readonly TeamView[];
+  readonly processes: readonly ProcessView[];
+  readonly sources: readonly SourceHealthView[];
+}) {
+  const items = [
+    {
+      id: "board",
+      label: `Read ${rows.length} board row${rows.length === 1 ? "" : "s"}`,
+      detail: `${approvals.filter((approval) => approval.status === "pending").length} pending approvals`
+    },
+    {
+      id: "teams",
+      label: `Read ${teams.length} team snapshot${teams.length === 1 ? "" : "s"}`,
+      detail: `${teams.reduce((sum, team) => sum + team.members.length, 0)} members materialized`
+    },
+    {
+      id: "processes",
+      label: `Read ${processes.length} process record${processes.length === 1 ? "" : "s"}`,
+      detail: `${processes.filter((process) => process.status === "running").length} running`
+    },
+    {
+      id: "sources",
+      label: `Read ${sources.length} runtime source${sources.length === 1 ? "" : "s"}`,
+      detail: sources[0]?.health || "health unknown"
+    }
+  ];
+
+  return (
+    <div className="mission-tool-stack">
+      {items.map((item) => (
+        <div className="mission-tool-card" key={item.id}>
+          <span className="mission-tool-led" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">{item.label}</span>
+            <span className="block truncate text-xs text-muted-foreground">
+              {item.detail}
+            </span>
+          </span>
+          <span className="mission-tool-braces" aria-hidden="true">
+            {"{}"}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MissionProcessRail({
+  processes,
+  selectedProcess,
+  selectedRow,
+  selectedSession,
+  selectedTeam,
+  selectedApproval,
+  selectedWorktree,
+  sources,
+  staleSourceIds,
+  pendingCommandCount,
+  sourceGapActive,
+  onSelectProcess
+}: {
+  readonly processes: readonly ProcessView[];
+  readonly selectedProcess?: ProcessView;
+  readonly selectedRow?: FleetRowView;
+  readonly selectedSession?: SessionView;
+  readonly selectedTeam?: TeamView;
+  readonly selectedApproval?: ApprovalView;
+  readonly selectedWorktree?: WorktreeView;
+  readonly sources: readonly SourceHealthView[];
+  readonly staleSourceIds: readonly string[];
+  readonly pendingCommandCount: number;
+  readonly sourceGapActive: boolean;
+  readonly onSelectProcess: (id: string) => void;
+}) {
+  const [filter, setFilter] = useState<"running" | "completed" | "all">("running");
+  const filteredProcesses = processes.filter((process) => {
+    if (filter === "all") {
+      return true;
+    }
+    if (filter === "running") {
+      return process.status === "running";
+    }
+    return process.status !== "running";
+  });
+
+  return (
+    <aside className="mission-processes">
+      <div className="mission-process-header">
+        <h2>Processes</h2>
+        <ToggleGroup
+          className="mission-process-toggle"
+          onValueChange={(value) => {
+            const next = Array.isArray(value) ? value[0] : value;
+            if (next === "running" || next === "completed" || next === "all") {
+              setFilter(next);
+            }
+          }}
+          value={[filter]}
+          variant="outline"
+        >
+          <ToggleGroupItem value="running">Running</ToggleGroupItem>
+          <ToggleGroupItem value="completed">Completed</ToggleGroupItem>
+          <ToggleGroupItem value="all">All</ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      <Separator className="mission-separator" />
+      <ScrollArea className="mission-process-scroll">
+        <div className="mission-process-list">
+          {filteredProcesses.length === 0 ? (
+            <EmptyBlock title="No processes" detail="Process materialization is empty." />
+          ) : (
+            filteredProcesses.map((process) => (
+              <div
+                className={cn(
+                  "mission-process-card",
+                  process.processId === selectedProcess?.processId &&
+                    "mission-process-card-active"
+                )}
+                key={process.processId}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectProcess(process.processId)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    onSelectProcess(process.processId);
+                  }
+                }}
+              >
+                <span className="mission-process-card-top">
+                  <StatusBadge status={process.status || "unknown"} />
+                  <span className="text-xs text-muted-foreground">
+                    {process.sourceId || "source"}
+                  </span>
+                  <Button
+                    disabled={sourceGapActive || process.status !== "running"}
+                    size="xs"
+                    type="button"
+                    variant="destructive"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      sendRealtimeCommand(
+                        makeCommand("process", process.processId, "killProcess", {
+                          processId: process.processId
+                        })
+                      );
+                    }}
+                  >
+                    Kill
+                  </Button>
+                </span>
+                <span className="mission-process-command">
+                  {process.command || process.processId}
+                </span>
+                <span className="mission-process-meta">
+                  <span>source_id {process.sourceId || "unknown"}</span>
+                  <span>process_id {process.processId}</span>
+                  <span>exit_code {String(process.exitCode)}</span>
+                  <span>status {process.status || "unknown"}</span>
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="mission-context-stack">
+          <ContextCard
+            title="Selection"
+            items={[
+              ["row", selectedRow?.rowId],
+              ["session", selectedSession?.sessionId],
+              ["team", selectedTeam?.teamId],
+              ["approval", selectedApproval?.approvalId],
+              ["process", selectedProcess?.processId],
+              ["worktree", selectedWorktree?.path]
+            ]}
+          />
+          <ContextCard
+            title="Source health"
+            items={sources.map((source) => [
+              source.displayName || source.sourceId,
+              `${source.health} / ${ageFrom(toNumber(source.observedAtUnixMs))}`
+            ])}
+          />
+          <ContextCard
+            title="Safety"
+            items={[
+              ["stale sources", staleSourceIds.length ? staleSourceIds.join(", ") : "none"],
+              ["pending commands", String(pendingCommandCount)]
+            ]}
           />
         </div>
-      </SidebarInset>
-    </SidebarProvider>
+      </ScrollArea>
+    </aside>
   );
+}
+
+function workspaceTitle(
+  activeView: WorkspaceView,
+  selectedRow?: FleetRowView,
+  selectedSession?: SessionView,
+  selectedTeam?: TeamView
+): string {
+  if (activeView === "teams") {
+    return selectedTeam?.name || "Coordinating team workspace";
+  }
+  if (activeView === "agents") {
+    return selectedSession?.sessionId || "Investigating agent session";
+  }
+  if (activeView === "inbox") {
+    return "Resolving approval queue";
+  }
+  if (activeView === "fleet") {
+    return "Inspecting runtime source health";
+  }
+  if (activeView === "ledger") {
+    return "Auditing gateway event flow";
+  }
+  return selectedRow?.title || selectedRow?.sessionId || "Investigating source health issues";
 }
 
 function TopStatus({

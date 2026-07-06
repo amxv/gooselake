@@ -53,6 +53,7 @@ import {
   connectRealtime,
   disconnectRealtime,
   ensureRealtimeWorker,
+  mintDevelopmentTicket,
   sendRealtimeCommand,
   subscribeRealtime,
   unsubscribeRealtime
@@ -2224,6 +2225,8 @@ function SettingsPane({
   readonly subscriptionCount: number;
 }) {
   const [ticket, setTicket] = useState(goosewebConfig.pastedDevTicket);
+  const [ticketStatus, setTicketStatus] = useState("");
+  const [ticketLoading, setTicketLoading] = useState(false);
   const debugExport = JSON.stringify(
     {
       connection: state.connection,
@@ -2236,6 +2239,21 @@ function SettingsPane({
     null,
     2
   );
+
+  async function mintAndConnectDevelopmentTicket() {
+    setTicketLoading(true);
+    setTicketStatus("");
+    try {
+      const nextTicket = await mintDevelopmentTicket();
+      setTicket(nextTicket);
+      connectRealtime(nextTicket);
+      setTicketStatus("Development ticket connected.");
+    } catch (error) {
+      setTicketStatus(error instanceof Error ? error.message : "Unable to mint development ticket.");
+    } finally {
+      setTicketLoading(false);
+    }
+  }
 
   return (
     <Tabs className="h-full" defaultValue="connection">
@@ -2269,6 +2287,11 @@ function SettingsPane({
                 <Textarea value={ticket} onChange={(event) => setTicket(event.target.value)} rows={5} />
               </Field>
               <div className="flex gap-2">
+                {goosewebConfig.flags.devTicketRoute ? (
+                  <Button disabled={ticketLoading} onClick={mintAndConnectDevelopmentTicket} type="button">
+                    {ticketLoading ? "Minting" : "Mint dev ticket"}
+                  </Button>
+                ) : null}
                 <Button disabled={!ticket.trim()} onClick={() => connectRealtime(ticket)} type="button">
                   Connect
                 </Button>
@@ -2276,6 +2299,9 @@ function SettingsPane({
                   Disconnect
                 </Button>
               </div>
+              {ticketStatus ? (
+                <p className="text-muted-foreground text-sm">{ticketStatus}</p>
+              ) : null}
             </FieldGroup>
           </CardContent>
         </Card>

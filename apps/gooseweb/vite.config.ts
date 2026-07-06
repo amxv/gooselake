@@ -18,7 +18,18 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3001
+    port: 3000,
+    strictPort: true,
+    proxy: {
+      "/api/dev-ticket": {
+        target: "http://127.0.0.1:8090",
+        changeOrigin: true,
+        rewrite: () => "/v1/dev/tickets",
+        headers: {
+          Authorization: "Bearer dev-goosetower-token"
+        }
+      }
+    }
   },
   plugins: [tailwindcss(), tanstackStart(), react()]
 });

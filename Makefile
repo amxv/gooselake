@@ -66,7 +66,7 @@ goosetower-preflight: ## Run Goosetower deployment preflight checks
 
 .PHONY: gooseweb-dev
 gooseweb-dev: ## Start Gooseweb dev server
-	bun run --cwd apps/gooseweb dev
+	VITE_GOOSETOWER_URL=ws://127.0.0.1:8090/v1/realtime VITE_GOOSEWEB_DEV_TICKET_ROUTE_ENABLED=true bun run --cwd apps/gooseweb dev
 
 .PHONY: gooseweb-build
 gooseweb-build: ## Build Gooseweb app

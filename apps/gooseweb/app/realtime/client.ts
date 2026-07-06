@@ -53,6 +53,24 @@ export function connectRealtime(ticket: string): void {
   });
 }
 
+export async function mintDevelopmentTicket(): Promise<string> {
+  const response = await fetch(goosewebConfig.devTicketRoute, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({})
+  });
+  if (!response.ok) {
+    throw new Error(`Dev ticket request failed with ${response.status}`);
+  }
+  const payload = (await response.json()) as { ticket?: unknown };
+  if (typeof payload.ticket !== "string" || !payload.ticket.trim()) {
+    throw new Error("Dev ticket response did not include a ticket");
+  }
+  return payload.ticket;
+}
+
 export function disconnectRealtime(): void {
   postRealtimeMessage({ type: "disconnect" });
 }

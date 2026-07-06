@@ -331,6 +331,13 @@ export class RealtimeWorkerCore {
   private applyEnvelopeCursor(envelope: RealtimeEnvelope): boolean {
     const source = sourceCursorFromEnvelope(envelope);
     if (!shouldApplyCursor(this.cursor, envelope.gatewaySeq, source)) {
+      if (
+        !source &&
+        (envelope.messageKind === MessageKind.PATCH ||
+          envelope.messageKind === MessageKind.SNAPSHOT)
+      ) {
+        return true;
+      }
       return false;
     }
 

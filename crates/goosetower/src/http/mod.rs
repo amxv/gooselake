@@ -5,15 +5,19 @@ use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, options, post};
 use axum::{Json, Router};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 
-use crate::auth::{origin_is_allowed, TicketIssuer};
+use crate::auth::origin_is_allowed;
 use crate::config::{GoosetowerConfig, RuntimeSourceConfig};
 use crate::gateway::GatewayState;
 use crate::runtime::{GooselakeRuntimeClient, GooselakeRuntimeClientConfig};
+
+mod dev_tickets;
+
+use dev_tickets::{dev_ticket_preflight, mint_dev_ticket};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -117,11 +121,19 @@ pub fn build_router(state: AppState) -> Router {
         .route("/debug/subscriptions", get(debug_subscriptions))
         .route("/debug/materializer", get(debug_materializer))
         .route("/debug/audit", get(debug_audit))
-        .route("/dev/tickets", post(mint_dev_ticket))
         .route_layer(middleware::from_fn_with_state(
             state.api_bearer_token.clone(),
             bearer_auth,
         ));
+    let dev_tickets = Router::new()
+        .route("/dev/tickets", options(dev_ticket_preflight))
+        .route(
+            "/dev/tickets",
+            post(mint_dev_ticket).route_layer(middleware::from_fn_with_state(
+                state.api_bearer_token.clone(),
+                bearer_auth,
+            )),
+        );
 
     Router::new()
         .route("/health", get(health))
@@ -129,6 +141,7 @@ pub fn build_router(state: AppState) -> Router {
             "/v1",
             Router::new()
                 .route("/realtime", get(realtime))
+                .merge(dev_tickets)
                 .merge(protected),
         )
         .with_state(state)
@@ -260,60 +273,6 @@ fn ensure_debug_enabled(state: &AppState) -> Result<(), StatusCode> {
         .ok_or(StatusCode::FORBIDDEN)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct DevTicketRequest {
-    subject: Option<String>,
-    workspace_id: Option<String>,
-    scopes: Option<Vec<String>>,
-    allowed_origins: Option<Vec<String>>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct DevTicketResponse {
-    ticket: String,
-    expires_in_secs: u64,
-    issuer: String,
-    audience: String,
-}
-
-async fn mint_dev_ticket(
-    State(state): State<AppState>,
-    Json(input): Json<DevTicketRequest>,
-) -> Result<Json<DevTicketResponse>, StatusCode> {
-    if !state.config.debug.endpoints_enabled {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    let issuer =
-        TicketIssuer::from_config(&state.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let allowed_origins = input
-        .allowed_origins
-        .unwrap_or_else(|| state.config.allowed_gooseweb_origins().unwrap_or_default());
-    let ticket = issuer
-        .mint_dev_ticket(
-            input.subject.unwrap_or_else(|| "dev-user".to_string()),
-            input.workspace_id.unwrap_or_else(|| {
-                state
-                    .config
-                    .runtimes
-                    .sources
-                    .first()
-                    .map(|source| source.workspace_id.clone())
-                    .unwrap_or_else(|| "default".to_string())
-            }),
-            input.scopes.unwrap_or_else(|| {
-                vec!["gateway:connect".to_string(), "gateway:command".to_string()]
-            }),
-            allowed_origins,
-        )
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(DevTicketResponse {
-        ticket,
-        expires_in_secs: state.config.tickets.ttl_secs,
-        issuer: state.config.tickets.issuer.clone(),
-        audience: state.config.tickets.audience.clone(),
-    }))
-}
-
 async fn realtime(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
@@ -419,7 +378,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use axum::body::{to_bytes, Body};
-    use axum::http::{HeaderValue, Request, StatusCode};
+    use axum::http::{HeaderValue, Method, Request, StatusCode};
     use futures_util::{SinkExt, StreamExt};
     use prost::Message as ProstMessage;
     use runtime_core::{SendTurnAccepted, SessionRecord};
@@ -481,6 +440,77 @@ mod tests {
             .await
             .expect("authorized response");
         assert_eq!(authorized.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn dev_ticket_preflight_allows_configured_origins_without_weakening_post_auth() {
+        let mut config = GoosetowerConfig::default();
+        config.server.allowed_gooseweb_origins = vec!["http://localhost:3000".to_string()];
+        let router = build_router(test_state(config, "tower-token"));
+
+        let preflight = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/v1/dev/tickets")
+                    .header(header::ORIGIN, "http://localhost:3000")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        "authorization,content-type",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("preflight response");
+        assert_eq!(preflight.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            preflight.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static("http://localhost:3000"))
+        );
+        assert_eq!(
+            preflight
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_METHODS),
+            Some(&HeaderValue::from_static("POST, OPTIONS"))
+        );
+        assert_eq!(
+            preflight
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_HEADERS),
+            Some(&HeaderValue::from_static("authorization, content-type"))
+        );
+
+        let rejected_preflight = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/v1/dev/tickets")
+                    .header(header::ORIGIN, "http://evil.local")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("rejected preflight response");
+        assert_eq!(rejected_preflight.status(), StatusCode::FORBIDDEN);
+
+        let unauthorized_post = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/dev/tickets")
+                    .header(header::ORIGIN, "http://localhost:3000")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .expect("unauthorized post response");
+        assert_eq!(unauthorized_post.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

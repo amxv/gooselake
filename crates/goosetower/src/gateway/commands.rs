@@ -717,7 +717,7 @@ impl GatewayState {
                             )),
                             version: Some(next.version("session", session_id)),
                             source_cursor: None,
-                            body: json!(row),
+                            body: json!({ "rows": [row] }),
                         });
                     }
                 }

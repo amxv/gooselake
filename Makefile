@@ -66,15 +66,21 @@ goosetower-preflight: ## Run Goosetower deployment preflight checks
 
 .PHONY: gooseweb-dev
 gooseweb-dev: ## Start Gooseweb dev server
-	bun --cwd apps/gooseweb run dev
+	bun run --cwd apps/gooseweb dev
 
 .PHONY: gooseweb-build
 gooseweb-build: ## Build Gooseweb app
-	bun --cwd apps/gooseweb run build
+	bun run --cwd apps/gooseweb build
 
 .PHONY: gooseweb-typecheck
 gooseweb-typecheck: ## Typecheck Gooseweb app
-	bun --cwd apps/gooseweb run typecheck
+	bun run --cwd apps/gooseweb typecheck
+
+.PHONY: gooseweb-check
+gooseweb-check: ## Typecheck, test, and build Gooseweb app
+	bun run --cwd apps/gooseweb typecheck
+	bun run --cwd apps/gooseweb test
+	bun run --cwd apps/gooseweb build
 
 .PHONY: api-docs-refresh
 api-docs-refresh: ## Regenerate runtime OpenAPI artifact from source

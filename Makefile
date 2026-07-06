@@ -64,6 +64,10 @@ api-docs-status: ## Show API/docs sync-relevant file status
 api-docs-check: ## Fail if API files changed without corresponding docs changes
 	./scripts/api-doc-sync.sh check
 
+.PHONY: lint-rust-file-lines
+lint-rust-file-lines: ## Fail if any Rust file exceeds 1000 lines
+	./scripts/check-rust-file-lines.sh 1000
+
 .PHONY: vps-deploy
 vps-deploy: ## One-command VPS deploy (upgrade + preflight + systemd enable/start)
 	./scripts/deploy-vps.sh --version "$(VERSION)" --config "$(CONFIG)" --service "$(SERVICE)" --scope "$(SCOPE)" $(if $(BASE_URL),--base-url "$(BASE_URL)") $(if $(TOKEN),--token "$(TOKEN)")

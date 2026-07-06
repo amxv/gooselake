@@ -16,6 +16,7 @@ use crate::bridge::{
 };
 use crate::config::{ClaudeProviderConfig, CLAUDE_BRIDGE_STDIN_QUEUE_CAPACITY};
 
+#[derive(Clone, Debug)]
 pub struct ClaudeProvider {
     pub(crate) inner: Arc<ClaudeProviderInner>,
 }

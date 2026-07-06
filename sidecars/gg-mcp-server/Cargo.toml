@@ -5,6 +5,10 @@ edition = "2024"
 rust-version = "1.94.0"
 publish = false
 
+[[bin]]
+name = "gg-mcp-server"
+path = "src/main.rs"
+
 [dependencies]
 rmcp = { version = "0.15.0", features = ["server", "client", "transport-io", "transport-child-process", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

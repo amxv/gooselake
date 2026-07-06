@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package goosetower.v1;
+
+import "goosetower/v1/common.proto";
+
+message SourceHealthView {
+  string source_id = 1;
+  string display_name = 2;
+  string source_kind = 3;
+  string health = 4;
+  SourceCursor cursor = 5;
+  int64 observed_at_unix_ms = 6;
+  reserved 20 to 49;
+}
+
+message FleetRowView {
+  string row_id = 1;
+  string source_id = 2;
+  string session_id = 3;
+  string team_id = 4;
+  string provider = 5;
+  string model = 6;
+  string status = 7;
+  string title = 8;
+  string worktree_path = 9;
+  uint32 pending_approval_count = 10;
+  int64 latest_activity_unix_ms = 11;
+  reserved 30 to 79;
+}
+
+message SessionView {
+  string source_id = 1;
+  string session_id = 2;
+  string provider = 3;
+  string model = 4;
+  string status = 5;
+  string cwd = 6;
+  string worktree_path = 7;
+  string active_turn_id = 8;
+  reserved 30 to 79;
+}
+
+message TeamView {
+  string source_id = 1;
+  string team_id = 2;
+  string name = 3;
+  string lead_member_id = 4;
+  repeated TeamMemberView members = 5;
+  reserved 30 to 79;
+}
+
+message TeamMemberView {
+  string member_id = 1;
+  string session_id = 2;
+  string title = 3;
+  string provider = 4;
+  string model = 5;
+  string status = 6;
+  reserved 30 to 79;
+}
+
+message ApprovalView {
+  string source_id = 1;
+  string approval_id = 2;
+  string session_id = 3;
+  string turn_id = 4;
+  string risk = 5;
+  string status = 6;
+  string summary = 7;
+  reserved 30 to 79;
+}
+
+message ProcessView {
+  string source_id = 1;
+  string process_id = 2;
+  string status = 3;
+  string command = 4;
+  int32 exit_code = 5;
+  reserved 30 to 79;
+}
+
+message WorktreeView {
+  string source_id = 1;
+  string worktree_id = 2;
+  string path = 3;
+  string branch = 4;
+  string status = 5;
+  reserved 30 to 79;
+}
+
+message Snapshot {
+  string view_kind = 1;
+  CursorVector cursor = 2;
+  bytes body = 3;
+  reserved 20 to 49;
+}
+
+message Patch {
+  string view_kind = 1;
+  EntityRef entity = 2;
+  CursorVector cursor = 3;
+  bytes body = 4;
+  reserved 20 to 49;
+}

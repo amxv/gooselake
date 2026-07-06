@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package goosetower.v1;
+
+import "goosetower/v1/common.proto";
+import "goosetower/v1/commands.proto";
+import "goosetower/v1/view.proto";
+
+message RealtimeEnvelope {
+  uint32 protocol_version = 1;
+  string message_id = 2;
+  MessageKind message_kind = 3;
+  Lane lane = 4;
+  uint64 gateway_seq = 5;
+  string source_id = 6;
+  string source_epoch = 7;
+  uint64 source_seq = 8;
+  Scope scope = 9;
+  string scope_id = 10;
+  uint64 entity_version = 11;
+  string kind = 12;
+  string command_id = 13;
+  int64 happened_at_unix_ms = 14;
+  int64 observed_at_unix_ms = 15;
+  oneof payload {
+    Hello hello = 30;
+    Ping ping = 31;
+    Pong pong = 32;
+    Resume resume = 33;
+    Subscribe subscribe = 34;
+    Unsubscribe unsubscribe = 35;
+    Ack ack = 36;
+    Snapshot snapshot = 37;
+    Patch patch = 38;
+    GatewayEvent event = 39;
+    Command command = 40;
+    CommandAccepted command_accepted = 41;
+    CommandRejected command_rejected = 42;
+    CommandDuplicate command_duplicate = 43;
+    AuthRefresh auth_refresh = 44;
+    AuthExpiring auth_expiring = 45;
+    AuthRefreshed auth_refreshed = 46;
+    ConnectionDegraded connection_degraded = 47;
+    SourceGapDetected source_gap_detected = 48;
+    SourceGapFilled source_gap_filled = 49;
+    SourceSnapshotResync source_snapshot_resync = 50;
+    ErrorDetail error = 51;
+  }
+  reserved 80 to 159;
+}
+
+message Hello {
+  string connection_id = 1;
+  int64 server_time_unix_ms = 2;
+  uint32 heartbeat_interval_ms = 3;
+  uint32 max_message_bytes = 4;
+  uint32 protocol_version = 5;
+  bool resume_supported = 6;
+  reserved 20 to 39;
+}
+
+message Ping {
+  int64 client_time_unix_ms = 1;
+  reserved 20 to 39;
+}
+
+message Pong {
+  int64 client_time_unix_ms = 1;
+  int64 server_time_unix_ms = 2;
+  reserved 20 to 39;
+}
+
+message Resume {
+  CursorVector cursor = 1;
+  reserved 20 to 39;
+}
+
+message Subscribe {
+  string subscription_id = 1;
+  string view_kind = 2;
+  map<string, string> filters = 3;
+  reserved 20 to 39;
+}
+
+message Unsubscribe {
+  string subscription_id = 1;
+  reserved 20 to 39;
+}
+
+message Ack {
+  string message_id = 1;
+  uint64 gateway_seq = 2;
+  reserved 20 to 39;
+}
+
+message GatewayEvent {
+  string event_id = 1;
+  string kind = 2;
+  Scope scope = 3;
+  string scope_id = 4;
+  SourceCursor source_cursor = 5;
+  string criticality = 6;
+  bytes payload_json = 7;
+  reserved 30 to 79;
+}
+
+message AuthRefresh {
+  string ticket = 1;
+  reserved 20 to 39;
+}
+
+message AuthExpiring {
+  int64 expires_at_unix_ms = 1;
+  reserved 20 to 39;
+}
+
+message AuthRefreshed {
+  int64 expires_at_unix_ms = 1;
+  reserved 20 to 39;
+}
+
+message ConnectionDegraded {
+  string reason = 1;
+  reserved 20 to 39;
+}
+
+message SourceGapDetected {
+  SourceCursor last_seen = 1;
+  SourceCursor next_available = 2;
+  reserved 20 to 39;
+}
+
+message SourceGapFilled {
+  SourceCursor cursor = 1;
+  reserved 20 to 39;
+}
+
+message SourceSnapshotResync {
+  string source_id = 1;
+  string reason = 2;
+  reserved 20 to 39;
+}

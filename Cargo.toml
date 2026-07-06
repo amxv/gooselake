@@ -7,6 +7,7 @@ members = [
   "crates/runtime-provider-acp",
   "crates/runtime-tools",
   "crates/runtime-server",
+  "crates/goosetower",
 ]
 resolver = "2"
 

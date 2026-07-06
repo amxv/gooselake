@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package goosetower.v1;
+
+// Shared gateway constants and cursor structures. Field numbers are reserved
+// aggressively so later protocol growth does not force renumbering.
+
+enum Lane {
+  LANE_UNSPECIFIED = 0;
+  LANE_CRITICAL = 1;
+  LANE_STATE = 2;
+  LANE_TOKENS = 3;
+  LANE_BULK = 4;
+  reserved 20 to 49;
+}
+
+enum Scope {
+  SCOPE_UNSPECIFIED = 0;
+  SCOPE_SYSTEM = 1;
+  SCOPE_SESSION = 2;
+  SCOPE_TEAM = 3;
+  SCOPE_PROCESS = 4;
+  SCOPE_WORKTREE = 5;
+  SCOPE_SOURCE = 6;
+  reserved 20 to 49;
+}
+
+enum MessageKind {
+  MESSAGE_KIND_UNSPECIFIED = 0;
+  MESSAGE_KIND_HELLO = 1;
+  MESSAGE_KIND_PING = 2;
+  MESSAGE_KIND_PONG = 3;
+  MESSAGE_KIND_RESUME = 4;
+  MESSAGE_KIND_SUBSCRIBE = 5;
+  MESSAGE_KIND_UNSUBSCRIBE = 6;
+  MESSAGE_KIND_ACK = 7;
+  MESSAGE_KIND_SNAPSHOT = 8;
+  MESSAGE_KIND_PATCH = 9;
+  MESSAGE_KIND_EVENT = 10;
+  MESSAGE_KIND_COMMAND = 11;
+  MESSAGE_KIND_COMMAND_ACCEPTED = 12;
+  MESSAGE_KIND_COMMAND_REJECTED = 13;
+  MESSAGE_KIND_COMMAND_DUPLICATE = 14;
+  MESSAGE_KIND_AUTH_REFRESH = 15;
+  MESSAGE_KIND_AUTH_EXPIRING = 16;
+  MESSAGE_KIND_AUTH_REFRESHED = 17;
+  MESSAGE_KIND_CONNECTION_DEGRADED = 18;
+  MESSAGE_KIND_SOURCE_GAP_DETECTED = 19;
+  MESSAGE_KIND_SOURCE_GAP_FILLED = 20;
+  MESSAGE_KIND_SOURCE_SNAPSHOT_RESYNC = 21;
+  MESSAGE_KIND_ERROR = 22;
+  reserved 40 to 79;
+}
+
+message SourceCursor {
+  string source_id = 1;
+  string source_epoch = 2;
+  uint64 source_seq = 3;
+  reserved 20 to 39;
+}
+
+message CursorVector {
+  uint64 gateway_seq = 1;
+  repeated SourceCursor sources = 2;
+  reserved 20 to 39;
+}
+
+message EntityRef {
+  Scope scope = 1;
+  string scope_id = 2;
+  string entity_id = 3;
+  uint64 entity_version = 4;
+  reserved 20 to 39;
+}
+
+message ErrorDetail {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+  reserved 20 to 39;
+}

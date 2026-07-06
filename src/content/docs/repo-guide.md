@@ -35,13 +35,13 @@ For the core runtime path:
 3. `crates/runtime-core/src/runtime.rs`
 4. `crates/runtime-store-sqlite/src/lib.rs`
 5. `crates/runtime-server/src/bootstrap.rs`
-6. `crates/runtime-server/src/http.rs`
+6. `crates/runtime-server/src/http/`
 
 For team/worktree/process services:
 
 1. `crates/runtime-core/src/team_comms.rs`
 2. `crates/runtime-tools/src/lib.rs`
-3. related HTTP handlers in `crates/runtime-server/src/http.rs`
+3. related HTTP handlers in `crates/runtime-server/src/http/`
 
 For provider behavior:
 
@@ -83,7 +83,7 @@ make api-docs-check
 Useful searches:
 
 ```bash
-rg "route\(" crates/runtime-server/src/http.rs
+rg "route\(" crates/runtime-server/src/http/mod.rs
 rg "RuntimeProvider" crates/runtime-core crates/runtime-provider-*
 rg "append_runtime_event" crates
 rg "StartupRecovery" crates

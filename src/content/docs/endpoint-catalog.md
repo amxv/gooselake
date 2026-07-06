@@ -9,7 +9,7 @@ summary: "A route-by-route catalog derived from the current server implementatio
 This catalog tracks the currently implemented HTTP/SSE surface from runtime code.
 
 Source references:
-- [`crates/runtime-server/src/http.rs`](https://github.com/amxv/gooselake/blob/main/crates/runtime-server/src/http.rs)
+- [`crates/runtime-server/src/http/`](https://github.com/amxv/gooselake/blob/main/crates/runtime-server/src/http)
 - [`openapi/runtime-server-openapi.yaml`](https://github.com/amxv/gooselake/blob/main/openapi/runtime-server-openapi.yaml)
 
 Auth legend:

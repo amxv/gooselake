@@ -10,7 +10,7 @@ Execute this workflow whenever API behavior changes.
 ## 1) Identify API-impacting changes
 
 Prioritize these files:
-- `crates/runtime-server/src/http.rs`
+- `crates/runtime-server/src/http/`
 - `crates/runtime-server/src/openapi.rs`
 - `openapi/runtime-server-openapi.yaml`
 

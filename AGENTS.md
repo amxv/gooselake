@@ -12,7 +12,7 @@ For future team agents, attach/use this project path as the working directory un
 When you touch runtime API behavior, treat docs as part of the same change.
 
 API-impacting edits include (at minimum):
-- `crates/runtime-server/src/http.rs`
+- `crates/runtime-server/src/http/`
 - `crates/runtime-server/src/openapi.rs`
 - `openapi/runtime-server-openapi.yaml`
 

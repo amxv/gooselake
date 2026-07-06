@@ -308,7 +308,7 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
 }
 
 fn collect_routes() -> BTreeMap<String, RouteSpec> {
-    let source = include_str!("http.rs");
+    let source = include_str!("http/mod.rs");
     let mcp_start = source.find("let mcp = Router::new()").unwrap_or(0);
     let protected_start = source
         .find("let protected = Router::new()")

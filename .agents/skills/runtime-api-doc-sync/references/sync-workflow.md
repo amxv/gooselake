@@ -9,7 +9,7 @@
 ## Signal Files
 
 API-signal files:
-- `crates/runtime-server/src/http.rs`
+- `crates/runtime-server/src/http/`
 - `crates/runtime-server/src/openapi.rs`
 - `openapi/runtime-server-openapi.yaml`
 

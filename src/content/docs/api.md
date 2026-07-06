@@ -11,7 +11,7 @@ This document is the human-facing guide to the runtime HTTP/SSE API.
 Sources of truth:
 
 - generated artifact: [`openapi/runtime-server-openapi.yaml`](https://github.com/amxv/gooselake/blob/main/openapi/runtime-server-openapi.yaml)
-- route + handler code: [`crates/runtime-server/src/http.rs`](https://github.com/amxv/gooselake/blob/main/crates/runtime-server/src/http.rs)
+- route + handler code: [`crates/runtime-server/src/http/`](https://github.com/amxv/gooselake/blob/main/crates/runtime-server/src/http)
 - OpenAPI generator: [`crates/runtime-server/src/openapi.rs`](https://github.com/amxv/gooselake/blob/main/crates/runtime-server/src/openapi.rs)
 - shared runtime structs: [`crates/runtime-core/src`](https://github.com/amxv/gooselake/blob/main/crates/runtime-core/src)
 
@@ -63,7 +63,7 @@ The generated OpenAPI currently prioritizes route/method/content-type coverage. 
 
 For exact JSON fields, use:
 
-- handler input structs in `crates/runtime-server/src/http.rs`
+- handler input structs in `crates/runtime-server/src/http/`
 - shared input/output structs in `crates/runtime-core/src/runtime.rs` and `crates/runtime-core/src/services.rs`
 - durable record structs in `crates/runtime-core/src/state.rs`
 

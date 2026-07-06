@@ -6,7 +6,7 @@ OPENAPI_ARTIFACT_REL="openapi/runtime-server-openapi.yaml"
 OPENAPI_ARTIFACT_PATH="${ROOT_DIR}/${OPENAPI_ARTIFACT_REL}"
 
 API_SIGNAL_FILES=(
-  "crates/runtime-server/src/http.rs"
+  "crates/runtime-server/src/http/"
   "crates/runtime-server/src/openapi.rs"
   "${OPENAPI_ARTIFACT_REL}"
 )

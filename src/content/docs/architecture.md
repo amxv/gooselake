@@ -245,7 +245,7 @@ For details, see [MCP and Sidecars](/docs/mcp-and-sidecars).
 
 ## API server
 
-`crates/runtime-server/src/http.rs` exposes:
+`crates/runtime-server/src/http/` exposes:
 
 - public health/OpenAPI routes
 - protected `/v1` routes

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,7 +15,12 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::auth::{now_ms, AuthContext, TicketValidator};
 use crate::config::GoosetowerConfig;
-use crate::materializer::{BootstrapOptions, SourceBootstrap};
+use crate::materializer::{
+    snapshot_cross_source_approval_inbox, snapshot_cross_source_board,
+    snapshot_cross_source_health, snapshot_cross_source_ledger, snapshot_cross_source_worktrees,
+    ApprovalInboxSubscription, BoardSubscription, BootstrapOptions, LedgerSubscription,
+    SourceBootstrap,
+};
 use crate::materializer::{MaterializedPatch, MaterializedPatchKind, MaterializedState};
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
 use crate::protocol::generated::goosetower::v1::{
@@ -26,9 +31,10 @@ use crate::protocol::generated::goosetower::v1::{
 };
 use crate::protocol::PROTOCOL_VERSION;
 use crate::runtime::client::{ProcessKillInput, ProcessStartInput};
-use crate::runtime::events::{SourceEvent, SourceHealthState};
+use crate::runtime::events::{SourceEvent, SourceHealth, SourceHealthState};
 use crate::runtime::{
-    GooselakeRuntimeClient, TeamBroadcastInput, TeamDirectInput, TeamMemberSpawnInput,
+    GooselakeRuntimeClient, RuntimeSseFanIn, RuntimeSseFanInConfig, TeamBroadcastInput,
+    TeamDirectInput, TeamMemberSpawnInput,
 };
 mod support;
 pub use self::support::GatewayMetricsSnapshot;
@@ -123,6 +129,139 @@ impl GatewayState {
                 );
             }
         }
+    }
+
+    pub async fn spawn_runtime_source_tasks(self: &Arc<Self>) -> Vec<tokio::task::JoinHandle<()>> {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<SourceEvent>(1024);
+        let mut handles = Vec::new();
+        for source in self
+            .config
+            .runtimes
+            .sources
+            .iter()
+            .filter(|source| source.enabled)
+        {
+            let client = match runtime_client_from_source(&self.config, source) {
+                Ok(client) => client,
+                Err(error) => {
+                    self.record_audit(
+                        "source.connect_failed",
+                        Some(source.source_id.clone()),
+                        json!({ "error": error.to_string() }),
+                    )
+                    .await;
+                    continue;
+                }
+            };
+            let fan_in = RuntimeSseFanIn::new(
+                client,
+                RuntimeSseFanInConfig {
+                    replay_page_limit: self.config.replay.max_events_per_request,
+                    reconnect_delay: Duration::from_millis(250),
+                    stale_after: Duration::from_millis(self.config.replay.source_stale_after_ms),
+                },
+            );
+            let initial_cursor = self
+                .materialized
+                .read()
+                .await
+                .get(&source.source_id)
+                .and_then(|state| state.source_health.last_source_seq);
+            handles.push(fan_in.clone().spawn(initial_cursor, tx.clone()));
+
+            let gateway = Arc::clone(self);
+            let mut health_rx = fan_in.subscribe_health();
+            handles.push(tokio::spawn(async move {
+                while health_rx.changed().await.is_ok() {
+                    let health = health_rx.borrow().clone();
+                    gateway.update_source_health(health).await;
+                }
+            }));
+        }
+        drop(tx);
+
+        let gateway = Arc::clone(self);
+        handles.push(tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                gateway.ingest_source_event(event).await;
+            }
+        }));
+        handles
+    }
+
+    pub async fn ingest_source_event(&self, event: SourceEvent) {
+        let patches = {
+            let mut materialized = self.materialized.write().await;
+            let state = materialized
+                .entry(event.source_id.clone())
+                .or_insert_with(|| MaterializedState::new(&event.source_id, &event.source_epoch));
+            if state.source_epoch != event.source_epoch {
+                state.mark_discontinuity("source epoch changed");
+                vec![state.transition_source_health(
+                    SourceHealthState::GapDetected,
+                    Some("source epoch changed".to_string()),
+                )]
+            } else if state
+                .source_health
+                .last_source_seq
+                .is_some_and(|last| event.source_seq > last + 1)
+            {
+                state.mark_discontinuity("source sequence gap detected");
+                vec![state.transition_source_health(
+                    SourceHealthState::GapDetected,
+                    Some(format!(
+                        "expected source seq {}, received {}",
+                        state.source_health.last_source_seq.unwrap_or_default() + 1,
+                        event.source_seq
+                    )),
+                )]
+            } else {
+                let ingest_lag = now_ms().saturating_sub(event.created_at);
+                self.metrics
+                    .event_ingest_lag_ms
+                    .store(ingest_lag as u64, Ordering::Relaxed);
+                let reduce_started = Instant::now();
+                let effect = state.reduce_source_event(event);
+                self.metrics.materializer_reduce_time_ms.store(
+                    reduce_started.elapsed().as_millis() as u64,
+                    Ordering::Relaxed,
+                );
+                if effect.duplicate {
+                    Vec::new()
+                } else {
+                    effect.patches
+                }
+            }
+        };
+
+        for patch in patches {
+            let envelope = self.patch_envelope(patch.clone());
+            self.record_replayable(envelope).await;
+            let _ = self.patches.send(patch);
+        }
+    }
+
+    async fn update_source_health(&self, health: SourceHealth) {
+        let patch = {
+            let mut materialized = self.materialized.write().await;
+            let state = materialized
+                .entry(health.source_id.clone())
+                .or_insert_with(|| MaterializedState::new(&health.source_id, &health.source_epoch));
+            state.source_health = health.clone();
+            state.transition_source_health(health.state, health.last_error.clone())
+        };
+        if matches!(health.state, SourceHealthState::GapDetected) {
+            self.metrics.gap_count.fetch_add(1, Ordering::Relaxed);
+            self.record_audit(
+                "source.gap",
+                Some(health.source_id.clone()),
+                json!({ "last_source_seq": health.last_source_seq, "error": health.last_error }),
+            )
+            .await;
+        }
+        let envelope = self.patch_envelope(patch.clone());
+        self.record_replayable(envelope).await;
+        let _ = self.patches.send(patch);
     }
 
     pub fn allowed_origins(&self) -> Result<Vec<String>> {
@@ -713,31 +852,76 @@ impl GatewayState {
 
     async fn snapshot_for_subscription(&self, subscribe: Subscribe) -> RealtimeEnvelope {
         let materialized = self.materialized.read().await;
-        let source_id = subscribe
-            .filters
-            .get("source_id")
-            .cloned()
-            .or_else(|| materialized.keys().next().cloned());
-        let body = match source_id
-            .as_deref()
-            .and_then(|source_id| materialized.get(source_id))
-        {
-            Some(state) => snapshot_body(state, &subscribe.view_kind, &subscribe.filters)
-                .unwrap_or_else(|error| json!({ "error": error.to_string() })),
-            None => Value::Null,
+        let source_id = optional_subscribe_filter(&subscribe.filters, "source_id");
+        let body = match subscribe.view_kind.as_str() {
+            "board" => serde_json::to_value(snapshot_cross_source_board(
+                &materialized,
+                &BoardSubscription {
+                    offset: parse_filter_usize(&subscribe.filters, "offset", 0),
+                    limit: parse_filter_usize(&subscribe.filters, "limit", 100),
+                    status_filter: optional_subscribe_filter(&subscribe.filters, "status"),
+                    team_id: optional_subscribe_filter(&subscribe.filters, "team_id"),
+                    source_id: source_id.clone(),
+                    query: optional_subscribe_filter(&subscribe.filters, "query"),
+                },
+            ))
+            .unwrap_or_else(|error| json!({ "error": error.to_string() })),
+            "approval_inbox" => serde_json::to_value(snapshot_cross_source_approval_inbox(
+                &materialized,
+                &ApprovalInboxSubscription {
+                    include_resolved: subscribe
+                        .filters
+                        .get("include_resolved")
+                        .is_some_and(|value| value == "true"),
+                    session_id: optional_subscribe_filter(&subscribe.filters, "session_id"),
+                    source_id: source_id.clone(),
+                },
+            ))
+            .unwrap_or_else(|error| json!({ "error": error.to_string() })),
+            "ledger" => serde_json::to_value(snapshot_cross_source_ledger(
+                &materialized,
+                &LedgerSubscription {
+                    offset: parse_filter_usize(&subscribe.filters, "offset", 0),
+                    limit: parse_filter_usize(&subscribe.filters, "limit", 200),
+                    scope: optional_subscribe_filter(&subscribe.filters, "scope"),
+                    session_id: optional_subscribe_filter(&subscribe.filters, "session_id"),
+                    team_id: optional_subscribe_filter(&subscribe.filters, "team_id"),
+                    process_id: optional_subscribe_filter(&subscribe.filters, "process_id"),
+                    kind: optional_subscribe_filter(&subscribe.filters, "kind"),
+                    criticality: optional_subscribe_filter(&subscribe.filters, "criticality"),
+                    source_id: source_id.clone(),
+                },
+            ))
+            .unwrap_or_else(|error| json!({ "error": error.to_string() })),
+            "fleet" | "source_health" => serde_json::to_value(snapshot_cross_source_health(
+                &materialized,
+                source_id.as_deref(),
+            ))
+            .unwrap_or_else(|error| json!({ "error": error.to_string() })),
+            "worktrees" => serde_json::to_value(snapshot_cross_source_worktrees(
+                &materialized,
+                source_id.as_deref(),
+            ))
+            .unwrap_or_else(|error| json!({ "error": error.to_string() })),
+            _ => {
+                let selected_source_id = source_id
+                    .clone()
+                    .or_else(|| materialized.keys().next().cloned());
+                match selected_source_id
+                    .as_deref()
+                    .and_then(|source_id| materialized.get(source_id))
+                {
+                    Some(state) => snapshot_body(state, &subscribe.view_kind, &subscribe.filters)
+                        .unwrap_or_else(|error| json!({ "error": error.to_string() })),
+                    None => Value::Null,
+                }
+            }
         };
-        let cursor = materialized
-            .values()
-            .next()
-            .and_then(|state| state.cursor())
-            .map(|cursor| CursorVector {
-                gateway_seq: self.next_gateway_seq.load(Ordering::Relaxed),
-                sources: vec![SourceCursor {
-                    source_id: cursor.source_id,
-                    source_epoch: cursor.source_epoch,
-                    source_seq: cursor.source_seq.max(0) as u64,
-                }],
-            });
+        let cursor = cursor_vector_from_states(
+            &materialized,
+            source_id.as_deref(),
+            self.next_gateway_seq.load(Ordering::Relaxed),
+        );
         envelope_with_payload(
             MessageKind::Snapshot,
             Lane::State,
@@ -905,23 +1089,6 @@ impl GatewayState {
         conn: &ConnectionState,
         command: &Command,
     ) -> Result<(), CommandRouteError> {
-        let client = self
-            .runtime_client_for_command(conn, command)
-            .await
-            .map_err(|error| {
-                let message = error.to_string();
-                match message.as_str() {
-                    REASON_SOURCE_UNAVAILABLE | REASON_SOURCE_STALE | REASON_SOURCE_GAP => {
-                        CommandRouteError::with_code(message.clone(), message, true)
-                    }
-                    "ownership_unknown" => CommandRouteError::with_code(
-                        REASON_INVALID_TARGET,
-                        "target source is not materialized",
-                        true,
-                    ),
-                    _ => CommandRouteError::non_retryable(message),
-                }
-            })?;
         let Some(payload) = command.payload.as_ref() else {
             return Err(CommandRouteError::with_code(
                 REASON_INVALID_SCOPE,
@@ -930,6 +1097,9 @@ impl GatewayState {
             ));
         };
         self.validate_command_target(command, payload)?;
+        let client = self
+            .runtime_client_for_command(conn, command, payload)
+            .await?;
         match payload {
             crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(input) => {
                 let session_id = non_empty(&input.session_id, "session_id")?;
@@ -1173,17 +1343,23 @@ impl GatewayState {
                 false,
             ));
         }
-        let source_id = target.entity_id.strip_prefix("source:").or_else(|| {
-            command
-                .target
-                .as_ref()
-                .and_then(|target| target.entity_id.strip_prefix("source:"))
-        });
+        let source_id = command_explicit_source_id(command);
         let materialized = self.materialized.try_read().map_err(|_| {
             CommandRouteError::with_code(REASON_SOURCE_STALE, "source state is busy", true)
         })?;
-        let Some((_, state)) = materialized.iter().find(|(candidate_source_id, _)| {
-            source_id.is_none_or(|source_id| candidate_source_id.as_str() == source_id)
+        let states = materialized
+            .iter()
+            .filter(|(candidate_source_id, state)| {
+                source_id.is_none_or(|source_id| candidate_source_id.as_str() == source_id)
+                    && state.ownership.owns(entity_kind, entity_id)
+            })
+            .collect::<Vec<_>>();
+        let Some((_, state)) = states.first().copied().or_else(|| {
+            source_id.and_then(|source_id| {
+                materialized
+                    .iter()
+                    .find(|(candidate_source_id, _)| candidate_source_id.as_str() == source_id)
+            })
         }) else {
             return Err(CommandRouteError::with_code(
                 REASON_INVALID_TARGET,
@@ -1208,13 +1384,12 @@ impl GatewayState {
         &self,
         conn: &ConnectionState,
         command: &Command,
-    ) -> Result<GooselakeRuntimeClient> {
-        let source_id = command
-            .target
-            .as_ref()
-            .map(|target| target.entity_id.as_str())
-            .filter(|value| value.starts_with("source:"))
-            .map(|value| value.trim_start_matches("source:"));
+        payload: &crate::protocol::generated::goosetower::v1::command::Payload,
+    ) -> Result<GooselakeRuntimeClient, CommandRouteError> {
+        let explicit_source_id = command_explicit_source_id(command);
+        let owner = self
+            .resolve_command_owner_source(command, payload, explicit_source_id)
+            .await?;
         let source = self
             .config
             .runtimes
@@ -1223,20 +1398,23 @@ impl GatewayState {
             .find(|candidate| {
                 candidate.enabled
                     && candidate.workspace_id == conn.auth.workspace_id
-                    && source_id.is_none_or(|source_id| candidate.source_id == source_id)
+                    && candidate.source_id == owner
             })
-            .or_else(|| {
-                self.config
-                    .runtimes
-                    .sources
-                    .iter()
-                    .find(|candidate| candidate.enabled)
-            })
-            .ok_or_else(|| anyhow!("source_unavailable"))?;
+            .ok_or_else(|| {
+                CommandRouteError::with_code(
+                    REASON_SOURCE_UNAVAILABLE,
+                    format!("runtime source {owner} is unavailable"),
+                    true,
+                )
+            })?;
         let materialized = self.materialized.read().await;
-        let state = materialized
-            .get(source.source_id.as_str())
-            .ok_or_else(|| anyhow!("ownership_unknown"))?;
+        let state = materialized.get(source.source_id.as_str()).ok_or_else(|| {
+            CommandRouteError::with_code(
+                REASON_INVALID_TARGET,
+                format!("runtime source {} is not materialized", source.source_id),
+                true,
+            )
+        })?;
         let stale_age = now_ms().saturating_sub(state.source_health.updated_at) as u64;
         self.metrics
             .source_stale_age_ms
@@ -1245,17 +1423,86 @@ impl GatewayState {
         match state.source_health.state {
             SourceHealthState::Live if stale_age <= stale_after => {}
             SourceHealthState::GapDetected => {
-                return Err(anyhow!("source_gap"));
+                return Err(CommandRouteError::with_code(
+                    REASON_SOURCE_GAP,
+                    format!("runtime source {} has a replay gap", source.source_id),
+                    true,
+                ));
             }
             SourceHealthState::Offline => {
-                return Err(anyhow!("source_unavailable"));
+                return Err(CommandRouteError::with_code(
+                    REASON_SOURCE_UNAVAILABLE,
+                    format!("runtime source {} is offline", source.source_id),
+                    true,
+                ));
             }
             _ => {
-                return Err(anyhow!("source_stale"));
+                return Err(CommandRouteError::with_code(
+                    REASON_SOURCE_STALE,
+                    format!("runtime source {} is stale", source.source_id),
+                    true,
+                ));
             }
         }
         drop(materialized);
-        runtime_client_from_source(&self.config, source)
+        runtime_client_from_source(&self.config, source).map_err(|error| {
+            CommandRouteError::with_code(REASON_SOURCE_UNAVAILABLE, error.to_string(), true)
+        })
+    }
+
+    async fn resolve_command_owner_source(
+        &self,
+        command: &Command,
+        payload: &crate::protocol::generated::goosetower::v1::command::Payload,
+        explicit_source_id: Option<&str>,
+    ) -> Result<String, CommandRouteError> {
+        let owner_entity = command_owner_entity(command, payload);
+        let materialized = self.materialized.read().await;
+        let candidates = match owner_entity {
+            Some((entity_kind, entity_id)) => materialized
+                .iter()
+                .filter(|(_, state)| state.ownership.owns(entity_kind, entity_id))
+                .map(|(source_id, _)| source_id.clone())
+                .collect::<Vec<_>>(),
+            None => Vec::new(),
+        };
+
+        if let Some(explicit_source_id) = explicit_source_id {
+            let source_exists = materialized.contains_key(explicit_source_id);
+            if !source_exists {
+                return Err(CommandRouteError::with_code(
+                    REASON_SOURCE_UNAVAILABLE,
+                    format!("runtime source {explicit_source_id} is unavailable"),
+                    true,
+                ));
+            }
+            if !candidates.is_empty()
+                && !candidates
+                    .iter()
+                    .any(|candidate| candidate == explicit_source_id)
+            {
+                return Err(CommandRouteError::with_code(
+                    REASON_CROSS_SOURCE_UNSUPPORTED,
+                    "command target is owned by a different runtime source",
+                    false,
+                ));
+            }
+            return Ok(explicit_source_id.to_string());
+        }
+
+        match candidates.as_slice() {
+            [source_id] => Ok(source_id.clone()),
+            [] => Err(CommandRouteError::with_code(
+                REASON_INVALID_TARGET,
+                "target source ownership is unknown",
+                true,
+            )),
+            _ => Err(CommandRouteError::with_code(
+                REASON_CROSS_SOURCE_UNSUPPORTED,
+                "command target is ambiguous across runtime sources",
+                false,
+            )),
+        }
     }
 
     fn hello(&self, connection_id: &str) -> RealtimeEnvelope {
@@ -1640,6 +1887,61 @@ fn command_target_labels(command: &Command) -> (String, String, String) {
         .unwrap_or_else(|| ("missing".to_string(), String::new(), String::new()))
 }
 
+fn command_explicit_source_id(command: &Command) -> Option<&str> {
+    command
+        .target
+        .as_ref()
+        .and_then(|target| target.entity_id.strip_prefix("source:"))
+        .filter(|source_id| !source_id.is_empty())
+}
+
+fn command_owner_entity<'a>(
+    command: &'a Command,
+    payload: &'a crate::protocol::generated::goosetower::v1::command::Payload,
+) -> Option<(&'static str, &'a str)> {
+    match payload {
+        crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(input) => {
+            (!input.session_id.is_empty()).then_some(("session", input.session_id.as_str()))
+        }
+        crate::protocol::generated::goosetower::v1::command::Payload::ResolveApproval(_) => command
+            .target
+            .as_ref()
+            .map(|target| target.scope_id.as_str())
+            .filter(|session_id| !session_id.is_empty())
+            .map(|session_id| ("session", session_id)),
+        crate::protocol::generated::goosetower::v1::command::Payload::InterruptTurn(input) => {
+            (!input.session_id.is_empty()).then_some(("session", input.session_id.as_str()))
+        }
+        crate::protocol::generated::goosetower::v1::command::Payload::SendTeamMessage(input) => {
+            (!input.team_id.is_empty()).then_some(("team", input.team_id.as_str()))
+        }
+        crate::protocol::generated::goosetower::v1::command::Payload::BroadcastTeamMessage(
+            input,
+        ) => (!input.team_id.is_empty()).then_some(("team", input.team_id.as_str())),
+        crate::protocol::generated::goosetower::v1::command::Payload::SpawnTeamMember(input) => {
+            (!input.team_id.is_empty()).then_some(("team", input.team_id.as_str()))
+        }
+        crate::protocol::generated::goosetower::v1::command::Payload::RetryDelivery(input) => {
+            (!input.delivery_id.is_empty()).then_some(("team_delivery", input.delivery_id.as_str()))
+        }
+        crate::protocol::generated::goosetower::v1::command::Payload::CancelDelivery(_) => command
+            .target
+            .as_ref()
+            .map(|target| target.scope_id.as_str())
+            .filter(|team_id| !team_id.is_empty())
+            .map(|team_id| ("team", team_id)),
+        crate::protocol::generated::goosetower::v1::command::Payload::KillProcess(input) => {
+            (!input.process_id.is_empty()).then_some(("process", input.process_id.as_str()))
+        }
+        crate::protocol::generated::goosetower::v1::command::Payload::StartProcess(_) => command
+            .target
+            .as_ref()
+            .map(|target| target.scope_id.as_str())
+            .filter(|session_id| !session_id.is_empty())
+            .map(|session_id| ("session", session_id)),
+    }
+}
+
 fn expected_scope_for_payload(
     payload: &crate::protocol::generated::goosetower::v1::command::Payload,
 ) -> Scope {
@@ -1672,6 +1974,43 @@ fn materialized_entity_kind_for_scope(scope: Scope) -> Option<&'static str> {
         Scope::Source => Some("source"),
         _ => None,
     }
+}
+
+fn parse_filter_usize(filters: &HashMap<String, String>, key: &str, default: usize) -> usize {
+    filters
+        .get(key)
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+fn optional_subscribe_filter(filters: &HashMap<String, String>, key: &str) -> Option<String> {
+    filters
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty() && *value != "all")
+        .map(str::to_string)
+}
+
+fn cursor_vector_from_states(
+    states: &BTreeMap<String, MaterializedState>,
+    source_id: Option<&str>,
+    gateway_seq: u64,
+) -> Option<CursorVector> {
+    let sources = states
+        .values()
+        .filter(|state| source_id.is_none_or(|source_id| state.source_id == source_id))
+        .filter_map(|state| {
+            state.cursor().map(|cursor| SourceCursor {
+                source_id: cursor.source_id,
+                source_epoch: cursor.source_epoch,
+                source_seq: cursor.source_seq.max(0) as u64,
+            })
+        })
+        .collect::<Vec<_>>();
+    (!sources.is_empty()).then_some(CursorVector {
+        gateway_seq,
+        sources,
+    })
 }
 
 #[derive(Debug, Default)]
@@ -1750,7 +2089,7 @@ enum Continue {
 #[cfg(test)]
 mod resume_tests {
     use std::net::SocketAddr;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex as StdMutex};
 
     use axum::extract::Query;
     use axum::routing::get;
@@ -1885,6 +2224,7 @@ mod resume_tests {
         let gateway = test_gateway(GoosetowerConfig::default());
         let mut state = MaterializedState::new("local", "static-0");
         state.mark_live();
+        state.upsert_session(session_record());
         state.transition_source_health(SourceHealthState::Stale, Some("test stale".to_string()));
         gateway
             .replace_materialized_state("local".to_string(), state)
@@ -1995,6 +2335,126 @@ mod resume_tests {
         };
         assert_eq!(duplicate.command_id, "cmd_duplicate");
         assert_eq!(duplicate.original_command_id, "cmd_duplicate");
+    }
+
+    #[tokio::test]
+    async fn command_routes_to_materialized_owner_source() {
+        let west_hits = Arc::new(StdMutex::new(Vec::new()));
+        let east_hits = Arc::new(StdMutex::new(Vec::new()));
+        let west_addr = spawn_accepting_command_runtime("west", west_hits.clone()).await;
+        let east_addr = spawn_accepting_command_runtime("east", east_hits.clone()).await;
+        let gateway = two_source_gateway(west_addr, east_addr).await;
+        let mut conn = test_connection(&gateway);
+
+        let response = gateway
+            .admit_and_route_command(
+                &mut conn,
+                send_turn_command_for_session("cmd_east", "east_session"),
+            )
+            .await;
+
+        assert!(matches!(
+            response.payload,
+            Some(Payload::CommandAccepted(_))
+        ));
+        assert!(west_hits.lock().unwrap().is_empty());
+        assert_eq!(east_hits.lock().unwrap().as_slice(), ["east:east_session"]);
+    }
+
+    #[tokio::test]
+    async fn source_stale_disables_only_affected_owner_commands() {
+        let west_hits = Arc::new(StdMutex::new(Vec::new()));
+        let east_hits = Arc::new(StdMutex::new(Vec::new()));
+        let west_addr = spawn_accepting_command_runtime("west", west_hits.clone()).await;
+        let east_addr = spawn_accepting_command_runtime("east", east_hits.clone()).await;
+        let gateway = two_source_gateway(west_addr, east_addr).await;
+        {
+            let mut materialized = gateway.materialized.write().await;
+            materialized
+                .get_mut("west")
+                .expect("west")
+                .transition_source_health(SourceHealthState::Stale, Some("test".to_string()));
+        }
+        let mut conn = test_connection(&gateway);
+
+        let west = gateway
+            .admit_and_route_command(
+                &mut conn,
+                send_turn_command_for_session("cmd_west", "west_session"),
+            )
+            .await;
+        let east = gateway
+            .admit_and_route_command(
+                &mut conn,
+                send_turn_command_for_session("cmd_east_ok", "east_session"),
+            )
+            .await;
+
+        let Some(Payload::CommandRejected(rejected)) = west.payload else {
+            panic!("expected west rejection");
+        };
+        assert_eq!(rejected.error.expect("error").code, REASON_SOURCE_STALE);
+        assert!(matches!(east.payload, Some(Payload::CommandAccepted(_))));
+        assert_eq!(east_hits.lock().unwrap().as_slice(), ["east:east_session"]);
+    }
+
+    #[tokio::test]
+    async fn ingest_source_events_assigns_gateway_sequence_and_gaps_per_source() {
+        let gateway = test_gateway(two_source_config(
+            "http://127.0.0.1:1".to_string(),
+            "http://127.0.0.1:2".to_string(),
+        ));
+        gateway
+            .replace_materialized_state(
+                "west".to_string(),
+                materialized_session_state("west", "west-epoch", "west_session"),
+            )
+            .await;
+        gateway
+            .replace_materialized_state(
+                "east".to_string(),
+                materialized_session_state("east", "east-epoch", "east_session"),
+            )
+            .await;
+
+        gateway
+            .ingest_source_event(runtime_source_event(
+                "west",
+                "west-epoch",
+                "west_session",
+                1,
+            ))
+            .await;
+        gateway
+            .ingest_source_event(runtime_source_event(
+                "east",
+                "east-epoch",
+                "east_session",
+                1,
+            ))
+            .await;
+        gateway
+            .ingest_source_event(runtime_source_event(
+                "east",
+                "east-epoch",
+                "east_session",
+                3,
+            ))
+            .await;
+
+        let replay = gateway.replay_buffer.lock().await.replay_after(0);
+        assert!(replay.entries.len() >= 3);
+        assert_eq!(replay.entries[0].gateway_seq, 1);
+        assert_eq!(replay.entries[1].gateway_seq, 2);
+        let materialized = gateway.materialized.read().await;
+        assert_eq!(
+            materialized["west"].source_health.state,
+            SourceHealthState::Live
+        );
+        assert_eq!(
+            materialized["east"].source_health.state,
+            SourceHealthState::GapDetected
+        );
     }
 
     fn test_gateway(config: GoosetowerConfig) -> GatewayState {
@@ -2110,22 +2570,140 @@ mod resume_tests {
     }
 
     fn send_turn_command(command_id: &str) -> Command {
+        send_turn_command_for_session(command_id, "session_1")
+    }
+
+    fn send_turn_command_for_session(command_id: &str, session_id: &str) -> Command {
         Command {
             command_id: command_id.to_string(),
             target: Some(EntityRef {
                 scope: Scope::Session as i32,
-                scope_id: "session_1".to_string(),
-                entity_id: "source:local".to_string(),
+                scope_id: session_id.to_string(),
+                entity_id: String::new(),
                 entity_version: 1,
             }),
             base_entity_version: 1,
             created_at_client_unix_ms: 1,
             payload: Some(CommandPayload::SendTurn(CommandSendTurn {
-                session_id: "session_1".to_string(),
+                session_id: session_id.to_string(),
                 text: "hello".to_string(),
             })),
             ..Command::default()
         }
+    }
+
+    async fn two_source_gateway(west_addr: SocketAddr, east_addr: SocketAddr) -> GatewayState {
+        let gateway = test_gateway(two_source_config(
+            format!("http://{west_addr}"),
+            format!("http://{east_addr}"),
+        ));
+        gateway
+            .replace_materialized_state(
+                "west".to_string(),
+                materialized_session_state("west", "west-epoch", "west_session"),
+            )
+            .await;
+        gateway
+            .replace_materialized_state(
+                "east".to_string(),
+                materialized_session_state("east", "east-epoch", "east_session"),
+            )
+            .await;
+        gateway
+    }
+
+    fn two_source_config(west_url: String, east_url: String) -> GoosetowerConfig {
+        let mut config = GoosetowerConfig::default();
+        config.runtimes.sources = vec![
+            crate::config::RuntimeSourceConfig {
+                source_id: "west".to_string(),
+                source_epoch: "west-epoch".to_string(),
+                base_url: west_url,
+                display_name: "West".to_string(),
+                ..crate::config::RuntimeSourceConfig::default()
+            },
+            crate::config::RuntimeSourceConfig {
+                source_id: "east".to_string(),
+                source_epoch: "east-epoch".to_string(),
+                base_url: east_url,
+                display_name: "East".to_string(),
+                ..crate::config::RuntimeSourceConfig::default()
+            },
+        ];
+        config
+    }
+
+    fn materialized_session_state(
+        source_id: &str,
+        source_epoch: &str,
+        session_id: &str,
+    ) -> MaterializedState {
+        let mut state = MaterializedState::new(source_id, source_epoch);
+        state.mark_live();
+        let mut session = session_record();
+        session.id = session_id.to_string();
+        state.upsert_session(session);
+        state
+    }
+
+    fn runtime_source_event(
+        source_id: &str,
+        source_epoch: &str,
+        session_id: &str,
+        row_id: i64,
+    ) -> SourceEvent {
+        SourceEvent::from_runtime_event(
+            source_id,
+            source_epoch,
+            RuntimeEventRecord {
+                session_id: Some(session_id.to_string()),
+                scope_id: session_id.to_string(),
+                row_id,
+                event_id: format!("{source_id}_{row_id}"),
+                scope: RuntimeEventScope::Session,
+                turn_id: Some("turn_1".to_string()),
+                team_id: None,
+                seq: row_id,
+                kind: "turn.completed".to_string(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: json!({ "assistant_text": format!("{source_id} {row_id}") }),
+                provider: Some("codex".to_string()),
+                provider_seq: Some(row_id),
+                created_at: row_id,
+            },
+        )
+    }
+
+    async fn spawn_accepting_command_runtime(
+        label: &'static str,
+        hits: Arc<StdMutex<Vec<String>>>,
+    ) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind accepting runtime");
+        let addr = listener.local_addr().expect("runtime addr");
+        tokio::spawn(async move {
+            let app = axum::Router::new().route(
+                "/v1/sessions/{session_id}/turns",
+                axum::routing::post(
+                    move |axum::extract::Path(session_id): axum::extract::Path<String>| {
+                        let hits = hits.clone();
+                        async move {
+                            hits.lock().unwrap().push(format!("{label}:{session_id}"));
+                            axum::Json(json!({
+                                "session_id": session_id,
+                                "turn_id": "turn_accepted",
+                                "status": "accepted"
+                            }))
+                        }
+                    },
+                ),
+            );
+            axum::serve(listener, app)
+                .await
+                .expect("serve accepting runtime");
+        });
+        addr
     }
 
     async fn spawn_rejecting_command_runtime() -> SocketAddr {

@@ -6,13 +6,16 @@ pub mod state;
 pub use bootstrap::{BootstrapError, BootstrapOptions, SourceBootstrap};
 pub use reducers::{CoalescingPatchBuffer, PatchEffect};
 pub use snapshots::{
+    snapshot_cross_source_approval_inbox, snapshot_cross_source_board,
+    snapshot_cross_source_health, snapshot_cross_source_ledger, snapshot_cross_source_worktrees,
     ApprovalInboxSubscription, BoardSubscription, LedgerSubscription, ProcessTailSubscription,
     SelectedSessionSubscription, SelectedTeamSubscription,
 };
 pub use state::{
     AgentRowView, ApprovalInboxView, EntityKey, EntityVersion, FleetBoardView, LedgerEventView,
     LedgerView, MaterializedPatch, MaterializedPatchKind, MaterializedState, MaterializerStatus,
-    ProcessTailView, SessionDetailView, SourceHealthView, TeamWorkspaceView, WorktreeView,
+    ProcessTailView, SessionDetailView, SourceHealthView, SourceOwnershipIndexes,
+    TeamWorkspaceView, WorktreeView,
 };
 
 #[cfg(test)]

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use runtime_core::{
     ApprovalRecord, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, SessionRecord,
     TeamMemberRecord, TeamRecord,
@@ -5,9 +7,9 @@ use runtime_core::{
 use serde_json::json;
 
 use crate::materializer::{
-    ApprovalInboxSubscription, BoardSubscription, CoalescingPatchBuffer, LedgerSubscription,
-    MaterializedPatchKind, MaterializedState, SelectedSessionSubscription,
-    SelectedTeamSubscription,
+    snapshot_cross_source_board, ApprovalInboxSubscription, BoardSubscription,
+    CoalescingPatchBuffer, LedgerSubscription, MaterializedPatchKind, MaterializedState,
+    SelectedSessionSubscription, SelectedTeamSubscription,
 };
 use crate::runtime::events::SourceEvent;
 
@@ -183,11 +185,101 @@ fn materializer_coalesces_repeated_state_patches_without_dropping_terminal_event
         .any(|patch| patch.kind == MaterializedPatchKind::TextAppend));
 }
 
+#[test]
+fn cross_source_board_aggregates_filters_and_preserves_per_source_order() {
+    let mut west = seeded_state_for_source("west", "epoch-west", "west_sess");
+    let mut east = seeded_state_for_source("east", "epoch-east", "east_sess");
+
+    west.reduce_source_event(source_event_for_source(
+        "west",
+        "epoch-west",
+        "west_sess",
+        2,
+        "turn.completed",
+        RuntimeEventScope::Session,
+        "west_sess",
+        json!({ "assistant_text": "west done" }),
+    ));
+    east.reduce_source_event(source_event_for_source(
+        "east",
+        "epoch-east",
+        "east_sess",
+        2,
+        "turn.completed",
+        RuntimeEventScope::Session,
+        "east_sess",
+        json!({ "assistant_text": "east done" }),
+    ));
+    west.reduce_source_event(source_event_for_source(
+        "west",
+        "epoch-west",
+        "west_sess",
+        3,
+        "approval.requested",
+        RuntimeEventScope::Session,
+        "west_sess",
+        json!({ "approval": approval_record_for_session("west_apr", "west_sess", "pending") }),
+    ));
+
+    let states = BTreeMap::from([("east".to_string(), east), ("west".to_string(), west)]);
+    let board = snapshot_cross_source_board(
+        &states,
+        &BoardSubscription {
+            limit: 10,
+            ..BoardSubscription::default()
+        },
+    );
+
+    assert_eq!(board.total_rows, 2);
+    assert_eq!(board.cursors.len(), 2);
+    assert_eq!(
+        states["west"]
+            .ledger
+            .iter()
+            .map(|event| event.source_seq)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    assert_eq!(
+        states["east"]
+            .ledger
+            .iter()
+            .map(|event| event.source_seq)
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+
+    let west_only = snapshot_cross_source_board(
+        &states,
+        &BoardSubscription {
+            source_id: Some("west".to_string()),
+            limit: 10,
+            ..BoardSubscription::default()
+        },
+    );
+    assert_eq!(west_only.total_rows, 1);
+    assert_eq!(west_only.rows[0].source_id, "west");
+    assert_eq!(west_only.rows[0].pending_approval_count, 1);
+}
+
 fn seeded_state() -> MaterializedState {
     let mut state = MaterializedState::new("local", "epoch");
     state.mark_live();
     state.upsert_session(session_record("sess_1"));
     state.upsert_team(team_record("team_1"));
+    state
+}
+
+fn seeded_state_for_source(
+    source_id: &str,
+    source_epoch: &str,
+    session_id: &str,
+) -> MaterializedState {
+    let mut state = MaterializedState::new(source_id, source_epoch);
+    state.mark_live();
+    let mut session = session_record(session_id);
+    session.id = session_id.to_string();
+    state.upsert_session(session);
     state
 }
 
@@ -211,6 +303,42 @@ fn source_event(
             } else {
                 Some("sess_1".to_string())
             },
+            team_id: if matches!(scope, RuntimeEventScope::Team) {
+                Some(scope_id.to_string())
+            } else {
+                None
+            },
+            turn_id: Some("turn_1".to_string()),
+            seq: row_id,
+            kind: kind.to_string(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload: runtime_payload,
+            provider: Some("codex".to_string()),
+            provider_seq: Some(row_id),
+            created_at: row_id,
+        },
+    )
+}
+
+fn source_event_for_source(
+    source_id: &str,
+    source_epoch: &str,
+    session_id: &str,
+    row_id: i64,
+    kind: &str,
+    scope: RuntimeEventScope,
+    scope_id: &str,
+    runtime_payload: serde_json::Value,
+) -> SourceEvent {
+    SourceEvent::from_runtime_event(
+        source_id,
+        source_epoch,
+        RuntimeEventRecord {
+            row_id,
+            event_id: format!("{source_id}_evt_{row_id}"),
+            scope,
+            scope_id: scope_id.to_string(),
+            session_id: Some(session_id.to_string()),
             team_id: if matches!(scope, RuntimeEventScope::Team) {
                 Some(scope_id.to_string())
             } else {
@@ -255,9 +383,13 @@ fn session_record(id: &str) -> SessionRecord {
 }
 
 fn approval_record(id: &str, status: &str) -> ApprovalRecord {
+    approval_record_for_session(id, "sess_1", status)
+}
+
+fn approval_record_for_session(id: &str, session_id: &str, status: &str) -> ApprovalRecord {
     ApprovalRecord {
         id: id.to_string(),
-        session_id: "sess_1".to_string(),
+        session_id: session_id.to_string(),
         turn_id: "turn_1".to_string(),
         tool_call_id: Some("tool_1".to_string()),
         provider_approval_ref: Some(id.to_string()),

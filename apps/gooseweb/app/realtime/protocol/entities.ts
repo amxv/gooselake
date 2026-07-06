@@ -113,6 +113,18 @@ function decodeJsonViewBody(
     case "fleet":
     case "source-health":
     case "source": {
+      if (Array.isArray(value)) {
+        return {
+          entities: {
+            sources: Object.fromEntries(
+              value.map((item) => {
+                const source = normalizeSource(item);
+                return [source.sourceId, source];
+              })
+            )
+          }
+        };
+      }
       const source = normalizeSource(value);
       return { entities: { sources: { [source.sourceId]: source } } };
     }

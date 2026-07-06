@@ -72,6 +72,7 @@ pub struct FleetBoardView {
     pub rows: Vec<AgentRowView>,
     pub total_rows: usize,
     pub cursor: Option<SourceCursorView>,
+    pub cursors: Vec<SourceCursorView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,6 +286,7 @@ pub struct MaterializedState {
     pub source_epoch: String,
     pub status: MaterializerStatus,
     pub source_health: SourceHealth,
+    pub ownership: SourceOwnershipIndexes,
     pub last_gateway_seq: u64,
     pub seen_source_cursors: BTreeSet<(String, String, i64)>,
     versions: BTreeMap<EntityKey, EntityVersion>,
@@ -312,12 +314,35 @@ pub struct MaterializedState {
     log_limit: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SourceOwnershipIndexes {
+    pub sessions: BTreeSet<String>,
+    pub teams: BTreeSet<String>,
+    pub processes: BTreeSet<String>,
+    pub worktrees: BTreeSet<String>,
+    pub deliveries: BTreeSet<String>,
+}
+
+impl SourceOwnershipIndexes {
+    pub fn owns(&self, entity_kind: &str, entity_id: &str) -> bool {
+        match entity_kind {
+            "session" => self.sessions.contains(entity_id),
+            "team" => self.teams.contains(entity_id),
+            "process" => self.processes.contains(entity_id),
+            "worktree" => self.worktrees.contains(entity_id),
+            "team_delivery" | "delivery" => self.deliveries.contains(entity_id),
+            _ => false,
+        }
+    }
+}
+
 impl MaterializedState {
     pub fn new(source_id: impl Into<String>, source_epoch: impl Into<String>) -> Self {
         let source_id = source_id.into();
         let source_epoch = source_epoch.into();
         Self {
             source_health: SourceHealth::new(source_id.clone(), source_epoch.clone()),
+            ownership: SourceOwnershipIndexes::default(),
             source_id,
             source_epoch,
             status: MaterializerStatus::Empty,
@@ -467,6 +492,7 @@ impl MaterializedState {
     pub fn upsert_session(&mut self, mut session: SessionRecord) -> EntityVersion {
         session.updated_at = session.updated_at.max(session.created_at);
         let id = session.id.clone();
+        self.ownership.sessions.insert(id.clone());
         self.sessions.insert(id.clone(), session);
         self.bump_version("session", id)
     }
@@ -479,6 +505,7 @@ impl MaterializedState {
 
     pub fn upsert_team(&mut self, team: TeamRecord) -> EntityVersion {
         let id = team.id.clone();
+        self.ownership.teams.insert(id.clone());
         self.teams.insert(id.clone(), team);
         self.bump_version("team", id)
     }
@@ -520,6 +547,7 @@ impl MaterializedState {
     pub fn upsert_delivery(&mut self, delivery: TeamDeliveryRecord) -> EntityVersion {
         let id = delivery.id.clone();
         let team_id = delivery.team_id.clone();
+        self.ownership.deliveries.insert(id.clone());
         let deliveries = self.deliveries_by_team.entry(team_id).or_default();
         if let Some(existing) = deliveries.iter_mut().find(|row| row.id == id) {
             *existing = delivery;
@@ -536,12 +564,14 @@ impl MaterializedState {
 
     pub fn upsert_worktree(&mut self, worktree: ManagedWorktreeRecord) -> EntityVersion {
         let id = worktree.id.clone();
+        self.ownership.worktrees.insert(id.clone());
         self.worktrees.insert(id.clone(), worktree);
         self.bump_version("worktree", id)
     }
 
     pub fn upsert_process_summary(&mut self, process: ProcessSummary) -> EntityVersion {
         let id = process.process_id.clone();
+        self.ownership.processes.insert(id.clone());
         let existing = self.processes.get(&id).cloned();
         self.processes.insert(
             id.clone(),
@@ -573,6 +603,7 @@ impl MaterializedState {
 
     pub fn upsert_process_details(&mut self, details: ProcessDetails) -> EntityVersion {
         let id = details.process.process_id.clone();
+        self.ownership.processes.insert(id.clone());
         self.processes.insert(
             id.clone(),
             ProcessView {

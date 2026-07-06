@@ -45,6 +45,7 @@ async fn main() -> Result<()> {
     let config = Arc::new(config);
     let gateway = Arc::new(GatewayState::new(config.clone())?);
     gateway.bootstrap_enabled_sources().await;
+    let _source_tasks = gateway.spawn_runtime_source_tasks().await;
     let state = AppState {
         gateway,
         config,

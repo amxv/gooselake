@@ -31,6 +31,7 @@ pub(super) const REASON_STALE_ENTITY_VERSION: &str = "stale_entity_version";
 pub(super) const REASON_SOURCE_UNAVAILABLE: &str = "source_unavailable";
 pub(super) const REASON_SOURCE_STALE: &str = "source_stale";
 pub(super) const REASON_SOURCE_GAP: &str = "source_gap";
+pub(super) const REASON_CROSS_SOURCE_UNSUPPORTED: &str = "cross_source_unsupported";
 pub(super) const REASON_UPSTREAM_REJECTED: &str = "upstream_rejected";
 pub(super) const REASON_UPSTREAM_TIMEOUT: &str = "upstream_timeout";
 pub(super) const REASON_DUPLICATE: &str = "duplicate";
@@ -457,16 +458,17 @@ impl Subscription {
             "board" => Self::Board(BoardSubscription {
                 offset: parse_usize(filters.get("offset"), 0),
                 limit: parse_usize(filters.get("limit"), 100),
-                status_filter: filters.get("status").cloned(),
-                team_id: filters.get("team_id").cloned(),
-                source_id: filters.get("source_id").cloned(),
-                query: filters.get("query").cloned(),
+                status_filter: optional_filter(filters, "status"),
+                team_id: optional_filter(filters, "team_id"),
+                source_id: optional_filter(filters, "source_id"),
+                query: optional_filter(filters, "query"),
             }),
             "approval_inbox" => Self::ApprovalInbox(ApprovalInboxSubscription {
                 include_resolved: filters
                     .get("include_resolved")
                     .is_some_and(|value| value == "true"),
-                session_id: filters.get("session_id").cloned(),
+                session_id: optional_filter(filters, "session_id"),
+                source_id: optional_filter(filters, "source_id"),
             }),
             "session" => Self::Session(SelectedSessionSubscription {
                 session_id: required_filter(filters, "session_id")?,
@@ -485,12 +487,13 @@ impl Subscription {
             "ledger" => Self::Ledger(LedgerSubscription {
                 offset: parse_usize(filters.get("offset"), 0),
                 limit: parse_usize(filters.get("limit"), 200),
-                scope: filters.get("scope").cloned(),
-                session_id: filters.get("session_id").cloned(),
-                team_id: filters.get("team_id").cloned(),
-                process_id: filters.get("process_id").cloned(),
-                kind: filters.get("kind").cloned(),
-                criticality: filters.get("criticality").cloned(),
+                scope: optional_filter(filters, "scope"),
+                session_id: optional_filter(filters, "session_id"),
+                team_id: optional_filter(filters, "team_id"),
+                process_id: optional_filter(filters, "process_id"),
+                kind: optional_filter(filters, "kind"),
+                criticality: optional_filter(filters, "criticality"),
+                source_id: optional_filter(filters, "source_id"),
             }),
             "fleet" => Self::Fleet,
             "worktrees" => Self::Worktrees,
@@ -500,19 +503,34 @@ impl Subscription {
 
     fn matches_patch(&self, patch: &MaterializedPatch) -> bool {
         match self {
-            Self::Board(_) => patch.view_kind == "board" || patch.view_kind == "session",
+            Self::Board(subscription) => {
+                (patch.view_kind == "board"
+                    || patch.view_kind == "fleet_board"
+                    || patch.view_kind == "session"
+                    || patch.view_kind == "session_detail")
+                    && subscription.source_id.as_deref().is_none_or(|source_id| {
+                        patch
+                            .entity
+                            .as_ref()
+                            .is_some_and(|entity| entity.source_id == source_id)
+                            || patch
+                                .source_cursor
+                                .as_ref()
+                                .is_some_and(|cursor| cursor.source_id == source_id)
+                    })
+            }
             Self::ApprovalInbox(_) => {
                 patch.view_kind == "approval_inbox" || patch.view_kind == "approval"
             }
             Self::Session(subscription) => {
-                patch.view_kind == "session"
+                (patch.view_kind == "session" || patch.view_kind == "session_detail")
                     && patch
                         .entity
                         .as_ref()
                         .is_some_and(|entity| entity.entity_id == subscription.session_id)
             }
             Self::Team(subscription) => {
-                patch.view_kind == "team"
+                (patch.view_kind == "team" || patch.view_kind == "team_workspace")
                     && patch
                         .entity
                         .as_ref()
@@ -592,14 +610,6 @@ pub(super) struct CommandRouteError {
 }
 
 impl CommandRouteError {
-    pub(super) fn non_retryable(message: impl Into<String>) -> Self {
-        Self {
-            code: REASON_UPSTREAM_REJECTED.to_string(),
-            message: message.into(),
-            retryable: false,
-        }
-    }
-
     pub(super) fn with_code(
         code: impl Into<String>,
         message: impl Into<String>,
@@ -660,17 +670,18 @@ pub(super) fn snapshot_body(
         "board" => serde_json::to_value(state.snapshot_board(&BoardSubscription {
             offset: parse_usize(filters.get("offset"), 0),
             limit: parse_usize(filters.get("limit"), 100),
-            status_filter: filters.get("status").cloned(),
-            team_id: filters.get("team_id").cloned(),
-            source_id: filters.get("source_id").cloned(),
-            query: filters.get("query").cloned(),
+            status_filter: optional_filter(filters, "status"),
+            team_id: optional_filter(filters, "team_id"),
+            source_id: optional_filter(filters, "source_id"),
+            query: optional_filter(filters, "query"),
         }))?,
         "approval_inbox" => serde_json::to_value(
             state.snapshot_approval_inbox(&ApprovalInboxSubscription {
                 include_resolved: filters
                     .get("include_resolved")
                     .is_some_and(|value| value == "true"),
-                session_id: filters.get("session_id").cloned(),
+                session_id: optional_filter(filters, "session_id"),
+                source_id: optional_filter(filters, "source_id"),
             }),
         )?,
         "session" => serde_json::to_value(
@@ -694,12 +705,13 @@ pub(super) fn snapshot_body(
         "ledger" => serde_json::to_value(state.snapshot_ledger(&LedgerSubscription {
             offset: parse_usize(filters.get("offset"), 0),
             limit: parse_usize(filters.get("limit"), 200),
-            scope: filters.get("scope").cloned(),
-            session_id: filters.get("session_id").cloned(),
-            team_id: filters.get("team_id").cloned(),
-            process_id: filters.get("process_id").cloned(),
-            kind: filters.get("kind").cloned(),
-            criticality: filters.get("criticality").cloned(),
+            scope: optional_filter(filters, "scope"),
+            session_id: optional_filter(filters, "session_id"),
+            team_id: optional_filter(filters, "team_id"),
+            process_id: optional_filter(filters, "process_id"),
+            kind: optional_filter(filters, "kind"),
+            criticality: optional_filter(filters, "criticality"),
+            source_id: optional_filter(filters, "source_id"),
         }))?,
         "fleet" | "source_health" => serde_json::to_value(state.snapshot_source_health())?,
         "worktrees" => serde_json::to_value(state.snapshot_worktrees())?,
@@ -801,6 +813,14 @@ fn parse_usize(value: Option<&String>, default: usize) -> usize {
     value
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(default)
+}
+
+fn optional_filter(filters: &HashMap<String, String>, key: &str) -> Option<String> {
+    filters
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty() && *value != "all")
+        .map(str::to_string)
 }
 
 fn required_filter(filters: &HashMap<String, String>, key: &str) -> Result<String> {

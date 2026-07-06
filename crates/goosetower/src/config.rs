@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
@@ -305,8 +306,15 @@ impl RuntimeRegistryConfig {
         if self.sources.is_empty() {
             return Err(anyhow!("runtimes.sources must contain at least one source"));
         }
+        let mut source_ids = BTreeSet::new();
         for source in &self.sources {
             source.validate()?;
+            if !source_ids.insert(source.source_id.clone()) {
+                return Err(anyhow!(
+                    "runtime source source_id must be unique: {}",
+                    source.source_id
+                ));
+            }
         }
         Ok(())
     }

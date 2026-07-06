@@ -24,6 +24,7 @@ pub struct BoardSubscription {
 pub struct ApprovalInboxSubscription {
     pub include_resolved: bool,
     pub session_id: Option<String>,
+    pub source_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +55,7 @@ pub struct LedgerSubscription {
     pub process_id: Option<String>,
     pub kind: Option<String>,
     pub criticality: Option<String>,
+    pub source_id: Option<String>,
 }
 
 impl MaterializedState {
@@ -78,6 +80,7 @@ impl MaterializedState {
             rows,
             total_rows,
             cursor: self.cursor(),
+            cursors: self.cursor().into_iter().collect(),
         }
     }
 
@@ -89,6 +92,12 @@ impl MaterializedState {
             .approvals
             .values()
             .filter(|approval| subscription.include_resolved || approval.status == "pending")
+            .filter(|_| {
+                subscription
+                    .source_id
+                    .as_deref()
+                    .is_none_or(|source_id| self.source_id == source_id)
+            })
             .filter(|approval| {
                 subscription
                     .session_id
@@ -265,6 +274,12 @@ impl MaterializedState {
             self.ledger
                 .iter()
                 .filter(|event| {
+                    subscription
+                        .source_id
+                        .as_deref()
+                        .is_none_or(|source_id| event.source_id == source_id)
+                })
+                .filter(|event| {
                     subscription.scope.as_deref().is_none_or(|scope| {
                         format!("{:?}", event.scope).eq_ignore_ascii_case(scope)
                     })
@@ -337,6 +352,134 @@ impl MaterializedState {
             worktree,
         }
     }
+}
+
+pub fn snapshot_cross_source_board(
+    states: &BTreeMap<String, MaterializedState>,
+    subscription: &BoardSubscription,
+) -> FleetBoardView {
+    let mut rows = states
+        .values()
+        .flat_map(|state| {
+            state
+                .snapshot_board(&BoardSubscription {
+                    offset: 0,
+                    limit: usize::MAX,
+                    ..subscription.clone()
+                })
+                .rows
+        })
+        .filter(|row| board_row_matches(row, subscription))
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .latest_activity_unix_ms
+            .cmp(&left.latest_activity_unix_ms)
+            .then_with(|| left.row_id.cmp(&right.row_id))
+    });
+    let total_rows = rows.len();
+    let offset = subscription.offset.min(rows.len());
+    let limit = subscription.limit.max(1);
+    let rows = rows.into_iter().skip(offset).take(limit).collect();
+    let cursors = states
+        .values()
+        .filter_map(MaterializedState::cursor)
+        .collect::<Vec<_>>();
+    FleetBoardView {
+        rows,
+        total_rows,
+        cursor: cursors.first().cloned(),
+        cursors,
+    }
+}
+
+pub fn snapshot_cross_source_approval_inbox(
+    states: &BTreeMap<String, MaterializedState>,
+    subscription: &ApprovalInboxSubscription,
+) -> ApprovalInboxView {
+    let mut approvals = states
+        .values()
+        .filter(|state| {
+            subscription
+                .source_id
+                .as_deref()
+                .is_none_or(|source_id| state.source_id == source_id)
+        })
+        .flat_map(|state| {
+            state
+                .snapshot_approval_inbox(subscription)
+                .approvals
+                .into_iter()
+        })
+        .collect::<Vec<_>>();
+    approvals.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.source_id.cmp(&right.source_id))
+            .then_with(|| left.approval_id.cmp(&right.approval_id))
+    });
+    ApprovalInboxView { approvals }
+}
+
+pub fn snapshot_cross_source_ledger(
+    states: &BTreeMap<String, MaterializedState>,
+    subscription: &LedgerSubscription,
+) -> LedgerView {
+    let mut events = states
+        .values()
+        .filter(|state| {
+            subscription
+                .source_id
+                .as_deref()
+                .is_none_or(|source_id| state.source_id == source_id)
+        })
+        .flat_map(|state| state.snapshot_ledger(subscription).events.into_iter())
+        .collect::<Vec<_>>();
+    events.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| right.source_seq.cmp(&left.source_seq))
+            .then_with(|| left.source_id.cmp(&right.source_id))
+    });
+    let offset = subscription.offset.min(events.len());
+    let limit = subscription.limit.max(1);
+    let discontinuities = states
+        .values()
+        .filter(|state| {
+            subscription
+                .source_id
+                .as_deref()
+                .is_none_or(|source_id| state.source_id == source_id)
+        })
+        .flat_map(|state| state.discontinuities.iter().cloned())
+        .collect();
+    LedgerView {
+        events: events.into_iter().skip(offset).take(limit).collect(),
+        discontinuities,
+    }
+}
+
+pub fn snapshot_cross_source_health(
+    states: &BTreeMap<String, MaterializedState>,
+    source_id: Option<&str>,
+) -> Vec<SourceHealthView> {
+    states
+        .values()
+        .filter(|state| source_id.is_none_or(|source_id| state.source_id == source_id))
+        .map(MaterializedState::source_health_view)
+        .collect()
+}
+
+pub fn snapshot_cross_source_worktrees(
+    states: &BTreeMap<String, MaterializedState>,
+    source_id: Option<&str>,
+) -> Vec<WorktreeView> {
+    states
+        .values()
+        .filter(|state| source_id.is_none_or(|source_id| state.source_id == source_id))
+        .flat_map(MaterializedState::snapshot_worktrees)
+        .collect()
 }
 
 pub fn approval_row_from_record(

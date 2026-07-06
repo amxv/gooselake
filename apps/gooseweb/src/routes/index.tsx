@@ -244,9 +244,9 @@ function Index() {
   useEffect(() => {
     subscribeRealtime("board:window", "board", {
       window: "0:120",
-      source: filters.sourceId,
-      team: filters.teamId,
-      status: filters.status
+      source_id: filters.sourceId === "all" ? "" : filters.sourceId,
+      team_id: filters.teamId === "all" ? "" : filters.teamId,
+      status: filters.status === "all" ? "" : filters.status
     });
   }, [filters]);
 
@@ -1306,13 +1306,14 @@ function FleetPane({
       <Card>
         <CardHeader>
           <CardTitle>Fleet</CardTitle>
-          <CardDescription>V0 one-runtime source view.</CardDescription>
+          <CardDescription>Runtime source health and capacity.</CardDescription>
           <CardAction className="flex gap-2">
             <Button disabled variant="outline">Add runtime</Button>
             <Button disabled variant="outline">Provision</Button>
           </CardAction>
         </CardHeader>
         <CardContent className="grid grid-cols-4 gap-2">
+          <MetricCard label="sources" value={String(sources.length || 0)} />
           <MetricCard label="health" value={source?.health || connection} />
           <MetricCard label="stale age" value={source ? ageFrom(toNumber(source.observedAtUnixMs)) : "unknown"} />
           <MetricCard label="replay lag" value={source?.cursor ? source.cursor.sourceSeq.toString() : "0"} />

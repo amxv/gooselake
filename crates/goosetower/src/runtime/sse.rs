@@ -132,7 +132,15 @@ impl RuntimeSseFanIn {
         self.transition(SourceHealthState::Live, last_seq, None);
         let mut parser = SseParser::default();
         let mut stream = response.bytes_stream();
-        while let Some(next) = stream.next().await {
+        loop {
+            let next = match tokio::time::timeout(self.config.stale_after, stream.next()).await {
+                Ok(Some(next)) => next,
+                Ok(None) => break,
+                Err(_) => {
+                    self.transition(SourceHealthState::Stale, last_seq, None);
+                    break;
+                }
+            };
             let chunk = next.map_err(RuntimeClientError::Transport)?;
             for frame in parser.push(&chunk) {
                 if frame.data.trim().is_empty() {

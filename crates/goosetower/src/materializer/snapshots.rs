@@ -159,6 +159,7 @@ impl MaterializedState {
                 .map(|row| row.latest_activity_unix_ms)
                 .unwrap_or(session.updated_at),
             source_health: self.source_health.state,
+            discontinuities: self.discontinuities.iter().cloned().collect(),
             version: self.version("session", &subscription.session_id),
         })
     }
@@ -201,6 +202,7 @@ impl MaterializedState {
             deliveries,
             latest_activity_unix_ms: team.updated_at,
             source_health: self.source_health.state,
+            discontinuities: self.discontinuities.iter().cloned().collect(),
             version: self.version("team", &subscription.team_id),
         })
     }
@@ -304,6 +306,7 @@ impl MaterializedState {
         let limit = subscription.limit.max(1);
         LedgerView {
             events: events.into_iter().skip(offset).take(limit).collect(),
+            discontinuities: self.discontinuities.iter().cloned().collect(),
         }
     }
 

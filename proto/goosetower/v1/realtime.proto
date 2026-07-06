@@ -72,6 +72,8 @@ message Pong {
 
 message Resume {
   CursorVector cursor = 1;
+  string previous_connection_id = 2;
+  repeated Subscribe active_subscriptions = 3;
   reserved 20 to 39;
 }
 

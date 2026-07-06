@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
@@ -14,7 +16,7 @@ use crate::materializer::{
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
 use crate::protocol::generated::goosetower::v1::{
     CommandDuplicate, CommandRejected, CursorVector, ErrorDetail, Lane, MessageKind, Pong,
-    RealtimeEnvelope, Subscribe, Unsubscribe,
+    RealtimeEnvelope, SourceCursor, Subscribe, Unsubscribe,
 };
 use crate::protocol::PROTOCOL_VERSION;
 use crate::runtime::client::{
@@ -28,6 +30,7 @@ pub(super) struct ConnectionState {
     pub(super) subscriptions: BTreeMap<String, Subscription>,
     pub(super) cursor: Option<CursorVector>,
     pub(super) last_acked_gateway_seq: u64,
+    pub(super) status: ConnectionStatus,
     lanes: OutboundLanes,
     pub(super) max_message_bytes: usize,
     backpressure_drops: u64,
@@ -46,6 +49,7 @@ impl ConnectionState {
             subscriptions: BTreeMap::new(),
             cursor: None,
             last_acked_gateway_seq: 0,
+            status: ConnectionStatus::Connected,
             lanes: OutboundLanes::new(lane_config),
             max_message_bytes,
             backpressure_drops: 0,
@@ -68,6 +72,107 @@ impl ConnectionState {
         self.subscriptions
             .values()
             .any(|subscription| subscription.matches_patch(patch))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConnectionStatus {
+    Connected,
+    Degraded,
+    Reconnecting,
+    Replaying,
+    Stale,
+    Offline,
+}
+
+impl ConnectionStatus {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Connected => "connected",
+            Self::Degraded => "degraded",
+            Self::Reconnecting => "reconnecting",
+            Self::Replaying => "replaying",
+            Self::Stale => "stale",
+            Self::Offline => "offline",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ReplayEntry {
+    pub(super) gateway_seq: u64,
+    pub(super) source_cursor: Option<SourceCursor>,
+    pub(super) envelope: RealtimeEnvelope,
+    pub(super) encoded_len: usize,
+}
+
+#[derive(Debug)]
+pub(super) struct GatewayReplayBuffer {
+    entries: VecDeque<ReplayEntry>,
+    capacity: usize,
+}
+
+impl GatewayReplayBuffer {
+    pub(super) fn new(capacity: usize) -> Self {
+        Self {
+            entries: VecDeque::new(),
+            capacity: capacity.max(1),
+        }
+    }
+
+    pub(super) fn push(&mut self, entry: ReplayEntry) {
+        self.entries.push_back(entry);
+        while self.entries.len() > self.capacity {
+            self.entries.pop_front();
+        }
+    }
+
+    pub(super) fn replay_after(&self, gateway_seq: u64) -> ReplayWindow {
+        let entries = self
+            .entries
+            .iter()
+            .filter(|entry| entry.gateway_seq > gateway_seq)
+            .cloned()
+            .collect::<Vec<_>>();
+        let earliest = self.entries.front().map(|entry| entry.gateway_seq);
+        let complete = entries
+            .first()
+            .map(|entry| entry.gateway_seq == gateway_seq.saturating_add(1))
+            .unwrap_or_else(|| {
+                earliest
+                    .map(|earliest| gateway_seq >= earliest)
+                    .unwrap_or(gateway_seq == 0)
+            });
+        ReplayWindow { entries, complete }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ReplayWindow {
+    pub(super) entries: Vec<ReplayEntry>,
+    pub(super) complete: bool,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct GatewayMetrics {
+    pub(super) resume_success: AtomicU64,
+    pub(super) resume_partial: AtomicU64,
+    pub(super) resume_rejected: AtomicU64,
+    pub(super) replay_events: AtomicU64,
+    pub(super) replay_bytes: AtomicU64,
+    pub(super) replay_catch_up_ms: AtomicU64,
+    pub(super) source_stale_age_ms: AtomicU64,
+    pub(super) gap_count: AtomicU64,
+    pub(super) snapshot_resync_count: AtomicU64,
+}
+
+impl GatewayMetrics {
+    pub(super) fn record_replay(&self, events: usize, bytes: usize, elapsed: Duration) {
+        self.replay_events
+            .fetch_add(events as u64, Ordering::Relaxed);
+        self.replay_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.replay_catch_up_ms
+            .store(elapsed.as_millis() as u64, Ordering::Relaxed);
     }
 }
 
@@ -327,6 +432,18 @@ impl CommandRouteError {
             code: "command_rejected".to_string(),
             message: message.into(),
             retryable: false,
+        }
+    }
+
+    pub(super) fn with_code(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        retryable: bool,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            retryable,
         }
     }
 }

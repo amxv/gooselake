@@ -76,6 +76,16 @@ impl GoosetowerConfig {
                 "websocket.heartbeat_interval_ms must be greater than zero"
             ));
         }
+        if self.replay.max_events_per_request == 0 {
+            return Err(anyhow!(
+                "replay.max_events_per_request must be greater than zero"
+            ));
+        }
+        if self.replay.source_stale_after_ms == 0 {
+            return Err(anyhow!(
+                "replay.source_stale_after_ms must be greater than zero"
+            ));
+        }
         if self.materializer.event_buffer_size == 0 {
             return Err(anyhow!(
                 "materializer.event_buffer_size must be greater than zero"

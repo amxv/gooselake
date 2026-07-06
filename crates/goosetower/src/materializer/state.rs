@@ -114,6 +114,7 @@ pub struct SessionDetailView {
     pub appended_text: String,
     pub latest_activity_unix_ms: i64,
     pub source_health: SourceHealthState,
+    pub discontinuities: Vec<DiscontinuityView>,
     pub version: EntityVersion,
 }
 
@@ -133,6 +134,7 @@ pub struct TeamWorkspaceView {
     pub delivery_status_counts: BTreeMap<String, usize>,
     pub latest_activity_unix_ms: i64,
     pub source_health: SourceHealthState,
+    pub discontinuities: Vec<DiscontinuityView>,
     pub version: EntityVersion,
 }
 
@@ -213,6 +215,16 @@ pub struct LedgerEventView {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct LedgerView {
     pub events: Vec<LedgerEventView>,
+    pub discontinuities: Vec<DiscontinuityView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscontinuityView {
+    pub source_id: String,
+    pub source_epoch: String,
+    pub source_seq: Option<i64>,
+    pub reason: String,
+    pub observed_at_unix_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -290,6 +302,7 @@ pub struct MaterializedState {
     pub process_samples: BTreeMap<String, VecDeque<ProcessOutputSampleView>>,
     pub appended_text_by_session: BTreeMap<String, VecDeque<String>>,
     pub ledger: VecDeque<LedgerEventView>,
+    pub discontinuities: VecDeque<DiscontinuityView>,
     pub provider_status: Value,
     pub diagnostics_summary: Value,
     pub selected_team_ids: BTreeSet<String>,
@@ -325,6 +338,7 @@ impl MaterializedState {
             process_samples: BTreeMap::new(),
             appended_text_by_session: BTreeMap::new(),
             ledger: VecDeque::new(),
+            discontinuities: VecDeque::new(),
             provider_status: Value::Null,
             diagnostics_summary: Value::Null,
             selected_team_ids: BTreeSet::new(),
@@ -631,6 +645,17 @@ impl MaterializedState {
         bounded_push(&mut self.ledger, event, self.ledger_limit);
     }
 
+    pub fn mark_discontinuity(&mut self, reason: impl Into<String>) {
+        let discontinuity = DiscontinuityView {
+            source_id: self.source_id.clone(),
+            source_epoch: self.source_epoch.clone(),
+            source_seq: self.source_health.last_source_seq,
+            reason: reason.into(),
+            observed_at_unix_ms: now_ms(),
+        };
+        bounded_push(&mut self.discontinuities, discontinuity, self.ledger_limit);
+    }
+
     pub fn source_health_view(&self) -> SourceHealthView {
         SourceHealthView {
             source_id: self.source_id.clone(),
@@ -778,4 +803,11 @@ pub fn bounded_push<T>(deque: &mut VecDeque<T>, value: T, limit: usize) {
     while deque.len() > limit {
         deque.pop_front();
     }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default()
 }

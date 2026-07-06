@@ -12,7 +12,9 @@ use tokio::net::TcpListener;
 use super::*;
 use crate::materializer::state::SourceCursorView;
 use crate::protocol::generated::goosetower::v1::command::Payload as CommandPayload;
-use crate::protocol::generated::goosetower::v1::{Command, CommandSendTurn, EntityRef};
+use crate::protocol::generated::goosetower::v1::{
+    Command, CommandCreateSession, CommandCreateTeam, CommandSendTurn, EntityRef,
+};
 
 #[tokio::test]
 async fn resume_clean_reconnect_uses_gateway_replay_without_duplicates() {
@@ -270,6 +272,53 @@ async fn command_routes_to_materialized_owner_source() {
 }
 
 #[tokio::test]
+async fn source_scoped_create_session_routes_to_explicit_source() {
+    let west_hits = Arc::new(StdMutex::new(Vec::new()));
+    let east_hits = Arc::new(StdMutex::new(Vec::new()));
+    let west_addr = spawn_accepting_create_runtime("west", west_hits.clone()).await;
+    let east_addr = spawn_accepting_create_runtime("east", east_hits.clone()).await;
+    let gateway = two_source_gateway(west_addr, east_addr).await;
+    let mut conn = test_connection(&gateway);
+
+    let response = gateway
+        .admit_and_route_command(&mut conn, create_session_command("cmd_create", "east"))
+        .await;
+
+    assert!(matches!(
+        response.payload,
+        Some(Payload::CommandAccepted(_))
+    ));
+    assert!(west_hits.lock().unwrap().is_empty());
+    assert_eq!(
+        east_hits.lock().unwrap().as_slice(),
+        ["east:create_session:codex:gpt-5.4"]
+    );
+}
+
+#[tokio::test]
+async fn source_scoped_create_team_routes_to_explicit_source() {
+    let hits = Arc::new(StdMutex::new(Vec::new()));
+    let runtime_addr = spawn_accepting_create_runtime("local", hits.clone()).await;
+    let mut config = GoosetowerConfig::default();
+    config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
+    let gateway = live_gateway_with_session_version(config, 1).await;
+    let mut conn = test_connection(&gateway);
+
+    let response = gateway
+        .admit_and_route_command(&mut conn, create_team_command("cmd_team", "local"))
+        .await;
+
+    assert!(matches!(
+        response.payload,
+        Some(Payload::CommandAccepted(_))
+    ));
+    assert_eq!(
+        hits.lock().unwrap().as_slice(),
+        ["local:create_team:Live Team:session_1"]
+    );
+}
+
+#[tokio::test]
 async fn source_stale_disables_only_affected_owner_commands() {
     let west_hits = Arc::new(StdMutex::new(Vec::new()));
     let east_hits = Arc::new(StdMutex::new(Vec::new()));
@@ -500,6 +549,48 @@ fn send_turn_command_for_session(command_id: &str, session_id: &str) -> Command 
     }
 }
 
+fn create_session_command(command_id: &str, source_id: &str) -> Command {
+    Command {
+        command_id: command_id.to_string(),
+        target: Some(EntityRef {
+            scope: Scope::Source as i32,
+            scope_id: source_id.to_string(),
+            entity_id: format!("source:{source_id}"),
+            entity_version: 0,
+        }),
+        created_at_client_unix_ms: 1,
+        payload: Some(CommandPayload::CreateSession(CommandCreateSession {
+            provider: "codex".to_string(),
+            model: "gpt-5.4".to_string(),
+            cwd: "/repo".to_string(),
+            title: "Lead".to_string(),
+            permission_mode: String::new(),
+            metadata: Default::default(),
+        })),
+        ..Command::default()
+    }
+}
+
+fn create_team_command(command_id: &str, source_id: &str) -> Command {
+    Command {
+        command_id: command_id.to_string(),
+        target: Some(EntityRef {
+            scope: Scope::Source as i32,
+            scope_id: source_id.to_string(),
+            entity_id: format!("source:{source_id}"),
+            entity_version: 0,
+        }),
+        created_at_client_unix_ms: 1,
+        payload: Some(CommandPayload::CreateTeam(CommandCreateTeam {
+            name: "Live Team".to_string(),
+            lead_agent_id: "session_1".to_string(),
+            member_agent_ids: Vec::new(),
+            created_by: "session_1".to_string(),
+        })),
+        ..Command::default()
+    }
+}
+
 async fn two_source_gateway(west_addr: SocketAddr, east_addr: SocketAddr) -> GatewayState {
     let gateway = test_gateway(two_source_config(
         format!("http://{west_addr}"),
@@ -610,6 +701,78 @@ async fn spawn_accepting_command_runtime(
         axum::serve(listener, app)
             .await
             .expect("serve accepting runtime");
+    });
+    addr
+}
+
+async fn spawn_accepting_create_runtime(
+    label: &'static str,
+    hits: Arc<StdMutex<Vec<String>>>,
+) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind accepting create runtime");
+    let addr = listener.local_addr().expect("runtime addr");
+    tokio::spawn(async move {
+        let create_session_hits = hits.clone();
+        let create_session = move |Json(input): Json<Value>| {
+            let hits = create_session_hits.clone();
+            async move {
+                hits.lock().unwrap().push(format!(
+                    "{label}:create_session:{}:{}",
+                    input["provider"].as_str().unwrap_or_default(),
+                    input["model"].as_str().unwrap_or_default()
+                ));
+                Json(json!({
+                    "id": format!("{label}_session"),
+                    "provider": input["provider"],
+                    "status": "ready",
+                    "cwd": input["cwd"],
+                    "model": input["model"],
+                    "permission_mode": input["permission_mode"],
+                    "system_prompt": null,
+                    "metadata": input["metadata"],
+                    "provider_session_ref": null,
+                    "canonical_provider_session_ref": null,
+                    "active_turn_id": null,
+                    "worktree_id": null,
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "closed_at": null,
+                    "failure_code": null,
+                    "failure_message": null
+                }))
+            }
+        };
+        let create_team_hits = hits.clone();
+        let create_team = move |Json(input): Json<Value>| {
+            let hits = create_team_hits.clone();
+            async move {
+                hits.lock().unwrap().push(format!(
+                    "{label}:create_team:{}:{}",
+                    input["name"].as_str().unwrap_or_default(),
+                    input["lead_agent_id"].as_str().unwrap_or_default()
+                ));
+                Json(json!({
+                    "team": {
+                        "id": format!("{label}_team"),
+                        "name": input["name"],
+                        "lead_agent_id": input["lead_agent_id"],
+                        "created_by": input["created_by"],
+                        "created_at": 1,
+                        "updated_at": 1,
+                        "deleted_at": null
+                    },
+                    "members": []
+                }))
+            }
+        };
+        let app = axum::Router::new()
+            .route("/v1/sessions", axum::routing::post(create_session))
+            .route("/v1/teams", axum::routing::post(create_team));
+        axum::serve(listener, app)
+            .await
+            .expect("serve accepting create runtime");
     });
     addr
 }

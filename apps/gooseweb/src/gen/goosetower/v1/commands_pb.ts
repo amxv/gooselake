@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file goosetower/v1/commands.proto.
  */
 export const file_goosetower_v1_commands: GenFile = /*@__PURE__*/
-  fileDesc("Chxnb29zZXRvd2VyL3YxL2NvbW1hbmRzLnByb3RvEg1nb29zZXRvd2VyLnYxIrYGCgdDb21tYW5kEhIKCmNvbW1hbmRfaWQYASABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAIgASgJEigKBnRhcmdldBgDIAEoCzIYLmdvb3NldG93ZXIudjEuRW50aXR5UmVmEhsKE2Jhc2VfZW50aXR5X3ZlcnNpb24YBCABKAQSIQoZY3JlYXRlZF9hdF9jbGllbnRfdW5peF9tcxgFIAEoAxIzCglzZW5kX3R1cm4YCiABKAsyHi5nb29zZXRvd2VyLnYxLkNvbW1hbmRTZW5kVHVybkgAEkEKEHJlc29sdmVfYXBwcm92YWwYCyABKAsyJS5nb29zZXRvd2VyLnYxLkNvbW1hbmRSZXNvbHZlQXBwcm92YWxIABI9Cg5pbnRlcnJ1cHRfdHVybhgMIAEoCzIjLmdvb3NldG93ZXIudjEuQ29tbWFuZEludGVycnVwdFR1cm5IABJCChFzZW5kX3RlYW1fbWVzc2FnZRgNIAEoCzIlLmdvb3NldG93ZXIudjEuQ29tbWFuZFNlbmRUZWFtTWVzc2FnZUgAEkwKFmJyb2FkY2FzdF90ZWFtX21lc3NhZ2UYDiABKAsyKi5nb29zZXRvd2VyLnYxLkNvbW1hbmRCcm9hZGNhc3RUZWFtTWVzc2FnZUgAEkIKEXNwYXduX3RlYW1fbWVtYmVyGA8gASgLMiUuZ29vc2V0b3dlci52MS5Db21tYW5kU3Bhd25UZWFtTWVtYmVySAASPQoOcmV0cnlfZGVsaXZlcnkYECABKAsyIy5nb29zZXRvd2VyLnYxLkNvbW1hbmRSZXRyeURlbGl2ZXJ5SAASPwoPY2FuY2VsX2RlbGl2ZXJ5GBEgASgLMiQuZ29vc2V0b3dlci52MS5Db21tYW5kQ2FuY2VsRGVsaXZlcnlIABI5CgxraWxsX3Byb2Nlc3MYEiABKAsyIS5nb29zZXRvd2VyLnYxLkNvbW1hbmRLaWxsUHJvY2Vzc0gAEjsKDXN0YXJ0X3Byb2Nlc3MYEyABKAsyIi5nb29zZXRvd2VyLnYxLkNvbW1hbmRTdGFydFByb2Nlc3NIAEIJCgdwYXlsb2FkSgQIHhBQIjkKD0NvbW1hbmRTZW5kVHVybhISCgpzZXNzaW9uX2lkGAEgASgJEgwKBHRleHQYAiABKAlKBAgUECgiVQoWQ29tbWFuZFJlc29sdmVBcHByb3ZhbBITCgthcHByb3ZhbF9pZBgBIAEoCRIQCghhcHByb3ZlZBgCIAEoCBIOCgZyZWFzb24YAyABKAlKBAgUECgiQQoUQ29tbWFuZEludGVycnVwdFR1cm4SEgoKc2Vzc2lvbl9pZBgBIAEoCRIPCgd0dXJuX2lkGAIgASgJSgQIFBAoIloKFkNvbW1hbmRTZW5kVGVhbU1lc3NhZ2USDwoHdGVhbV9pZBgBIAEoCRIbChNyZWNpcGllbnRfbWVtYmVyX2lkGAIgASgJEgwKBHRleHQYAyABKAlKBAgUECgiQgobQ29tbWFuZEJyb2FkY2FzdFRlYW1NZXNzYWdlEg8KB3RlYW1faWQYASABKAkSDAoEdGV4dBgCIAEoCUoECBQQKCJkChZDb21tYW5kU3Bhd25UZWFtTWVtYmVyEg8KB3RlYW1faWQYASABKAkSDQoFdGl0bGUYAiABKAkSDgoGcHJvbXB0GAMgASgJEhQKDG1vZGVsX3ByZXNldBgEIAEoCUoECBQQKCIxChRDb21tYW5kUmV0cnlEZWxpdmVyeRITCgtkZWxpdmVyeV9pZBgBIAEoCUoECBQQKCIxChVDb21tYW5kQ2FuY2VsRGVsaXZlcnkSEgoKbWVzc2FnZV9pZBgBIAEoCUoECBQQKCIuChJDb21tYW5kS2lsbFByb2Nlc3MSEgoKcHJvY2Vzc19pZBgBIAEoCUoECBQQKCJNChNDb21tYW5kU3RhcnRQcm9jZXNzEg8KB2NvbW1hbmQYASABKAkSCwoDY3dkGAIgASgJEhIKCnRpbWVvdXRfbXMYAyABKARKBAgUECgiQAoPQ29tbWFuZEFjY2VwdGVkEhIKCmNvbW1hbmRfaWQYASABKAkSEwoLZ2F0ZXdheV9zZXEYAiABKARKBAgUECgiVgoPQ29tbWFuZFJlamVjdGVkEhIKCmNvbW1hbmRfaWQYASABKAkSKQoFZXJyb3IYAiABKAsyGi5nb29zZXRvd2VyLnYxLkVycm9yRGV0YWlsSgQIFBAoIkkKEENvbW1hbmREdXBsaWNhdGUSEgoKY29tbWFuZF9pZBgBIAEoCRIbChNvcmlnaW5hbF9jb21tYW5kX2lkGAIgASgJSgQIFBAoYgZwcm90bzM", [file_goosetower_v1_common]);
+  fileDesc("Chxnb29zZXRvd2VyL3YxL2NvbW1hbmRzLnByb3RvEg1nb29zZXRvd2VyLnYxIq4HCgdDb21tYW5kEhIKCmNvbW1hbmRfaWQYASABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAIgASgJEigKBnRhcmdldBgDIAEoCzIYLmdvb3NldG93ZXIudjEuRW50aXR5UmVmEhsKE2Jhc2VfZW50aXR5X3ZlcnNpb24YBCABKAQSIQoZY3JlYXRlZF9hdF9jbGllbnRfdW5peF9tcxgFIAEoAxIzCglzZW5kX3R1cm4YCiABKAsyHi5nb29zZXRvd2VyLnYxLkNvbW1hbmRTZW5kVHVybkgAEkEKEHJlc29sdmVfYXBwcm92YWwYCyABKAsyJS5nb29zZXRvd2VyLnYxLkNvbW1hbmRSZXNvbHZlQXBwcm92YWxIABI9Cg5pbnRlcnJ1cHRfdHVybhgMIAEoCzIjLmdvb3NldG93ZXIudjEuQ29tbWFuZEludGVycnVwdFR1cm5IABJCChFzZW5kX3RlYW1fbWVzc2FnZRgNIAEoCzIlLmdvb3NldG93ZXIudjEuQ29tbWFuZFNlbmRUZWFtTWVzc2FnZUgAEkwKFmJyb2FkY2FzdF90ZWFtX21lc3NhZ2UYDiABKAsyKi5nb29zZXRvd2VyLnYxLkNvbW1hbmRCcm9hZGNhc3RUZWFtTWVzc2FnZUgAEkIKEXNwYXduX3RlYW1fbWVtYmVyGA8gASgLMiUuZ29vc2V0b3dlci52MS5Db21tYW5kU3Bhd25UZWFtTWVtYmVySAASPQoOcmV0cnlfZGVsaXZlcnkYECABKAsyIy5nb29zZXRvd2VyLnYxLkNvbW1hbmRSZXRyeURlbGl2ZXJ5SAASPwoPY2FuY2VsX2RlbGl2ZXJ5GBEgASgLMiQuZ29vc2V0b3dlci52MS5Db21tYW5kQ2FuY2VsRGVsaXZlcnlIABI5CgxraWxsX3Byb2Nlc3MYEiABKAsyIS5nb29zZXRvd2VyLnYxLkNvbW1hbmRLaWxsUHJvY2Vzc0gAEjsKDXN0YXJ0X3Byb2Nlc3MYEyABKAsyIi5nb29zZXRvd2VyLnYxLkNvbW1hbmRTdGFydFByb2Nlc3NIABI9Cg5jcmVhdGVfc2Vzc2lvbhgUIAEoCzIjLmdvb3NldG93ZXIudjEuQ29tbWFuZENyZWF0ZVNlc3Npb25IABI3CgtjcmVhdGVfdGVhbRgVIAEoCzIgLmdvb3NldG93ZXIudjEuQ29tbWFuZENyZWF0ZVRlYW1IAEIJCgdwYXlsb2FkSgQIHhBQIugBChRDb21tYW5kQ3JlYXRlU2Vzc2lvbhIQCghwcm92aWRlchgBIAEoCRINCgVtb2RlbBgCIAEoCRILCgNjd2QYAyABKAkSDQoFdGl0bGUYBCABKAkSFwoPcGVybWlzc2lvbl9tb2RlGAUgASgJEkMKCG1ldGFkYXRhGAYgAygLMjEuZ29vc2V0b3dlci52MS5Db21tYW5kQ3JlYXRlU2Vzc2lvbi5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUoECBQQKCJsChFDb21tYW5kQ3JlYXRlVGVhbRIMCgRuYW1lGAEgASgJEhUKDWxlYWRfYWdlbnRfaWQYAiABKAkSGAoQbWVtYmVyX2FnZW50X2lkcxgDIAMoCRISCgpjcmVhdGVkX2J5GAQgASgJSgQIFBAoIjkKD0NvbW1hbmRTZW5kVHVybhISCgpzZXNzaW9uX2lkGAEgASgJEgwKBHRleHQYAiABKAlKBAgUECgiVQoWQ29tbWFuZFJlc29sdmVBcHByb3ZhbBITCgthcHByb3ZhbF9pZBgBIAEoCRIQCghhcHByb3ZlZBgCIAEoCBIOCgZyZWFzb24YAyABKAlKBAgUECgiQQoUQ29tbWFuZEludGVycnVwdFR1cm4SEgoKc2Vzc2lvbl9pZBgBIAEoCRIPCgd0dXJuX2lkGAIgASgJSgQIFBAoIloKFkNvbW1hbmRTZW5kVGVhbU1lc3NhZ2USDwoHdGVhbV9pZBgBIAEoCRIbChNyZWNpcGllbnRfbWVtYmVyX2lkGAIgASgJEgwKBHRleHQYAyABKAlKBAgUECgiQgobQ29tbWFuZEJyb2FkY2FzdFRlYW1NZXNzYWdlEg8KB3RlYW1faWQYASABKAkSDAoEdGV4dBgCIAEoCUoECBQQKCJkChZDb21tYW5kU3Bhd25UZWFtTWVtYmVyEg8KB3RlYW1faWQYASABKAkSDQoFdGl0bGUYAiABKAkSDgoGcHJvbXB0GAMgASgJEhQKDG1vZGVsX3ByZXNldBgEIAEoCUoECBQQKCIxChRDb21tYW5kUmV0cnlEZWxpdmVyeRITCgtkZWxpdmVyeV9pZBgBIAEoCUoECBQQKCIxChVDb21tYW5kQ2FuY2VsRGVsaXZlcnkSEgoKbWVzc2FnZV9pZBgBIAEoCUoECBQQKCIuChJDb21tYW5kS2lsbFByb2Nlc3MSEgoKcHJvY2Vzc19pZBgBIAEoCUoECBQQKCJNChNDb21tYW5kU3RhcnRQcm9jZXNzEg8KB2NvbW1hbmQYASABKAkSCwoDY3dkGAIgASgJEhIKCnRpbWVvdXRfbXMYAyABKARKBAgUECgiQAoPQ29tbWFuZEFjY2VwdGVkEhIKCmNvbW1hbmRfaWQYASABKAkSEwoLZ2F0ZXdheV9zZXEYAiABKARKBAgUECgiVgoPQ29tbWFuZFJlamVjdGVkEhIKCmNvbW1hbmRfaWQYASABKAkSKQoFZXJyb3IYAiABKAsyGi5nb29zZXRvd2VyLnYxLkVycm9yRGV0YWlsSgQIFBAoIkkKEENvbW1hbmREdXBsaWNhdGUSEgoKY29tbWFuZF9pZBgBIAEoCRIbChNvcmlnaW5hbF9jb21tYW5kX2lkGAIgASgJSgQIFBAoYgZwcm90bzM", [file_goosetower_v1_common]);
 
 /**
  * @generated from message goosetower.v1.Command
@@ -106,6 +106,18 @@ export type Command = Message<"goosetower.v1.Command"> & {
      */
     value: CommandStartProcess;
     case: "startProcess";
+  } | {
+    /**
+     * @generated from field: goosetower.v1.CommandCreateSession create_session = 20;
+     */
+    value: CommandCreateSession;
+    case: "createSession";
+  } | {
+    /**
+     * @generated from field: goosetower.v1.CommandCreateTeam create_team = 21;
+     */
+    value: CommandCreateTeam;
+    case: "createTeam";
   } | { case: undefined; value?: undefined };
 };
 
@@ -115,6 +127,80 @@ export type Command = Message<"goosetower.v1.Command"> & {
  */
 export const CommandSchema: GenMessage<Command> = /*@__PURE__*/
   messageDesc(file_goosetower_v1_commands, 0);
+
+/**
+ * @generated from message goosetower.v1.CommandCreateSession
+ */
+export type CommandCreateSession = Message<"goosetower.v1.CommandCreateSession"> & {
+  /**
+   * @generated from field: string provider = 1;
+   */
+  provider: string;
+
+  /**
+   * @generated from field: string model = 2;
+   */
+  model: string;
+
+  /**
+   * @generated from field: string cwd = 3;
+   */
+  cwd: string;
+
+  /**
+   * @generated from field: string title = 4;
+   */
+  title: string;
+
+  /**
+   * @generated from field: string permission_mode = 5;
+   */
+  permissionMode: string;
+
+  /**
+   * @generated from field: map<string, string> metadata = 6;
+   */
+  metadata: { [key: string]: string };
+};
+
+/**
+ * Describes the message goosetower.v1.CommandCreateSession.
+ * Use `create(CommandCreateSessionSchema)` to create a new message.
+ */
+export const CommandCreateSessionSchema: GenMessage<CommandCreateSession> = /*@__PURE__*/
+  messageDesc(file_goosetower_v1_commands, 1);
+
+/**
+ * @generated from message goosetower.v1.CommandCreateTeam
+ */
+export type CommandCreateTeam = Message<"goosetower.v1.CommandCreateTeam"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string lead_agent_id = 2;
+   */
+  leadAgentId: string;
+
+  /**
+   * @generated from field: repeated string member_agent_ids = 3;
+   */
+  memberAgentIds: string[];
+
+  /**
+   * @generated from field: string created_by = 4;
+   */
+  createdBy: string;
+};
+
+/**
+ * Describes the message goosetower.v1.CommandCreateTeam.
+ * Use `create(CommandCreateTeamSchema)` to create a new message.
+ */
+export const CommandCreateTeamSchema: GenMessage<CommandCreateTeam> = /*@__PURE__*/
+  messageDesc(file_goosetower_v1_commands, 2);
 
 /**
  * @generated from message goosetower.v1.CommandSendTurn
@@ -136,7 +222,7 @@ export type CommandSendTurn = Message<"goosetower.v1.CommandSendTurn"> & {
  * Use `create(CommandSendTurnSchema)` to create a new message.
  */
 export const CommandSendTurnSchema: GenMessage<CommandSendTurn> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 1);
+  messageDesc(file_goosetower_v1_commands, 3);
 
 /**
  * @generated from message goosetower.v1.CommandResolveApproval
@@ -163,7 +249,7 @@ export type CommandResolveApproval = Message<"goosetower.v1.CommandResolveApprov
  * Use `create(CommandResolveApprovalSchema)` to create a new message.
  */
 export const CommandResolveApprovalSchema: GenMessage<CommandResolveApproval> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 2);
+  messageDesc(file_goosetower_v1_commands, 4);
 
 /**
  * @generated from message goosetower.v1.CommandInterruptTurn
@@ -185,7 +271,7 @@ export type CommandInterruptTurn = Message<"goosetower.v1.CommandInterruptTurn">
  * Use `create(CommandInterruptTurnSchema)` to create a new message.
  */
 export const CommandInterruptTurnSchema: GenMessage<CommandInterruptTurn> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 3);
+  messageDesc(file_goosetower_v1_commands, 5);
 
 /**
  * @generated from message goosetower.v1.CommandSendTeamMessage
@@ -212,7 +298,7 @@ export type CommandSendTeamMessage = Message<"goosetower.v1.CommandSendTeamMessa
  * Use `create(CommandSendTeamMessageSchema)` to create a new message.
  */
 export const CommandSendTeamMessageSchema: GenMessage<CommandSendTeamMessage> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 4);
+  messageDesc(file_goosetower_v1_commands, 6);
 
 /**
  * @generated from message goosetower.v1.CommandBroadcastTeamMessage
@@ -234,7 +320,7 @@ export type CommandBroadcastTeamMessage = Message<"goosetower.v1.CommandBroadcas
  * Use `create(CommandBroadcastTeamMessageSchema)` to create a new message.
  */
 export const CommandBroadcastTeamMessageSchema: GenMessage<CommandBroadcastTeamMessage> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 5);
+  messageDesc(file_goosetower_v1_commands, 7);
 
 /**
  * @generated from message goosetower.v1.CommandSpawnTeamMember
@@ -266,7 +352,7 @@ export type CommandSpawnTeamMember = Message<"goosetower.v1.CommandSpawnTeamMemb
  * Use `create(CommandSpawnTeamMemberSchema)` to create a new message.
  */
 export const CommandSpawnTeamMemberSchema: GenMessage<CommandSpawnTeamMember> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 6);
+  messageDesc(file_goosetower_v1_commands, 8);
 
 /**
  * @generated from message goosetower.v1.CommandRetryDelivery
@@ -283,7 +369,7 @@ export type CommandRetryDelivery = Message<"goosetower.v1.CommandRetryDelivery">
  * Use `create(CommandRetryDeliverySchema)` to create a new message.
  */
 export const CommandRetryDeliverySchema: GenMessage<CommandRetryDelivery> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 7);
+  messageDesc(file_goosetower_v1_commands, 9);
 
 /**
  * @generated from message goosetower.v1.CommandCancelDelivery
@@ -300,7 +386,7 @@ export type CommandCancelDelivery = Message<"goosetower.v1.CommandCancelDelivery
  * Use `create(CommandCancelDeliverySchema)` to create a new message.
  */
 export const CommandCancelDeliverySchema: GenMessage<CommandCancelDelivery> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 8);
+  messageDesc(file_goosetower_v1_commands, 10);
 
 /**
  * @generated from message goosetower.v1.CommandKillProcess
@@ -317,7 +403,7 @@ export type CommandKillProcess = Message<"goosetower.v1.CommandKillProcess"> & {
  * Use `create(CommandKillProcessSchema)` to create a new message.
  */
 export const CommandKillProcessSchema: GenMessage<CommandKillProcess> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 9);
+  messageDesc(file_goosetower_v1_commands, 11);
 
 /**
  * @generated from message goosetower.v1.CommandStartProcess
@@ -344,7 +430,7 @@ export type CommandStartProcess = Message<"goosetower.v1.CommandStartProcess"> &
  * Use `create(CommandStartProcessSchema)` to create a new message.
  */
 export const CommandStartProcessSchema: GenMessage<CommandStartProcess> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 10);
+  messageDesc(file_goosetower_v1_commands, 12);
 
 /**
  * @generated from message goosetower.v1.CommandAccepted
@@ -366,7 +452,7 @@ export type CommandAccepted = Message<"goosetower.v1.CommandAccepted"> & {
  * Use `create(CommandAcceptedSchema)` to create a new message.
  */
 export const CommandAcceptedSchema: GenMessage<CommandAccepted> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 11);
+  messageDesc(file_goosetower_v1_commands, 13);
 
 /**
  * @generated from message goosetower.v1.CommandRejected
@@ -388,7 +474,7 @@ export type CommandRejected = Message<"goosetower.v1.CommandRejected"> & {
  * Use `create(CommandRejectedSchema)` to create a new message.
  */
 export const CommandRejectedSchema: GenMessage<CommandRejected> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 12);
+  messageDesc(file_goosetower_v1_commands, 14);
 
 /**
  * @generated from message goosetower.v1.CommandDuplicate
@@ -410,5 +496,5 @@ export type CommandDuplicate = Message<"goosetower.v1.CommandDuplicate"> & {
  * Use `create(CommandDuplicateSchema)` to create a new message.
  */
 export const CommandDuplicateSchema: GenMessage<CommandDuplicate> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_commands, 13);
+  messageDesc(file_goosetower_v1_commands, 15);
 

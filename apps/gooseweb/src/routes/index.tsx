@@ -198,7 +198,10 @@ function Index() {
     [state.entities.sources]
   );
   const pendingCommands = useMemo(
-    () => Object.values(state.pendingCommands),
+    () =>
+      Object.values(state.pendingCommands).filter(
+        (command) => command.status === "queued" || command.status === "sent"
+      ),
     [state.pendingCommands]
   );
   const subscriptions = useMemo(
@@ -222,12 +225,14 @@ function Index() {
     subscribeRealtime("board:window", "board", { window: "0:120" });
     subscribeRealtime("inbox:pending", "approval_inbox", { status: "pending" });
     subscribeRealtime("sources:health", "fleet");
+    subscribeRealtime("teams:list", "teams");
     subscribeRealtime("ledger:recent", "ledger", { window: "0:120" });
 
     return () => {
       unsubscribeRealtime("board:window");
       unsubscribeRealtime("inbox:pending");
       unsubscribeRealtime("sources:health");
+      unsubscribeRealtime("teams:list");
       unsubscribeRealtime("ledger:recent");
     };
   }, []);
@@ -894,6 +899,7 @@ function MissionViewBody({
         sessions={sessions}
         approvals={approvals}
         processes={processes}
+        sources={sources}
         selectedSession={selectedSession}
         selectedApproval={selectedApproval}
         setSelectedSessionId={setSelectedSessionId}
@@ -905,6 +911,9 @@ function MissionViewBody({
     return (
       <TeamPane
         teams={teams}
+        rows={rows}
+        sessions={sessions}
+        sources={sources}
         selectedTeam={selectedTeam}
         setSelectedTeamId={setSelectedTeamId}
         pendingCommands={pendingCommands}
@@ -1520,6 +1529,7 @@ function AgentPane({
   sessions,
   approvals,
   processes,
+  sources,
   selectedSession,
   selectedApproval,
   setSelectedSessionId,
@@ -1528,11 +1538,25 @@ function AgentPane({
   readonly sessions: readonly SessionView[];
   readonly approvals: readonly ApprovalView[];
   readonly processes: readonly ProcessView[];
+  readonly sources: readonly SourceHealthView[];
   readonly selectedSession?: SessionView;
   readonly selectedApproval?: ApprovalView;
   readonly setSelectedSessionId: (id: string) => void;
   readonly sourceGapActive: boolean;
 }) {
+  const defaultSourceId = selectedSession?.sourceId || sources[0]?.sourceId || "";
+  const [createSourceId, setCreateSourceId] = useState(defaultSourceId);
+  const [createTitle, setCreateTitle] = useState("Lead agent");
+  const [createProvider, setCreateProvider] = useState("codex");
+  const [createModel, setCreateModel] = useState("gpt-5.4");
+  const [createCwd, setCreateCwd] = useState("");
+
+  useEffect(() => {
+    if (!createSourceId && defaultSourceId) {
+      setCreateSourceId(defaultSourceId);
+    }
+  }, [createSourceId, defaultSourceId]);
+
   const sessionApprovals = approvals.filter(
     (approval) => approval.sessionId === selectedSession?.sessionId
   );
@@ -1548,6 +1572,24 @@ function AgentPane({
       meta: process.status
     }))
   ];
+
+  function createSession(event: FormEvent) {
+    event.preventDefault();
+    const sourceId = createSourceId || defaultSourceId;
+    if (!sourceId || !createProvider.trim() || sourceGapActive) {
+      return;
+    }
+    sendRealtimeCommand(
+      makeCommand("source", sourceId, "createSession", {
+        provider: createProvider.trim(),
+        model: createModel.trim(),
+        cwd: createCwd.trim(),
+        title: createTitle.trim(),
+        permissionMode: "",
+        metadata: {}
+      })
+    );
+  }
 
   return (
     <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_19rem] gap-3">
@@ -1581,6 +1623,58 @@ function AgentPane({
           </CardAction>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+          <form className="grid gap-3 rounded-md border bg-muted/20 p-3" onSubmit={createSession}>
+            <div className="grid grid-cols-2 gap-2">
+              <Field>
+                <FieldLabel htmlFor="create-agent-source">Source</FieldLabel>
+                <SelectFilter
+                  value={createSourceId || defaultSourceId}
+                  options={sources.map((source) => source.sourceId)}
+                  onChange={setCreateSourceId}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="create-agent-title">Title</FieldLabel>
+                <Input
+                  id="create-agent-title"
+                  value={createTitle}
+                  onChange={(event) => setCreateTitle(event.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="create-agent-provider">Provider</FieldLabel>
+                <Input
+                  id="create-agent-provider"
+                  value={createProvider}
+                  onChange={(event) => setCreateProvider(event.target.value)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="create-agent-model">Model</FieldLabel>
+                <Input
+                  id="create-agent-model"
+                  value={createModel}
+                  onChange={(event) => setCreateModel(event.target.value)}
+                />
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="create-agent-cwd">Working directory</FieldLabel>
+              <Input
+                id="create-agent-cwd"
+                value={createCwd}
+                onChange={(event) => setCreateCwd(event.target.value)}
+                placeholder="/path/to/project"
+              />
+            </Field>
+            <Button
+              disabled={!sources.length || !createProvider.trim() || sourceGapActive}
+              type="submit"
+            >
+              <PlusIcon data-icon="inline-start" />
+              Create agent
+            </Button>
+          </form>
           {selectedSession ? (
             <>
               <div className="grid grid-cols-3 gap-2">
@@ -1606,7 +1700,7 @@ function AgentPane({
               </Card>
             </>
           ) : (
-            <EmptyBlock title="No session" detail="Select a board row or session." />
+            <EmptyBlock title="No session" detail="Create an agent on a live source or select an existing session." />
           )}
         </CardContent>
       </Card>
@@ -1620,25 +1714,77 @@ function AgentPane({
 
 function TeamPane({
   teams,
+  rows,
+  sessions,
+  sources,
   selectedTeam,
   setSelectedTeamId,
   pendingCommands,
   sourceGapActive
 }: {
   readonly teams: readonly TeamView[];
+  readonly rows: readonly FleetRowView[];
+  readonly sessions: readonly SessionView[];
+  readonly sources: readonly SourceHealthView[];
   readonly selectedTeam?: TeamView;
   readonly setSelectedTeamId: (id: string) => void;
   readonly pendingCommands: readonly PendingCommandState[];
   readonly sourceGapActive: boolean;
 }) {
+  const leadOptions = unique([
+    ...sessions.map((session) => session.sessionId),
+    ...rows.map((row) => row.sessionId).filter(Boolean)
+  ]);
+  const defaultLeadId =
+    selectedTeam?.members.find((member) => member.memberId === selectedTeam.leadMemberId)
+      ?.sessionId ||
+    selectedTeam?.leadMemberId ||
+    leadOptions[0] ||
+    "";
+  const defaultSourceId =
+    selectedTeam?.sourceId ||
+    sessions.find((session) => session.sessionId === defaultLeadId)?.sourceId ||
+    rows.find((row) => row.sessionId === defaultLeadId)?.sourceId ||
+    sources[0]?.sourceId ||
+    "";
   const [mode, setMode] = useState<"direct" | "broadcast">("broadcast");
   const [recipient, setRecipient] = useState("");
   const [message, setMessage] = useState("");
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnTitle, setSpawnTitle] = useState("");
   const [spawnPrompt, setSpawnPrompt] = useState("");
+  const [teamSourceId, setTeamSourceId] = useState(defaultSourceId);
+  const [teamName, setTeamName] = useState("Live Team");
+  const [leadAgentId, setLeadAgentId] = useState(defaultLeadId);
   const members = selectedTeam?.members ?? [];
   const lead = members.find((member) => member.memberId === selectedTeam?.leadMemberId);
+  const hasLeadForNewTeam = Boolean(leadAgentId || defaultLeadId);
+
+  useEffect(() => {
+    if (!teamSourceId && defaultSourceId) {
+      setTeamSourceId(defaultSourceId);
+    }
+    if (!leadAgentId && defaultLeadId) {
+      setLeadAgentId(defaultLeadId);
+    }
+  }, [defaultLeadId, defaultSourceId, leadAgentId, teamSourceId]);
+
+  function createTeam(event: FormEvent) {
+    event.preventDefault();
+    const sourceId = teamSourceId || defaultSourceId;
+    const leadId = leadAgentId || defaultLeadId;
+    if (!sourceId || !leadId || !teamName.trim() || sourceGapActive) {
+      return;
+    }
+    sendRealtimeCommand(
+      makeCommand("source", sourceId, "createTeam", {
+        name: teamName.trim(),
+        leadAgentId: leadId,
+        memberAgentIds: [],
+        createdBy: leadId
+      })
+    );
+  }
 
   function sendMessage(event: FormEvent) {
     event.preventDefault();
@@ -1701,6 +1847,47 @@ function TeamPane({
             </CardAction>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+            <form className="grid gap-3 rounded-md border bg-muted/20 p-3" onSubmit={createTeam}>
+              <div className="grid grid-cols-3 gap-2">
+                <Field>
+                  <FieldLabel>Source</FieldLabel>
+                  <SelectFilter
+                    value={teamSourceId || defaultSourceId}
+                    options={sources.map((source) => source.sourceId)}
+                    onChange={setTeamSourceId}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="create-team-name">Team name</FieldLabel>
+                  <Input
+                    id="create-team-name"
+                    value={teamName}
+                    onChange={(event) => setTeamName(event.target.value)}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel>Lead agent</FieldLabel>
+                  <SelectFilter
+                    value={leadAgentId || defaultLeadId}
+                    options={leadOptions}
+                    onChange={setLeadAgentId}
+                  />
+                </Field>
+              </div>
+              <Button
+                disabled={
+                  !sources.length ||
+                  !leadOptions.length ||
+                  !teamName.trim() ||
+                  !hasLeadForNewTeam ||
+                  sourceGapActive
+                }
+                type="submit"
+              >
+                <PlusIcon data-icon="inline-start" />
+                Create team
+              </Button>
+            </form>
             <div className="grid grid-cols-3 gap-2">
               <MetricCard label="lead" value={lead?.title || lead?.memberId || "unset"} />
               <MetricCard label="members" value={String(members.length)} />
@@ -2624,7 +2811,7 @@ function useVirtualRows<T>(items: readonly T[], rowHeight: number, overscan: num
 }
 
 function makeCommand(
-  scope: "session" | "team" | "process",
+  scope: "session" | "team" | "process" | "source",
   scopeId: string,
   payloadCase: NonNullable<Command["payload"]["case"]>,
   payloadValue: Record<string, unknown>
@@ -2639,9 +2826,11 @@ function makeCommand(
           ? Scope.TEAM
           : scope === "process"
             ? Scope.PROCESS
-            : Scope.SESSION,
+            : scope === "source"
+              ? Scope.SOURCE
+              : Scope.SESSION,
       scopeId,
-      entityId: scopeId
+      entityId: scope === "source" ? `source:${scopeId}` : scopeId
     }),
     payload: {
       case: payloadCase,

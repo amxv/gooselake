@@ -444,6 +444,7 @@ pub(super) enum Subscription {
     Board(BoardSubscription),
     ApprovalInbox(ApprovalInboxSubscription),
     Session(SelectedSessionSubscription),
+    Teams,
     Team(SelectedTeamSubscription),
     ProcessTail(ProcessTailSubscription),
     Ledger(LedgerSubscription),
@@ -476,6 +477,7 @@ impl Subscription {
                     .get("include_text")
                     .is_none_or(|value| value == "true"),
             }),
+            "teams" => Self::Teams,
             "team" => Self::Team(SelectedTeamSubscription {
                 team_id: required_filter(filters, "team_id")?,
                 message_limit: parse_usize(filters.get("message_limit"), 100),
@@ -529,6 +531,7 @@ impl Subscription {
                         .as_ref()
                         .is_some_and(|entity| entity.entity_id == subscription.session_id)
             }
+            Self::Teams => patch.view_kind == "teams" || patch.view_kind == "team",
             Self::Team(subscription) => {
                 (patch.view_kind == "team" || patch.view_kind == "team_workspace")
                     && patch
@@ -692,6 +695,18 @@ pub(super) fn snapshot_body(
                     .is_none_or(|value| value == "true"),
             }),
         )?,
+        "teams" => serde_json::json!({
+            "teams": state
+                .teams
+                .keys()
+                .filter_map(|team_id| {
+                    state.snapshot_team(&SelectedTeamSubscription {
+                        team_id: team_id.clone(),
+                        message_limit: 100,
+                    })
+                })
+                .collect::<Vec<_>>()
+        }),
         "team" => serde_json::to_value(state.snapshot_team(&SelectedTeamSubscription {
             team_id: required_filter(filters, "team_id")?,
             message_limit: parse_usize(filters.get("message_limit"), 100),

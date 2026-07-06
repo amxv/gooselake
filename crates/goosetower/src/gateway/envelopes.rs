@@ -66,6 +66,12 @@ impl GatewayState {
         self.enqueue_connection(conn, entry.envelope, None);
     }
 
+    pub(super) async fn publish_materialized_patch(&self, patch: MaterializedPatch) {
+        let envelope = self.patch_envelope(patch.clone());
+        self.record_replayable(envelope).await;
+        let _ = self.patches.send(patch);
+    }
+
     pub(super) async fn record_replayable(&self, mut envelope: RealtimeEnvelope) -> ReplayEntry {
         let gateway_seq = self.next_gateway_seq.fetch_add(1, Ordering::Relaxed);
         envelope.gateway_seq = gateway_seq;

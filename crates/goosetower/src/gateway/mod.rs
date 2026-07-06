@@ -8,7 +8,7 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use axum::http::StatusCode;
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
-use runtime_core::{ApprovalResponseInput, SendTurnInput};
+use runtime_core::{ApprovalResponseInput, ProviderKind, SendTurnInput};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -19,7 +19,7 @@ use crate::materializer::{
     snapshot_cross_source_approval_inbox, snapshot_cross_source_board,
     snapshot_cross_source_health, snapshot_cross_source_ledger, snapshot_cross_source_worktrees,
     ApprovalInboxSubscription, BoardSubscription, BootstrapOptions, LedgerSubscription,
-    SourceBootstrap,
+    SelectedTeamSubscription, SourceBootstrap,
 };
 use crate::materializer::{MaterializedPatch, MaterializedPatchKind, MaterializedState};
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
@@ -34,7 +34,7 @@ use crate::runtime::client::{ProcessKillInput, ProcessStartInput};
 use crate::runtime::events::{SourceEvent, SourceHealth, SourceHealthState};
 use crate::runtime::{
     GooselakeRuntimeClient, RuntimeSseFanIn, RuntimeSseFanInConfig, TeamBroadcastInput,
-    TeamDirectInput, TeamMemberSpawnInput,
+    TeamCreateInput, TeamDirectInput, TeamMemberSpawnInput,
 };
 mod commands;
 mod envelopes;
@@ -253,9 +253,7 @@ impl GatewayState {
         };
 
         for patch in patches {
-            let envelope = self.patch_envelope(patch.clone());
-            self.record_replayable(envelope).await;
-            let _ = self.patches.send(patch);
+            self.publish_materialized_patch(patch).await;
         }
     }
 
@@ -282,9 +280,7 @@ impl GatewayState {
             )
             .await;
         }
-        let envelope = self.patch_envelope(patch.clone());
-        self.record_replayable(envelope).await;
-        let _ = self.patches.send(patch);
+        self.publish_materialized_patch(patch).await;
     }
 
     pub fn allowed_origins(&self) -> Result<Vec<String>> {

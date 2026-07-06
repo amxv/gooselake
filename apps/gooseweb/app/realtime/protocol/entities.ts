@@ -6,6 +6,7 @@ import {
   ProcessViewSchema,
   SessionViewSchema,
   SourceHealthViewSchema,
+  TeamMemberViewSchema,
   TeamViewSchema,
   WorktreeViewSchema,
   type Patch,
@@ -128,6 +129,26 @@ function decodeJsonViewBody(
       const source = normalizeSource(value);
       return { entities: { sources: { [source.sourceId]: source } } };
     }
+    case "team": {
+      const team = normalizeTeam(value);
+      return team ? { entities: { teams: { [team.teamId]: team } } } : { entities: {} };
+    }
+    case "session": {
+      const session = normalizeSession(value);
+      return session
+        ? { entities: { sessions: { [session.sessionId]: session } } }
+        : { entities: {} };
+    }
+    case "teams": {
+      const teams = arrayFrom((value as { teams?: unknown }).teams)
+        .map((team) => normalizeTeam(team))
+        .filter((team): team is NonNullable<ReturnType<typeof normalizeTeam>> => Boolean(team));
+      return {
+        entities: {
+          teams: Object.fromEntries(teams.map((team) => [team.teamId, team]))
+        }
+      };
+    }
     default:
       return { entities: {} };
   }
@@ -191,6 +212,54 @@ function normalizeSource(value: unknown) {
     replayWindowMs: bigintFrom(source.replay_window_ms),
     region: stringFrom(source.region),
     costHint: stringFrom(source.cost_hint)
+  });
+}
+
+function normalizeSession(value: unknown) {
+  const detail = recordFrom(value);
+  const record = recordFrom(detail.session);
+  const sessionId = stringFrom(record.id || detail.session_id);
+  if (!sessionId) {
+    return undefined;
+  }
+  return create(SessionViewSchema, {
+    sourceId: stringFrom(detail.source_id),
+    sessionId,
+    provider: stringFrom(record.provider),
+    model: stringFrom(record.model),
+    status: stringFrom(record.status),
+    cwd: stringFrom(record.cwd),
+    worktreePath: stringFrom(record.worktree_path),
+    activeTurnId: stringFrom(record.active_turn_id)
+  });
+}
+
+function normalizeTeam(value: unknown) {
+  const workspace = recordFrom(value);
+  const teamRecord = recordFrom(workspace.team);
+  const teamId = stringFrom(teamRecord.id || workspace.team_id);
+  if (!teamId) {
+    return undefined;
+  }
+  const members = arrayFrom(workspace.members).map((memberValue) => {
+    const memberView = recordFrom(memberValue);
+    const member = recordFrom(memberView.member);
+    const session = recordFrom(memberView.session);
+    return create(TeamMemberViewSchema, {
+      memberId: stringFrom(member.agent_id),
+      sessionId: stringFrom(session.id || member.agent_id),
+      title: stringFrom(member.title),
+      provider: stringFrom(session.provider),
+      model: stringFrom(session.model),
+      status: stringFrom(session.status)
+    });
+  });
+  return create(TeamViewSchema, {
+    sourceId: stringFrom(workspace.source_id),
+    teamId,
+    name: stringFrom(teamRecord.name),
+    leadMemberId: stringFrom(teamRecord.lead_agent_id),
+    members
   });
 }
 

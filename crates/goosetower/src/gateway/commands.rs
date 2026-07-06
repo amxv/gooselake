@@ -169,6 +169,54 @@ impl GatewayState {
             .runtime_client_for_command(conn, command, payload)
             .await?;
         match payload {
+            crate::protocol::generated::goosetower::v1::command::Payload::CreateSession(input) => {
+                let provider = ProviderKind::from_str(non_empty(&input.provider, "provider")?)
+                    .ok_or_else(|| {
+                        CommandRouteError::with_code(
+                            REASON_INVALID_TARGET,
+                            format!("unknown provider {}", input.provider),
+                            false,
+                        )
+                    })?;
+                let mut metadata = serde_json::Map::new();
+                for (key, value) in &input.metadata {
+                    if !key.trim().is_empty() {
+                        metadata.insert(key.clone(), json!(value));
+                    }
+                }
+                if let Some(title) = optional_string(&input.title) {
+                    metadata.insert("title".to_string(), json!(title));
+                }
+                client
+                    .create_session(&runtime_core::CreateSessionInput {
+                        provider,
+                        model: optional_string(&input.model),
+                        cwd: optional_string(&input.cwd),
+                        permission_mode: optional_string(&input.permission_mode),
+                        metadata: (!metadata.is_empty()).then_some(Value::Object(metadata)),
+                    })
+                    .await?;
+                self.refresh_source_after_command(command).await;
+            }
+            crate::protocol::generated::goosetower::v1::command::Payload::CreateTeam(input) => {
+                client
+                    .create_team(&TeamCreateInput {
+                        name: non_empty(&input.name, "name")?.to_string(),
+                        lead_agent_id: non_empty(&input.lead_agent_id, "lead_agent_id")?
+                            .to_string(),
+                        member_agent_ids: Some(
+                            input
+                                .member_agent_ids
+                                .iter()
+                                .filter_map(|member_id| optional_string(member_id))
+                                .collect(),
+                        ),
+                        created_by: optional_string(&input.created_by)
+                            .or_else(|| Some(conn.auth.subject.clone())),
+                    })
+                    .await?;
+                self.refresh_source_after_command(command).await;
+            }
             crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(input) => {
                 let session_id = non_empty(&input.session_id, "session_id")?;
                 client
@@ -220,17 +268,19 @@ impl GatewayState {
             crate::protocol::generated::goosetower::v1::command::Payload::SendTeamMessage(
                 input,
             ) => {
+                let team_id = non_empty(&input.team_id, "team_id")?;
+                let sender_agent_id = self.team_sender_agent_id(team_id, &conn.auth.subject).await;
                 client
                     .send_team_direct(
-                        non_empty(&input.team_id, "team_id")?,
+                        team_id,
                         &TeamDirectInput {
-                            sender_agent_id: conn.auth.subject.clone(),
+                            sender_agent_id,
                             recipient_agent_id: non_empty(
                                 &input.recipient_member_id,
                                 "recipient_member_id",
                             )?
                             .to_string(),
-                            input: json!({ "text": input.text }),
+                            input: json!([{ "type": "text", "text": input.text }]),
                             image_paths: None,
                             priority: Some("normal".to_string()),
                             policy: Some("non_interrupting".to_string()),
@@ -244,16 +294,18 @@ impl GatewayState {
             crate::protocol::generated::goosetower::v1::command::Payload::BroadcastTeamMessage(
                 input,
             ) => {
+                let team_id = non_empty(&input.team_id, "team_id")?;
+                let sender_agent_id = self.team_sender_agent_id(team_id, &conn.auth.subject).await;
                 client
                     .send_team_broadcast(
-                        non_empty(&input.team_id, "team_id")?,
+                        team_id,
                         &TeamBroadcastInput {
-                            sender_agent_id: conn.auth.subject.clone(),
-                            input: json!({ "text": input.text }),
+                            sender_agent_id,
+                            input: json!([{ "type": "text", "text": input.text }]),
                             image_paths: None,
                             priority: Some("normal".to_string()),
                             policy: Some("non_interrupting".to_string()),
-                            include_sender: Some(false),
+                            include_sender: Some(true),
                             correlation_id: Some(command.command_id.clone()),
                             idempotency_key: Some(command.command_id.clone()),
                         },
@@ -588,12 +640,150 @@ impl GatewayState {
             )),
         }
     }
+
+    async fn refresh_source_after_command(&self, command: &Command) {
+        let Some(source_id) = command
+            .target
+            .as_ref()
+            .map(|target| target.scope_id.as_str())
+            .filter(|value| !value.is_empty())
+        else {
+            tracing::warn!(
+                command_id = %command.command_id,
+                "skipping post-command source refresh because target.scope_id is missing"
+            );
+            return;
+        };
+        let Some(source) = self
+            .config
+            .runtimes
+            .sources
+            .iter()
+            .find(|candidate| candidate.enabled && candidate.source_id == source_id)
+        else {
+            tracing::warn!(
+                command_id = %command.command_id,
+                source_id,
+                "skipping post-command source refresh because source is unavailable"
+            );
+            return;
+        };
+        let client = match runtime_client_from_source(&self.config, source) {
+            Ok(client) => client,
+            Err(error) => {
+                tracing::warn!(
+                    command_id = %command.command_id,
+                    source_id,
+                    error = %error,
+                    "skipping post-command source refresh because runtime client could not be created"
+                );
+                return;
+            }
+        };
+        let mut next = match SourceBootstrap::from_runtime_client(
+            &client,
+            BootstrapOptions::default(),
+        )
+        .await
+        {
+            Ok(bootstrap) => bootstrap.state,
+            Err(error) => {
+                tracing::warn!(
+                    command_id = %command.command_id,
+                    source_id,
+                    error = %error,
+                    "skipping post-command source refresh because runtime bootstrap failed"
+                );
+                return;
+            }
+        };
+        next.apply_source_config(source);
+
+        let patches = {
+            let mut materialized = self.materialized.write().await;
+            let previous = materialized.get(source_id);
+            let mut patches = Vec::new();
+
+            for session_id in next.sessions.keys() {
+                if previous.is_none_or(|state| !state.sessions.contains_key(session_id)) {
+                    if let Some(row) = next.agent_row(session_id) {
+                        patches.push(MaterializedPatch {
+                            kind: MaterializedPatchKind::ListInsert,
+                            view_kind: "board".to_string(),
+                            entity: Some(crate::materializer::EntityKey::new(
+                                source_id,
+                                "session",
+                                session_id.clone(),
+                            )),
+                            version: Some(next.version("session", session_id)),
+                            source_cursor: None,
+                            body: json!(row),
+                        });
+                    }
+                }
+            }
+
+            for team_id in next.teams.keys() {
+                if previous.is_none_or(|state| !state.teams.contains_key(team_id)) {
+                    patches.push(MaterializedPatch {
+                        kind: MaterializedPatchKind::ListInsert,
+                        view_kind: "team".to_string(),
+                        entity: Some(crate::materializer::EntityKey::new(
+                            source_id,
+                            "team",
+                            team_id.clone(),
+                        )),
+                        version: Some(next.version("team", team_id)),
+                        body: json!(next.snapshot_team(&SelectedTeamSubscription {
+                            team_id: team_id.clone(),
+                            message_limit: 100,
+                        })),
+                        source_cursor: None,
+                    });
+                }
+            }
+
+            patches.push(MaterializedPatch {
+                kind: MaterializedPatchKind::EntityUpsert,
+                view_kind: "source_health".to_string(),
+                entity: Some(crate::materializer::EntityKey::new(
+                    source_id, "source", source_id,
+                )),
+                version: None,
+                source_cursor: None,
+                body: json!(next.snapshot_source_health()),
+            });
+
+            materialized.insert(source_id.to_string(), next);
+            patches
+        };
+
+        for patch in patches {
+            self.publish_materialized_patch(patch).await;
+        }
+    }
+
+    async fn team_sender_agent_id(&self, team_id: &str, fallback: &str) -> String {
+        let materialized = self.materialized.read().await;
+        materialized
+            .values()
+            .find_map(|state| state.teams.get(team_id))
+            .map(|team| team.lead_agent_id.clone())
+            .filter(|lead_agent_id| !lead_agent_id.trim().is_empty())
+            .unwrap_or_else(|| fallback.to_string())
+    }
 }
 
 fn command_payload_kind(command: &Command) -> &'static str {
     match command.payload.as_ref() {
         Some(crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(_)) => {
             "send_turn"
+        }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::CreateSession(_)) => {
+            "create_session"
+        }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::CreateTeam(_)) => {
+            "create_team"
         }
         Some(crate::protocol::generated::goosetower::v1::command::Payload::ResolveApproval(_)) => {
             "resolve_approval"
@@ -654,6 +844,8 @@ fn command_owner_entity<'a>(
     payload: &'a crate::protocol::generated::goosetower::v1::command::Payload,
 ) -> Option<(&'static str, &'a str)> {
     match payload {
+        crate::protocol::generated::goosetower::v1::command::Payload::CreateSession(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::CreateTeam(_) => None,
         crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(input) => {
             (!input.session_id.is_empty()).then_some(("session", input.session_id.as_str()))
         }
@@ -700,6 +892,10 @@ fn expected_scope_for_payload(
     payload: &crate::protocol::generated::goosetower::v1::command::Payload,
 ) -> Scope {
     match payload {
+        crate::protocol::generated::goosetower::v1::command::Payload::CreateSession(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::CreateTeam(_) => {
+            Scope::Source
+        }
         crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(_)
         | crate::protocol::generated::goosetower::v1::command::Payload::ResolveApproval(_)
         | crate::protocol::generated::goosetower::v1::command::Payload::InterruptTurn(_) => {

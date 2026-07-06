@@ -21,8 +21,28 @@ message Command {
     CommandCancelDelivery cancel_delivery = 17;
     CommandKillProcess kill_process = 18;
     CommandStartProcess start_process = 19;
+    CommandCreateSession create_session = 20;
+    CommandCreateTeam create_team = 21;
   }
   reserved 30 to 79;
+}
+
+message CommandCreateSession {
+  string provider = 1;
+  string model = 2;
+  string cwd = 3;
+  string title = 4;
+  string permission_mode = 5;
+  map<string, string> metadata = 6;
+  reserved 20 to 39;
+}
+
+message CommandCreateTeam {
+  string name = 1;
+  string lead_agent_id = 2;
+  repeated string member_agent_ids = 3;
+  string created_by = 4;
+  reserved 20 to 39;
 }
 
 message CommandSendTurn {

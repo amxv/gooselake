@@ -1284,6 +1284,70 @@ Recommended initial Protobuf concepts:
 - Risk: browser UI implies unsupported migration or autoscaling.
 - Fallback: label V0 Fleet actions as explicit admin operations and avoid automatic placement until policy exists.
 
+### Phase 13: Mission-Control UI Redesign To Match Desktop Reference
+
+#### Files to read before starting
+
+- `apps/gooseweb/src/routes/index.tsx`
+- `apps/gooseweb/src/routes/__root.tsx`
+- `apps/gooseweb/src/styles/app.css`
+- `apps/gooseweb/components.json`
+- `apps/gooseweb/components/ui/*`
+- `apps/gooseweb/app/stores/gooseweb-store.ts`
+- `apps/gooseweb/app/realtime/*`
+- the design reference image provided by the lead/user for this phase
+
+#### What to do
+
+- Redesign the Gooseweb operator surface to visually match the provided desktop reference as closely as practical without regressing existing realtime behavior.
+- Keep the app `shadcn/ui`-based, but shift the composition, spacing, hierarchy, and chrome toward the reference:
+  - full-height dark mission-control shell
+  - left roster rail for agents/teams/projects with stacked cards and subtle active states
+  - dominant center conversation/worklog pane with rounded container, muted header bar, dense prose blocks, and inline tool/result cards
+  - right-side processes rail with compact segmented filters, running/completed states, process metadata, and kill/action affordances
+  - persistent top-window/app chrome that reads like a desktop control surface rather than a browser dashboard
+- Match the visual language of the reference:
+  - near-black background with low-contrast layered panels
+  - restrained grayscale palette with sparse accent color
+  - larger rounded corners, inset surfaces, and soft separators instead of high-contrast borders
+  - denser typography hierarchy tuned for long-form operational text
+  - card treatments that feel like terminal/agent artifacts rather than generic SaaS widgets
+- Rework the Gooseweb information architecture where needed so the main screen prioritizes:
+  - active investigation or session narrative in the center
+  - team/agent switching on the left
+  - process operations and server state on the right
+  - composer/action tray anchored at the bottom of the main pane
+- Preserve or improve the existing V0 functionality from earlier phases:
+  - realtime subscriptions
+  - command actions
+  - connection status
+  - approval/inbox handling
+  - fleet/process visibility
+  - virtualization and frame-batched streaming behavior
+- Introduce any additional `shadcn/ui` components through the CLI if the redesign needs them, rather than freehand recreating common primitives.
+- Ensure the redesign still works on narrower laptop widths and has a coherent fallback layout for smaller screens, even though desktop is the priority target.
+
+#### Validation strategy
+
+- `bun run typecheck` in `apps/gooseweb`
+- `bun run build` in `apps/gooseweb`
+- Manual browser review against the reference image:
+  - left roster rail hierarchy
+  - center investigation/worklog pane
+  - right processes rail
+  - bottom composer/action bar
+  - connection/process controls
+- Capture before/after screenshots or a concise visual diff summary for review.
+
+#### Risks / fallbacks
+
+- Risk: redesign work regresses established command/realtime interactions while chasing visual parity.
+- Fallback: treat behavior as non-negotiable, and isolate the redesign to layout, composition, styling, and presentation-layer state.
+- Risk: copying the reference too literally creates mismatches with Gooseweb domain needs.
+- Fallback: preserve the reference's structural cues and aesthetic language while adapting labels, panes, and controls to Gooseweb semantics.
+- Risk: `shadcn/ui` defaults look too generic compared with the reference.
+- Fallback: keep `shadcn/ui` as the primitive layer, but use custom layout composition, tokens, and panel treatments to achieve the darker mission-control feel.
+
 ## Cross-Runtime Requirements Summary
 
 - Add second-source readiness before adding actual RunPod.

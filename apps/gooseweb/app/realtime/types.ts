@@ -1,0 +1,115 @@
+import type { Command } from "../../src/gen/goosetower/v1/commands_pb";
+import type {
+  ApprovalView,
+  FleetRowView,
+  ProcessView,
+  SessionView,
+  SourceHealthView,
+  TeamView,
+  WorktreeView
+} from "../../src/gen/goosetower/v1/view_pb";
+
+export type ConnectionState =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "degraded"
+  | "reconnecting"
+  | "replaying"
+  | "stale"
+  | "offline";
+
+export type NormalizedEntities = {
+  readonly fleetRows: Readonly<Record<string, FleetRowView>>;
+  readonly sessions: Readonly<Record<string, SessionView>>;
+  readonly teams: Readonly<Record<string, TeamView>>;
+  readonly approvals: Readonly<Record<string, ApprovalView>>;
+  readonly processes: Readonly<Record<string, ProcessView>>;
+  readonly worktrees: Readonly<Record<string, WorktreeView>>;
+  readonly sources: Readonly<Record<string, SourceHealthView>>;
+};
+
+export type NormalizedEntityPatch = {
+  readonly fleetRows?: Readonly<Record<string, FleetRowView>>;
+  readonly sessions?: Readonly<Record<string, SessionView>>;
+  readonly teams?: Readonly<Record<string, TeamView>>;
+  readonly approvals?: Readonly<Record<string, ApprovalView>>;
+  readonly processes?: Readonly<Record<string, ProcessView>>;
+  readonly worktrees?: Readonly<Record<string, WorktreeView>>;
+  readonly sources?: Readonly<Record<string, SourceHealthView>>;
+};
+
+export type PendingCommandState = {
+  readonly commandId: string;
+  readonly idempotencyKey: string;
+  readonly status: "queued" | "sent" | "accepted" | "rejected" | "duplicate";
+  readonly createdAtUnixMs: number;
+  readonly error?: string;
+};
+
+export type SubscriptionState = {
+  readonly subscriptionId: string;
+  readonly viewKind: string;
+  readonly filters: Readonly<Record<string, string>>;
+  readonly status: "subscribing" | "active" | "stale" | "unsubscribed";
+};
+
+export type CursorState = {
+  readonly gatewaySeq: bigint;
+  readonly sourceCursors: Readonly<Record<string, SourceCursorState>>;
+};
+
+export type SourceCursorState = {
+  readonly sourceId: string;
+  readonly sourceEpoch: string;
+  readonly sourceSeq: bigint;
+};
+
+export type GoosewebSnapshot = {
+  readonly connection: ConnectionState;
+  readonly connectionId?: string;
+  readonly heartbeatIntervalMs: number;
+  readonly cursor: CursorState;
+  readonly entities: NormalizedEntities;
+  readonly subscriptions: Readonly<Record<string, SubscriptionState>>;
+  readonly pendingCommands: Readonly<Record<string, PendingCommandState>>;
+  readonly staleSources: Readonly<Record<string, string>>;
+  readonly lastError?: string;
+};
+
+export type WorkerInbound =
+  | {
+      readonly type: "connect";
+      readonly ticket: string;
+      readonly goosetowerUrl: string;
+    }
+  | { readonly type: "disconnect" }
+  | {
+      readonly type: "subscribe";
+      readonly subscriptionId: string;
+      readonly viewKind: string;
+      readonly filters?: Readonly<Record<string, string>>;
+    }
+  | { readonly type: "unsubscribe"; readonly subscriptionId: string }
+  | {
+      readonly type: "command";
+      readonly command: Command;
+      readonly idempotencyKey?: string;
+    }
+  | { readonly type: "auth-refresh"; readonly ticket: string };
+
+export type WorkerOutbound =
+  | {
+      readonly type: "state";
+      readonly patch: GoosewebStorePatch;
+    }
+  | { readonly type: "command-state"; readonly command: PendingCommandState }
+  | {
+      readonly type: "subscription-state";
+      readonly subscription: SubscriptionState;
+    }
+  | { readonly type: "error"; readonly message: string; readonly retryable: boolean };
+
+export type GoosewebStorePatch = Partial<Omit<GoosewebSnapshot, "entities">> & {
+  readonly entities?: NormalizedEntityPatch;
+};

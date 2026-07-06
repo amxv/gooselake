@@ -1,0 +1,30 @@
+{
+  "name": "gooseweb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "bun run scripts/proto-smoke.ts",
+    "proto": "buf generate"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.12.1",
+    "@tanstack/react-router": "^1.136.0",
+    "@tanstack/react-start": "^1.136.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.60.1",
+    "@bufbuild/protoc-gen-es": "^2.12.1",
+    "@types/node": "^24.10.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7"
+  }
+}

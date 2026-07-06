@@ -8,6 +8,7 @@ use runtime_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::config::{RuntimeSourceCapabilitiesConfig, RuntimeSourceConfig};
 use crate::runtime::events::{SourceEvent, SourceHealth, SourceHealthState};
 
 pub const DEFAULT_LEDGER_LIMIT: usize = 2_000;
@@ -232,15 +233,85 @@ pub struct DiscontinuityView {
 pub struct SourceHealthView {
     pub source_id: String,
     pub source_epoch: String,
+    pub display_name: String,
+    pub source_kind: String,
+    pub provisioner_kind: String,
     pub state: SourceHealthState,
     pub last_source_seq: Option<i64>,
     pub last_error: Option<String>,
     pub observed_at_unix_ms: i64,
     pub active_session_count: usize,
     pub active_process_count: usize,
+    pub provider_kinds: Vec<String>,
+    pub models: Vec<String>,
+    pub process_capacity: Option<u32>,
+    pub supports_worktrees: bool,
+    pub supports_teams: bool,
+    pub replay_window_events: Option<u64>,
+    pub replay_window_ms: Option<u64>,
+    pub region: Option<String>,
+    pub cost_hint: Option<String>,
     pub provider_status: Value,
     pub diagnostics_summary: Value,
     pub version: EntityVersion,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceMetadataView {
+    pub display_name: String,
+    pub source_kind: String,
+    pub provisioner_kind: String,
+    pub provider_kinds: Vec<String>,
+    pub models: Vec<String>,
+    pub process_capacity: Option<u32>,
+    pub supports_worktrees: bool,
+    pub supports_teams: bool,
+    pub replay_window_events: Option<u64>,
+    pub replay_window_ms: Option<u64>,
+    pub region: Option<String>,
+    pub cost_hint: Option<String>,
+}
+
+impl SourceMetadataView {
+    pub fn from_source_config(source: &RuntimeSourceConfig) -> Self {
+        Self {
+            display_name: source.display_name.clone(),
+            source_kind: source.source_kind.clone(),
+            provisioner_kind: serde_json::to_value(source.provisioner_kind)
+                .ok()
+                .and_then(|value| value.as_str().map(ToOwned::to_owned))
+                .unwrap_or_else(|| "static".to_string()),
+            provider_kinds: source.capabilities.provider_kinds.clone(),
+            models: source.capabilities.models.clone(),
+            process_capacity: source.capabilities.process_capacity,
+            supports_worktrees: source.capabilities.supports_worktrees,
+            supports_teams: source.capabilities.supports_teams,
+            replay_window_events: source.capabilities.replay_window_events,
+            replay_window_ms: source.capabilities.replay_window_ms,
+            region: source.region.clone(),
+            cost_hint: source.cost_hint.clone(),
+        }
+    }
+}
+
+impl Default for SourceMetadataView {
+    fn default() -> Self {
+        let capabilities = RuntimeSourceCapabilitiesConfig::default();
+        Self {
+            display_name: String::new(),
+            source_kind: String::new(),
+            provisioner_kind: "static".to_string(),
+            provider_kinds: capabilities.provider_kinds,
+            models: capabilities.models,
+            process_capacity: capabilities.process_capacity,
+            supports_worktrees: capabilities.supports_worktrees,
+            supports_teams: capabilities.supports_teams,
+            replay_window_events: capabilities.replay_window_events,
+            replay_window_ms: capabilities.replay_window_ms,
+            region: None,
+            cost_hint: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -286,6 +357,7 @@ pub struct MaterializedState {
     pub source_epoch: String,
     pub status: MaterializerStatus,
     pub source_health: SourceHealth,
+    pub source_metadata: SourceMetadataView,
     pub ownership: SourceOwnershipIndexes,
     pub last_gateway_seq: u64,
     pub seen_source_cursors: BTreeSet<(String, String, i64)>,
@@ -342,6 +414,11 @@ impl MaterializedState {
         let source_epoch = source_epoch.into();
         Self {
             source_health: SourceHealth::new(source_id.clone(), source_epoch.clone()),
+            source_metadata: SourceMetadataView {
+                display_name: source_id.clone(),
+                source_kind: "gooselake-runtime".to_string(),
+                ..SourceMetadataView::default()
+            },
             ownership: SourceOwnershipIndexes::default(),
             source_id,
             source_epoch,
@@ -379,6 +456,12 @@ impl MaterializedState {
         self.text_limit = text_limit.max(1);
         self.log_limit = log_limit.max(1);
         self
+    }
+
+    pub fn apply_source_config(&mut self, source: &RuntimeSourceConfig) {
+        self.source_metadata = SourceMetadataView::from_source_config(source);
+        self.source_health.state = source.lifecycle;
+        self.bump_source_health_version();
     }
 
     pub fn cursor(&self) -> Option<SourceCursorView> {
@@ -691,6 +774,9 @@ impl MaterializedState {
         SourceHealthView {
             source_id: self.source_id.clone(),
             source_epoch: self.source_epoch.clone(),
+            display_name: self.source_metadata.display_name.clone(),
+            source_kind: self.source_metadata.source_kind.clone(),
+            provisioner_kind: self.source_metadata.provisioner_kind.clone(),
             state: self.source_health.state,
             last_source_seq: self.source_health.last_source_seq,
             last_error: self.source_health.last_error.clone(),
@@ -705,6 +791,15 @@ impl MaterializedState {
                 .values()
                 .filter(|process| matches!(process.status.as_str(), "queued" | "running"))
                 .count(),
+            provider_kinds: self.source_metadata.provider_kinds.clone(),
+            models: self.source_metadata.models.clone(),
+            process_capacity: self.source_metadata.process_capacity,
+            supports_worktrees: self.source_metadata.supports_worktrees,
+            supports_teams: self.source_metadata.supports_teams,
+            replay_window_events: self.source_metadata.replay_window_events,
+            replay_window_ms: self.source_metadata.replay_window_ms,
+            region: self.source_metadata.region.clone(),
+            cost_hint: self.source_metadata.cost_hint.clone(),
             provider_status: self.provider_status.clone(),
             diagnostics_summary: self.diagnostics_summary.clone(),
             version: self.version("source", &self.source_id),

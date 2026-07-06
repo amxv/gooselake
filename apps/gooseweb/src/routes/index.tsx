@@ -7,12 +7,15 @@ import {
   ClipboardListIcon,
   InboxIcon,
   LayoutDashboardIcon,
+  ListChecksIcon,
+  PowerIcon,
   RadioIcon,
   ScrollTextIcon,
   SendIcon,
   SettingsIcon,
   ShieldAlertIcon,
   SquareIcon,
+  TerminalIcon,
   UsersIcon,
   WorkflowIcon
 } from "lucide-react";
@@ -1300,6 +1303,7 @@ function FleetPane({
 }) {
   const source = sources[0];
   const activeProcesses = processes.filter((process) => process.status === "running").length;
+  const controlsEnabled = goosewebConfig.flags.fleetProvisioningControls;
 
   return (
     <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_19rem] gap-3">
@@ -1308,35 +1312,87 @@ function FleetPane({
           <CardTitle>Fleet</CardTitle>
           <CardDescription>Runtime source health and capacity.</CardDescription>
           <CardAction className="flex gap-2">
-            <Button disabled variant="outline">Add runtime</Button>
-            <Button disabled variant="outline">Provision</Button>
+            <Button disabled={!controlsEnabled} variant="outline">
+              <PowerIcon />
+              Provision
+            </Button>
+            <Button disabled={!controlsEnabled || !source} variant="outline">
+              <ListChecksIcon />
+              Drain
+            </Button>
           </CardAction>
         </CardHeader>
         <CardContent className="grid grid-cols-4 gap-2">
           <MetricCard label="sources" value={String(sources.length || 0)} />
-          <MetricCard label="health" value={source?.health || connection} />
+          <MetricCard label="health" value={source?.lifecycle || source?.health || connection} />
           <MetricCard label="stale age" value={source ? ageFrom(toNumber(source.observedAtUnixMs)) : "unknown"} />
           <MetricCard label="replay lag" value={source?.cursor ? source.cursor.sourceSeq.toString() : "0"} />
-          <MetricCard label="active sessions" value={String(rows.length)} />
-          <MetricCard label="process capacity" value={`${activeProcesses}/${Math.max(activeProcesses, 1)}`} />
-          {["codex", "claude", "acp"].map((provider) => (
+          <MetricCard label="active sessions" value={String(source?.activeSessionCount || rows.length)} />
+          <MetricCard
+            label="process capacity"
+            value={`${source?.activeProcessCount || activeProcesses}/${source?.processCapacity || Math.max(activeProcesses, 1)}`}
+          />
+          {(source?.providerKinds.length ? source.providerKinds : ["codex", "claude", "acp"]).map((provider) => (
             <MetricCard
               key={provider}
               label={`${provider} auth`}
-              value={rows.some((row) => row.provider === provider) ? "available" : "unknown"}
+              value={source?.providerKinds.includes(provider) || rows.some((row) => row.provider === provider) ? "available" : "unknown"}
             />
           ))}
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>Future source actions</CardTitle>
-          <CardDescription>Placeholders only in V0.</CardDescription>
+          <CardTitle>Source operations</CardTitle>
+          <CardDescription>Explicit admin controls. No live session migration.</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          {["add runtime", "provision source", "drain source", "inspect source logs"].map((item) => (
-            <Button disabled key={item} variant="outline">{item}</Button>
-          ))}
+        <CardContent className="flex min-h-0 flex-col gap-3">
+          <div className="grid gap-2">
+            {sources.length ? sources.map((item) => (
+              <div className="rounded-md border border-border/70 p-2" key={item.sourceId}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium">{item.displayName || item.sourceId}</div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {item.sourceKind} · {item.provisionerKind || "static"} · {item.region || "region unknown"}
+                    </div>
+                  </div>
+                  <Badge variant={item.lifecycle === "live" || item.health === "live" ? "default" : "secondary"}>
+                    {item.lifecycle || item.health}
+                  </Badge>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-muted-foreground">
+                  <span>{item.supportsWorktrees ? "worktrees" : "no worktrees"}</span>
+                  <span>{item.supportsTeams ? "teams" : "no teams"}</span>
+                  <span>{item.models.length ? item.models.join(", ") : "models unknown"}</span>
+                  <span>{item.costHint || "cost unknown"}</span>
+                </div>
+              </div>
+            )) : (
+              <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                No runtime sources are materialized.
+              </div>
+            )}
+          </div>
+          <Separator />
+          <div className="grid gap-2">
+            <Button disabled={!controlsEnabled} variant="outline">
+              <PowerIcon />
+              Provision source
+            </Button>
+            <Button disabled={!controlsEnabled || !source} variant="outline">
+              <ListChecksIcon />
+              Drain source
+            </Button>
+            <Button disabled={!controlsEnabled || !source} variant="outline">
+              <SquareIcon />
+              Terminate source
+            </Button>
+            <Button disabled={!controlsEnabled || !source} variant="outline">
+              <TerminalIcon />
+              Inspect logs/health
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

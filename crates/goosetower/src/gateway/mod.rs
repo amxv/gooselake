@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::auth::{now_ms, AuthContext, TicketValidator};
-use crate::config::GoosetowerConfig;
+use crate::config::{GoosetowerConfig, RuntimeSourceConfig};
 use crate::materializer::{
     snapshot_cross_source_approval_inbox, snapshot_cross_source_board,
     snapshot_cross_source_health, snapshot_cross_source_ledger, snapshot_cross_source_worktrees,
@@ -38,6 +38,12 @@ use crate::runtime::{
 };
 mod support;
 pub use self::support::GatewayMetricsSnapshot;
+
+fn materialized_state_from_source(source: &RuntimeSourceConfig) -> MaterializedState {
+    let mut state = MaterializedState::new(source.source_id.clone(), source.source_epoch.clone());
+    state.apply_source_config(source);
+    state
+}
 
 use self::support::*;
 
@@ -74,7 +80,7 @@ impl GatewayState {
         {
             materialized.insert(
                 source.source_id.clone(),
-                MaterializedState::new(source.source_id.clone(), source.source_epoch.clone()),
+                materialized_state_from_source(source),
             );
         }
         let replay_buffer_capacity = config.materializer.event_buffer_size;
@@ -107,10 +113,12 @@ impl GatewayState {
                     SourceBootstrap::from_runtime_client(&client, BootstrapOptions::default())
                         .await
                         .map_err(|error| anyhow!(error.to_string()))?;
+                let mut state = bootstrap.state;
+                state.apply_source_config(source);
                 self.materialized
                     .write()
                     .await
-                    .insert(source.source_id.clone(), bootstrap.state);
+                    .insert(source.source_id.clone(), state);
                 Result::<()>::Ok(())
             }
             .await;
@@ -195,6 +203,11 @@ impl GatewayState {
             let state = materialized
                 .entry(event.source_id.clone())
                 .or_insert_with(|| MaterializedState::new(&event.source_id, &event.source_epoch));
+            if let Some(source) = self.config.runtimes.sources.iter().find(|source| {
+                source.source_id == event.source_id && source.source_epoch == event.source_epoch
+            }) {
+                state.apply_source_config(source);
+            }
             if state.source_epoch != event.source_epoch {
                 state.mark_discontinuity("source epoch changed");
                 vec![state.transition_source_health(
@@ -247,6 +260,11 @@ impl GatewayState {
             let state = materialized
                 .entry(health.source_id.clone())
                 .or_insert_with(|| MaterializedState::new(&health.source_id, &health.source_epoch));
+            if let Some(source) = self.config.runtimes.sources.iter().find(|source| {
+                source.source_id == health.source_id && source.source_epoch == health.source_epoch
+            }) {
+                state.apply_source_config(source);
+            }
             state.source_health = health.clone();
             state.transition_source_health(health.state, health.last_error.clone())
         };
@@ -734,9 +752,7 @@ impl GatewayState {
                 let mut materialized = self.materialized.write().await;
                 let state = materialized
                     .entry(source.source_id.clone())
-                    .or_insert_with(|| {
-                        MaterializedState::new(&source.source_id, &source.source_epoch)
-                    });
+                    .or_insert_with(|| materialized_state_from_source(source));
                 let mut patches = Vec::new();
                 for event in source_events {
                     let ingest_lag = now_ms().saturating_sub(event.created_at);
@@ -1422,6 +1438,13 @@ impl GatewayState {
         let stale_after = self.config.replay.source_stale_after_ms;
         match state.source_health.state {
             SourceHealthState::Live if stale_age <= stale_after => {}
+            SourceHealthState::Draining => {
+                return Err(CommandRouteError::with_code(
+                    REASON_SOURCE_UNAVAILABLE,
+                    format!("runtime source {} is draining", source.source_id),
+                    true,
+                ));
+            }
             SourceHealthState::GapDetected => {
                 return Err(CommandRouteError::with_code(
                     REASON_SOURCE_GAP,
@@ -1429,10 +1452,19 @@ impl GatewayState {
                     true,
                 ));
             }
-            SourceHealthState::Offline => {
+            SourceHealthState::Configured
+            | SourceHealthState::Provisioning
+            | SourceHealthState::Booting
+            | SourceHealthState::Offline
+            | SourceHealthState::Failed
+            | SourceHealthState::Terminated => {
                 return Err(CommandRouteError::with_code(
                     REASON_SOURCE_UNAVAILABLE,
-                    format!("runtime source {} is offline", source.source_id),
+                    format!(
+                        "runtime source {} is {}",
+                        source.source_id,
+                        state.source_health.state.command_admission_label()
+                    ),
                     true,
                 ));
             }

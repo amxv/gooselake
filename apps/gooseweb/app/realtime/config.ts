@@ -2,6 +2,7 @@ export type GoosewebFeatureFlags = {
   readonly workerRealtime: boolean;
   readonly devTicketRoute: boolean;
   readonly debugFrames: boolean;
+  readonly fleetProvisioningControls: boolean;
 };
 
 export type GoosewebRuntimeConfig = {
@@ -21,7 +22,9 @@ export const goosewebConfig: GoosewebRuntimeConfig = {
   flags: {
     workerRealtime: env.VITE_GOOSEWEB_WORKER_REALTIME !== "false",
     devTicketRoute: env.VITE_GOOSEWEB_DEV_TICKET_ROUTE_ENABLED === "true",
-    debugFrames: env.VITE_GOOSEWEB_DEBUG_FRAMES === "true"
+    debugFrames: env.VITE_GOOSEWEB_DEBUG_FRAMES === "true",
+    fleetProvisioningControls:
+      env.VITE_GOOSEWEB_FLEET_PROVISIONING_CONTROLS === "true"
   }
 };
 

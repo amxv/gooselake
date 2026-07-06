@@ -11,6 +11,19 @@ message SourceHealthView {
   string health = 4;
   SourceCursor cursor = 5;
   int64 observed_at_unix_ms = 6;
+  string lifecycle = 7;
+  string provisioner_kind = 8;
+  repeated string provider_kinds = 9;
+  repeated string models = 10;
+  uint32 active_session_count = 11;
+  uint32 active_process_count = 12;
+  uint32 process_capacity = 13;
+  bool supports_worktrees = 14;
+  bool supports_teams = 15;
+  uint64 replay_window_events = 16;
+  uint64 replay_window_ms = 17;
+  string region = 18;
+  string cost_hint = 19;
   reserved 20 to 49;
 }
 

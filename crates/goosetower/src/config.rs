@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::runtime::SourceHealthState;
+
 pub const GOOSELAKE_RUNTIME_SOURCE_KIND: &str = "gooselake-runtime";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -326,12 +328,17 @@ pub struct RuntimeSourceConfig {
     pub source_id: String,
     pub source_epoch: String,
     pub source_kind: String,
+    pub provisioner_kind: RuntimeSourceProvisionerKind,
+    pub lifecycle: SourceHealthState,
     pub base_url: String,
     pub bearer_token: Option<String>,
     pub bearer_token_file: Option<PathBuf>,
     pub enabled: bool,
     pub display_name: String,
     pub workspace_id: String,
+    pub capabilities: RuntimeSourceCapabilitiesConfig,
+    pub region: Option<String>,
+    pub cost_hint: Option<String>,
 }
 
 impl Default for RuntimeSourceConfig {
@@ -340,12 +347,17 @@ impl Default for RuntimeSourceConfig {
             source_id: "local".to_string(),
             source_epoch: "static-0".to_string(),
             source_kind: GOOSELAKE_RUNTIME_SOURCE_KIND.to_string(),
+            provisioner_kind: RuntimeSourceProvisionerKind::Static,
+            lifecycle: SourceHealthState::Configured,
             base_url: "http://127.0.0.1:8080".to_string(),
             bearer_token: None,
             bearer_token_file: None,
             enabled: true,
             display_name: "Local Gooselake Runtime".to_string(),
             workspace_id: "default".to_string(),
+            capabilities: RuntimeSourceCapabilitiesConfig::default(),
+            region: None,
+            cost_hint: None,
         }
     }
 }
@@ -368,6 +380,15 @@ impl RuntimeSourceConfig {
                 GOOSELAKE_RUNTIME_SOURCE_KIND
             ));
         }
+        if matches!(
+            self.lifecycle,
+            SourceHealthState::Replaying | SourceHealthState::GapDetected
+        ) {
+            return Err(anyhow!(
+                "runtime source {} lifecycle cannot be an internal replay state",
+                self.source_id
+            ));
+        }
         if !(self.base_url.starts_with("http://") || self.base_url.starts_with("https://")) {
             return Err(anyhow!(
                 "runtime source {} base_url must start with http:// or https://",
@@ -386,8 +407,103 @@ impl RuntimeSourceConfig {
                 self.source_id
             ));
         }
+        self.capabilities.validate(&self.source_id)?;
+        if let Some(region) = self.region.as_ref() {
+            if region.trim().is_empty() {
+                return Err(anyhow!(
+                    "runtime source {} region cannot be empty",
+                    self.source_id
+                ));
+            }
+        }
+        if let Some(cost_hint) = self.cost_hint.as_ref() {
+            if cost_hint.trim().is_empty() {
+                return Err(anyhow!(
+                    "runtime source {} cost_hint cannot be empty",
+                    self.source_id
+                ));
+            }
+        }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeSourceProvisionerKind {
+    Static,
+    Runpod,
+}
+
+impl Default for RuntimeSourceProvisionerKind {
+    fn default() -> Self {
+        Self::Static
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RuntimeSourceCapabilitiesConfig {
+    pub provider_kinds: Vec<String>,
+    pub models: Vec<String>,
+    pub process_capacity: Option<u32>,
+    pub supports_worktrees: bool,
+    pub supports_teams: bool,
+    pub replay_window_events: Option<u64>,
+    pub replay_window_ms: Option<u64>,
+}
+
+impl Default for RuntimeSourceCapabilitiesConfig {
+    fn default() -> Self {
+        Self {
+            provider_kinds: vec!["codex".to_string(), "claude".to_string(), "acp".to_string()],
+            models: Vec::new(),
+            process_capacity: Some(1),
+            supports_worktrees: true,
+            supports_teams: true,
+            replay_window_events: None,
+            replay_window_ms: None,
+        }
+    }
+}
+
+impl RuntimeSourceCapabilitiesConfig {
+    fn validate(&self, source_id: &str) -> Result<()> {
+        validate_trimmed_strings(source_id, "provider_kinds", &self.provider_kinds)?;
+        validate_trimmed_strings(source_id, "models", &self.models)?;
+        if self.process_capacity == Some(0) {
+            return Err(anyhow!(
+                "runtime source {} process_capacity must be greater than zero when set",
+                source_id
+            ));
+        }
+        if self.replay_window_events == Some(0) {
+            return Err(anyhow!(
+                "runtime source {} replay_window_events must be greater than zero when set",
+                source_id
+            ));
+        }
+        if self.replay_window_ms == Some(0) {
+            return Err(anyhow!(
+                "runtime source {} replay_window_ms must be greater than zero when set",
+                source_id
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn validate_trimmed_strings(source_id: &str, field: &str, values: &[String]) -> Result<()> {
+    for value in values {
+        if value.trim().is_empty() {
+            return Err(anyhow!(
+                "runtime source {} {} cannot contain empty values",
+                source_id,
+                field
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

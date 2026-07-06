@@ -14,11 +14,58 @@ pub enum SourceEventLane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceHealthState {
+    Configured,
+    Provisioning,
+    Booting,
     Live,
     Replaying,
+    Draining,
     Stale,
     Offline,
+    Failed,
+    Terminated,
     GapDetected,
+}
+
+impl SourceHealthState {
+    pub fn can_transition_to(self, next: Self) -> bool {
+        use SourceHealthState::*;
+        match (self, next) {
+            (current, target) if current == target => true,
+            (Terminated, _) => false,
+            (
+                Configured,
+                Provisioning | Booting | Replaying | Live | Offline | Failed | Terminated
+                | GapDetected,
+            ) => true,
+            (Provisioning, Booting | Failed | Terminated) => true,
+            (Booting, Live | Failed | Offline | Terminated) => true,
+            (Live, Draining | Stale | Offline | Failed) => true,
+            (Replaying, Live | Stale | Offline | GapDetected | Failed) => true,
+            (Draining, Offline | Terminated | Failed) => true,
+            (Stale, Live | Offline | GapDetected | Draining | Failed) => true,
+            (Offline, Booting | Live | Failed | Terminated) => true,
+            (Failed, Booting | Offline | Terminated) => true,
+            (GapDetected, Replaying | Stale | Offline | Failed) => true,
+            _ => false,
+        }
+    }
+
+    pub fn command_admission_label(self) -> &'static str {
+        match self {
+            SourceHealthState::Live => "accepting_commands",
+            SourceHealthState::Draining => "draining_no_new_sessions",
+            SourceHealthState::Configured
+            | SourceHealthState::Provisioning
+            | SourceHealthState::Booting
+            | SourceHealthState::Replaying
+            | SourceHealthState::Stale
+            | SourceHealthState::Offline
+            | SourceHealthState::Failed
+            | SourceHealthState::Terminated
+            | SourceHealthState::GapDetected => "not_accepting_commands",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,7 +83,7 @@ impl SourceHealth {
         Self {
             source_id: source_id.into(),
             source_epoch: source_epoch.into(),
-            state: SourceHealthState::Offline,
+            state: SourceHealthState::Configured,
             last_source_seq: None,
             last_error: None,
             updated_at: now_ms(),
@@ -49,6 +96,12 @@ impl SourceHealth {
         last_source_seq: Option<i64>,
         last_error: Option<String>,
     ) {
+        debug_assert!(
+            self.state.can_transition_to(state),
+            "invalid source lifecycle transition {:?} -> {:?}",
+            self.state,
+            state
+        );
         self.state = state;
         if let Some(last_source_seq) = last_source_seq {
             self.last_source_seq = Some(last_source_seq);
@@ -182,5 +235,22 @@ mod tests {
             map_runtime_event_lane(RuntimeEventCriticality::Droppable, "team.member_joined"),
             SourceEventLane::State
         );
+    }
+
+    #[test]
+    fn source_lifecycle_allows_explicit_provisioning_path() {
+        assert!(SourceHealthState::Configured.can_transition_to(SourceHealthState::Provisioning));
+        assert!(SourceHealthState::Provisioning.can_transition_to(SourceHealthState::Booting));
+        assert!(SourceHealthState::Booting.can_transition_to(SourceHealthState::Live));
+        assert!(SourceHealthState::Live.can_transition_to(SourceHealthState::Draining));
+        assert!(SourceHealthState::Draining.can_transition_to(SourceHealthState::Terminated));
+    }
+
+    #[test]
+    fn source_lifecycle_blocks_terminated_reactivation_and_drain_reactivation_shortcuts() {
+        assert!(!SourceHealthState::Terminated.can_transition_to(SourceHealthState::Booting));
+        assert!(SourceHealthState::Configured.can_transition_to(SourceHealthState::Live));
+        assert!(SourceHealthState::Configured.can_transition_to(SourceHealthState::Replaying));
+        assert!(!SourceHealthState::Draining.can_transition_to(SourceHealthState::Live));
     }
 }

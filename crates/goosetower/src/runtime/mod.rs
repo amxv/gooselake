@@ -1,5 +1,6 @@
 pub mod client;
 pub mod events;
+pub mod provisioning;
 pub mod sse;
 
 pub use client::{
@@ -10,6 +11,10 @@ pub use client::{
 };
 pub use events::{
     map_runtime_event_lane, SourceEvent, SourceEventLane, SourceHealth, SourceHealthState,
+};
+pub use provisioning::{
+    ProvisioningRequest, ProvisioningSourceRecord, RunpodSourceProvisioner,
+    RuntimeSourceProvisioner, StaticSourceProvisioner,
 };
 pub use sse::{RuntimeSseFanIn, RuntimeSseFanInConfig, SseFrame};
 

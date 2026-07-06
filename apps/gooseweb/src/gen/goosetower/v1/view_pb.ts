@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file goosetower/v1/view.proto.
  */
 export const file_goosetower_v1_view: GenFile = /*@__PURE__*/
-  fileDesc("Chhnb29zZXRvd2VyL3YxL3ZpZXcucHJvdG8SDWdvb3NldG93ZXIudjEisAEKEFNvdXJjZUhlYWx0aFZpZXcSEQoJc291cmNlX2lkGAEgASgJEhQKDGRpc3BsYXlfbmFtZRgCIAEoCRITCgtzb3VyY2Vfa2luZBgDIAEoCRIOCgZoZWFsdGgYBCABKAkSKwoGY3Vyc29yGAUgASgLMhsuZ29vc2V0b3dlci52MS5Tb3VyY2VDdXJzb3ISGwoTb2JzZXJ2ZWRfYXRfdW5peF9tcxgGIAEoA0oECBQQMiL0AQoMRmxlZXRSb3dWaWV3Eg4KBnJvd19pZBgBIAEoCRIRCglzb3VyY2VfaWQYAiABKAkSEgoKc2Vzc2lvbl9pZBgDIAEoCRIPCgd0ZWFtX2lkGAQgASgJEhAKCHByb3ZpZGVyGAUgASgJEg0KBW1vZGVsGAYgASgJEg4KBnN0YXR1cxgHIAEoCRINCgV0aXRsZRgIIAEoCRIVCg13b3JrdHJlZV9wYXRoGAkgASgJEh4KFnBlbmRpbmdfYXBwcm92YWxfY291bnQYCiABKA0SHwoXbGF0ZXN0X2FjdGl2aXR5X3VuaXhfbXMYCyABKANKBAgeEFAipwEKC1Nlc3Npb25WaWV3EhEKCXNvdXJjZV9pZBgBIAEoCRISCgpzZXNzaW9uX2lkGAIgASgJEhAKCHByb3ZpZGVyGAMgASgJEg0KBW1vZGVsGAQgASgJEg4KBnN0YXR1cxgFIAEoCRILCgNjd2QYBiABKAkSFQoNd29ya3RyZWVfcGF0aBgHIAEoCRIWCg5hY3RpdmVfdHVybl9pZBgIIAEoCUoECB4QUCKKAQoIVGVhbVZpZXcSEQoJc291cmNlX2lkGAEgASgJEg8KB3RlYW1faWQYAiABKAkSDAoEbmFtZRgDIAEoCRIWCg5sZWFkX21lbWJlcl9pZBgEIAEoCRIuCgdtZW1iZXJzGAUgAygLMh0uZ29vc2V0b3dlci52MS5UZWFtTWVtYmVyVmlld0oECB4QUCJ9Cg5UZWFtTWVtYmVyVmlldxIRCgltZW1iZXJfaWQYASABKAkSEgoKc2Vzc2lvbl9pZBgCIAEoCRINCgV0aXRsZRgDIAEoCRIQCghwcm92aWRlchgEIAEoCRINCgVtb2RlbBgFIAEoCRIOCgZzdGF0dXMYBiABKAlKBAgeEFAikAEKDEFwcHJvdmFsVmlldxIRCglzb3VyY2VfaWQYASABKAkSEwoLYXBwcm92YWxfaWQYAiABKAkSEgoKc2Vzc2lvbl9pZBgDIAEoCRIPCgd0dXJuX2lkGAQgASgJEgwKBHJpc2sYBSABKAkSDgoGc3RhdHVzGAYgASgJEg8KB3N1bW1hcnkYByABKAlKBAgeEFAibgoLUHJvY2Vzc1ZpZXcSEQoJc291cmNlX2lkGAEgASgJEhIKCnByb2Nlc3NfaWQYAiABKAkSDgoGc3RhdHVzGAMgASgJEg8KB2NvbW1hbmQYBCABKAkSEQoJZXhpdF9jb2RlGAUgASgFSgQIHhBQImoKDFdvcmt0cmVlVmlldxIRCglzb3VyY2VfaWQYASABKAkSEwoLd29ya3RyZWVfaWQYAiABKAkSDAoEcGF0aBgDIAEoCRIOCgZicmFuY2gYBCABKAkSDgoGc3RhdHVzGAUgASgJSgQIHhBQIl4KCFNuYXBzaG90EhEKCXZpZXdfa2luZBgBIAEoCRIrCgZjdXJzb3IYAiABKAsyGy5nb29zZXRvd2VyLnYxLkN1cnNvclZlY3RvchIMCgRib2R5GAMgASgMSgQIFBAyIoUBCgVQYXRjaBIRCgl2aWV3X2tpbmQYASABKAkSKAoGZW50aXR5GAIgASgLMhguZ29vc2V0b3dlci52MS5FbnRpdHlSZWYSKwoGY3Vyc29yGAMgASgLMhsuZ29vc2V0b3dlci52MS5DdXJzb3JWZWN0b3ISDAoEYm9keRgEIAEoDEoECBQQMmIGcHJvdG8z", [file_goosetower_v1_common]);
+  fileDesc("Chhnb29zZXRvd2VyL3YxL3ZpZXcucHJvdG8SDWdvb3NldG93ZXIudjEi6gMKEFNvdXJjZUhlYWx0aFZpZXcSEQoJc291cmNlX2lkGAEgASgJEhQKDGRpc3BsYXlfbmFtZRgCIAEoCRITCgtzb3VyY2Vfa2luZBgDIAEoCRIOCgZoZWFsdGgYBCABKAkSKwoGY3Vyc29yGAUgASgLMhsuZ29vc2V0b3dlci52MS5Tb3VyY2VDdXJzb3ISGwoTb2JzZXJ2ZWRfYXRfdW5peF9tcxgGIAEoAxIRCglsaWZlY3ljbGUYByABKAkSGAoQcHJvdmlzaW9uZXJfa2luZBgIIAEoCRIWCg5wcm92aWRlcl9raW5kcxgJIAMoCRIOCgZtb2RlbHMYCiADKAkSHAoUYWN0aXZlX3Nlc3Npb25fY291bnQYCyABKA0SHAoUYWN0aXZlX3Byb2Nlc3NfY291bnQYDCABKA0SGAoQcHJvY2Vzc19jYXBhY2l0eRgNIAEoDRIaChJzdXBwb3J0c193b3JrdHJlZXMYDiABKAgSFgoOc3VwcG9ydHNfdGVhbXMYDyABKAgSHAoUcmVwbGF5X3dpbmRvd19ldmVudHMYECABKAQSGAoQcmVwbGF5X3dpbmRvd19tcxgRIAEoBBIOCgZyZWdpb24YEiABKAkSEQoJY29zdF9oaW50GBMgASgJSgQIFBAyIvQBCgxGbGVldFJvd1ZpZXcSDgoGcm93X2lkGAEgASgJEhEKCXNvdXJjZV9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJEg8KB3RlYW1faWQYBCABKAkSEAoIcHJvdmlkZXIYBSABKAkSDQoFbW9kZWwYBiABKAkSDgoGc3RhdHVzGAcgASgJEg0KBXRpdGxlGAggASgJEhUKDXdvcmt0cmVlX3BhdGgYCSABKAkSHgoWcGVuZGluZ19hcHByb3ZhbF9jb3VudBgKIAEoDRIfChdsYXRlc3RfYWN0aXZpdHlfdW5peF9tcxgLIAEoA0oECB4QUCKnAQoLU2Vzc2lvblZpZXcSEQoJc291cmNlX2lkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEAoIcHJvdmlkZXIYAyABKAkSDQoFbW9kZWwYBCABKAkSDgoGc3RhdHVzGAUgASgJEgsKA2N3ZBgGIAEoCRIVCg13b3JrdHJlZV9wYXRoGAcgASgJEhYKDmFjdGl2ZV90dXJuX2lkGAggASgJSgQIHhBQIooBCghUZWFtVmlldxIRCglzb3VyY2VfaWQYASABKAkSDwoHdGVhbV9pZBgCIAEoCRIMCgRuYW1lGAMgASgJEhYKDmxlYWRfbWVtYmVyX2lkGAQgASgJEi4KB21lbWJlcnMYBSADKAsyHS5nb29zZXRvd2VyLnYxLlRlYW1NZW1iZXJWaWV3SgQIHhBQIn0KDlRlYW1NZW1iZXJWaWV3EhEKCW1lbWJlcl9pZBgBIAEoCRISCgpzZXNzaW9uX2lkGAIgASgJEg0KBXRpdGxlGAMgASgJEhAKCHByb3ZpZGVyGAQgASgJEg0KBW1vZGVsGAUgASgJEg4KBnN0YXR1cxgGIAEoCUoECB4QUCKQAQoMQXBwcm92YWxWaWV3EhEKCXNvdXJjZV9pZBgBIAEoCRITCgthcHByb3ZhbF9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJEg8KB3R1cm5faWQYBCABKAkSDAoEcmlzaxgFIAEoCRIOCgZzdGF0dXMYBiABKAkSDwoHc3VtbWFyeRgHIAEoCUoECB4QUCJuCgtQcm9jZXNzVmlldxIRCglzb3VyY2VfaWQYASABKAkSEgoKcHJvY2Vzc19pZBgCIAEoCRIOCgZzdGF0dXMYAyABKAkSDwoHY29tbWFuZBgEIAEoCRIRCglleGl0X2NvZGUYBSABKAVKBAgeEFAiagoMV29ya3RyZWVWaWV3EhEKCXNvdXJjZV9pZBgBIAEoCRITCgt3b3JrdHJlZV9pZBgCIAEoCRIMCgRwYXRoGAMgASgJEg4KBmJyYW5jaBgEIAEoCRIOCgZzdGF0dXMYBSABKAlKBAgeEFAiXgoIU25hcHNob3QSEQoJdmlld19raW5kGAEgASgJEisKBmN1cnNvchgCIAEoCzIbLmdvb3NldG93ZXIudjEuQ3Vyc29yVmVjdG9yEgwKBGJvZHkYAyABKAxKBAgUEDIihQEKBVBhdGNoEhEKCXZpZXdfa2luZBgBIAEoCRIoCgZlbnRpdHkYAiABKAsyGC5nb29zZXRvd2VyLnYxLkVudGl0eVJlZhIrCgZjdXJzb3IYAyABKAsyGy5nb29zZXRvd2VyLnYxLkN1cnNvclZlY3RvchIMCgRib2R5GAQgASgMSgQIFBAyYgZwcm90bzM", [file_goosetower_v1_common]);
 
 /**
  * @generated from message goosetower.v1.SourceHealthView
@@ -47,6 +47,71 @@ export type SourceHealthView = Message<"goosetower.v1.SourceHealthView"> & {
    * @generated from field: int64 observed_at_unix_ms = 6;
    */
   observedAtUnixMs: bigint;
+
+  /**
+   * @generated from field: string lifecycle = 7;
+   */
+  lifecycle: string;
+
+  /**
+   * @generated from field: string provisioner_kind = 8;
+   */
+  provisionerKind: string;
+
+  /**
+   * @generated from field: repeated string provider_kinds = 9;
+   */
+  providerKinds: string[];
+
+  /**
+   * @generated from field: repeated string models = 10;
+   */
+  models: string[];
+
+  /**
+   * @generated from field: uint32 active_session_count = 11;
+   */
+  activeSessionCount: number;
+
+  /**
+   * @generated from field: uint32 active_process_count = 12;
+   */
+  activeProcessCount: number;
+
+  /**
+   * @generated from field: uint32 process_capacity = 13;
+   */
+  processCapacity: number;
+
+  /**
+   * @generated from field: bool supports_worktrees = 14;
+   */
+  supportsWorktrees: boolean;
+
+  /**
+   * @generated from field: bool supports_teams = 15;
+   */
+  supportsTeams: boolean;
+
+  /**
+   * @generated from field: uint64 replay_window_events = 16;
+   */
+  replayWindowEvents: bigint;
+
+  /**
+   * @generated from field: uint64 replay_window_ms = 17;
+   */
+  replayWindowMs: bigint;
+
+  /**
+   * @generated from field: string region = 18;
+   */
+  region: string;
+
+  /**
+   * @generated from field: string cost_hint = 19;
+   */
+  costHint: string;
 };
 
 /**

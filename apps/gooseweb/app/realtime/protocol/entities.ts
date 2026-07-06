@@ -169,15 +169,28 @@ function normalizeSource(value: unknown) {
   const sourceId = stringFrom(source.source_id);
   return create(SourceHealthViewSchema, {
     sourceId,
-    displayName: sourceId || "source",
-    sourceKind: "gooselake-runtime",
+    displayName: stringFrom(source.display_name) || sourceId || "source",
+    sourceKind: stringFrom(source.source_kind) || "gooselake-runtime",
     health: state,
     cursor: create(SourceCursorSchema, {
       sourceId,
       sourceEpoch: stringFrom(source.source_epoch),
       sourceSeq: bigintFrom(source.last_source_seq)
     }),
-    observedAtUnixMs: bigintFrom(source.observed_at_unix_ms)
+    observedAtUnixMs: bigintFrom(source.observed_at_unix_ms),
+    lifecycle: stringFrom(source.lifecycle) || state,
+    provisionerKind: stringFrom(source.provisioner_kind) || "static",
+    providerKinds: stringArrayFrom(source.provider_kinds),
+    models: stringArrayFrom(source.models),
+    activeSessionCount: numberFrom(source.active_session_count),
+    activeProcessCount: numberFrom(source.active_process_count),
+    processCapacity: numberFrom(source.process_capacity),
+    supportsWorktrees: Boolean(source.supports_worktrees),
+    supportsTeams: Boolean(source.supports_teams),
+    replayWindowEvents: bigintFrom(source.replay_window_events),
+    replayWindowMs: bigintFrom(source.replay_window_ms),
+    region: stringFrom(source.region),
+    costHint: stringFrom(source.cost_hint)
   });
 }
 
@@ -199,4 +212,10 @@ function numberFrom(value: unknown): number {
 
 function bigintFrom(value: unknown): bigint {
   return typeof value === "number" ? BigInt(value) : 0n;
+}
+
+function stringArrayFrom(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }

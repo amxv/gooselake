@@ -1,0 +1,47 @@
+[server]
+bind_address = "127.0.0.1:8090"
+public_base_url = "http://127.0.0.1:8090"
+allowed_gooseweb_origins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+]
+
+[auth]
+api_token = "dev-goosetower-token"
+
+[tickets]
+issuer = "gooseweb-local"
+audience = "goosetower-local"
+signing_key = "dev-ticket-signing-key"
+ttl_secs = 60
+
+[[runtimes.sources]]
+source_id = "local"
+source_epoch = "local-dev-0"
+source_kind = "gooselake-runtime"
+base_url = "http://127.0.0.1:8080"
+bearer_token_file = ".gg-runtime/auth/api-token"
+enabled = true
+display_name = "Local Gooselake Runtime"
+workspace_id = "default"
+
+[websocket]
+max_message_bytes = 1048576
+heartbeat_interval_ms = 15000
+
+[replay]
+max_events_per_request = 1000
+source_stale_after_ms = 30000
+
+[materializer]
+event_buffer_size = 8192
+snapshot_cache_size = 1024
+
+[lanes]
+critical_capacity = 4096
+state_capacity = 8192
+tokens_capacity = 16384
+bulk_capacity = 2048
+
+[debug]
+endpoints_enabled = true

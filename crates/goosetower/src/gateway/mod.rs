@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,6 +9,7 @@ use axum::http::StatusCode;
 use futures_util::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
 use runtime_core::{ApprovalResponseInput, SendTurnInput};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex, RwLock};
 
@@ -30,6 +31,7 @@ use crate::runtime::{
     GooselakeRuntimeClient, TeamBroadcastInput, TeamDirectInput, TeamMemberSpawnInput,
 };
 mod support;
+pub use self::support::GatewayMetricsSnapshot;
 
 use self::support::*;
 
@@ -47,6 +49,8 @@ pub struct GatewayState {
     command_store: Mutex<CommandIdStore>,
     replay_buffer: Mutex<GatewayReplayBuffer>,
     metrics: GatewayMetrics,
+    active_connections: Mutex<BTreeMap<String, ActiveConnectionDebug>>,
+    audit: Mutex<VecDeque<GatewayAuditRecord>>,
     next_connection_id: AtomicU64,
     next_gateway_seq: AtomicU64,
     patches: broadcast::Sender<MaterializedPatch>,
@@ -75,6 +79,8 @@ impl GatewayState {
             command_store: Mutex::new(CommandIdStore::default()),
             replay_buffer: Mutex::new(GatewayReplayBuffer::new(replay_buffer_capacity)),
             metrics: GatewayMetrics::default(),
+            active_connections: Mutex::new(BTreeMap::new()),
+            audit: Mutex::new(VecDeque::new()),
             next_connection_id: AtomicU64::new(1),
             next_gateway_seq: AtomicU64::new(1),
             patches,
@@ -104,6 +110,12 @@ impl GatewayState {
             .await;
 
             if let Err(error) = result {
+                self.record_audit(
+                    "source.bootstrap_failed",
+                    Some(source.source_id.clone()),
+                    json!({ "error": error.to_string() }),
+                )
+                .await;
                 tracing::warn!(
                     source_id = %source.source_id,
                     error = %error,
@@ -136,6 +148,32 @@ impl GatewayState {
             "conn_{}",
             self.next_connection_id.fetch_add(1, Ordering::Relaxed)
         );
+        self.metrics
+            .connection_open_count
+            .fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .active_connections
+            .fetch_add(1, Ordering::Relaxed);
+        self.active_connections.lock().await.insert(
+            connection_id.clone(),
+            ActiveConnectionDebug {
+                connection_id: connection_id.clone(),
+                subject: auth.subject.clone(),
+                workspace_id: auth.workspace_id.clone(),
+                status: "connected".to_string(),
+                connected_at_unix_ms: now_ms(),
+                subscriptions: Vec::new(),
+                last_acked_gateway_seq: 0,
+                buffered_messages: 0,
+                backpressure_drops: 0,
+            },
+        );
+        self.record_audit(
+            "connection.open",
+            Some(connection_id.clone()),
+            json!({ "user": auth.subject.clone(), "workspace_id": auth.workspace_id.clone() }),
+        )
+        .await;
         tracing::info!(
             connection_id,
             user = %auth.subject,
@@ -150,8 +188,16 @@ impl GatewayState {
             self.config.lanes.clone(),
             self.config.websocket.max_message_bytes,
         );
-        conn.enqueue(self.hello(&connection_id), Some("hello".to_string()));
-        conn.enqueue(self.audit_event("connection.open", Scope::System, ""), None);
+        self.enqueue_connection(
+            &mut conn,
+            self.hello(&connection_id),
+            Some("hello".to_string()),
+        );
+        self.enqueue_connection(
+            &mut conn,
+            self.audit_event("connection.open", Scope::System, ""),
+            None,
+        );
         if sender
             .send(Message::Binary(
                 self.encode_next(&mut conn).unwrap_or_default().into(),
@@ -190,11 +236,17 @@ impl GatewayState {
                         Ok(_) => {}
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             conn.status = ConnectionStatus::Degraded;
-                            conn.enqueue(
+                            self.enqueue_connection(
+                                &mut conn,
                                 self.connection_degraded("gateway replay buffer lagged"),
                                 Some("connection_status".to_string()),
                             );
-                            conn.enqueue(self.audit_event("source.gap", Scope::Source, ""), None);
+                            self.enqueue_connection(&mut conn, self.audit_event("source.gap", Scope::Source, ""), None);
+                            self.record_audit(
+                                "source.gap",
+                                Some(conn.connection_id.clone()),
+                                json!({ "reason": "gateway replay buffer lagged" }),
+                            ).await;
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
                     }
@@ -215,7 +267,11 @@ impl GatewayState {
                         Ok(Continue::Yes) => {}
                         Ok(Continue::No) => break,
                         Err(error) => {
-                            conn.enqueue(error_envelope("protocol_error", error.to_string(), false), None);
+                            self.enqueue_connection(
+                                &mut conn,
+                                error_envelope("protocol_error", error.to_string(), false),
+                                None,
+                            );
                         }
                     }
                 }
@@ -230,6 +286,7 @@ impl GatewayState {
                     return;
                 }
             }
+            self.refresh_connection_debug(&conn).await;
         }
 
         tracing::info!(
@@ -238,6 +295,25 @@ impl GatewayState {
             workspace = %conn.auth.workspace_id,
             "gateway audit connection.close"
         );
+        self.record_audit(
+            "connection.close",
+            Some(conn.connection_id.clone()),
+            json!({ "user": conn.auth.subject, "workspace_id": conn.auth.workspace_id }),
+        )
+        .await;
+        self.metrics
+            .connection_close_count
+            .fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .active_connections
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                Some(value.saturating_sub(1))
+            })
+            .ok();
+        self.active_connections
+            .lock()
+            .await
+            .remove(&conn.connection_id);
         conn.status = ConnectionStatus::Offline;
     }
 
@@ -249,7 +325,7 @@ impl GatewayState {
         let bytes = match message {
             Message::Binary(bytes) => bytes,
             Message::Ping(bytes) => {
-                conn.enqueue(raw_pong_envelope(bytes), None);
+                self.enqueue_connection(conn, raw_pong_envelope(bytes), None);
                 return Ok(Continue::Yes);
             }
             Message::Pong(_) => return Ok(Continue::Yes),
@@ -265,7 +341,14 @@ impl GatewayState {
         }
         match envelope.payload {
             Some(Payload::Ping(ping)) => {
-                conn.enqueue(self.pong(ping), Some("pong".to_string()));
+                let pong = self.pong(ping);
+                if let Some(Payload::Pong(pong_payload)) = pong.payload.as_ref() {
+                    let rtt = now_ms().saturating_sub(pong_payload.client_time_unix_ms);
+                    self.metrics
+                        .browser_rtt_ms
+                        .store(rtt as u64, Ordering::Relaxed);
+                }
+                self.enqueue_connection(conn, pong, Some("pong".to_string()));
             }
             Some(Payload::Ack(ack)) => {
                 conn.last_acked_gateway_seq = conn.last_acked_gateway_seq.max(ack.gateway_seq);
@@ -275,14 +358,23 @@ impl GatewayState {
             }
             Some(Payload::Subscribe(subscribe)) => {
                 let snapshot = self.subscribe(conn, subscribe).await?;
-                conn.enqueue(snapshot, None);
+                self.enqueue_connection(conn, snapshot, None);
             }
             Some(Payload::Unsubscribe(unsubscribe)) => {
+                let subscription_id = unsubscribe.subscription_id.clone();
                 conn.unsubscribe(unsubscribe);
-                conn.enqueue(
+                self.enqueue_connection(
+                    conn,
                     self.audit_event("subscribe.removed", Scope::System, ""),
                     None,
                 );
+                self.refresh_connection_debug(conn).await;
+                self.record_audit(
+                    "subscribe.removed",
+                    Some(conn.connection_id.clone()),
+                    json!({ "subscription_id": subscription_id }),
+                )
+                .await;
             }
             Some(Payload::AuthRefresh(AuthRefresh { ticket })) => {
                 let origin = conn
@@ -296,7 +388,8 @@ impl GatewayState {
                     .validate_and_consume(ticket.as_str(), origin.as_str())
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
-                conn.enqueue(
+                self.enqueue_connection(
+                    conn,
                     envelope_with_payload(
                         MessageKind::AuthRefreshed,
                         Lane::Critical,
@@ -306,11 +399,21 @@ impl GatewayState {
                     ),
                     None,
                 );
-                conn.enqueue(self.audit_event("auth.refresh", Scope::System, ""), None);
+                self.enqueue_connection(
+                    conn,
+                    self.audit_event("auth.refresh", Scope::System, ""),
+                    None,
+                );
+                self.record_audit(
+                    "auth.refresh",
+                    Some(conn.connection_id.clone()),
+                    json!({ "subject": conn.auth.subject }),
+                )
+                .await;
             }
             Some(Payload::Command(command)) => {
                 let response = self.admit_and_route_command(conn, command).await;
-                conn.enqueue(response, None);
+                self.enqueue_connection(conn, response, None);
             }
             _ => {
                 return Err(anyhow!("unsupported client message kind"));
@@ -318,7 +421,8 @@ impl GatewayState {
         }
 
         if conn.auth.expires_at_unix_ms - now_ms() < 15_000 {
-            conn.enqueue(
+            self.enqueue_connection(
+                conn,
                 envelope_with_payload(
                     MessageKind::AuthExpiring,
                     Lane::Critical,
@@ -337,7 +441,8 @@ impl GatewayState {
         let started = Instant::now();
         let Some(cursor) = resume.cursor else {
             self.metrics.resume_rejected.fetch_add(1, Ordering::Relaxed);
-            conn.enqueue(
+            self.enqueue_connection(
+                conn,
                 error_envelope(
                     "resume_rejected",
                     "resume cursor is required".to_string(),
@@ -358,7 +463,8 @@ impl GatewayState {
         }
 
         conn.status = ConnectionStatus::Replaying;
-        conn.enqueue(
+        self.enqueue_connection(
+            conn,
             self.connection_degraded(format!(
                 "{}: resume from {}",
                 conn.status.as_str(),
@@ -376,7 +482,7 @@ impl GatewayState {
         let mut replayed_bytes = 0usize;
         for entry in &window.entries {
             if replay_entry_matches(conn, entry) {
-                conn.enqueue(entry.envelope.clone(), None);
+                self.enqueue_connection(conn, entry.envelope.clone(), None);
                 replayed_events += 1;
                 replayed_bytes += entry.encoded_len;
             }
@@ -388,7 +494,7 @@ impl GatewayState {
                 .record_replay(replayed_events, replayed_bytes, started.elapsed());
             conn.status = ConnectionStatus::Connected;
             for source in &cursor.sources {
-                conn.enqueue(self.source_gap_filled(source.clone()), None);
+                self.enqueue_connection(conn, self.source_gap_filled(source.clone()), None);
             }
             return Ok(());
         }
@@ -402,13 +508,14 @@ impl GatewayState {
                     .record_replay(replayed_events, replayed_bytes, started.elapsed());
                 conn.status = ConnectionStatus::Connected;
                 for source in source_replay.filled {
-                    conn.enqueue(self.source_gap_filled(source), None);
+                    self.enqueue_connection(conn, self.source_gap_filled(source), None);
                 }
             }
             Err(gap) => {
                 self.metrics.gap_count.fetch_add(1, Ordering::Relaxed);
                 conn.status = ConnectionStatus::Stale;
-                conn.enqueue(
+                self.enqueue_connection(
+                    conn,
                     self.source_gap_detected(gap.last_seen.clone(), gap.next_available.clone()),
                     None,
                 );
@@ -493,6 +600,10 @@ impl GatewayState {
                     });
                 let mut patches = Vec::new();
                 for event in source_events {
+                    let ingest_lag = now_ms().saturating_sub(event.created_at);
+                    self.metrics
+                        .event_ingest_lag_ms
+                        .store(ingest_lag as u64, Ordering::Relaxed);
                     if state
                         .source_health
                         .last_source_seq
@@ -508,7 +619,12 @@ impl GatewayState {
                             "source sequence jumped during replay",
                         ));
                     }
+                    let reduce_started = Instant::now();
                     let effect = state.reduce_source_event(event);
+                    self.metrics.materializer_reduce_time_ms.store(
+                        reduce_started.elapsed().as_millis() as u64,
+                        Ordering::Relaxed,
+                    );
                     if !effect.duplicate {
                         patches.extend(effect.patches);
                     }
@@ -521,7 +637,7 @@ impl GatewayState {
                     let replay_entry = self.record_replayable(envelope).await;
                     outcome.events += 1;
                     outcome.bytes += replay_entry.encoded_len;
-                    conn.enqueue(replay_entry.envelope, None);
+                    self.enqueue_connection(conn, replay_entry.envelope, None);
                 }
                 let _ = self.patches.send(patch);
             }
@@ -562,7 +678,7 @@ impl GatewayState {
             .snapshot_resync_count
             .fetch_add(1, Ordering::Relaxed);
         let event = self.source_snapshot_resync(source_id, &reason);
-        conn.enqueue(event, None);
+        self.enqueue_connection(conn, event, None);
         self.enqueue_patch(conn, patch.clone()).await;
         let _ = self.patches.send(patch);
         Ok(())
@@ -582,6 +698,16 @@ impl GatewayState {
             view_kind = %subscribe.view_kind,
             "gateway audit subscribe.changed"
         );
+        self.refresh_connection_debug(conn).await;
+        self.record_audit(
+            "subscribe.changed",
+            Some(conn.connection_id.clone()),
+            json!({
+                "subscription_id": subscribe.subscription_id.clone(),
+                "view_kind": subscribe.view_kind.clone(),
+            }),
+        )
+        .await;
         Ok(self.snapshot_for_subscription(subscribe).await)
     }
 
@@ -628,10 +754,17 @@ impl GatewayState {
         conn: &mut ConnectionState,
         command: Command,
     ) -> RealtimeEnvelope {
+        let admission_started = Instant::now();
         if command.command_id.trim().is_empty() {
+            self.metrics
+                .command_rejected_count
+                .fetch_add(1, Ordering::Relaxed);
             return command_rejected("", "missing_command_id", "command_id is required", false);
         }
         if command.created_at_client_unix_ms <= 0 {
+            self.metrics
+                .command_rejected_count
+                .fetch_add(1, Ordering::Relaxed);
             return command_rejected(
                 &command.command_id,
                 REASON_INVALID_TARGET,
@@ -640,6 +773,9 @@ impl GatewayState {
             );
         }
         if !conn.auth.has_scope("gateway:command") {
+            self.metrics
+                .command_rejected_count
+                .fetch_add(1, Ordering::Relaxed);
             return command_rejected(
                 &command.command_id,
                 REASON_UNAUTHORIZED,
@@ -689,7 +825,12 @@ impl GatewayState {
             store.insert_pending(&command.command_id);
         }
 
+        let upstream_started = Instant::now();
         let result = self.route_command(conn, &command).await;
+        self.metrics.upstream_command_latency_ms.store(
+            upstream_started.elapsed().as_millis() as u64,
+            Ordering::Relaxed,
+        );
         let mut store = self.command_store.lock().await;
         match result {
             Ok(()) => {
@@ -697,6 +838,13 @@ impl GatewayState {
                 store.complete(
                     &command.command_id,
                     CommandDisposition::Accepted { gateway_seq },
+                );
+                self.metrics
+                    .command_accepted_count
+                    .fetch_add(1, Ordering::Relaxed);
+                self.metrics.command_admission_latency_ms.store(
+                    admission_started.elapsed().as_millis() as u64,
+                    Ordering::Relaxed,
                 );
                 tracing::info!(
                     command_id = %command.command_id,
@@ -724,6 +872,13 @@ impl GatewayState {
                         message: error.message.clone(),
                         retryable: error.retryable,
                     },
+                );
+                self.metrics
+                    .command_rejected_count
+                    .fetch_add(1, Ordering::Relaxed);
+                self.metrics.command_admission_latency_ms.store(
+                    admission_started.elapsed().as_millis() as u64,
+                    Ordering::Relaxed,
                 );
                 tracing::info!(
                     command_id = %command.command_id,
@@ -1165,7 +1320,7 @@ impl GatewayState {
     async fn enqueue_patch(&self, conn: &mut ConnectionState, patch: MaterializedPatch) {
         let envelope = self.patch_envelope(patch);
         let entry = self.record_replayable(envelope).await;
-        conn.enqueue(entry.envelope, None);
+        self.enqueue_connection(conn, entry.envelope, None);
     }
 
     async fn record_replayable(&self, mut envelope: RealtimeEnvelope) -> ReplayEntry {
@@ -1253,6 +1408,115 @@ impl GatewayState {
         )
     }
 
+    fn enqueue_connection(
+        &self,
+        conn: &mut ConnectionState,
+        envelope: RealtimeEnvelope,
+        coalesce_key: Option<String>,
+    ) {
+        let outcome = conn.enqueue(envelope, coalesce_key);
+        self.metrics.record_outbound(outcome);
+    }
+
+    async fn refresh_connection_debug(&self, conn: &ConnectionState) {
+        if let Some(active) = self
+            .active_connections
+            .lock()
+            .await
+            .get_mut(&conn.connection_id)
+        {
+            active.status = conn.status.as_str().to_string();
+            active.subscriptions = conn.subscriptions.keys().cloned().collect();
+            active.last_acked_gateway_seq = conn.last_acked_gateway_seq;
+            active.buffered_messages = conn.buffered_messages();
+            active.backpressure_drops = conn.backpressure_drops();
+        }
+    }
+
+    async fn record_audit(&self, kind: &str, subject: Option<String>, details: Value) {
+        let mut audit = self.audit.lock().await;
+        audit.push_back(GatewayAuditRecord {
+            observed_at_unix_ms: now_ms(),
+            kind: kind.to_string(),
+            subject,
+            details,
+        });
+        while audit.len() > 200 {
+            audit.pop_front();
+        }
+    }
+
+    pub async fn debug_protocol_version(&self) -> ProtocolDebugSnapshot {
+        ProtocolDebugSnapshot {
+            protocol_version: PROTOCOL_VERSION,
+            crate_version: env!("CARGO_PKG_VERSION").to_string(),
+            max_message_bytes: self.config.websocket.max_message_bytes,
+            heartbeat_interval_ms: self.config.websocket.heartbeat_interval_ms,
+        }
+    }
+
+    pub async fn debug_active_sources(&self) -> Vec<SourceDebugSnapshot> {
+        let materialized = self.materialized.read().await;
+        self.config
+            .runtimes
+            .sources
+            .iter()
+            .map(|source| {
+                let health = materialized
+                    .get(&source.source_id)
+                    .map(|state| state.source_health.clone());
+                SourceDebugSnapshot {
+                    source_id: source.source_id.clone(),
+                    source_epoch: source.source_epoch.clone(),
+                    source_kind: source.source_kind.clone(),
+                    enabled: source.enabled,
+                    display_name: source.display_name.clone(),
+                    workspace_id: source.workspace_id.clone(),
+                    base_url: source.base_url.clone(),
+                    health,
+                }
+            })
+            .collect()
+    }
+
+    pub async fn debug_active_subscriptions(&self) -> Vec<ActiveConnectionDebug> {
+        self.active_connections
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    pub async fn debug_materializer_summary(&self) -> Vec<MaterializerDebugSummary> {
+        self.materialized
+            .read()
+            .await
+            .values()
+            .map(|state| MaterializerDebugSummary {
+                source_id: state.source_id.clone(),
+                source_epoch: state.source_epoch.clone(),
+                status: format!("{:?}", state.status).to_ascii_lowercase(),
+                source_health: state.source_health.clone(),
+                sessions: state.sessions.len(),
+                approvals: state.approvals.len(),
+                teams: state.teams.len(),
+                processes: state.processes.len(),
+                worktrees: state.worktrees.len(),
+                ledger_events: state.ledger.len(),
+                discontinuities: state.discontinuities.len(),
+            })
+            .collect()
+    }
+
+    pub async fn recent_gateway_audit(&self) -> Vec<GatewayAuditRecord> {
+        self.audit.lock().await.iter().cloned().collect()
+    }
+
+    pub fn metrics_snapshot(&self) -> GatewayMetricsSnapshot {
+        self.metrics.snapshot()
+    }
+
     fn encode_next(&self, conn: &mut ConnectionState) -> Option<Vec<u8>> {
         conn.next_outbound()
             .map(|envelope| envelope.encode_to_vec())
@@ -1267,6 +1531,62 @@ impl GatewayState {
     pub fn publish_patch(&self, patch: MaterializedPatch) {
         let _ = self.patches.send(patch);
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolDebugSnapshot {
+    pub protocol_version: u32,
+    pub crate_version: String,
+    pub max_message_bytes: usize,
+    pub heartbeat_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceDebugSnapshot {
+    pub source_id: String,
+    pub source_epoch: String,
+    pub source_kind: String,
+    pub enabled: bool,
+    pub display_name: String,
+    pub workspace_id: String,
+    pub base_url: String,
+    pub health: Option<crate::runtime::events::SourceHealth>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveConnectionDebug {
+    pub connection_id: String,
+    pub subject: String,
+    pub workspace_id: String,
+    pub status: String,
+    pub connected_at_unix_ms: i64,
+    pub subscriptions: Vec<String>,
+    pub last_acked_gateway_seq: u64,
+    pub buffered_messages: usize,
+    pub backpressure_drops: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterializerDebugSummary {
+    pub source_id: String,
+    pub source_epoch: String,
+    pub status: String,
+    pub source_health: crate::runtime::events::SourceHealth,
+    pub sessions: usize,
+    pub approvals: usize,
+    pub teams: usize,
+    pub processes: usize,
+    pub worktrees: usize,
+    pub ledger_events: usize,
+    pub discontinuities: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayAuditRecord {
+    pub observed_at_unix_ms: i64,
+    pub kind: String,
+    pub subject: Option<String>,
+    pub details: Value,
 }
 
 fn command_payload_kind(command: &Command) -> &'static str {

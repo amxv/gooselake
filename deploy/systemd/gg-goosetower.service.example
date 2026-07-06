@@ -1,0 +1,22 @@
+[Unit]
+Description=GG Goosetower browser realtime gateway (user service)
+After=network-online.target gg-runtime.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+Environment=RUST_LOG=info
+EnvironmentFile=-%h/.config/gg-goosetower/goosetower.env
+ExecStart=%h/.local/share/gg-runtime/current/bin/gg-goosetower --config %h/.config/gg-goosetower/goosetower.toml
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=45
+KillMode=mixed
+LimitNOFILE=65536
+UMask=0077
+
+[Install]
+WantedBy=default.target

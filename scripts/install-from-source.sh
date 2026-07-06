@@ -81,9 +81,15 @@ mkdir -p "${INSTALL_ROOT}/sidecars/gg-mcp-server"
 mkdir -p "${INSTALL_ROOT}/docs"
 
 install -m 0755 "${PACKAGE_DIR}/bin/gg-runtime-server" "${INSTALL_ROOT}/bin/gg-runtime-server"
+if [[ -x "${PACKAGE_DIR}/bin/gg-goosetower" ]]; then
+  install -m 0755 "${PACKAGE_DIR}/bin/gg-goosetower" "${INSTALL_ROOT}/bin/gg-goosetower"
+fi
 install -m 0755 "${PACKAGE_DIR}/sidecars/claude-bridge/claude-bridge" "${INSTALL_ROOT}/sidecars/claude-bridge/claude-bridge"
 install -m 0755 "${PACKAGE_DIR}/sidecars/gg-mcp-server/gg-mcp-server" "${INSTALL_ROOT}/sidecars/gg-mcp-server/gg-mcp-server"
 install -m 0644 "${PACKAGE_DIR}/runtime-server.toml.example" "${INSTALL_ROOT}/runtime-server.toml.example"
+if [[ -f "${PACKAGE_DIR}/goosetower.toml.example" ]]; then
+  install -m 0644 "${PACKAGE_DIR}/goosetower.toml.example" "${INSTALL_ROOT}/goosetower.toml.example"
+fi
 install -m 0644 "${PACKAGE_DIR}/openapi.yaml" "${INSTALL_ROOT}/openapi.yaml"
 install -m 0644 "${PACKAGE_DIR}/README.md" "${INSTALL_ROOT}/README.md"
 /bin/cp -R "${PACKAGE_DIR}/docs/." "${INSTALL_ROOT}/docs/"
@@ -103,6 +109,16 @@ Next steps:
 5. gg-runtime-server --check-config --config ./runtime-server.toml
 6. gg-runtime-server --config ./runtime-server.toml
 EOF
+
+if [[ -x "${INSTALL_ROOT}/bin/gg-goosetower" ]]; then
+  cat <<EOF
+
+Optional Goosetower browser gateway:
+  cp "${INSTALL_ROOT}/goosetower.toml.example" ./goosetower.toml
+  gg-goosetower --check-config --config ./goosetower.toml
+  gg-goosetower --config ./goosetower.toml
+EOF
+fi
 
 if [[ -d "${INSTALL_ROOT}/deploy/systemd" ]]; then
   cat <<EOF

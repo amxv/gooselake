@@ -155,6 +155,12 @@ These routes are served by `gg-goosetower`, not `gg-runtime-server`.
 - `GET /health` (Public)
 - `GET /v1/health` (Bearer, Goosetower API token)
 - `GET /v1/sources` (Bearer, Goosetower API token)
+- `GET /v1/metrics` (Bearer, Goosetower API token)
+- `GET /v1/debug/protocol` (Bearer, Goosetower API token, requires `debug.endpoints_enabled = true`)
+- `GET /v1/debug/sources` (Bearer, Goosetower API token, requires `debug.endpoints_enabled = true`)
+- `GET /v1/debug/subscriptions` (Bearer, Goosetower API token, requires `debug.endpoints_enabled = true`)
+- `GET /v1/debug/materializer` (Bearer, Goosetower API token, requires `debug.endpoints_enabled = true`)
+- `GET /v1/debug/audit` (Bearer, Goosetower API token, requires `debug.endpoints_enabled = true`)
 - `POST /v1/dev/tickets` (Bearer, Goosetower API token, dev-only when `debug.endpoints_enabled = true`)
 - `GET /v1/realtime?ticket={ticket}` (WebSocket upgrade, exact `Origin` allowlist, signed single-use ticket)
 
@@ -176,6 +182,10 @@ Realtime gateway notes:
 - Command payloads route to the configured Gooselake runtime for send turn,
   resolve approval, interrupt turn, direct/broadcast team message, spawn team
   member, retry/cancel delivery, kill process, and start process.
+- `/v1/metrics` exposes in-process operational counters for gateway
+  connections, source health, browser RTT, command latency, replay/resume,
+  materializer reduce time, outbound lanes, coalescing, drops, and WebSocket
+  backpressure state.
 
 ## Notes on Contract Precision
 

@@ -1,0 +1,47 @@
+[server]
+bind_address = "127.0.0.1:8090"
+public_base_url = "https://goosetower.example.com"
+allowed_gooseweb_origins = [
+  "https://gooseweb.example.com",
+  "https://gooseweb-git-main-example.vercel.app",
+]
+
+[auth]
+api_token_file = "secrets/goosetower-api-token"
+
+[tickets]
+issuer = "gooseweb"
+audience = "goosetower"
+signing_key_file = "secrets/goosetower-ticket-signing-key"
+ttl_secs = 60
+
+[[runtimes.sources]]
+source_id = "vps-primary"
+source_epoch = "vps-primary-2026-07-06"
+source_kind = "gooselake-runtime"
+base_url = "http://127.0.0.1:8080"
+bearer_token_file = "secrets/gooselake-runtime-token"
+enabled = true
+display_name = "Primary VPS Runtime"
+workspace_id = "default"
+
+[websocket]
+max_message_bytes = 1048576
+heartbeat_interval_ms = 15000
+
+[replay]
+max_events_per_request = 1000
+source_stale_after_ms = 30000
+
+[materializer]
+event_buffer_size = 8192
+snapshot_cache_size = 1024
+
+[lanes]
+critical_capacity = 4096
+state_capacity = 8192
+tokens_capacity = 16384
+bulk_capacity = 2048
+
+[debug]
+endpoints_enabled = false

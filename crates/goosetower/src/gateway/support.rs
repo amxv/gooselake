@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::auth::{now_ms, AuthContext};
@@ -67,12 +68,28 @@ impl ConnectionState {
         }
     }
 
-    pub(super) fn enqueue(&mut self, envelope: RealtimeEnvelope, coalesce_key: Option<String>) {
-        self.backpressure_drops += self.lanes.enqueue(envelope, coalesce_key) as u64;
+    pub(super) fn enqueue(
+        &mut self,
+        envelope: RealtimeEnvelope,
+        coalesce_key: Option<String>,
+    ) -> EnqueueOutcome {
+        let outcome = self.lanes.enqueue(envelope, coalesce_key);
+        if outcome.dropped {
+            self.backpressure_drops = self.backpressure_drops.saturating_add(1);
+        }
+        outcome
     }
 
     pub(super) fn next_outbound(&mut self) -> Option<RealtimeEnvelope> {
         self.lanes.next()
+    }
+
+    pub(super) fn buffered_messages(&self) -> usize {
+        self.lanes.buffered_messages()
+    }
+
+    pub(super) fn backpressure_drops(&self) -> u64 {
+        self.backpressure_drops
     }
 
     pub(super) fn unsubscribe(&mut self, unsubscribe: Unsubscribe) {
@@ -166,6 +183,24 @@ pub(super) struct ReplayWindow {
 
 #[derive(Debug, Default)]
 pub(super) struct GatewayMetrics {
+    pub(super) connection_open_count: AtomicU64,
+    pub(super) connection_close_count: AtomicU64,
+    pub(super) active_connections: AtomicU64,
+    pub(super) browser_rtt_ms: AtomicU64,
+    pub(super) command_accepted_count: AtomicU64,
+    pub(super) command_rejected_count: AtomicU64,
+    pub(super) command_admission_latency_ms: AtomicU64,
+    pub(super) upstream_command_latency_ms: AtomicU64,
+    pub(super) event_ingest_lag_ms: AtomicU64,
+    pub(super) materializer_reduce_time_ms: AtomicU64,
+    pub(super) outbound_critical_messages: AtomicU64,
+    pub(super) outbound_state_messages: AtomicU64,
+    pub(super) outbound_token_messages: AtomicU64,
+    pub(super) outbound_bulk_messages: AtomicU64,
+    pub(super) coalesced_state_messages: AtomicU64,
+    pub(super) dropped_bulk_messages: AtomicU64,
+    pub(super) websocket_buffered_messages: AtomicU64,
+    pub(super) websocket_backpressure_drops: AtomicU64,
     pub(super) resume_success: AtomicU64,
     pub(super) resume_partial: AtomicU64,
     pub(super) resume_rejected: AtomicU64,
@@ -178,6 +213,37 @@ pub(super) struct GatewayMetrics {
 }
 
 impl GatewayMetrics {
+    pub(super) fn record_outbound(&self, outcome: EnqueueOutcome) {
+        match outcome.lane {
+            Lane::Critical => {
+                self.outbound_critical_messages
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            Lane::State => {
+                self.outbound_state_messages.fetch_add(1, Ordering::Relaxed);
+            }
+            Lane::Tokens => {
+                self.outbound_token_messages.fetch_add(1, Ordering::Relaxed);
+            }
+            Lane::Bulk | Lane::Unspecified => {
+                self.outbound_bulk_messages.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        if outcome.coalesced {
+            self.coalesced_state_messages
+                .fetch_add(1, Ordering::Relaxed);
+        }
+        if outcome.dropped {
+            self.websocket_backpressure_drops
+                .fetch_add(1, Ordering::Relaxed);
+            if matches!(outcome.lane, Lane::Bulk | Lane::Unspecified) {
+                self.dropped_bulk_messages.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        self.websocket_buffered_messages
+            .store(outcome.buffered_messages as u64, Ordering::Relaxed);
+    }
+
     pub(super) fn record_replay(&self, events: usize, bytes: usize, elapsed: Duration) {
         self.replay_events
             .fetch_add(events as u64, Ordering::Relaxed);
@@ -185,6 +251,69 @@ impl GatewayMetrics {
         self.replay_catch_up_ms
             .store(elapsed.as_millis() as u64, Ordering::Relaxed);
     }
+
+    pub(super) fn snapshot(&self) -> GatewayMetricsSnapshot {
+        GatewayMetricsSnapshot {
+            connection_open_count: self.connection_open_count.load(Ordering::Relaxed),
+            connection_close_count: self.connection_close_count.load(Ordering::Relaxed),
+            active_connections: self.active_connections.load(Ordering::Relaxed),
+            browser_rtt_ms: self.browser_rtt_ms.load(Ordering::Relaxed),
+            command_accepted_count: self.command_accepted_count.load(Ordering::Relaxed),
+            command_rejected_count: self.command_rejected_count.load(Ordering::Relaxed),
+            command_admission_latency_ms: self.command_admission_latency_ms.load(Ordering::Relaxed),
+            upstream_command_latency_ms: self.upstream_command_latency_ms.load(Ordering::Relaxed),
+            event_ingest_lag_ms: self.event_ingest_lag_ms.load(Ordering::Relaxed),
+            materializer_reduce_time_ms: self.materializer_reduce_time_ms.load(Ordering::Relaxed),
+            outbound_critical_messages: self.outbound_critical_messages.load(Ordering::Relaxed),
+            outbound_state_messages: self.outbound_state_messages.load(Ordering::Relaxed),
+            outbound_token_messages: self.outbound_token_messages.load(Ordering::Relaxed),
+            outbound_bulk_messages: self.outbound_bulk_messages.load(Ordering::Relaxed),
+            coalesced_state_messages: self.coalesced_state_messages.load(Ordering::Relaxed),
+            dropped_bulk_messages: self.dropped_bulk_messages.load(Ordering::Relaxed),
+            websocket_buffered_messages: self.websocket_buffered_messages.load(Ordering::Relaxed),
+            websocket_backpressure_drops: self.websocket_backpressure_drops.load(Ordering::Relaxed),
+            resume_success: self.resume_success.load(Ordering::Relaxed),
+            resume_partial: self.resume_partial.load(Ordering::Relaxed),
+            resume_rejected: self.resume_rejected.load(Ordering::Relaxed),
+            replay_events: self.replay_events.load(Ordering::Relaxed),
+            replay_bytes: self.replay_bytes.load(Ordering::Relaxed),
+            replay_catch_up_ms: self.replay_catch_up_ms.load(Ordering::Relaxed),
+            source_stale_age_ms: self.source_stale_age_ms.load(Ordering::Relaxed),
+            gap_count: self.gap_count.load(Ordering::Relaxed),
+            snapshot_resync_count: self.snapshot_resync_count.load(Ordering::Relaxed),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayMetricsSnapshot {
+    pub connection_open_count: u64,
+    pub connection_close_count: u64,
+    pub active_connections: u64,
+    pub browser_rtt_ms: u64,
+    pub command_accepted_count: u64,
+    pub command_rejected_count: u64,
+    pub command_admission_latency_ms: u64,
+    pub upstream_command_latency_ms: u64,
+    pub event_ingest_lag_ms: u64,
+    pub materializer_reduce_time_ms: u64,
+    pub outbound_critical_messages: u64,
+    pub outbound_state_messages: u64,
+    pub outbound_token_messages: u64,
+    pub outbound_bulk_messages: u64,
+    pub coalesced_state_messages: u64,
+    pub dropped_bulk_messages: u64,
+    pub websocket_buffered_messages: u64,
+    pub websocket_backpressure_drops: u64,
+    pub resume_success: u64,
+    pub resume_partial: u64,
+    pub resume_rejected: u64,
+    pub replay_events: u64,
+    pub replay_bytes: u64,
+    pub replay_catch_up_ms: u64,
+    pub source_stale_age_ms: u64,
+    pub gap_count: u64,
+    pub snapshot_resync_count: u64,
 }
 
 #[derive(Debug)]
@@ -209,18 +338,31 @@ impl OutboundLanes {
         }
     }
 
-    fn enqueue(&mut self, envelope: RealtimeEnvelope, coalesce_key: Option<String>) -> bool {
-        match Lane::try_from(envelope.lane).unwrap_or(Lane::State) {
+    fn enqueue(
+        &mut self,
+        envelope: RealtimeEnvelope,
+        coalesce_key: Option<String>,
+    ) -> EnqueueOutcome {
+        let lane = Lane::try_from(envelope.lane).unwrap_or(Lane::State);
+        let mut outcome = EnqueueOutcome {
+            lane,
+            dropped: false,
+            coalesced: false,
+            buffered_messages: 0,
+        };
+        match lane {
             Lane::Critical => {
                 self.critical.push_back(envelope);
-                self.critical.len() > self.capacities.critical_capacity
+                outcome.dropped = self.critical.len() > self.capacities.critical_capacity;
             }
             Lane::State => {
                 if let Some(key) = coalesce_key {
                     if let Some(index) = self.state_coalesce.get(&key).copied() {
                         if let Some(slot) = self.state.get_mut(index) {
                             *slot = envelope;
-                            return false;
+                            outcome.coalesced = true;
+                            outcome.buffered_messages = self.buffered_messages();
+                            return outcome;
                         }
                     }
                     self.state_coalesce.insert(key, self.state.len());
@@ -229,27 +371,27 @@ impl OutboundLanes {
                 while self.state.len() > self.capacities.state_capacity {
                     self.state.pop_front();
                     self.rebuild_state_coalesce();
-                    return true;
+                    outcome.dropped = true;
+                    break;
                 }
-                false
             }
             Lane::Tokens => {
                 self.tokens.push_back(envelope);
                 if self.tokens.len() > self.capacities.tokens_capacity {
                     self.tokens.pop_front();
-                    return true;
+                    outcome.dropped = true;
                 }
-                false
             }
             Lane::Bulk | Lane::Unspecified => {
                 self.bulk.push_back(envelope);
                 if self.bulk.len() > self.capacities.bulk_capacity {
                     self.bulk.pop_front();
-                    return true;
+                    outcome.dropped = true;
                 }
-                false
             }
         }
+        outcome.buffered_messages = self.buffered_messages();
+        outcome
     }
 
     fn next(&mut self) -> Option<RealtimeEnvelope> {
@@ -282,6 +424,18 @@ impl OutboundLanes {
             }
         }
     }
+
+    fn buffered_messages(&self) -> usize {
+        self.critical.len() + self.state.len() + self.tokens.len() + self.bulk.len()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct EnqueueOutcome {
+    pub(super) lane: Lane,
+    pub(super) dropped: bool,
+    pub(super) coalesced: bool,
+    pub(super) buffered_messages: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

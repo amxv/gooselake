@@ -76,6 +76,7 @@ mkdir -p "${ROOT_DIR}/${OUTPUT_DIR}"
 pushd "${ROOT_DIR}" >/dev/null
 
 cargo build --release --bin gg-runtime-server
+cargo build --release --bin gg-goosetower
 cargo build --release --manifest-path sidecars/gg-mcp-server/Cargo.toml --bin gg-mcp-server
 bun install --cwd sidecars/claude-bridge --frozen-lockfile
 bun build sidecars/claude-bridge/src/main.ts \
@@ -84,6 +85,7 @@ bun build sidecars/claude-bridge/src/main.ts \
   --outfile "${PACKAGE_ROOT}/sidecars/claude-bridge/claude-bridge"
 
 cp target/release/gg-runtime-server "${PACKAGE_ROOT}/bin/gg-runtime-server"
+cp target/release/gg-goosetower "${PACKAGE_ROOT}/bin/gg-goosetower"
 GG_MCP_SERVER_BIN=""
 if [[ -x "${ROOT_DIR}/target/release/gg-mcp-server" ]]; then
   GG_MCP_SERVER_BIN="${ROOT_DIR}/target/release/gg-mcp-server"
@@ -95,6 +97,7 @@ else
 fi
 cp "${GG_MCP_SERVER_BIN}" "${PACKAGE_ROOT}/sidecars/gg-mcp-server/gg-mcp-server"
 cp examples/runtime-server.toml "${PACKAGE_ROOT}/runtime-server.toml.example"
+cp examples/goosetower.toml "${PACKAGE_ROOT}/goosetower.toml.example"
 cp README.md "${PACKAGE_ROOT}/README.md"
 cp openapi/runtime-server-openapi.yaml "${PACKAGE_ROOT}/openapi.yaml"
 mkdir -p "${PACKAGE_ROOT}/docs"
@@ -102,6 +105,7 @@ mkdir -p "${PACKAGE_ROOT}/docs"
 /bin/cp -R deploy/. "${PACKAGE_ROOT}/deploy/"
 
 chmod +x "${PACKAGE_ROOT}/bin/gg-runtime-server"
+chmod +x "${PACKAGE_ROOT}/bin/gg-goosetower"
 chmod +x "${PACKAGE_ROOT}/sidecars/gg-mcp-server/gg-mcp-server"
 chmod +x "${PACKAGE_ROOT}/sidecars/claude-bridge/claude-bridge"
 

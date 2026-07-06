@@ -85,7 +85,12 @@ runtime and keeps only in-memory gateway state for connection/session concerns.
 Routes:
 
 - `GET /health` is public and reports Goosetower service health.
-- `GET /v1/health` and `GET /v1/sources` require `Authorization: Bearer <goosetower-api-token>`.
+- `GET /v1/health`, `GET /v1/sources`, and `GET /v1/metrics` require
+  `Authorization: Bearer <goosetower-api-token>`.
+- `GET /v1/debug/protocol`, `/v1/debug/sources`,
+  `/v1/debug/subscriptions`, `/v1/debug/materializer`, and `/v1/debug/audit`
+  require the same bearer token and only work when `debug.endpoints_enabled =
+  true`.
 - `POST /v1/dev/tickets` requires the same bearer token and only works when
   `debug.endpoints_enabled = true`. It is a local-development ticket issuer,
   not the production web-auth path.

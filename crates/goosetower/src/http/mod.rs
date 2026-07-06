@@ -111,6 +111,12 @@ pub fn build_router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/health", get(protected_health))
         .route("/sources", get(list_sources))
+        .route("/metrics", get(metrics))
+        .route("/debug/protocol", get(debug_protocol))
+        .route("/debug/sources", get(debug_sources))
+        .route("/debug/subscriptions", get(debug_subscriptions))
+        .route("/debug/materializer", get(debug_materializer))
+        .route("/debug/audit", get(debug_audit))
         .route("/dev/tickets", post(mint_dev_ticket))
         .route_layer(middleware::from_fn_with_state(
             state.api_bearer_token.clone(),
@@ -204,6 +210,54 @@ async fn list_sources(State(state): State<AppState>) -> Json<SourcesResponse> {
         );
     }
     Json(SourcesResponse { sources })
+}
+
+async fn metrics(State(state): State<AppState>) -> Json<crate::gateway::GatewayMetricsSnapshot> {
+    Json(state.gateway.metrics_snapshot())
+}
+
+async fn debug_protocol(
+    State(state): State<AppState>,
+) -> Result<Json<crate::gateway::ProtocolDebugSnapshot>, StatusCode> {
+    ensure_debug_enabled(&state)?;
+    Ok(Json(state.gateway.debug_protocol_version().await))
+}
+
+async fn debug_sources(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::gateway::SourceDebugSnapshot>>, StatusCode> {
+    ensure_debug_enabled(&state)?;
+    Ok(Json(state.gateway.debug_active_sources().await))
+}
+
+async fn debug_subscriptions(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::gateway::ActiveConnectionDebug>>, StatusCode> {
+    ensure_debug_enabled(&state)?;
+    Ok(Json(state.gateway.debug_active_subscriptions().await))
+}
+
+async fn debug_materializer(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::gateway::MaterializerDebugSummary>>, StatusCode> {
+    ensure_debug_enabled(&state)?;
+    Ok(Json(state.gateway.debug_materializer_summary().await))
+}
+
+async fn debug_audit(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::gateway::GatewayAuditRecord>>, StatusCode> {
+    ensure_debug_enabled(&state)?;
+    Ok(Json(state.gateway.recent_gateway_audit().await))
+}
+
+fn ensure_debug_enabled(state: &AppState) -> Result<(), StatusCode> {
+    state
+        .config
+        .debug
+        .endpoints_enabled
+        .then_some(())
+        .ok_or(StatusCode::FORBIDDEN)
 }
 
 #[derive(Debug, Deserialize)]

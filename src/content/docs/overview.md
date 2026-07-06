@@ -74,6 +74,7 @@ You are trying to change implementation without breaking the runtime contract.
 - [Configuration reference](/docs/configuration): every config section.
 - [Operations runbook](/docs/operations): day-two commands.
 - [Deployment guide](/docs/deployment): VPS/systemd-oriented deployment.
+- [Goosetower and Gooseweb deployment](/docs/goosetower-deployment): browser gateway, Vercel, and WebSocket operations.
 - [Security model](/docs/security): bearer auth, local trust, process execution, and provider credentials.
 - [Troubleshooting](/docs/troubleshooting): common failure playbooks.
 

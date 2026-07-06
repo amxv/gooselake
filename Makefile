@@ -2,12 +2,14 @@
 
 VERSION ?= latest
 CONFIG ?= $(HOME)/.config/gg-runtime/runtime-server.toml
+GOOSETOWER_CONFIG ?= $(HOME)/.config/gg-goosetower/goosetower.toml
 SERVICE ?= gg-runtime.service
 SCOPE ?= user
 BASE_URL ?=
 TOKEN ?=
 
 RUNTIME_BIN ?= $(HOME)/.local/share/gg-runtime/current/bin/gg-runtime-server
+GOOSETOWER_BIN ?= $(HOME)/.local/share/gg-runtime/current/bin/gg-goosetower
 
 .PHONY: help
 help: ## Show available targets
@@ -16,11 +18,13 @@ help: ## Show available targets
 	@echo "Variables:"
 	@echo "  VERSION=<tag>        (default: latest)"
 	@echo "  CONFIG=<path>        (default: $(HOME)/.config/gg-runtime/runtime-server.toml)"
+	@echo "  GOOSETOWER_CONFIG=<path> (default: $(HOME)/.config/gg-goosetower/goosetower.toml)"
 	@echo "  SERVICE=<name>       (default: gg-runtime.service)"
 	@echo "  SCOPE=<user|system>  (default: user)"
 	@echo "  BASE_URL=<url>       (optional)"
 	@echo "  TOKEN=<bearer>       (optional)"
 	@echo "  RUNTIME_BIN=<path>   (default: $(HOME)/.local/share/gg-runtime/current/bin/gg-runtime-server)"
+	@echo "  GOOSETOWER_BIN=<path> (default: $(HOME)/.local/share/gg-runtime/current/bin/gg-goosetower)"
 	@echo ""
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
@@ -52,6 +56,26 @@ preflight-http: ## Run deployment preflight checks including HTTP (requires BASE
 check-config: ## Validate runtime config via gg-runtime-server --check-config
 	"$(RUNTIME_BIN)" --check-config --config "$(CONFIG)"
 
+.PHONY: goosetower-check-config
+goosetower-check-config: ## Validate Goosetower config via gg-goosetower --check-config
+	"$(GOOSETOWER_BIN)" --check-config --config "$(GOOSETOWER_CONFIG)"
+
+.PHONY: goosetower-preflight
+goosetower-preflight: ## Run Goosetower deployment preflight checks
+	./scripts/preflight-goosetower.sh --config "$(GOOSETOWER_CONFIG)" --goosetower-bin "$(GOOSETOWER_BIN)" $(if $(BASE_URL),--base-url "$(BASE_URL)") $(if $(TOKEN),--token "$(TOKEN)")
+
+.PHONY: gooseweb-dev
+gooseweb-dev: ## Start Gooseweb dev server
+	bun --cwd apps/gooseweb run dev
+
+.PHONY: gooseweb-build
+gooseweb-build: ## Build Gooseweb app
+	bun --cwd apps/gooseweb run build
+
+.PHONY: gooseweb-typecheck
+gooseweb-typecheck: ## Typecheck Gooseweb app
+	bun --cwd apps/gooseweb run typecheck
+
 .PHONY: api-docs-refresh
 api-docs-refresh: ## Regenerate runtime OpenAPI artifact from source
 	./scripts/api-doc-sync.sh refresh
@@ -72,6 +96,8 @@ lint-rust-file-lines: ## Fail if any Rust file exceeds 1000 lines
 check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tests
 	$(MAKE) lint-rust-file-lines
 	cargo fmt --check
+	cargo check -p goosetower
+	cargo test -p goosetower
 	cargo check --workspace
 	cargo test --workspace
 	cargo check --manifest-path sidecars/gg-mcp-server/Cargo.toml

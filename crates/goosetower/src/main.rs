@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use goosetower::config::{AuthTokenSource, GoosetowerConfig};
+use goosetower::gateway::GatewayState;
 use goosetower::http::{build_router, AppState, RuntimeHealthClient};
 
 #[tokio::main]
@@ -41,8 +42,10 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&config.server.bind_address)
         .await
         .with_context(|| format!("failed to bind {}", config.server.bind_address))?;
+    let config = Arc::new(config);
     let state = AppState {
-        config: Arc::new(config),
+        gateway: Arc::new(GatewayState::new(config.clone())?),
+        config,
         api_bearer_token: Arc::from(api_auth.bearer_token),
         runtime_client: RuntimeHealthClient::new(),
     };

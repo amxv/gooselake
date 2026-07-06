@@ -6,10 +6,13 @@ category: "Reference"
 summary: "A route-by-route catalog derived from the current server implementation."
 ---
 
-This catalog tracks the currently implemented HTTP/SSE surface from runtime code.
+This catalog tracks the currently implemented Gooselake runtime HTTP/SSE surface
+and the initial Goosetower browser gateway surface.
 
 Source references:
 - [`crates/runtime-server/src/http/`](https://github.com/amxv/gooselake/blob/main/crates/runtime-server/src/http)
+- [`crates/goosetower/src/http/mod.rs`](https://github.com/amxv/gooselake/blob/main/crates/goosetower/src/http/mod.rs)
+- [`crates/goosetower/src/gateway/mod.rs`](https://github.com/amxv/gooselake/blob/main/crates/goosetower/src/gateway/mod.rs)
 - [`openapi/runtime-server-openapi.yaml`](https://github.com/amxv/gooselake/blob/main/openapi/runtime-server-openapi.yaml)
 
 Auth legend:
@@ -144,6 +147,35 @@ Diagnostics query parameters:
 - `caller_agent_id` (required, accepts alias `callerAgentId`)
 - `invocation_id` (optional, accepts alias `invocationId`)
 - `args` (optional JSON value, defaults to `{}`)
+
+## Goosetower Browser Gateway
+
+These routes are served by `gg-goosetower`, not `gg-runtime-server`.
+
+- `GET /health` (Public)
+- `GET /v1/health` (Bearer, Goosetower API token)
+- `GET /v1/sources` (Bearer, Goosetower API token)
+- `POST /v1/dev/tickets` (Bearer, Goosetower API token, dev-only when `debug.endpoints_enabled = true`)
+- `GET /v1/realtime?ticket={ticket}` (WebSocket upgrade, exact `Origin` allowlist, signed single-use ticket)
+
+Realtime gateway notes:
+
+- `/v1/realtime` accepts binary Protobuf `RealtimeEnvelope` frames from
+  `proto/goosetower/v1/realtime.proto`.
+- Tickets are short-lived and include issuer, audience, subject, workspace,
+  scopes, allowed origins, expiry, issued-at time, and `jti`.
+- The WebSocket upgrade rejects missing/invalid/replayed tickets and origins
+  outside the exact configured allowlist.
+- The server emits `Hello`, responds to `Ping` with `Pong`, enforces configured
+  max message size, and supports in-band `AuthRefresh`.
+- Subscriptions return snapshots and receive matching patches for board,
+  approval inbox, session, team, process tail, ledger, fleet/source health, and
+  worktree views.
+- Commands return `CommandAccepted`, `CommandRejected`, or `CommandDuplicate`.
+  V0 duplicate detection is in-memory with TTL only.
+- Command payloads route to the configured Gooselake runtime for send turn,
+  resolve approval, interrupt turn, direct/broadcast team message, spawn team
+  member, retry/cancel delivery, kill process, and start process.
 
 ## Notes on Contract Precision
 

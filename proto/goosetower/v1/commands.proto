@@ -8,6 +8,8 @@ message Command {
   string command_id = 1;
   string idempotency_key = 2;
   EntityRef target = 3;
+  uint64 base_entity_version = 4;
+  int64 created_at_client_unix_ms = 5;
   oneof payload {
     CommandSendTurn send_turn = 10;
     CommandResolveApproval resolve_approval = 11;

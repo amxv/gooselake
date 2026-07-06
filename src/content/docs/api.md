@@ -6,7 +6,8 @@ category: "Client Builders"
 summary: "The human-facing API guide for building clients on top of the runtime."
 ---
 
-This document is the human-facing guide to the runtime HTTP/SSE API.
+This document is the human-facing guide to the runtime HTTP/SSE API and the
+initial Goosetower browser gateway API.
 
 Sources of truth:
 
@@ -16,6 +17,13 @@ Sources of truth:
 - shared runtime structs: [`crates/runtime-core/src`](https://github.com/amxv/gooselake/blob/main/crates/runtime-core/src)
 
 If this guide disagrees with runtime behavior, treat server/core code as authoritative.
+
+Goosetower gateway sources:
+
+- gateway route + handler code: [`crates/goosetower/src/http/mod.rs`](https://github.com/amxv/gooselake/blob/main/crates/goosetower/src/http/mod.rs)
+- ticket validation: [`crates/goosetower/src/auth/mod.rs`](https://github.com/amxv/gooselake/blob/main/crates/goosetower/src/auth/mod.rs)
+- WebSocket gateway: [`crates/goosetower/src/gateway/mod.rs`](https://github.com/amxv/gooselake/blob/main/crates/goosetower/src/gateway/mod.rs)
+- Protobuf schema: [`proto/goosetower/v1/`](https://github.com/amxv/gooselake/blob/main/proto/goosetower/v1)
 
 ## Quick API start
 
@@ -56,6 +64,7 @@ Top-level groups:
 - Processes: run/list/get/logs/kill, replay and stream process events
 - Worktrees: create/list/get/claim/release/cleanup
 - MCP gateway: capabilities and invoke
+- Goosetower browser gateway: ticket-authenticated Protobuf WebSocket at `/v1/realtime`
 
 ## Request/response precision
 
@@ -66,6 +75,71 @@ For exact JSON fields, use:
 - handler input structs in `crates/runtime-server/src/http/`
 - shared input/output structs in `crates/runtime-core/src/runtime.rs` and `crates/runtime-core/src/services.rs`
 - durable record structs in `crates/runtime-core/src/state.rs`
+
+## Goosetower realtime gateway
+
+Goosetower exposes the V0 browser gateway as a separate service from
+`gg-runtime-server`. It routes browser commands to a configured Gooselake
+runtime and keeps only in-memory gateway state for connection/session concerns.
+
+Routes:
+
+- `GET /health` is public and reports Goosetower service health.
+- `GET /v1/health` and `GET /v1/sources` require `Authorization: Bearer <goosetower-api-token>`.
+- `POST /v1/dev/tickets` requires the same bearer token and only works when
+  `debug.endpoints_enabled = true`. It is a local-development ticket issuer,
+  not the production web-auth path.
+- `GET /v1/realtime?ticket=<ticket>` upgrades to a WebSocket using binary
+  Protobuf frames from `proto/goosetower/v1/realtime.proto`.
+
+Realtime auth:
+
+- Browsers authenticate with a short-lived, signed, single-use URL ticket.
+- The gateway checks the WebSocket `Origin` header against the exact configured
+  `server.allowed_gooseweb_origins` allowlist before upgrade.
+- Ticket claims include issuer, audience, subject, workspace ID, scopes,
+  allowed origins, expiry, issued-at time, and `jti` nonce.
+- Expired, replayed, wrong-audience, wrong-issuer, wrong-origin, missing-subject,
+  missing-workspace, and missing-scope tickets are rejected.
+- A connection ticket must include `gateway:connect`; command frames require
+  `gateway:command`.
+
+Realtime protocol behavior:
+
+- The server sends `Hello` after connection open with connection ID, server
+  time, heartbeat interval, max message size, protocol version, and resume
+  support.
+- Clients send binary Protobuf `RealtimeEnvelope` frames. Text frames are not
+  accepted.
+- `Ping` frames receive `Pong`; oversized WebSocket messages are closed by the
+  WebSocket layer according to `websocket.max_message_bytes`.
+- `Subscribe` creates per-connection interest state and returns a `Snapshot`
+  for views such as `board`, `approval_inbox`, `session`, `team`,
+  `process_tail`, `ledger`, `fleet`, and `worktrees`.
+- Patches are faned out only to matching subscriptions.
+- Outbound frames use priority lanes: critical, state, tokens, and bulk. State
+  patches can coalesce by entity under backpressure; critical command/auth
+  frames are prioritized.
+- Commands must carry `command_id`, `target`, `base_entity_version`, and
+  `created_at_client_unix_ms`. Duplicate `command_id` values are answered with
+  `CommandDuplicate` from in-memory TTL state.
+
+V0 command routing supports:
+
+- send turn
+- resolve approval
+- interrupt turn
+- direct team message
+- broadcast team message
+- spawn team member
+- retry delivery
+- cancel delivery
+- kill process
+- start process
+
+Gateway audit events are emitted over the realtime stream for connection
+open/close, subscription changes, auth refresh, command accepted/rejected/
+duplicate, source gap, and snapshot resync.
 
 ## Sessions
 

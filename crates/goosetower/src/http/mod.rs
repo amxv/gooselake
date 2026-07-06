@@ -1,14 +1,18 @@
 use std::sync::Arc;
 
-use axum::extract::State;
+use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::{Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
+use crate::auth::{origin_is_allowed, TicketIssuer};
 use crate::config::{GoosetowerConfig, RuntimeSourceConfig};
+use crate::gateway::GatewayState;
 use crate::runtime::{GooselakeRuntimeClient, GooselakeRuntimeClientConfig};
 
 #[derive(Clone)]
@@ -16,6 +20,7 @@ pub struct AppState {
     pub config: Arc<GoosetowerConfig>,
     pub api_bearer_token: Arc<str>,
     pub runtime_client: RuntimeHealthClient,
+    pub gateway: Arc<GatewayState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +111,7 @@ pub fn build_router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/health", get(protected_health))
         .route("/sources", get(list_sources))
+        .route("/dev/tickets", post(mint_dev_ticket))
         .route_layer(middleware::from_fn_with_state(
             state.api_bearer_token.clone(),
             bearer_auth,
@@ -113,7 +119,12 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", get(health))
-        .nest("/v1", protected)
+        .nest(
+            "/v1",
+            Router::new()
+                .route("/realtime", get(realtime))
+                .merge(protected),
+        )
         .with_state(state)
 }
 
@@ -195,6 +206,102 @@ async fn list_sources(State(state): State<AppState>) -> Json<SourcesResponse> {
     Json(SourcesResponse { sources })
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DevTicketRequest {
+    subject: Option<String>,
+    workspace_id: Option<String>,
+    scopes: Option<Vec<String>>,
+    allowed_origins: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DevTicketResponse {
+    ticket: String,
+    expires_in_secs: u64,
+    issuer: String,
+    audience: String,
+}
+
+async fn mint_dev_ticket(
+    State(state): State<AppState>,
+    Json(input): Json<DevTicketRequest>,
+) -> Result<Json<DevTicketResponse>, StatusCode> {
+    if !state.config.debug.endpoints_enabled {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let issuer =
+        TicketIssuer::from_config(&state.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let allowed_origins = input
+        .allowed_origins
+        .unwrap_or_else(|| state.config.allowed_gooseweb_origins().unwrap_or_default());
+    let ticket = issuer
+        .mint_dev_ticket(
+            input.subject.unwrap_or_else(|| "dev-user".to_string()),
+            input.workspace_id.unwrap_or_else(|| {
+                state
+                    .config
+                    .runtimes
+                    .sources
+                    .first()
+                    .map(|source| source.workspace_id.clone())
+                    .unwrap_or_else(|| "default".to_string())
+            }),
+            input.scopes.unwrap_or_else(|| {
+                vec!["gateway:connect".to_string(), "gateway:command".to_string()]
+            }),
+            allowed_origins,
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(DevTicketResponse {
+        ticket,
+        expires_in_secs: state.config.tickets.ttl_secs,
+        issuer: state.config.tickets.issuer.clone(),
+        audience: state.config.tickets.audience.clone(),
+    }))
+}
+
+async fn realtime(
+    State(state): State<AppState>,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+    else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    let allowed_origins = match state.gateway.allowed_origins() {
+        Ok(origins) => origins,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    if !origin_is_allowed(origin.as_str(), &allowed_origins) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(ticket) = query.get("ticket") else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let auth = match state
+        .gateway
+        .validate_ticket(ticket.as_str(), origin.as_str())
+        .await
+    {
+        Ok(auth) => auth,
+        Err(reject) => {
+            tracing::info!(reason = %reject.code, "gateway audit auth.rejected");
+            return reject.status.into_response();
+        }
+    };
+    if !auth.has_scope("gateway:connect") {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let gateway = state.gateway.clone();
+    ws.max_message_size(state.config.websocket.max_message_bytes)
+        .on_upgrade(move |socket| gateway.handle_socket(socket, auth))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeSourceStatus {
     source_id: String,
@@ -255,15 +362,30 @@ async fn bearer_auth(
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use axum::body::{to_bytes, Body};
-    use axum::http::{Request, StatusCode};
+    use axum::http::{HeaderValue, Request, StatusCode};
+    use futures_util::{SinkExt, StreamExt};
+    use prost::Message as ProstMessage;
+    use runtime_core::{SendTurnAccepted, SessionRecord};
     use serde_json::Value;
     use tokio::net::TcpListener;
+    use tokio_tungstenite::connect_async;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
     use tower::ServiceExt;
 
     use super::*;
+    use crate::auth::TicketIssuer;
     use crate::config::{AuthConfig, TicketConfig};
+    use crate::materializer::MaterializedState;
+    use crate::protocol::generated::goosetower::v1::command::Payload as CommandPayload;
+    use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
+    use crate::protocol::generated::goosetower::v1::{
+        Command, CommandSendTurn, MessageKind, Ping, RealtimeEnvelope, Scope, Subscribe,
+    };
+    use crate::protocol::PROTOCOL_VERSION;
 
     #[tokio::test]
     async fn health_route_is_public_and_v1_requires_bearer_auth() {
@@ -347,11 +469,296 @@ mod tests {
         assert_eq!(source["workspace_id"], "default");
     }
 
+    #[tokio::test]
+    async fn realtime_gateway_rejects_invalid_origin_and_replayed_ticket() {
+        let config = GoosetowerConfig::default();
+        let addr = spawn_gateway(config.clone()).await.0;
+        let ticket = mint_test_ticket(&config);
+
+        let invalid = connect_gateway_with_origin(addr, &ticket, "http://evil.local").await;
+        assert!(invalid.is_err(), "invalid origin should fail upgrade");
+
+        let (mut socket, _) = connect_gateway(addr, &ticket)
+            .await
+            .expect("valid websocket");
+        let hello = read_kind(&mut socket, MessageKind::Hello).await;
+        assert!(matches!(hello.payload, Some(Payload::Hello(_))));
+        socket.close(None).await.expect("close socket");
+
+        let replay = connect_gateway(addr, &ticket).await;
+        assert!(replay.is_err(), "replayed ticket should fail upgrade");
+    }
+
+    #[tokio::test]
+    async fn realtime_gateway_sends_hello_heartbeat_and_enforces_binary_size() {
+        let mut config = GoosetowerConfig::default();
+        config.websocket.max_message_bytes = 64;
+        let addr = spawn_gateway(config.clone()).await.0;
+        let ticket = mint_test_ticket(&config);
+        let (mut socket, _) = connect_gateway(addr, &ticket).await.expect("websocket");
+
+        let hello = read_kind(&mut socket, MessageKind::Hello).await;
+        let Some(Payload::Hello(hello)) = hello.payload else {
+            panic!("expected hello");
+        };
+        assert_eq!(hello.protocol_version, PROTOCOL_VERSION);
+        assert_eq!(hello.max_message_bytes, 64);
+
+        socket
+            .send(WsMessage::Binary(
+                envelope(Payload::Ping(Ping {
+                    client_time_unix_ms: 42,
+                }))
+                .encode_to_vec()
+                .into(),
+            ))
+            .await
+            .expect("send ping");
+        let pong = read_kind(&mut socket, MessageKind::Pong).await;
+        assert!(matches!(pong.payload, Some(Payload::Pong(_))));
+
+        socket
+            .send(WsMessage::Binary(vec![1_u8; 65].into()))
+            .await
+            .expect("send oversized");
+        let next = socket
+            .next()
+            .await
+            .expect("oversized frame closes connection");
+        assert!(next.is_err() || matches!(next, Ok(WsMessage::Close(_))));
+    }
+
+    #[tokio::test]
+    async fn realtime_gateway_subscribe_returns_snapshot() {
+        let config = GoosetowerConfig::default();
+        let (addr, gateway) = spawn_gateway(config.clone()).await;
+        let mut state = MaterializedState::new("local", "static-0");
+        state
+            .sessions
+            .insert("session_1".to_string(), session_record());
+        gateway
+            .replace_materialized_state("local".to_string(), state)
+            .await;
+
+        let ticket = mint_test_ticket(&config);
+        let (mut socket, _) = connect_gateway(addr, &ticket).await.expect("websocket");
+        let _ = read_kind(&mut socket, MessageKind::Hello).await;
+        socket
+            .send(WsMessage::Binary(
+                envelope(Payload::Subscribe(Subscribe {
+                    subscription_id: "sub_board".to_string(),
+                    view_kind: "board".to_string(),
+                    filters: [("source_id".to_string(), "local".to_string())]
+                        .into_iter()
+                        .collect(),
+                }))
+                .encode_to_vec()
+                .into(),
+            ))
+            .await
+            .expect("send subscribe");
+
+        let snapshot = read_kind(&mut socket, MessageKind::Snapshot).await;
+        let Some(Payload::Snapshot(snapshot)) = snapshot.payload else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(snapshot.view_kind, "board");
+        let body: Value = serde_json::from_slice(&snapshot.body).expect("snapshot json");
+        assert_eq!(body["total_rows"], 1);
+        assert_eq!(body["rows"][0]["session_id"], "session_1");
+    }
+
+    #[tokio::test]
+    async fn realtime_gateway_routes_command_and_returns_duplicate() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let runtime_addr = spawn_command_runtime("runtime-token", call_count.clone()).await;
+        let mut config = GoosetowerConfig::default();
+        config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
+        config.runtimes.sources[0].bearer_token = Some("runtime-token".to_string());
+        let addr = spawn_gateway(config.clone()).await.0;
+        let ticket = mint_test_ticket(&config);
+        let (mut socket, _) = connect_gateway(addr, &ticket).await.expect("websocket");
+        let _ = read_kind(&mut socket, MessageKind::Hello).await;
+
+        let command = command_envelope("cmd_1");
+        socket
+            .send(WsMessage::Binary(command.encode_to_vec().into()))
+            .await
+            .expect("send command");
+        let accepted = read_kind(&mut socket, MessageKind::CommandAccepted).await;
+        assert!(matches!(
+            accepted.payload,
+            Some(Payload::CommandAccepted(_))
+        ));
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+        socket
+            .send(WsMessage::Binary(
+                command_envelope("cmd_1").encode_to_vec().into(),
+            ))
+            .await
+            .expect("send duplicate");
+        let duplicate = read_kind(&mut socket, MessageKind::CommandDuplicate).await;
+        assert!(matches!(
+            duplicate.payload,
+            Some(Payload::CommandDuplicate(_))
+        ));
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
     fn test_state(config: GoosetowerConfig, token: &str) -> AppState {
+        let config = Arc::new(config);
         AppState {
-            config: Arc::new(config),
+            gateway: Arc::new(GatewayState::new(config.clone()).expect("gateway state")),
+            config,
             api_bearer_token: Arc::from(token.to_string()),
             runtime_client: RuntimeHealthClient::new(),
+        }
+    }
+
+    async fn spawn_gateway(config: GoosetowerConfig) -> (SocketAddr, Arc<GatewayState>) {
+        let config = Arc::new(config);
+        let gateway = Arc::new(GatewayState::new(config.clone()).expect("gateway"));
+        let state = AppState {
+            gateway: gateway.clone(),
+            config,
+            api_bearer_token: Arc::from("tower-token".to_string()),
+            runtime_client: RuntimeHealthClient::new(),
+        };
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind gateway");
+        let addr = listener.local_addr().expect("gateway addr");
+        tokio::spawn(async move {
+            axum::serve(listener, build_router(state))
+                .await
+                .expect("gateway server");
+        });
+        (addr, gateway)
+    }
+
+    fn mint_test_ticket(config: &GoosetowerConfig) -> String {
+        TicketIssuer::from_config(config)
+            .expect("issuer")
+            .mint_dev_ticket(
+                "session_1",
+                "default",
+                vec!["gateway:connect".to_string(), "gateway:command".to_string()],
+                vec!["http://localhost:3000".to_string()],
+            )
+            .expect("ticket")
+    }
+
+    async fn connect_gateway(
+        addr: SocketAddr,
+        ticket: &str,
+    ) -> tokio_tungstenite::tungstenite::Result<(
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tokio_tungstenite::tungstenite::handshake::client::Response,
+    )> {
+        connect_gateway_with_origin(addr, ticket, "http://localhost:3000").await
+    }
+
+    async fn connect_gateway_with_origin(
+        addr: SocketAddr,
+        ticket: &str,
+        origin: &str,
+    ) -> tokio_tungstenite::tungstenite::Result<(
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tokio_tungstenite::tungstenite::handshake::client::Response,
+    )> {
+        let mut request = format!("ws://{addr}/v1/realtime?ticket={ticket}")
+            .into_client_request()
+            .expect("websocket request");
+        request.headers_mut().insert(
+            header::ORIGIN,
+            HeaderValue::from_str(origin).expect("origin header"),
+        );
+        connect_async(request).await
+    }
+
+    async fn read_kind(
+        socket: &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        kind: MessageKind,
+    ) -> RealtimeEnvelope {
+        for _ in 0..8 {
+            let message = socket
+                .next()
+                .await
+                .expect("websocket message")
+                .expect("websocket ok");
+            let WsMessage::Binary(bytes) = message else {
+                continue;
+            };
+            let envelope = RealtimeEnvelope::decode(bytes.as_ref()).expect("decode envelope");
+            if MessageKind::try_from(envelope.message_kind).ok() == Some(kind) {
+                return envelope;
+            }
+        }
+        panic!("did not receive {:?}", kind);
+    }
+
+    fn envelope(payload: Payload) -> RealtimeEnvelope {
+        let kind = match &payload {
+            Payload::Ping(_) => MessageKind::Ping,
+            Payload::Subscribe(_) => MessageKind::Subscribe,
+            Payload::Command(_) => MessageKind::Command,
+            _ => MessageKind::Unspecified,
+        };
+        RealtimeEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            message_id: "test_msg".to_string(),
+            message_kind: kind as i32,
+            lane: crate::protocol::generated::goosetower::v1::Lane::Critical as i32,
+            payload: Some(payload),
+            ..RealtimeEnvelope::default()
+        }
+    }
+
+    fn command_envelope(command_id: &str) -> RealtimeEnvelope {
+        envelope(Payload::Command(Command {
+            command_id: command_id.to_string(),
+            target: Some(crate::protocol::generated::goosetower::v1::EntityRef {
+                scope: Scope::Session as i32,
+                scope_id: "session_1".to_string(),
+                entity_id: "session_1".to_string(),
+                entity_version: 1,
+            }),
+            base_entity_version: 1,
+            created_at_client_unix_ms: 1,
+            payload: Some(CommandPayload::SendTurn(CommandSendTurn {
+                session_id: "session_1".to_string(),
+                text: "hello".to_string(),
+            })),
+            ..Command::default()
+        }))
+    }
+
+    fn session_record() -> SessionRecord {
+        SessionRecord {
+            id: "session_1".to_string(),
+            provider: "codex".to_string(),
+            status: "ready".to_string(),
+            cwd: Some("/repo".to_string()),
+            model: Some("gpt-5".to_string()),
+            permission_mode: None,
+            system_prompt: None,
+            metadata: serde_json::json!({}),
+            provider_session_ref: None,
+            canonical_provider_session_ref: None,
+            active_turn_id: None,
+            worktree_id: None,
+            created_at: 1,
+            updated_at: 1,
+            closed_at: None,
+            failure_code: None,
+            failure_message: None,
         }
     }
 
@@ -388,6 +795,42 @@ mod tests {
             axum::serve(listener, app)
                 .await
                 .expect("mock runtime server");
+        });
+        addr
+    }
+
+    async fn spawn_command_runtime(
+        expected_token: &'static str,
+        call_count: Arc<AtomicUsize>,
+    ) -> SocketAddr {
+        let route = move |headers: HeaderMap| {
+            let call_count = call_count.clone();
+            async move {
+                let authorized = headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    == Some(format!("Bearer {expected_token}").as_str());
+                if !authorized {
+                    return StatusCode::UNAUTHORIZED.into_response();
+                }
+                call_count.fetch_add(1, Ordering::SeqCst);
+                Json(SendTurnAccepted {
+                    session_id: "session_1".to_string(),
+                    turn_id: "turn_1".to_string(),
+                    status: "in_progress".to_string(),
+                })
+                .into_response()
+            }
+        };
+        let app = Router::new().route("/v1/sessions/session_1/turns", post(route));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind command runtime");
+        let addr = listener.local_addr().expect("command runtime addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("command runtime server");
         });
         addr
     }

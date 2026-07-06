@@ -44,7 +44,12 @@ export type PendingCommandState = {
   readonly idempotencyKey: string;
   readonly status: "queued" | "sent" | "accepted" | "rejected" | "duplicate";
   readonly createdAtUnixMs: number;
+  readonly targetScope?: string;
+  readonly targetScopeId?: string;
+  readonly targetEntityId?: string;
+  readonly errorCode?: string;
   readonly error?: string;
+  readonly refreshEntity?: boolean;
 };
 
 export type SubscriptionState = {

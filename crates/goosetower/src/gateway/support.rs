@@ -23,6 +23,17 @@ use crate::runtime::client::{
     GooselakeRuntimeClient, GooselakeRuntimeClientConfig, RuntimeClientError,
 };
 
+pub(super) const REASON_UNAUTHORIZED: &str = "unauthorized";
+pub(super) const REASON_INVALID_SCOPE: &str = "invalid_scope";
+pub(super) const REASON_INVALID_TARGET: &str = "invalid_target";
+pub(super) const REASON_STALE_ENTITY_VERSION: &str = "stale_entity_version";
+pub(super) const REASON_SOURCE_UNAVAILABLE: &str = "source_unavailable";
+pub(super) const REASON_SOURCE_STALE: &str = "source_stale";
+pub(super) const REASON_SOURCE_GAP: &str = "source_gap";
+pub(super) const REASON_UPSTREAM_REJECTED: &str = "upstream_rejected";
+pub(super) const REASON_UPSTREAM_TIMEOUT: &str = "upstream_timeout";
+pub(super) const REASON_DUPLICATE: &str = "duplicate";
+
 #[derive(Debug)]
 pub(super) struct ConnectionState {
     pub(super) connection_id: String,
@@ -429,7 +440,7 @@ pub(super) struct CommandRouteError {
 impl CommandRouteError {
     pub(super) fn non_retryable(message: impl Into<String>) -> Self {
         Self {
-            code: "command_rejected".to_string(),
+            code: REASON_UPSTREAM_REJECTED.to_string(),
             message: message.into(),
             retryable: false,
         }
@@ -450,10 +461,24 @@ impl CommandRouteError {
 
 impl From<RuntimeClientError> for CommandRouteError {
     fn from(value: RuntimeClientError) -> Self {
+        let retryable = matches!(value, RuntimeClientError::Transport(_));
+        let code = match &value {
+            RuntimeClientError::Transport(error) if error.is_timeout() => REASON_UPSTREAM_TIMEOUT,
+            RuntimeClientError::Transport(_) => REASON_SOURCE_UNAVAILABLE,
+            RuntimeClientError::Http { status, .. }
+                if *status == reqwest::StatusCode::GATEWAY_TIMEOUT
+                    || *status == reqwest::StatusCode::REQUEST_TIMEOUT =>
+            {
+                REASON_UPSTREAM_TIMEOUT
+            }
+            RuntimeClientError::Http { .. }
+            | RuntimeClientError::Decode(_)
+            | RuntimeClientError::Json(_) => REASON_UPSTREAM_REJECTED,
+        };
         Self {
-            code: "runtime_rejected".to_string(),
+            code: code.to_string(),
             message: value.to_string(),
-            retryable: matches!(value, RuntimeClientError::Transport(_)),
+            retryable,
         }
     }
 }
@@ -604,9 +629,11 @@ pub(super) fn command_duplicate(command_id: &str, original_command_id: &str) -> 
 
 pub(super) fn non_empty<'a>(value: &'a str, field: &str) -> Result<&'a str, CommandRouteError> {
     if value.trim().is_empty() {
-        Err(CommandRouteError::non_retryable(format!(
-            "{field} is required"
-        )))
+        Err(CommandRouteError::with_code(
+            REASON_INVALID_TARGET,
+            format!("{field} is required"),
+            false,
+        ))
     } else {
         Ok(value)
     }

@@ -575,7 +575,13 @@ mod tests {
         let mut config = GoosetowerConfig::default();
         config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
         config.runtimes.sources[0].bearer_token = Some("runtime-token".to_string());
-        let addr = spawn_gateway(config.clone()).await.0;
+        let (addr, gateway) = spawn_gateway(config.clone()).await;
+        let mut materialized = MaterializedState::new("local", "static-0");
+        materialized.mark_live();
+        materialized.upsert_session(session_record());
+        gateway
+            .replace_materialized_state("local".to_string(), materialized)
+            .await;
         let ticket = mint_test_ticket(&config);
         let (mut socket, _) = connect_gateway(addr, &ticket).await.expect("websocket");
         let _ = read_kind(&mut socket, MessageKind::Hello).await;

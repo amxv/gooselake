@@ -19,8 +19,8 @@ use crate::materializer::{MaterializedPatch, MaterializedPatchKind, Materialized
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
 use crate::protocol::generated::goosetower::v1::{
     AuthExpiring, AuthRefresh, AuthRefreshed, Command, CommandAccepted, ConnectionDegraded,
-    CursorVector, GatewayEvent, Hello, Lane, MessageKind, Patch, Ping, Pong, RealtimeEnvelope,
-    Resume, Scope, Snapshot, SourceCursor, SourceGapDetected, SourceGapFilled,
+    CursorVector, EntityRef, GatewayEvent, Hello, Lane, MessageKind, Patch, Ping, Pong,
+    RealtimeEnvelope, Resume, Scope, Snapshot, SourceCursor, SourceGapDetected, SourceGapFilled,
     SourceSnapshotResync, Subscribe,
 };
 use crate::protocol::PROTOCOL_VERSION;
@@ -602,7 +602,7 @@ impl GatewayState {
         if command.created_at_client_unix_ms <= 0 {
             return command_rejected(
                 &command.command_id,
-                "missing_client_time",
+                REASON_INVALID_TARGET,
                 "created_at_client_unix_ms is required",
                 false,
             );
@@ -610,12 +610,14 @@ impl GatewayState {
         if !conn.auth.has_scope("gateway:command") {
             return command_rejected(
                 &command.command_id,
-                "forbidden",
+                REASON_UNAUTHORIZED,
                 "ticket does not include gateway:command scope",
                 false,
             );
         }
 
+        let payload_kind = command_payload_kind(&command);
+        let (target_scope, target_scope_id, target_entity_id) = command_target_labels(&command);
         {
             let mut store = self.command_store.lock().await;
             store.prune(now_ms());
@@ -643,6 +645,11 @@ impl GatewayState {
                 }
                 tracing::info!(
                     command_id = %command.command_id,
+                    reason = REASON_DUPLICATE,
+                    payload_kind = payload_kind,
+                    target_scope = target_scope,
+                    target_scope_id = target_scope_id,
+                    target_entity_id = target_entity_id,
                     "gateway audit command.duplicate"
                 );
                 return command_duplicate(&command.command_id, &existing.original_command_id);
@@ -661,6 +668,11 @@ impl GatewayState {
                 );
                 tracing::info!(
                     command_id = %command.command_id,
+                    payload_kind = payload_kind,
+                    target_scope = target_scope,
+                    target_scope_id = target_scope_id,
+                    target_entity_id = target_entity_id,
+                    gateway_seq,
                     "gateway audit command.accepted"
                 );
                 envelope_with_payload(
@@ -684,6 +696,11 @@ impl GatewayState {
                 tracing::info!(
                     command_id = %command.command_id,
                     reason = %error.code,
+                    retryable = error.retryable,
+                    payload_kind = payload_kind,
+                    target_scope = target_scope,
+                    target_scope_id = target_scope_id,
+                    target_entity_id = target_entity_id,
                     "gateway audit command.rejected"
                 );
                 command_rejected(
@@ -707,15 +724,25 @@ impl GatewayState {
             .map_err(|error| {
                 let message = error.to_string();
                 match message.as_str() {
-                    "source_unavailable" | "source_stale" | "source_gap" | "ownership_unknown" => {
+                    REASON_SOURCE_UNAVAILABLE | REASON_SOURCE_STALE | REASON_SOURCE_GAP => {
                         CommandRouteError::with_code(message.clone(), message, true)
                     }
+                    "ownership_unknown" => CommandRouteError::with_code(
+                        REASON_INVALID_TARGET,
+                        "target source is not materialized",
+                        true,
+                    ),
                     _ => CommandRouteError::non_retryable(message),
                 }
             })?;
         let Some(payload) = command.payload.as_ref() else {
-            return Err(CommandRouteError::non_retryable("missing command payload"));
+            return Err(CommandRouteError::with_code(
+                REASON_INVALID_SCOPE,
+                "missing command payload",
+                false,
+            ));
         };
+        self.validate_command_target(command, payload)?;
         match payload {
             crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(input) => {
                 let session_id = non_empty(&input.session_id, "session_id")?;
@@ -740,7 +767,11 @@ impl GatewayState {
                     .map(|target| target.scope_id.as_str())
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
-                        CommandRouteError::non_retryable("target.scope_id session_id is required")
+                        CommandRouteError::with_code(
+                            REASON_INVALID_TARGET,
+                            "target.scope_id session_id is required",
+                            false,
+                        )
                     })?;
                 client
                     .respond_approval(
@@ -842,7 +873,11 @@ impl GatewayState {
                     .map(|target| target.scope_id.as_str())
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
-                        CommandRouteError::non_retryable("target.scope_id team_id is required")
+                        CommandRouteError::with_code(
+                            REASON_INVALID_TARGET,
+                            "target.scope_id team_id is required",
+                            false,
+                        )
                     })?;
                 client
                     .retry_team_delivery(team_id, non_empty(&input.delivery_id, "delivery_id")?)
@@ -855,7 +890,11 @@ impl GatewayState {
                     .map(|target| target.scope_id.as_str())
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| {
-                        CommandRouteError::non_retryable("target.scope_id team_id is required")
+                        CommandRouteError::with_code(
+                            REASON_INVALID_TARGET,
+                            "target.scope_id team_id is required",
+                            false,
+                        )
                     })?;
                 client
                     .cancel_team_message(team_id, non_empty(&input.message_id, "message_id")?)
@@ -890,6 +929,90 @@ impl GatewayState {
                     })
                     .await?;
             }
+        }
+        Ok(())
+    }
+
+    fn validate_command_target(
+        &self,
+        command: &Command,
+        payload: &crate::protocol::generated::goosetower::v1::command::Payload,
+    ) -> Result<(), CommandRouteError> {
+        let Some(target) = command.target.as_ref() else {
+            return Err(CommandRouteError::with_code(
+                REASON_INVALID_TARGET,
+                "command target is required",
+                false,
+            ));
+        };
+        let target_scope = Scope::try_from(target.scope).unwrap_or(Scope::Unspecified);
+        let expected_scope = expected_scope_for_payload(payload);
+        if target_scope != expected_scope {
+            return Err(CommandRouteError::with_code(
+                REASON_INVALID_SCOPE,
+                format!(
+                    "command target scope must be {:?} for {}",
+                    expected_scope,
+                    command_payload_kind(command)
+                ),
+                false,
+            ));
+        }
+        self.validate_entity_version(command, target, expected_scope)
+    }
+
+    fn validate_entity_version(
+        &self,
+        command: &Command,
+        target: &EntityRef,
+        target_scope: Scope,
+    ) -> Result<(), CommandRouteError> {
+        let expected = command.base_entity_version.max(target.entity_version);
+        if expected == 0 {
+            return Ok(());
+        }
+        let Some(entity_kind) = materialized_entity_kind_for_scope(target_scope) else {
+            return Ok(());
+        };
+        let entity_id = if target.entity_id.starts_with("source:") || target.entity_id.is_empty() {
+            target.scope_id.as_str()
+        } else {
+            target.entity_id.as_str()
+        };
+        if entity_id.is_empty() {
+            return Err(CommandRouteError::with_code(
+                REASON_INVALID_TARGET,
+                "target entity id is required",
+                false,
+            ));
+        }
+        let source_id = target.entity_id.strip_prefix("source:").or_else(|| {
+            command
+                .target
+                .as_ref()
+                .and_then(|target| target.entity_id.strip_prefix("source:"))
+        });
+        let materialized = self.materialized.try_read().map_err(|_| {
+            CommandRouteError::with_code(REASON_SOURCE_STALE, "source state is busy", true)
+        })?;
+        let Some((_, state)) = materialized.iter().find(|(candidate_source_id, _)| {
+            source_id.is_none_or(|source_id| candidate_source_id.as_str() == source_id)
+        }) else {
+            return Err(CommandRouteError::with_code(
+                REASON_INVALID_TARGET,
+                "target source is not materialized",
+                true,
+            ));
+        };
+        let actual = state.version(entity_kind, entity_id).0;
+        if actual > 0 && actual != expected {
+            return Err(CommandRouteError::with_code(
+                REASON_STALE_ENTITY_VERSION,
+                format!(
+                    "stale {entity_kind} version for {entity_id}: expected {expected}, current {actual}"
+                ),
+                true,
+            ));
         }
         Ok(())
     }
@@ -1111,6 +1234,91 @@ impl GatewayState {
     #[cfg(test)]
     pub fn publish_patch(&self, patch: MaterializedPatch) {
         let _ = self.patches.send(patch);
+    }
+}
+
+fn command_payload_kind(command: &Command) -> &'static str {
+    match command.payload.as_ref() {
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(_)) => {
+            "send_turn"
+        }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::ResolveApproval(_)) => {
+            "resolve_approval"
+        }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::InterruptTurn(_)) => {
+            "interrupt_turn"
+        }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::SendTeamMessage(_)) => {
+            "send_team_message"
+        }
+        Some(
+            crate::protocol::generated::goosetower::v1::command::Payload::BroadcastTeamMessage(_),
+        ) => "broadcast_team_message",
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::SpawnTeamMember(_)) => {
+            "spawn_team_member"
+        }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::RetryDelivery(_)) => {
+            "retry_delivery"
+        }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::CancelDelivery(_)) => {
+            "cancel_delivery"
+        }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::KillProcess(_)) => {
+            "kill_process"
+        }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::StartProcess(_)) => {
+            "start_process"
+        }
+        None => "missing",
+    }
+}
+
+fn command_target_labels(command: &Command) -> (String, String, String) {
+    command
+        .target
+        .as_ref()
+        .map(|target| {
+            let scope = Scope::try_from(target.scope).unwrap_or(Scope::Unspecified);
+            (
+                format!("{scope:?}"),
+                target.scope_id.clone(),
+                target.entity_id.clone(),
+            )
+        })
+        .unwrap_or_else(|| ("missing".to_string(), String::new(), String::new()))
+}
+
+fn expected_scope_for_payload(
+    payload: &crate::protocol::generated::goosetower::v1::command::Payload,
+) -> Scope {
+    match payload {
+        crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::ResolveApproval(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::InterruptTurn(_) => {
+            Scope::Session
+        }
+        crate::protocol::generated::goosetower::v1::command::Payload::SendTeamMessage(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::BroadcastTeamMessage(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::SpawnTeamMember(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::RetryDelivery(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::CancelDelivery(_) => {
+            Scope::Team
+        }
+        crate::protocol::generated::goosetower::v1::command::Payload::KillProcess(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::StartProcess(_) => {
+            Scope::Process
+        }
+    }
+}
+
+fn materialized_entity_kind_for_scope(scope: Scope) -> Option<&'static str> {
+    match scope {
+        Scope::Session => Some("session"),
+        Scope::Team => Some("team"),
+        Scope::Process => Some("process"),
+        Scope::Worktree => Some("worktree"),
+        Scope::Source => Some("source"),
+        _ => None,
     }
 }
 
@@ -1341,8 +1549,120 @@ mod resume_tests {
         assert_eq!(rejected.error.expect("error").code, "source_stale");
     }
 
+    #[tokio::test]
+    async fn command_without_scope_is_rejected_as_unauthorized_without_leaving_pending() {
+        let gateway = test_gateway(GoosetowerConfig::default());
+        let mut conn = test_connection(&gateway);
+        conn.auth.scopes = vec!["gateway:connect".to_string()];
+
+        let response = gateway
+            .admit_and_route_command(&mut conn, send_turn_command("cmd_unauthorized"))
+            .await;
+
+        let Some(Payload::CommandRejected(rejected)) = response.payload else {
+            panic!("expected command rejection");
+        };
+        assert_eq!(rejected.error.expect("error").code, REASON_UNAUTHORIZED);
+        assert!(gateway
+            .command_store
+            .lock()
+            .await
+            .get("cmd_unauthorized")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn command_scope_mismatch_is_rejected_before_runtime_route() {
+        let gateway = live_gateway_with_session_version(GoosetowerConfig::default(), 1).await;
+        let mut conn = test_connection(&gateway);
+        let mut command = send_turn_command("cmd_invalid_scope");
+        command.target.as_mut().expect("target").scope = Scope::Team as i32;
+
+        let response = gateway.admit_and_route_command(&mut conn, command).await;
+
+        let Some(Payload::CommandRejected(rejected)) = response.payload else {
+            panic!("expected command rejection");
+        };
+        assert_eq!(rejected.error.expect("error").code, REASON_INVALID_SCOPE);
+    }
+
+    #[tokio::test]
+    async fn stale_entity_version_is_rejected_with_refreshable_reason() {
+        let gateway = live_gateway_with_session_version(GoosetowerConfig::default(), 2).await;
+        let mut conn = test_connection(&gateway);
+        let response = gateway
+            .admit_and_route_command(&mut conn, send_turn_command("cmd_stale_version"))
+            .await;
+
+        let Some(Payload::CommandRejected(rejected)) = response.payload else {
+            panic!("expected command rejection");
+        };
+        let error = rejected.error.expect("error");
+        assert_eq!(error.code, REASON_STALE_ENTITY_VERSION);
+        assert!(error.retryable);
+    }
+
+    #[tokio::test]
+    async fn upstream_runtime_http_error_is_rejected_as_upstream_rejected() {
+        let runtime_addr = spawn_rejecting_command_runtime().await;
+        let mut config = GoosetowerConfig::default();
+        config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
+        let gateway = live_gateway_with_session_version(config, 1).await;
+        let mut conn = test_connection(&gateway);
+
+        let response = gateway
+            .admit_and_route_command(&mut conn, send_turn_command("cmd_upstream_reject"))
+            .await;
+
+        let Some(Payload::CommandRejected(rejected)) = response.payload else {
+            panic!("expected command rejection");
+        };
+        assert_eq!(
+            rejected.error.expect("error").code,
+            REASON_UPSTREAM_REJECTED
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_command_returns_duplicate_disposition_reason() {
+        let runtime_addr = spawn_rejecting_command_runtime().await;
+        let mut config = GoosetowerConfig::default();
+        config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
+        let gateway = live_gateway_with_session_version(config, 1).await;
+        let mut conn = test_connection(&gateway);
+
+        let _ = gateway
+            .admit_and_route_command(&mut conn, send_turn_command("cmd_duplicate"))
+            .await;
+        let response = gateway
+            .admit_and_route_command(&mut conn, send_turn_command("cmd_duplicate"))
+            .await;
+
+        let Some(Payload::CommandDuplicate(duplicate)) = response.payload else {
+            panic!("expected duplicate command response");
+        };
+        assert_eq!(duplicate.command_id, "cmd_duplicate");
+        assert_eq!(duplicate.original_command_id, "cmd_duplicate");
+    }
+
     fn test_gateway(config: GoosetowerConfig) -> GatewayState {
         GatewayState::new(Arc::new(config)).expect("gateway")
+    }
+
+    async fn live_gateway_with_session_version(
+        config: GoosetowerConfig,
+        session_version: usize,
+    ) -> GatewayState {
+        let gateway = test_gateway(config);
+        let mut state = MaterializedState::new("local", "static-0");
+        state.mark_live();
+        for _ in 0..session_version {
+            state.upsert_session(session_record());
+        }
+        gateway
+            .replace_materialized_state("local".to_string(), state)
+            .await;
+        gateway
     }
 
     fn test_connection(gateway: &GatewayState) -> ConnectionState {
@@ -1454,6 +1774,30 @@ mod resume_tests {
             })),
             ..Command::default()
         }
+    }
+
+    async fn spawn_rejecting_command_runtime() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind rejecting runtime");
+        let addr = listener.local_addr().expect("runtime addr");
+        tokio::spawn(async move {
+            let app = axum::Router::new().route(
+                "/v1/sessions/{session_id}/turns",
+                axum::routing::post(|| async {
+                    (
+                        axum::http::StatusCode::CONFLICT,
+                        axum::Json(json!({
+                            "error": "session already has an active turn"
+                        })),
+                    )
+                }),
+            );
+            axum::serve(listener, app)
+                .await
+                .expect("serve rejecting runtime");
+        });
+        addr
     }
 
     #[derive(Debug, Clone, Copy)]

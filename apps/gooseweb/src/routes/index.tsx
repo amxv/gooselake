@@ -228,9 +228,9 @@ function Index() {
 
   useEffect(() => {
     ensureRealtimeWorker();
-    subscribeRealtime("board:window", "fleet-row", { window: "0:120" });
-    subscribeRealtime("inbox:pending", "approval", { status: "pending" });
-    subscribeRealtime("sources:health", "source-health");
+    subscribeRealtime("board:window", "board", { window: "0:120" });
+    subscribeRealtime("inbox:pending", "approval_inbox", { status: "pending" });
+    subscribeRealtime("sources:health", "source_health");
     subscribeRealtime("ledger:recent", "ledger", { window: "0:120" });
 
     return () => {
@@ -242,7 +242,7 @@ function Index() {
   }, []);
 
   useEffect(() => {
-    subscribeRealtime("board:window", "fleet-row", {
+    subscribeRealtime("board:window", "board", {
       window: "0:120",
       source: filters.sourceId,
       team: filters.teamId,
@@ -1020,7 +1020,12 @@ function TeamPane({
             items={pendingCommands.map((command) => ({
               id: command.commandId,
               title: command.commandId,
-              meta: command.status
+              meta:
+                command.status === "rejected"
+                  ? `${command.errorCode ?? "rejected"}: ${command.error ?? "Command rejected"}`
+                  : command.status === "duplicate"
+                    ? `${command.errorCode ?? "duplicate"}: ${command.error ?? "Already submitted"}`
+                    : command.status
             }))}
             renderAction={(id) => (
               <div className="flex gap-1">

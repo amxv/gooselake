@@ -90,6 +90,7 @@ export class RealtimeWorkerCore {
       this.sendEnvelope(
         makeResume(this.cursor, this.connectionId, this.subscriptions)
       );
+      this.resendActiveSubscriptions();
     };
     socket.onmessage = (event) => this.receiveFrame(event.data);
     socket.onerror = () => {
@@ -137,13 +138,31 @@ export class RealtimeWorkerCore {
     this.sendEnvelope(makeUnsubscribe(subscriptionId));
   }
 
+  private resendActiveSubscriptions(): void {
+    for (const subscription of Object.values(this.subscriptions)) {
+      if (subscription.status === "unsubscribed") {
+        continue;
+      }
+      this.sendEnvelope(
+        makeSubscribe(
+          subscription.subscriptionId,
+          subscription.viewKind,
+          subscription.filters
+        )
+      );
+    }
+  }
+
   private sendCommand(command: PendingCommandInput, idempotencyKey?: string): void {
     const commandId = command.commandId || crypto.randomUUID();
     const pending: PendingCommandState = {
       commandId,
       idempotencyKey: idempotencyKey ?? command.idempotencyKey ?? commandId,
       status: "queued",
-      createdAtUnixMs: Number(command.createdAtClientUnixMs || BigInt(Date.now()))
+      createdAtUnixMs: Number(command.createdAtClientUnixMs || BigInt(Date.now())),
+      targetScope: command.target?.scope?.toString(),
+      targetScopeId: command.target?.scopeId,
+      targetEntityId: command.target?.entityId
     };
     this.pendingCommands[commandId] = pending;
     this.post({ type: "command-state", command: pending });
@@ -261,22 +280,39 @@ export class RealtimeWorkerCore {
       createdAtUnixMs: Date.now()
     };
 
+    const rejection =
+      envelope.payload.case === "commandRejected"
+        ? envelope.payload.value.error
+        : undefined;
+    const rejectionCode = rejection?.code || "upstream_rejected";
     const next: PendingCommandState =
       envelope.messageKind === MessageKind.COMMAND_ACCEPTED
-        ? { ...base, status: "accepted" }
+        ? { ...base, status: "accepted", error: undefined, errorCode: undefined }
         : envelope.messageKind === MessageKind.COMMAND_DUPLICATE
-          ? { ...base, status: "duplicate" }
+          ? {
+              ...base,
+              status: "duplicate",
+              errorCode: "duplicate",
+              error: commandReasonCopy("duplicate")
+            }
           : {
               ...base,
               status: "rejected",
-              error:
-                envelope.payload.case === "commandRejected"
-                  ? envelope.payload.value.error?.message
-                  : "Command rejected"
+              errorCode: rejectionCode,
+              error: commandReasonCopy(rejectionCode, rejection?.message),
+              refreshEntity: shouldRefreshRejectedCommand(rejectionCode)
             };
 
     this.pendingCommands[commandId] = next;
     this.post({ type: "command-state", command: next });
+    if (next.status === "rejected" && next.refreshEntity) {
+      this.emitState({
+        lastError: `${next.errorCode}: ${next.error}`,
+        staleSources: next.targetEntityId?.startsWith("source:")
+          ? { [next.targetEntityId.replace(/^source:/, "")]: next.errorCode ?? "source_stale" }
+          : undefined
+      });
+    }
   }
 
   private handleStaleSignal(envelope: RealtimeEnvelope): void {
@@ -381,6 +417,42 @@ function commandIdFromPayload(envelope: RealtimeEnvelope): string {
     default:
       return "";
   }
+}
+
+function commandReasonCopy(code: string, fallback?: string): string {
+  switch (code) {
+    case "unauthorized":
+      return "This session is not authorized to run that command.";
+    case "invalid_scope":
+      return "The command does not match the selected object type.";
+    case "invalid_target":
+      return "The selected object is no longer available.";
+    case "stale_entity_version":
+      return "The selected object changed. Refreshing its state before retry.";
+    case "source_unavailable":
+      return "The runtime source is unavailable.";
+    case "source_stale":
+      return "The runtime source is stale. Refreshing before retry.";
+    case "source_gap":
+      return "The runtime event stream has a gap. Refreshing before retry.";
+    case "upstream_rejected":
+      return fallback || "The runtime rejected the command.";
+    case "upstream_timeout":
+      return "The runtime did not respond before the command timed out.";
+    case "duplicate":
+      return "This command was already submitted.";
+    default:
+      return fallback || "Command rejected.";
+  }
+}
+
+function shouldRefreshRejectedCommand(code: string): boolean {
+  return (
+    code === "stale_entity_version" ||
+    code === "source_stale" ||
+    code === "source_gap" ||
+    code === "source_unavailable"
+  );
 }
 
 function mergeSnapshotPatch(

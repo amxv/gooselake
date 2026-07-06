@@ -645,10 +645,23 @@ function MissionWorkspace({
   readonly staleSourceIds: readonly string[];
 }) {
   const [composerText, setComposerText] = useState("");
+  const hasAgentThreadComposer =
+    activeView === "agents" && Boolean(selectedSession?.sessionId);
+
+  useEffect(() => {
+    if (!hasAgentThreadComposer && composerText) {
+      setComposerText("");
+    }
+  }, [composerText, hasAgentThreadComposer]);
 
   function submitComposer(event: FormEvent) {
     event.preventDefault();
-    if (!selectedSession || !composerText.trim() || sourceGapActive) {
+    if (
+      !hasAgentThreadComposer ||
+      !selectedSession ||
+      !composerText.trim() ||
+      sourceGapActive
+    ) {
       return;
     }
     sendRealtimeCommand(
@@ -661,7 +674,14 @@ function MissionWorkspace({
   }
 
   return (
-    <section className="mission-workspace">
+    <section
+      className={cn(
+        "mission-workspace",
+        hasAgentThreadComposer
+          ? "mission-workspace-thread"
+          : "mission-workspace-dashboard"
+      )}
+    >
       <div className="mission-workspace-tab" aria-hidden="true" />
       <div className="mission-workspace-header">
         <div>
@@ -727,47 +747,49 @@ function MissionWorkspace({
         </div>
       </ScrollArea>
 
-      <form className="mission-composer" onSubmit={submitComposer}>
-        <Textarea
-          aria-label="Mission composer"
-          value={composerText}
-          onChange={(event) => setComposerText(event.target.value)}
-          placeholder=""
-          rows={4}
-        />
-        <div className="mission-composer-tray">
-          <div className="mission-composer-tools">
-            <Button size="icon-sm" type="button" variant="ghost">
-              <PlusIcon />
-            </Button>
-            <SelectFilter
-              value={selectedSession?.model || "default"}
-              options={unique(["default", "medium", "high", selectedSession?.model || "default"])}
-              onChange={() => undefined}
-            />
-            <SelectFilter
-              value={selectedSession?.provider || "runtime"}
-              options={unique(["runtime", "codex", "claude", selectedSession?.provider || "runtime"])}
-              onChange={() => undefined}
-            />
-            <MetricChip label="target" value={selectedSession?.sessionId || "none"} />
+      {hasAgentThreadComposer ? (
+        <form className="mission-composer" onSubmit={submitComposer}>
+          <Textarea
+            aria-label="Agent thread composer"
+            value={composerText}
+            onChange={(event) => setComposerText(event.target.value)}
+            placeholder=""
+            rows={4}
+          />
+          <div className="mission-composer-tray">
+            <div className="mission-composer-tools">
+              <Button size="icon-sm" type="button" variant="ghost">
+                <PlusIcon />
+              </Button>
+              <SelectFilter
+                value={selectedSession?.model || "default"}
+                options={unique(["default", "medium", "high", selectedSession?.model || "default"])}
+                onChange={() => undefined}
+              />
+              <SelectFilter
+                value={selectedSession?.provider || "runtime"}
+                options={unique(["runtime", "codex", "claude", selectedSession?.provider || "runtime"])}
+                onChange={() => undefined}
+              />
+              <MetricChip label="target" value={selectedSession?.sessionId || "none"} />
+            </div>
+            <div className="mission-composer-actions">
+              <span className="mission-context-gauge">
+                <CircleIcon />
+                36% left
+              </span>
+              <Button
+                disabled={!composerText.trim() || sourceGapActive}
+                size="icon-lg"
+                type="submit"
+                variant="secondary"
+              >
+                <SquareIcon />
+              </Button>
+            </div>
           </div>
-          <div className="mission-composer-actions">
-            <span className="mission-context-gauge">
-              <CircleIcon />
-              36% left
-            </span>
-            <Button
-              disabled={!composerText.trim() || !selectedSession || sourceGapActive}
-              size="icon-lg"
-              type="submit"
-              variant="secondary"
-            >
-              <SquareIcon />
-            </Button>
-          </div>
-        </div>
-      </form>
+        </form>
+      ) : null}
     </section>
   );
 }
@@ -914,30 +936,25 @@ function WorklogNarrative({
 }) {
   const runningCount = processes.filter((process) => process.status === "running").length;
   const codeValue = selectedRow?.sourceId || selectedSession?.sourceId || "source none";
+  const selectedLabel =
+    selectedRow?.title || selectedSession?.sessionId || selectedTeam?.name || activeView;
+  const narrative = getWorkspaceNarrative({
+    activeView,
+    selectedLabel,
+    selectedSession,
+    selectedApproval,
+    codeValue,
+    runningCount,
+    sourceGapActive
+  });
 
   return (
     <div className="mission-narrative">
-      <p className="mission-muted-copy">
-        The board is centered on{" "}
-        <strong>{selectedRow?.title || selectedSession?.sessionId || selectedTeam?.name || activeView}</strong>
-        . Gooseweb is keeping the realtime worker, subscriptions, command queue,
-        approvals, and process visibility active while this operator surface is
-        rendered as a dense desktop control room.
-      </p>
-      <p className="mission-primary-copy">
-        The active workspace is <code>{activeView}</code>, the current source is{" "}
-        <code>{codeValue}</code>, and there {runningCount === 1 ? "is" : "are"}{" "}
-        <code>{runningCount}</code> running process{runningCount === 1 ? "" : "es"}.
-        {sourceGapActive
-          ? " Command mutation controls are guarded because the source is stale, offline, or replaying."
-          : " Command mutation controls are available for the selected runtime entity."}
-      </p>
-      {selectedApproval ? (
+      <p className="mission-muted-copy">{narrative.muted}</p>
+      <p className="mission-primary-copy">{narrative.primary}</p>
+      {narrative.approval ? (
         <p className="mission-primary-copy">
-          Approval context is in scope:{" "}
-          <code>{selectedApproval.summary || selectedApproval.approvalId}</code>{" "}
-          is currently <code>{selectedApproval.status}</code> with risk{" "}
-          <code>{selectedApproval.risk || "unknown"}</code>.
+          {narrative.approval}
         </p>
       ) : null}
     </div>

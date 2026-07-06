@@ -68,6 +68,16 @@ api-docs-check: ## Fail if API files changed without corresponding docs changes
 lint-rust-file-lines: ## Fail if any Rust file exceeds 1000 lines
 	./scripts/check-rust-file-lines.sh 1000
 
+.PHONY: check
+check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tests
+	$(MAKE) lint-rust-file-lines
+	cargo fmt --check
+	cargo check --workspace
+	cargo test --workspace
+	cargo check --manifest-path sidecars/gg-mcp-server/Cargo.toml
+	cargo test --manifest-path sidecars/gg-mcp-server/Cargo.toml
+	$(MAKE) api-docs-check
+
 .PHONY: vps-deploy
 vps-deploy: ## One-command VPS deploy (upgrade + preflight + systemd enable/start)
 	./scripts/deploy-vps.sh --version "$(VERSION)" --config "$(CONFIG)" --service "$(SERVICE)" --scope "$(SCOPE)" $(if $(BASE_URL),--base-url "$(BASE_URL)") $(if $(TOKEN),--token "$(TOKEN)")

@@ -7,6 +7,16 @@ The canonical working directory for this repo is:
 
 For future team agents, attach/use this project path as the working directory unless the user explicitly provides a different worktree or path.
 
+## Repo-Wide Validation
+
+Use the repo-wide check target before pushing broad Rust changes:
+
+```bash
+make check
+```
+
+This runs the Rust file-length lint, `cargo fmt --check`, workspace check/test, standalone `gg-mcp-server` check/test, and the API docs sync check.
+
 ## API Docs Sync Expectations
 
 When you touch runtime API behavior, treat docs as part of the same change.

@@ -250,6 +250,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use crate::materializer::MaterializedState;
     use crate::runtime::{GooselakeRuntimeClient, GooselakeRuntimeClientConfig};
     use axum::extract::Query;
     use axum::http::{header, HeaderMap};
@@ -312,6 +313,78 @@ mod tests {
         );
         assert_eq!(fan_in.health().state, SourceHealthState::Live);
         assert_eq!(fan_in.health().last_source_seq, Some(4));
+    }
+
+    #[tokio::test]
+    async fn sse_recovers_from_decode_error_and_materializes_live_session_event() {
+        let calls = Arc::new(Mutex::new(0usize));
+        let addr = spawn_decode_then_session_mock(calls.clone()).await;
+        let client = GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
+            "local",
+            "epoch-test",
+            format!("http://{addr}"),
+            None,
+        ))
+        .expect("client");
+        let fan_in = RuntimeSseFanIn::new(client, RuntimeSseFanInConfig::default());
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut seen = HashSet::new();
+
+        let decode_error = fan_in.consume_once(None, &tx, &mut seen).await;
+        assert!(matches!(decode_error, Err(RuntimeClientError::Json(_))));
+        fan_in.transition(
+            SourceHealthState::Offline,
+            None,
+            Some("decode error".to_string()),
+        );
+        fan_in.transition(SourceHealthState::Replaying, None, None);
+
+        let cursor = fan_in
+            .consume_once(None, &tx, &mut seen)
+            .await
+            .expect("reconnect consume");
+        drop(tx);
+
+        assert_eq!(cursor, Some(1));
+        let event = rx.recv().await.expect("source event");
+        let mut state = MaterializedState::new("local", "epoch-test");
+        let effect = state.reduce_source_event(event);
+        assert!(!effect.duplicate);
+        assert_eq!(state.sessions["sess_live"].provider, "codex");
+        assert_eq!(fan_in.health().state, SourceHealthState::Live);
+        assert_eq!(*calls.lock().unwrap(), 2);
+    }
+
+    async fn spawn_decode_then_session_mock(calls: Arc<Mutex<usize>>) -> SocketAddr {
+        let route = move || {
+            let calls = calls.clone();
+            async move {
+                let mut calls = calls.lock().unwrap();
+                *calls += 1;
+                let call_index = *calls;
+                drop(calls);
+
+                let event = if call_index == 1 {
+                    Event::default().id("1").event("broken").data("{not json")
+                } else {
+                    let payload = serde_json::to_string(&session_created_event()).unwrap();
+                    Event::default()
+                        .id("1")
+                        .event("session.created")
+                        .data(payload)
+                };
+                let stream = tokio_stream::iter(vec![Ok::<_, std::convert::Infallible>(event)]);
+                Sse::new(stream)
+            }
+        };
+
+        let app = Router::new().route("/v1/events/stream", get(route));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock");
+        let addr = listener.local_addr().expect("mock addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("mock server");
+        });
+        addr
     }
 
     async fn spawn_sse_mock(observed: Arc<Mutex<Vec<(Option<i64>, Option<i64>)>>>) -> SocketAddr {
@@ -381,6 +454,25 @@ mod tests {
             provider: Some("codex".to_string()),
             provider_seq: Some(row_id),
             created_at: row_id,
+        }
+    }
+
+    fn session_created_event() -> RuntimeEventRecord {
+        RuntimeEventRecord {
+            row_id: 1,
+            event_id: "event_1".to_string(),
+            scope: RuntimeEventScope::Session,
+            scope_id: "sess_live".to_string(),
+            session_id: Some("sess_live".to_string()),
+            team_id: None,
+            turn_id: None,
+            seq: 1,
+            kind: "session.created".to_string(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload: json!({ "provider": "codex" }),
+            provider: Some("codex".to_string()),
+            provider_seq: Some(1),
+            created_at: 1,
         }
     }
 }

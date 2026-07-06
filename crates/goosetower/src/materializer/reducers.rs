@@ -144,6 +144,8 @@ impl MaterializedState {
             }
             updated.updated_at = event.created_at.max(updated.updated_at);
             self.upsert_session(updated);
+        } else if event.kind == "session.created" {
+            self.upsert_session(session_record_from_created_event(event, session_id));
         }
         patches.extend(self.session_patches(session_id, cursor));
         patches
@@ -762,6 +764,42 @@ fn event_payload_record<T: DeserializeOwned>(event: &SourceEvent, field: &str) -
         .cloned()
         .or_else(|| event.payload.get(field).cloned())
         .and_then(|value| serde_json::from_value(value).ok())
+}
+
+fn session_record_from_created_event(event: &SourceEvent, session_id: &str) -> SessionRecord {
+    let provider = event
+        .payload
+        .pointer("/runtime_event/provider")
+        .and_then(Value::as_str)
+        .or_else(|| event.payload.pointer("/provider").and_then(Value::as_str))
+        .unwrap_or("unknown")
+        .to_string();
+    let model = event
+        .payload
+        .pointer("/runtime_event/model")
+        .and_then(Value::as_str)
+        .or_else(|| event.payload.pointer("/model").and_then(Value::as_str))
+        .map(str::to_string);
+
+    SessionRecord {
+        id: session_id.to_string(),
+        provider,
+        status: "ready".to_string(),
+        cwd: None,
+        model,
+        permission_mode: None,
+        system_prompt: None,
+        metadata: Value::Object(Default::default()),
+        provider_session_ref: None,
+        canonical_provider_session_ref: None,
+        active_turn_id: None,
+        worktree_id: None,
+        created_at: event.created_at,
+        updated_at: event.created_at,
+        closed_at: None,
+        failure_code: None,
+        failure_message: None,
+    }
 }
 
 fn assistant_text(event: &SourceEvent) -> Option<String> {

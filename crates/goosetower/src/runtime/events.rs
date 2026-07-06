@@ -44,7 +44,7 @@ impl SourceHealthState {
             (Replaying, Live | Stale | Offline | GapDetected | Failed) => true,
             (Draining, Offline | Terminated | Failed) => true,
             (Stale, Live | Offline | GapDetected | Draining | Failed) => true,
-            (Offline, Booting | Live | Failed | Terminated) => true,
+            (Offline, Booting | Replaying | Live | Failed | Terminated) => true,
             (Failed, Booting | Offline | Terminated) => true,
             (GapDetected, Replaying | Stale | Offline | Failed) => true,
             _ => false,
@@ -251,6 +251,7 @@ mod tests {
         assert!(!SourceHealthState::Terminated.can_transition_to(SourceHealthState::Booting));
         assert!(SourceHealthState::Configured.can_transition_to(SourceHealthState::Live));
         assert!(SourceHealthState::Configured.can_transition_to(SourceHealthState::Replaying));
+        assert!(SourceHealthState::Offline.can_transition_to(SourceHealthState::Replaying));
         assert!(!SourceHealthState::Draining.can_transition_to(SourceHealthState::Live));
     }
 }

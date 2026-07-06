@@ -73,6 +73,29 @@ fn materializer_reduces_session_approval_team_and_process_events() {
 }
 
 #[test]
+fn materializer_creates_session_from_live_session_created_hint() {
+    let mut state = MaterializedState::new("local", "epoch");
+    state.mark_live();
+
+    let effect = state.reduce_source_event(source_event(
+        13,
+        "session.created",
+        RuntimeEventScope::Session,
+        "sess_live",
+        json!({ "provider": "codex" }),
+    ));
+
+    assert!(!effect.duplicate);
+    assert_eq!(state.sessions["sess_live"].provider, "codex");
+    assert_eq!(state.sessions["sess_live"].status, "ready");
+    assert!(effect
+        .patches
+        .iter()
+        .any(|patch| patch.kind == MaterializedPatchKind::EntityUpsert
+            && patch.view_kind == "fleet_board"));
+}
+
+#[test]
 fn materializer_snapshots_board_inbox_session_team_and_ledger() {
     let mut state = seeded_state();
     state.reduce_source_event(source_event(

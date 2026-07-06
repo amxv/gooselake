@@ -94,7 +94,6 @@ import {
 } from "~/components/ui/empty";
 import {
   Field,
-  FieldDescription,
   FieldGroup,
   FieldLabel
 } from "~/components/ui/field";
@@ -247,6 +246,9 @@ function Index() {
     sessions.find((session) => session.sessionId === selectedSessionId) ??
     sessions.find((session) => session.sessionId === selectedRow?.sessionId) ??
     sessions[0];
+  const selectedAgentSession =
+    sessions.find((session) => session.sessionId === selectedSessionId) ??
+    (selectedSessionId ? selectedSession : undefined);
   const selectedTeam =
     teams.find((team) => team.teamId === selectedTeamId) ??
     teams.find((team) => team.teamId === selectedRow?.teamId) ??
@@ -313,7 +315,7 @@ function Index() {
     staleSourceIds.length > 0;
 
   return (
-    <div className="mission-shell h-svh overflow-hidden bg-background text-foreground">
+    <div className="mission-shell bg-background text-foreground">
       <MissionChrome
         state={state}
         sources={sources}
@@ -328,7 +330,7 @@ function Index() {
           teams={teams}
           processes={processes}
           selectedRowId={selectedRow?.rowId ?? ""}
-          selectedSessionId={selectedSession?.sessionId ?? ""}
+          selectedSessionId={selectedSessionId}
           selectedTeamId={selectedTeam?.teamId ?? ""}
           selectedApprovalId={selectedApproval?.approvalId ?? ""}
           selectedProcessId={selectedProcess?.processId ?? ""}
@@ -365,7 +367,9 @@ function Index() {
             filters={filters}
             setFilters={setFilters}
             selectedRow={selectedRow}
-            selectedSession={selectedSession}
+            selectedSession={
+              activeView === "agents" ? selectedAgentSession : selectedSession
+            }
             selectedTeam={selectedTeam}
             selectedApproval={selectedApproval}
             selectedRowId={selectedRow?.rowId ?? ""}
@@ -647,6 +651,7 @@ function MissionWorkspace({
   const [composerText, setComposerText] = useState("");
   const hasAgentThreadComposer =
     activeView === "agents" && Boolean(selectedSession?.sessionId);
+  const isAgentThread = activeView === "agents" && Boolean(selectedSession);
 
   useEffect(() => {
     if (!hasAgentThreadComposer && composerText) {
@@ -677,75 +682,112 @@ function MissionWorkspace({
     <section
       className={cn(
         "mission-workspace",
-        hasAgentThreadComposer
+        isAgentThread
           ? "mission-workspace-thread"
           : "mission-workspace-dashboard"
       )}
     >
-      <div className="mission-workspace-tab" aria-hidden="true" />
-      <div className="mission-workspace-header">
-        <div>
-          <div className="mission-kicker">
-            Thinking
-            <ChevronDownIcon />
+      {isAgentThread ? (
+        <>
+          <div className="mission-workspace-tab" aria-hidden="true" />
+          <div className="mission-workspace-header">
+            <div>
+              <div className="mission-kicker">
+                Thinking
+                <ChevronDownIcon />
+              </div>
+              <h1>
+                {workspaceTitle(activeView, selectedRow, selectedSession, selectedTeam)}
+              </h1>
+            </div>
+            <div className="mission-header-metrics">
+              <ConnectionBadge connection={connection} />
+              <MetricChip label="subs" value={String(subscriptionCount)} />
+              <MetricChip
+                label="stale"
+                value={staleSourceIds.length ? staleSourceIds.join(", ") : "none"}
+              />
+            </div>
           </div>
-          <h1>{workspaceTitle(activeView, selectedRow, selectedSession, selectedTeam)}</h1>
-        </div>
-        <div className="mission-header-metrics">
-          <ConnectionBadge connection={connection} />
-          <MetricChip label="subs" value={String(subscriptionCount)} />
-          <MetricChip label="stale" value={staleSourceIds.length ? staleSourceIds.join(", ") : "none"} />
-        </div>
-      </div>
 
-      <ScrollArea className="mission-workspace-scroll">
-        <div className="mission-worklog">
-          <WorklogNarrative
-            activeView={activeView}
-            selectedRow={selectedRow}
-            selectedSession={selectedSession}
-            selectedTeam={selectedTeam}
-            selectedApproval={selectedApproval}
-            processes={processes}
-            sourceGapActive={sourceGapActive}
-          />
-          <InlineToolStack
-            rows={rows}
-            approvals={approvals}
-            teams={teams}
-            processes={processes}
-            sources={sources}
-          />
-          <div className="mission-embedded-pane">
-            <MissionViewBody
-              state={state}
-              activeView={activeView}
-              rows={rows}
-              sessions={sessions}
-              teams={teams}
-              approvals={approvals}
-              processes={processes}
-              sources={sources}
-              filters={filters}
-              setFilters={setFilters}
-              selectedRowId={selectedRowId}
-              selectedSession={selectedSession}
-              selectedTeam={selectedTeam}
-              selectedApproval={selectedApproval}
-              selectedApprovalId={selectedApprovalId}
-              setSelectedRowId={setSelectedRowId}
-              setSelectedSessionId={setSelectedSessionId}
-              setSelectedTeamId={setSelectedTeamId}
-              setSelectedApprovalId={setSelectedApprovalId}
-              pendingCommands={pendingCommands}
-              ledgerEvents={ledgerEvents}
-              connection={connection}
-              subscriptionCount={subscriptionCount}
-              sourceGapActive={sourceGapActive}
-            />
-          </div>
-        </div>
-      </ScrollArea>
+          <ScrollArea className="mission-workspace-scroll">
+            <div className="mission-worklog">
+              <WorklogNarrative
+                selectedRow={selectedRow}
+                selectedSession={selectedSession}
+                selectedTeam={selectedTeam}
+                selectedApproval={selectedApproval}
+                processes={processes}
+                sourceGapActive={sourceGapActive}
+              />
+              <InlineToolStack
+                rows={rows}
+                approvals={approvals}
+                teams={teams}
+                processes={processes}
+                sources={sources}
+              />
+              <div className="mission-embedded-pane">
+                <MissionViewBody
+                  state={state}
+                  activeView={activeView}
+                  rows={rows}
+                  sessions={sessions}
+                  teams={teams}
+                  approvals={approvals}
+                  processes={processes}
+                  sources={sources}
+                  filters={filters}
+                  setFilters={setFilters}
+                  selectedRowId={selectedRowId}
+                  selectedSession={selectedSession}
+                  selectedTeam={selectedTeam}
+                  selectedApproval={selectedApproval}
+                  selectedApprovalId={selectedApprovalId}
+                  setSelectedRowId={setSelectedRowId}
+                  setSelectedSessionId={setSelectedSessionId}
+                  setSelectedTeamId={setSelectedTeamId}
+                  setSelectedApprovalId={setSelectedApprovalId}
+                  pendingCommands={pendingCommands}
+                  ledgerEvents={ledgerEvents}
+                  connection={connection}
+                  subscriptionCount={subscriptionCount}
+                  sourceGapActive={sourceGapActive}
+                />
+              </div>
+            </div>
+          </ScrollArea>
+        </>
+      ) : (
+        <DashboardWorkspace
+          state={state}
+          activeView={activeView}
+          rows={rows}
+          sessions={sessions}
+          teams={teams}
+          approvals={approvals}
+          processes={processes}
+          sources={sources}
+          filters={filters}
+          setFilters={setFilters}
+          selectedRow={selectedRow}
+          selectedSession={selectedSession}
+          selectedTeam={selectedTeam}
+          selectedApproval={selectedApproval}
+          selectedRowId={selectedRowId}
+          selectedApprovalId={selectedApprovalId}
+          setSelectedRowId={setSelectedRowId}
+          setSelectedSessionId={setSelectedSessionId}
+          setSelectedTeamId={setSelectedTeamId}
+          setSelectedApprovalId={setSelectedApprovalId}
+          pendingCommands={pendingCommands}
+          ledgerEvents={ledgerEvents}
+          connection={connection}
+          subscriptionCount={subscriptionCount}
+          sourceGapActive={sourceGapActive}
+          staleSourceIds={staleSourceIds}
+        />
+      )}
 
       {hasAgentThreadComposer ? (
         <form className="mission-composer" onSubmit={submitComposer}>
@@ -917,8 +959,139 @@ function MissionViewBody({
   );
 }
 
-function WorklogNarrative({
+function DashboardWorkspace({
+  state,
   activeView,
+  rows,
+  sessions,
+  teams,
+  approvals,
+  processes,
+  sources,
+  filters,
+  setFilters,
+  selectedRow,
+  selectedSession,
+  selectedTeam,
+  selectedApproval,
+  selectedRowId,
+  selectedApprovalId,
+  setSelectedRowId,
+  setSelectedSessionId,
+  setSelectedTeamId,
+  setSelectedApprovalId,
+  pendingCommands,
+  ledgerEvents,
+  connection,
+  subscriptionCount,
+  sourceGapActive,
+  staleSourceIds
+}: {
+  readonly state: GoosewebSnapshot;
+  readonly activeView: WorkspaceView;
+  readonly rows: readonly FleetRowView[];
+  readonly sessions: readonly SessionView[];
+  readonly teams: readonly TeamView[];
+  readonly approvals: readonly ApprovalView[];
+  readonly processes: readonly ProcessView[];
+  readonly sources: readonly SourceHealthView[];
+  readonly filters: BoardFilters;
+  readonly setFilters: (filters: BoardFilters) => void;
+  readonly selectedRow?: FleetRowView;
+  readonly selectedSession?: SessionView;
+  readonly selectedTeam?: TeamView;
+  readonly selectedApproval?: ApprovalView;
+  readonly selectedRowId: string;
+  readonly selectedApprovalId: string;
+  readonly setSelectedRowId: (id: string) => void;
+  readonly setSelectedSessionId: (id: string) => void;
+  readonly setSelectedTeamId: (id: string) => void;
+  readonly setSelectedApprovalId: (id: string) => void;
+  readonly pendingCommands: readonly PendingCommandState[];
+  readonly ledgerEvents: readonly LedgerEvent[];
+  readonly connection: ConnectionState;
+  readonly subscriptionCount: number;
+  readonly sourceGapActive: boolean;
+  readonly staleSourceIds: readonly string[];
+}) {
+  const runningProcesses = processes.filter((process) => process.status === "running").length;
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
+  const title = dashboardTitle(activeView);
+  const description = dashboardDescription(activeView);
+
+  return (
+    <>
+      <div className="mission-dashboard-header">
+        <div className="min-w-0">
+          <div className="mission-dashboard-kicker">{title.kicker}</div>
+          <h1>{title.heading}</h1>
+          <p>{description}</p>
+        </div>
+        <div className="mission-header-metrics">
+          <ConnectionBadge connection={connection} />
+          <MetricChip label="subs" value={String(subscriptionCount)} />
+          <MetricChip
+            label="stale"
+            value={staleSourceIds.length ? staleSourceIds.join(", ") : "none"}
+          />
+        </div>
+      </div>
+
+      <div className="mission-dashboard-stats">
+        <MetricCard label="board rows" value={String(rows.length)} />
+        <MetricCard label="pending approvals" value={String(pendingApprovals)} />
+        <MetricCard label="running processes" value={String(runningProcesses)} />
+        <MetricCard label="runtime sources" value={String(sources.length)} />
+      </div>
+
+      <div className="mission-dashboard-body">
+        <MissionViewBody
+          state={state}
+          activeView={activeView}
+          rows={rows}
+          sessions={sessions}
+          teams={teams}
+          approvals={approvals}
+          processes={processes}
+          sources={sources}
+          filters={filters}
+          setFilters={setFilters}
+          selectedRowId={selectedRowId}
+          selectedSession={selectedSession}
+          selectedTeam={selectedTeam}
+          selectedApproval={selectedApproval}
+          selectedApprovalId={selectedApprovalId}
+          setSelectedRowId={setSelectedRowId}
+          setSelectedSessionId={setSelectedSessionId}
+          setSelectedTeamId={setSelectedTeamId}
+          setSelectedApprovalId={setSelectedApprovalId}
+          pendingCommands={pendingCommands}
+          ledgerEvents={ledgerEvents}
+          connection={connection}
+          subscriptionCount={subscriptionCount}
+          sourceGapActive={sourceGapActive}
+        />
+      </div>
+
+      {activeView === "board" ? (
+        <div className="mission-dashboard-inspector">
+          <ContextCard
+            title="Selected row"
+            items={[
+              ["row", selectedRow?.rowId],
+              ["session", selectedRow?.sessionId],
+              ["team", selectedRow?.teamId],
+              ["source", selectedRow?.sourceId],
+              ["worktree", selectedRow?.worktreePath]
+            ]}
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function WorklogNarrative({
   selectedRow,
   selectedSession,
   selectedTeam,
@@ -926,7 +1099,6 @@ function WorklogNarrative({
   processes,
   sourceGapActive
 }: {
-  readonly activeView: WorkspaceView;
   readonly selectedRow?: FleetRowView;
   readonly selectedSession?: SessionView;
   readonly selectedTeam?: TeamView;
@@ -937,24 +1109,29 @@ function WorklogNarrative({
   const runningCount = processes.filter((process) => process.status === "running").length;
   const codeValue = selectedRow?.sourceId || selectedSession?.sourceId || "source none";
   const selectedLabel =
-    selectedRow?.title || selectedSession?.sessionId || selectedTeam?.name || activeView;
-  const narrative = getWorkspaceNarrative({
-    activeView,
-    selectedLabel,
-    selectedSession,
-    selectedApproval,
-    codeValue,
-    runningCount,
-    sourceGapActive
-  });
+    selectedRow?.title || selectedSession?.sessionId || selectedTeam?.name || "agent thread";
+  const muted = `The selected agent thread is ${selectedLabel}. Gooseweb is keeping the realtime worker, subscriptions, approvals, command queue, and process visibility active while this operator surface is rendered as a dense desktop control room.`;
+  const primary = (
+    <>
+      The active session is <code>{selectedSession?.sessionId || "none"}</code>,
+      the current source is <code>{codeValue}</code>, and there are{" "}
+      <code>{String(runningCount)}</code> running processes. Command mutation
+      controls are available only for this selected agent thread.
+    </>
+  );
+  const approval = selectedApproval
+    ? `Approval context is ${selectedApproval.status || "unknown"} with ${selectedApproval.risk || "unknown"} risk.`
+    : sourceGapActive
+      ? "Source state is stale or reconnecting, so runtime mutation controls are guarded."
+      : undefined;
 
   return (
     <div className="mission-narrative">
-      <p className="mission-muted-copy">{narrative.muted}</p>
-      <p className="mission-primary-copy">{narrative.primary}</p>
-      {narrative.approval ? (
+      <p className="mission-muted-copy">{muted}</p>
+      <p className="mission-primary-copy">{primary}</p>
+      {approval ? (
         <p className="mission-primary-copy">
-          {narrative.approval}
+          {approval}
         </p>
       ) : null}
     </div>
@@ -1189,129 +1366,48 @@ function workspaceTitle(
   return selectedRow?.title || selectedRow?.sessionId || "Investigating source health issues";
 }
 
-function TopStatus({
-  state,
-  sources,
-  subscriptionCount
-}: {
-  readonly state: GoosewebSnapshot;
-  readonly sources: readonly SourceHealthView[];
-  readonly subscriptionCount: number;
-}) {
-  const source = sources[0];
-  return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-3 px-4">
-      <div className="min-w-0">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">
-          Operating workspace
-        </div>
-        <h1 className="truncate text-base font-medium">
-          Runtime control board
-        </h1>
-      </div>
-      <div className="flex min-w-0 items-center gap-2">
-        <ConnectionBadge connection={state.connection} />
-        <MetricChip label="source" value={source?.displayName || source?.sourceId || "none"} />
-        <MetricChip label="seq" value={state.cursor.gatewaySeq.toString()} />
-        <MetricChip label="subs" value={String(subscriptionCount)} />
-      </div>
-    </header>
-  );
+function dashboardTitle(view: WorkspaceView): { readonly kicker: string; readonly heading: string } {
+  switch (view) {
+    case "inbox":
+      return { kicker: "Approval operations", heading: "Inbox" };
+    case "teams":
+      return { kicker: "Coordination operations", heading: "Teams" };
+    case "agents":
+      return { kicker: "Agent workspace", heading: "Select an agent session" };
+    case "ledger":
+      return { kicker: "Audit operations", heading: "Ledger" };
+    case "fleet":
+      return { kicker: "Runtime operations", heading: "Fleet" };
+    case "playbooks":
+      return { kicker: "Template operations", heading: "Playbooks" };
+    case "settings":
+      return { kicker: "Admin operations", heading: "Settings" };
+    case "board":
+    default:
+      return { kicker: "Mission board", heading: "Board" };
+  }
 }
 
-function EntityList({
-  activeView,
-  rows,
-  sessions,
-  teams,
-  approvals,
-  processes,
-  selectedRowId,
-  selectedSessionId,
-  selectedTeamId,
-  selectedApprovalId,
-  selectedProcessId,
-  onSelectRow,
-  onSelectSession,
-  onSelectTeam,
-  onSelectApproval,
-  onSelectProcess
-}: {
-  readonly activeView: WorkspaceView;
-  readonly rows: readonly FleetRowView[];
-  readonly sessions: readonly SessionView[];
-  readonly teams: readonly TeamView[];
-  readonly approvals: readonly ApprovalView[];
-  readonly processes: readonly ProcessView[];
-  readonly selectedRowId: string;
-  readonly selectedSessionId: string;
-  readonly selectedTeamId: string;
-  readonly selectedApprovalId: string;
-  readonly selectedProcessId: string;
-  readonly onSelectRow: (id: string) => void;
-  readonly onSelectSession: (id: string) => void;
-  readonly onSelectTeam: (id: string) => void;
-  readonly onSelectApproval: (id: string) => void;
-  readonly onSelectProcess: (id: string) => void;
-}) {
-  const items = getEntityItems({
-    activeView,
-    rows,
-    sessions,
-    teams,
-    approvals,
-    processes,
-    selectedRowId,
-    selectedSessionId,
-    selectedTeamId,
-    selectedApprovalId,
-    selectedProcessId,
-    onSelectRow,
-    onSelectSession,
-    onSelectTeam,
-    onSelectApproval,
-    onSelectProcess
-  });
-
-  return (
-    <aside className="flex min-w-0 flex-col overflow-hidden bg-muted/20">
-      <div className="flex h-14 shrink-0 items-center justify-between px-3">
-        <div>
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">
-            Entity list
-          </div>
-          <div className="text-sm font-medium">{sidebarTitle(activeView)}</div>
-        </div>
-        <Badge variant="outline">{items.length}</Badge>
-      </div>
-      <Separator />
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-1 p-2">
-          {items.length === 0 ? (
-            <EmptyBlock title="No entities" detail="Waiting for realtime snapshots." />
-          ) : (
-            items.map((item) => (
-              <Button
-                className="h-auto justify-start px-2 py-2"
-                key={item.id}
-                type="button"
-                variant={item.selected ? "secondary" : "ghost"}
-                onClick={item.onClick}
-              >
-                <span className="grid min-w-0 flex-1 gap-0.5 text-left">
-                  <span className="truncate text-sm">{item.title}</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {item.meta}
-                  </span>
-                </span>
-                <StatusBadge status={item.status} />
-              </Button>
-            ))
-          )}
-        </div>
-      </ScrollArea>
-    </aside>
-  );
+function dashboardDescription(view: WorkspaceView): string {
+  switch (view) {
+    case "inbox":
+      return "Review pending approvals, stale-source guards, and command-safe resolution controls.";
+    case "teams":
+      return "Inspect team membership, delivery state, and coordination commands without chat-thread chrome.";
+    case "agents":
+      return "Choose a session from the roster to open the agent thread and reveal the anchored composer.";
+    case "ledger":
+      return "Filter runtime and gateway events by source, scope, cursor, and criticality.";
+    case "fleet":
+      return "Track runtime source health, replay lag, process capacity, and future provisioning controls.";
+    case "playbooks":
+      return "Send prepared command or team-message templates to explicit selected targets.";
+    case "settings":
+      return "Manage gateway connection, protocol state, feature flags, and debug exports.";
+    case "board":
+    default:
+      return "Scan active sessions, source ownership, approvals, processes, worktrees, and latest activity.";
+  }
 }
 
 function BoardPane({
@@ -1436,7 +1532,6 @@ function AgentPane({
   readonly setSelectedSessionId: (id: string) => void;
   readonly sourceGapActive: boolean;
 }) {
-  const [turnText, setTurnText] = useState("");
   const sessionApprovals = approvals.filter(
     (approval) => approval.sessionId === selectedSession?.sessionId
   );
@@ -1452,20 +1547,6 @@ function AgentPane({
       meta: process.status
     }))
   ];
-
-  function submitTurn(event: FormEvent) {
-    event.preventDefault();
-    if (!selectedSession || !turnText.trim() || sourceGapActive) {
-      return;
-    }
-    sendRealtimeCommand(
-      makeCommand("session", selectedSession.sessionId, "sendTurn", {
-        sessionId: selectedSession.sessionId,
-        text: turnText.trim()
-      })
-    );
-    setTurnText("");
-  }
 
   return (
     <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_19rem] gap-3">
@@ -1511,7 +1592,7 @@ function AgentPane({
               </div>
               <Card className="min-h-36 flex-1 bg-muted/20" size="sm">
                 <CardHeader>
-                  <CardTitle>Streaming current response</CardTitle>
+                  <CardTitle>Conversation stream</CardTitle>
                   <CardDescription>
                     Token updates are frame-batched by the realtime worker.
                   </CardDescription>
@@ -1522,27 +1603,6 @@ function AgentPane({
                     : "No active turn stream for this session."}
                 </CardContent>
               </Card>
-              <form onSubmit={submitTurn}>
-                <FieldGroup>
-                  <Field>
-                    <FieldLabel htmlFor="turn-text">Turn composer</FieldLabel>
-                    <Textarea
-                      id="turn-text"
-                      value={turnText}
-                      onChange={(event) => setTurnText(event.target.value)}
-                      placeholder="Message selected agent"
-                      rows={4}
-                    />
-                    <FieldDescription>
-                      Sends a command through Goosetower with an idempotency key.
-                    </FieldDescription>
-                  </Field>
-                  <Button disabled={!turnText.trim() || sourceGapActive} type="submit">
-                    <SendIcon data-icon="inline-start" />
-                    Send turn
-                  </Button>
-                </FieldGroup>
-              </form>
             </>
           ) : (
             <EmptyBlock title="No session" detail="Select a board row or session." />
@@ -1654,50 +1714,54 @@ function TeamPane({
                 ))
               )}
             </div>
-            <form onSubmit={sendMessage}>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel>Delivery mode</FieldLabel>
-                  <ToggleGroup
-                    onValueChange={(value) => {
-                      const next = Array.isArray(value) ? value[0] : value;
-                      if (next === "direct" || next === "broadcast") {
-                        setMode(next);
-                      }
-                    }}
-                    value={[mode]}
-                    variant="outline"
-                  >
-                    <ToggleGroupItem value="broadcast">Broadcast</ToggleGroupItem>
-                    <ToggleGroupItem value="direct">Direct</ToggleGroupItem>
-                  </ToggleGroup>
-                </Field>
-                {mode === "direct" ? (
+            {selectedTeam ? (
+              <form onSubmit={sendMessage}>
+                <FieldGroup>
                   <Field>
-                    <FieldLabel>Recipient</FieldLabel>
-                    <SelectFilter
-                      value={recipient || members[0]?.memberId || ""}
-                      options={members.map((member) => member.memberId)}
-                      onChange={setRecipient}
+                    <FieldLabel>Delivery mode</FieldLabel>
+                    <ToggleGroup
+                      onValueChange={(value) => {
+                        const next = Array.isArray(value) ? value[0] : value;
+                        if (next === "direct" || next === "broadcast") {
+                          setMode(next);
+                        }
+                      }}
+                      value={[mode]}
+                      variant="outline"
+                    >
+                      <ToggleGroupItem value="broadcast">Broadcast</ToggleGroupItem>
+                      <ToggleGroupItem value="direct">Direct</ToggleGroupItem>
+                    </ToggleGroup>
+                  </Field>
+                  {mode === "direct" ? (
+                    <Field>
+                      <FieldLabel>Recipient</FieldLabel>
+                      <SelectFilter
+                        value={recipient || members[0]?.memberId || ""}
+                        options={members.map((member) => member.memberId)}
+                        onChange={setRecipient}
+                      />
+                    </Field>
+                  ) : null}
+                  <Field>
+                    <FieldLabel htmlFor="team-message">Team message</FieldLabel>
+                    <Textarea
+                      id="team-message"
+                      value={message}
+                      onChange={(event) => setMessage(event.target.value)}
+                      placeholder="Message selected team"
+                      rows={3}
                     />
                   </Field>
-                ) : null}
-                <Field>
-                  <FieldLabel htmlFor="team-message">Team composer</FieldLabel>
-                  <Textarea
-                    id="team-message"
-                    value={message}
-                    onChange={(event) => setMessage(event.target.value)}
-                    placeholder="Message team"
-                    rows={4}
-                  />
-                </Field>
-                <Button disabled={!message.trim() || !selectedTeam || sourceGapActive} type="submit">
-                  <SendIcon data-icon="inline-start" />
-                  Send
-                </Button>
-              </FieldGroup>
-            </form>
+                  <Button disabled={!message.trim() || sourceGapActive} type="submit">
+                    <SendIcon data-icon="inline-start" />
+                    Send
+                  </Button>
+                </FieldGroup>
+              </form>
+            ) : (
+              <EmptyBlock title="No team selected" detail="Select a team to enable team message actions." />
+            )}
           </CardContent>
         </Card>
         <div className="flex min-h-0 flex-col gap-3">
@@ -2242,71 +2306,6 @@ function SettingsPane({
         </Card>
       </TabsContent>
     </Tabs>
-  );
-}
-
-function Inspector({
-  selectedRow,
-  selectedSession,
-  selectedTeam,
-  selectedApproval,
-  selectedProcess,
-  selectedWorktree,
-  sources,
-  staleSourceIds,
-  pendingCommandCount
-}: {
-  readonly selectedRow?: FleetRowView;
-  readonly selectedSession?: SessionView;
-  readonly selectedTeam?: TeamView;
-  readonly selectedApproval?: ApprovalView;
-  readonly selectedProcess?: ProcessView;
-  readonly selectedWorktree?: WorktreeView;
-  readonly sources: readonly SourceHealthView[];
-  readonly staleSourceIds: readonly string[];
-  readonly pendingCommandCount: number;
-}) {
-  return (
-    <aside className="min-w-0 overflow-hidden bg-muted/20">
-      <div className="flex h-14 items-center px-3">
-        <div>
-          <div className="text-xs uppercase tracking-wide text-muted-foreground">
-            Inspector
-          </div>
-          <div className="text-sm font-medium">Context</div>
-        </div>
-      </div>
-      <Separator />
-      <ScrollArea className="h-[calc(100%-3.5rem)]">
-        <div className="flex flex-col gap-3 p-3">
-          <ContextCard
-            title="Selection"
-            items={[
-              ["row", selectedRow?.rowId],
-              ["session", selectedSession?.sessionId],
-              ["team", selectedTeam?.teamId],
-              ["approval", selectedApproval?.approvalId],
-              ["process", selectedProcess?.processId],
-              ["worktree", selectedWorktree?.path]
-            ]}
-          />
-          <ContextCard
-            title="Source health"
-            items={sources.map((source) => [
-              source.displayName || source.sourceId,
-              `${source.health} / ${ageFrom(toNumber(source.observedAtUnixMs))}`
-            ])}
-          />
-          <ContextCard
-            title="Safety"
-            items={[
-              ["stale sources", staleSourceIds.length ? staleSourceIds.join(", ") : "none"],
-              ["pending commands", String(pendingCommandCount)]
-            ]}
-          />
-        </div>
-      </ScrollArea>
-    </aside>
   );
 }
 

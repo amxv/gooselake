@@ -1348,6 +1348,78 @@ Recommended initial Protobuf concepts:
 - Risk: `shadcn/ui` defaults look too generic compared with the reference.
 - Fallback: keep `shadcn/ui` as the primitive layer, but use custom layout composition, tokens, and panel treatments to achieve the darker mission-control feel.
 
+### Phase 14: Screenshot-Driven UI Redesign QA And Correction Pass
+
+#### Files to read before starting
+
+- `apps/gooseweb/src/routes/index.tsx`
+- `apps/gooseweb/src/routes/__root.tsx`
+- `apps/gooseweb/src/styles/app.css`
+- `apps/gooseweb/components.json`
+- `apps/gooseweb/components/ui/*`
+- `apps/gooseweb/app/stores/gooseweb-store.ts`
+- `apps/gooseweb/app/realtime/*`
+- the original desktop reference image for Phase 13
+- the follow-up review screenshot and any Phase 13 screenshots captured in `tmp/`
+
+#### What to do
+
+- Treat this phase as a screenshot-first redesign and QA correction pass on top of the committed Phase 13 shell.
+- Use browser exploration plus saved screenshots to review every major Gooseweb surface and fix the specific UX issues discovered during the first redesign pass.
+- Fix composer scope and placement:
+  - the global prompt composer must only appear for a real agent thread
+  - it must not appear on Board, Inbox, Teams, Ledger, Fleet, Playbooks, or Settings views
+  - if Agents has no selected session, show an empty/select-session state without a composer
+  - avoid duplicate prompt surfaces between shell-level composer and any inner agent composer
+- Fix dashboard visual model:
+  - dashboard/control views must feel like operational dashboards, not conversation threads
+  - Board/Fleet/Ledger/Inbox should use the center pane as a dashboard surface with tables, cards, filters, and inspector context rather than false chat chrome
+- Fix agent-thread visual model:
+  - left roster rail
+  - center conversation/worklog narrative
+  - right process rail
+  - single anchored composer only for agent-thread sending
+- Fix responsive and clipping issues:
+  - ensure lower content and composer areas are not clipped
+  - ensure laptop, tablet, and narrower layouts retain access to primary controls
+  - avoid horizontal overflow and trapped bottom content
+- Do a screenshot-driven comparison pass across at least:
+  - Board
+  - Agents empty state
+  - Agents with session if local data exists
+  - Teams
+  - Inbox
+  - Ledger
+  - Fleet
+  - Playbooks
+  - Settings
+- Keep `shadcn/ui` as the primitive layer and refine layout/composition rather than regressing to custom one-off primitives.
+- Remove or refactor dead or obsolete shell helper components left behind by earlier dashboard iterations if they no longer serve the final information architecture.
+
+#### Validation strategy
+
+- `bun run typecheck` in `apps/gooseweb`
+- `bun run build` in `apps/gooseweb`
+- Screenshot-driven browser review with explicit viewport coverage:
+  - desktop
+  - laptop
+  - tablet/narrow
+- Save fresh screenshots for the key surfaces reviewed and summarize what changed versus the previous Phase 13 pass.
+- Confirm:
+  - composer only appears in agent-thread context
+  - dashboard views do not present false chat affordances
+  - bottom content is reachable
+  - no important pane is clipped at the tested widths
+
+#### Risks / fallbacks
+
+- Risk: iterative screenshot fixes create layout-specific hacks that break other views.
+- Fallback: keep the shell model consistent and fix the underlying pane/layout rules rather than patching individual screenshots one by one.
+- Risk: preserving all prior UX while correcting the shell leaves redundant components in place.
+- Fallback: remove or consolidate obsolete helpers once the final pane model is stable.
+- Risk: responsive fixes dilute the desktop mission-control target.
+- Fallback: treat desktop parity as the primary design target, but enforce coherent, usable stacking rules for smaller widths.
+
 ## Cross-Runtime Requirements Summary
 
 - Add second-source readiness before adding actual RunPod.

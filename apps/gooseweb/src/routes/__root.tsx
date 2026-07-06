@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 import {
   HeadContent,
-  Link,
   Outlet,
   Scripts,
   createRootRoute
 } from "@tanstack/react-router";
 import appCss from "../styles/app.css?url";
+import { TooltipProvider } from "~/components/ui/tooltip";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -23,22 +23,9 @@ export const Route = createRootRoute({
 function RootComponent() {
   return (
     <RootDocument>
-      <main className="shell">
-        <aside className="sidebar">
-          <div className="brand">
-            <h1>Gooseweb</h1>
-            <span>Goosetower realtime console</span>
-          </div>
-          <nav className="nav" aria-label="Primary">
-            <Link to="/" search={{}} activeOptions={{ exact: true }}>
-              Realtime
-            </Link>
-          </nav>
-        </aside>
-        <section className="content">
-          <Outlet />
-        </section>
-      </main>
+      <TooltipProvider>
+        <Outlet />
+      </TooltipProvider>
     </RootDocument>
   );
 }
@@ -49,7 +36,7 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
       <head>
         <HeadContent />
       </head>
-      <body>
+      <body className="dark overflow-hidden">
         {children}
         <Scripts />
       </body>

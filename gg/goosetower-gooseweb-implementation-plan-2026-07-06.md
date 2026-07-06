@@ -132,6 +132,7 @@ Gooseweb responsibilities:
 - A TanStack Start browser app, deployed to Vercel, serving the human operating experience only.
 - A Web Worker realtime core that owns the WebSocket connection, Protobuf decode/encode, cursors, resume, dedupe, coalescing, command retry metadata, and state patches.
 - A React/TanStack UI that consumes materialized client state through TanStack Store or `useSyncExternalStore`.
+- A `shadcn/ui`-based component system for the app shell, navigation, forms, overlays, tables, alerts, and operating panels. Treat `shadcn/ui` source components as the default UI primitive layer rather than building ad hoc bespoke controls first.
 - Virtualized logs, timelines, inboxes, ledger surfaces, and feeds.
 - Desktop-class multi-agent operating workflows, not just passive dashboards.
 
@@ -239,6 +240,7 @@ proto/
 apps/
   gooseweb/
     package.json
+    components.json
     app/
       routes/
       components/
@@ -260,7 +262,7 @@ Recommended dependency direction:
 - SSE client: `eventsource-stream`, `reqwest-eventsource`, or a small runtime-specific parser over streaming HTTP. Pick the crate after checking current docs with `webctx` if APIs have shifted.
 - Protobuf Rust: `prost` and `prost-build`.
 - Protobuf TS: `@bufbuild/protobuf` plus `protoc-gen-es`, or the current Buf-recommended equivalent after checking docs.
-- Gooseweb: TanStack Start, React, TanStack Store or `useSyncExternalStore`, TanStack Virtual, and a dedicated Web Worker.
+- Gooseweb: TanStack Start, React, `shadcn/ui`, TanStack Store or `useSyncExternalStore`, TanStack Virtual, and a dedicated Web Worker.
 
 Wire protocol scope:
 
@@ -880,6 +882,7 @@ Recommended initial Protobuf concepts:
 - Use `webctx` to check current TanStack Start and Buf/Protobuf-ES setup before scaffolding if APIs are uncertain.
 - Add `apps/gooseweb` as a separate TanStack Start app.
 - Keep the existing Astro docs site intact.
+- Initialize `shadcn/ui` inside `apps/gooseweb` using the Bun runner and current CLI guidance. Commit `components.json`, theme/global CSS wiring, aliases, and any required utility setup as part of the app foundation.
 - Add package scripts for Gooseweb:
   - dev
   - build
@@ -887,6 +890,7 @@ Recommended initial Protobuf concepts:
   - test if a test runner is introduced
   - proto generation
 - Add TypeScript Protobuf generation from `proto/goosetower/v1`.
+- Add the initial `shadcn/ui` dependency and component baseline needed for the app shell in later phases. At minimum, prepare the project to add components by CLI without manual path surgery.
 - Implement `app/realtime/worker`:
   - WebSocket lifecycle
   - ticket input from main thread
@@ -910,6 +914,7 @@ Recommended initial Protobuf concepts:
   - dev ticket route or pasted dev ticket
   - feature flags
 - Do not put raw durable tokens in browser local storage.
+- Prefer `shadcn/ui` primitives for any shell scaffolding introduced in this phase instead of custom buttons, cards, dialogs, tabs, alerts, or sidebars.
 
 #### Validation strategy
 
@@ -928,6 +933,8 @@ Recommended initial Protobuf concepts:
 - Fallback: use `useSyncExternalStore` around a small hand-written external store and keep TanStack Store optional.
 - Risk: Protobuf TS generation output style changes.
 - Fallback: pin the generation package versions and document the command in `apps/gooseweb/package.json`.
+- Risk: `shadcn/ui` CLI or generated config shape shifts.
+- Fallback: verify current CLI/init flow with `webctx`, keep `components.json` and aliases explicit, and prefer CLI-managed component additions over hand-copied snippets.
 
 ### Phase 8: Gooseweb V0 Desktop-Class Operating Experience
 
@@ -943,6 +950,7 @@ Recommended initial Protobuf concepts:
 #### What to do
 
 - Build the primary shell as an operating workspace, not a marketing page.
+- Standardize the Gooseweb surface on `shadcn/ui` primitives and composition. Use CLI-added source components for navigation, cards, tables, forms, overlays, separators, alerts, badges, tabs, sheets, drawers, and menus before introducing custom wrappers.
 - Use a dense desktop layout:
   - left rail for Board, Inbox, Teams, Agents, Ledger, Fleet, Playbooks, Settings
   - entity list/sidebar
@@ -954,6 +962,7 @@ Recommended initial Protobuf concepts:
   - source/team/session filters
   - status, active turn, provider/model, pending approvals, process indicator, worktree, latest activity
   - selected row drives subscriptions
+  - prefer `shadcn/ui` table, badge, input, select, tooltip, scroll-area, and sidebar/navigation primitives for row chrome and filters
 - Agent workspace:
   - session selector
   - timeline
@@ -962,6 +971,7 @@ Recommended initial Protobuf concepts:
   - interrupt action
   - approvals in context
   - process/worktree/provider/context indicators
+  - use `shadcn/ui` cards, tabs, field/input patterns, dialogs/sheets, badges, alerts, and separators
 - Team workspace:
   - team selector
   - member roster
@@ -971,16 +981,19 @@ Recommended initial Protobuf concepts:
   - delivery state list
   - retry/cancel controls
   - team event timeline
+  - use `shadcn/ui` roster/table, dropdown menu, dialog, textarea/input, and status primitives
 - Inbox:
   - global pending approvals
   - approve/reject controls
   - stale/source-gap warning
   - inline rejection feedback
+  - prefer `shadcn/ui` alert, badge, button, dialog/alert-dialog, and empty-state patterns
 - Ledger:
   - virtualized event feed
   - filters
   - cursor/replay markers
   - gateway audit events
+  - use `shadcn/ui` scroll-area, table/list, badges, inputs/selects, and separators
 - Fleet:
   - one runtime source in V0
   - health, stale age, replay lag, active sessions, provider auth statuses, process capacity
@@ -1000,6 +1013,7 @@ Recommended initial Protobuf concepts:
   - keep approval controls outside heavy streaming subtrees
   - frame-batch visible token/log updates
   - show honest connected/degraded/reconnecting/replaying/stale/offline states
+- Add any missing `shadcn/ui` components through the CLI as needed during this phase instead of copying registry markup manually.
 
 #### Validation strategy
 
@@ -1025,6 +1039,8 @@ Recommended initial Protobuf concepts:
 - Fallback: add a Goosetower/browser dev fixture mode backed by a fake runtime server, not by fake UI state.
 - Risk: desktop scope sprawls.
 - Fallback: complete Board, Agent workspace, Team workspace, Inbox, and connection state before Ledger/Fleet/Playbooks polish.
+- Risk: overly customized one-off UI drifts away from the shared component system.
+- Fallback: keep `shadcn/ui` components as the visual and structural baseline, adding thin local wrappers only where Gooseweb needs domain-specific composition.
 
 ### Phase 9: End-To-End Command, Approval, Team, Process, And Worktree Hardening
 
@@ -1318,4 +1334,4 @@ Recommended initial Protobuf concepts:
 
 ## Final Recommendation
 
-Implement V0 as a separate `gg-goosetower` Rust service plus a separate `apps/gooseweb` TanStack Start app, with Protobuf-over-WebSocket as the only primary browser protocol and a TypeScript Web Worker as the client realtime core. Keep Gooselake as the only source of truth, use Goosetower for materialized realtime views and command routing, and finish the single-runtime path completely before enabling multi-runtime or RunPod behavior.
+Implement V0 as a separate `gg-goosetower` Rust service plus a separate `apps/gooseweb` TanStack Start app, with `shadcn/ui` as the default component system, Protobuf-over-WebSocket as the only primary browser protocol, and a TypeScript Web Worker as the client realtime core. Keep Gooselake as the only source of truth, use Goosetower for materialized realtime views and command routing, and finish the single-runtime path completely before enabling multi-runtime or RunPod behavior.

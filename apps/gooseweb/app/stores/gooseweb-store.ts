@@ -97,8 +97,32 @@ export function useConnectionState(): ConnectionState {
   return useGoosewebSelector((state) => state.connection);
 }
 
+export function useGoosewebState() {
+  return useGoosewebSelector((state) => state);
+}
+
 export function useFleetRows() {
   return useGoosewebSelector((state) => Object.values(state.entities.fleetRows));
+}
+
+export function useSessions() {
+  return useGoosewebSelector((state) => Object.values(state.entities.sessions));
+}
+
+export function useTeams() {
+  return useGoosewebSelector((state) => Object.values(state.entities.teams));
+}
+
+export function useApprovals() {
+  return useGoosewebSelector((state) => Object.values(state.entities.approvals));
+}
+
+export function useProcesses() {
+  return useGoosewebSelector((state) => Object.values(state.entities.processes));
+}
+
+export function useWorktrees() {
+  return useGoosewebSelector((state) => Object.values(state.entities.worktrees));
 }
 
 export function useSources() {

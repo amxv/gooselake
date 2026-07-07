@@ -2899,6 +2899,18 @@ function makeCommand(
     commandId: crypto.randomUUID(),
     idempotencyKey: crypto.randomUUID(),
     createdAtClientUnixMs: BigInt(Date.now()),
+    ...(payloadCase === "createSession"
+      ? {
+          fallbackCreateSession: {
+            provider: stringCommandValue(payloadValue, "provider"),
+            model: stringCommandValue(payloadValue, "model"),
+            cwd: stringCommandValue(payloadValue, "cwd"),
+            title: stringCommandValue(payloadValue, "title"),
+            permissionMode: stringCommandValue(payloadValue, "permissionMode"),
+            metadata: {}
+          }
+        }
+      : {}),
     target: {
       scope,
       scopeId,
@@ -2909,6 +2921,11 @@ function makeCommand(
       value: payloadValue
     }
   };
+}
+
+function stringCommandValue(value: Record<string, unknown>, key: string): string {
+  const next = value[key];
+  return typeof next === "string" ? next : "";
 }
 
 function getEntityItems(input: {

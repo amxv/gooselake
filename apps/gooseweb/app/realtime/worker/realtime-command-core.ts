@@ -176,7 +176,7 @@ export class RealtimeWorkerCore {
       targetScope: command.target.scope,
       targetScopeId: command.target.scopeId,
       targetEntityId: command.target.entityId,
-      payloadCase: command.payload.case
+      payloadCase: command.payload?.case
     };
     this.pendingCommands[commandId] = pending;
     this.post({ type: "command-state", command: pending });

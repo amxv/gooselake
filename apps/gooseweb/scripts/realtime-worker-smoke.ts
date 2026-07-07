@@ -171,6 +171,38 @@ assert.equal(
   true
 );
 
+const sentBeforeFallbackCommand = sockets[2]?.sent.length ?? 0;
+await core.handleMessage({
+  type: "command",
+  command: {
+    commandId: "cmd_with_fallback",
+    idempotencyKey: "cmd_with_fallback",
+    createdAtClientUnixMs: BigInt(Date.now()),
+    fallbackCreateSession: {
+      provider: "codex",
+      model: "gpt-5.4",
+      cwd: "/tmp",
+      title: "Fallback payload test",
+      permissionMode: "",
+      metadata: {}
+    },
+    target: {
+      scope: "source",
+      scopeId: "local",
+      entityId: "source:local"
+    }
+  } as never
+});
+assert.equal((sockets[2]?.sent.length ?? 0) > sentBeforeFallbackCommand, true);
+const fallbackCommandFrame = sockets[2]?.sent.at(-1);
+assert.ok(fallbackCommandFrame instanceof Uint8Array);
+const fallbackCommandEnvelope = fromBinary(
+  RealtimeEnvelopeSchema,
+  fallbackCommandFrame
+);
+assert.equal(fallbackCommandEnvelope.payload.case, "command");
+assert.equal(fallbackCommandEnvelope.payload.value.payload.case, "createSession");
+
 console.log("realtime worker socket ownership smoke fixture passed");
 
 function waitForPatchFlush(): Promise<void> {

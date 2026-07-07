@@ -72,6 +72,14 @@ export type CommandIntent = {
   readonly commandId: string;
   readonly idempotencyKey: string;
   readonly createdAtClientUnixMs: bigint;
+  readonly fallbackCreateSession?: {
+    readonly provider: string;
+    readonly model: string;
+    readonly cwd: string;
+    readonly title: string;
+    readonly permissionMode: string;
+    readonly metadata: Readonly<Record<string, string>>;
+  };
   readonly target: {
     readonly scope: CommandScope;
     readonly scopeId: string;

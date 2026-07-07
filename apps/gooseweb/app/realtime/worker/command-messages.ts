@@ -137,6 +137,18 @@ export function makeCommand(command: CommandIntent): RealtimeEnvelope {
 }
 
 function commandIntentToProto(command: CommandIntent): Command {
+  const runtimeCommand = command as CommandIntent & {
+    readonly payload?: {
+      readonly case?: CommandPayloadCase;
+      readonly value?: Readonly<Record<string, unknown>>;
+    };
+  };
+  const payload = (runtimeCommand.payload?.case
+    ? makeCommandPayload(
+        runtimeCommand.payload.case,
+        runtimeCommand.payload.value ?? {}
+      )
+    : undefined) ?? fallbackCommandPayload(command);
   return create(CommandSchema, {
     commandId: command.commandId,
     idempotencyKey: command.idempotencyKey,
@@ -146,7 +158,7 @@ function commandIntentToProto(command: CommandIntent): Command {
       scopeId: command.target.scopeId,
       entityId: command.target.entityId
     }),
-    payload: makeCommandPayload(command.payload.case, command.payload.value)
+    payload
   });
 }
 
@@ -166,7 +178,7 @@ function scopeToProto(scope: CommandScope): Scope {
 function makeCommandPayload(
   payloadCase: CommandPayloadCase,
   payloadValue: Readonly<Record<string, unknown>>
-): Command["payload"] {
+): Command["payload"] | undefined {
   switch (payloadCase) {
     case "sendTurn":
       return {
@@ -241,6 +253,24 @@ function makeCommandPayload(
         })
       };
   }
+}
+
+function fallbackCommandPayload(command: CommandIntent): Command["payload"] | undefined {
+  if (command.target.scope !== "source" || !command.fallbackCreateSession) {
+    return undefined;
+  }
+
+  return {
+    case: "createSession",
+    value: create(CommandCreateSessionSchema, {
+      provider: command.fallbackCreateSession.provider,
+      model: command.fallbackCreateSession.model,
+      cwd: command.fallbackCreateSession.cwd,
+      title: command.fallbackCreateSession.title,
+      permissionMode: command.fallbackCreateSession.permissionMode,
+      metadata: { ...command.fallbackCreateSession.metadata }
+    })
+  };
 }
 
 function stringPayloadValue(

@@ -16,12 +16,15 @@ class FakeSocket {
   onmessage: ((event: { data: unknown }) => void) | null = null;
   onerror: (() => void) | null = null;
   onclose: (() => void) | null = null;
+  sent: unknown[] = [];
 
   constructor(readonly url: string) {
     sockets.push(this);
   }
 
-  send(): void {}
+  send(data: unknown): void {
+    this.sent.push(data);
+  }
 
   close(): void {
     this.readyState = 3;
@@ -105,6 +108,50 @@ assert.equal(
       message.command.commandId === "cmd_without_socket" &&
       message.command.status === "rejected" &&
       message.command.errorCode === "socket_unavailable"
+  ),
+  true
+);
+
+await core.handleMessage({
+  type: "connect",
+  goosetowerUrl: "ws://127.0.0.1:18090/v1/realtime",
+  ticket: "third"
+});
+assert.equal(sockets.length, 3);
+sockets[2]?.open();
+const sentBeforeCommand = sockets[2]?.sent.length ?? 0;
+
+await core.handleMessage({
+  type: "command",
+  command: {
+    commandId: "cmd_with_socket",
+    target: {
+      scope: Scope.SOURCE,
+      scopeId: "local",
+      entityId: "source:local"
+    },
+    createdAtClientUnixMs: BigInt(Date.now()),
+    payload: {
+      case: "createSession",
+      value: {
+        provider: "codex",
+        model: "gpt-5.4",
+        cwd: "/tmp",
+        title: "Socket write test",
+        permissionMode: "",
+        metadata: {}
+      }
+    }
+  }
+});
+
+assert.equal((sockets[2]?.sent.length ?? 0) > sentBeforeCommand, true);
+assert.equal(
+  posted.some(
+    (message) =>
+      message.type === "command-state" &&
+      message.command.commandId === "cmd_with_socket" &&
+      message.command.status === "sent"
   ),
   true
 );

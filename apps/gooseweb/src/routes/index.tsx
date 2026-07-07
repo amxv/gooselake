@@ -1574,8 +1574,7 @@ function AgentPane({
     }))
   ];
 
-  function createSession(event: FormEvent) {
-    event.preventDefault();
+  function createSession() {
     const sourceId = createSourceId || defaultSourceId;
     if (!sourceId || !createProvider.trim() || sourceGapActive) {
       return;
@@ -1624,7 +1623,13 @@ function AgentPane({
           </CardAction>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-          <form className="grid gap-3 rounded-md border bg-muted/20 p-3" onSubmit={createSession}>
+          <form
+            className="grid gap-3 rounded-md border bg-muted/20 p-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              createSession();
+            }}
+          >
             <div className="grid grid-cols-2 gap-2">
               <Field>
                 <FieldLabel htmlFor="create-agent-source">Source</FieldLabel>
@@ -1670,7 +1675,8 @@ function AgentPane({
             </Field>
             <Button
               disabled={!sources.length || !createProvider.trim() || sourceGapActive}
-              type="submit"
+              onClick={createSession}
+              type="button"
             >
               <PlusIcon data-icon="inline-start" />
               Create agent
@@ -1770,8 +1776,7 @@ function TeamPane({
     }
   }, [defaultLeadId, defaultSourceId, leadAgentId, teamSourceId]);
 
-  function createTeam(event: FormEvent) {
-    event.preventDefault();
+  function createTeam() {
     const sourceId = teamSourceId || defaultSourceId;
     const leadId = leadAgentId || defaultLeadId;
     if (!sourceId || !leadId || !teamName.trim() || sourceGapActive) {
@@ -1848,7 +1853,13 @@ function TeamPane({
             </CardAction>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-            <form className="grid gap-3 rounded-md border bg-muted/20 p-3" onSubmit={createTeam}>
+            <form
+              className="grid gap-3 rounded-md border bg-muted/20 p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                createTeam();
+              }}
+            >
               <div className="grid grid-cols-3 gap-2">
                 <Field>
                   <FieldLabel>Source</FieldLabel>
@@ -1883,7 +1894,8 @@ function TeamPane({
                   !hasLeadForNewTeam ||
                   sourceGapActive
                 }
-                type="submit"
+                onClick={createTeam}
+                type="button"
               >
                 <PlusIcon data-icon="inline-start" />
                 Create team

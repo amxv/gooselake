@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { create } from "@bufbuild/protobuf";
 import {
   ActivityIcon,
   BotIcon,
@@ -24,6 +25,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  type KeyboardEvent,
   type ReactNode,
   useEffect,
   useMemo,
@@ -40,6 +42,7 @@ import type {
   TeamView,
   WorktreeView
 } from "../../src/gen/goosetower/v1/view_pb";
+import { SessionViewSchema } from "../../src/gen/goosetower/v1/view_pb";
 import {
   connectRealtime,
   disconnectRealtime,
@@ -208,6 +211,10 @@ function Index() {
   );
   const sessionDetails = state.entities.sessionDetails;
   const teamWorkspaces = state.entities.teamWorkspaces;
+  const sessionOptions = useMemo(
+    () => mergeSessionOptions(sessions, fleetRows),
+    [fleetRows, sessions]
+  );
   const [activeView, setActiveView] = useState<WorkspaceView>("board");
   const [selectedRowId, setSelectedRowId] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState("");
@@ -276,11 +283,11 @@ function Index() {
   const selectedRow =
     fleetRows.find((row) => row.rowId === selectedRowId) ?? fleetRows[0];
   const selectedSession =
-    sessions.find((session) => session.sessionId === selectedSessionId) ??
-    sessions.find((session) => session.sessionId === selectedRow?.sessionId) ??
-    sessions[0];
+    sessionOptions.find((session) => session.sessionId === selectedSessionId) ??
+    sessionOptions.find((session) => session.sessionId === selectedRow?.sessionId) ??
+    sessionOptions[0];
   const selectedAgentSession =
-    sessions.find((session) => session.sessionId === selectedSessionId) ??
+    sessionOptions.find((session) => session.sessionId === selectedSessionId) ??
     (selectedSessionId ? selectedSession : undefined);
   const selectedTeam =
     teams.find((team) => team.teamId === selectedTeamId) ??
@@ -382,7 +389,7 @@ function Index() {
           activeView={activeView}
           approvals={approvals}
           rows={fleetRows}
-          sessions={sessions}
+          sessions={sessionOptions}
           teams={teams}
           processes={processes}
           selectedRowId={selectedRow?.rowId ?? ""}
@@ -391,7 +398,7 @@ function Index() {
           selectedApprovalId={selectedApproval?.approvalId ?? ""}
           selectedProcessId={selectedProcess?.processId ?? ""}
           sourceGapActive={sourceGapActive}
-          addAgentDisabled={!sessions.length || !teams.length || sourceGapActive}
+          addAgentDisabled={!sessionOptions.length || !teams.length || sourceGapActive}
           onViewChange={setActiveView}
           onSelectRow={setSelectedRowId}
           onSelectSession={setSelectedSessionId}
@@ -417,7 +424,7 @@ function Index() {
             state={state}
             activeView={activeView}
             rows={fleetRows}
-            sessions={sessions}
+            sessions={sessionOptions}
             teams={teams}
             approvals={approvals}
             processes={processes}
@@ -725,6 +732,10 @@ function MissionWorkspace({
   const hasAgentThreadComposer =
     activeView === "agents" && Boolean(selectedSession?.sessionId);
   const isAgentThread = activeView === "agents" && Boolean(selectedSession);
+  const sessionOptions = useMemo(
+    () => mergeSessionOptions(sessions, rows),
+    [rows, sessions]
+  );
 
   useEffect(() => {
     if (!hasAgentThreadComposer && composerText) {
@@ -732,15 +743,14 @@ function MissionWorkspace({
     }
   }, [composerText, hasAgentThreadComposer]);
 
-  function submitComposer(event: FormEvent) {
-    event.preventDefault();
+  function dispatchComposerMessage() {
     if (
       !hasAgentThreadComposer ||
       !selectedSession ||
       !composerText.trim() ||
       sourceGapActive
     ) {
-      return;
+      return false;
     }
     sendRealtimeCommand(
       makeCommand("session", selectedSession.sessionId, "sendTurn", {
@@ -749,6 +759,20 @@ function MissionWorkspace({
       })
     );
     setComposerText("");
+    return true;
+  }
+
+  function submitComposer(event: FormEvent) {
+    event.preventDefault();
+    dispatchComposerMessage();
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+    event.preventDefault();
+    dispatchComposerMessage();
   }
 
   return (
@@ -805,7 +829,7 @@ function MissionWorkspace({
                   state={state}
                   activeView={activeView}
                   rows={rows}
-                  sessions={sessions}
+                  sessions={sessionOptions}
                   teams={teams}
                   approvals={approvals}
                   processes={processes}
@@ -838,7 +862,7 @@ function MissionWorkspace({
           state={state}
           activeView={activeView}
           rows={rows}
-          sessions={sessions}
+          sessions={sessionOptions}
           teams={teams}
           approvals={approvals}
           processes={processes}
@@ -872,6 +896,7 @@ function MissionWorkspace({
             aria-label="Agent thread composer"
             value={composerText}
             onChange={(event) => setComposerText(event.target.value)}
+            onKeyDown={handleComposerKeyDown}
             placeholder=""
             rows={4}
           />
@@ -898,12 +923,14 @@ function MissionWorkspace({
                 36% left
               </span>
               <Button
+                aria-label="Send agent thread message"
                 disabled={!composerText.trim() || sourceGapActive}
-                size="icon-lg"
+                size="sm"
                 type="submit"
                 variant="secondary"
               >
-                <SquareIcon />
+                <SendIcon data-icon="inline-start" />
+                Send
               </Button>
             </div>
           </div>
@@ -1505,6 +1532,37 @@ function dashboardDescription(view: WorkspaceView): string {
   }
 }
 
+function mergeSessionOptions(
+  sessions: readonly SessionView[],
+  rows: readonly FleetRowView[]
+): readonly SessionView[] {
+  const byId = new Map<string, SessionView>();
+  for (const session of sessions) {
+    if (session.sessionId) {
+      byId.set(session.sessionId, session);
+    }
+  }
+  for (const row of rows) {
+    if (!row.sessionId || byId.has(row.sessionId)) {
+      continue;
+    }
+    byId.set(
+      row.sessionId,
+      create(SessionViewSchema, {
+        sourceId: row.sourceId,
+        sessionId: row.sessionId,
+        provider: row.provider,
+        model: row.model,
+        status: row.status,
+        cwd: "",
+        worktreePath: row.worktreePath,
+        activeTurnId: ""
+      })
+    );
+  }
+  return Array.from(byId.values());
+}
+
 function BoardPane({
   rows,
   teams,
@@ -1870,12 +1928,15 @@ function TeamPane({
   const [teamName, setTeamName] = useState("Live Team");
   const [leadAgentId, setLeadAgentId] = useState(defaultLeadId);
   const [joinAgentId, setJoinAgentId] = useState("");
-  const joinPointerHandledRef = useRef(false);
+  const joinActivationHandledRef = useRef(false);
   const members = selectedTeam?.members ?? [];
   const deliveries = teamWorkspace?.deliveries ?? [];
   const messages = teamWorkspace?.messages ?? [];
   const memberAgentIds = new Set(
     members.flatMap((member) => [member.memberId, member.sessionId].filter(Boolean))
+  );
+  const recipientOptions = unique(
+    members.map((member) => teamMemberIdentity(member)).filter(Boolean)
   );
   const joinOptions = unique([
     ...sessions.map((session) => session.sessionId),
@@ -1924,7 +1985,7 @@ function TeamPane({
       sendMode === "direct"
         ? makeCommand("team", selectedTeam.teamId, "sendTeamMessage", {
             teamId: selectedTeam.teamId,
-            recipientMemberId: recipient || members[0]?.memberId || "",
+            recipientMemberId: recipient || recipientOptions[0] || "",
             text: message.trim()
           })
         : makeCommand("team", selectedTeam.teamId, "broadcastTeamMessage", {
@@ -1949,14 +2010,17 @@ function TeamPane({
     );
   }
 
-  function joinAgentToTeamFromPointer() {
-    joinPointerHandledRef.current = true;
+  function joinAgentToTeamFromActivation() {
+    if (joinActivationHandledRef.current) {
+      return;
+    }
+    joinActivationHandledRef.current = true;
     joinAgentToTeam();
   }
 
   function joinAgentToTeamFromClick() {
-    if (joinPointerHandledRef.current) {
-      joinPointerHandledRef.current = false;
+    if (joinActivationHandledRef.current) {
+      joinActivationHandledRef.current = false;
       return;
     }
     joinAgentToTeam();
@@ -2086,7 +2150,8 @@ function TeamPane({
                   disabled={!joinOptions.length || !joinAgentId || sourceGapActive}
                   type="button"
                   onClick={joinAgentToTeamFromClick}
-                  onPointerUp={joinAgentToTeamFromPointer}
+                  onMouseUp={joinAgentToTeamFromActivation}
+                  onPointerUp={joinAgentToTeamFromActivation}
                 >
                   <PlusIcon data-icon="inline-start" />
                   Join selected agent
@@ -2119,8 +2184,8 @@ function TeamPane({
                     <Field>
                       <FieldLabel>Recipient</FieldLabel>
                       <SelectFilter
-                        value={recipient || members[0]?.memberId || ""}
-                        options={members.map((member) => member.memberId)}
+                        value={recipient || recipientOptions[0] || ""}
+                        options={recipientOptions}
                         onChange={setRecipient}
                       />
                     </Field>
@@ -2862,8 +2927,8 @@ function MemberCard({
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>{member.title || member.memberId}</CardTitle>
-        <CardDescription>{member.sessionId}</CardDescription>
+        <CardTitle>{member.title || teamMemberIdentity(member)}</CardTitle>
+        <CardDescription>{member.sessionId || member.memberId}</CardDescription>
         <CardAction>
           <StatusBadge status={member.status || "unknown"} />
         </CardAction>
@@ -2875,6 +2940,10 @@ function MemberCard({
       </CardContent>
     </Card>
   );
+}
+
+function teamMemberIdentity(member: TeamMemberView): string {
+  return member.memberId || member.sessionId || member.title || "";
 }
 
 function TimelineCard({

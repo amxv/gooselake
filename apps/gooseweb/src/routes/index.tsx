@@ -1722,9 +1722,6 @@ function AgentPane({
                 <Card className="min-h-36 flex-1 bg-muted/20" size="sm">
                   <CardHeader>
                     <CardTitle>Conversation stream</CardTitle>
-                    <CardDescription>
-                      Token updates are frame-batched by the realtime worker.
-                    </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2">
                     {latestTranscript ? (
@@ -1739,7 +1736,7 @@ function AgentPane({
                     ) : selectedSession.activeTurnId ? (
                       `Streaming turn ${selectedSession.activeTurnId}.`
                     ) : (
-                      "No active turn stream for this session."
+                      "No active turn."
                     )}
                   </CardContent>
                 </Card>
@@ -2775,7 +2772,7 @@ function ApprovalCard({
     <Card>
       <CardHeader>
         <CardTitle>Approval context</CardTitle>
-        <CardDescription>{approval?.status || "none"}</CardDescription>
+        <CardDescription>{approval?.status || "No approval pending."}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {approval ? (
@@ -2820,7 +2817,7 @@ function ApprovalCard({
             </div>
           </>
         ) : (
-          <EmptyBlock title="No approval" detail="Controls stay outside streaming panes." />
+          <EmptyBlock title="No approval pending." />
         )}
       </CardContent>
     </Card>
@@ -3233,7 +3230,7 @@ function SelectFilter({
   );
 }
 
-function EmptyBlock({ title, detail }: { readonly title: string; readonly detail: string }) {
+function EmptyBlock({ title, detail }: { readonly title: string; readonly detail?: string }) {
   return (
     <Empty className="min-h-32 border">
       <EmptyHeader>
@@ -3241,7 +3238,7 @@ function EmptyBlock({ title, detail }: { readonly title: string; readonly detail
           <ClipboardListIcon />
         </EmptyMedia>
         <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{detail}</EmptyDescription>
+        {detail ? <EmptyDescription>{detail}</EmptyDescription> : null}
       </EmptyHeader>
     </Empty>
   );

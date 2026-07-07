@@ -92,12 +92,24 @@ export class RealtimeWorkerCore {
       );
       this.resendActiveSubscriptions();
     };
-    socket.onmessage = (event) => this.receiveFrame(event.data);
+    socket.onmessage = (event) => {
+      if (this.socket !== socket) {
+        return;
+      }
+      this.receiveFrame(event.data);
+    };
     socket.onerror = () => {
+      if (this.socket !== socket) {
+        return;
+      }
       this.emitError("Realtime socket error", true);
     };
     socket.onclose = () => {
+      if (this.socket !== socket) {
+        return;
+      }
       this.stopHeartbeat();
+      this.socket = undefined;
       this.emitState({ connection: "offline" });
     };
   }

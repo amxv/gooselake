@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { Scope } from "../src/gen/goosetower/v1/common_pb";
+import { fromBinary } from "@bufbuild/protobuf";
+import { RealtimeEnvelopeSchema } from "../src/gen/goosetower/v1/realtime_pb";
 import type { WorkerOutbound } from "../app/realtime/types";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-core";
 
@@ -81,8 +82,9 @@ await core.handleMessage({
   type: "command",
   command: {
     commandId: "cmd_without_socket",
+    idempotencyKey: "cmd_without_socket",
     target: {
-      scope: Scope.SOURCE,
+      scope: "source",
       scopeId: "local",
       entityId: "source:local"
     },
@@ -132,8 +134,9 @@ await core.handleMessage({
   type: "command",
   command: {
     commandId: "cmd_with_socket",
+    idempotencyKey: "cmd_with_socket",
     target: {
-      scope: Scope.SOURCE,
+      scope: "source",
       scopeId: "local",
       entityId: "source:local"
     },
@@ -153,6 +156,11 @@ await core.handleMessage({
 });
 
 assert.equal((sockets[2]?.sent.length ?? 0) > sentBeforeCommand, true);
+const sentCommandFrame = sockets[2]?.sent.at(-1);
+assert.ok(sentCommandFrame instanceof Uint8Array);
+const sentCommandEnvelope = fromBinary(RealtimeEnvelopeSchema, sentCommandFrame);
+assert.equal(sentCommandEnvelope.payload.case, "command");
+assert.equal(sentCommandEnvelope.payload.value.payload.case, "createSession");
 assert.equal(
   posted.some(
     (message) =>

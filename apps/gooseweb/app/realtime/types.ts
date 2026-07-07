@@ -1,4 +1,3 @@
-import type { Command } from "../../src/gen/goosetower/v1/commands_pb";
 import type {
   ApprovalView,
   FleetRowView,
@@ -52,6 +51,37 @@ export type PendingCommandState = {
   readonly refreshEntity?: boolean;
 };
 
+export type CommandScope = "session" | "team" | "process" | "source";
+
+export type CommandPayloadCase =
+  | "sendTurn"
+  | "resolveApproval"
+  | "interruptTurn"
+  | "sendTeamMessage"
+  | "broadcastTeamMessage"
+  | "spawnTeamMember"
+  | "retryDelivery"
+  | "cancelDelivery"
+  | "killProcess"
+  | "startProcess"
+  | "createSession"
+  | "createTeam";
+
+export type CommandIntent = {
+  readonly commandId: string;
+  readonly idempotencyKey: string;
+  readonly createdAtClientUnixMs: bigint;
+  readonly target: {
+    readonly scope: CommandScope;
+    readonly scopeId: string;
+    readonly entityId: string;
+  };
+  readonly payload: {
+    readonly case: CommandPayloadCase;
+    readonly value: Readonly<Record<string, unknown>>;
+  };
+};
+
 export type SubscriptionState = {
   readonly subscriptionId: string;
   readonly viewKind: string;
@@ -98,7 +128,7 @@ export type WorkerInbound =
   | { readonly type: "unsubscribe"; readonly subscriptionId: string }
   | {
       readonly type: "command";
-      readonly command: Command;
+      readonly command: CommandIntent;
       readonly idempotencyKey?: string;
     }
   | { readonly type: "auth-refresh"; readonly ticket: string };

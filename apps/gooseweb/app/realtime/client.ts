@@ -1,6 +1,5 @@
-import type { Command } from "../../src/gen/goosetower/v1/commands_pb";
 import { goosewebConfig } from "./config";
-import type { WorkerInbound, WorkerOutbound } from "./types";
+import type { CommandIntent, WorkerInbound, WorkerOutbound } from "./types";
 import {
   setPendingCommand,
   setSubscription,
@@ -108,7 +107,7 @@ export function unsubscribeRealtime(subscriptionId: string): void {
 }
 
 export function sendRealtimeCommand(
-  command: Command,
+  command: CommandIntent,
   idempotencyKey?: string
 ): void {
   postRealtimeMessage({ type: "command", command, idempotencyKey });

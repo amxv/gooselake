@@ -173,9 +173,9 @@ export class RealtimeWorkerCore {
       idempotencyKey: idempotencyKey ?? command.idempotencyKey ?? commandId,
       status: "queued",
       createdAtUnixMs: Number(command.createdAtClientUnixMs || BigInt(Date.now())),
-      targetScope: command.target?.scope?.toString(),
-      targetScopeId: command.target?.scopeId,
-      targetEntityId: command.target?.entityId
+      targetScope: command.target.scope,
+      targetScopeId: command.target.scopeId,
+      targetEntityId: command.target.entityId
     };
     this.pendingCommands[commandId] = pending;
     this.post({ type: "command-state", command: pending });

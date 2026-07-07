@@ -1,4 +1,3 @@
-import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   ActivityIcon,
@@ -31,26 +30,6 @@ import {
   useRef,
   useState
 } from "react";
-import {
-  CommandBroadcastTeamMessageSchema,
-  CommandCancelDeliverySchema,
-  CommandCreateSessionSchema,
-  CommandCreateTeamSchema,
-  CommandInterruptTurnSchema,
-  CommandKillProcessSchema,
-  CommandResolveApprovalSchema,
-  CommandRetryDeliverySchema,
-  CommandSendTeamMessageSchema,
-  CommandSendTurnSchema,
-  CommandSpawnTeamMemberSchema,
-  CommandStartProcessSchema,
-  CommandSchema,
-  type Command
-} from "../../src/gen/goosetower/v1/commands_pb";
-import {
-  EntityRefSchema,
-  Scope
-} from "../../src/gen/goosetower/v1/common_pb";
 import type {
   ApprovalView,
   FleetRowView,
@@ -73,6 +52,9 @@ import {
 import { goosewebConfig } from "../../app/realtime/config";
 import type {
   ConnectionState,
+  CommandIntent,
+  CommandPayloadCase,
+  CommandScope,
   GoosewebSnapshot,
   PendingCommandState
 } from "../../app/realtime/types";
@@ -2880,99 +2862,25 @@ function useVirtualRows<T>(items: readonly T[], rowHeight: number, overscan: num
 }
 
 function makeCommand(
-  scope: "session" | "team" | "process" | "source",
+  scope: CommandScope,
   scopeId: string,
-  payloadCase: NonNullable<Command["payload"]["case"]>,
+  payloadCase: CommandPayloadCase,
   payloadValue: Record<string, unknown>
-): Command {
-  const command: MessageInitShape<typeof CommandSchema> = {
+): CommandIntent {
+  return {
     commandId: crypto.randomUUID(),
     idempotencyKey: crypto.randomUUID(),
     createdAtClientUnixMs: BigInt(Date.now()),
-    target: create(EntityRefSchema, {
-      scope:
-        scope === "team"
-          ? Scope.TEAM
-          : scope === "process"
-            ? Scope.PROCESS
-            : scope === "source"
-              ? Scope.SOURCE
-              : Scope.SESSION,
+    target: {
+      scope,
       scopeId,
       entityId: scope === "source" ? `source:${scopeId}` : scopeId
-    }),
-    payload: makeCommandPayload(payloadCase, payloadValue)
+    },
+    payload: {
+      case: payloadCase,
+      value: payloadValue
+    }
   };
-
-  return create(CommandSchema, command);
-}
-
-function makeCommandPayload(
-  payloadCase: NonNullable<Command["payload"]["case"]>,
-  payloadValue: Record<string, unknown>
-): Command["payload"] {
-  switch (payloadCase) {
-    case "sendTurn":
-      return {
-        case: payloadCase,
-        value: create(CommandSendTurnSchema, payloadValue)
-      };
-    case "resolveApproval":
-      return {
-        case: payloadCase,
-        value: create(CommandResolveApprovalSchema, payloadValue)
-      };
-    case "interruptTurn":
-      return {
-        case: payloadCase,
-        value: create(CommandInterruptTurnSchema, payloadValue)
-      };
-    case "sendTeamMessage":
-      return {
-        case: payloadCase,
-        value: create(CommandSendTeamMessageSchema, payloadValue)
-      };
-    case "broadcastTeamMessage":
-      return {
-        case: payloadCase,
-        value: create(CommandBroadcastTeamMessageSchema, payloadValue)
-      };
-    case "spawnTeamMember":
-      return {
-        case: payloadCase,
-        value: create(CommandSpawnTeamMemberSchema, payloadValue)
-      };
-    case "retryDelivery":
-      return {
-        case: payloadCase,
-        value: create(CommandRetryDeliverySchema, payloadValue)
-      };
-    case "cancelDelivery":
-      return {
-        case: payloadCase,
-        value: create(CommandCancelDeliverySchema, payloadValue)
-      };
-    case "killProcess":
-      return {
-        case: payloadCase,
-        value: create(CommandKillProcessSchema, payloadValue)
-      };
-    case "startProcess":
-      return {
-        case: payloadCase,
-        value: create(CommandStartProcessSchema, payloadValue)
-      };
-    case "createSession":
-      return {
-        case: payloadCase,
-        value: create(CommandCreateSessionSchema, payloadValue)
-      };
-    case "createTeam":
-      return {
-        case: payloadCase,
-        value: create(CommandCreateTeamSchema, payloadValue)
-      };
-  }
 }
 
 function getEntityItems(input: {

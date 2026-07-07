@@ -1,5 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import {
+  EntityRefSchema,
   Lane,
   MessageKind,
   Scope
@@ -14,10 +15,30 @@ import {
   type RealtimeEnvelope,
   type Subscribe
 } from "../../../src/gen/goosetower/v1/realtime_pb";
-import type { Command } from "../../../src/gen/goosetower/v1/commands_pb";
-import { CommandSchema } from "../../../src/gen/goosetower/v1/commands_pb";
+import {
+  CommandBroadcastTeamMessageSchema,
+  CommandCancelDeliverySchema,
+  CommandCreateSessionSchema,
+  CommandCreateTeamSchema,
+  CommandInterruptTurnSchema,
+  CommandKillProcessSchema,
+  CommandResolveApprovalSchema,
+  CommandRetryDeliverySchema,
+  CommandSchema,
+  CommandSendTeamMessageSchema,
+  CommandSendTurnSchema,
+  CommandSpawnTeamMemberSchema,
+  CommandStartProcessSchema,
+  type Command
+} from "../../../src/gen/goosetower/v1/commands_pb";
 import { cursorStateToProto } from "../cursors";
-import type { CursorState, SubscriptionState } from "../types";
+import type {
+  CommandIntent,
+  CommandPayloadCase,
+  CommandScope,
+  CursorState,
+  SubscriptionState
+} from "../types";
 
 const PROTOCOL_VERSION = 1;
 
@@ -97,21 +118,117 @@ export function makeUnsubscribe(subscriptionId: string): RealtimeEnvelope {
   });
 }
 
-export function makeCommand(command: Command): RealtimeEnvelope {
+export function makeCommand(command: CommandIntent): RealtimeEnvelope {
+  const encodedCommand = commandIntentToProto(command);
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: PROTOCOL_VERSION,
     messageId: randomMessageId("cmd"),
     messageKind: MessageKind.COMMAND,
     lane: Lane.CRITICAL,
-    scope: command.target?.scope ?? Scope.UNSPECIFIED,
-    scopeId: command.target?.scopeId ?? "",
+    scope: encodedCommand.target?.scope ?? Scope.UNSPECIFIED,
+    scopeId: encodedCommand.target?.scopeId ?? "",
     commandId: command.commandId,
     happenedAtUnixMs: BigInt(Date.now()),
     payload: {
       case: "command",
-      value: create(CommandSchema, command)
+      value: encodedCommand
     }
   });
+}
+
+function commandIntentToProto(command: CommandIntent): Command {
+  return create(CommandSchema, {
+    commandId: command.commandId,
+    idempotencyKey: command.idempotencyKey,
+    createdAtClientUnixMs: command.createdAtClientUnixMs,
+    target: create(EntityRefSchema, {
+      scope: scopeToProto(command.target.scope),
+      scopeId: command.target.scopeId,
+      entityId: command.target.entityId
+    }),
+    payload: makeCommandPayload(command.payload.case, command.payload.value)
+  });
+}
+
+function scopeToProto(scope: CommandScope): Scope {
+  switch (scope) {
+    case "team":
+      return Scope.TEAM;
+    case "process":
+      return Scope.PROCESS;
+    case "source":
+      return Scope.SOURCE;
+    case "session":
+      return Scope.SESSION;
+  }
+}
+
+function makeCommandPayload(
+  payloadCase: CommandPayloadCase,
+  payloadValue: Readonly<Record<string, unknown>>
+): Command["payload"] {
+  switch (payloadCase) {
+    case "sendTurn":
+      return {
+        case: payloadCase,
+        value: create(CommandSendTurnSchema, payloadValue)
+      };
+    case "resolveApproval":
+      return {
+        case: payloadCase,
+        value: create(CommandResolveApprovalSchema, payloadValue)
+      };
+    case "interruptTurn":
+      return {
+        case: payloadCase,
+        value: create(CommandInterruptTurnSchema, payloadValue)
+      };
+    case "sendTeamMessage":
+      return {
+        case: payloadCase,
+        value: create(CommandSendTeamMessageSchema, payloadValue)
+      };
+    case "broadcastTeamMessage":
+      return {
+        case: payloadCase,
+        value: create(CommandBroadcastTeamMessageSchema, payloadValue)
+      };
+    case "spawnTeamMember":
+      return {
+        case: payloadCase,
+        value: create(CommandSpawnTeamMemberSchema, payloadValue)
+      };
+    case "retryDelivery":
+      return {
+        case: payloadCase,
+        value: create(CommandRetryDeliverySchema, payloadValue)
+      };
+    case "cancelDelivery":
+      return {
+        case: payloadCase,
+        value: create(CommandCancelDeliverySchema, payloadValue)
+      };
+    case "killProcess":
+      return {
+        case: payloadCase,
+        value: create(CommandKillProcessSchema, payloadValue)
+      };
+    case "startProcess":
+      return {
+        case: payloadCase,
+        value: create(CommandStartProcessSchema, payloadValue)
+      };
+    case "createSession":
+      return {
+        case: payloadCase,
+        value: create(CommandCreateSessionSchema, payloadValue)
+      };
+    case "createTeam":
+      return {
+        case: payloadCase,
+        value: create(CommandCreateTeamSchema, payloadValue)
+      };
+  }
 }
 
 export function makeAuthRefresh(ticket: string): RealtimeEnvelope {

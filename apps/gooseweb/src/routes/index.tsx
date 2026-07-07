@@ -1872,10 +1872,13 @@ function TeamPane({
   const members = selectedTeam?.members ?? [];
   const deliveries = teamWorkspace?.deliveries ?? [];
   const messages = teamWorkspace?.messages ?? [];
-  const memberSessionIds = new Set(members.map((member) => member.sessionId || member.memberId));
-  const joinOptions = sessions
-    .map((session) => session.sessionId)
-    .filter((sessionId) => sessionId && !memberSessionIds.has(sessionId));
+  const memberAgentIds = new Set(
+    members.flatMap((member) => [member.memberId, member.sessionId].filter(Boolean))
+  );
+  const joinOptions = unique([
+    ...sessions.map((session) => session.sessionId),
+    ...rows.map((row) => row.sessionId).filter(Boolean)
+  ]).filter((sessionId) => sessionId && !memberAgentIds.has(sessionId));
   const lead = members.find((member) => member.memberId === selectedTeam?.leadMemberId);
   const hasLeadForNewTeam = Boolean(leadAgentId || defaultLeadId);
 
@@ -1886,8 +1889,11 @@ function TeamPane({
     if (!leadAgentId && defaultLeadId) {
       setLeadAgentId(defaultLeadId);
     }
-    if (!joinAgentId && joinOptions[0]) {
+    if (joinOptions[0] && !joinOptions.includes(joinAgentId)) {
       setJoinAgentId(joinOptions[0]);
+    }
+    if (!joinOptions.length && joinAgentId) {
+      setJoinAgentId("");
     }
   }, [defaultLeadId, defaultSourceId, joinAgentId, joinOptions, leadAgentId, teamSourceId]);
 

@@ -53,13 +53,28 @@ export function connectRealtime(ticket: string): void {
   });
 }
 
+type DevelopmentTicketRequest = {
+  readonly allowed_origins?: readonly string[];
+};
+
+export function developmentTicketRequestBody(
+  currentOrigin: string | undefined = currentBrowserOrigin(),
+  configuredOrigins: readonly string[] = goosewebConfig.devTicketAllowedOrigins
+): DevelopmentTicketRequest {
+  const allowedOrigins = uniqueOrigins([currentOrigin, ...configuredOrigins]);
+  if (allowedOrigins.length === 0) {
+    return {};
+  }
+  return { allowed_origins: allowedOrigins };
+}
+
 export async function mintDevelopmentTicket(): Promise<string> {
   const response = await fetch(goosewebConfig.devTicketRoute, {
     method: "POST",
     headers: {
       "content-type": "application/json"
     },
-    body: JSON.stringify({})
+    body: JSON.stringify(developmentTicketRequestBody())
   });
   if (!response.ok) {
     throw new Error(`Dev ticket request failed with ${response.status}`);
@@ -105,4 +120,19 @@ export function refreshRealtimeAuth(ticket: string): void {
 
 function postRealtimeMessage(message: WorkerInbound): void {
   ensureRealtimeWorker()?.postMessage(message);
+}
+
+function currentBrowserOrigin(): string | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  return window.location.origin;
+}
+
+function uniqueOrigins(origins: readonly (string | undefined)[]): readonly string[] {
+  return [...new Set(origins.map((origin) => origin?.trim()).filter(isNonEmptyString))];
+}
+
+function isNonEmptyString(value: string | undefined): value is string {
+  return typeof value === "string" && value.length > 0;
 }

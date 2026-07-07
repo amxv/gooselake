@@ -9,6 +9,7 @@ export type GoosewebRuntimeConfig = {
   readonly goosetowerUrl: string;
   readonly devTicketRoute: string;
   readonly devTicketBearerToken: string;
+  readonly devTicketAllowedOrigins: readonly string[];
   readonly pastedDevTicket: string;
   readonly flags: GoosewebFeatureFlags;
 };
@@ -20,6 +21,9 @@ export const goosewebConfig: GoosewebRuntimeConfig = {
     env.VITE_GOOSETOWER_URL ?? "ws://localhost:8787/v1/realtime",
   devTicketRoute: env.VITE_GOOSEWEB_DEV_TICKET_ROUTE ?? "/api/dev-ticket",
   devTicketBearerToken: env.VITE_GOOSEWEB_DEV_TICKET_BEARER_TOKEN ?? "",
+  devTicketAllowedOrigins: parseOriginList(
+    env.VITE_GOOSEWEB_DEV_TICKET_ALLOWED_ORIGINS
+  ),
   pastedDevTicket: env.VITE_GOOSEWEB_DEV_TICKET ?? "",
   flags: {
     workerRealtime: env.VITE_GOOSEWEB_WORKER_REALTIME !== "false",
@@ -34,4 +38,14 @@ export function realtimeUrlWithTicket(baseUrl: string, ticket: string): string {
   const url = new URL(baseUrl);
   url.searchParams.set("ticket", ticket);
   return url.toString();
+}
+
+function parseOriginList(value: string | undefined): readonly string[] {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
 }

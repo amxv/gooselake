@@ -317,6 +317,7 @@ function Index() {
   const sourceGapActive =
     state.connection === "stale" ||
     state.connection === "offline" ||
+    state.connection === "connecting" ||
     state.connection === "reconnecting" ||
     staleSourceIds.length > 0;
 

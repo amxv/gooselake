@@ -187,7 +187,18 @@ export class RealtimeWorkerCore {
         command.createdAtClientUnixMs || BigInt(pending.createdAtUnixMs)
     };
 
-    this.sendEnvelope(makeCommand(fullCommand));
+    if (!this.sendEnvelope(makeCommand(fullCommand))) {
+      const rejected = {
+        ...pending,
+        status: "rejected" as const,
+        errorCode: "socket_unavailable",
+        error: "Realtime socket is not open."
+      };
+      this.pendingCommands[commandId] = rejected;
+      this.post({ type: "command-state", command: rejected });
+      return;
+    }
+
     const sent = { ...pending, status: "sent" as const };
     this.pendingCommands[commandId] = sent;
     this.post({ type: "command-state", command: sent });
@@ -200,15 +211,15 @@ export class RealtimeWorkerCore {
     }
 
     const envelope = fromBinary(RealtimeEnvelopeSchema, new Uint8Array(data));
-    if (!this.applyEnvelopeCursor(envelope)) {
-      return;
-    }
 
     switch (envelope.messageKind) {
       case MessageKind.HELLO:
         this.handleHello(envelope);
         break;
       case MessageKind.SNAPSHOT:
+        if (!this.applyEnvelopeCursor(envelope)) {
+          return;
+        }
         this.handleEntityPatch(
           envelope.payload.case === "snapshot"
             ? decodeSnapshot(envelope.payload.value)
@@ -216,6 +227,9 @@ export class RealtimeWorkerCore {
         );
         break;
       case MessageKind.PATCH:
+        if (!this.applyEnvelopeCursor(envelope)) {
+          return;
+        }
         this.handleEntityPatch(
           envelope.payload.case === "patch"
             ? decodePatch(envelope.payload.value)
@@ -223,14 +237,23 @@ export class RealtimeWorkerCore {
         );
         break;
       case MessageKind.PONG:
+        if (!this.applyEnvelopeCursor(envelope)) {
+          return;
+        }
         this.emitState({ connection: "connected" });
         break;
       case MessageKind.COMMAND_ACCEPTED:
       case MessageKind.COMMAND_REJECTED:
       case MessageKind.COMMAND_DUPLICATE:
+        if (!this.applyEnvelopeCursor(envelope)) {
+          return;
+        }
         this.handleCommandLifecycle(envelope);
         break;
       case MessageKind.CONNECTION_DEGRADED:
+        if (!this.applyEnvelopeCursor(envelope)) {
+          return;
+        }
         this.emitState({
           connection: "degraded",
           lastError:
@@ -241,12 +264,21 @@ export class RealtimeWorkerCore {
         break;
       case MessageKind.SOURCE_GAP_DETECTED:
       case MessageKind.SOURCE_SNAPSHOT_RESYNC:
+        if (!this.applyEnvelopeCursor(envelope)) {
+          return;
+        }
         this.handleStaleSignal(envelope);
         break;
       case MessageKind.SOURCE_GAP_FILLED:
+        if (!this.applyEnvelopeCursor(envelope)) {
+          return;
+        }
         this.emitState({ connection: "replaying" });
         break;
       case MessageKind.ERROR:
+        if (!this.applyEnvelopeCursor(envelope)) {
+          return;
+        }
         this.emitError(
           envelope.payload.case === "error"
             ? envelope.payload.value.message
@@ -373,9 +405,9 @@ export class RealtimeWorkerCore {
     }
   }
 
-  private sendEnvelope(envelope: RealtimeEnvelope): void {
+  private sendEnvelope(envelope: RealtimeEnvelope): boolean {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      return;
+      return false;
     }
 
     const lane = envelope.lane;
@@ -384,10 +416,11 @@ export class RealtimeWorkerCore {
         connection: "degraded",
         lastError: "Realtime bulk lane backpressure"
       });
-      return;
+      return false;
     }
 
     this.socket.send(toBinary(RealtimeEnvelopeSchema, envelope));
+    return true;
   }
 
   private emitState(patch: GoosewebStorePatch): void {

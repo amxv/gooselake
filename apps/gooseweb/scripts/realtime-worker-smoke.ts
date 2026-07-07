@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Scope } from "../src/gen/goosetower/v1/common_pb";
 import type { WorkerOutbound } from "../app/realtime/types";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-core";
 
@@ -69,6 +70,41 @@ await waitForPatchFlush();
 assert.equal(
   posted.some(
     (message) => message.type === "state" && message.patch.connection === "offline"
+  ),
+  true
+);
+
+await core.handleMessage({
+  type: "command",
+  command: {
+    commandId: "cmd_without_socket",
+    target: {
+      scope: Scope.SOURCE,
+      scopeId: "local",
+      entityId: "source:local"
+    },
+    createdAtClientUnixMs: BigInt(Date.now()),
+    payload: {
+      case: "createSession",
+      value: {
+        provider: "codex",
+        model: "gpt-5.4",
+        cwd: "/tmp",
+        title: "Socket unavailable test",
+        permissionMode: "",
+        metadata: {}
+      }
+    }
+  }
+});
+
+assert.equal(
+  posted.some(
+    (message) =>
+      message.type === "command-state" &&
+      message.command.commandId === "cmd_without_socket" &&
+      message.command.status === "rejected" &&
+      message.command.errorCode === "socket_unavailable"
   ),
   true
 );

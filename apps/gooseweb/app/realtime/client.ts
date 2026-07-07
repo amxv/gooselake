@@ -17,9 +17,12 @@ export function ensureRealtimeWorker(): Worker | undefined {
     return worker;
   }
 
-  worker = new Worker(new URL("./worker/realtime-worker.ts", import.meta.url), {
-    type: "module"
-  });
+  worker = new Worker(
+    new URL("./worker/realtime-worker.ts?worker_rev=command-intent-v1", import.meta.url),
+    {
+      type: "module"
+    }
+  );
   worker.onmessage = (event: MessageEvent<WorkerOutbound>) => {
     const message = event.data;
     switch (message.type) {

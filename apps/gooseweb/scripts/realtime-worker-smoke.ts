@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { fromBinary } from "@bufbuild/protobuf";
 import { RealtimeEnvelopeSchema } from "../src/gen/goosetower/v1/realtime_pb";
 import type { WorkerOutbound } from "../app/realtime/types";
-import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-core";
+import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core";
 
 const sockets: FakeSocket[] = [];
 const posted: WorkerOutbound[] = [];

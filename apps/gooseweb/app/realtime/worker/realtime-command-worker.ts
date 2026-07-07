@@ -1,4 +1,4 @@
-import { RealtimeWorkerCore } from "./realtime-core";
+import { RealtimeWorkerCore } from "./realtime-command-core";
 import type { WorkerInbound, WorkerOutbound } from "../types";
 
 const core = new RealtimeWorkerCore((message: WorkerOutbound) => {

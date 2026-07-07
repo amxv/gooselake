@@ -208,6 +208,7 @@ function Index() {
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [selectedProcessId, setSelectedProcessId] = useState("");
+  const devAutoConnectAttempted = useRef(false);
   const [filters, setFilters] = useState<BoardFilters>({
     sourceId: "all",
     teamId: "all",
@@ -230,6 +231,33 @@ function Index() {
       unsubscribeRealtime("ledger:recent");
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      devAutoConnectAttempted.current ||
+      !goosewebConfig.flags.devTicketAutoConnect ||
+      state.connection !== "idle"
+    ) {
+      return;
+    }
+
+    devAutoConnectAttempted.current = true;
+    const pastedTicket = goosewebConfig.pastedDevTicket.trim();
+    if (pastedTicket) {
+      connectRealtime(pastedTicket);
+      return;
+    }
+
+    if (!goosewebConfig.flags.devTicketRoute) {
+      return;
+    }
+
+    void mintDevelopmentTicket()
+      .then((ticket) => connectRealtime(ticket))
+      .catch((error) => {
+        console.error("Unable to auto-connect Gooseweb development ticket", error);
+      });
+  }, [state.connection]);
 
   useEffect(() => {
     subscribeRealtime("board:window", "board", {

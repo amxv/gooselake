@@ -3,6 +3,10 @@ import {
   developmentTicketRequestBody,
   mintDevelopmentTicket
 } from "../app/realtime/client";
+import {
+  goosetowerHttpTarget,
+  httpTargetFromRealtimeUrl
+} from "../app/realtime/goosetower-target";
 
 const activeOrigin = "http://127.0.0.1:13000";
 
@@ -22,6 +26,21 @@ assert.deepEqual(
 );
 
 assert.deepEqual(developmentTicketRequestBody(undefined, []), {});
+assert.equal(
+  httpTargetFromRealtimeUrl("ws://127.0.0.1:18090/v1/realtime"),
+  "http://127.0.0.1:18090"
+);
+assert.equal(
+  httpTargetFromRealtimeUrl("wss://goosetower.example.test/v1/realtime"),
+  "https://goosetower.example.test"
+);
+assert.equal(
+  goosetowerHttpTarget(
+    "ws://127.0.0.1:18090/v1/realtime",
+    "http://127.0.0.1:19090/custom/path"
+  ),
+  "http://127.0.0.1:19090"
+);
 
 let capturedRoute: unknown;
 let capturedBody: unknown;

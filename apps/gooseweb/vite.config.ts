@@ -3,8 +3,10 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
+import { goosetowerHttpTarget } from "./app/realtime/goosetower-target";
 
 const appRoot = fileURLToPath(new URL("./", import.meta.url));
+const defaultGoosetowerUrl = "ws://127.0.0.1:8090/v1/realtime";
 
 export default defineConfig({
   resolve: {
@@ -22,7 +24,10 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api/dev-ticket": {
-        target: "http://127.0.0.1:8090",
+        target: goosetowerHttpTarget(
+          process.env.VITE_GOOSETOWER_URL ?? defaultGoosetowerUrl,
+          process.env.VITE_GOOSETOWER_HTTP_URL
+        ),
         changeOrigin: true,
         rewrite: () => "/v1/dev/tickets",
         headers: {

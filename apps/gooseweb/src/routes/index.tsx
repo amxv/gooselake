@@ -2068,7 +2068,8 @@ function TeamPane({
                 </Field>
                 <Button
                   disabled={!joinOptions.length || !joinAgentId || sourceGapActive}
-                  type="submit"
+                  type="button"
+                  onClick={joinAgentToTeam}
                 >
                   <PlusIcon data-icon="inline-start" />
                   Add existing agent

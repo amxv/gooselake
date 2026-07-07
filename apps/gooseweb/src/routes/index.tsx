@@ -366,17 +366,6 @@ function Index() {
     staleSourceIds.length > 0;
 
   function addSelectedAgentToTeam() {
-    if (!selectedSession?.sessionId || !selectedTeam?.teamId || sourceGapActive) {
-      return;
-    }
-    sendRealtimeCommand(
-      makeCommand("team", selectedTeam.teamId, "joinTeamMember", {
-        teamId: selectedTeam.teamId,
-        agentId: selectedSession.sessionId,
-        title: selectedSession.sessionId,
-        addedBy: selectedTeam.leadMemberId || ""
-      })
-    );
     setActiveView("teams");
   }
 
@@ -401,7 +390,7 @@ function Index() {
           selectedApprovalId={selectedApproval?.approvalId ?? ""}
           selectedProcessId={selectedProcess?.processId ?? ""}
           sourceGapActive={sourceGapActive}
-          addAgentDisabled={!selectedSession?.sessionId || !selectedTeam?.teamId || sourceGapActive}
+          addAgentDisabled={!sessions.length || !teams.length || sourceGapActive}
           onViewChange={setActiveView}
           onSelectRow={setSelectedRowId}
           onSelectSession={setSelectedSessionId}
@@ -1879,9 +1868,14 @@ function TeamPane({
   const [teamSourceId, setTeamSourceId] = useState(defaultSourceId);
   const [teamName, setTeamName] = useState("Live Team");
   const [leadAgentId, setLeadAgentId] = useState(defaultLeadId);
+  const [joinAgentId, setJoinAgentId] = useState("");
   const members = selectedTeam?.members ?? [];
   const deliveries = teamWorkspace?.deliveries ?? [];
   const messages = teamWorkspace?.messages ?? [];
+  const memberSessionIds = new Set(members.map((member) => member.sessionId || member.memberId));
+  const joinOptions = sessions
+    .map((session) => session.sessionId)
+    .filter((sessionId) => sessionId && !memberSessionIds.has(sessionId));
   const lead = members.find((member) => member.memberId === selectedTeam?.leadMemberId);
   const hasLeadForNewTeam = Boolean(leadAgentId || defaultLeadId);
 
@@ -1892,7 +1886,10 @@ function TeamPane({
     if (!leadAgentId && defaultLeadId) {
       setLeadAgentId(defaultLeadId);
     }
-  }, [defaultLeadId, defaultSourceId, leadAgentId, teamSourceId]);
+    if (!joinAgentId && joinOptions[0]) {
+      setJoinAgentId(joinOptions[0]);
+    }
+  }, [defaultLeadId, defaultSourceId, joinAgentId, joinOptions, leadAgentId, teamSourceId]);
 
   function createTeam() {
     const sourceId = teamSourceId || defaultSourceId;
@@ -1910,13 +1907,13 @@ function TeamPane({
     );
   }
 
-  function sendMessage(event: FormEvent) {
+  function sendMessage(event: FormEvent, sendMode = mode) {
     event.preventDefault();
     if (!selectedTeam || !message.trim() || sourceGapActive) {
       return;
     }
     sendRealtimeCommand(
-      mode === "direct"
+      sendMode === "direct"
         ? makeCommand("team", selectedTeam.teamId, "sendTeamMessage", {
             teamId: selectedTeam.teamId,
             recipientMemberId: recipient || members[0]?.memberId || "",
@@ -1928,6 +1925,20 @@ function TeamPane({
           })
     );
     setMessage("");
+  }
+
+  function joinAgentToTeam() {
+    if (!selectedTeam || !joinAgentId || sourceGapActive) {
+      return;
+    }
+    sendRealtimeCommand(
+      makeCommand("team", selectedTeam.teamId, "joinTeamMember", {
+        teamId: selectedTeam.teamId,
+        agentId: joinAgentId,
+        title: joinAgentId,
+        addedBy: selectedTeam.leadMemberId || ""
+      })
+    );
   }
 
   function spawnMember(event: FormEvent) {
@@ -2034,10 +2045,35 @@ function TeamPane({
               )}
             </div>
             {selectedTeam ? (
-              <form onSubmit={sendMessage}>
-                <FieldGroup>
+              <form
+                className="grid gap-3 rounded-md border bg-muted/20 p-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  joinAgentToTeam();
+                }}
+              >
                 <Field>
-                  <FieldLabel>Delivery mode</FieldLabel>
+                  <FieldLabel>Add existing agent</FieldLabel>
+                  <SelectFilter
+                    value={joinAgentId || joinOptions[0] || ""}
+                    options={joinOptions}
+                    onChange={setJoinAgentId}
+                  />
+                </Field>
+                <Button
+                  disabled={!joinOptions.length || !joinAgentId || sourceGapActive}
+                  type="submit"
+                >
+                  <PlusIcon data-icon="inline-start" />
+                  Add existing agent
+                </Button>
+              </form>
+            ) : null}
+            {selectedTeam ? (
+              <form onSubmit={(event) => sendMessage(event)}>
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel>Delivery mode</FieldLabel>
                   <div className="flex gap-2">
                     <Button
                       type="button"
@@ -2075,10 +2111,25 @@ function TeamPane({
                       rows={3}
                     />
                   </Field>
-                  <Button disabled={!message.trim() || sourceGapActive} type="submit">
-                    <SendIcon data-icon="inline-start" />
-                    Send
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      disabled={!message.trim() || sourceGapActive}
+                      type="button"
+                      onClick={(event) => sendMessage(event, "direct")}
+                    >
+                      <SendIcon data-icon="inline-start" />
+                      Send direct
+                    </Button>
+                    <Button
+                      disabled={!message.trim() || sourceGapActive}
+                      type="button"
+                      variant="outline"
+                      onClick={(event) => sendMessage(event, "broadcast")}
+                    >
+                      <SendIcon data-icon="inline-start" />
+                      Broadcast
+                    </Button>
+                  </div>
                 </FieldGroup>
               </form>
             ) : (

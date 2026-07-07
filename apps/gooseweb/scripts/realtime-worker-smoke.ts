@@ -119,6 +119,13 @@ await core.handleMessage({
 });
 assert.equal(sockets.length, 3);
 sockets[2]?.open();
+await waitForPatchFlush();
+assert.equal(
+  posted.some(
+    (message) => message.type === "state" && message.patch.connection === "connected"
+  ),
+  true
+);
 const sentBeforeCommand = sockets[2]?.sent.length ?? 0;
 
 await core.handleMessage({

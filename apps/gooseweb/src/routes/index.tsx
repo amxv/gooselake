@@ -32,6 +32,18 @@ import {
   useState
 } from "react";
 import {
+  CommandBroadcastTeamMessageSchema,
+  CommandCancelDeliverySchema,
+  CommandCreateSessionSchema,
+  CommandCreateTeamSchema,
+  CommandInterruptTurnSchema,
+  CommandKillProcessSchema,
+  CommandResolveApprovalSchema,
+  CommandRetryDeliverySchema,
+  CommandSendTeamMessageSchema,
+  CommandSendTurnSchema,
+  CommandSpawnTeamMemberSchema,
+  CommandStartProcessSchema,
   CommandSchema,
   type Command
 } from "../../src/gen/goosetower/v1/commands_pb";
@@ -2889,13 +2901,78 @@ function makeCommand(
       scopeId,
       entityId: scope === "source" ? `source:${scopeId}` : scopeId
     }),
-    payload: {
-      case: payloadCase,
-      value: payloadValue
-    } as Command["payload"]
+    payload: makeCommandPayload(payloadCase, payloadValue)
   };
 
   return create(CommandSchema, command);
+}
+
+function makeCommandPayload(
+  payloadCase: NonNullable<Command["payload"]["case"]>,
+  payloadValue: Record<string, unknown>
+): Command["payload"] {
+  switch (payloadCase) {
+    case "sendTurn":
+      return {
+        case: payloadCase,
+        value: create(CommandSendTurnSchema, payloadValue)
+      };
+    case "resolveApproval":
+      return {
+        case: payloadCase,
+        value: create(CommandResolveApprovalSchema, payloadValue)
+      };
+    case "interruptTurn":
+      return {
+        case: payloadCase,
+        value: create(CommandInterruptTurnSchema, payloadValue)
+      };
+    case "sendTeamMessage":
+      return {
+        case: payloadCase,
+        value: create(CommandSendTeamMessageSchema, payloadValue)
+      };
+    case "broadcastTeamMessage":
+      return {
+        case: payloadCase,
+        value: create(CommandBroadcastTeamMessageSchema, payloadValue)
+      };
+    case "spawnTeamMember":
+      return {
+        case: payloadCase,
+        value: create(CommandSpawnTeamMemberSchema, payloadValue)
+      };
+    case "retryDelivery":
+      return {
+        case: payloadCase,
+        value: create(CommandRetryDeliverySchema, payloadValue)
+      };
+    case "cancelDelivery":
+      return {
+        case: payloadCase,
+        value: create(CommandCancelDeliverySchema, payloadValue)
+      };
+    case "killProcess":
+      return {
+        case: payloadCase,
+        value: create(CommandKillProcessSchema, payloadValue)
+      };
+    case "startProcess":
+      return {
+        case: payloadCase,
+        value: create(CommandStartProcessSchema, payloadValue)
+      };
+    case "createSession":
+      return {
+        case: payloadCase,
+        value: create(CommandCreateSessionSchema, payloadValue)
+      };
+    case "createTeam":
+      return {
+        case: payloadCase,
+        value: create(CommandCreateTeamSchema, payloadValue)
+      };
+  }
 }
 
 function getEntityItems(input: {

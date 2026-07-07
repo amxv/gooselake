@@ -87,6 +87,7 @@ export class RealtimeWorkerCore {
     socket.binaryType = "arraybuffer";
     socket.onopen = () => {
       this.socket = socket;
+      this.emitState({ connection: "connected" });
       this.sendEnvelope(
         makeResume(this.cursor, this.connectionId, this.subscriptions)
       );

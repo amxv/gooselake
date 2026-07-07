@@ -69,7 +69,7 @@ import {
 } from "../../app/stores/gooseweb-store";
 import { Alert, AlertDescription, AlertTitle } from "~/components/ui/alert";
 import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
+import { Button, buttonVariants } from "~/components/ui/button";
 import {
   Card,
   CardAction,
@@ -2518,9 +2518,14 @@ function SettingsPane({
               </Field>
               <div className="flex gap-2">
                 {goosewebConfig.flags.devTicketRoute ? (
-                  <Button disabled={ticketLoading} onClick={mintAndConnectDevelopmentTicket} type="button">
+                  <button
+                    className={buttonVariants()}
+                    disabled={ticketLoading}
+                    onClick={mintAndConnectDevelopmentTicket}
+                    type="button"
+                  >
                     {ticketLoading ? "Minting" : "Mint dev ticket"}
-                  </Button>
+                  </button>
                 ) : null}
                 <Button
                   disabled={

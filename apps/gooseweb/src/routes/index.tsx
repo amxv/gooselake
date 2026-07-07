@@ -153,6 +153,18 @@ type LedgerEvent = {
   readonly happenedAt: number;
 };
 
+type TeamFeedItem = {
+  readonly id: string;
+  readonly kind: "message" | "delivery" | "command" | "member";
+  readonly title: string;
+  readonly body: string;
+  readonly meta: readonly (readonly [string, string])[];
+  readonly timestampUnixMs?: number;
+  readonly status?: string;
+  readonly deliveryId?: string;
+  readonly cancelMessageId?: string;
+};
+
 const NAV_ITEMS: ReadonlyArray<{
   readonly id: WorkspaceView;
   readonly label: string;
@@ -1982,7 +1994,13 @@ function TeamPane({
   const joinActivationHandledRef = useRef(false);
   const members = selectedTeam?.members ?? [];
   const deliveries = teamWorkspace?.deliveries ?? [];
-  const messages = teamWorkspace?.messages ?? [];
+  const teamPendingCommands = pendingCommands.filter(
+    (command) => command.targetScope === "team" && command.targetScopeId === selectedTeam?.teamId
+  );
+  const teamFeed = useMemo(
+    () => buildTeamFeed(selectedTeam, teamWorkspace, pendingCommands),
+    [pendingCommands, selectedTeam, teamWorkspace]
+  );
   const memberAgentIds = new Set(
     members.flatMap((member) => [member.memberId, member.sessionId].filter(Boolean))
   );
@@ -2124,15 +2142,11 @@ function TeamPane({
               <MetricCard label="members" value={String(members.length)} />
               <MetricCard label="team id" value={selectedTeam?.teamId || "none"} />
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {members.length === 0 ? (
-                <EmptyBlock title="No members" detail="Waiting for team snapshot." />
-              ) : (
-                members.map((member) => (
-                  <MemberCard key={member.memberId} leadId={selectedTeam?.leadMemberId ?? ""} member={member} />
-                ))
-              )}
-            </div>
+            <TeamStream
+              items={teamFeed}
+              sourceGapActive={sourceGapActive}
+              teamId={selectedTeam?.teamId ?? ""}
+            />
             {selectedTeam ? (
               <form onSubmit={(event) => sendMessage(event)}>
                 <FieldGroup>
@@ -2202,75 +2216,29 @@ function TeamPane({
           </CardContent>
         </Card>
         <div className="flex min-h-0 flex-col gap-3">
-          <TimelineCard
-            title="Delivery state"
-            items={[
-              ...deliveries.map((delivery) => ({
-                id: delivery.id,
-                title: delivery.recipientAgentId || delivery.id,
-                meta: `${delivery.status}${delivery.injectedTurnId ? ` / ${delivery.injectedTurnId}` : ""}${delivery.lastError ? ` / ${delivery.lastError}` : ""}`
-              })),
-              ...pendingCommands.map((command) => ({
-                id: command.commandId,
-                title: command.commandId,
-                meta:
-                  command.status === "rejected"
-                    ? `${command.errorCode ?? "rejected"}: ${command.error ?? "Command rejected"}`
-                    : command.status === "duplicate"
-                      ? `${command.errorCode ?? "duplicate"}: ${command.error ?? "Already submitted"}`
-                      : command.status
-              }))
-            ]}
-            renderAction={(id) => (
-              <div className="flex gap-1">
-                <Button
-                  disabled={!selectedTeam || sourceGapActive}
-                  size="xs"
-                  type="button"
-                  variant="outline"
-                  onClick={() =>
-                    selectedTeam &&
-                    sendRealtimeCommand(
-                      makeCommand("team", selectedTeam.teamId, "retryDelivery", {
-                        deliveryId: id
-                      })
-                    )
-                  }
-                >
-                  Retry
-                </Button>
-                <Button
-                  disabled={!selectedTeam || sourceGapActive}
-                  size="xs"
-                  type="button"
-                  variant="outline"
-                  onClick={() =>
-                    selectedTeam &&
-                    sendRealtimeCommand(
-                      makeCommand("team", selectedTeam.teamId, "cancelDelivery", {
-                        messageId: id
-                      })
-                    )
-                  }
-                >
-                  Cancel
-                </Button>
+          <Card className="min-h-0 flex-1">
+            <CardHeader className="border-b">
+              <CardTitle>Team roster</CardTitle>
+              <CardDescription>{members.length} members</CardDescription>
+            </CardHeader>
+            <CardContent className="min-h-0 flex-1 overflow-auto p-2">
+              <div className="grid gap-2">
+                {members.length === 0 ? (
+                  <EmptyBlock title="No members" detail="Waiting for team snapshot." />
+                ) : (
+                  members.map((member) => (
+                    <MemberCard key={member.memberId} leadId={selectedTeam?.leadMemberId ?? ""} member={member} />
+                  ))
+                )}
               </div>
-            )}
-          />
-          <TimelineCard
-            title="Team events"
+            </CardContent>
+          </Card>
+          <ContextCard
+            title="Delivery queue"
             items={[
-              ...messages.map((message) => ({
-                id: message.id,
-                title: message.scope || "team message",
-                meta: message.text || message.senderAgentId
-              })),
-              ...members.map((member) => ({
-                id: member.memberId,
-                title: member.title || member.memberId,
-                meta: `${member.status || "unknown"} / ${member.provider || "provider"}`
-              }))
+              ["records", String(deliveries.length)],
+              ["pending commands", String(teamPendingCommands.length)],
+              ["latest status", deliveries.at(-1)?.status ?? teamPendingCommands.at(-1)?.status]
             ]}
           />
         </div>
@@ -2995,6 +2963,246 @@ function MemberCard({
       </CardContent>
     </Card>
   );
+}
+
+function TeamStream({
+  items,
+  sourceGapActive,
+  teamId
+}: {
+  readonly items: readonly TeamFeedItem[];
+  readonly sourceGapActive: boolean;
+  readonly teamId: string;
+}) {
+  return (
+    <Card className="min-h-64 flex-1 bg-muted/20" size="sm">
+      <CardHeader className="border-b">
+        <CardTitle>Team stream</CardTitle>
+        <CardDescription>{items.length} events</CardDescription>
+      </CardHeader>
+      <CardContent className="min-h-0 flex-1 overflow-auto p-2">
+        <div className="flex flex-col gap-2">
+          {items.length === 0 ? (
+            <EmptyBlock title="No team activity" detail="Send a team message to start the stream." />
+          ) : (
+            items.map((item) => (
+              <div
+                className={cn(
+                  "grid gap-2 rounded-md border bg-background/80 p-2",
+                  item.kind === "message" && "border-primary/30 bg-primary/5",
+                  item.kind === "member" && "border-dashed bg-muted/30"
+                )}
+                key={item.id}
+              >
+                <div className="flex min-w-0 items-start gap-2">
+                  <TeamFeedIcon kind={item.kind} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Badge variant={item.kind === "message" ? "secondary" : "outline"}>
+                        {teamFeedKindLabel(item.kind)}
+                      </Badge>
+                      <span className="truncate text-sm font-medium">{item.title}</span>
+                      {item.status ? <StatusBadge status={item.status} /> : null}
+                    </div>
+                    <div className="mt-1 whitespace-pre-wrap break-words text-sm">{item.body}</div>
+                  </div>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {item.timestampUnixMs ? formatTime(item.timestampUnixMs) : "state"}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1 pl-7">
+                  {item.meta.map(([label, value]) => (
+                    <MetricChip key={`${item.id}:${label}`} label={label} value={value} />
+                  ))}
+                  {item.deliveryId ? (
+                    <div className="ml-auto flex gap-1">
+                      <Button
+                        disabled={!teamId || sourceGapActive}
+                        size="xs"
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          sendRealtimeCommand(
+                            makeCommand("team", teamId, "retryDelivery", {
+                              deliveryId: item.deliveryId
+                            })
+                          )
+                        }
+                      >
+                        Retry
+                      </Button>
+                      <Button
+                        disabled={!teamId || !item.cancelMessageId || sourceGapActive}
+                        size="xs"
+                        type="button"
+                        variant="outline"
+                        onClick={() =>
+                          sendRealtimeCommand(
+                            makeCommand("team", teamId, "cancelDelivery", {
+                              messageId: item.cancelMessageId
+                            })
+                          )
+                        }
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function TeamFeedIcon({ kind }: { readonly kind: TeamFeedItem["kind"] }) {
+  const className = "mt-0.5 size-4 shrink-0 text-muted-foreground";
+  if (kind === "message") {
+    return <SendIcon className={className} />;
+  }
+  if (kind === "member") {
+    return <UsersIcon className={className} />;
+  }
+  if (kind === "command") {
+    return <TerminalIcon className={className} />;
+  }
+  return <ActivityIcon className={className} />;
+}
+
+function buildTeamFeed(
+  selectedTeam: TeamView | undefined,
+  teamWorkspace: TeamWorkspaceState | undefined,
+  pendingCommands: readonly PendingCommandState[]
+): readonly TeamFeedItem[] {
+  if (!selectedTeam) {
+    return [];
+  }
+  const teamId = selectedTeam.teamId;
+  const messages = teamWorkspace?.messages ?? [];
+  const deliveries = teamWorkspace?.deliveries ?? [];
+  const messageById = new Map(messages.map((message) => [message.id, message]));
+  const items: TeamFeedItem[] = [
+    ...messages.map((message) => teamMessageFeedItem(message)),
+    ...deliveries.map((delivery) => teamDeliveryFeedItem(delivery, messageById.get(delivery.messageId))),
+    ...pendingCommands
+      .filter((command) => command.targetScope === "team" && command.targetScopeId === teamId)
+      .map((command) => teamCommandFeedItem(command))
+  ];
+
+  if (messages.length + deliveries.length < 4) {
+    items.push(
+      ...selectedTeam.members.map((member) =>
+        teamMemberFeedItem(member, member.memberId === selectedTeam.leadMemberId)
+      )
+    );
+  }
+
+  return items.sort((a, b) => {
+    const left = a.timestampUnixMs ?? Number.MAX_SAFE_INTEGER;
+    const right = b.timestampUnixMs ?? Number.MAX_SAFE_INTEGER;
+    return left === right ? a.id.localeCompare(b.id) : left - right;
+  });
+}
+
+function teamMessageFeedItem(message: TeamWorkspaceState["messages"][number]): TeamFeedItem {
+  const scope = teamMessageScope(message);
+  return {
+    id: `message:${message.id}`,
+    kind: "message",
+    title: scope === "direct" ? "Direct message" : "Broadcast message",
+    body: message.text || "(empty message)",
+    timestampUnixMs: message.createdAtUnixMs,
+    meta: [
+      ["sender", message.senderAgentId || "unknown"],
+      ["recipients", message.recipientAgentIds.length ? message.recipientAgentIds.join(", ") : "team"],
+      ["message", message.id]
+    ]
+  };
+}
+
+function teamDeliveryFeedItem(
+  delivery: TeamWorkspaceState["deliveries"][number],
+  message?: TeamWorkspaceState["messages"][number]
+): TeamFeedItem {
+  return {
+    id: `delivery:${delivery.id}`,
+    kind: "delivery",
+    title: `Delivery to ${delivery.recipientAgentId || "unknown recipient"}`,
+    body: delivery.lastError || message?.text || delivery.injectedTurnId || "Delivery state updated.",
+    timestampUnixMs: delivery.updatedAtUnixMs,
+    status: delivery.status || "unknown",
+    deliveryId: delivery.id,
+    cancelMessageId: delivery.messageId,
+    meta: [
+      ["scope", message ? teamMessageScope(message) : "delivery"],
+      ["provider", delivery.provider || "unknown"],
+      ["message", delivery.messageId || "unknown"],
+      ["turn", delivery.injectedTurnId || "none"]
+    ]
+  };
+}
+
+function teamCommandFeedItem(command: PendingCommandState): TeamFeedItem {
+  return {
+    id: `command:${command.commandId}`,
+    kind: "command",
+    title: command.payloadCase || "team command",
+    body:
+      command.status === "rejected"
+        ? `${command.errorCode ?? "rejected"}: ${command.error ?? "Command rejected"}`
+        : command.status === "duplicate"
+          ? `${command.errorCode ?? "duplicate"}: ${command.error ?? "Already submitted"}`
+          : `Command ${command.status}.`,
+    timestampUnixMs: command.createdAtUnixMs,
+    status: command.status,
+    meta: [
+      ["command", command.commandId],
+      ["target", command.targetEntityId || command.targetScopeId || "team"]
+    ]
+  };
+}
+
+function teamMemberFeedItem(member: TeamMemberView, isLead: boolean): TeamFeedItem {
+  return {
+    id: `member:${member.memberId}`,
+    kind: "member",
+    title: isLead ? "Lead member online" : "Member status",
+    body: member.title || teamMemberIdentity(member) || "Team member",
+    status: member.status || "unknown",
+    meta: [
+      ["member", member.memberId || "unknown"],
+      ["session", member.sessionId || "none"],
+      ["provider", member.provider || "unknown"],
+      ["model", member.model || "default"]
+    ]
+  };
+}
+
+function teamMessageScope(message: TeamWorkspaceState["messages"][number]): string {
+  const scope = message.scope.toLowerCase();
+  if (scope.includes("direct") || message.recipientAgentIds.length === 1) {
+    return "direct";
+  }
+  if (scope.includes("broadcast")) {
+    return "broadcast";
+  }
+  return message.scope || "team";
+}
+
+function teamFeedKindLabel(kind: TeamFeedItem["kind"]): string {
+  if (kind === "message") {
+    return "chat";
+  }
+  if (kind === "delivery") {
+    return "delivery";
+  }
+  if (kind === "command") {
+    return "command";
+  }
+  return "member";
 }
 
 function teamMemberIdentity(member: TeamMemberView): string {

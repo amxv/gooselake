@@ -221,6 +221,7 @@ function Index() {
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [selectedProcessId, setSelectedProcessId] = useState("");
+  const [addAgentDialogOpen, setAddAgentDialogOpen] = useState(false);
   const [filters, setFilters] = useState<BoardFilters>({
     sourceId: "all",
     teamId: "all",
@@ -375,6 +376,7 @@ function Index() {
 
   function addSelectedAgentToTeam() {
     setActiveView("teams");
+    setAddAgentDialogOpen(true);
   }
 
   return (
@@ -398,7 +400,7 @@ function Index() {
           selectedApprovalId={selectedApproval?.approvalId ?? ""}
           selectedProcessId={selectedProcess?.processId ?? ""}
           sourceGapActive={sourceGapActive}
-          addAgentDisabled={!sessionOptions.length || !teams.length || sourceGapActive}
+          addAgentDisabled={sourceGapActive || (!sessionOptions.length && !sources.length)}
           onViewChange={setActiveView}
           onSelectRow={setSelectedRowId}
           onSelectSession={setSelectedSessionId}
@@ -451,6 +453,8 @@ function Index() {
             subscriptionCount={activeSubscriptions.length}
             sourceGapActive={sourceGapActive}
             staleSourceIds={staleSourceIds}
+            addAgentDialogOpen={addAgentDialogOpen}
+            onAddAgentDialogOpenChange={setAddAgentDialogOpen}
           />
         </main>
 
@@ -697,7 +701,9 @@ function MissionWorkspace({
   connection,
   subscriptionCount,
   sourceGapActive,
-  staleSourceIds
+  staleSourceIds,
+  addAgentDialogOpen,
+  onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
   readonly activeView: WorkspaceView;
@@ -727,6 +733,8 @@ function MissionWorkspace({
   readonly subscriptionCount: number;
   readonly sourceGapActive: boolean;
   readonly staleSourceIds: readonly string[];
+  readonly addAgentDialogOpen: boolean;
+  readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const [composerText, setComposerText] = useState("");
   const hasAgentThreadComposer =
@@ -852,6 +860,8 @@ function MissionWorkspace({
                   connection={connection}
                   subscriptionCount={subscriptionCount}
                   sourceGapActive={sourceGapActive}
+                  addAgentDialogOpen={addAgentDialogOpen}
+                  onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
                 />
               </div>
             </div>
@@ -887,6 +897,8 @@ function MissionWorkspace({
           subscriptionCount={subscriptionCount}
           sourceGapActive={sourceGapActive}
           staleSourceIds={staleSourceIds}
+          addAgentDialogOpen={addAgentDialogOpen}
+          onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       )}
 
@@ -966,7 +978,9 @@ function MissionViewBody({
   ledgerEvents,
   connection,
   subscriptionCount,
-  sourceGapActive
+  sourceGapActive,
+  addAgentDialogOpen,
+  onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
   readonly activeView: WorkspaceView;
@@ -994,6 +1008,8 @@ function MissionViewBody({
   readonly connection: ConnectionState;
   readonly subscriptionCount: number;
   readonly sourceGapActive: boolean;
+  readonly addAgentDialogOpen: boolean;
+  readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   if (activeView === "agents") {
     return (
@@ -1024,6 +1040,8 @@ function MissionViewBody({
         setSelectedTeamId={setSelectedTeamId}
         pendingCommands={pendingCommands}
         sourceGapActive={sourceGapActive}
+        addAgentDialogOpen={addAgentDialogOpen}
+        onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
       />
     );
   }
@@ -1103,7 +1121,9 @@ function DashboardWorkspace({
   connection,
   subscriptionCount,
   sourceGapActive,
-  staleSourceIds
+  staleSourceIds,
+  addAgentDialogOpen,
+  onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
   readonly activeView: WorkspaceView;
@@ -1133,6 +1153,8 @@ function DashboardWorkspace({
   readonly subscriptionCount: number;
   readonly sourceGapActive: boolean;
   readonly staleSourceIds: readonly string[];
+  readonly addAgentDialogOpen: boolean;
+  readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const runningProcesses = processes.filter((process) => process.status === "running").length;
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
@@ -1192,6 +1214,8 @@ function DashboardWorkspace({
           connection={connection}
           subscriptionCount={subscriptionCount}
           sourceGapActive={sourceGapActive}
+          addAgentDialogOpen={addAgentDialogOpen}
+          onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       </div>
 
@@ -1695,6 +1719,7 @@ function AgentPane({
   const [createProvider, setCreateProvider] = useState("codex");
   const [createModel, setCreateModel] = useState("gpt-5.4");
   const [createCwd, setCreateCwd] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
     if (!createSourceId && defaultSourceId) {
@@ -1740,42 +1765,106 @@ function AgentPane({
         metadata: {}
       })
     );
+    setCreateOpen(false);
   }
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_19rem] gap-3">
-      <Card className="min-h-0">
-        <CardHeader className="border-b">
-          <CardTitle>Agent workspace</CardTitle>
-          <CardDescription>{selectedSession?.sessionId || "No session selected"}</CardDescription>
-          <CardAction className="flex gap-2">
-            <SelectFilter
-              value={selectedSession?.sessionId ?? ""}
-              options={sessions.map((session) => session.sessionId)}
-              onChange={setSelectedSessionId}
-            />
-            <Button
-              disabled={!selectedSession?.activeTurnId || sourceGapActive}
-              type="button"
-              variant="destructive"
-              onClick={() =>
-                selectedSession &&
-                sendRealtimeCommand(
-                  makeCommand("session", selectedSession.sessionId, "interruptTurn", {
-                    sessionId: selectedSession.sessionId,
-                    turnId: selectedSession.activeTurnId
-                  })
-                )
-              }
-            >
-              <SquareIcon data-icon="inline-start" />
-              Interrupt
-            </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+    <>
+      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_19rem] gap-3">
+        <Card className="min-h-0">
+          <CardHeader className="border-b">
+            <CardTitle>Agent workspace</CardTitle>
+            <CardDescription>{selectedSession?.sessionId || "No session selected"}</CardDescription>
+            <CardAction className="flex gap-2">
+              <SelectFilter
+                value={selectedSession?.sessionId ?? ""}
+                options={sessions.map((session) => session.sessionId)}
+                onChange={setSelectedSessionId}
+              />
+              <Button
+                disabled={!sources.length || sourceGapActive}
+                type="button"
+                variant="outline"
+                onClick={() => setCreateOpen(true)}
+              >
+                <PlusIcon data-icon="inline-start" />
+                New agent
+              </Button>
+              <Button
+                disabled={!selectedSession?.activeTurnId || sourceGapActive}
+                type="button"
+                variant="destructive"
+                onClick={() =>
+                  selectedSession &&
+                  sendRealtimeCommand(
+                    makeCommand("session", selectedSession.sessionId, "interruptTurn", {
+                      sessionId: selectedSession.sessionId,
+                      turnId: selectedSession.activeTurnId
+                    })
+                  )
+                }
+              >
+                <SquareIcon data-icon="inline-start" />
+                Interrupt
+              </Button>
+            </CardAction>
+          </CardHeader>
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+            {selectedSession ? (
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  <MetricCard label="provider" value={selectedSession.provider || "unknown"} />
+                  <MetricCard label="model" value={selectedSession.model || "default"} />
+                  <MetricCard label="status" value={selectedSession.status || "unknown"} />
+                  <MetricCard label="active turn" value={selectedSession.activeTurnId || "none"} />
+                  <MetricCard label="cwd" value={selectedSession.cwd || "unset"} />
+                  <MetricCard label="worktree" value={selectedSession.worktreePath || "unassigned"} />
+                </div>
+                <Card className="min-h-36 flex-1 bg-muted/20" size="sm">
+                  <CardHeader>
+                    <CardTitle>Conversation stream</CardTitle>
+                    <CardDescription>
+                      Token updates are frame-batched by the realtime worker.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {latestTranscript ? (
+                      transcriptItems.slice(-4).map((entry) => (
+                        <div className="rounded-md border bg-background p-2" key={entry.id}>
+                          <div className="mb-1 text-xs font-medium text-muted-foreground">
+                            {entry.role}{entry.turnId ? ` / ${entry.turnId}` : ""}
+                          </div>
+                          <div className="whitespace-pre-wrap text-sm">{entry.text}</div>
+                        </div>
+                      ))
+                    ) : selectedSession.activeTurnId ? (
+                      `Streaming turn ${selectedSession.activeTurnId}.`
+                    ) : (
+                      "No active turn stream for this session."
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            ) : (
+              <EmptyBlock title="No session" detail="Select an existing session or create an agent from the toolbar." />
+            )}
+          </CardContent>
+        </Card>
+        <div className="flex min-h-0 flex-col gap-3">
+          <TimelineCard title="Timeline" items={timeline} />
+          <ApprovalCard approval={selectedApproval} sourceGapActive={sourceGapActive} />
+        </div>
+      </div>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create agent</DialogTitle>
+            <DialogDescription>
+              Start a new agent session on a live source.
+            </DialogDescription>
+          </DialogHeader>
           <form
-            className="grid gap-3 rounded-md border bg-muted/20 p-3"
+            className="grid gap-3"
             onSubmit={(event) => {
               event.preventDefault();
               createSession();
@@ -1824,60 +1913,19 @@ function AgentPane({
                 placeholder="/path/to/project"
               />
             </Field>
-            <Button
-              disabled={!sources.length || !createProvider.trim() || sourceGapActive}
-              onClick={createSession}
-              type="button"
-            >
-              <PlusIcon data-icon="inline-start" />
-              Create agent
-            </Button>
+            <DialogFooter>
+              <Button
+                disabled={!sources.length || !createProvider.trim() || sourceGapActive}
+                type="submit"
+              >
+                <PlusIcon data-icon="inline-start" />
+                Create agent
+              </Button>
+            </DialogFooter>
           </form>
-          {selectedSession ? (
-            <>
-              <div className="grid grid-cols-3 gap-2">
-                <MetricCard label="provider" value={selectedSession.provider || "unknown"} />
-                <MetricCard label="model" value={selectedSession.model || "default"} />
-                <MetricCard label="status" value={selectedSession.status || "unknown"} />
-                <MetricCard label="active turn" value={selectedSession.activeTurnId || "none"} />
-                <MetricCard label="cwd" value={selectedSession.cwd || "unset"} />
-                <MetricCard label="worktree" value={selectedSession.worktreePath || "unassigned"} />
-              </div>
-              <Card className="min-h-36 flex-1 bg-muted/20" size="sm">
-                <CardHeader>
-                  <CardTitle>Conversation stream</CardTitle>
-                  <CardDescription>
-                    Token updates are frame-batched by the realtime worker.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {latestTranscript ? (
-                    transcriptItems.slice(-4).map((entry) => (
-                      <div className="rounded-md border bg-background p-2" key={entry.id}>
-                        <div className="mb-1 text-xs font-medium text-muted-foreground">
-                          {entry.role}{entry.turnId ? ` / ${entry.turnId}` : ""}
-                        </div>
-                        <div className="whitespace-pre-wrap text-sm">{entry.text}</div>
-                      </div>
-                    ))
-                  ) : selectedSession.activeTurnId ? (
-                    `Streaming turn ${selectedSession.activeTurnId}.`
-                  ) : (
-                    "No active turn stream for this session."
-                  )}
-                </CardContent>
-              </Card>
-            </>
-          ) : (
-            <EmptyBlock title="No session" detail="Create an agent on a live source or select an existing session." />
-          )}
-        </CardContent>
-      </Card>
-      <div className="flex min-h-0 flex-col gap-3">
-        <TimelineCard title="Timeline" items={timeline} />
-        <ApprovalCard approval={selectedApproval} sourceGapActive={sourceGapActive} />
-      </div>
-    </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -1890,7 +1938,9 @@ function TeamPane({
   teamWorkspace,
   setSelectedTeamId,
   pendingCommands,
-  sourceGapActive
+  sourceGapActive,
+  addAgentDialogOpen,
+  onAddAgentDialogOpenChange
 }: {
   readonly teams: readonly TeamView[];
   readonly rows: readonly FleetRowView[];
@@ -1901,6 +1951,8 @@ function TeamPane({
   readonly setSelectedTeamId: (id: string) => void;
   readonly pendingCommands: readonly PendingCommandState[];
   readonly sourceGapActive: boolean;
+  readonly addAgentDialogOpen: boolean;
+  readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const leadOptions = unique([
     ...sessions.map((session) => session.sessionId),
@@ -1921,7 +1973,6 @@ function TeamPane({
   const [mode, setMode] = useState<"direct" | "broadcast">("broadcast");
   const [recipient, setRecipient] = useState("");
   const [message, setMessage] = useState("");
-  const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnTitle, setSpawnTitle] = useState("");
   const [spawnPrompt, setSpawnPrompt] = useState("");
   const [teamSourceId, setTeamSourceId] = useState(defaultSourceId);
@@ -2039,7 +2090,7 @@ function TeamPane({
         modelPreset: ""
       })
     );
-    setSpawnOpen(false);
+    onAddAgentDialogOpenChange(false);
     setSpawnTitle("");
     setSpawnPrompt("");
   }
@@ -2058,63 +2109,16 @@ function TeamPane({
                 onChange={setSelectedTeamId}
               />
               <Button
-                disabled={!selectedTeam || sourceGapActive}
+                disabled={sourceGapActive}
                 type="button"
-                onClick={() => setSpawnOpen(true)}
+                onClick={() => onAddAgentDialogOpenChange(true)}
               >
-                Spawn
+                <PlusIcon data-icon="inline-start" />
+                Add agent
               </Button>
             </CardAction>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-            <form
-              className="grid gap-3 rounded-md border bg-muted/20 p-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                createTeam();
-              }}
-            >
-              <div className="grid grid-cols-3 gap-2">
-                <Field>
-                  <FieldLabel>Source</FieldLabel>
-                  <SelectFilter
-                    value={teamSourceId || defaultSourceId}
-                    options={sources.map((source) => source.sourceId)}
-                    onChange={setTeamSourceId}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="create-team-name">Team name</FieldLabel>
-                  <Input
-                    id="create-team-name"
-                    value={teamName}
-                    onChange={(event) => setTeamName(event.target.value)}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel>Lead agent</FieldLabel>
-                  <SelectFilter
-                    value={leadAgentId || defaultLeadId}
-                    options={leadOptions}
-                    onChange={setLeadAgentId}
-                  />
-                </Field>
-              </div>
-              <Button
-                disabled={
-                  !sources.length ||
-                  !leadOptions.length ||
-                  !teamName.trim() ||
-                  !hasLeadForNewTeam ||
-                  sourceGapActive
-                }
-                onClick={createTeam}
-                type="button"
-              >
-                <PlusIcon data-icon="inline-start" />
-                Create team
-              </Button>
-            </form>
             <div className="grid grid-cols-3 gap-2">
               <MetricCard label="lead" value={lead?.title || lead?.memberId || "unset"} />
               <MetricCard label="members" value={String(members.length)} />
@@ -2129,35 +2133,6 @@ function TeamPane({
                 ))
               )}
             </div>
-            {selectedTeam ? (
-              <form
-                className="grid gap-3 rounded-md border bg-muted/20 p-3"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  joinAgentToTeam();
-                }}
-              >
-                <Field>
-                  <FieldLabel>Existing agent</FieldLabel>
-                  <SelectFilter
-                    value={joinAgentId || joinOptions[0] || ""}
-                    options={joinOptions}
-                    onChange={setJoinAgentId}
-                  />
-                </Field>
-                <button
-                  className={buttonVariants()}
-                  disabled={!joinOptions.length || !joinAgentId || sourceGapActive}
-                  type="button"
-                  onClick={joinAgentToTeamFromClick}
-                  onMouseUp={joinAgentToTeamFromActivation}
-                  onPointerUp={joinAgentToTeamFromActivation}
-                >
-                  <PlusIcon data-icon="inline-start" />
-                  Join selected agent
-                </button>
-              </form>
-            ) : null}
             {selectedTeam ? (
               <form onSubmit={(event) => sendMessage(event)}>
                 <FieldGroup>
@@ -2300,40 +2275,120 @@ function TeamPane({
           />
         </div>
       </div>
-      <Dialog open={spawnOpen} onOpenChange={setSpawnOpen}>
-        <DialogContent>
+      <Dialog open={addAgentDialogOpen} onOpenChange={onAddAgentDialogOpenChange}>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Spawn teammate</DialogTitle>
+            <DialogTitle>Add agent to team</DialogTitle>
             <DialogDescription>
-              Creates a team member through the runtime spawn command.
+              {selectedTeam
+                ? `Target team: ${selectedTeam.name || selectedTeam.teamId}.`
+                : "Select an existing team to join or spawn members, or create a team from a live source."}
             </DialogDescription>
           </DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={spawnMember}>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="spawn-title">Title</FieldLabel>
-                <Input
-                  id="spawn-title"
-                  value={spawnTitle}
-                  onChange={(event) => setSpawnTitle(event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="spawn-prompt">Onboarding prompt</FieldLabel>
-                <Textarea
-                  id="spawn-prompt"
-                  value={spawnPrompt}
-                  onChange={(event) => setSpawnPrompt(event.target.value)}
-                  rows={5}
-                />
-              </Field>
-            </FieldGroup>
-            <DialogFooter>
-              <Button disabled={!spawnTitle.trim() || sourceGapActive} type="submit">
-                Spawn teammate
+          <div className="grid gap-4">
+            <form
+              className="grid gap-3 rounded-md border bg-muted/20 p-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                createTeam();
+              }}
+            >
+              <div className="grid grid-cols-3 gap-2">
+                <Field>
+                  <FieldLabel>Source</FieldLabel>
+                  <SelectFilter
+                    value={teamSourceId || defaultSourceId}
+                    options={sources.map((source) => source.sourceId)}
+                    onChange={setTeamSourceId}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="create-team-name">Team name</FieldLabel>
+                  <Input
+                    id="create-team-name"
+                    value={teamName}
+                    onChange={(event) => setTeamName(event.target.value)}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel>Lead agent</FieldLabel>
+                  <SelectFilter
+                    value={leadAgentId || defaultLeadId}
+                    options={leadOptions}
+                    onChange={setLeadAgentId}
+                  />
+                </Field>
+              </div>
+              <Button
+                disabled={
+                  !sources.length ||
+                  !leadOptions.length ||
+                  !teamName.trim() ||
+                  !hasLeadForNewTeam ||
+                  sourceGapActive
+                }
+                type="submit"
+              >
+                <PlusIcon data-icon="inline-start" />
+                Create team
               </Button>
-            </DialogFooter>
-          </form>
+            </form>
+            {selectedTeam ? (
+              <div className="grid grid-cols-2 gap-3">
+                <form
+                  className="grid gap-3 rounded-md border bg-muted/20 p-3"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    joinAgentToTeam();
+                  }}
+                >
+                  <Field>
+                    <FieldLabel>Existing agent</FieldLabel>
+                    <SelectFilter
+                      value={joinAgentId || joinOptions[0] || ""}
+                      options={joinOptions}
+                      onChange={setJoinAgentId}
+                    />
+                  </Field>
+                  <button
+                    className={buttonVariants()}
+                    disabled={!joinOptions.length || !joinAgentId || sourceGapActive}
+                    type="button"
+                    onClick={joinAgentToTeamFromClick}
+                    onMouseUp={joinAgentToTeamFromActivation}
+                    onPointerUp={joinAgentToTeamFromActivation}
+                  >
+                    <PlusIcon data-icon="inline-start" />
+                    Join selected agent
+                  </button>
+                </form>
+                <form className="grid gap-3 rounded-md border bg-muted/20 p-3" onSubmit={spawnMember}>
+                  <Field>
+                    <FieldLabel htmlFor="spawn-title">Title</FieldLabel>
+                    <Input
+                      id="spawn-title"
+                      value={spawnTitle}
+                      onChange={(event) => setSpawnTitle(event.target.value)}
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="spawn-prompt">Onboarding prompt</FieldLabel>
+                    <Textarea
+                      id="spawn-prompt"
+                      value={spawnPrompt}
+                      onChange={(event) => setSpawnPrompt(event.target.value)}
+                      rows={4}
+                    />
+                  </Field>
+                  <Button disabled={!spawnTitle.trim() || sourceGapActive} type="submit">
+                    Spawn teammate
+                  </Button>
+                </form>
+              </div>
+            ) : (
+              <EmptyBlock title="No team selected" detail="Create or select a team before joining or spawning members." />
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </>

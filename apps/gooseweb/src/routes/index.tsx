@@ -2415,6 +2415,7 @@ function SettingsPane({
   const [ticket, setTicket] = useState(goosewebConfig.pastedDevTicket);
   const [ticketStatus, setTicketStatus] = useState("");
   const [ticketLoading, setTicketLoading] = useState(false);
+  const [connectedTicket, setConnectedTicket] = useState("");
   const debugExport = JSON.stringify(
     {
       connection: state.connection,
@@ -2434,6 +2435,7 @@ function SettingsPane({
     try {
       const nextTicket = await mintDevelopmentTicket();
       setTicket(nextTicket);
+      setConnectedTicket(nextTicket);
       connectRealtime(nextTicket);
       setTicketStatus("Development ticket connected.");
     } catch (error) {
@@ -2441,6 +2443,25 @@ function SettingsPane({
     } finally {
       setTicketLoading(false);
     }
+  }
+
+  function connectDevelopmentTicket() {
+    const nextTicket = ticket.trim();
+    if (!nextTicket) {
+      return;
+    }
+    if (nextTicket === connectedTicket) {
+      setTicketStatus(
+        state.connection === "offline" || state.connection === "idle"
+          ? "Development ticket was already used. Mint a new ticket to reconnect."
+          : "Development ticket already connected."
+      );
+      return;
+    }
+
+    setConnectedTicket(nextTicket);
+    connectRealtime(nextTicket);
+    setTicketStatus("Development ticket connected.");
   }
 
   return (
@@ -2472,7 +2493,16 @@ function SettingsPane({
               </Field>
               <Field>
                 <FieldLabel>Development ticket</FieldLabel>
-                <Textarea value={ticket} onChange={(event) => setTicket(event.target.value)} rows={5} />
+                <Textarea
+                  value={ticket}
+                  onChange={(event) => {
+                    setTicket(event.target.value);
+                    if (event.target.value.trim() !== connectedTicket) {
+                      setTicketStatus("");
+                    }
+                  }}
+                  rows={5}
+                />
               </Field>
               <div className="flex gap-2">
                 {goosewebConfig.flags.devTicketRoute ? (
@@ -2480,7 +2510,16 @@ function SettingsPane({
                     {ticketLoading ? "Minting" : "Mint dev ticket"}
                   </Button>
                 ) : null}
-                <Button disabled={!ticket.trim()} onClick={() => connectRealtime(ticket)} type="button">
+                <Button
+                  disabled={
+                    !ticket.trim() ||
+                    (ticket.trim() === connectedTicket &&
+                      state.connection !== "offline" &&
+                      state.connection !== "idle")
+                  }
+                  onClick={connectDevelopmentTicket}
+                  type="button"
+                >
                   Connect
                 </Button>
                 <Button onClick={disconnectRealtime} type="button" variant="outline">

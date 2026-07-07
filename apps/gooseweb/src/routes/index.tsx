@@ -2073,7 +2073,7 @@ function TeamPane({
                 }}
               >
                 <Field>
-                  <FieldLabel>Add existing agent</FieldLabel>
+                  <FieldLabel>Existing agent</FieldLabel>
                   <SelectFilter
                     value={joinAgentId || joinOptions[0] || ""}
                     options={joinOptions}
@@ -2088,7 +2088,7 @@ function TeamPane({
                   onPointerUp={joinAgentToTeamFromPointer}
                 >
                   <PlusIcon data-icon="inline-start" />
-                  Add existing agent
+                  Join selected agent
                 </button>
               </form>
             ) : null}

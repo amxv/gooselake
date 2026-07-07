@@ -1869,6 +1869,7 @@ function TeamPane({
   const [teamName, setTeamName] = useState("Live Team");
   const [leadAgentId, setLeadAgentId] = useState(defaultLeadId);
   const [joinAgentId, setJoinAgentId] = useState("");
+  const joinPointerHandledRef = useRef(false);
   const members = selectedTeam?.members ?? [];
   const deliveries = teamWorkspace?.deliveries ?? [];
   const messages = teamWorkspace?.messages ?? [];
@@ -1945,6 +1946,19 @@ function TeamPane({
         addedBy: selectedTeam.leadMemberId || ""
       })
     );
+  }
+
+  function joinAgentToTeamFromPointer() {
+    joinPointerHandledRef.current = true;
+    joinAgentToTeam();
+  }
+
+  function joinAgentToTeamFromClick() {
+    if (joinPointerHandledRef.current) {
+      joinPointerHandledRef.current = false;
+      return;
+    }
+    joinAgentToTeam();
   }
 
   function spawnMember(event: FormEvent) {
@@ -2066,14 +2080,16 @@ function TeamPane({
                     onChange={setJoinAgentId}
                   />
                 </Field>
-                <Button
+                <button
+                  className={buttonVariants()}
                   disabled={!joinOptions.length || !joinAgentId || sourceGapActive}
                   type="button"
-                  onClick={joinAgentToTeam}
+                  onClick={joinAgentToTeamFromClick}
+                  onPointerUp={joinAgentToTeamFromPointer}
                 >
                   <PlusIcon data-icon="inline-start" />
                   Add existing agent
-                </Button>
+                </button>
               </form>
             ) : null}
             {selectedTeam ? (

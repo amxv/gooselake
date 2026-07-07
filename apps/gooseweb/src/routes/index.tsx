@@ -364,6 +364,7 @@ function Index() {
     }
   }, [selectedProcess?.processId]);
 
+  const staleSourceIds = Object.keys(state.staleSources);
   const ledgerEvents = useMemo(
     () =>
       buildLedgerEvents({
@@ -371,14 +372,15 @@ function Index() {
         teams,
         approvals,
         processes,
-        sources
+        sources,
+        connection: state.connection,
+        staleSourceIds
       }),
-    [approvals, fleetRows, processes, sources, teams]
+    [approvals, fleetRows, processes, sources, staleSourceIds, state.connection, teams]
   );
   const activeSubscriptions = subscriptions.filter(
     (subscription) => subscription.status !== "unsubscribed"
   );
-  const staleSourceIds = Object.keys(state.staleSources);
   const sourceGapActive =
     state.connection === "stale" ||
     state.connection === "offline" ||
@@ -479,6 +481,7 @@ function Index() {
           selectedApproval={selectedApproval}
           selectedWorktree={selectedWorktree}
           sources={sources}
+          connection={state.connection}
           staleSourceIds={staleSourceIds}
           pendingCommandCount={pendingCommands.length}
           sourceGapActive={sourceGapActive}
@@ -857,6 +860,7 @@ function MissionWorkspace({
                   connection={connection}
                   subscriptionCount={subscriptionCount}
                   sourceGapActive={sourceGapActive}
+                  staleSourceIds={staleSourceIds}
                   addAgentDialogOpen={addAgentDialogOpen}
                   onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
                 />
@@ -976,6 +980,7 @@ function MissionViewBody({
   connection,
   subscriptionCount,
   sourceGapActive,
+  staleSourceIds,
   addAgentDialogOpen,
   onAddAgentDialogOpenChange
 }: {
@@ -1005,6 +1010,7 @@ function MissionViewBody({
   readonly connection: ConnectionState;
   readonly subscriptionCount: number;
   readonly sourceGapActive: boolean;
+  readonly staleSourceIds: readonly string[];
   readonly addAgentDialogOpen: boolean;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
@@ -1062,6 +1068,7 @@ function MissionViewBody({
         rows={rows}
         processes={processes}
         connection={connection}
+        staleSourceIds={staleSourceIds}
       />
     );
   }
@@ -1211,6 +1218,7 @@ function DashboardWorkspace({
           connection={connection}
           subscriptionCount={subscriptionCount}
           sourceGapActive={sourceGapActive}
+          staleSourceIds={staleSourceIds}
           addAgentDialogOpen={addAgentDialogOpen}
           onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
@@ -1243,6 +1251,7 @@ function MissionProcessRail({
   selectedApproval,
   selectedWorktree,
   sources,
+  connection,
   staleSourceIds,
   pendingCommandCount,
   sourceGapActive,
@@ -1256,6 +1265,7 @@ function MissionProcessRail({
   readonly selectedApproval?: ApprovalView;
   readonly selectedWorktree?: WorktreeView;
   readonly sources: readonly SourceHealthView[];
+  readonly connection: ConnectionState;
   readonly staleSourceIds: readonly string[];
   readonly pendingCommandCount: number;
   readonly sourceGapActive: boolean;
@@ -1364,10 +1374,13 @@ function MissionProcessRail({
           />
           <ContextCard
             title="Source health"
-            items={sources.map((source) => [
-              source.displayName || source.sourceId,
-              `${source.health} / ${ageFrom(toNumber(source.observedAtUnixMs))}`
-            ])}
+            items={sources.map((source) => {
+              const displayState = sourceDisplayState(source, connection, staleSourceIds);
+              return [
+                source.displayName || source.sourceId,
+                `${displayState.status} / ${displayState.age}`
+              ];
+            })}
           />
           <ContextCard
             title="Safety"
@@ -2424,14 +2437,17 @@ function FleetPane({
   sources,
   rows,
   processes,
-  connection
+  connection,
+  staleSourceIds
 }: {
   readonly sources: readonly SourceHealthView[];
   readonly rows: readonly FleetRowView[];
   readonly processes: readonly ProcessView[];
   readonly connection: ConnectionState;
+  readonly staleSourceIds: readonly string[];
 }) {
   const source = sources[0];
+  const sourceState = source ? sourceDisplayState(source, connection, staleSourceIds) : undefined;
   const activeProcesses = processes.filter((process) => process.status === "running").length;
   const controlsEnabled = goosewebConfig.flags.fleetProvisioningControls;
 
@@ -2454,8 +2470,8 @@ function FleetPane({
         </CardHeader>
         <CardContent className="grid grid-cols-4 gap-2">
           <MetricCard label="sources" value={String(sources.length || 0)} />
-          <MetricCard label="health" value={source?.lifecycle || source?.health || connection} />
-          <MetricCard label="stale age" value={source ? ageFrom(toNumber(source.observedAtUnixMs)) : "unknown"} />
+          <MetricCard label="health" value={sourceState?.status || connection} />
+          <MetricCard label="stale age" value={sourceState?.age || "not observed"} />
           <MetricCard label="replay lag" value={source?.cursor ? source.cursor.sourceSeq.toString() : "0"} />
           <MetricCard label="active sessions" value={String(source?.activeSessionCount || rows.length)} />
           <MetricCard
@@ -2478,27 +2494,30 @@ function FleetPane({
         </CardHeader>
         <CardContent className="flex min-h-0 flex-col gap-3">
           <div className="grid gap-2">
-            {sources.length ? sources.map((item) => (
-              <div className="rounded-md border border-border/70 p-2" key={item.sourceId}>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{item.displayName || item.sourceId}</div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {item.sourceKind} · {item.provisionerKind || "static"} · {item.region || "region unknown"}
+            {sources.length ? sources.map((item) => {
+              const itemState = sourceDisplayState(item, connection, staleSourceIds);
+              return (
+                <div className="rounded-md border border-border/70 p-2" key={item.sourceId}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{item.displayName || item.sourceId}</div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        {item.sourceKind} · {item.provisionerKind || "static"} · {item.region || "region unknown"}
+                      </div>
                     </div>
+                    <Badge variant={itemState.healthy ? "default" : "secondary"}>
+                      {itemState.status}
+                    </Badge>
                   </div>
-                  <Badge variant={item.lifecycle === "live" || item.health === "live" ? "default" : "secondary"}>
-                    {item.lifecycle || item.health}
-                  </Badge>
+                  <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-muted-foreground">
+                    <span>{item.supportsWorktrees ? "worktrees" : "no worktrees"}</span>
+                    <span>{item.supportsTeams ? "teams" : "no teams"}</span>
+                    <span>{item.models.length ? item.models.join(", ") : "models unknown"}</span>
+                    <span>{item.costHint || "cost unknown"}</span>
+                  </div>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-1 text-xs text-muted-foreground">
-                  <span>{item.supportsWorktrees ? "worktrees" : "no worktrees"}</span>
-                  <span>{item.supportsTeams ? "teams" : "no teams"}</span>
-                  <span>{item.models.length ? item.models.join(", ") : "models unknown"}</span>
-                  <span>{item.costHint || "cost unknown"}</span>
-                </div>
-              </div>
-            )) : (
+              );
+            }) : (
               <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
                 No runtime sources are materialized.
               </div>
@@ -3428,16 +3447,19 @@ function buildLedgerEvents(input: {
   readonly approvals: readonly ApprovalView[];
   readonly processes: readonly ProcessView[];
   readonly sources: readonly SourceHealthView[];
+  readonly connection: ConnectionState;
+  readonly staleSourceIds: readonly string[];
 }): readonly LedgerEvent[] {
   const events: LedgerEvent[] = [];
   for (const source of input.sources) {
+    const displayState = sourceDisplayState(source, input.connection, input.staleSourceIds);
     events.push({
       id: `source:${source.sourceId}:${source.cursor?.sourceSeq ?? 0n}`,
       sourceId: source.sourceId,
       scope: "source",
-      kind: `source.${source.health || "unknown"}`,
+      kind: `source.${displayState.status}`,
       cursor: `${source.cursor?.sourceEpoch || "epoch"}:${source.cursor?.sourceSeq ?? 0n}`,
-      criticality: source.health || "state",
+      criticality: displayState.status,
       happenedAt: toNumber(source.observedAtUnixMs)
     });
   }
@@ -3509,6 +3531,39 @@ function ageFrom(unixMs: number): string {
   }
   const seconds = Math.max(0, Math.round((Date.now() - unixMs) / 1000));
   return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
+}
+
+function sourceDisplayState(
+  source: SourceHealthView,
+  connection: ConnectionState,
+  staleSourceIds: readonly string[]
+): { readonly status: string; readonly age: string; readonly healthy: boolean } {
+  const rawStatus = firstKnown(source.lifecycle, source.health);
+  const isStale = staleSourceIds.includes(source.sourceId);
+  const observedAge = ageFrom(toNumber(source.observedAtUnixMs));
+  const connected =
+    connection === "connected" ||
+    connection === "degraded" ||
+    connection === "replaying";
+
+  if (isStale) {
+    return {
+      status: rawStatus || "stale",
+      age: observedAge === "unknown" ? "stale" : observedAge,
+      healthy: false
+    };
+  }
+
+  const status = rawStatus || (connected ? "connected" : connection);
+  return {
+    status,
+    age: observedAge === "unknown" && connected ? "not stale" : observedAge,
+    healthy: status === "live" || status === "connected"
+  };
+}
+
+function firstKnown(...values: readonly string[]): string {
+  return values.find((value) => value && value !== "unknown") || "";
 }
 
 function toNumber(value: number | bigint): number {

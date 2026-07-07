@@ -48,6 +48,7 @@ export class RealtimeWorkerCore {
   private pendingCommands: Record<string, PendingCommandState> = {};
   private queuedPatch: GoosewebStorePatch = {};
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
+  private startupFramesSent = false;
 
   constructor(private readonly post: (message: WorkerOutbound) => void) {}
 
@@ -80,24 +81,30 @@ export class RealtimeWorkerCore {
 
   private async connect(goosetowerUrl: string, ticket: string): Promise<void> {
     this.disconnect();
+    this.startupFramesSent = false;
     this.cursor = await loadCursorState();
     this.emitState({ connection: "connecting", cursor: this.cursor });
 
     const socket = new WebSocket(realtimeUrlWithTicket(goosetowerUrl, ticket));
+    this.socket = socket;
     socket.binaryType = "arraybuffer";
     socket.onopen = () => {
-      this.socket = socket;
+      if (this.socket !== socket) {
+        return;
+      }
       this.emitState({ connection: "connected" });
-      this.sendEnvelope(
-        makeResume(this.cursor, this.connectionId, this.subscriptions)
-      );
-      this.resendActiveSubscriptions();
+      this.startHeartbeat();
+      this.sendStartupFrames();
     };
     socket.onmessage = (event) => {
       if (this.socket !== socket) {
         return;
       }
-      this.receiveFrame(event.data);
+      try {
+        this.receiveFrame(event.data);
+      } catch (error) {
+        this.emitError(error instanceof Error ? error.message : "Realtime frame handling failed", true);
+      }
     };
     socket.onerror = () => {
       if (this.socket !== socket) {
@@ -105,13 +112,21 @@ export class RealtimeWorkerCore {
       }
       this.emitError("Realtime socket error", true);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.socket !== socket) {
         return;
       }
       this.stopHeartbeat();
       this.socket = undefined;
-      this.emitState({ connection: "offline" });
+      const code = event?.code;
+      const reason = event?.reason;
+      this.emitState({
+        connection: "offline",
+        lastError:
+          code === 1000
+            ? undefined
+            : `Realtime socket closed (${code || "unknown"}${reason ? `: ${reason}` : ""})`
+      });
     };
   }
 
@@ -306,6 +321,22 @@ export class RealtimeWorkerCore {
       heartbeatIntervalMs: this.heartbeatIntervalMs
     });
     this.startHeartbeat();
+    this.sendStartupFrames();
+  }
+
+  private sendStartupFrames(): void {
+    if (this.startupFramesSent) {
+      return;
+    }
+    this.startupFramesSent = true;
+    try {
+      this.sendEnvelope(
+        makeResume(this.cursor, this.connectionId, this.subscriptions)
+      );
+      this.resendActiveSubscriptions();
+    } catch (error) {
+      this.emitError(error instanceof Error ? error.message : "Realtime socket setup failed", true);
+    }
   }
 
   private handleEntityPatch(patch: EntityPatch): void {

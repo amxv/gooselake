@@ -122,6 +122,8 @@ export const Route = createFileRoute("/")({
   component: Index
 });
 
+let devAutoConnectStarted = false;
+
 type WorkspaceView =
   | "board"
   | "inbox"
@@ -212,7 +214,6 @@ function Index() {
   const [selectedTeamId, setSelectedTeamId] = useState("");
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [selectedProcessId, setSelectedProcessId] = useState("");
-  const devAutoConnectAttempted = useRef(false);
   const [filters, setFilters] = useState<BoardFilters>({
     sourceId: "all",
     teamId: "all",
@@ -238,14 +239,14 @@ function Index() {
 
   useEffect(() => {
     if (
-      devAutoConnectAttempted.current ||
+      devAutoConnectStarted ||
       !goosewebConfig.flags.devTicketAutoConnect ||
-      state.connection !== "idle"
+      (state.connection !== "idle" && state.connection !== "offline")
     ) {
       return;
     }
 
-    devAutoConnectAttempted.current = true;
+    devAutoConnectStarted = true;
     const pastedTicket = goosewebConfig.pastedDevTicket.trim();
     if (pastedTicket) {
       connectRealtime(pastedTicket);

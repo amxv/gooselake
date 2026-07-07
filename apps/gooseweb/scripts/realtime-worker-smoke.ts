@@ -233,6 +233,9 @@ const joinCommandEnvelope = fromBinary(RealtimeEnvelopeSchema, joinCommandFrame)
 assert.equal(joinCommandEnvelope.payload.case, "command");
 assert.equal(joinCommandEnvelope.payload.value.payload.case, "joinTeamMember");
 
+sockets[2]?.closeFromServer();
+await waitForPatchFlush();
+
 console.log("realtime worker socket ownership smoke fixture passed");
 
 function waitForPatchFlush(): Promise<void> {

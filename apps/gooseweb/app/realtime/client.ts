@@ -1,16 +1,32 @@
 import { goosewebConfig } from "./config";
 import type { CommandIntent, WorkerInbound, WorkerOutbound } from "./types";
+import { RealtimeWorkerCore } from "./worker/realtime-command-core";
 import {
   setPendingCommand,
   setSubscription,
   updateGoosewebStore
 } from "../stores/gooseweb-store";
 
+type RealtimeTransport = {
+  readonly postMessage: (message: WorkerInbound) => void;
+};
+
 let worker: Worker | undefined;
+let inlineCore: RealtimeWorkerCore | undefined;
+let inlineTransport: RealtimeTransport | undefined;
 
 export function ensureRealtimeWorker(): Worker | undefined {
+  ensureRealtimeTransport();
+  return worker;
+}
+
+function ensureRealtimeTransport(): RealtimeTransport | undefined {
   if (!goosewebConfig.flags.workerRealtime || typeof window === "undefined") {
     return undefined;
+  }
+
+  if (import.meta.env.DEV) {
+    return ensureInlineRealtimeTransport();
   }
 
   if (worker) {
@@ -21,27 +37,50 @@ export function ensureRealtimeWorker(): Worker | undefined {
     type: "module"
   });
   worker.onmessage = (event: MessageEvent<WorkerOutbound>) => {
-    const message = event.data;
-    switch (message.type) {
-      case "state":
-        updateGoosewebStore(message.patch);
-        break;
-      case "command-state":
-        setPendingCommand(message.command);
-        break;
-      case "subscription-state":
-        setSubscription(message.subscription);
-        break;
-      case "error":
-        updateGoosewebStore({
-          lastError: message.message,
-          connection: message.retryable ? "degraded" : "offline"
-        });
-        break;
-    }
+    handleWorkerMessage(event.data);
   };
 
   return worker;
+}
+
+function ensureInlineRealtimeTransport(): RealtimeTransport {
+  if (inlineTransport) {
+    return inlineTransport;
+  }
+
+  inlineCore = new RealtimeWorkerCore(handleWorkerMessage);
+  inlineTransport = {
+    postMessage(message) {
+      inlineCore?.handleMessage(message).catch((error: unknown) => {
+        handleWorkerMessage({
+          type: "error",
+          message: error instanceof Error ? error.message : "Realtime transport failed",
+          retryable: true
+        });
+      });
+    }
+  };
+  return inlineTransport;
+}
+
+function handleWorkerMessage(message: WorkerOutbound): void {
+  switch (message.type) {
+    case "state":
+      updateGoosewebStore(message.patch);
+      break;
+    case "command-state":
+      setPendingCommand(message.command);
+      break;
+    case "subscription-state":
+      setSubscription(message.subscription);
+      break;
+    case "error":
+      updateGoosewebStore({
+        lastError: message.message,
+        connection: message.retryable ? "degraded" : "offline"
+      });
+      break;
+  }
 }
 
 export function connectRealtime(ticket: string): void {
@@ -118,7 +157,7 @@ export function refreshRealtimeAuth(ticket: string): void {
 }
 
 function postRealtimeMessage(message: WorkerInbound): void {
-  ensureRealtimeWorker()?.postMessage(message);
+  ensureRealtimeTransport()?.postMessage(message);
 }
 
 function currentBrowserOrigin(): string | undefined {

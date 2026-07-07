@@ -56,7 +56,9 @@ import type {
   CommandPayloadCase,
   CommandScope,
   GoosewebSnapshot,
-  PendingCommandState
+  PendingCommandState,
+  SessionDetailState,
+  TeamWorkspaceState
 } from "../../app/realtime/types";
 import {
   useGoosewebState
@@ -202,6 +204,8 @@ function Index() {
     () => Object.values(state.subscriptions),
     [state.subscriptions]
   );
+  const sessionDetails = state.entities.sessionDetails;
+  const teamWorkspaces = state.entities.teamWorkspaces;
   const [activeView, setActiveView] = useState<WorkspaceView>("board");
   const [selectedRowId, setSelectedRowId] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState("");
@@ -313,6 +317,24 @@ function Index() {
   }, [selectedRow]);
 
   useEffect(() => {
+    if (!selectedSession?.sessionId) {
+      return;
+    }
+    subscribeRealtime(`session:${selectedSession.sessionId}`, "session", {
+      session_id: selectedSession.sessionId
+    });
+  }, [selectedSession?.sessionId]);
+
+  useEffect(() => {
+    if (!selectedTeam?.teamId) {
+      return;
+    }
+    subscribeRealtime(`team:${selectedTeam.teamId}`, "team", {
+      team_id: selectedTeam.teamId
+    });
+  }, [selectedTeam?.teamId]);
+
+  useEffect(() => {
     if (selectedProcess?.processId) {
       subscribeRealtime(`process:${selectedProcess.processId}`, "process", {
         process_id: selectedProcess.processId,
@@ -343,6 +365,21 @@ function Index() {
     state.connection === "reconnecting" ||
     staleSourceIds.length > 0;
 
+  function addSelectedAgentToTeam() {
+    if (!selectedSession?.sessionId || !selectedTeam?.teamId || sourceGapActive) {
+      return;
+    }
+    sendRealtimeCommand(
+      makeCommand("team", selectedTeam.teamId, "joinTeamMember", {
+        teamId: selectedTeam.teamId,
+        agentId: selectedSession.sessionId,
+        title: selectedSession.sessionId,
+        addedBy: selectedTeam.leadMemberId || ""
+      })
+    );
+    setActiveView("teams");
+  }
+
   return (
     <div className="mission-shell bg-background text-foreground">
       <MissionChrome
@@ -364,12 +401,14 @@ function Index() {
           selectedApprovalId={selectedApproval?.approvalId ?? ""}
           selectedProcessId={selectedProcess?.processId ?? ""}
           sourceGapActive={sourceGapActive}
+          addAgentDisabled={!selectedSession?.sessionId || !selectedTeam?.teamId || sourceGapActive}
           onViewChange={setActiveView}
           onSelectRow={setSelectedRowId}
           onSelectSession={setSelectedSessionId}
           onSelectTeam={setSelectedTeamId}
           onSelectApproval={setSelectedApprovalId}
           onSelectProcess={setSelectedProcessId}
+          onAddAgentToTeam={addSelectedAgentToTeam}
         />
 
         <main className="mission-center min-w-0 overflow-hidden">
@@ -400,6 +439,8 @@ function Index() {
               activeView === "agents" ? selectedAgentSession : selectedSession
             }
             selectedTeam={selectedTeam}
+            sessionDetails={sessionDetails}
+            teamWorkspaces={teamWorkspaces}
             selectedApproval={selectedApproval}
             selectedRowId={selectedRow?.rowId ?? ""}
             selectedApprovalId={selectedApproval?.approvalId ?? ""}
@@ -489,12 +530,14 @@ function MissionRosterRail({
   selectedApprovalId,
   selectedProcessId,
   sourceGapActive,
+  addAgentDisabled,
   onViewChange,
   onSelectRow,
   onSelectSession,
   onSelectTeam,
   onSelectApproval,
-  onSelectProcess
+  onSelectProcess,
+  onAddAgentToTeam
 }: {
   readonly activeView: WorkspaceView;
   readonly approvals: readonly ApprovalView[];
@@ -508,12 +551,14 @@ function MissionRosterRail({
   readonly selectedApprovalId: string;
   readonly selectedProcessId: string;
   readonly sourceGapActive: boolean;
+  readonly addAgentDisabled: boolean;
   readonly onViewChange: (view: WorkspaceView) => void;
   readonly onSelectRow: (id: string) => void;
   readonly onSelectSession: (id: string) => void;
   readonly onSelectTeam: (id: string) => void;
   readonly onSelectApproval: (id: string) => void;
   readonly onSelectProcess: (id: string) => void;
+  readonly onAddAgentToTeam: () => void;
 }) {
   const items = getEntityItems({
     activeView,
@@ -605,7 +650,12 @@ function MissionRosterRail({
       </div>
 
       <div className="mission-roster-actions">
-        <Button type="button" variant="outline">
+        <Button
+          disabled={addAgentDisabled}
+          type="button"
+          variant="outline"
+          onClick={onAddAgentToTeam}
+        >
           <PlusIcon data-icon="inline-start" />
           Add Agent to Team
         </Button>
@@ -636,6 +686,8 @@ function MissionWorkspace({
   selectedRow,
   selectedSession,
   selectedTeam,
+  sessionDetails,
+  teamWorkspaces,
   selectedApproval,
   selectedRowId,
   selectedApprovalId,
@@ -663,6 +715,8 @@ function MissionWorkspace({
   readonly selectedRow?: FleetRowView;
   readonly selectedSession?: SessionView;
   readonly selectedTeam?: TeamView;
+  readonly sessionDetails: Readonly<Record<string, SessionDetailState>>;
+  readonly teamWorkspaces: Readonly<Record<string, TeamWorkspaceState>>;
   readonly selectedApproval?: ApprovalView;
   readonly selectedRowId: string;
   readonly selectedApprovalId: string;
@@ -771,6 +825,8 @@ function MissionWorkspace({
                   selectedRowId={selectedRowId}
                   selectedSession={selectedSession}
                   selectedTeam={selectedTeam}
+                  sessionDetails={sessionDetails}
+                  teamWorkspaces={teamWorkspaces}
                   selectedApproval={selectedApproval}
                   selectedApprovalId={selectedApprovalId}
                   setSelectedRowId={setSelectedRowId}
@@ -802,6 +858,8 @@ function MissionWorkspace({
           selectedRow={selectedRow}
           selectedSession={selectedSession}
           selectedTeam={selectedTeam}
+          sessionDetails={sessionDetails}
+          teamWorkspaces={teamWorkspaces}
           selectedApproval={selectedApproval}
           selectedRowId={selectedRowId}
           selectedApprovalId={selectedApprovalId}
@@ -879,6 +937,8 @@ function MissionViewBody({
   selectedRowId,
   selectedSession,
   selectedTeam,
+  sessionDetails,
+  teamWorkspaces,
   selectedApproval,
   selectedApprovalId,
   setSelectedRowId,
@@ -904,6 +964,8 @@ function MissionViewBody({
   readonly selectedRowId: string;
   readonly selectedSession?: SessionView;
   readonly selectedTeam?: TeamView;
+  readonly sessionDetails: Readonly<Record<string, SessionDetailState>>;
+  readonly teamWorkspaces: Readonly<Record<string, TeamWorkspaceState>>;
   readonly selectedApproval?: ApprovalView;
   readonly selectedApprovalId: string;
   readonly setSelectedRowId: (id: string) => void;
@@ -924,6 +986,9 @@ function MissionViewBody({
         processes={processes}
         sources={sources}
         selectedSession={selectedSession}
+        sessionDetail={
+          selectedSession ? sessionDetails[selectedSession.sessionId] : undefined
+        }
         selectedApproval={selectedApproval}
         setSelectedSessionId={setSelectedSessionId}
         sourceGapActive={sourceGapActive}
@@ -938,6 +1003,7 @@ function MissionViewBody({
         sessions={sessions}
         sources={sources}
         selectedTeam={selectedTeam}
+        teamWorkspace={selectedTeam ? teamWorkspaces[selectedTeam.teamId] : undefined}
         setSelectedTeamId={setSelectedTeamId}
         pendingCommands={pendingCommands}
         sourceGapActive={sourceGapActive}
@@ -1006,6 +1072,8 @@ function DashboardWorkspace({
   selectedRow,
   selectedSession,
   selectedTeam,
+  sessionDetails,
+  teamWorkspaces,
   selectedApproval,
   selectedRowId,
   selectedApprovalId,
@@ -1033,6 +1101,8 @@ function DashboardWorkspace({
   readonly selectedRow?: FleetRowView;
   readonly selectedSession?: SessionView;
   readonly selectedTeam?: TeamView;
+  readonly sessionDetails: Readonly<Record<string, SessionDetailState>>;
+  readonly teamWorkspaces: Readonly<Record<string, TeamWorkspaceState>>;
   readonly selectedApproval?: ApprovalView;
   readonly selectedRowId: string;
   readonly selectedApprovalId: string;
@@ -1092,6 +1162,8 @@ function DashboardWorkspace({
           selectedRowId={selectedRowId}
           selectedSession={selectedSession}
           selectedTeam={selectedTeam}
+          sessionDetails={sessionDetails}
+          teamWorkspaces={teamWorkspaces}
           selectedApproval={selectedApproval}
           selectedApprovalId={selectedApprovalId}
           setSelectedRowId={setSelectedRowId}
@@ -1554,6 +1626,7 @@ function AgentPane({
   processes,
   sources,
   selectedSession,
+  sessionDetail,
   selectedApproval,
   setSelectedSessionId,
   sourceGapActive
@@ -1563,6 +1636,7 @@ function AgentPane({
   readonly processes: readonly ProcessView[];
   readonly sources: readonly SourceHealthView[];
   readonly selectedSession?: SessionView;
+  readonly sessionDetail?: SessionDetailState;
   readonly selectedApproval?: ApprovalView;
   readonly setSelectedSessionId: (id: string) => void;
   readonly sourceGapActive: boolean;
@@ -1583,7 +1657,14 @@ function AgentPane({
   const sessionApprovals = approvals.filter(
     (approval) => approval.sessionId === selectedSession?.sessionId
   );
+  const transcriptItems = sessionDetail?.transcript ?? [];
+  const latestTranscript = transcriptItems.at(-1);
   const timeline = [
+    ...transcriptItems.map((entry) => ({
+      id: entry.id,
+      title: entry.role === "user" ? "User message" : "Assistant response",
+      meta: entry.text
+    })),
     ...sessionApprovals.map((approval) => ({
       id: approval.approvalId,
       title: approval.summary || "Approval requested",
@@ -1721,10 +1802,21 @@ function AgentPane({
                     Token updates are frame-batched by the realtime worker.
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
-                  {selectedSession.activeTurnId
-                    ? `Streaming turn ${selectedSession.activeTurnId}.`
-                    : "No active turn stream for this session."}
+                <CardContent className="space-y-2">
+                  {latestTranscript ? (
+                    transcriptItems.slice(-4).map((entry) => (
+                      <div className="rounded-md border bg-background p-2" key={entry.id}>
+                        <div className="mb-1 text-xs font-medium text-muted-foreground">
+                          {entry.role}{entry.turnId ? ` / ${entry.turnId}` : ""}
+                        </div>
+                        <div className="whitespace-pre-wrap text-sm">{entry.text}</div>
+                      </div>
+                    ))
+                  ) : selectedSession.activeTurnId ? (
+                    `Streaming turn ${selectedSession.activeTurnId}.`
+                  ) : (
+                    "No active turn stream for this session."
+                  )}
                 </CardContent>
               </Card>
             </>
@@ -1747,6 +1839,7 @@ function TeamPane({
   sessions,
   sources,
   selectedTeam,
+  teamWorkspace,
   setSelectedTeamId,
   pendingCommands,
   sourceGapActive
@@ -1756,6 +1849,7 @@ function TeamPane({
   readonly sessions: readonly SessionView[];
   readonly sources: readonly SourceHealthView[];
   readonly selectedTeam?: TeamView;
+  readonly teamWorkspace?: TeamWorkspaceState;
   readonly setSelectedTeamId: (id: string) => void;
   readonly pendingCommands: readonly PendingCommandState[];
   readonly sourceGapActive: boolean;
@@ -1786,6 +1880,8 @@ function TeamPane({
   const [teamName, setTeamName] = useState("Live Team");
   const [leadAgentId, setLeadAgentId] = useState(defaultLeadId);
   const members = selectedTeam?.members ?? [];
+  const deliveries = teamWorkspace?.deliveries ?? [];
+  const messages = teamWorkspace?.messages ?? [];
   const lead = members.find((member) => member.memberId === selectedTeam?.leadMemberId);
   const hasLeadForNewTeam = Boolean(leadAgentId || defaultLeadId);
 
@@ -1940,22 +2036,25 @@ function TeamPane({
             {selectedTeam ? (
               <form onSubmit={sendMessage}>
                 <FieldGroup>
-                  <Field>
-                    <FieldLabel>Delivery mode</FieldLabel>
-                    <ToggleGroup
-                      onValueChange={(value) => {
-                        const next = Array.isArray(value) ? value[0] : value;
-                        if (next === "direct" || next === "broadcast") {
-                          setMode(next);
-                        }
-                      }}
-                      value={[mode]}
-                      variant="outline"
+                <Field>
+                  <FieldLabel>Delivery mode</FieldLabel>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={mode === "broadcast" ? "secondary" : "outline"}
+                      onClick={() => setMode("broadcast")}
                     >
-                      <ToggleGroupItem value="broadcast">Broadcast</ToggleGroupItem>
-                      <ToggleGroupItem value="direct">Direct</ToggleGroupItem>
-                    </ToggleGroup>
-                  </Field>
+                      Broadcast
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={mode === "direct" ? "secondary" : "outline"}
+                      onClick={() => setMode("direct")}
+                    >
+                      Direct
+                    </Button>
+                  </div>
+                </Field>
                   {mode === "direct" ? (
                     <Field>
                       <FieldLabel>Recipient</FieldLabel>
@@ -1990,16 +2089,23 @@ function TeamPane({
         <div className="flex min-h-0 flex-col gap-3">
           <TimelineCard
             title="Delivery state"
-            items={pendingCommands.map((command) => ({
-              id: command.commandId,
-              title: command.commandId,
-              meta:
-                command.status === "rejected"
-                  ? `${command.errorCode ?? "rejected"}: ${command.error ?? "Command rejected"}`
-                  : command.status === "duplicate"
-                    ? `${command.errorCode ?? "duplicate"}: ${command.error ?? "Already submitted"}`
-                    : command.status
-            }))}
+            items={[
+              ...deliveries.map((delivery) => ({
+                id: delivery.id,
+                title: delivery.recipientAgentId || delivery.id,
+                meta: `${delivery.status}${delivery.injectedTurnId ? ` / ${delivery.injectedTurnId}` : ""}${delivery.lastError ? ` / ${delivery.lastError}` : ""}`
+              })),
+              ...pendingCommands.map((command) => ({
+                id: command.commandId,
+                title: command.commandId,
+                meta:
+                  command.status === "rejected"
+                    ? `${command.errorCode ?? "rejected"}: ${command.error ?? "Command rejected"}`
+                    : command.status === "duplicate"
+                      ? `${command.errorCode ?? "duplicate"}: ${command.error ?? "Already submitted"}`
+                      : command.status
+              }))
+            ]}
             renderAction={(id) => (
               <div className="flex gap-1">
                 <Button
@@ -2039,11 +2145,18 @@ function TeamPane({
           />
           <TimelineCard
             title="Team events"
-            items={members.map((member) => ({
-              id: member.memberId,
-              title: member.title || member.memberId,
-              meta: `${member.status || "unknown"} / ${member.provider || "provider"}`
-            }))}
+            items={[
+              ...messages.map((message) => ({
+                id: message.id,
+                title: message.scope || "team message",
+                meta: message.text || message.senderAgentId
+              })),
+              ...members.map((member) => ({
+                id: member.memberId,
+                title: member.title || member.memberId,
+                meta: `${member.status || "unknown"} / ${member.provider || "provider"}`
+              }))
+            ]}
           />
         </div>
       </div>

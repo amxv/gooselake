@@ -217,6 +217,25 @@ impl GatewayState {
                     .await?;
                 self.refresh_source_after_command(command).await;
             }
+            crate::protocol::generated::goosetower::v1::command::Payload::JoinTeamMember(input) => {
+                let team_id = non_empty(&input.team_id, "team_id")?;
+                let agent_id = non_empty(&input.agent_id, "agent_id")?;
+                client
+                    .join_team(
+                        team_id,
+                        &TeamJoinInput {
+                            agent_id: agent_id.to_string(),
+                            title: optional_string(&input.title),
+                            added_by: optional_string(&input.added_by)
+                                .or_else(|| Some(conn.auth.subject.clone())),
+                            creator_agent_id: Some(conn.auth.subject.clone()),
+                            creator_compaction_subscription: None,
+                            worktree_id: None,
+                        },
+                    )
+                    .await?;
+                self.refresh_source_after_command(command).await;
+            }
             crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(input) => {
                 let session_id = non_empty(&input.session_id, "session_id")?;
                 client
@@ -785,6 +804,9 @@ fn command_payload_kind(command: &Command) -> &'static str {
         Some(crate::protocol::generated::goosetower::v1::command::Payload::CreateTeam(_)) => {
             "create_team"
         }
+        Some(crate::protocol::generated::goosetower::v1::command::Payload::JoinTeamMember(_)) => {
+            "join_team_member"
+        }
         Some(crate::protocol::generated::goosetower::v1::command::Payload::ResolveApproval(_)) => {
             "resolve_approval"
         }
@@ -864,6 +886,9 @@ fn command_owner_entity<'a>(
         crate::protocol::generated::goosetower::v1::command::Payload::BroadcastTeamMessage(
             input,
         ) => (!input.team_id.is_empty()).then_some(("team", input.team_id.as_str())),
+        crate::protocol::generated::goosetower::v1::command::Payload::JoinTeamMember(input) => {
+            (!input.team_id.is_empty()).then_some(("team", input.team_id.as_str()))
+        }
         crate::protocol::generated::goosetower::v1::command::Payload::SpawnTeamMember(input) => {
             (!input.team_id.is_empty()).then_some(("team", input.team_id.as_str()))
         }
@@ -903,6 +928,7 @@ fn expected_scope_for_payload(
         }
         crate::protocol::generated::goosetower::v1::command::Payload::SendTeamMessage(_)
         | crate::protocol::generated::goosetower::v1::command::Payload::BroadcastTeamMessage(_)
+        | crate::protocol::generated::goosetower::v1::command::Payload::JoinTeamMember(_)
         | crate::protocol::generated::goosetower::v1::command::Payload::SpawnTeamMember(_)
         | crate::protocol::generated::goosetower::v1::command::Payload::RetryDelivery(_)
         | crate::protocol::generated::goosetower::v1::command::Payload::CancelDelivery(_) => {

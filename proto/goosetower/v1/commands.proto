@@ -23,6 +23,7 @@ message Command {
     CommandStartProcess start_process = 19;
     CommandCreateSession create_session = 20;
     CommandCreateTeam create_team = 21;
+    CommandJoinTeamMember join_team_member = 22;
   }
   reserved 30 to 79;
 }
@@ -42,6 +43,14 @@ message CommandCreateTeam {
   string lead_agent_id = 2;
   repeated string member_agent_ids = 3;
   string created_by = 4;
+  reserved 20 to 39;
+}
+
+message CommandJoinTeamMember {
+  string team_id = 1;
+  string agent_id = 2;
+  string title = 3;
+  string added_by = 4;
   reserved 20 to 39;
 }
 

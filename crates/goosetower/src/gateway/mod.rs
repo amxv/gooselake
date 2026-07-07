@@ -34,7 +34,7 @@ use crate::runtime::client::{ProcessKillInput, ProcessStartInput};
 use crate::runtime::events::{SourceEvent, SourceHealth, SourceHealthState};
 use crate::runtime::{
     GooselakeRuntimeClient, RuntimeSseFanIn, RuntimeSseFanInConfig, TeamBroadcastInput,
-    TeamCreateInput, TeamDirectInput, TeamMemberSpawnInput,
+    TeamCreateInput, TeamDirectInput, TeamJoinInput, TeamMemberSpawnInput,
 };
 mod commands;
 mod envelopes;

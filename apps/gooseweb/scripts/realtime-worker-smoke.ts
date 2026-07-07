@@ -203,6 +203,36 @@ const fallbackCommandEnvelope = fromBinary(
 assert.equal(fallbackCommandEnvelope.payload.case, "command");
 assert.equal(fallbackCommandEnvelope.payload.value.payload.case, "createSession");
 
+const sentBeforeJoinCommand = sockets[2]?.sent.length ?? 0;
+await core.handleMessage({
+  type: "command",
+  command: {
+    commandId: "cmd_join_team_member",
+    idempotencyKey: "cmd_join_team_member",
+    target: {
+      scope: "team",
+      scopeId: "team_1",
+      entityId: "team_1"
+    },
+    createdAtClientUnixMs: BigInt(Date.now()),
+    payload: {
+      case: "joinTeamMember",
+      value: {
+        teamId: "team_1",
+        agentId: "session_2",
+        title: "Second agent",
+        addedBy: "session_1"
+      }
+    }
+  }
+});
+assert.equal((sockets[2]?.sent.length ?? 0) > sentBeforeJoinCommand, true);
+const joinCommandFrame = sockets[2]?.sent.at(-1);
+assert.ok(joinCommandFrame instanceof Uint8Array);
+const joinCommandEnvelope = fromBinary(RealtimeEnvelopeSchema, joinCommandFrame);
+assert.equal(joinCommandEnvelope.payload.case, "command");
+assert.equal(joinCommandEnvelope.payload.value.payload.case, "joinTeamMember");
+
 console.log("realtime worker socket ownership smoke fixture passed");
 
 function waitForPatchFlush(): Promise<void> {

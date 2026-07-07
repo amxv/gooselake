@@ -3,6 +3,9 @@ import type {
   ConnectionState,
   GoosewebStorePatch,
   GoosewebSnapshot,
+  NormalizedEntities,
+  SessionDetailState,
+  TeamWorkspaceState,
   PendingCommandState,
   SubscriptionState
 } from "../realtime/types";
@@ -11,7 +14,9 @@ import { emptyCursorState } from "../realtime/cursors";
 const emptyEntities = {
   fleetRows: {},
   sessions: {},
+  sessionDetails: {},
   teams: {},
+  teamWorkspaces: {},
   approvals: {},
   processes: {},
   worktrees: {},
@@ -47,7 +52,7 @@ export function updateGoosewebStore(patch: GoosewebStorePatch): void {
     ...snapshot,
     ...patch,
     entities: patch.entities
-      ? { ...snapshot.entities, ...patch.entities }
+      ? mergeEntities(snapshot.entities, patch.entities)
       : snapshot.entities,
     subscriptions: patch.subscriptions
       ? { ...snapshot.subscriptions, ...patch.subscriptions }
@@ -63,6 +68,71 @@ export function updateGoosewebStore(patch: GoosewebStorePatch): void {
   for (const listener of listeners) {
     listener();
   }
+}
+
+function mergeEntities(
+  current: NormalizedEntities,
+  patch: GoosewebStorePatch["entities"]
+): NormalizedEntities {
+  return {
+    ...current,
+    ...patch,
+    sessionDetails: patch?.sessionDetails
+      ? mergeSessionDetails(current.sessionDetails, patch.sessionDetails)
+      : current.sessionDetails,
+    teamWorkspaces: patch?.teamWorkspaces
+      ? mergeTeamWorkspaces(current.teamWorkspaces, patch.teamWorkspaces)
+      : current.teamWorkspaces
+  };
+}
+
+function mergeSessionDetails(
+  current: Readonly<Record<string, SessionDetailState>>,
+  patch: Readonly<Record<string, SessionDetailState>>
+) {
+  const next = { ...current };
+  for (const [sessionId, detail] of Object.entries(patch)) {
+    const existing = next[sessionId];
+    next[sessionId] = existing
+      ? {
+          ...existing,
+          ...detail,
+          transcript: mergeById(existing.transcript, detail.transcript),
+          appendedText: detail.appendedText || existing.appendedText
+        }
+      : detail;
+  }
+  return next;
+}
+
+function mergeTeamWorkspaces(
+  current: Readonly<Record<string, TeamWorkspaceState>>,
+  patch: Readonly<Record<string, TeamWorkspaceState>>
+) {
+  const next = { ...current };
+  for (const [teamId, workspace] of Object.entries(patch)) {
+    const existing = next[teamId];
+    next[teamId] = existing
+      ? {
+          ...existing,
+          ...workspace,
+          messages: mergeById(existing.messages, workspace.messages),
+          deliveries: mergeById(existing.deliveries, workspace.deliveries)
+        }
+      : workspace;
+  }
+  return next;
+}
+
+function mergeById<T extends { readonly id: string }>(
+  current: readonly T[],
+  patch: readonly T[]
+): readonly T[] {
+  const byId = new Map(current.map((item) => [item.id, item]));
+  for (const item of patch) {
+    byId.set(item.id, { ...byId.get(item.id), ...item });
+  }
+  return [...byId.values()];
 }
 
 export function setConnectionState(connection: ConnectionState): void {

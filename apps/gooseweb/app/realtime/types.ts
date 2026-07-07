@@ -21,7 +21,9 @@ export type ConnectionState =
 export type NormalizedEntities = {
   readonly fleetRows: Readonly<Record<string, FleetRowView>>;
   readonly sessions: Readonly<Record<string, SessionView>>;
+  readonly sessionDetails: Readonly<Record<string, SessionDetailState>>;
   readonly teams: Readonly<Record<string, TeamView>>;
+  readonly teamWorkspaces: Readonly<Record<string, TeamWorkspaceState>>;
   readonly approvals: Readonly<Record<string, ApprovalView>>;
   readonly processes: Readonly<Record<string, ProcessView>>;
   readonly worktrees: Readonly<Record<string, WorktreeView>>;
@@ -31,11 +33,59 @@ export type NormalizedEntities = {
 export type NormalizedEntityPatch = {
   readonly fleetRows?: Readonly<Record<string, FleetRowView>>;
   readonly sessions?: Readonly<Record<string, SessionView>>;
+  readonly sessionDetails?: Readonly<Record<string, SessionDetailState>>;
   readonly teams?: Readonly<Record<string, TeamView>>;
+  readonly teamWorkspaces?: Readonly<Record<string, TeamWorkspaceState>>;
   readonly approvals?: Readonly<Record<string, ApprovalView>>;
   readonly processes?: Readonly<Record<string, ProcessView>>;
   readonly worktrees?: Readonly<Record<string, WorktreeView>>;
   readonly sources?: Readonly<Record<string, SourceHealthView>>;
+};
+
+export type SessionTranscriptEntry = {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly role: string;
+  readonly text: string;
+  readonly turnId?: string;
+  readonly createdAtUnixMs?: number;
+};
+
+export type SessionDetailState = {
+  readonly sessionId: string;
+  readonly sourceId: string;
+  readonly transcript: readonly SessionTranscriptEntry[];
+  readonly appendedText: string;
+  readonly latestActivityUnixMs: number;
+};
+
+export type TeamMessageState = {
+  readonly id: string;
+  readonly teamId: string;
+  readonly scope: string;
+  readonly senderAgentId: string;
+  readonly recipientAgentIds: readonly string[];
+  readonly text: string;
+  readonly createdAtUnixMs: number;
+};
+
+export type TeamDeliveryState = {
+  readonly id: string;
+  readonly messageId: string;
+  readonly teamId: string;
+  readonly recipientAgentId: string;
+  readonly provider: string;
+  readonly status: string;
+  readonly injectedTurnId?: string;
+  readonly lastError?: string;
+  readonly updatedAtUnixMs: number;
+};
+
+export type TeamWorkspaceState = {
+  readonly teamId: string;
+  readonly sourceId: string;
+  readonly messages: readonly TeamMessageState[];
+  readonly deliveries: readonly TeamDeliveryState[];
 };
 
 export type PendingCommandState = {
@@ -66,7 +116,8 @@ export type CommandPayloadCase =
   | "killProcess"
   | "startProcess"
   | "createSession"
-  | "createTeam";
+  | "createTeam"
+  | "joinTeamMember";
 
 export type CommandIntent = {
   readonly commandId: string;

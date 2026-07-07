@@ -139,6 +139,22 @@ function decodeJsonViewBody(
         ? { entities: { sessions: { [session.sessionId]: session } } }
         : { entities: {} };
     }
+    case "session_detail": {
+      const detail = normalizeSessionDetail(value);
+      return detail
+        ? { entities: { sessionDetails: { [detail.sessionId]: detail } } }
+        : { entities: {} };
+    }
+    case "team_workspace": {
+      const workspace = normalizeTeamWorkspace(value);
+      const team = normalizeTeam(value);
+      return {
+        entities: {
+          ...(team ? { teams: { [team.teamId]: team } } : {}),
+          ...(workspace ? { teamWorkspaces: { [workspace.teamId]: workspace } } : {})
+        }
+      };
+    }
     case "teams": {
       const teams = arrayFrom((value as { teams?: unknown }).teams)
         .map((team) => normalizeTeam(team))
@@ -234,6 +250,48 @@ function normalizeSession(value: unknown) {
   });
 }
 
+function normalizeSessionDetail(value: unknown) {
+  const detail = recordFrom(value);
+  const record = recordFrom(detail.session);
+  const sessionId = stringFrom(record.id || detail.session_id);
+  if (!sessionId) {
+    return undefined;
+  }
+  const appendedText = stringFrom(detail.appended_text || detail.text);
+  const turnId = stringFrom(detail.turn_id);
+  const transcript = [
+    ...arrayFrom(detail.transcript).map((entry, index) => {
+      const row = recordFrom(entry);
+      return {
+        id: stringFrom(row.id) || `${sessionId}:transcript:${index}`,
+        sessionId,
+        role: stringFrom(row.role) || "assistant",
+        text: stringFrom(row.text),
+        turnId: stringFrom(row.turn_id) || undefined,
+        createdAtUnixMs: numberFrom(row.created_at)
+      };
+    }),
+    ...(appendedText
+      ? [{
+          id: `${sessionId}:${turnId || "turn"}:${appendedText}`,
+          sessionId,
+          role: "assistant",
+          text: appendedText,
+          turnId: turnId || undefined,
+          createdAtUnixMs: numberFrom(detail.created_at)
+        }]
+      : [])
+  ].filter((entry) => entry.text);
+
+  return {
+    sessionId,
+    sourceId: stringFrom(detail.source_id),
+    transcript,
+    appendedText,
+    latestActivityUnixMs: numberFrom(detail.latest_activity_unix_ms)
+  };
+}
+
 function normalizeTeam(value: unknown) {
   const workspace = recordFrom(value);
   const teamRecord = recordFrom(workspace.team);
@@ -241,7 +299,7 @@ function normalizeTeam(value: unknown) {
   if (!teamId) {
     return undefined;
   }
-  const members = arrayFrom(workspace.members).map((memberValue) => {
+  const members = collectionFrom(workspace.members).map((memberValue) => {
     const memberView = recordFrom(memberValue);
     const member = recordFrom(memberView.member);
     const session = recordFrom(memberView.session);
@@ -263,8 +321,93 @@ function normalizeTeam(value: unknown) {
   });
 }
 
+function normalizeTeamWorkspace(value: unknown) {
+  const workspace = recordFrom(value);
+  const teamRecord = recordFrom(workspace.team);
+  const deliveryRecord = recordFrom(workspace.delivery);
+  const messageRecord = recordFrom(workspace.message);
+  const directDelivery = stringFrom(workspace.recipient_agent_id || workspace.message_id)
+    ? workspace
+    : undefined;
+  const directMessage = stringFrom(workspace.sender_agent_id) || workspace.input
+    ? workspace
+    : undefined;
+  const teamId = stringFrom(
+    teamRecord.id ||
+    workspace.team_id ||
+    deliveryRecord.team_id ||
+    messageRecord.team_id
+  );
+  if (!teamId) {
+    return undefined;
+  }
+  return {
+    teamId,
+    sourceId: stringFrom(workspace.source_id),
+    messages: [
+      ...collectionFrom(workspace.messages).map(normalizeTeamMessage),
+      ...(stringFrom(messageRecord.id) ? [normalizeTeamMessage(messageRecord)] : []),
+      ...(directMessage ? [normalizeTeamMessage(directMessage)] : [])
+    ].filter((message) => message.id),
+    deliveries: [
+      ...collectionFrom(workspace.deliveries).map(normalizeTeamDelivery),
+      ...(stringFrom(deliveryRecord.id) ? [normalizeTeamDelivery(deliveryRecord)] : []),
+      ...(directDelivery ? [normalizeTeamDelivery(directDelivery)] : [])
+    ].filter((delivery) => delivery.id)
+  };
+}
+
+function normalizeTeamMessage(value: unknown) {
+  const message = recordFrom(value);
+  return {
+    id: stringFrom(message.id),
+    teamId: stringFrom(message.team_id),
+    scope: stringFrom(message.scope),
+    senderAgentId: stringFrom(message.sender_agent_id),
+    recipientAgentIds: stringArrayFrom(message.recipient_agent_ids),
+    text: messageText(message.input),
+    createdAtUnixMs: numberFrom(message.created_at)
+  };
+}
+
+function normalizeTeamDelivery(value: unknown) {
+  const delivery = recordFrom(value);
+  return {
+    id: stringFrom(delivery.id),
+    messageId: stringFrom(delivery.message_id),
+    teamId: stringFrom(delivery.team_id),
+    recipientAgentId: stringFrom(delivery.recipient_agent_id),
+    provider: stringFrom(delivery.provider),
+    status: stringFrom(delivery.status),
+    injectedTurnId: stringFrom(delivery.injected_turn_id) || undefined,
+    lastError: stringFrom(delivery.last_error_message || delivery.last_error_code) || undefined,
+    updatedAtUnixMs: numberFrom(delivery.updated_at)
+  };
+}
+
+function messageText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => stringFrom(recordFrom(item).text))
+    .filter(Boolean)
+    .join("\n");
+}
+
 function arrayFrom(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function collectionFrom(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value);
+  }
+  return [];
 }
 
 function recordFrom(value: unknown): Record<string, unknown> {

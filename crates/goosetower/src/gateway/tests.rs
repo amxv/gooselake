@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use axum::extract::Query;
 use axum::routing::get;
 use axum::{Json, Router};
-use runtime_core::{RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, SessionRecord};
+use runtime_core::{
+    RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, SessionRecord, TeamRecord,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -13,7 +15,8 @@ use super::*;
 use crate::materializer::state::SourceCursorView;
 use crate::protocol::generated::goosetower::v1::command::Payload as CommandPayload;
 use crate::protocol::generated::goosetower::v1::{
-    Command, CommandCreateSession, CommandCreateTeam, CommandSendTurn, EntityRef,
+    Command, CommandCreateSession, CommandCreateTeam, CommandJoinTeamMember, CommandSendTurn,
+    EntityRef,
 };
 
 #[tokio::test]
@@ -302,6 +305,13 @@ async fn source_scoped_create_team_routes_to_explicit_source() {
     let mut config = GoosetowerConfig::default();
     config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
     let gateway = live_gateway_with_session_version(config, 1).await;
+    {
+        let mut materialized = gateway.materialized.write().await;
+        materialized
+            .get_mut("local")
+            .expect("local source")
+            .upsert_team(team_record("team_1"));
+    }
     let mut conn = test_connection(&gateway);
 
     let response = gateway
@@ -315,6 +325,37 @@ async fn source_scoped_create_team_routes_to_explicit_source() {
     assert_eq!(
         hits.lock().unwrap().as_slice(),
         ["local:create_team:Live Team:session_1"]
+    );
+}
+
+#[tokio::test]
+async fn team_scoped_join_member_routes_to_team_source() {
+    let hits = Arc::new(StdMutex::new(Vec::new()));
+    let runtime_addr = spawn_accepting_create_runtime("local", hits.clone()).await;
+    let mut config = GoosetowerConfig::default();
+    config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
+    let gateway = live_gateway_with_session_version(config, 1).await;
+    {
+        let mut materialized = gateway.materialized.write().await;
+        materialized
+            .get_mut("local")
+            .expect("local source")
+            .upsert_team(team_record("team_1"));
+    }
+    let mut conn = test_connection(&gateway);
+
+    let response = gateway
+        .admit_and_route_command(&mut conn, join_team_member_command("cmd_join", "team_1"))
+        .await;
+
+    assert!(
+        matches!(response.payload, Some(Payload::CommandAccepted(_))),
+        "expected join-team-member command to be accepted, got {:?}",
+        response.payload
+    );
+    assert_eq!(
+        hits.lock().unwrap().as_slice(),
+        ["local:join_team_member:team_1:session_2"]
     );
 }
 
@@ -591,6 +632,26 @@ fn create_team_command(command_id: &str, source_id: &str) -> Command {
     }
 }
 
+fn join_team_member_command(command_id: &str, team_id: &str) -> Command {
+    Command {
+        command_id: command_id.to_string(),
+        target: Some(EntityRef {
+            scope: Scope::Team as i32,
+            scope_id: team_id.to_string(),
+            entity_id: team_id.to_string(),
+            entity_version: 0,
+        }),
+        created_at_client_unix_ms: 1,
+        payload: Some(CommandPayload::JoinTeamMember(CommandJoinTeamMember {
+            team_id: team_id.to_string(),
+            agent_id: "session_2".to_string(),
+            title: "Second".to_string(),
+            added_by: "session_1".to_string(),
+        })),
+        ..Command::default()
+    }
+}
+
 async fn two_source_gateway(west_addr: SocketAddr, east_addr: SocketAddr) -> GatewayState {
     let gateway = test_gateway(two_source_config(
         format!("http://{west_addr}"),
@@ -767,9 +828,37 @@ async fn spawn_accepting_create_runtime(
                 }))
             }
         };
+        let join_team_hits = hits.clone();
+        let join_team = move |axum::extract::Path(team_id): axum::extract::Path<String>,
+                              Json(input): Json<Value>| {
+            let hits = join_team_hits.clone();
+            async move {
+                hits.lock().unwrap().push(format!(
+                    "{label}:join_team_member:{}:{}",
+                    team_id,
+                    input["agent_id"].as_str().unwrap_or_default()
+                ));
+                Json(json!({
+                    "team": {
+                        "id": team_id,
+                        "name": "Live Team",
+                        "lead_agent_id": "session_1",
+                        "created_by": "session_1",
+                        "created_at": 1,
+                        "updated_at": 2,
+                        "deleted_at": null
+                    },
+                    "members": []
+                }))
+            }
+        };
         let app = axum::Router::new()
             .route("/v1/sessions", axum::routing::post(create_session))
-            .route("/v1/teams", axum::routing::post(create_team));
+            .route("/v1/teams", axum::routing::post(create_team))
+            .route(
+                "/v1/teams/{team_id}/members",
+                axum::routing::post(join_team),
+            );
         axum::serve(listener, app)
             .await
             .expect("serve accepting create runtime");
@@ -899,5 +988,17 @@ fn session_record() -> SessionRecord {
         closed_at: None,
         failure_code: None,
         failure_message: None,
+    }
+}
+
+fn team_record(team_id: &str) -> TeamRecord {
+    TeamRecord {
+        id: team_id.to_string(),
+        name: "Live Team".to_string(),
+        lead_agent_id: "session_1".to_string(),
+        created_by: "session_1".to_string(),
+        created_at: 1,
+        updated_at: 1,
+        deleted_at: None,
     }
 }

@@ -21,6 +21,7 @@ import {
   CommandCreateSessionSchema,
   CommandCreateTeamSchema,
   CommandInterruptTurnSchema,
+  CommandJoinTeamMemberSchema,
   CommandKillProcessSchema,
   CommandResolveApprovalSchema,
   CommandRetryDeliverySchema,
@@ -238,6 +239,16 @@ function makeCommandPayload(
           leadAgentId: stringPayloadValue(payloadValue, "leadAgentId"),
           memberAgentIds: stringListPayloadValue(payloadValue, "memberAgentIds"),
           createdBy: stringPayloadValue(payloadValue, "createdBy")
+        })
+      };
+    case "joinTeamMember":
+      return {
+        case: payloadCase,
+        value: create(CommandJoinTeamMemberSchema, {
+          teamId: stringPayloadValue(payloadValue, "teamId"),
+          agentId: stringPayloadValue(payloadValue, "agentId"),
+          title: stringPayloadValue(payloadValue, "title"),
+          addedBy: stringPayloadValue(payloadValue, "addedBy")
         })
       };
   }

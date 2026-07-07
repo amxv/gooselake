@@ -46,6 +46,7 @@ export type PendingCommandState = {
   readonly targetScope?: string;
   readonly targetScopeId?: string;
   readonly targetEntityId?: string;
+  readonly payloadCase?: CommandPayloadCase;
   readonly errorCode?: string;
   readonly error?: string;
   readonly refreshEntity?: boolean;

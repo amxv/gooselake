@@ -221,14 +221,60 @@ function makeCommandPayload(
     case "createSession":
       return {
         case: payloadCase,
-        value: create(CommandCreateSessionSchema, payloadValue)
+        value: create(CommandCreateSessionSchema, {
+          provider: stringPayloadValue(payloadValue, "provider"),
+          model: stringPayloadValue(payloadValue, "model"),
+          cwd: stringPayloadValue(payloadValue, "cwd"),
+          title: stringPayloadValue(payloadValue, "title"),
+          permissionMode: stringPayloadValue(payloadValue, "permissionMode"),
+          metadata: stringRecordPayloadValue(payloadValue, "metadata")
+        })
       };
     case "createTeam":
       return {
         case: payloadCase,
-        value: create(CommandCreateTeamSchema, payloadValue)
+        value: create(CommandCreateTeamSchema, {
+          name: stringPayloadValue(payloadValue, "name"),
+          leadAgentId: stringPayloadValue(payloadValue, "leadAgentId"),
+          memberAgentIds: stringListPayloadValue(payloadValue, "memberAgentIds"),
+          createdBy: stringPayloadValue(payloadValue, "createdBy")
+        })
       };
   }
+}
+
+function stringPayloadValue(
+  payload: Readonly<Record<string, unknown>>,
+  key: string
+): string {
+  const value = payload[key];
+  return typeof value === "string" ? value : "";
+}
+
+function stringListPayloadValue(
+  payload: Readonly<Record<string, unknown>>,
+  key: string
+): string[] {
+  const value = payload[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function stringRecordPayloadValue(
+  payload: Readonly<Record<string, unknown>>,
+  key: string
+): Record<string, string> {
+  const value = payload[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string"
+    )
+  );
 }
 
 export function makeAuthRefresh(ticket: string): RealtimeEnvelope {

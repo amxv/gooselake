@@ -810,7 +810,7 @@ function MissionWorkspace({
           <div className="mission-workspace-header">
             <div>
               <div className="mission-kicker">
-                Thinking
+                {agentThreadKicker(selectedSession)}
                 <ChevronDownIcon />
               </div>
               <h1>
@@ -829,21 +829,6 @@ function MissionWorkspace({
 
           <ScrollArea className="mission-workspace-scroll">
             <div className="mission-worklog">
-              <WorklogNarrative
-                selectedRow={selectedRow}
-                selectedSession={selectedSession}
-                selectedTeam={selectedTeam}
-                selectedApproval={selectedApproval}
-                processes={processes}
-                sourceGapActive={sourceGapActive}
-              />
-              <InlineToolStack
-                rows={rows}
-                approvals={approvals}
-                teams={teams}
-                processes={processes}
-                sources={sources}
-              />
               <div className="mission-embedded-pane">
                 <MissionViewBody
                   state={state}
@@ -1249,109 +1234,6 @@ function DashboardWorkspace({
   );
 }
 
-function WorklogNarrative({
-  selectedRow,
-  selectedSession,
-  selectedTeam,
-  selectedApproval,
-  processes,
-  sourceGapActive
-}: {
-  readonly selectedRow?: FleetRowView;
-  readonly selectedSession?: SessionView;
-  readonly selectedTeam?: TeamView;
-  readonly selectedApproval?: ApprovalView;
-  readonly processes: readonly ProcessView[];
-  readonly sourceGapActive: boolean;
-}) {
-  const runningCount = processes.filter((process) => process.status === "running").length;
-  const codeValue = selectedRow?.sourceId || selectedSession?.sourceId || "source none";
-  const selectedLabel =
-    selectedRow?.title || selectedSession?.sessionId || selectedTeam?.name || "agent thread";
-  const muted = `The selected agent thread is ${selectedLabel}. Gooseweb is keeping the realtime worker, subscriptions, approvals, command queue, and process visibility active while this operator surface is rendered as a dense desktop control room.`;
-  const primary = (
-    <>
-      The active session is <code>{selectedSession?.sessionId || "none"}</code>,
-      the current source is <code>{codeValue}</code>, and there are{" "}
-      <code>{String(runningCount)}</code> running processes. Command mutation
-      controls are available only for this selected agent thread.
-    </>
-  );
-  const approval = selectedApproval
-    ? `Approval context is ${selectedApproval.status || "unknown"} with ${selectedApproval.risk || "unknown"} risk.`
-    : sourceGapActive
-      ? "Source state is stale or reconnecting, so runtime mutation controls are guarded."
-      : undefined;
-
-  return (
-    <div className="mission-narrative">
-      <p className="mission-muted-copy">{muted}</p>
-      <p className="mission-primary-copy">{primary}</p>
-      {approval ? (
-        <p className="mission-primary-copy">
-          {approval}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-function InlineToolStack({
-  rows,
-  approvals,
-  teams,
-  processes,
-  sources
-}: {
-  readonly rows: readonly FleetRowView[];
-  readonly approvals: readonly ApprovalView[];
-  readonly teams: readonly TeamView[];
-  readonly processes: readonly ProcessView[];
-  readonly sources: readonly SourceHealthView[];
-}) {
-  const items = [
-    {
-      id: "board",
-      label: `Read ${rows.length} board row${rows.length === 1 ? "" : "s"}`,
-      detail: `${approvals.filter((approval) => approval.status === "pending").length} pending approvals`
-    },
-    {
-      id: "teams",
-      label: `Read ${teams.length} team snapshot${teams.length === 1 ? "" : "s"}`,
-      detail: `${teams.reduce((sum, team) => sum + team.members.length, 0)} members materialized`
-    },
-    {
-      id: "processes",
-      label: `Read ${processes.length} process record${processes.length === 1 ? "" : "s"}`,
-      detail: `${processes.filter((process) => process.status === "running").length} running`
-    },
-    {
-      id: "sources",
-      label: `Read ${sources.length} runtime source${sources.length === 1 ? "" : "s"}`,
-      detail: sources[0]?.health || "health unknown"
-    }
-  ];
-
-  return (
-    <div className="mission-tool-stack">
-      {items.map((item) => (
-        <div className="mission-tool-card" key={item.id}>
-          <span className="mission-tool-led" />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate font-medium">{item.label}</span>
-            <span className="block truncate text-xs text-muted-foreground">
-              {item.detail}
-            </span>
-          </span>
-          <span className="mission-tool-braces" aria-hidden="true">
-            {"{}"}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function MissionProcessRail({
   processes,
   selectedProcess,
@@ -1522,6 +1404,11 @@ function workspaceTitle(
     return "Auditing gateway event flow";
   }
   return selectedRow?.title || selectedRow?.sessionId || "Investigating source health issues";
+}
+
+function agentThreadKicker(selectedSession?: SessionView): string {
+  const status = selectedSession?.status || "selected";
+  return `Agent thread / ${status}`;
 }
 
 function dashboardTitle(view: WorkspaceView): { readonly kicker: string; readonly heading: string } {

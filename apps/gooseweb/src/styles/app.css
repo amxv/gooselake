@@ -935,13 +935,8 @@
   .mission-team-comms-scroll {
     position: relative;
     min-height: 0;
-    overflow: hidden;
-  }
-
-  .mission-team-comms-scroll [data-slot="scroll-area-viewport"] {
-    height: 100%;
-    min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .mission-team-comms-list {

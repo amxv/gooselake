@@ -3199,7 +3199,7 @@ function TeamCommsPane({
         </div>
       </div>
 
-      <ScrollArea className="mission-team-comms-scroll">
+      <div className="mission-team-comms-scroll" data-team-comms-scroll="true">
         <div className="mission-team-comms-list">
           {visibleMessages.length ? (
             visibleMessages.map((message) => (
@@ -3233,7 +3233,7 @@ function TeamCommsPane({
             <div className="mission-team-comms-empty" aria-hidden="true" />
           )}
         </div>
-      </ScrollArea>
+      </div>
 
       <form className="mission-team-comms-composer" onSubmit={sendTeamCommsMessage}>
         <Textarea

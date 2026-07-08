@@ -818,6 +818,20 @@
     margin: 0 auto;
   }
 
+  .mission-agent-thread-with-commits {
+    width: min(100%, 92rem);
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 21rem);
+    align-items: start;
+    gap: 2rem;
+  }
+
+  .mission-agent-thread-main {
+    display: grid;
+    min-width: 0;
+    gap: 1rem;
+    align-content: start;
+  }
+
   .mission-thread-meta {
     display: flex;
     flex-wrap: wrap;
@@ -1065,6 +1079,237 @@
     width: min(100%, 42rem);
   }
 
+  .mission-commit-inspector {
+    position: sticky;
+    top: 0.25rem;
+    display: grid;
+    min-width: 0;
+    max-height: min(44rem, calc(100svh - 16rem));
+    overflow: hidden;
+    border-left: 1px solid color-mix(in oklch, var(--border), transparent 30%);
+    color: var(--foreground);
+    padding: 0.25rem 0 0.65rem 1rem;
+  }
+
+  .mission-commit-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    min-width: 0;
+    padding: 0.15rem 0 0.75rem;
+  }
+
+  .mission-commit-header h2 {
+    margin: 0;
+    color: oklch(0.5 0.004 255);
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.065em;
+    text-transform: uppercase;
+  }
+
+  .mission-commit-header button,
+  .mission-commit-topline button {
+    display: inline-grid;
+    place-items: center;
+    border: 0;
+    background: transparent;
+    color: oklch(0.52 0.004 255);
+    padding: 0;
+  }
+
+  .mission-commit-header button {
+    width: 1.8rem;
+    height: 1.8rem;
+  }
+
+  .mission-commit-header svg {
+    width: 1.2rem;
+    height: 1.2rem;
+  }
+
+  .mission-commit-timeline {
+    position: relative;
+    display: grid;
+    gap: 0.95rem;
+    min-width: 0;
+    padding: 0.25rem 0 0.9rem;
+    overflow: hidden;
+  }
+
+  .mission-commit-timeline::before {
+    content: "";
+    position: absolute;
+    top: 0.8rem;
+    bottom: 0.8rem;
+    left: 0.54rem;
+    width: 1px;
+    background: color-mix(in oklch, var(--border), transparent 22%);
+  }
+
+  .mission-commit-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1.2rem minmax(0, 1fr);
+    gap: 0.65rem;
+    min-width: 0;
+  }
+
+  .mission-commit-dot {
+    z-index: 1;
+    align-self: start;
+    width: 0.65rem;
+    height: 0.65rem;
+    margin: 0.35rem 0 0 0.25rem;
+    border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 8%);
+    border-radius: 999px;
+    background: oklch(0.17 0.003 255);
+  }
+
+  .mission-commit-dot-head {
+    width: 0.92rem;
+    height: 0.92rem;
+    margin-left: 0.1rem;
+    background: oklch(0.72 0.15 165);
+    box-shadow: 0 0 1rem oklch(0.72 0.15 165 / 32%);
+  }
+
+  .mission-commit-content {
+    min-width: 0;
+  }
+
+  .mission-commit-topline {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .mission-commit-hash {
+    max-width: 5.8rem;
+    overflow: hidden;
+    border-radius: 0.4rem;
+    background: oklch(0.17 0.003 255);
+    color: oklch(0.74 0.004 255);
+    padding: 0.08rem 0.4rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.82rem;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-commit-topline button {
+    width: 1.3rem;
+    height: 1.3rem;
+    flex: 0 0 auto;
+  }
+
+  .mission-commit-topline svg {
+    width: 0.85rem;
+    height: 0.85rem;
+  }
+
+  .mission-commit-head {
+    border-radius: 999px;
+    background: oklch(0.44 0.13 165 / 38%);
+    color: oklch(0.78 0.15 165);
+    padding: 0.07rem 0.42rem;
+    font-size: 0.67rem;
+    font-weight: 820;
+    line-height: 1.2;
+  }
+
+  .mission-commit-content h3 {
+    margin: 0.35rem 0 0;
+    overflow-wrap: anywhere;
+    color: oklch(0.82 0.004 255);
+    font-size: 1rem;
+    font-weight: 560;
+    line-height: 1.25;
+  }
+
+  .mission-commit-content p {
+    margin: 0.35rem 0 0;
+    overflow: hidden;
+    color: oklch(0.46 0.004 255);
+    font-size: 0.82rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-change-strip {
+    display: grid;
+    gap: 0.55rem;
+    border-top: 1px solid color-mix(in oklch, var(--border), transparent 38%);
+    padding: 0.9rem 0 0.75rem 1.2rem;
+  }
+
+  .mission-change-strip > button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-width: 0;
+    height: 2.35rem;
+    border: 0;
+    border-radius: 0.85rem;
+    background: oklch(0.18 0.003 255);
+    color: oklch(0.65 0.004 255);
+    font-size: 0.9rem;
+    font-weight: 650;
+  }
+
+  .mission-change-strip svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .mission-change-list {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .mission-change-list span {
+    border-radius: 999px;
+    background: oklch(0.15 0.003 255);
+    color: oklch(0.56 0.004 255);
+    padding: 0.15rem 0.45rem;
+    font-size: 0.72rem;
+  }
+
+  .mission-workspace-pill {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    min-width: 0;
+    height: 2.4rem;
+    margin-left: 1.2rem;
+    border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 5%);
+    border-radius: 0.8rem;
+    background: oklch(0.14 0.003 255);
+    color: oklch(0.82 0.004 255);
+    font-size: 0.86rem;
+    font-weight: 720;
+  }
+
+  .mission-workspace-pill span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-workspace-pill svg {
+    width: 1rem;
+    height: 1rem;
+    color: oklch(0.54 0.004 255);
+  }
+
   .mission-processes {
     border-right: 0;
     border-left: 1px solid color-mix(in oklch, var(--border), transparent 24%);
@@ -1164,6 +1409,25 @@
       padding-right: 1.75rem;
       padding-left: 1.75rem;
     }
+
+    .mission-agent-thread-with-commits {
+      width: min(100%, 70rem);
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .mission-commit-inspector {
+      position: static;
+      max-height: none;
+      border-top: 1px solid color-mix(in oklch, var(--border), transparent 36%);
+      border-left: 0;
+      padding: 1rem 0 0;
+    }
+
+    .mission-change-strip,
+    .mission-workspace-pill {
+      margin-left: 0;
+      padding-left: 0;
+    }
   }
 
   @media (max-width: 1040px) {
@@ -1261,6 +1525,18 @@
 
     .mission-workspace-thread-empty .mission-workspace-scroll {
       padding-top: 0.85rem;
+    }
+
+    .mission-agent-thread-with-commits {
+      gap: 1.25rem;
+    }
+
+    .mission-commit-timeline {
+      gap: 0.8rem;
+    }
+
+    .mission-commit-content h3 {
+      font-size: 0.94rem;
     }
 
     .mission-dashboard-header,

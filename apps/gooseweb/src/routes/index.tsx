@@ -12,6 +12,7 @@ import {
   Maximize2Icon,
   Minimize2Icon,
   MessageSquareIcon,
+  SearchIcon,
   InboxIcon,
   LayoutDashboardIcon,
   ListChecksIcon,
@@ -181,6 +182,19 @@ type AgentThreadItem = {
 };
 
 type SessionTranscriptEntry = SessionDetailState["transcript"][number];
+
+type RecentCommitItem = {
+  readonly hash: string;
+  readonly title: string;
+  readonly repo: string;
+  readonly age: string;
+  readonly head?: boolean;
+};
+
+type RecentChangeItem = {
+  readonly label: string;
+  readonly count?: number;
+};
 
 const NAV_ITEMS: ReadonlyArray<{
   readonly id: WorkspaceView;
@@ -1754,6 +1768,7 @@ function AgentPane({
   readonly sourceGapActive: boolean;
 }) {
   const showDevFixture = isThreadVisualFixtureEnabled();
+  const showCommitsFixture = isRecentCommitsVisualFixtureEnabled();
   const sessionApprovals = approvals.filter(
     (approval) => approval.sessionId === selectedSession?.sessionId
   );
@@ -1787,41 +1802,50 @@ function AgentPane({
   ];
 
   return (
-    <div className="mission-agent-thread">
-      {selectedSession ? (
-        <div className="mission-thread-meta" aria-label="Selected session details">
-          <span>{selectedSession.provider || "provider unknown"}</span>
-          <span>{selectedSession.model || "default model"}</span>
-          <span>{selectedSession.status || "status unknown"}</span>
-          {selectedSession.activeTurnId ? <span>turn {selectedSession.activeTurnId}</span> : null}
-          {selectedSession.cwd ? <span>{selectedSession.cwd}</span> : null}
-        </div>
-      ) : showDevFixture ? (
-        <div className="mission-thread-meta" aria-label="Development thread visual fixture">
-          <span>dev visual fixture</span>
-          <span>query gated</span>
-        </div>
-      ) : null}
-
-      <div className="mission-thread-feed">
-        {!selectedSession && !showDevFixture ? (
-          <div className="mission-thread-empty mission-thread-empty-quiet" aria-hidden="true" />
-        ) : threadItems.length === 0 ? (
-          <div className="mission-thread-empty">
-            {selectedSession?.activeTurnId
-              ? `Streaming turn ${selectedSession.activeTurnId}.`
-              : "No messages yet."}
+    <div
+      className={cn(
+        "mission-agent-thread",
+        showCommitsFixture && "mission-agent-thread-with-commits"
+      )}
+    >
+      <div className="mission-agent-thread-main">
+        {selectedSession ? (
+          <div className="mission-thread-meta" aria-label="Selected session details">
+            <span>{selectedSession.provider || "provider unknown"}</span>
+            <span>{selectedSession.model || "default model"}</span>
+            <span>{selectedSession.status || "status unknown"}</span>
+            {selectedSession.activeTurnId ? <span>turn {selectedSession.activeTurnId}</span> : null}
+            {selectedSession.cwd ? <span>{selectedSession.cwd}</span> : null}
           </div>
-        ) : (
-          threadItems.map((item) => <AgentThreadRow item={item} key={item.id} />)
-        )}
+        ) : showDevFixture ? (
+          <div className="mission-thread-meta" aria-label="Development thread visual fixture">
+            <span>dev visual fixture</span>
+            <span>query gated</span>
+          </div>
+        ) : null}
+
+        <div className="mission-thread-feed">
+          {!selectedSession && !showDevFixture ? (
+            <div className="mission-thread-empty mission-thread-empty-quiet" aria-hidden="true" />
+          ) : threadItems.length === 0 ? (
+            <div className="mission-thread-empty">
+              {selectedSession?.activeTurnId
+                ? `Streaming turn ${selectedSession.activeTurnId}.`
+                : "No messages yet."}
+            </div>
+          ) : (
+            threadItems.map((item) => <AgentThreadRow item={item} key={item.id} />)
+          )}
+        </div>
+
+        {focusedApproval ? (
+          <div className="mission-thread-approval">
+            <ApprovalCard approval={focusedApproval} sourceGapActive={sourceGapActive} />
+          </div>
+        ) : null}
       </div>
 
-      {focusedApproval ? (
-        <div className="mission-thread-approval">
-          <ApprovalCard approval={focusedApproval} sourceGapActive={sourceGapActive} />
-        </div>
-      ) : null}
+      {showCommitsFixture ? <RecentCommitsPanel /> : null}
     </div>
   );
 }
@@ -1913,6 +1937,64 @@ function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
   );
 }
 
+function RecentCommitsPanel() {
+  return (
+    <aside className="mission-commit-inspector" aria-label="Recent commits">
+      <div className="mission-commit-header">
+        <h2>Recent Commits</h2>
+        <button type="button" aria-label="Search commits" title="Search commits">
+          <SearchIcon aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="mission-commit-timeline">
+        {DEV_RECENT_COMMITS.map((commit) => (
+          <article className="mission-commit-row" key={commit.hash} data-commit-row>
+            <span className={cn("mission-commit-dot", commit.head && "mission-commit-dot-head")} />
+            <div className="mission-commit-content">
+              <div className="mission-commit-topline">
+                <span className="mission-commit-hash">{commit.hash}</span>
+                <button
+                  type="button"
+                  aria-label={`Copy commit ${commit.hash}`}
+                  title={`Copy ${commit.hash}`}
+                >
+                  <ClipboardListIcon aria-hidden="true" />
+                </button>
+                {commit.head ? <span className="mission-commit-head">HEAD</span> : null}
+              </div>
+              <h3>{commit.title}</h3>
+              <p>{commit.repo} · {commit.age}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="mission-change-strip">
+        <button type="button" aria-label="Local changes summary">
+          <span>{DEV_RECENT_CHANGES.length ? "Changes" : "No changes"}</span>
+          <ChevronDownIcon aria-hidden="true" />
+        </button>
+        {DEV_RECENT_CHANGES.length ? (
+          <div className="mission-change-list">
+            {DEV_RECENT_CHANGES.map((change) => (
+              <span key={change.label}>
+                {change.label}
+                {typeof change.count === "number" ? ` ${change.count}` : ""}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mission-workspace-pill">
+        <span>gooselake</span>
+        <ClipboardListIcon aria-hidden="true" />
+      </div>
+    </aside>
+  );
+}
+
 function transcriptThreadItem(
   entry: SessionTranscriptEntry,
   selectedSession?: SessionView
@@ -1984,6 +2066,14 @@ function isRosterVisualFixtureEnabled(): boolean {
   return params.has("goosewebRosterFixture") || params.has("goosewebThreadFixture");
 }
 
+function isRecentCommitsVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  const params = new URLSearchParams(window.location.search);
+  return params.has("goosewebCommitsFixture") || params.has("goosewebThreadFixture");
+}
+
 const DEV_AGENT_THREAD_ITEMS: readonly AgentThreadItem[] = [
   {
     id: "dev-thread:user",
@@ -2034,6 +2124,42 @@ const DEV_AGENT_THREAD_ITEMS: readonly AgentThreadItem[] = [
     status: "pending"
   }
 ];
+
+const DEV_RECENT_COMMITS: readonly RecentCommitItem[] = [
+  {
+    hash: "cfcf893",
+    title: "Polish agents roster rows",
+    repo: "amxv",
+    age: "now",
+    head: true
+  },
+  {
+    hash: "72d012b",
+    title: "Polish agents thread rendering",
+    repo: "amxv",
+    age: "18m"
+  },
+  {
+    hash: "e93ab4f",
+    title: "Polish agents composer controls",
+    repo: "amxv",
+    age: "36m"
+  },
+  {
+    hash: "9c28b1d",
+    title: "Polish agents roster sidebar",
+    repo: "amxv",
+    age: "47m"
+  },
+  {
+    hash: "a0f9c01",
+    title: "Remove gooseweb traffic light chrome",
+    repo: "amxv",
+    age: "60m"
+  }
+];
+
+const DEV_RECENT_CHANGES: readonly RecentChangeItem[] = [];
 
 function TeamPane({
   teams,

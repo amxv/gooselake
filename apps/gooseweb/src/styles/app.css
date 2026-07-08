@@ -1026,6 +1026,142 @@
     white-space: pre-wrap;
   }
 
+  .mission-thread-process-card {
+    background: oklch(0.115 0.002 255);
+    border-color: color-mix(in oklch, var(--border), transparent 24%);
+  }
+
+  .mission-thread-process-header {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.62rem;
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 34%);
+    color: oklch(0.62 0.004 255);
+    padding: 0.7rem 0.82rem;
+  }
+
+  .mission-thread-process-header svg {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+    color: oklch(0.58 0.004 255);
+  }
+
+  .mission-thread-process-header > span:not(.mission-thread-process-indicator) {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow-wrap: anywhere;
+    font-size: 0.96rem;
+    line-height: 1.35;
+  }
+
+  .mission-thread-process-indicator {
+    width: 0.72rem;
+    height: 0.72rem;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: oklch(0.72 0.16 166);
+    box-shadow: 0 0 0 0.22rem oklch(0.72 0.16 166 / 9%);
+  }
+
+  .mission-thread-process-card-running .mission-thread-process-indicator {
+    border: 2px solid oklch(0.72 0.15 220);
+    border-top-color: transparent;
+    background: transparent;
+    animation: mission-process-spin 0.9s linear infinite;
+    box-shadow: none;
+  }
+
+  .mission-thread-process-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 0.7rem;
+  }
+
+  .mission-thread-process-actions button,
+  .mission-thread-process-command button {
+    display: inline-grid;
+    place-items: center;
+    border: 0;
+    background: transparent;
+    color: oklch(0.56 0.004 255);
+    padding: 0;
+  }
+
+  .mission-thread-process-actions button {
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 650;
+  }
+
+  .mission-thread-process-actions button span {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92rem;
+    font-weight: 760;
+  }
+
+  .mission-thread-process-command {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 0.72rem;
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 38%);
+    padding: 0.75rem 0.82rem;
+  }
+
+  .mission-thread-process-command pre {
+    min-width: 0;
+    flex: 1 1 auto;
+    margin: 0;
+    color: oklch(0.82 0.004 255);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .mission-thread-process-command pre span {
+    color: oklch(0.5 0.004 255);
+  }
+
+  .mission-thread-process-command button svg {
+    width: 1.05rem;
+    height: 1.05rem;
+  }
+
+  .mission-thread-process-meta {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 0.1rem 0;
+    padding: 0.52rem 0.82rem 0.62rem;
+  }
+
+  .mission-thread-process-meta span {
+    min-width: 0;
+    max-width: 100%;
+    color: oklch(0.52 0.004 255);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .mission-thread-process-meta span:not(:last-child)::after {
+    content: "·";
+    margin: 0 0.45rem;
+    color: oklch(0.36 0.004 255);
+  }
+
+  @keyframes mission-process-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
   .mission-thread-tool-rich {
     background:
       linear-gradient(180deg, oklch(0.145 0.002 255), oklch(0.118 0.002 255));

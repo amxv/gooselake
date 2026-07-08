@@ -180,6 +180,18 @@ type AgentThreadItem = {
   readonly status?: string;
   readonly output?: string;
   readonly toolDiff?: AgentToolDiff;
+  readonly processCard?: AgentProcessCard;
+};
+
+type AgentProcessCard = {
+  readonly state: "running" | "completed";
+  readonly title: string;
+  readonly command: string;
+  readonly pid?: number;
+  readonly processId?: string;
+  readonly cwd?: string;
+  readonly duration?: string;
+  readonly injectedAt?: string;
 };
 
 type AgentToolDiffLine = {
@@ -1887,6 +1899,9 @@ function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
     if (item.toolDiff) {
       return <AgentToolDiffCard item={item} diff={item.toolDiff} />;
     }
+    if (item.processCard) {
+      return <AgentProcessCardRow item={item} process={item.processCard} />;
+    }
 
     return (
       <article className="mission-thread-row mission-thread-tool" data-thread-row="tool">
@@ -1953,6 +1968,76 @@ function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
         <span>{item.timestampUnixMs ? formatTime(item.timestampUnixMs) : item.meta}</span>
       </div>
       <div className="mission-thread-row-body">{item.body}</div>
+    </article>
+  );
+}
+
+function AgentProcessCardRow({
+  item,
+  process
+}: {
+  readonly item: AgentThreadItem;
+  readonly process: AgentProcessCard;
+}) {
+  const metadata = [
+    process.injectedAt ? `injected ${process.injectedAt}` : null,
+    typeof process.pid === "number" ? `PID ${process.pid}` : null,
+    process.processId,
+    process.duration ? `duration ${process.duration}` : null,
+    process.cwd
+  ].filter((value): value is string => Boolean(value));
+
+  return (
+    <article
+      className={cn(
+        "mission-thread-row mission-thread-tool mission-thread-process-card",
+        process.state === "running" && "mission-thread-process-card-running"
+      )}
+      data-process-card={process.state}
+      data-thread-row="tool"
+    >
+      <div className="mission-thread-process-header">
+        <span
+          className="mission-thread-process-indicator"
+          aria-label={
+            process.state === "running"
+              ? "Background process is running"
+              : "Background process completed"
+          }
+        />
+        <TerminalIcon aria-hidden="true" />
+        <span>{process.title}</span>
+        <div className="mission-thread-process-actions">
+          {process.state === "running" ? (
+            <button type="button" aria-label="View process logs" title="View logs">
+              View logs
+            </button>
+          ) : null}
+          <button type="button" aria-label="Show process JSON" title="Show process JSON">
+            <span aria-hidden="true">{"{}"}</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="mission-thread-process-command">
+        <pre>
+          <span>$ </span>
+          {process.command}
+        </pre>
+        <button type="button" aria-label="Copy process command" title="Copy command">
+          <ClipboardListIcon aria-hidden="true" />
+        </button>
+      </div>
+
+      {metadata.length ? (
+        <div className="mission-thread-process-meta">
+          {metadata.map((value) => (
+            <span key={`${item.id}:${value}`}>{value}</span>
+          ))}
+        </div>
+      ) : null}
+
+      {item.body ? <div className="mission-thread-tool-output">{item.body}</div> : null}
     </article>
   );
 }
@@ -2218,6 +2303,39 @@ const DEV_AGENT_THREAD_ITEMS: readonly AgentThreadItem[] = [
         { newLine: 201, kind: "add", text: "fi" },
         { oldLine: 197, newLine: 202, kind: "context", text: "sleep \"${delay}\"" }
       ]
+    }
+  },
+  {
+    id: "dev-thread:process-running",
+    kind: "tool",
+    title: "Running background process",
+    body: "",
+    meta: "proc_68",
+    status: "running",
+    processCard: {
+      state: "running",
+      title: "Running background process",
+      command: "bun run --cwd apps/gooseweb build",
+      pid: 43221,
+      processId: "proc_68",
+      cwd: "/Users/ashray/code/amxv/gooselake"
+    }
+  },
+  {
+    id: "dev-thread:process-result",
+    kind: "tool",
+    title: "Background process result",
+    body: "",
+    meta: "proc_68",
+    status: "completed",
+    processCard: {
+      state: "completed",
+      title: "Background process result",
+      command: "bun run --cwd apps/gooseweb build",
+      pid: 43221,
+      processId: "proc_68",
+      duration: "43s",
+      injectedAt: "Jul 8 at 11:33:12 PM"
     }
   },
   {

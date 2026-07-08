@@ -11,6 +11,7 @@ import {
   InfoIcon,
   Maximize2Icon,
   Minimize2Icon,
+  MessageSquareIcon,
   InboxIcon,
   LayoutDashboardIcon,
   ListChecksIcon,
@@ -167,6 +168,19 @@ type TeamFeedItem = {
   readonly deliveryId?: string;
   readonly cancelMessageId?: string;
 };
+
+type AgentThreadItem = {
+  readonly id: string;
+  readonly kind: "human" | "assistant" | "thinking" | "tool" | "team" | "approval";
+  readonly title: string;
+  readonly body: string;
+  readonly meta?: string;
+  readonly timestampUnixMs?: number;
+  readonly status?: string;
+  readonly output?: string;
+};
+
+type SessionTranscriptEntry = SessionDetailState["transcript"][number];
 
 const NAV_ITEMS: ReadonlyArray<{
   readonly id: WorkspaceView;
@@ -1113,6 +1127,7 @@ function MissionViewBody({
           selectedSession ? sessionDetails[selectedSession.sessionId] : undefined
         }
         selectedApproval={selectedApproval}
+        teamWorkspaces={teamWorkspaces}
         sourceGapActive={sourceGapActive}
       />
     );
@@ -1711,6 +1726,7 @@ function AgentPane({
   selectedSession,
   sessionDetail,
   selectedApproval,
+  teamWorkspaces,
   sourceGapActive
 }: {
   readonly approvals: readonly ApprovalView[];
@@ -1718,8 +1734,10 @@ function AgentPane({
   readonly selectedSession?: SessionView;
   readonly sessionDetail?: SessionDetailState;
   readonly selectedApproval?: ApprovalView;
+  readonly teamWorkspaces: Readonly<Record<string, TeamWorkspaceState>>;
   readonly sourceGapActive: boolean;
 }) {
+  const showDevFixture = isThreadVisualFixtureEnabled();
   const sessionApprovals = approvals.filter(
     (approval) => approval.sessionId === selectedSession?.sessionId
   );
@@ -1732,34 +1750,24 @@ function AgentPane({
       ? selectedApproval
       : sessionApprovals[0];
   const transcriptItems = sessionDetail?.transcript ?? [];
-  const threadItems = [
-    ...transcriptItems.map((entry) => ({
-      id: entry.id,
-      kind: entry.role === "user" ? "human" : "agent",
-      title: entry.role === "user" ? "Human" : "Agent",
-      body: entry.text,
-      timestampUnixMs: entry.createdAtUnixMs,
-      meta: entry.turnId ? `turn ${entry.turnId}` : selectedSession?.model || ""
-    })),
-    ...sessionApprovals.map((approval) => ({
-      id: approval.approvalId,
-      kind: "approval",
-      title: approval.summary || "Approval requested",
-      body: `${approval.status} / ${approval.risk || "unknown risk"}`,
-      timestampUnixMs: undefined,
-      meta: approval.turnId || approval.approvalId
-    })),
-    ...relatedProcesses.map((process) => ({
-      id: process.processId,
-      kind: "tool",
-      title: process.command || process.processId,
-      body:
-        process.exitCode !== 0
-          ? `${process.status} / exit ${process.exitCode}`
-          : process.status,
-      timestampUnixMs: undefined,
-      meta: process.processId
-    }))
+  const relatedTeamMessages = Object.values(teamWorkspaces)
+    .flatMap((workspace) => workspace.messages)
+    .filter((message) => {
+      if (!selectedSession?.sessionId) {
+        return false;
+      }
+      return (
+        message.senderAgentId === selectedSession.sessionId ||
+        message.recipientAgentIds.includes(selectedSession.sessionId)
+      );
+    });
+  const threadItems: readonly AgentThreadItem[] = showDevFixture && !selectedSession
+    ? DEV_AGENT_THREAD_ITEMS
+    : [
+    ...transcriptItems.map((entry) => transcriptThreadItem(entry, selectedSession)),
+    ...sessionApprovals.map(approvalThreadItem),
+    ...relatedTeamMessages.map(teamMessageThreadItem),
+    ...relatedProcesses.map(processThreadItem)
   ];
 
   return (
@@ -1772,33 +1780,24 @@ function AgentPane({
           {selectedSession.activeTurnId ? <span>turn {selectedSession.activeTurnId}</span> : null}
           {selectedSession.cwd ? <span>{selectedSession.cwd}</span> : null}
         </div>
+      ) : showDevFixture ? (
+        <div className="mission-thread-meta" aria-label="Development thread visual fixture">
+          <span>dev visual fixture</span>
+          <span>query gated</span>
+        </div>
       ) : null}
 
       <div className="mission-thread-feed">
-        {!selectedSession ? (
+        {!selectedSession && !showDevFixture ? (
           <div className="mission-thread-empty mission-thread-empty-quiet" aria-hidden="true" />
         ) : threadItems.length === 0 ? (
           <div className="mission-thread-empty">
-            {selectedSession.activeTurnId
+            {selectedSession?.activeTurnId
               ? `Streaming turn ${selectedSession.activeTurnId}.`
               : "No messages yet."}
           </div>
         ) : (
-          threadItems.map((item) => (
-            <article
-              className={cn(
-                "mission-thread-row",
-                item.kind === "human" && "mission-thread-row-human"
-              )}
-              key={item.id}
-            >
-              <div className="mission-thread-row-label">
-                <span>{item.title}</span>
-                <span>{item.timestampUnixMs ? formatTime(item.timestampUnixMs) : item.meta}</span>
-              </div>
-              <div className="mission-thread-row-body">{item.body}</div>
-            </article>
-          ))
+          threadItems.map((item) => <AgentThreadRow item={item} key={item.id} />)
         )}
       </div>
 
@@ -1810,6 +1809,207 @@ function AgentPane({
     </div>
   );
 }
+
+function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
+  if (item.kind === "thinking") {
+    return (
+      <article className="mission-thread-row mission-thread-thinking">
+        <button
+          aria-expanded="true"
+          className="mission-thread-thinking-toggle"
+          type="button"
+        >
+          <span>Thinking</span>
+          <ChevronDownIcon aria-hidden="true" />
+        </button>
+        <div className="mission-thread-thinking-body">{item.body}</div>
+      </article>
+    );
+  }
+
+  if (item.kind === "tool") {
+    return (
+      <article className="mission-thread-row mission-thread-tool" data-thread-row="tool">
+        <div className="mission-thread-tool-header">
+          <TerminalIcon aria-hidden="true" />
+          <div className="min-w-0">
+            <div className="mission-thread-tool-title">{item.title}</div>
+            <div className="mission-thread-tool-meta">
+              {item.meta || item.status || "tool"}
+            </div>
+          </div>
+          {item.status ? <span className="mission-thread-tool-status">{item.status}</span> : null}
+        </div>
+        {item.output ? (
+          <pre className="mission-thread-tool-code">{item.output}</pre>
+        ) : null}
+        <div className="mission-thread-tool-output">{item.body}</div>
+      </article>
+    );
+  }
+
+  if (item.kind === "team") {
+    return (
+      <article className="mission-thread-row mission-thread-team" data-thread-row="team">
+        <div className="mission-thread-team-header">
+          <MessageSquareIcon aria-hidden="true" />
+          <span>{item.title}</span>
+          <span>{item.timestampUnixMs ? formatTime(item.timestampUnixMs) : item.status}</span>
+        </div>
+        <div className="mission-thread-team-body">
+          <p>{item.body || "(empty message)"}</p>
+          {item.meta ? <span>{item.meta}</span> : null}
+        </div>
+      </article>
+    );
+  }
+
+  if (item.kind === "approval") {
+    return (
+      <article className="mission-thread-row mission-thread-tool" data-thread-row="approval">
+        <div className="mission-thread-tool-header">
+          <ShieldAlertIcon aria-hidden="true" />
+          <div className="min-w-0">
+            <div className="mission-thread-tool-title">{item.title}</div>
+            <div className="mission-thread-tool-meta">{item.meta || "approval"}</div>
+          </div>
+          {item.status ? <span className="mission-thread-tool-status">{item.status}</span> : null}
+        </div>
+        <div className="mission-thread-tool-output">{item.body}</div>
+      </article>
+    );
+  }
+
+  return (
+    <article
+      className={cn(
+        "mission-thread-row",
+        item.kind === "human" ? "mission-thread-row-human" : "mission-thread-row-assistant"
+      )}
+      data-thread-row={item.kind}
+    >
+      <div className="mission-thread-row-label">
+        <span>{item.title}</span>
+        <span>{item.timestampUnixMs ? formatTime(item.timestampUnixMs) : item.meta}</span>
+      </div>
+      <div className="mission-thread-row-body">{item.body}</div>
+    </article>
+  );
+}
+
+function transcriptThreadItem(
+  entry: SessionTranscriptEntry,
+  selectedSession?: SessionView
+): AgentThreadItem {
+  const isHuman = entry.role === "user";
+  return {
+    id: entry.id,
+    kind: isHuman ? "human" : "assistant",
+    title: isHuman ? "Human" : "Agent",
+    body: entry.text,
+    timestampUnixMs: entry.createdAtUnixMs,
+    meta: entry.turnId ? `turn ${entry.turnId}` : selectedSession?.model || ""
+  };
+}
+
+function approvalThreadItem(approval: ApprovalView): AgentThreadItem {
+  return {
+    id: approval.approvalId,
+    kind: "approval",
+    title: approval.summary || "Approval requested",
+    body: `${approval.status} / ${approval.risk || "unknown risk"}`,
+    meta: approval.turnId || approval.approvalId,
+    status: approval.status
+  };
+}
+
+function teamMessageThreadItem(
+  message: TeamWorkspaceState["messages"][number]
+): AgentThreadItem {
+  const scope = teamMessageScope(message);
+  return {
+    id: message.id,
+    kind: "team",
+    title: scope === "broadcast" ? "Team broadcast" : "Direct message",
+    body: message.text,
+    timestampUnixMs: message.createdAtUnixMs,
+    meta: message.senderAgentId ? `from ${message.senderAgentId}` : message.teamId,
+    status: scope
+  };
+}
+
+function processThreadItem(process: ProcessView): AgentThreadItem {
+  return {
+    id: process.processId,
+    kind: "tool",
+    title: process.command ? "Process" : "Tool activity",
+    body:
+      process.exitCode !== 0
+        ? `${process.status} / exit ${process.exitCode}`
+        : process.status,
+    meta: process.processId,
+    status: process.status,
+    output: process.command || ""
+  };
+}
+
+function isThreadVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebThreadFixture");
+}
+
+const DEV_AGENT_THREAD_ITEMS: readonly AgentThreadItem[] = [
+  {
+    id: "dev-thread:user",
+    kind: "human",
+    title: "Human",
+    body: "Please inspect the local Gooseweb Agents surface and report the tightest UI issue.",
+    meta: "dev exercise"
+  },
+  {
+    id: "dev-thread:thinking",
+    kind: "thinking",
+    title: "Thinking",
+    body:
+      "Checking the empty-session baseline first, then comparing the composer and thread rows against the desktop reference."
+  },
+  {
+    id: "dev-thread:assistant",
+    kind: "assistant",
+    title: "Agent",
+    body:
+      "The composer now stays anchored at narrow widths. I am moving on to the central thread so message, tool, and team events are readable without adding a dashboard panel.",
+    meta: "gpt-5"
+  },
+  {
+    id: "dev-thread:tool",
+    kind: "tool",
+    title: "Read app.css",
+    body: "20 matches found",
+    meta: "tool result",
+    status: "completed",
+    output: "rg \"mission-agent-thread|mission-composer\" apps/gooseweb/src/styles/app.css"
+  },
+  {
+    id: "dev-thread:team",
+    kind: "team",
+    title: "Direct message",
+    body:
+      "Accepted the responsive composer pass. Continue with the thread renderer and keep the commit focused.",
+    meta: "from platinum_pearl",
+    status: "direct"
+  },
+  {
+    id: "dev-thread:approval",
+    kind: "approval",
+    title: "Approval requested",
+    body: "pending / medium risk",
+    meta: "turn dev-turn",
+    status: "pending"
+  }
+];
 
 function TeamPane({
   teams,

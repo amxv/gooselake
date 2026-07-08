@@ -2881,6 +2881,11 @@
       gap: 1.25rem;
     }
 
+    .mission-commit-inspector-changes-focus {
+      margin-bottom: clamp(10rem, 24svh, 14rem);
+      scroll-margin-bottom: clamp(10rem, 24svh, 14rem);
+    }
+
     .mission-commit-timeline {
       gap: 0.8rem;
     }

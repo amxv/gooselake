@@ -416,6 +416,7 @@ function Index() {
           teams={teams}
           approvals={approvals}
           processes={processes}
+          sources={sources}
           selectedRowId={selectedRowId}
           selectedSessionId={selectedSessionId}
           selectedTeamId={selectedTeamId}
@@ -575,6 +576,7 @@ function MissionRosterRail({
   sessions,
   teams,
   processes,
+  sources,
   selectedRowId,
   selectedSessionId,
   selectedTeamId,
@@ -595,6 +597,7 @@ function MissionRosterRail({
   readonly sessions: readonly SessionView[];
   readonly teams: readonly TeamView[];
   readonly processes: readonly ProcessView[];
+  readonly sources: readonly SourceHealthView[];
   readonly selectedRowId: string;
   readonly selectedSessionId: string;
   readonly selectedTeamId: string;
@@ -610,12 +613,13 @@ function MissionRosterRail({
   readonly onSelectProcess: (id: string) => void;
   readonly onAddAgentToTeam: () => void;
 }) {
-  const items = getAgentRosterItems({
+  const groups = getAgentRosterGroups({
     rows,
     sessions,
     teams,
     approvals,
     processes,
+    sources,
     selectedRowId,
     selectedSessionId,
     selectedTeamId,
@@ -627,58 +631,64 @@ function MissionRosterRail({
     onSelectApproval,
     onSelectProcess
   });
-  const visibleItems = items.slice(0, 12);
-
   return (
     <aside className="mission-roster">
       <div className="mission-roster-scroll">
         <div className="mission-roster-summary">
-          <div>
-            <span className="mission-section-kicker">Active navigation</span>
-            <h2>Agents</h2>
-          </div>
+          <h2>Agents</h2>
           <StatusBadge status={sourceGapActive ? "stale" : "live"} />
         </div>
 
-        <div className="mission-rail-section">
-          <div className="mission-section-label">
-            <span>Sessions</span>
-            <Badge variant={sourceGapActive ? "destructive" : "outline"}>
-              {items.length}
-            </Badge>
-          </div>
-          <div className="mission-roster-list">
-            {visibleItems.length === 0 ? (
-              null
-            ) : (
-              visibleItems.map((item) => (
-                <button
-                  className={cn(
-                    "mission-roster-card",
-                    item.selected && "mission-roster-card-active"
-                  )}
-                  key={item.id}
-                  type="button"
-                  onClick={() => {
-                    item.onClick();
-                    onViewChange("agents");
-                  }}
-                >
-                  <span className="mission-roster-card-main">
-                    <span className="truncate text-[0.95rem] font-medium">
-                      {item.title}
-                    </span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {item.meta}
-                    </span>
-                  </span>
-                  <span className="mission-roster-card-side">
-                    <StatusBadge status={item.status} />
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
+        <div className="mission-roster-groups">
+          {groups.map((group) => (
+            <section className="mission-roster-group" key={group.id}>
+              <div className="mission-roster-group-heading">
+                <span className="mission-roster-group-name">{group.label}</span>
+                <span className="mission-roster-group-count">{group.count}</span>
+              </div>
+              {group.items.length ? (
+                <div className="mission-roster-list">
+                  {group.items.map((item) => (
+                    <button
+                      className={cn(
+                        "mission-roster-card",
+                        item.selected && "mission-roster-card-active"
+                      )}
+                      key={item.id}
+                      title={item.title}
+                      type="button"
+                      onClick={() => {
+                        item.onClick();
+                        onViewChange("agents");
+                      }}
+                    >
+                      <span className="mission-roster-status" data-status={item.status}>
+                        {item.active ? (
+                          <ActivityIcon aria-hidden="true" />
+                        ) : (
+                          <span aria-hidden="true" />
+                        )}
+                      </span>
+                      <span className="mission-roster-card-main">
+                        <span className="mission-roster-card-title">
+                          {item.title}
+                        </span>
+                        <span className="mission-roster-card-meta">
+                          {item.meta}
+                        </span>
+                      </span>
+                      <span className="mission-roster-card-side">
+                        <span>{item.aside}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          ))}
+          {groups.length === 0 ? (
+            <div className="mission-roster-quiet" aria-hidden="true" />
+          ) : null}
         </div>
       </div>
 
@@ -704,6 +714,24 @@ function MissionRosterRail({
     </aside>
   );
 }
+
+type AgentRosterItem = {
+  readonly id: string;
+  readonly title: string;
+  readonly meta: string;
+  readonly aside: string;
+  readonly status: string;
+  readonly active: boolean;
+  readonly selected: boolean;
+  readonly onClick: () => void;
+};
+
+type AgentRosterGroup = {
+  readonly id: string;
+  readonly label: string;
+  readonly count: number;
+  readonly items: readonly AgentRosterItem[];
+};
 
 function MissionWorkspace({
   state,
@@ -3252,12 +3280,13 @@ function stringCommandValue(value: Record<string, unknown>, key: string): string
   return typeof next === "string" ? next : "";
 }
 
-function getAgentRosterItems(input: {
+function getAgentRosterGroups(input: {
   readonly rows: readonly FleetRowView[];
   readonly sessions: readonly SessionView[];
   readonly teams: readonly TeamView[];
   readonly approvals: readonly ApprovalView[];
   readonly processes: readonly ProcessView[];
+  readonly sources: readonly SourceHealthView[];
   readonly selectedRowId: string;
   readonly selectedSessionId: string;
   readonly selectedTeamId: string;
@@ -3268,7 +3297,7 @@ function getAgentRosterItems(input: {
   readonly onSelectTeam: (id: string) => void;
   readonly onSelectApproval: (id: string) => void;
   readonly onSelectProcess: (id: string) => void;
-}) {
+}): readonly AgentRosterGroup[] {
   const rowsBySessionId = new Map<string, FleetRowView>();
   for (const row of input.rows) {
     if (row.sessionId && !rowsBySessionId.has(row.sessionId)) {
@@ -3276,50 +3305,208 @@ function getAgentRosterItems(input: {
     }
   }
 
-  if (input.sessions.length > 0) {
-    return input.sessions.map((session) => {
-      const row = rowsBySessionId.get(session.sessionId);
-      const pendingForSession = input.approvals.filter(
-        (approval) =>
-          approval.sessionId === session.sessionId && approval.status === "pending"
-      ).length;
-      return {
-        id: session.sessionId,
-        title: row?.title || session.sessionId,
-        meta: [
-          session.provider || row?.provider || "provider",
-          session.model || row?.model || "default",
-          row?.teamId ? `team ${row.teamId}` : undefined,
-          pendingForSession ? `${pendingForSession} approval` : undefined
-        ]
-          .filter(Boolean)
-          .join(" / "),
-        status: session.status || row?.status || "unknown",
-        selected:
-          session.sessionId === input.selectedSessionId ||
-          Boolean(row?.rowId && row.rowId === input.selectedRowId),
-        onClick: () => {
-          input.onSelectSession(session.sessionId);
-          if (row?.rowId) {
-            input.onSelectRow(row.rowId);
-          }
-        }
-      };
-    });
+  const teamBySessionId = new Map<string, TeamView>();
+  const teamMemberBySessionId = new Map<string, TeamMemberView>();
+  for (const team of input.teams) {
+    for (const member of team.members) {
+      if (member.sessionId) {
+        teamBySessionId.set(member.sessionId, team);
+        teamMemberBySessionId.set(member.sessionId, member);
+      }
+    }
   }
 
-  return input.rows.map((row) => ({
-    id: row.rowId,
-    title: row.title || row.sessionId || row.rowId,
+  const sessionItems = input.sessions.map((session) =>
+    makeSessionRosterItem({
+      session,
+      row: rowsBySessionId.get(session.sessionId),
+      team: teamBySessionId.get(session.sessionId),
+      member: teamMemberBySessionId.get(session.sessionId),
+      approvals: input.approvals,
+      processes: input.processes,
+      selectedRowId: input.selectedRowId,
+      selectedSessionId: input.selectedSessionId,
+      selectedTeamId: input.selectedTeamId,
+      onSelectRow: input.onSelectRow,
+      onSelectSession: input.onSelectSession,
+      onSelectTeam: input.onSelectTeam,
+      onSelectApproval: input.onSelectApproval,
+      onSelectProcess: input.onSelectProcess
+    })
+  );
+
+  const rowItems = input.sessions.length
+    ? []
+    : input.rows.map((row) =>
+        makeRowRosterItem({
+          row,
+          approvals: input.approvals,
+          processes: input.processes,
+          selectedRowId: input.selectedRowId,
+          onSelectRow: input.onSelectRow,
+          onSelectSession: input.onSelectSession,
+          onSelectTeam: input.onSelectTeam,
+          onSelectApproval: input.onSelectApproval,
+          onSelectProcess: input.onSelectProcess
+        })
+      );
+
+  const items = [...sessionItems, ...rowItems];
+  const itemsBySourceId = new Map<string, AgentRosterItem[]>();
+  for (const item of items) {
+    const sourceId = item.id.split(":", 1)[0] || "source";
+    const bucket = itemsBySourceId.get(sourceId) ?? [];
+    bucket.push(item);
+    itemsBySourceId.set(sourceId, bucket);
+  }
+
+  const teamGroups = input.teams
+    .map((team) => {
+      const teamItems = items.filter((item) => item.id.includes(`:team:${team.teamId}:`));
+      return {
+        id: `team:${team.teamId}`,
+        label: team.name || team.teamId,
+        count: team.members.length,
+        items: teamItems
+      };
+    })
+    .filter((group) => group.count > 0 || group.items.length > 0);
+
+  const groupedSessionIds = new Set(
+    teamGroups.flatMap((group) => group.items.map((item) => item.id))
+  );
+
+  const sourceGroups = input.sources.map((source) => {
+    const sourceItems = (itemsBySourceId.get(source.sourceId) ?? []).filter(
+      (item) => !groupedSessionIds.has(item.id)
+    );
+    const sourceName = source.displayName || source.sourceId || "local";
+    return {
+      id: `source:${source.sourceId}`,
+      label: sourceName,
+      count: source.activeSessionCount || sourceItems.length,
+      items: sourceItems.slice(0, 10)
+    };
+  });
+
+  const orphanItems = items.filter(
+    (item) =>
+      !groupedSessionIds.has(item.id) &&
+      !input.sources.some((source) => item.id.startsWith(`${source.sourceId}:`))
+  );
+  const orphanGroups =
+    orphanItems.length > 0
+      ? [
+          {
+            id: "source:runtime",
+            label: "runtime",
+            count: orphanItems.length,
+            items: orphanItems.slice(0, 10)
+          }
+        ]
+      : [];
+
+  return [...teamGroups, ...sourceGroups, ...orphanGroups];
+}
+
+function makeSessionRosterItem(input: {
+  readonly session: SessionView;
+  readonly row?: FleetRowView;
+  readonly team?: TeamView;
+  readonly member?: TeamMemberView;
+  readonly approvals: readonly ApprovalView[];
+  readonly processes: readonly ProcessView[];
+  readonly selectedRowId: string;
+  readonly selectedSessionId: string;
+  readonly selectedTeamId: string;
+  readonly onSelectRow: (id: string) => void;
+  readonly onSelectSession: (id: string) => void;
+  readonly onSelectTeam: (id: string) => void;
+  readonly onSelectApproval: (id: string) => void;
+  readonly onSelectProcess: (id: string) => void;
+}): AgentRosterItem {
+  const { session, row, team, member } = input;
+  const pendingForSession = input.approvals.filter(
+    (approval) =>
+      approval.sessionId === session.sessionId && approval.status === "pending"
+  ).length;
+  const activeProcess = input.processes.find(
+    (process) => process.sourceId === session.sourceId && process.status === "running"
+  );
+  const activity = toNumber(row?.latestActivityUnixMs ?? 0n);
+  const title = member?.title || row?.title || compactSessionId(session.sessionId);
+  const meta = [
+    team ? "Lead" : undefined,
+    session.provider || row?.provider || "runtime",
+    session.model || row?.model || "default",
+    session.cwd || session.worktreePath ? basename(session.cwd || session.worktreePath) : undefined,
+    pendingForSession ? `${pendingForSession} approval` : undefined
+  ]
+    .filter(Boolean)
+    .join(" / ");
+
+  return {
+    id: `${session.sourceId}:team:${team?.teamId ?? ""}:session:${session.sessionId}`,
+    title,
+    meta,
+    aside: activity ? ageFrom(activity) : session.activeTurnId ? "now" : session.status || "",
+    status: session.status || row?.status || "unknown",
+    active: Boolean(session.activeTurnId || activeProcess),
+    selected:
+      session.sessionId === input.selectedSessionId ||
+      team?.teamId === input.selectedTeamId ||
+      Boolean(row?.rowId && row.rowId === input.selectedRowId),
+    onClick: () => {
+      input.onSelectSession(session.sessionId);
+      if (row?.rowId) {
+        input.onSelectRow(row.rowId);
+      }
+      if (team?.teamId) {
+        input.onSelectTeam(team.teamId);
+      }
+      const pendingApproval = input.approvals.find(
+        (approval) =>
+          approval.sessionId === session.sessionId && approval.status === "pending"
+      );
+      if (pendingApproval) {
+        input.onSelectApproval(pendingApproval.approvalId);
+      }
+      if (activeProcess) {
+        input.onSelectProcess(activeProcess.processId);
+      }
+    }
+  };
+}
+
+function makeRowRosterItem(input: {
+  readonly row: FleetRowView;
+  readonly approvals: readonly ApprovalView[];
+  readonly processes: readonly ProcessView[];
+  readonly selectedRowId: string;
+  readonly onSelectRow: (id: string) => void;
+  readonly onSelectSession: (id: string) => void;
+  readonly onSelectTeam: (id: string) => void;
+  readonly onSelectApproval: (id: string) => void;
+  readonly onSelectProcess: (id: string) => void;
+}): AgentRosterItem {
+  const { row } = input;
+  const activeProcess = input.processes.find(
+    (process) => process.sourceId === row.sourceId && process.status === "running"
+  );
+  return {
+    id: `${row.sourceId}:team:${row.teamId}:row:${row.rowId}`,
+    title: row.title || compactSessionId(row.sessionId) || row.rowId,
     meta: [
-      row.provider || "provider",
+      row.provider || "runtime",
       row.model || "default",
-      row.teamId ? `team ${row.teamId}` : undefined,
+      row.worktreePath ? basename(row.worktreePath) : undefined,
       row.pendingApprovalCount ? `${row.pendingApprovalCount} approval` : undefined
     ]
       .filter(Boolean)
       .join(" / "),
+    aside: ageFrom(toNumber(row.latestActivityUnixMs)),
     status: row.status || "unknown",
+    active: Boolean(activeProcess || row.status === "running"),
     selected: row.rowId === input.selectedRowId,
     onClick: () => {
       input.onSelectRow(row.rowId);
@@ -3336,14 +3523,27 @@ function getAgentRosterItems(input: {
       if (pendingApproval) {
         input.onSelectApproval(pendingApproval.approvalId);
       }
-      const rowProcess = input.processes.find(
-        (process) => process.sourceId === row.sourceId && process.status === "running"
-      );
-      if (rowProcess) {
-        input.onSelectProcess(rowProcess.processId);
+      if (activeProcess) {
+        input.onSelectProcess(activeProcess.processId);
       }
     }
-  }));
+  };
+}
+
+function compactSessionId(sessionId: string): string {
+  if (!sessionId) {
+    return "";
+  }
+  const parts = sessionId.split(/[_:.-]/).filter(Boolean);
+  return parts.slice(-2).join(" ") || sessionId;
+}
+
+function basename(path: string): string {
+  const normalized = path.trim().replace(/\/+$/, "");
+  if (!normalized) {
+    return "";
+  }
+  return normalized.split("/").filter(Boolean).pop() ?? normalized;
 }
 
 function buildLedgerEvents(input: {

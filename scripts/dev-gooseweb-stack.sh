@@ -18,6 +18,7 @@ RUNTIME_TOKEN_FILE="${RUNTIME_TOKEN_FILE:-${RUNTIME_DATA_DIR}/auth/api-token}"
 RUNTIME_TOKEN="${RUNTIME_TOKEN:-dev-runtime-token}"
 GOOSETOWER_TOKEN="${GOOSETOWER_TOKEN:-dev-goosetower-token}"
 GOOSETOWER_TICKET_KEY="${GOOSETOWER_TICKET_KEY:-dev-ticket-signing-key}"
+GOOSEWEB_DEV_AUTO_STOP_PORTS="${GOOSEWEB_DEV_AUTO_STOP_PORTS:-true}"
 
 RUNTIME_URL="http://${RUNTIME_HOST}:${RUNTIME_PORT}"
 GOOSETOWER_HTTP_URL="http://${GOOSETOWER_HOST}:${GOOSETOWER_PORT}"
@@ -173,9 +174,72 @@ endpoints_enabled = true
 EOF
 }
 
-require_free_port() {
+wait_for_free_port() {
   local port="$1"
   local label="$2"
+  local attempts="${3:-40}"
+  local delay="${4:-0.25}"
+
+  for _ in $(seq 1 "${attempts}"); do
+    if ! lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "${delay}"
+  done
+
+  return 1
+}
+
+listener_pids_for_port() {
+  local port="$1"
+  lsof -nP -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null | sort -u
+}
+
+stop_listeners_on_port() {
+  local port="$1"
+  local label="$2"
+  local listeners=()
+  local pid
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] && listeners+=("${pid}")
+  done < <(listener_pids_for_port "${port}")
+
+  if ((${#listeners[@]} == 0)); then
+    return 0
+  fi
+
+  echo "Stopping existing ${label} listener(s) on port ${port}: ${listeners[*]}"
+  for pid in "${listeners[@]}"; do
+    kill "${pid}" 2>/dev/null || true
+  done
+
+  if wait_for_free_port "${port}" "${label}" 20 0.25; then
+    return 0
+  fi
+
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    echo "Force-stopping ${label} listener on port ${port}: ${pid}"
+    kill -9 "${pid}" 2>/dev/null || true
+  done < <(listener_pids_for_port "${port}")
+
+  if ! wait_for_free_port "${port}" "${label}"; then
+    echo "Timed out waiting for ${label} port ${port} to become free." >&2
+    lsof -nP -iTCP:"${port}" -sTCP:LISTEN >&2 || true
+    exit 1
+  fi
+}
+
+ensure_free_port() {
+  local port="$1"
+  local label="$2"
+
+  if [[ "${GOOSEWEB_DEV_AUTO_STOP_PORTS}" == "true" ]]; then
+    stop_listeners_on_port "${port}" "${label}"
+    return 0
+  fi
+
   if lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "Port ${port} is already in use; stop the existing ${label} process or override its port." >&2
     lsof -nP -iTCP:"${port}" -sTCP:LISTEN >&2 || true
@@ -220,9 +284,9 @@ wait_for_stack() {
 
 write_configs
 
-require_free_port "${RUNTIME_PORT}" "runtime"
-require_free_port "${GOOSETOWER_PORT}" "Goosetower"
-require_free_port "${GOOSEWEB_PORT}" "Gooseweb"
+ensure_free_port "${RUNTIME_PORT}" "runtime"
+ensure_free_port "${GOOSETOWER_PORT}" "Goosetower"
+ensure_free_port "${GOOSEWEB_PORT}" "Gooseweb"
 
 echo "Starting Gooseweb live dev stack"
 echo "  runtime:    ${RUNTIME_URL}"

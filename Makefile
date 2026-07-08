@@ -29,6 +29,7 @@ help: ## Show available targets
 	@echo "  DEV_RUNTIME_PORT=<port> (default: 18080)"
 	@echo "  DEV_GOOSETOWER_PORT=<port> (default: 18090)"
 	@echo "  DEV_GOOSEWEB_PORT=<port> (default: 13001)"
+	@echo "  GOOSEWEB_DEV_AUTO_STOP_PORTS=<true|false> (default: true)"
 	@echo "  RUNTIME_BIN=<path>   (default: $(HOME)/.local/share/gg-runtime/current/bin/gg-runtime-server)"
 	@echo "  GOOSETOWER_BIN=<path> (default: $(HOME)/.local/share/gg-runtime/current/bin/gg-goosetower)"
 	@echo ""

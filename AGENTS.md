@@ -29,6 +29,12 @@ Default local endpoints:
 
 `make dev` runs `scripts/dev-gooseweb-stack.sh`, writes generated local configs under `tmp/gooseweb-dev/`, starts all three processes, waits for HTTP readiness, and stops all child processes on `Ctrl-C`.
 
+Before starting, `make dev` automatically stops existing listeners on the requested runtime, Goosetower, and Gooseweb ports. This lets agents restart a crashed or stale dev stack without manually running `lsof` and `kill`. To keep the old fail-fast behavior, run:
+
+```bash
+GOOSEWEB_DEV_AUTO_STOP_PORTS=false make dev
+```
+
 Common overrides:
 
 ```bash
@@ -38,7 +44,7 @@ make dev DEV_RUNTIME_PORT=18081 DEV_GOOSETOWER_PORT=18091 DEV_GOOSEWEB_PORT=1300
 
 Use `make gooseweb-dev` only when runtime and Goosetower are already running; it starts just the Vite app pointed at `DEV_GOOSETOWER_PORT` and `DEV_GOOSEWEB_PORT`.
 
-When starting `make dev` as an agent, use the long-running process tool (`gg_process_run`) so the stack can stay alive while browser QA continues. Do not run a second stack on the same ports; stop the existing listener or override ports.
+When starting `make dev` as an agent, use the long-running process tool (`gg_process_run`) so the stack can stay alive while browser QA continues. Re-running `make dev` on the same ports is acceptable; it will stop stale listeners first. Override ports when you need two independent stacks at the same time.
 
 ## Repo-Wide Validation
 

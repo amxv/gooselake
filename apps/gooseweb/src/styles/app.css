@@ -834,9 +834,9 @@
 
   @media (max-width: 900px) {
     .mission-shell {
-      height: auto;
+      height: 100svh;
       min-height: 100svh;
-      overflow: visible;
+      overflow: hidden;
     }
 
     .mission-chrome {
@@ -859,12 +859,15 @@
 
     .mission-grid {
       grid-template-columns: 1fr;
-      overflow: visible;
+      grid-template-rows: minmax(12rem, 16rem) minmax(0, 1fr);
+      height: calc(100svh - 5.8rem);
+      min-height: 0;
+      overflow: hidden;
       padding: 0.75rem;
     }
 
     .mission-roster {
-      min-height: 16rem;
+      min-height: 0;
       border-right: 0;
       border-bottom: 1px solid var(--border);
       padding-right: 0;
@@ -875,7 +878,7 @@
     }
 
     .mission-workspace {
-      min-height: 42rem;
+      min-height: 0;
       border-radius: 1.4rem;
     }
 
@@ -903,6 +906,10 @@
       padding-left: 1.1rem;
     }
 
+    .mission-workspace-thread-empty .mission-workspace-scroll {
+      padding-top: 0.85rem;
+    }
+
     .mission-dashboard-header,
     .mission-dashboard-stats,
     .mission-dashboard-body,
@@ -924,8 +931,20 @@
     }
 
     .mission-composer-tray {
-      align-items: flex-start;
-      flex-direction: column;
+      align-items: flex-end;
+      flex-direction: row;
+      gap: 0.65rem;
+      padding-right: 0.95rem;
+      padding-left: 0.95rem;
+    }
+
+    .mission-composer-tools {
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+
+    .mission-composer-actions {
+      flex: 0 0 auto;
     }
   }
 }

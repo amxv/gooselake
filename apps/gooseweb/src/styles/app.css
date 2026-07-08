@@ -3182,8 +3182,8 @@
     }
 
     .mission-commit-inspector-changes-focus {
-      margin-bottom: clamp(10rem, 24svh, 14rem);
-      scroll-margin-bottom: clamp(10rem, 24svh, 14rem);
+      margin-bottom: clamp(6.5rem, 16svh, 9rem);
+      scroll-margin-bottom: clamp(6.5rem, 16svh, 9rem);
     }
 
     .mission-changes-preview {

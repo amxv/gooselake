@@ -376,6 +376,10 @@
       linear-gradient(180deg, oklch(0.145 0.003 255), oklch(0.108 0.002 255));
   }
 
+  .mission-workspace-thread-empty {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
   .mission-dashboard-header {
     display: flex;
     align-items: flex-start;
@@ -556,6 +560,10 @@
 
   .mission-workspace-thread-empty .mission-workspace-scroll {
     padding-top: 1.5rem;
+  }
+
+  .mission-workspace-thread-empty .mission-embedded-pane {
+    min-height: 0;
   }
 
   .mission-embedded-pane > [data-slot="card"],

@@ -105,6 +105,28 @@ fn provider_new_absolutizes_relative_home_dir() {
     );
 }
 
+#[tokio::test]
+async fn codex_model_catalog_exposes_gpt_reasoning_levels() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let provider = CodexProvider::new(CodexProviderConfig {
+        enabled: true,
+        home_dir: temp_dir.path().to_path_buf(),
+        max_transports: 1,
+        max_sessions_per_transport: 1,
+        gg_mcp: CodexGgMcpConfig::default(),
+    });
+    let models = provider.list_models().await.expect("list models");
+    let expected = vec!["low", "medium", "high", "extra-high"];
+
+    for model_id in ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] {
+        let model = models
+            .iter()
+            .find(|model| model.id == model_id)
+            .expect("expected codex model");
+        assert_eq!(model.reasoning_levels, expected);
+    }
+}
+
 #[test]
 fn copy_auth_file_stages_into_runtime_home() {
     let source_dir = tempfile::tempdir().expect("source dir");

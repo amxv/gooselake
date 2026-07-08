@@ -1,6 +1,28 @@
 use super::*;
 
 #[tokio::test]
+async fn claude_model_catalog_exposes_family_reasoning_levels() {
+    let harness = FakeClaudeBridgeHarness::new("normal");
+    let provider = harness.provider(ClaudeGgMcpConfig::default());
+    let models = provider.list_models().await.expect("list models");
+    let full_levels = vec!["low", "medium", "high", "extra-high", "max"];
+
+    for model_id in ["claude-sonnet-5", "claude-opus-4-8", "claude-fable-5"] {
+        let model = models
+            .iter()
+            .find(|model| model.id == model_id)
+            .expect("expected claude model");
+        assert_eq!(model.reasoning_levels, full_levels);
+    }
+
+    let haiku = models
+        .iter()
+        .find(|model| model.id == "claude-haiku-4-5")
+        .expect("expected haiku model");
+    assert!(haiku.reasoning_levels.is_empty());
+}
+
+#[tokio::test]
 async fn real_adapter_contract_covers_create_resume_send_interrupt_approval_wait_and_close() {
     let harness = FakeClaudeBridgeHarness::new("normal");
     let provider = harness.provider(ClaudeGgMcpConfig::default());

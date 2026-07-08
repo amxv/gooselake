@@ -452,6 +452,7 @@ impl RuntimeProvider for CodexProvider {
                 id: "gpt-5.5".to_string(),
                 display_name: "GPT 5.5".to_string(),
                 reasoning_levels: vec![
+                    "low".to_string(),
                     "medium".to_string(),
                     "high".to_string(),
                     "extra-high".to_string(),
@@ -461,6 +462,7 @@ impl RuntimeProvider for CodexProvider {
                 id: "gpt-5.4".to_string(),
                 display_name: "GPT 5.4".to_string(),
                 reasoning_levels: vec![
+                    "low".to_string(),
                     "medium".to_string(),
                     "high".to_string(),
                     "extra-high".to_string(),
@@ -469,7 +471,12 @@ impl RuntimeProvider for CodexProvider {
             ProviderModel {
                 id: "gpt-5.4-mini".to_string(),
                 display_name: "GPT 5.4 Mini".to_string(),
-                reasoning_levels: vec!["medium".to_string(), "high".to_string()],
+                reasoning_levels: vec![
+                    "low".to_string(),
+                    "medium".to_string(),
+                    "high".to_string(),
+                    "extra-high".to_string(),
+                ],
             },
         ])
     }

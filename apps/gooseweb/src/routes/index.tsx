@@ -7,11 +7,15 @@ import {
   BoxesIcon,
   ChevronDownIcon,
   ClipboardListIcon,
+  FileIcon,
   FolderIcon,
+  GitBranchIcon,
   InfoIcon,
+  ListIcon,
   Maximize2Icon,
   Minimize2Icon,
   MessageSquareIcon,
+  RefreshCwIcon,
   SearchIcon,
   InboxIcon,
   LayoutDashboardIcon,
@@ -31,6 +35,7 @@ import {
   XIcon
 } from "lucide-react";
 import {
+  type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -248,8 +253,10 @@ type RecentCommitItem = {
 };
 
 type RecentChangeItem = {
-  readonly label: string;
-  readonly count?: number;
+  readonly path: string;
+  readonly status: string;
+  readonly added: number;
+  readonly removed: number;
 };
 
 type OpenAIUsageWindow = {
@@ -2357,6 +2364,7 @@ function AgentPane({
 }) {
   const showDevFixture = isThreadVisualFixtureEnabled();
   const showCommitsFixture = isRecentCommitsVisualFixtureEnabled();
+  const focusChangesFixture = isChangesVisualFixtureEnabled();
   const sessionApprovals = approvals.filter(
     (approval) => approval.sessionId === selectedSession?.sessionId
   );
@@ -2433,7 +2441,7 @@ function AgentPane({
         ) : null}
       </div>
 
-      {showCommitsFixture ? <RecentCommitsPanel /> : null}
+      {showCommitsFixture ? <RecentCommitsPanel focusChanges={focusChangesFixture} /> : null}
     </div>
   );
 }
@@ -2669,61 +2677,195 @@ function AgentToolDiffCard({
   );
 }
 
-function RecentCommitsPanel() {
+function RecentCommitsPanel({
+  focusChanges
+}: {
+  readonly focusChanges?: boolean;
+}) {
+  const changedFileCount = DEV_RECENT_CHANGES.length;
+  const addedLines = DEV_RECENT_CHANGES.reduce((total, change) => total + change.added, 0);
+  const removedLines = DEV_RECENT_CHANGES.reduce((total, change) => total + change.removed, 0);
+
   return (
-    <aside className="mission-commit-inspector" aria-label="Recent commits">
-      <div className="mission-commit-header">
-        <h2>Recent Commits</h2>
-        <button type="button" aria-label="Search commits" title="Search commits">
-          <SearchIcon aria-hidden="true" />
-        </button>
-      </div>
+    <aside
+      className={cn(
+        "mission-commit-inspector",
+        focusChanges && "mission-commit-inspector-changes-focus"
+      )}
+      aria-label={focusChanges ? "Local changes" : "Recent commits"}
+    >
+      {focusChanges ? null : (
+        <>
+          <div className="mission-commit-header">
+            <h2>Recent Commits</h2>
+            <button type="button" aria-label="Search commits" title="Search commits">
+              <SearchIcon aria-hidden="true" />
+            </button>
+          </div>
 
-      <div className="mission-commit-timeline">
-        {DEV_RECENT_COMMITS.map((commit) => (
-          <article className="mission-commit-row" key={commit.hash} data-commit-row>
-            <span className={cn("mission-commit-dot", commit.head && "mission-commit-dot-head")} />
-            <div className="mission-commit-content">
-              <div className="mission-commit-topline">
-                <span className="mission-commit-hash">{commit.hash}</span>
-                <button
-                  type="button"
-                  aria-label={`Copy commit ${commit.hash}`}
-                  title={`Copy ${commit.hash}`}
-                >
-                  <ClipboardListIcon aria-hidden="true" />
-                </button>
-                {commit.head ? <span className="mission-commit-head">HEAD</span> : null}
-              </div>
-              <h3>{commit.title}</h3>
-              <p>{commit.repo} · {commit.age}</p>
-            </div>
-          </article>
-        ))}
-      </div>
-
-      <div className="mission-change-strip">
-        <button type="button" aria-label="Local changes summary">
-          <span>{DEV_RECENT_CHANGES.length ? "Changes" : "No changes"}</span>
-          <ChevronDownIcon aria-hidden="true" />
-        </button>
-        {DEV_RECENT_CHANGES.length ? (
-          <div className="mission-change-list">
-            {DEV_RECENT_CHANGES.map((change) => (
-              <span key={change.label}>
-                {change.label}
-                {typeof change.count === "number" ? ` ${change.count}` : ""}
-              </span>
+          <div className="mission-commit-timeline">
+            {DEV_RECENT_COMMITS.map((commit) => (
+              <article className="mission-commit-row" key={commit.hash} data-commit-row>
+                <span className={cn("mission-commit-dot", commit.head && "mission-commit-dot-head")} />
+                <div className="mission-commit-content">
+                  <div className="mission-commit-topline">
+                    <span className="mission-commit-hash">{commit.hash}</span>
+                    <button
+                      type="button"
+                      aria-label={`Copy commit ${commit.hash}`}
+                      title={`Copy ${commit.hash}`}
+                    >
+                      <ClipboardListIcon aria-hidden="true" />
+                    </button>
+                    {commit.head ? <span className="mission-commit-head">HEAD</span> : null}
+                  </div>
+                  <h3>{commit.title}</h3>
+                  <p>{commit.repo} · {commit.age}</p>
+                </div>
+              </article>
             ))}
           </div>
-        ) : null}
-      </div>
+        </>
+      )}
 
+      <ChangesInspectorPanel
+        addedLines={addedLines}
+        changedFileCount={changedFileCount}
+        changes={DEV_RECENT_CHANGES}
+        removedLines={removedLines}
+      />
+
+      <div className="mission-commit-action-area">
+        <button
+          aria-label={changedFileCount ? "Commit and push local changes" : "No changes to commit"}
+          className="mission-commit-action"
+          disabled={!changedFileCount}
+          type="button"
+        >
+          <ArrowUpIcon aria-hidden="true" />
+          <span>{changedFileCount ? "Commit & Push" : "No changes"}</span>
+          <ChevronDownIcon aria-hidden="true" />
+        </button>
+      </div>
       <div className="mission-workspace-pill">
         <span>gooselake</span>
         <ClipboardListIcon aria-hidden="true" />
       </div>
     </aside>
+  );
+}
+
+function ChangesInspectorPanel({
+  addedLines,
+  changedFileCount,
+  changes,
+  removedLines
+}: {
+  readonly addedLines: number;
+  readonly changedFileCount: number;
+  readonly changes: readonly RecentChangeItem[];
+  readonly removedLines: number;
+}) {
+  return (
+    <section className="mission-changes-panel" data-changes-panel="true">
+      <header className="mission-changes-header">
+        <div className="mission-changes-title">
+          <h2>Changes</h2>
+          <span>
+            {changedFileCount} file{changedFileCount === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div className="mission-changes-actions" aria-label="Changes actions">
+          <button type="button" aria-label="Refresh changes" title="Refresh changes">
+            <RefreshCwIcon aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="Expand changes" title="Expand changes">
+            <Maximize2Icon aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="Toggle changes list" title="List changes">
+            <ListIcon aria-hidden="true" />
+          </button>
+        </div>
+      </header>
+
+      <div className="mission-changes-branch">
+        <button type="button" aria-label="Current branch main">
+          <GitBranchIcon aria-hidden="true" />
+          <span>main</span>
+          <ChevronDownIcon aria-hidden="true" />
+        </button>
+        <div className="mission-changes-summary">
+          <span className="mission-changes-count">{changedFileCount} file</span>
+          <span className="mission-changes-added">+{addedLines}</span>
+          <span className="mission-changes-removed">-{removedLines}</span>
+        </div>
+      </div>
+
+      <div className="mission-changes-tree" role="tree" aria-label="Changed files">
+        <ChangeTreeFolder depth={0} name="apps">
+          <ChangeTreeFolder depth={1} name="gooseweb">
+            <ChangeTreeFolder depth={2} name="src">
+              <ChangeTreeFolder depth={3} name="routes">
+                {changes.map((change) => (
+                  <ChangeTreeFile change={change} depth={4} key={change.path} />
+                ))}
+              </ChangeTreeFolder>
+            </ChangeTreeFolder>
+          </ChangeTreeFolder>
+        </ChangeTreeFolder>
+      </div>
+    </section>
+  );
+}
+
+function ChangeTreeFolder({
+  children,
+  depth,
+  name
+}: {
+  readonly children: ReactNode;
+  readonly depth: number;
+  readonly name: string;
+}) {
+  return (
+    <div className="mission-changes-tree-node" role="treeitem">
+      <div
+        className="mission-changes-tree-label mission-changes-tree-folder"
+        style={{ "--change-tree-depth": depth } as CSSProperties}
+      >
+        <FolderIcon aria-hidden="true" />
+        <span>{name}</span>
+      </div>
+      <div className="mission-changes-tree-children" role="group">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ChangeTreeFile({
+  change,
+  depth
+}: {
+  readonly change: RecentChangeItem;
+  readonly depth: number;
+}) {
+  const fileName = change.path.split("/").filter(Boolean).at(-1) ?? change.path;
+  return (
+    <div
+      className="mission-changes-tree-label mission-changes-tree-file"
+      data-changes-file="true"
+      role="treeitem"
+      style={{ "--change-tree-depth": depth } as CSSProperties}
+    >
+      <FileIcon aria-hidden="true" />
+      <span className="mission-changes-file-name">{fileName}</span>
+      <span className="mission-changes-file-stats">
+        <span className="mission-changes-added">+{change.added}</span>
+        <span className="mission-changes-removed">-{change.removed}</span>
+        <span className="mission-changes-status">{change.status}</span>
+      </span>
+    </div>
   );
 }
 
@@ -2803,7 +2945,18 @@ function isRecentCommitsVisualFixtureEnabled(): boolean {
     return false;
   }
   const params = new URLSearchParams(window.location.search);
-  return params.has("goosewebCommitsFixture") || params.has("goosewebThreadFixture");
+  return (
+    params.has("goosewebCommitsFixture") ||
+    params.has("goosewebChangesFixture") ||
+    params.has("goosewebThreadFixture")
+  );
+}
+
+function isChangesVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebChangesFixture");
 }
 
 function isOpenAIAccountVisualFixtureEnabled(): boolean {
@@ -3001,7 +3154,14 @@ const DEV_RECENT_COMMITS: readonly RecentCommitItem[] = [
   }
 ];
 
-const DEV_RECENT_CHANGES: readonly RecentChangeItem[] = [];
+const DEV_RECENT_CHANGES: readonly RecentChangeItem[] = [
+  {
+    path: "apps/gooseweb/src/routes/index.tsx",
+    status: "M",
+    added: 117,
+    removed: 3
+  }
+];
 
 const DEV_OPENAI_ACCOUNT_USAGE: OpenAIAccountUsage = {
   email: "gooseweb.fixture@example.com",

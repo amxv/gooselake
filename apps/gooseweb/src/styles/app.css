@@ -2165,6 +2165,11 @@
     padding: 0.25rem 0 0.65rem 1rem;
   }
 
+  .mission-commit-inspector-changes-focus {
+    gap: 0;
+    padding-top: 0.25rem;
+  }
+
   .mission-commit-header {
     display: flex;
     align-items: center;
@@ -2353,6 +2358,226 @@
     color: oklch(0.56 0.004 255);
     padding: 0.15rem 0.45rem;
     font-size: 0.72rem;
+  }
+
+  .mission-changes-panel {
+    min-width: 0;
+    border-top: 1px solid color-mix(in oklch, var(--border), transparent 38%);
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 38%);
+    padding: 0.9rem 0 0.8rem;
+  }
+
+  .mission-changes-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-width: 0;
+    padding-bottom: 0.75rem;
+  }
+
+  .mission-changes-title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+
+  .mission-changes-title h2 {
+    margin: 0;
+    color: oklch(0.5 0.004 255);
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.065em;
+    text-transform: uppercase;
+  }
+
+  .mission-changes-title span {
+    color: oklch(0.45 0.004 255);
+    font-size: 0.82rem;
+    font-weight: 650;
+  }
+
+  .mission-changes-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    flex: 0 0 auto;
+  }
+
+  .mission-changes-actions button {
+    display: inline-grid;
+    place-items: center;
+    width: 1.65rem;
+    height: 1.65rem;
+    border: 0;
+    border-radius: 0.45rem;
+    background: transparent;
+    color: oklch(0.5 0.004 255);
+  }
+
+  .mission-changes-actions button:hover,
+  .mission-changes-actions button:focus-visible {
+    background: oklch(0.18 0.003 255);
+    color: oklch(0.78 0.004 255);
+  }
+
+  .mission-changes-actions svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .mission-changes-branch {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-width: 0;
+    padding-bottom: 0.75rem;
+  }
+
+  .mission-changes-branch > button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    height: 1.75rem;
+    border: 0;
+    border-radius: 0.55rem;
+    background: transparent;
+    color: oklch(0.64 0.004 255);
+    padding: 0 0.35rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+
+  .mission-changes-branch svg {
+    width: 0.95rem;
+    height: 0.95rem;
+    flex: 0 0 auto;
+  }
+
+  .mission-changes-summary,
+  .mission-changes-file-stats {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex: 0 0 auto;
+    font-size: 0.82rem;
+    font-weight: 760;
+    tab-size: 4;
+  }
+
+  .mission-changes-count {
+    border-radius: 999px;
+    background: oklch(0.15 0.003 255);
+    color: oklch(0.57 0.004 255);
+    padding: 0.12rem 0.5rem;
+    font-weight: 650;
+  }
+
+  .mission-changes-added {
+    color: oklch(0.72 0.15 165);
+  }
+
+  .mission-changes-removed {
+    color: oklch(0.68 0.18 20);
+  }
+
+  .mission-changes-status {
+    color: oklch(0.76 0.14 72);
+    font-weight: 850;
+  }
+
+  .mission-changes-tree {
+    min-width: 0;
+    border-top: 1px solid color-mix(in oklch, var(--border), transparent 50%);
+    padding: 0.8rem 0 0.25rem;
+  }
+
+  .mission-changes-tree-node,
+  .mission-changes-tree-children {
+    min-width: 0;
+  }
+
+  .mission-changes-tree-label {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1.05rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+    min-height: 2rem;
+    padding-left: calc(var(--change-tree-depth, 0) * 1rem);
+    color: oklch(0.5 0.004 255);
+  }
+
+  .mission-changes-tree-label::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc((var(--change-tree-depth, 0) * 1rem) + 0.48rem);
+    width: 1px;
+    background: color-mix(in oklch, var(--border), transparent 55%);
+  }
+
+  .mission-changes-tree-label svg {
+    position: relative;
+    z-index: 1;
+    width: 0.95rem;
+    height: 0.95rem;
+    color: oklch(0.47 0.004 255);
+    background: oklch(0.108 0.002 255);
+  }
+
+  .mission-changes-tree-label span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-changes-tree-file {
+    color: oklch(0.82 0.004 255);
+  }
+
+  .mission-changes-file-name {
+    font-size: 1rem;
+    font-weight: 540;
+  }
+
+  .mission-commit-action-area {
+    padding: 0.9rem 0 0.65rem;
+  }
+
+  .mission-commit-action {
+    display: grid;
+    width: 100%;
+    height: 2.7rem;
+    grid-template-columns: 1.25rem minmax(0, 1fr) 1.25rem;
+    align-items: center;
+    gap: 0.6rem;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 48%);
+    border-radius: 0.9rem;
+    background: oklch(0.07 0.002 255);
+    color: oklch(0.88 0.004 255);
+    padding: 0 0.85rem;
+    font-size: 0.95rem;
+    font-weight: 760;
+  }
+
+  .mission-commit-action svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .mission-commit-action span {
+    min-width: 0;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .mission-workspace-pill {

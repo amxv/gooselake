@@ -449,7 +449,11 @@
   }
 
   .mission-workspace-thread-empty {
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .mission-workspace-thread-empty .mission-workspace-tab {
+    display: none;
   }
 
   .mission-dashboard-header {
@@ -647,21 +651,42 @@
 
   .mission-composer {
     display: grid;
-    min-height: 11.8rem;
+    min-height: 11.2rem;
     margin: 0 1.05rem 1.05rem;
     border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 5%);
-    border-radius: 1.75rem;
-    background: oklch(0.18 0.003 255);
-    box-shadow: inset 0 1px 0 oklch(1 0 0 / 4%);
+    border-radius: 1.85rem;
+    background: oklch(0.17 0.003 255);
+    padding: 0.78rem 0.9rem 0.72rem;
+    box-shadow:
+      inset 0 1px 0 oklch(1 0 0 / 5%),
+      0 0.8rem 2.2rem oklch(0 0 0 / 24%);
+  }
+
+  .mission-composer-input-frame {
+    position: relative;
+    min-width: 0;
+  }
+
+  .mission-composer-expand {
+    position: absolute;
+    z-index: 1;
+    top: 0.1rem;
+    right: 0.1rem;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    color: var(--muted-foreground);
   }
 
   .mission-composer textarea {
-    min-height: 7rem;
+    min-height: 6rem;
     resize: none;
     border: 0;
     background: transparent;
     color: var(--foreground);
-    font-size: 1.15rem;
+    padding: 0.25rem 2.55rem 0.35rem 0.15rem;
+    font-size: 1.08rem;
+    line-height: 1.45;
     box-shadow: none;
   }
 
@@ -683,11 +708,80 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0 1.25rem 1rem;
+    padding: 0.25rem 0 0;
   }
 
-  .mission-composer-actions > [data-slot="button"] {
+  .mission-composer-tools {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .mission-composer-tools > [data-slot="button"],
+  .mission-composer-control,
+  .mission-composer-info {
+    height: 2rem;
     border-radius: 999px;
+    color: var(--muted-foreground);
+  }
+
+  .mission-composer-tools > [data-slot="button"] {
+    width: 2rem;
+  }
+
+  .mission-composer-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    max-width: 10rem;
+    padding: 0 0.45rem;
+    font-size: 0.84rem;
+    line-height: 1;
+  }
+
+  .mission-composer-control span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-composer-control svg {
+    width: 0.82rem;
+    height: 0.82rem;
+    flex: 0 0 auto;
+    opacity: 0.7;
+  }
+
+  .mission-composer-info {
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+  }
+
+  .mission-composer-info svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .mission-composer-actions {
+    justify-content: flex-end;
+  }
+
+  .mission-composer-actions > [data-slot="button"],
+  .mission-composer-submit {
+    border-radius: 999px;
+  }
+
+  .mission-composer-submit {
+    width: 2.55rem;
+    height: 2.55rem;
+    background: var(--foreground);
+    color: var(--background);
+  }
+
+  .mission-composer-submit:hover {
+    background: oklch(0.9 0.004 255);
+    color: var(--background);
   }
 
   .mission-agent-thread {

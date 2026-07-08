@@ -2,12 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { create } from "@bufbuild/protobuf";
 import {
   ActivityIcon,
+  ArrowUpIcon,
   BotIcon,
   BoxesIcon,
   ChevronDownIcon,
   ClipboardListIcon,
   FolderIcon,
+  InfoIcon,
   Maximize2Icon,
+  Minimize2Icon,
   InboxIcon,
   LayoutDashboardIcon,
   ListChecksIcon,
@@ -958,35 +961,60 @@ function MissionWorkspace({
 
       {showAgentThreadComposer ? (
         <form className="mission-composer" onSubmit={submitComposer}>
-          <Textarea
-            aria-label="Agent thread composer"
-            className={cn(composerExpanded && "mission-composer-input-expanded")}
-            disabled={!hasAgentThreadComposer}
-            value={composerText}
-            onChange={(event) => setComposerText(event.target.value)}
-            onKeyDown={handleComposerKeyDown}
-            placeholder=""
-            rows={4}
-          />
+          <div className="mission-composer-input-frame">
+            <Button
+              aria-label={composerExpanded ? "Minimize composer" : "Maximize composer"}
+              className="mission-composer-expand"
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+              onClick={() => setComposerExpanded((expanded) => !expanded)}
+            >
+              {composerExpanded ? <Minimize2Icon /> : <Maximize2Icon />}
+            </Button>
+            <Textarea
+              aria-label="Agent thread composer"
+              className={cn(composerExpanded && "mission-composer-input-expanded")}
+              disabled={!hasAgentThreadComposer}
+              value={composerText}
+              onChange={(event) => setComposerText(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
+              placeholder=""
+              rows={4}
+            />
+          </div>
           <div className="mission-composer-tray">
             <div className="mission-composer-tools">
-              <MetricChip label="model" value={selectedSession?.model || "default"} />
-              <MetricChip label="provider" value={selectedSession?.provider || "runtime"} />
-              <MetricChip label="target" value={selectedSession?.sessionId || "none"} />
-            </div>
-            <div className="mission-composer-actions">
               <Button
-                aria-label={composerExpanded ? "Collapse composer" : "Expand composer"}
+                aria-label="Add attachment"
+                disabled
                 size="icon-sm"
+                title="Attachments are not available in Gooseweb yet"
                 type="button"
                 variant="ghost"
-                onClick={() => setComposerExpanded((expanded) => !expanded)}
               >
-                <Maximize2Icon />
+                <PlusIcon />
               </Button>
+              <span className="mission-composer-control">
+                <span>{formatComposerModelLabel(selectedSession)}</span>
+                <ChevronDownIcon aria-hidden="true" />
+              </span>
+              <span className="mission-composer-control">
+                <span>{formatComposerModeLabel(selectedSession)}</span>
+                <ChevronDownIcon aria-hidden="true" />
+              </span>
+              <span
+                className="mission-composer-info"
+                title={formatComposerContextLabel(selectedSession)}
+              >
+                <InfoIcon aria-hidden="true" />
+              </span>
+            </div>
+            <div className="mission-composer-actions">
               {canInterruptSelectedTurn ? (
                 <Button
                   aria-label="Stop active turn"
+                  className="mission-composer-submit"
                   size="icon"
                   type="button"
                   variant="secondary"
@@ -997,12 +1025,13 @@ function MissionWorkspace({
               ) : (
                 <Button
                   aria-label="Send agent thread message"
+                  className="mission-composer-submit"
                   disabled={!hasAgentThreadComposer || !composerText.trim() || sourceGapActive}
                   size="icon"
                   type="submit"
                   variant="secondary"
                 >
-                  <SendIcon />
+                  <ArrowUpIcon />
                 </Button>
               )}
             </div>
@@ -1479,6 +1508,21 @@ function workspaceTitle(
 function agentThreadKicker(selectedSession?: SessionView): string {
   const status = selectedSession?.status || "selected";
   return `Agent thread / ${status}`;
+}
+
+function formatComposerModelLabel(selectedSession?: SessionView): string {
+  return selectedSession?.model || "Default";
+}
+
+function formatComposerModeLabel(selectedSession?: SessionView): string {
+  return selectedSession?.provider || "Runtime";
+}
+
+function formatComposerContextLabel(selectedSession?: SessionView): string {
+  if (!selectedSession?.sessionId) {
+    return "No active context";
+  }
+  return `Session ${selectedSession.sessionId}`;
 }
 
 function dashboardTitle(view: WorkspaceView): { readonly kicker: string; readonly heading: string } {

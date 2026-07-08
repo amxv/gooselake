@@ -58,6 +58,10 @@ Check the running server rather than hardcoding:
 curl "$BASE_URL/v1/providers/codex/models" "${AUTH[@]}"
 ```
 
+Model responses include provider-owned `reasoning_levels`. Codex models can
+offer different levels, so clients should populate reasoning/effort selectors
+from this field instead of assuming a fixed set.
+
 ### Auth
 
 Codex auth is staged from host credentials into the runtime's provider data area. This keeps runtime execution isolated from the normal host config path while still using the logged-in host as the source.
@@ -90,6 +94,10 @@ Check:
 ```bash
 curl "$BASE_URL/v1/providers/claude/models" "${AUTH[@]}"
 ```
+
+Claude model responses also include `reasoning_levels` when the selected model
+supports a global reasoning selector. Some Claude models may expose a smaller
+set or no global selector.
 
 ### Auth modes
 

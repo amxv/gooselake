@@ -107,6 +107,7 @@ impl RuntimeProvider for TestProvider {
         Ok(vec![ProviderModel {
             id: "test-model".to_string(),
             display_name: "Test Model".to_string(),
+            reasoning_levels: vec!["test".to_string()],
         }])
     }
 
@@ -292,6 +293,7 @@ impl RuntimeProvider for TestClaudeProvider {
         Ok(vec![ProviderModel {
             id: "test-claude-model".to_string(),
             display_name: "Test Claude Model".to_string(),
+            reasoning_levels: vec!["test".to_string()],
         }])
     }
 

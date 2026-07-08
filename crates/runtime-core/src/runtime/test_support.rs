@@ -246,6 +246,7 @@ impl RuntimeProvider for MockProvider {
         Ok(vec![ProviderModel {
             id: "mock".to_string(),
             display_name: "Mock".to_string(),
+            reasoning_levels: vec!["test".to_string()],
         }])
     }
 

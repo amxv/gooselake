@@ -219,6 +219,15 @@ function normalizeSource(value: unknown) {
     provisionerKind: stringFrom(source.provisioner_kind) || "static",
     providerKinds: stringArrayFrom(source.provider_kinds),
     models: stringArrayFrom(source.models),
+    modelCapabilities: arrayFrom(source.model_capabilities).map((capability) => {
+      const record = recordFrom(capability);
+      return {
+        provider: stringFrom(record.provider),
+        model: stringFrom(record.model),
+        displayName: stringFrom(record.display_name),
+        reasoningLevels: stringArrayFrom(record.reasoning_levels)
+      };
+    }),
     activeSessionCount: numberFrom(source.active_session_count),
     activeProcessCount: numberFrom(source.active_process_count),
     processCapacity: numberFrom(source.process_capacity),

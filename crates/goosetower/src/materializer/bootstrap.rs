@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::runtime::client::{GooselakeRuntimeClient, ProcessLogsQuery, RuntimeClientError};
 
-use super::state::MaterializedState;
+use super::state::{MaterializedState, ModelCapabilityView};
 
 #[derive(Debug, Clone)]
 pub struct BootstrapOptions {
@@ -140,8 +140,14 @@ impl SourceBootstrap {
 
         let providers = client.providers().await?;
         let mut auth_status = Vec::new();
+        let mut model_capabilities = Vec::new();
         for provider in &providers.providers {
             if let Some(kind) = ProviderKind::from_str(provider.kind.as_str()) {
+                if let Ok(models) = client.provider_models(kind).await {
+                    model_capabilities.extend(models.models.iter().map(|model| {
+                        ModelCapabilityView::from_provider_model(provider.kind.as_str(), model)
+                    }));
+                }
                 let status = client.provider_auth_status(kind).await.ok();
                 auth_status.push(json!({
                     "provider": provider.kind,
@@ -154,6 +160,7 @@ impl SourceBootstrap {
             "providers": providers.providers,
             "auth": auth_status,
         });
+        state.source_metadata.model_capabilities = model_capabilities;
 
         let diagnostics = client.diagnostics().await?;
         state.diagnostics_summary = json!({

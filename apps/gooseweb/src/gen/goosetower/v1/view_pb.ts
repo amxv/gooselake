@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file goosetower/v1/view.proto.
  */
 export const file_goosetower_v1_view: GenFile = /*@__PURE__*/
-  fileDesc("Chhnb29zZXRvd2VyL3YxL3ZpZXcucHJvdG8SDWdvb3NldG93ZXIudjEi6gMKEFNvdXJjZUhlYWx0aFZpZXcSEQoJc291cmNlX2lkGAEgASgJEhQKDGRpc3BsYXlfbmFtZRgCIAEoCRITCgtzb3VyY2Vfa2luZBgDIAEoCRIOCgZoZWFsdGgYBCABKAkSKwoGY3Vyc29yGAUgASgLMhsuZ29vc2V0b3dlci52MS5Tb3VyY2VDdXJzb3ISGwoTb2JzZXJ2ZWRfYXRfdW5peF9tcxgGIAEoAxIRCglsaWZlY3ljbGUYByABKAkSGAoQcHJvdmlzaW9uZXJfa2luZBgIIAEoCRIWCg5wcm92aWRlcl9raW5kcxgJIAMoCRIOCgZtb2RlbHMYCiADKAkSHAoUYWN0aXZlX3Nlc3Npb25fY291bnQYCyABKA0SHAoUYWN0aXZlX3Byb2Nlc3NfY291bnQYDCABKA0SGAoQcHJvY2Vzc19jYXBhY2l0eRgNIAEoDRIaChJzdXBwb3J0c193b3JrdHJlZXMYDiABKAgSFgoOc3VwcG9ydHNfdGVhbXMYDyABKAgSHAoUcmVwbGF5X3dpbmRvd19ldmVudHMYECABKAQSGAoQcmVwbGF5X3dpbmRvd19tcxgRIAEoBBIOCgZyZWdpb24YEiABKAkSEQoJY29zdF9oaW50GBMgASgJSgQIFBAyIvQBCgxGbGVldFJvd1ZpZXcSDgoGcm93X2lkGAEgASgJEhEKCXNvdXJjZV9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJEg8KB3RlYW1faWQYBCABKAkSEAoIcHJvdmlkZXIYBSABKAkSDQoFbW9kZWwYBiABKAkSDgoGc3RhdHVzGAcgASgJEg0KBXRpdGxlGAggASgJEhUKDXdvcmt0cmVlX3BhdGgYCSABKAkSHgoWcGVuZGluZ19hcHByb3ZhbF9jb3VudBgKIAEoDRIfChdsYXRlc3RfYWN0aXZpdHlfdW5peF9tcxgLIAEoA0oECB4QUCKnAQoLU2Vzc2lvblZpZXcSEQoJc291cmNlX2lkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEAoIcHJvdmlkZXIYAyABKAkSDQoFbW9kZWwYBCABKAkSDgoGc3RhdHVzGAUgASgJEgsKA2N3ZBgGIAEoCRIVCg13b3JrdHJlZV9wYXRoGAcgASgJEhYKDmFjdGl2ZV90dXJuX2lkGAggASgJSgQIHhBQIooBCghUZWFtVmlldxIRCglzb3VyY2VfaWQYASABKAkSDwoHdGVhbV9pZBgCIAEoCRIMCgRuYW1lGAMgASgJEhYKDmxlYWRfbWVtYmVyX2lkGAQgASgJEi4KB21lbWJlcnMYBSADKAsyHS5nb29zZXRvd2VyLnYxLlRlYW1NZW1iZXJWaWV3SgQIHhBQIn0KDlRlYW1NZW1iZXJWaWV3EhEKCW1lbWJlcl9pZBgBIAEoCRISCgpzZXNzaW9uX2lkGAIgASgJEg0KBXRpdGxlGAMgASgJEhAKCHByb3ZpZGVyGAQgASgJEg0KBW1vZGVsGAUgASgJEg4KBnN0YXR1cxgGIAEoCUoECB4QUCKQAQoMQXBwcm92YWxWaWV3EhEKCXNvdXJjZV9pZBgBIAEoCRITCgthcHByb3ZhbF9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJEg8KB3R1cm5faWQYBCABKAkSDAoEcmlzaxgFIAEoCRIOCgZzdGF0dXMYBiABKAkSDwoHc3VtbWFyeRgHIAEoCUoECB4QUCJuCgtQcm9jZXNzVmlldxIRCglzb3VyY2VfaWQYASABKAkSEgoKcHJvY2Vzc19pZBgCIAEoCRIOCgZzdGF0dXMYAyABKAkSDwoHY29tbWFuZBgEIAEoCRIRCglleGl0X2NvZGUYBSABKAVKBAgeEFAiagoMV29ya3RyZWVWaWV3EhEKCXNvdXJjZV9pZBgBIAEoCRITCgt3b3JrdHJlZV9pZBgCIAEoCRIMCgRwYXRoGAMgASgJEg4KBmJyYW5jaBgEIAEoCRIOCgZzdGF0dXMYBSABKAlKBAgeEFAiXgoIU25hcHNob3QSEQoJdmlld19raW5kGAEgASgJEisKBmN1cnNvchgCIAEoCzIbLmdvb3NldG93ZXIudjEuQ3Vyc29yVmVjdG9yEgwKBGJvZHkYAyABKAxKBAgUEDIihQEKBVBhdGNoEhEKCXZpZXdfa2luZBgBIAEoCRIoCgZlbnRpdHkYAiABKAsyGC5nb29zZXRvd2VyLnYxLkVudGl0eVJlZhIrCgZjdXJzb3IYAyABKAsyGy5nb29zZXRvd2VyLnYxLkN1cnNvclZlY3RvchIMCgRib2R5GAQgASgMSgQIFBAyYgZwcm90bzM", [file_goosetower_v1_common]);
+  fileDesc("Chhnb29zZXRvd2VyL3YxL3ZpZXcucHJvdG8SDWdvb3NldG93ZXIudjEiqgQKEFNvdXJjZUhlYWx0aFZpZXcSEQoJc291cmNlX2lkGAEgASgJEhQKDGRpc3BsYXlfbmFtZRgCIAEoCRITCgtzb3VyY2Vfa2luZBgDIAEoCRIOCgZoZWFsdGgYBCABKAkSKwoGY3Vyc29yGAUgASgLMhsuZ29vc2V0b3dlci52MS5Tb3VyY2VDdXJzb3ISGwoTb2JzZXJ2ZWRfYXRfdW5peF9tcxgGIAEoAxIRCglsaWZlY3ljbGUYByABKAkSGAoQcHJvdmlzaW9uZXJfa2luZBgIIAEoCRIWCg5wcm92aWRlcl9raW5kcxgJIAMoCRIOCgZtb2RlbHMYCiADKAkSHAoUYWN0aXZlX3Nlc3Npb25fY291bnQYCyABKA0SHAoUYWN0aXZlX3Byb2Nlc3NfY291bnQYDCABKA0SGAoQcHJvY2Vzc19jYXBhY2l0eRgNIAEoDRIaChJzdXBwb3J0c193b3JrdHJlZXMYDiABKAgSFgoOc3VwcG9ydHNfdGVhbXMYDyABKAgSHAoUcmVwbGF5X3dpbmRvd19ldmVudHMYECABKAQSGAoQcmVwbGF5X3dpbmRvd19tcxgRIAEoBBIOCgZyZWdpb24YEiABKAkSEQoJY29zdF9oaW50GBMgASgJEj4KEm1vZGVsX2NhcGFiaWxpdGllcxgyIAMoCzIiLmdvb3NldG93ZXIudjEuTW9kZWxDYXBhYmlsaXR5Vmlld0oECBQQMiJmChNNb2RlbENhcGFiaWxpdHlWaWV3EhAKCHByb3ZpZGVyGAEgASgJEg0KBW1vZGVsGAIgASgJEhQKDGRpc3BsYXlfbmFtZRgDIAEoCRIYChByZWFzb25pbmdfbGV2ZWxzGAQgAygJIvQBCgxGbGVldFJvd1ZpZXcSDgoGcm93X2lkGAEgASgJEhEKCXNvdXJjZV9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJEg8KB3RlYW1faWQYBCABKAkSEAoIcHJvdmlkZXIYBSABKAkSDQoFbW9kZWwYBiABKAkSDgoGc3RhdHVzGAcgASgJEg0KBXRpdGxlGAggASgJEhUKDXdvcmt0cmVlX3BhdGgYCSABKAkSHgoWcGVuZGluZ19hcHByb3ZhbF9jb3VudBgKIAEoDRIfChdsYXRlc3RfYWN0aXZpdHlfdW5peF9tcxgLIAEoA0oECB4QUCKnAQoLU2Vzc2lvblZpZXcSEQoJc291cmNlX2lkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEAoIcHJvdmlkZXIYAyABKAkSDQoFbW9kZWwYBCABKAkSDgoGc3RhdHVzGAUgASgJEgsKA2N3ZBgGIAEoCRIVCg13b3JrdHJlZV9wYXRoGAcgASgJEhYKDmFjdGl2ZV90dXJuX2lkGAggASgJSgQIHhBQIooBCghUZWFtVmlldxIRCglzb3VyY2VfaWQYASABKAkSDwoHdGVhbV9pZBgCIAEoCRIMCgRuYW1lGAMgASgJEhYKDmxlYWRfbWVtYmVyX2lkGAQgASgJEi4KB21lbWJlcnMYBSADKAsyHS5nb29zZXRvd2VyLnYxLlRlYW1NZW1iZXJWaWV3SgQIHhBQIn0KDlRlYW1NZW1iZXJWaWV3EhEKCW1lbWJlcl9pZBgBIAEoCRISCgpzZXNzaW9uX2lkGAIgASgJEg0KBXRpdGxlGAMgASgJEhAKCHByb3ZpZGVyGAQgASgJEg0KBW1vZGVsGAUgASgJEg4KBnN0YXR1cxgGIAEoCUoECB4QUCKQAQoMQXBwcm92YWxWaWV3EhEKCXNvdXJjZV9pZBgBIAEoCRITCgthcHByb3ZhbF9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJEg8KB3R1cm5faWQYBCABKAkSDAoEcmlzaxgFIAEoCRIOCgZzdGF0dXMYBiABKAkSDwoHc3VtbWFyeRgHIAEoCUoECB4QUCJuCgtQcm9jZXNzVmlldxIRCglzb3VyY2VfaWQYASABKAkSEgoKcHJvY2Vzc19pZBgCIAEoCRIOCgZzdGF0dXMYAyABKAkSDwoHY29tbWFuZBgEIAEoCRIRCglleGl0X2NvZGUYBSABKAVKBAgeEFAiagoMV29ya3RyZWVWaWV3EhEKCXNvdXJjZV9pZBgBIAEoCRITCgt3b3JrdHJlZV9pZBgCIAEoCRIMCgRwYXRoGAMgASgJEg4KBmJyYW5jaBgEIAEoCRIOCgZzdGF0dXMYBSABKAlKBAgeEFAiXgoIU25hcHNob3QSEQoJdmlld19raW5kGAEgASgJEisKBmN1cnNvchgCIAEoCzIbLmdvb3NldG93ZXIudjEuQ3Vyc29yVmVjdG9yEgwKBGJvZHkYAyABKAxKBAgUEDIihQEKBVBhdGNoEhEKCXZpZXdfa2luZBgBIAEoCRIoCgZlbnRpdHkYAiABKAsyGC5nb29zZXRvd2VyLnYxLkVudGl0eVJlZhIrCgZjdXJzb3IYAyABKAsyGy5nb29zZXRvd2VyLnYxLkN1cnNvclZlY3RvchIMCgRib2R5GAQgASgMSgQIFBAyYgZwcm90bzM", [file_goosetower_v1_common]);
 
 /**
  * @generated from message goosetower.v1.SourceHealthView
@@ -112,6 +112,11 @@ export type SourceHealthView = Message<"goosetower.v1.SourceHealthView"> & {
    * @generated from field: string cost_hint = 19;
    */
   costHint: string;
+
+  /**
+   * @generated from field: repeated goosetower.v1.ModelCapabilityView model_capabilities = 50;
+   */
+  modelCapabilities: ModelCapabilityView[];
 };
 
 /**
@@ -120,6 +125,38 @@ export type SourceHealthView = Message<"goosetower.v1.SourceHealthView"> & {
  */
 export const SourceHealthViewSchema: GenMessage<SourceHealthView> = /*@__PURE__*/
   messageDesc(file_goosetower_v1_view, 0);
+
+/**
+ * @generated from message goosetower.v1.ModelCapabilityView
+ */
+export type ModelCapabilityView = Message<"goosetower.v1.ModelCapabilityView"> & {
+  /**
+   * @generated from field: string provider = 1;
+   */
+  provider: string;
+
+  /**
+   * @generated from field: string model = 2;
+   */
+  model: string;
+
+  /**
+   * @generated from field: string display_name = 3;
+   */
+  displayName: string;
+
+  /**
+   * @generated from field: repeated string reasoning_levels = 4;
+   */
+  reasoningLevels: string[];
+};
+
+/**
+ * Describes the message goosetower.v1.ModelCapabilityView.
+ * Use `create(ModelCapabilityViewSchema)` to create a new message.
+ */
+export const ModelCapabilityViewSchema: GenMessage<ModelCapabilityView> = /*@__PURE__*/
+  messageDesc(file_goosetower_v1_view, 1);
 
 /**
  * @generated from message goosetower.v1.FleetRowView
@@ -186,7 +223,7 @@ export type FleetRowView = Message<"goosetower.v1.FleetRowView"> & {
  * Use `create(FleetRowViewSchema)` to create a new message.
  */
 export const FleetRowViewSchema: GenMessage<FleetRowView> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 1);
+  messageDesc(file_goosetower_v1_view, 2);
 
 /**
  * @generated from message goosetower.v1.SessionView
@@ -238,7 +275,7 @@ export type SessionView = Message<"goosetower.v1.SessionView"> & {
  * Use `create(SessionViewSchema)` to create a new message.
  */
 export const SessionViewSchema: GenMessage<SessionView> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 2);
+  messageDesc(file_goosetower_v1_view, 3);
 
 /**
  * @generated from message goosetower.v1.TeamView
@@ -275,7 +312,7 @@ export type TeamView = Message<"goosetower.v1.TeamView"> & {
  * Use `create(TeamViewSchema)` to create a new message.
  */
 export const TeamViewSchema: GenMessage<TeamView> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 3);
+  messageDesc(file_goosetower_v1_view, 4);
 
 /**
  * @generated from message goosetower.v1.TeamMemberView
@@ -317,7 +354,7 @@ export type TeamMemberView = Message<"goosetower.v1.TeamMemberView"> & {
  * Use `create(TeamMemberViewSchema)` to create a new message.
  */
 export const TeamMemberViewSchema: GenMessage<TeamMemberView> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 4);
+  messageDesc(file_goosetower_v1_view, 5);
 
 /**
  * @generated from message goosetower.v1.ApprovalView
@@ -364,7 +401,7 @@ export type ApprovalView = Message<"goosetower.v1.ApprovalView"> & {
  * Use `create(ApprovalViewSchema)` to create a new message.
  */
 export const ApprovalViewSchema: GenMessage<ApprovalView> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 5);
+  messageDesc(file_goosetower_v1_view, 6);
 
 /**
  * @generated from message goosetower.v1.ProcessView
@@ -401,7 +438,7 @@ export type ProcessView = Message<"goosetower.v1.ProcessView"> & {
  * Use `create(ProcessViewSchema)` to create a new message.
  */
 export const ProcessViewSchema: GenMessage<ProcessView> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 6);
+  messageDesc(file_goosetower_v1_view, 7);
 
 /**
  * @generated from message goosetower.v1.WorktreeView
@@ -438,7 +475,7 @@ export type WorktreeView = Message<"goosetower.v1.WorktreeView"> & {
  * Use `create(WorktreeViewSchema)` to create a new message.
  */
 export const WorktreeViewSchema: GenMessage<WorktreeView> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 7);
+  messageDesc(file_goosetower_v1_view, 8);
 
 /**
  * @generated from message goosetower.v1.Snapshot
@@ -465,7 +502,7 @@ export type Snapshot = Message<"goosetower.v1.Snapshot"> & {
  * Use `create(SnapshotSchema)` to create a new message.
  */
 export const SnapshotSchema: GenMessage<Snapshot> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 8);
+  messageDesc(file_goosetower_v1_view, 9);
 
 /**
  * @generated from message goosetower.v1.Patch
@@ -497,5 +534,5 @@ export type Patch = Message<"goosetower.v1.Patch"> & {
  * Use `create(PatchSchema)` to create a new message.
  */
 export const PatchSchema: GenMessage<Patch> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 9);
+  messageDesc(file_goosetower_v1_view, 10);
 

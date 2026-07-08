@@ -24,7 +24,15 @@ message SourceHealthView {
   uint64 replay_window_ms = 17;
   string region = 18;
   string cost_hint = 19;
+  repeated ModelCapabilityView model_capabilities = 50;
   reserved 20 to 49;
+}
+
+message ModelCapabilityView {
+  string provider = 1;
+  string model = 2;
+  string display_name = 3;
+  repeated string reasoning_levels = 4;
 }
 
 message FleetRowView {

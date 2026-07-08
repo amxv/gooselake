@@ -46,18 +46,26 @@ impl RuntimeProvider for ClaudeProvider {
             ProviderModel {
                 id: "claude-sonnet-5".to_string(),
                 display_name: "Claude Sonnet 5".to_string(),
+                reasoning_levels: vec!["standard".to_string(), "high".to_string()],
             },
             ProviderModel {
                 id: "claude-opus-4-8".to_string(),
                 display_name: "Claude Opus 4.8".to_string(),
+                reasoning_levels: vec![
+                    "standard".to_string(),
+                    "high".to_string(),
+                    "max".to_string(),
+                ],
             },
             ProviderModel {
                 id: "claude-fable-5".to_string(),
                 display_name: "Claude Fable 5".to_string(),
+                reasoning_levels: vec!["standard".to_string()],
             },
             ProviderModel {
                 id: "claude-haiku-4-5".to_string(),
                 display_name: "Claude Haiku 4.5".to_string(),
+                reasoning_levels: Vec::new(),
             },
         ])
     }

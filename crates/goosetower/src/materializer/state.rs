@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use runtime_core::{
     ApprovalRecord, ManagedWorktreeRecord, ProcessDetails, ProcessLogsChunk, ProcessSummary,
-    RuntimeEventScope, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamRecord,
+    ProviderModel, RuntimeEventScope, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -244,6 +244,7 @@ pub struct SourceHealthView {
     pub active_process_count: usize,
     pub provider_kinds: Vec<String>,
     pub models: Vec<String>,
+    pub model_capabilities: Vec<ModelCapabilityView>,
     pub process_capacity: Option<u32>,
     pub supports_worktrees: bool,
     pub supports_teams: bool,
@@ -257,12 +258,32 @@ pub struct SourceHealthView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCapabilityView {
+    pub provider: String,
+    pub model: String,
+    pub display_name: String,
+    pub reasoning_levels: Vec<String>,
+}
+
+impl ModelCapabilityView {
+    pub fn from_provider_model(provider: impl Into<String>, model: &ProviderModel) -> Self {
+        Self {
+            provider: provider.into(),
+            model: model.id.clone(),
+            display_name: model.display_name.clone(),
+            reasoning_levels: model.reasoning_levels.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceMetadataView {
     pub display_name: String,
     pub source_kind: String,
     pub provisioner_kind: String,
     pub provider_kinds: Vec<String>,
     pub models: Vec<String>,
+    pub model_capabilities: Vec<ModelCapabilityView>,
     pub process_capacity: Option<u32>,
     pub supports_worktrees: bool,
     pub supports_teams: bool,
@@ -283,6 +304,7 @@ impl SourceMetadataView {
                 .unwrap_or_else(|| "static".to_string()),
             provider_kinds: source.capabilities.provider_kinds.clone(),
             models: source.capabilities.models.clone(),
+            model_capabilities: Vec::new(),
             process_capacity: source.capabilities.process_capacity,
             supports_worktrees: source.capabilities.supports_worktrees,
             supports_teams: source.capabilities.supports_teams,
@@ -303,6 +325,7 @@ impl Default for SourceMetadataView {
             provisioner_kind: "static".to_string(),
             provider_kinds: capabilities.provider_kinds,
             models: capabilities.models,
+            model_capabilities: Vec::new(),
             process_capacity: capabilities.process_capacity,
             supports_worktrees: capabilities.supports_worktrees,
             supports_teams: capabilities.supports_teams,
@@ -793,6 +816,7 @@ impl MaterializedState {
                 .count(),
             provider_kinds: self.source_metadata.provider_kinds.clone(),
             models: self.source_metadata.models.clone(),
+            model_capabilities: self.source_metadata.model_capabilities.clone(),
             process_capacity: self.source_metadata.process_capacity,
             supports_worktrees: self.source_metadata.supports_worktrees,
             supports_teams: self.source_metadata.supports_teams,

@@ -310,6 +310,13 @@ ACP v1 notes:
 
 See [Provider Guide](/docs/providers) for full provider setup.
 
+`GET /v1/providers/{provider}/models` returns the provider's current model
+catalog. Each model includes `id`, `display_name`, and `reasoning_levels`.
+`reasoning_levels` is the provider-owned source of truth for client reasoning
+or effort selectors; clients should not hardcode level names. The list may be
+empty when a provider or model has no global reasoning selector, and ACP model
+catalogs may be empty when model choice is session-scoped.
+
 ## Processes
 
 Start a process:

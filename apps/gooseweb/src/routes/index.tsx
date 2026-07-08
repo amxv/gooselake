@@ -268,16 +268,17 @@ type ProcessMonitorItem = {
   readonly fixture?: boolean;
 };
 
-type ComposerEffort = "medium" | "high" | "extra-high";
-
-const COMPOSER_EFFORT_OPTIONS: ReadonlyArray<{
-  readonly value: ComposerEffort;
+type ComposerReasoningOption = {
+  readonly value: string;
   readonly label: string;
-}> = [
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "extra-high", label: "Extra High" }
-];
+};
+
+type ComposerModelCapability = {
+  readonly provider: string;
+  readonly model: string;
+  readonly displayName: string;
+  readonly reasoningLevels: readonly string[];
+};
 
 const PROCESS_MONITOR_FILTERS: ReadonlyArray<{
   readonly id: ProcessMonitorFilter;
@@ -962,9 +963,13 @@ function MissionWorkspace({
 }) {
   const [composerText, setComposerText] = useState("");
   const [composerExpanded, setComposerExpanded] = useState(false);
-  const [composerEffort, setComposerEffort] = useState<ComposerEffort>("high");
+  const [composerReasoningLevel, setComposerReasoningLevel] = useState("");
   const [openAIAccountOpen, setOpenAIAccountOpen] = useState(false);
   const openAIAccountUsage = getOpenAIAccountUsageFixture();
+  const reasoningOptions = useMemo(
+    () => composerReasoningOptions(sources, selectedSession),
+    [selectedSession, sources]
+  );
   const hasAgentThreadComposer =
     activeView === "agents" && Boolean(selectedSession?.sessionId);
   const showAgentThreadComposer = activeView === "agents";
@@ -981,6 +986,18 @@ function MissionWorkspace({
       setComposerText("");
     }
   }, [composerText, hasAgentThreadComposer]);
+
+  useEffect(() => {
+    if (!reasoningOptions.length) {
+      if (composerReasoningLevel) {
+        setComposerReasoningLevel("");
+      }
+      return;
+    }
+    if (!reasoningOptions.some((option) => option.value === composerReasoningLevel)) {
+      setComposerReasoningLevel(reasoningOptions[0].value);
+    }
+  }, [composerReasoningLevel, reasoningOptions]);
 
   function dispatchComposerMessage() {
     if (
@@ -1164,8 +1181,9 @@ function MissionWorkspace({
                 <ChevronDownIcon aria-hidden="true" />
               </span>
               <ComposerEffortDropdown
-                value={composerEffort}
-                onValueChange={setComposerEffort}
+                options={reasoningOptions}
+                value={composerReasoningLevel}
+                onValueChange={setComposerReasoningLevel}
               />
               <span className="mission-composer-control mission-composer-control-static">
                 <span>{formatComposerModeLabel(selectedSession)}</span>
@@ -1361,12 +1379,30 @@ function MissionViewBody({
 }
 
 function ComposerEffortDropdown({
+  options,
   value,
   onValueChange
 }: {
-  readonly value: ComposerEffort;
-  readonly onValueChange: (value: ComposerEffort) => void;
+  readonly options: readonly ComposerReasoningOption[];
+  readonly value: string;
+  readonly onValueChange: (value: string) => void;
 }) {
+  const selectedLabel = options.find((option) => option.value === value)?.label;
+  if (!options.length) {
+    return (
+      <button
+        aria-label="Reasoning effort unavailable"
+        className="mission-composer-control mission-composer-control-trigger"
+        data-composer-effort-trigger
+        disabled
+        type="button"
+      >
+        <span>Reasoning</span>
+        <ChevronDownIcon aria-hidden="true" />
+      </button>
+    );
+  }
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -1374,7 +1410,7 @@ function ComposerEffortDropdown({
         className="mission-composer-control mission-composer-control-trigger"
         data-composer-effort-trigger
       >
-        <span>{formatComposerEffortLabel(value)}</span>
+        <span>{selectedLabel || options[0].label}</span>
         <ChevronDownIcon aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -1385,9 +1421,9 @@ function ComposerEffortDropdown({
       >
         <DropdownMenuRadioGroup
           value={value}
-          onValueChange={(nextValue) => onValueChange(nextValue as ComposerEffort)}
+          onValueChange={onValueChange}
         >
-          {COMPOSER_EFFORT_OPTIONS.map((option) => (
+          {options.map((option) => (
             <DropdownMenuRadioItem
               className="mission-composer-menu-item"
               data-composer-effort-option={option.value}
@@ -2007,8 +2043,75 @@ function formatComposerModeLabel(selectedSession?: SessionView): string {
   return selectedSession?.provider || "Runtime";
 }
 
-function formatComposerEffortLabel(value: ComposerEffort): string {
-  return COMPOSER_EFFORT_OPTIONS.find((option) => option.value === value)?.label || "High";
+function composerReasoningOptions(
+  sources: readonly SourceHealthView[],
+  selectedSession?: SessionView
+): readonly ComposerReasoningOption[] {
+  const capabilities = getComposerReasoningCapabilities(sources);
+  if (!capabilities.length) {
+    return [];
+  }
+
+  const exact = selectedSession
+    ? capabilities.find(
+        (capability) =>
+          capability.provider === selectedSession.provider &&
+          capability.model === selectedSession.model &&
+          capability.reasoningLevels.length > 0
+      )
+    : undefined;
+  const providerDefault = selectedSession
+    ? capabilities.find(
+        (capability) =>
+          capability.provider === selectedSession.provider &&
+          capability.reasoningLevels.length > 0
+      )
+    : undefined;
+  const fallback = capabilities.find((capability) => capability.reasoningLevels.length > 0);
+  const levels = exact?.reasoningLevels ?? providerDefault?.reasoningLevels ?? fallback?.reasoningLevels ?? [];
+
+  return dedupeStrings(levels).map((level) => ({
+    value: level,
+    label: formatReasoningLevelLabel(level)
+  }));
+}
+
+function getComposerReasoningCapabilities(
+  sources: readonly SourceHealthView[]
+): readonly ComposerModelCapability[] {
+  if (isReasoningCapabilitiesVisualFixtureEnabled()) {
+    return DEV_REASONING_MODEL_CAPABILITIES;
+  }
+  return sources.flatMap((source) => source.modelCapabilities);
+}
+
+function isReasoningCapabilitiesVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebReasoningFixture");
+}
+
+function dedupeStrings(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    deduped.push(trimmed);
+  }
+  return deduped;
+}
+
+function formatReasoningLevelLabel(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function formatComposerContextLabel(selectedSession?: SessionView): string {
@@ -2929,6 +3032,21 @@ const DEV_PROCESS_MONITOR_ITEMS: readonly ProcessMonitorItem[] = [
       "WARNING Cannot find base config file \"astro/tsconfigs/strict\"\n" +
       "external imports from TanStack SSR server were not used",
     fixture: true
+  }
+];
+
+const DEV_REASONING_MODEL_CAPABILITIES: readonly ComposerModelCapability[] = [
+  {
+    provider: "codex",
+    model: "gpt-5.5",
+    displayName: "GPT 5.5",
+    reasoningLevels: ["swift", "focused", "deep"]
+  },
+  {
+    provider: "codex",
+    model: "gpt-5.4-mini",
+    displayName: "GPT 5.4 Mini",
+    reasoningLevels: ["swift", "focused"]
   }
 ];
 

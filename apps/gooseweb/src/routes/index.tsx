@@ -6,8 +6,8 @@ import {
   BoxesIcon,
   ChevronDownIcon,
   ClipboardListIcon,
-  CircleIcon,
   FolderIcon,
+  Maximize2Icon,
   InboxIcon,
   LayoutDashboardIcon,
   ListChecksIcon,
@@ -626,9 +626,6 @@ function MissionRosterRail({
     onSelectProcess
   });
   const visibleItems = items.slice(0, 12);
-  const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
-  const runningProcesses = processes.filter((process) => process.status === "running").length;
-  const activeTeams = teams.filter((team) => team.members.length > 0).length;
 
   return (
     <aside className="mission-roster">
@@ -640,20 +637,6 @@ function MissionRosterRail({
           </div>
           <StatusBadge status={sourceGapActive ? "stale" : "live"} />
         </div>
-        <div className="mission-rail-metrics">
-          <button type="button" onClick={() => onViewChange("inbox")}>
-            <span>{pendingApprovals}</span>
-            <span>approvals</span>
-          </button>
-          <button type="button" onClick={() => onViewChange("teams")}>
-            <span>{activeTeams}</span>
-            <span>teams</span>
-          </button>
-          <button type="button" onClick={() => onViewChange("fleet")}>
-            <span>{runningProcesses}</span>
-            <span>processes</span>
-          </button>
-        </div>
 
         <div className="mission-rail-section">
           <div className="mission-section-label">
@@ -664,10 +647,7 @@ function MissionRosterRail({
           </div>
           <div className="mission-roster-list">
             {visibleItems.length === 0 ? (
-              <EmptyBlock
-                title="No active agents"
-                detail="Connect a source or create a session to populate this rail."
-              />
+              <div className="mission-roster-empty">No active agents</div>
             ) : (
               visibleItems.map((item) => (
                 <button
@@ -787,13 +767,16 @@ function MissionWorkspace({
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const [composerText, setComposerText] = useState("");
+  const [composerExpanded, setComposerExpanded] = useState(false);
   const hasAgentThreadComposer =
     activeView === "agents" && Boolean(selectedSession?.sessionId);
-  const isAgentThread = activeView === "agents" && Boolean(selectedSession);
+  const isAgentThread = activeView === "agents";
   const sessionOptions = useMemo(
     () => mergeSessionOptions(sessions, rows),
     [rows, sessions]
   );
+  const canInterruptSelectedTurn =
+    hasAgentThreadComposer && Boolean(selectedSession?.activeTurnId) && !sourceGapActive;
 
   useEffect(() => {
     if (!hasAgentThreadComposer && composerText) {
@@ -833,6 +816,18 @@ function MissionWorkspace({
     dispatchComposerMessage();
   }
 
+  function interruptSelectedTurn() {
+    if (!selectedSession?.sessionId || !selectedSession.activeTurnId || sourceGapActive) {
+      return;
+    }
+    sendRealtimeCommand(
+      makeCommand("session", selectedSession.sessionId, "interruptTurn", {
+        sessionId: selectedSession.sessionId,
+        turnId: selectedSession.activeTurnId
+      })
+    );
+  }
+
   return (
     <section
       className={cn(
@@ -848,20 +843,13 @@ function MissionWorkspace({
           <div className="mission-workspace-header">
             <div>
               <div className="mission-kicker">
-                {agentThreadKicker(selectedSession)}
-                <ChevronDownIcon />
+                {selectedSession ? agentThreadKicker(selectedSession) : "Agent workspace"}
               </div>
               <h1>
-                {workspaceTitle(activeView, selectedRow, selectedSession, selectedTeam)}
+                {selectedSession
+                  ? workspaceTitle(activeView, selectedRow, selectedSession, selectedTeam)
+                  : "Select an agent session"}
               </h1>
-            </div>
-            <div className="mission-header-metrics">
-              <ConnectionBadge connection={connection} />
-              <MetricChip label="subs" value={String(subscriptionCount)} />
-              <MetricChip
-                label="stale"
-                value={staleSourceIds.length ? staleSourceIds.join(", ") : "none"}
-              />
             </div>
           </div>
 
@@ -942,6 +930,7 @@ function MissionWorkspace({
         <form className="mission-composer" onSubmit={submitComposer}>
           <Textarea
             aria-label="Agent thread composer"
+            className={cn(composerExpanded && "mission-composer-input-expanded")}
             value={composerText}
             onChange={(event) => setComposerText(event.target.value)}
             onKeyDown={handleComposerKeyDown}
@@ -950,36 +939,41 @@ function MissionWorkspace({
           />
           <div className="mission-composer-tray">
             <div className="mission-composer-tools">
-              <Button size="icon-sm" type="button" variant="ghost">
-                <PlusIcon />
-              </Button>
-              <SelectFilter
-                value={selectedSession?.model || "default"}
-                options={unique(["default", "medium", "high", selectedSession?.model || "default"])}
-                onChange={() => undefined}
-              />
-              <SelectFilter
-                value={selectedSession?.provider || "runtime"}
-                options={unique(["runtime", "codex", "claude", selectedSession?.provider || "runtime"])}
-                onChange={() => undefined}
-              />
+              <MetricChip label="model" value={selectedSession?.model || "default"} />
+              <MetricChip label="provider" value={selectedSession?.provider || "runtime"} />
               <MetricChip label="target" value={selectedSession?.sessionId || "none"} />
             </div>
             <div className="mission-composer-actions">
-              <span className="mission-context-gauge">
-                <CircleIcon />
-                36% left
-              </span>
               <Button
-                aria-label="Send agent thread message"
-                disabled={!composerText.trim() || sourceGapActive}
-                size="sm"
-                type="submit"
-                variant="secondary"
+                aria-label={composerExpanded ? "Collapse composer" : "Expand composer"}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+                onClick={() => setComposerExpanded((expanded) => !expanded)}
               >
-                <SendIcon data-icon="inline-start" />
-                Send
+                <Maximize2Icon />
               </Button>
+              {canInterruptSelectedTurn ? (
+                <Button
+                  aria-label="Stop active turn"
+                  size="icon"
+                  type="button"
+                  variant="secondary"
+                  onClick={interruptSelectedTurn}
+                >
+                  <SquareIcon />
+                </Button>
+              ) : (
+                <Button
+                  aria-label="Send agent thread message"
+                  disabled={!composerText.trim() || sourceGapActive}
+                  size="icon"
+                  type="submit"
+                  variant="secondary"
+                >
+                  <SendIcon />
+                </Button>
+              )}
             </div>
           </div>
         </form>
@@ -1052,16 +1046,13 @@ function MissionViewBody({
   if (activeView === "agents") {
     return (
       <AgentPane
-        sessions={sessions}
         approvals={approvals}
         processes={processes}
-        sources={sources}
         selectedSession={selectedSession}
         sessionDetail={
           selectedSession ? sessionDetails[selectedSession.sessionId] : undefined
         }
         selectedApproval={selectedApproval}
-        setSelectedSessionId={setSelectedSessionId}
         sourceGapActive={sourceGapActive}
       />
     );
@@ -1640,236 +1631,108 @@ function BoardPane({
 }
 
 function AgentPane({
-  sessions,
   approvals,
   processes,
-  sources,
   selectedSession,
   sessionDetail,
   selectedApproval,
-  setSelectedSessionId,
   sourceGapActive
 }: {
-  readonly sessions: readonly SessionView[];
   readonly approvals: readonly ApprovalView[];
   readonly processes: readonly ProcessView[];
-  readonly sources: readonly SourceHealthView[];
   readonly selectedSession?: SessionView;
   readonly sessionDetail?: SessionDetailState;
   readonly selectedApproval?: ApprovalView;
-  readonly setSelectedSessionId: (id: string) => void;
   readonly sourceGapActive: boolean;
 }) {
-  const defaultSourceId = selectedSession?.sourceId || sources[0]?.sourceId || "";
-  const [createSourceId, setCreateSourceId] = useState(defaultSourceId);
-  const [createTitle, setCreateTitle] = useState("Lead agent");
-  const [createProvider, setCreateProvider] = useState("codex");
-  const [createModel, setCreateModel] = useState("gpt-5.4");
-  const [createCwd, setCreateCwd] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-
-  useEffect(() => {
-    if (!createSourceId && defaultSourceId) {
-      setCreateSourceId(defaultSourceId);
-    }
-  }, [createSourceId, defaultSourceId]);
-
   const sessionApprovals = approvals.filter(
     (approval) => approval.sessionId === selectedSession?.sessionId
   );
+  const relatedProcesses = processes.filter(
+    (process) =>
+      !selectedSession?.sourceId || process.sourceId === selectedSession.sourceId
+  );
+  const focusedApproval =
+    selectedApproval?.sessionId === selectedSession?.sessionId
+      ? selectedApproval
+      : sessionApprovals[0];
   const transcriptItems = sessionDetail?.transcript ?? [];
-  const latestTranscript = transcriptItems.at(-1);
-  const timeline = [
+  const threadItems = [
     ...transcriptItems.map((entry) => ({
       id: entry.id,
-      title: entry.role === "user" ? "User message" : "Assistant response",
-      meta: entry.text
+      kind: entry.role === "user" ? "human" : "agent",
+      title: entry.role === "user" ? "Human" : "Agent",
+      body: entry.text,
+      timestampUnixMs: entry.createdAtUnixMs,
+      meta: entry.turnId ? `turn ${entry.turnId}` : selectedSession?.model || ""
     })),
     ...sessionApprovals.map((approval) => ({
       id: approval.approvalId,
+      kind: "approval",
       title: approval.summary || "Approval requested",
-      meta: `${approval.status} / ${approval.risk || "unknown risk"}`
+      body: `${approval.status} / ${approval.risk || "unknown risk"}`,
+      timestampUnixMs: undefined,
+      meta: approval.turnId || approval.approvalId
     })),
-    ...processes.map((process) => ({
+    ...relatedProcesses.map((process) => ({
       id: process.processId,
+      kind: "tool",
       title: process.command || process.processId,
-      meta: process.status
+      body:
+        process.exitCode !== 0
+          ? `${process.status} / exit ${process.exitCode}`
+          : process.status,
+      timestampUnixMs: undefined,
+      meta: process.processId
     }))
   ];
 
-  function createSession() {
-    const sourceId = createSourceId || defaultSourceId;
-    if (!sourceId || !createProvider.trim() || sourceGapActive) {
-      return;
-    }
-    sendRealtimeCommand(
-      makeCommand("source", sourceId, "createSession", {
-        provider: createProvider.trim(),
-        model: createModel.trim(),
-        cwd: createCwd.trim(),
-        title: createTitle.trim(),
-        permissionMode: "",
-        metadata: {}
-      })
-    );
-    setCreateOpen(false);
-  }
-
   return (
-    <>
-      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_19rem] gap-3">
-        <Card className="min-h-0">
-          <CardHeader className="border-b">
-            <CardTitle>Agent workspace</CardTitle>
-            <CardDescription>{selectedSession?.sessionId || "No session selected"}</CardDescription>
-            <CardAction className="flex gap-2">
-              <SelectFilter
-                value={selectedSession?.sessionId ?? ""}
-                options={sessions.map((session) => session.sessionId)}
-                onChange={setSelectedSessionId}
-              />
-              <Button
-                disabled={!sources.length || sourceGapActive}
-                type="button"
-                variant="outline"
-                onClick={() => setCreateOpen(true)}
-              >
-                <PlusIcon data-icon="inline-start" />
-                New agent
-              </Button>
-              <Button
-                disabled={!selectedSession?.activeTurnId || sourceGapActive}
-                type="button"
-                variant="destructive"
-                onClick={() =>
-                  selectedSession &&
-                  sendRealtimeCommand(
-                    makeCommand("session", selectedSession.sessionId, "interruptTurn", {
-                      sessionId: selectedSession.sessionId,
-                      turnId: selectedSession.activeTurnId
-                    })
-                  )
-                }
-              >
-                <SquareIcon data-icon="inline-start" />
-                Interrupt
-              </Button>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-            {selectedSession ? (
-              <>
-                <div className="grid grid-cols-3 gap-2">
-                  <MetricCard label="provider" value={selectedSession.provider || "unknown"} />
-                  <MetricCard label="model" value={selectedSession.model || "default"} />
-                  <MetricCard label="status" value={selectedSession.status || "unknown"} />
-                  <MetricCard label="active turn" value={selectedSession.activeTurnId || "none"} />
-                  <MetricCard label="cwd" value={selectedSession.cwd || "unset"} />
-                  <MetricCard label="worktree" value={selectedSession.worktreePath || "unassigned"} />
-                </div>
-                <Card className="min-h-36 flex-1 bg-muted/20" size="sm">
-                  <CardHeader>
-                    <CardTitle>Conversation stream</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {latestTranscript ? (
-                      transcriptItems.slice(-4).map((entry) => (
-                        <div className="rounded-md border bg-background p-2" key={entry.id}>
-                          <div className="mb-1 text-xs font-medium text-muted-foreground">
-                            {entry.role}{entry.turnId ? ` / ${entry.turnId}` : ""}
-                          </div>
-                          <div className="whitespace-pre-wrap text-sm">{entry.text}</div>
-                        </div>
-                      ))
-                    ) : selectedSession.activeTurnId ? (
-                      `Streaming turn ${selectedSession.activeTurnId}.`
-                    ) : (
-                      "No active turn."
-                    )}
-                  </CardContent>
-                </Card>
-              </>
-            ) : (
-              <EmptyBlock title="No session" detail="Select an existing session or create an agent from the toolbar." />
-            )}
-          </CardContent>
-        </Card>
-        <div className="flex min-h-0 flex-col gap-3">
-          <TimelineCard title="Timeline" items={timeline} />
-          <ApprovalCard approval={selectedApproval} sourceGapActive={sourceGapActive} />
+    <div className="mission-agent-thread">
+      {selectedSession ? (
+        <div className="mission-thread-meta" aria-label="Selected session details">
+          <span>{selectedSession.provider || "provider unknown"}</span>
+          <span>{selectedSession.model || "default model"}</span>
+          <span>{selectedSession.status || "status unknown"}</span>
+          {selectedSession.activeTurnId ? <span>turn {selectedSession.activeTurnId}</span> : null}
+          {selectedSession.cwd ? <span>{selectedSession.cwd}</span> : null}
         </div>
+      ) : null}
+
+      <div className="mission-thread-feed">
+        {!selectedSession ? (
+          <div className="mission-thread-empty">Select a session from the left rail.</div>
+        ) : threadItems.length === 0 ? (
+          <div className="mission-thread-empty">
+            {selectedSession.activeTurnId
+              ? `Streaming turn ${selectedSession.activeTurnId}.`
+              : "No messages yet."}
+          </div>
+        ) : (
+          threadItems.map((item) => (
+            <article
+              className={cn(
+                "mission-thread-row",
+                item.kind === "human" && "mission-thread-row-human"
+              )}
+              key={item.id}
+            >
+              <div className="mission-thread-row-label">
+                <span>{item.title}</span>
+                <span>{item.timestampUnixMs ? formatTime(item.timestampUnixMs) : item.meta}</span>
+              </div>
+              <div className="mission-thread-row-body">{item.body}</div>
+            </article>
+          ))
+        )}
       </div>
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create agent</DialogTitle>
-            <DialogDescription>
-              Start a new agent session on a live source.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            className="grid gap-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createSession();
-            }}
-          >
-            <div className="grid grid-cols-2 gap-2">
-              <Field>
-                <FieldLabel htmlFor="create-agent-source">Source</FieldLabel>
-                <SelectFilter
-                  value={createSourceId || defaultSourceId}
-                  options={sources.map((source) => source.sourceId)}
-                  onChange={setCreateSourceId}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="create-agent-title">Title</FieldLabel>
-                <Input
-                  id="create-agent-title"
-                  value={createTitle}
-                  onChange={(event) => setCreateTitle(event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="create-agent-provider">Provider</FieldLabel>
-                <Input
-                  id="create-agent-provider"
-                  value={createProvider}
-                  onChange={(event) => setCreateProvider(event.target.value)}
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="create-agent-model">Model</FieldLabel>
-                <Input
-                  id="create-agent-model"
-                  value={createModel}
-                  onChange={(event) => setCreateModel(event.target.value)}
-                />
-              </Field>
-            </div>
-            <Field>
-              <FieldLabel htmlFor="create-agent-cwd">Working directory</FieldLabel>
-              <Input
-                id="create-agent-cwd"
-                value={createCwd}
-                onChange={(event) => setCreateCwd(event.target.value)}
-                placeholder="/path/to/project"
-              />
-            </Field>
-            <DialogFooter>
-              <Button
-                disabled={!sources.length || !createProvider.trim() || sourceGapActive}
-                type="submit"
-              >
-                <PlusIcon data-icon="inline-start" />
-                Create agent
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </>
+
+      {focusedApproval ? (
+        <div className="mission-thread-approval">
+          <ApprovalCard approval={focusedApproval} sourceGapActive={sourceGapActive} />
+        </div>
+      ) : null}
+    </div>
   );
 }
 

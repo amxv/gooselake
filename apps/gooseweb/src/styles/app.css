@@ -257,40 +257,6 @@
     text-transform: uppercase;
   }
 
-  .mission-rail-metrics {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.45rem;
-    padding: 0 0.35rem 0.9rem 0;
-  }
-
-  .mission-rail-metrics button {
-    display: grid;
-    min-width: 0;
-    gap: 0.12rem;
-    border: 1px solid color-mix(in oklch, var(--border), transparent 18%);
-    border-radius: 0.65rem;
-    background: oklch(0.13 0.003 255);
-    color: inherit;
-    padding: 0.45rem 0.35rem;
-    text-align: left;
-  }
-
-  .mission-rail-metrics button span:first-child {
-    color: oklch(0.82 0.004 255);
-    font-size: 0.92rem;
-    font-weight: 780;
-  }
-
-  .mission-rail-metrics button span:last-child {
-    overflow: hidden;
-    color: var(--muted-foreground);
-    font-size: 0.68rem;
-    font-weight: 700;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .mission-rail-section {
     padding: 0.75rem 0.35rem 0.75rem 0;
   }
@@ -346,6 +312,14 @@
     justify-content: flex-end;
   }
 
+  .mission-roster-empty {
+    border: 1px solid color-mix(in oklch, var(--border), transparent 36%);
+    border-radius: 0.95rem;
+    color: var(--muted-foreground);
+    padding: 1rem 0.85rem;
+    font-size: 0.9rem;
+  }
+
   .mission-roster-actions {
     display: grid;
     gap: 0.65rem;
@@ -389,6 +363,13 @@
     border-radius: 1.35rem;
     background:
       linear-gradient(180deg, oklch(0.142 0.003 255), oklch(0.112 0.002 255));
+  }
+
+  .mission-workspace-thread {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    border-radius: 2rem;
+    background:
+      linear-gradient(180deg, oklch(0.145 0.003 255), oklch(0.108 0.002 255));
   }
 
   .mission-dashboard-header {
@@ -565,6 +546,10 @@
     color: var(--foreground);
   }
 
+  .mission-workspace-thread .mission-embedded-pane {
+    min-height: 100%;
+  }
+
   .mission-embedded-pane > [data-slot="card"],
   .mission-embedded-pane [data-slot="card"] {
     border-radius: 1rem;
@@ -592,6 +577,10 @@
     box-shadow: none;
   }
 
+  .mission-composer textarea.mission-composer-input-expanded {
+    min-height: min(44svh, 24rem);
+  }
+
   .mission-composer textarea:focus-visible {
     box-shadow: none;
   }
@@ -604,16 +593,98 @@
     padding: 0 1.25rem 1rem;
   }
 
-  .mission-context-gauge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
-    color: var(--muted-foreground);
-    font-size: 0.86rem;
+  .mission-composer-actions > [data-slot="button"] {
+    border-radius: 999px;
   }
 
-  .mission-context-gauge svg {
-    color: oklch(0.53 0.004 255);
+  .mission-agent-thread {
+    display: grid;
+    min-height: 100%;
+    gap: 1.15rem;
+    align-content: start;
+  }
+
+  .mission-thread-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    color: var(--muted-foreground);
+    font-size: 0.78rem;
+  }
+
+  .mission-thread-meta span {
+    min-width: 0;
+    max-width: 22rem;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 28%);
+    border-radius: 999px;
+    background: oklch(0.12 0.002 255);
+    padding: 0.28rem 0.62rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-thread-feed {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+  }
+
+  .mission-thread-row {
+    width: min(100%, 58rem);
+    min-width: 0;
+  }
+
+  .mission-thread-row-human {
+    align-self: flex-end;
+    width: min(100%, 44rem);
+  }
+
+  .mission-thread-row-label {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    margin-bottom: 0.38rem;
+    color: var(--muted-foreground);
+    font-size: 0.76rem;
+    font-weight: 700;
+  }
+
+  .mission-thread-row-label span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-thread-row-body {
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 26%);
+    border-radius: 1.05rem;
+    background: oklch(0.13 0.002 255);
+    color: oklch(0.82 0.004 255);
+    padding: 0.85rem 0.95rem;
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+
+  .mission-thread-row-human .mission-thread-row-body {
+    background: oklch(0.18 0.004 255);
+  }
+
+  .mission-thread-empty {
+    display: grid;
+    min-height: 18rem;
+    place-items: center;
+    color: var(--muted-foreground);
+    font-size: 0.98rem;
+    text-align: center;
+  }
+
+  .mission-thread-approval {
+    width: min(100%, 42rem);
   }
 
   .mission-processes {

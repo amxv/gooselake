@@ -205,7 +205,7 @@ type TeamCommsMessageItem = {
 
 type AgentThreadItem = {
   readonly id: string;
-  readonly kind: "human" | "assistant" | "thinking" | "tool" | "team" | "approval";
+  readonly kind: "human" | "assistant" | "thinking" | "tool" | "team" | "approval" | "todos";
   readonly title: string;
   readonly body: string;
   readonly meta?: string;
@@ -214,6 +214,13 @@ type AgentThreadItem = {
   readonly output?: string;
   readonly toolDiff?: AgentToolDiff;
   readonly processCard?: AgentProcessCard;
+  readonly todos?: readonly AgentTodoItem[];
+};
+
+type AgentTodoItem = {
+  readonly id: string;
+  readonly title: string;
+  readonly status: "current" | "pending" | "completed";
 };
 
 type AgentProcessCard = {
@@ -2380,6 +2387,7 @@ function AgentPane({
   readonly sourceGapActive: boolean;
 }) {
   const showDevFixture = isThreadVisualFixtureEnabled();
+  const showTodosFixture = isTodosVisualFixtureEnabled();
   const showCommitsFixture = isRecentCommitsVisualFixtureEnabled();
   const focusChangesFixture = isChangesVisualFixtureEnabled();
   const [changesPreviewOpen, setChangesPreviewOpen] = useState(false);
@@ -2414,8 +2422,11 @@ function AgentPane({
         message.recipientAgentIds.includes(selectedSession.sessionId)
       );
     });
-  const threadItems: readonly AgentThreadItem[] = showDevFixture && !selectedSession
-    ? DEV_AGENT_THREAD_ITEMS
+  const threadItems: readonly AgentThreadItem[] = !selectedSession && (showDevFixture || showTodosFixture)
+    ? [
+      ...(showTodosFixture ? DEV_TODOS_THREAD_ITEMS : []),
+      ...(showDevFixture ? DEV_AGENT_THREAD_ITEMS : [])
+    ]
     : [
     ...transcriptItems.map((entry) => transcriptThreadItem(entry, selectedSession)),
     ...sessionApprovals.map(approvalThreadItem),
@@ -2439,7 +2450,7 @@ function AgentPane({
             {selectedSession.activeTurnId ? <span>turn {selectedSession.activeTurnId}</span> : null}
             {selectedSession.cwd ? <span>{selectedSession.cwd}</span> : null}
           </div>
-        ) : showDevFixture ? (
+        ) : showDevFixture || showTodosFixture ? (
           <div className="mission-thread-meta" aria-label="Development thread visual fixture">
             <span>dev visual fixture</span>
             <span>query gated</span>
@@ -2450,7 +2461,7 @@ function AgentPane({
           <ChangesDiffPreviewPanel preview={DEV_CHANGES_DIFF_PREVIEW} />
         ) : (
           <div className="mission-thread-feed">
-            {!selectedSession && !showDevFixture ? (
+            {!selectedSession && !showDevFixture && !showTodosFixture ? (
               <div className="mission-thread-empty mission-thread-empty-quiet" aria-hidden="true" />
             ) : threadItems.length === 0 ? (
               <div className="mission-thread-empty">
@@ -2482,6 +2493,10 @@ function AgentPane({
 }
 
 function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
+  if (item.kind === "todos") {
+    return <AgentTodosCard item={item} todos={item.todos ?? []} />;
+  }
+
   if (item.kind === "thinking") {
     return (
       <article className="mission-thread-row mission-thread-thinking">
@@ -2571,6 +2586,33 @@ function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
         <span>{item.timestampUnixMs ? formatTime(item.timestampUnixMs) : item.meta}</span>
       </div>
       <div className="mission-thread-row-body">{item.body}</div>
+    </article>
+  );
+}
+
+function AgentTodosCard({
+  item,
+  todos
+}: {
+  readonly item: AgentThreadItem;
+  readonly todos: readonly AgentTodoItem[];
+}) {
+  const completed = todos.filter((todo) => todo.status === "completed").length;
+
+  return (
+    <article className="mission-thread-row mission-thread-todos" data-thread-row="todos" data-todos-card="true">
+      <div className="mission-thread-todos-header">
+        <h3>{item.title}</h3>
+        <span>{completed}/{todos.length}</span>
+      </div>
+      <div className="mission-thread-todos-list">
+        {todos.map((todo) => (
+          <div className="mission-thread-todo-row" data-todo-status={todo.status} key={todo.id}>
+            <span aria-hidden="true" />
+            <p>{todo.title}</p>
+          </div>
+        ))}
+      </div>
     </article>
   );
 }
@@ -3083,6 +3125,13 @@ function isThreadVisualFixtureEnabled(): boolean {
   return new URLSearchParams(window.location.search).has("goosewebThreadFixture");
 }
 
+function isTodosVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebTodosFixture");
+}
+
 function isRosterVisualFixtureEnabled(): boolean {
   if (!import.meta.env.DEV || typeof window === "undefined") {
     return false;
@@ -3268,6 +3317,32 @@ const DEV_AGENT_THREAD_ITEMS: readonly AgentThreadItem[] = [
     body: "pending / medium risk",
     meta: "turn dev-turn",
     status: "pending"
+  }
+];
+
+const DEV_TODOS_THREAD_ITEMS: readonly AgentThreadItem[] = [
+  {
+    id: "dev-thread:todos",
+    kind: "todos",
+    title: "Todos",
+    body: "",
+    todos: [
+      {
+        id: "todo-image-view",
+        title: "Assign imageView preview bug fix to implementation agent",
+        status: "current"
+      },
+      {
+        id: "todo-handoff",
+        title: "Wait for handoff",
+        status: "pending"
+      },
+      {
+        id: "todo-integrate",
+        title: "Integrate, validate, push, and clean up",
+        status: "pending"
+      }
+    ]
   }
 ];
 

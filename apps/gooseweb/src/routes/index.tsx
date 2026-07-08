@@ -648,6 +648,18 @@ function MissionRosterRail({
     onSelectApproval,
     onSelectProcess
   });
+  const fixtureGroups =
+    isRosterVisualFixtureEnabled() && groups.every((group) => group.items.length === 0)
+      ? getDevAgentRosterGroups({
+          selectedSessionId,
+          onSelectSession,
+          onSelectRow,
+          onSelectTeam,
+          onSelectApproval,
+          onSelectProcess
+        })
+      : [];
+  const visibleGroups = fixtureGroups.length ? fixtureGroups : groups;
   return (
     <aside className="mission-roster">
       <div className="mission-roster-scroll">
@@ -657,7 +669,7 @@ function MissionRosterRail({
         </div>
 
         <div className="mission-roster-groups">
-          {groups.map((group) => (
+          {visibleGroups.map((group) => (
             <section className="mission-roster-group" key={group.id}>
               <div className="mission-roster-group-heading">
                 <span className="mission-roster-group-name">{group.label}</span>
@@ -679,8 +691,12 @@ function MissionRosterRail({
                         onViewChange("agents");
                       }}
                     >
-                      <span className="mission-roster-status" data-status={item.status}>
-                        {item.active ? (
+                      <span
+                        className="mission-roster-status"
+                        data-activity={item.activity}
+                        data-status={item.status}
+                      >
+                        {item.activity === "process" ? (
                           <ActivityIcon aria-hidden="true" />
                         ) : (
                           <span aria-hidden="true" />
@@ -703,7 +719,7 @@ function MissionRosterRail({
               ) : null}
             </section>
           ))}
-          {groups.length === 0 ? (
+          {visibleGroups.length === 0 ? (
             <div className="mission-roster-quiet" aria-hidden="true" />
           ) : null}
         </div>
@@ -738,7 +754,7 @@ type AgentRosterItem = {
   readonly meta: string;
   readonly aside: string;
   readonly status: string;
-  readonly active: boolean;
+  readonly activity: "turn" | "process" | "unread" | "idle";
   readonly selected: boolean;
   readonly onClick: () => void;
 };
@@ -1958,6 +1974,14 @@ function isThreadVisualFixtureEnabled(): boolean {
     return false;
   }
   return new URLSearchParams(window.location.search).has("goosewebThreadFixture");
+}
+
+function isRosterVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  const params = new URLSearchParams(window.location.search);
+  return params.has("goosewebRosterFixture") || params.has("goosewebThreadFixture");
 }
 
 const DEV_AGENT_THREAD_ITEMS: readonly AgentThreadItem[] = [
@@ -3653,6 +3677,64 @@ function getAgentRosterGroups(input: {
   return [...teamGroups, ...sourceGroups, ...orphanGroups];
 }
 
+function getDevAgentRosterGroups(input: {
+  readonly selectedSessionId: string;
+  readonly onSelectRow: (id: string) => void;
+  readonly onSelectSession: (id: string) => void;
+  readonly onSelectTeam: (id: string) => void;
+  readonly onSelectApproval: (id: string) => void;
+  readonly onSelectProcess: (id: string) => void;
+}): readonly AgentRosterGroup[] {
+  const selectFixture = (sessionId: string, rowId: string, processId = "") => {
+    input.onSelectSession(sessionId);
+    input.onSelectRow(rowId);
+    input.onSelectTeam("dev-roster-team");
+    input.onSelectApproval(sessionId === "dev-roster-lead" ? "dev-roster-approval" : "");
+    input.onSelectProcess(processId);
+  };
+  const items: readonly AgentRosterItem[] = [
+    {
+      id: "dev-roster:team:dev-roster-team:session:dev-roster-lead",
+      title: "Lead",
+      meta: "Finished Cove",
+      aside: "4m",
+      status: "running",
+      activity: "turn",
+      selected: input.selectedSessionId === "dev-roster-lead",
+      onClick: () => selectFixture("dev-roster-lead", "dev-roster-row-lead")
+    },
+    {
+      id: "dev-roster:team:dev-roster-team:session:dev-roster-browser",
+      title: "Gooseweb Browser QA",
+      meta: "Platinum Pearl",
+      aside: "now",
+      status: "running",
+      activity: "process",
+      selected: input.selectedSessionId === "dev-roster-browser",
+      onClick: () =>
+        selectFixture("dev-roster-browser", "dev-roster-row-browser", "dev-roster-process")
+    },
+    {
+      id: "dev-roster:team:dev-roster-team:session:dev-roster-composer",
+      title: "Gooseweb Agents Composer",
+      meta: "Social Spring",
+      aside: "now",
+      status: "completed",
+      activity: "unread",
+      selected: input.selectedSessionId === "dev-roster-composer",
+      onClick: () => selectFixture("dev-roster-composer", "dev-roster-row-composer")
+    }
+  ];
+  return [
+    {
+      id: "dev-roster-group:gooselake",
+      label: "gooselake",
+      count: items.length,
+      items
+    }
+  ];
+}
+
 function makeSessionRosterItem(input: {
   readonly session: SessionView;
   readonly row?: FleetRowView;
@@ -3695,7 +3777,7 @@ function makeSessionRosterItem(input: {
     meta,
     aside: activity ? ageFrom(activity) : session.activeTurnId ? "now" : session.status || "",
     status: session.status || row?.status || "unknown",
-    active: Boolean(session.activeTurnId || activeProcess),
+    activity: session.activeTurnId ? "turn" : activeProcess ? "process" : "idle",
     selected:
       session.sessionId === input.selectedSessionId ||
       team?.teamId === input.selectedTeamId ||
@@ -3750,7 +3832,7 @@ function makeRowRosterItem(input: {
       .join(" / "),
     aside: ageFrom(toNumber(row.latestActivityUnixMs)),
     status: row.status || "unknown",
-    active: Boolean(activeProcess || row.status === "running"),
+    activity: row.status === "running" ? "turn" : activeProcess ? "process" : "idle",
     selected: row.rowId === input.selectedRowId,
     onClick: () => {
       input.onSelectRow(row.rowId);

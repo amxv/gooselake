@@ -214,7 +214,7 @@
   .mission-tool-stack {
     display: flex;
     flex-direction: column;
-    gap: 0.55rem;
+    gap: 0.35rem;
   }
 
   .mission-roster-summary {
@@ -298,15 +298,15 @@
   .mission-roster-card {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0.65rem;
+    align-items: start;
+    gap: 0.6rem;
     width: 100%;
-    min-height: 3.35rem;
+    min-height: 3.15rem;
     border: 1px solid transparent;
-    border-radius: 1rem;
+    border-radius: 1.05rem;
     background: transparent;
     color: inherit;
-    padding: 0.55rem 0.65rem;
+    padding: 0.58rem 0.62rem;
     text-align: left;
     transition:
       background 160ms ease,
@@ -317,36 +317,53 @@
   .mission-roster-card:hover,
   .mission-roster-card-active {
     border-color: color-mix(in oklch, var(--border), var(--foreground) 7%);
-    background: oklch(0.158 0.003 255);
+    background: oklch(0.17 0.003 255);
     color: var(--foreground);
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / 4%);
   }
 
   .mission-roster-status {
     display: grid;
     place-items: center;
-    width: 0.72rem;
-    min-width: 0.72rem;
+    width: 0.95rem;
+    min-width: 0.95rem;
+    height: 1.35rem;
     color: oklch(0.68 0.004 255);
+    margin-top: 0.05rem;
   }
 
   .mission-roster-status > span {
     display: block;
-    width: 0.48rem;
-    height: 0.48rem;
+    width: 0.55rem;
+    height: 0.55rem;
     border-radius: 999px;
     background: oklch(0.5 0.004 255);
   }
 
   .mission-roster-status > svg {
-    width: 0.78rem;
-    height: 0.78rem;
+    width: 0.95rem;
+    height: 0.95rem;
   }
 
-  .mission-roster-status[data-status="running"] > span,
-  .mission-roster-status[data-status="live"] > span,
-  .mission-roster-status[data-status="connected"] > span {
-    background: oklch(0.72 0.15 165);
-    box-shadow: 0 0 0.75rem oklch(0.72 0.15 165 / 35%);
+  .mission-roster-status[data-activity="turn"] > span {
+    width: 0.78rem;
+    height: 0.78rem;
+    border: 2px solid oklch(0.5 0.004 255 / 40%);
+    border-top-color: oklch(0.72 0.15 225);
+    background: transparent;
+    animation: mission-roster-spin 850ms linear infinite;
+  }
+
+  .mission-roster-status[data-activity="process"] > svg {
+    color: oklch(0.7 0.12 225);
+  }
+
+  .mission-roster-status[data-activity="unread"] > span,
+  .mission-roster-status[data-status="running"][data-activity="idle"] > span,
+  .mission-roster-status[data-status="live"][data-activity="idle"] > span,
+  .mission-roster-status[data-status="connected"][data-activity="idle"] > span {
+    background: oklch(0.7 0.15 225);
+    box-shadow: 0 0 0.75rem oklch(0.7 0.15 225 / 38%);
   }
 
   .mission-roster-status[data-status="pending"] > span,
@@ -362,7 +379,7 @@
   .mission-roster-card-main {
     display: grid;
     min-width: 0;
-    gap: 0.18rem;
+    gap: 0.2rem;
   }
 
   .mission-roster-card-title,
@@ -374,22 +391,30 @@
   }
 
   .mission-roster-card-title {
-    color: oklch(0.82 0.004 255);
-    font-size: 0.88rem;
-    font-weight: 650;
+    color: oklch(0.84 0.004 255);
+    font-size: 0.95rem;
+    font-weight: 690;
+    line-height: 1.2;
   }
 
   .mission-roster-card-meta {
     color: oklch(0.5 0.004 255);
-    font-size: 0.72rem;
+    font-size: 0.76rem;
     line-height: 1.25;
   }
 
   .mission-roster-card-side {
-    color: oklch(0.48 0.004 255);
-    font-size: 0.76rem;
+    color: oklch(0.46 0.004 255);
+    font-size: 0.86rem;
     font-variant-numeric: tabular-nums;
+    line-height: 1.35;
     white-space: nowrap;
+  }
+
+  @keyframes mission-roster-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .mission-roster-quiet {

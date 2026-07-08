@@ -406,13 +406,24 @@ function Index() {
       />
       <div className="mission-grid min-h-0">
         <MissionRosterRail
-          activeView={activeView}
+          rows={fleetRows}
           sessions={sessionOptions}
+          teams={teams}
+          approvals={approvals}
+          processes={processes}
+          selectedRowId={selectedRowId}
           selectedSessionId={selectedSessionId}
+          selectedTeamId={selectedTeamId}
+          selectedApprovalId={selectedApprovalId}
+          selectedProcessId={selectedProcessId}
           sourceGapActive={sourceGapActive}
           addAgentDisabled={sourceGapActive || (!sessionOptions.length && !sources.length)}
           onViewChange={setActiveView}
+          onSelectRow={setSelectedRowId}
           onSelectSession={setSelectedSessionId}
+          onSelectTeam={setSelectedTeamId}
+          onSelectApproval={setSelectedApprovalId}
+          onSelectProcess={setSelectedProcessId}
           onAddAgentToTeam={addSelectedAgentToTeam}
         />
 
@@ -485,13 +496,21 @@ function Index() {
 }
 
 function MissionChrome({
+  activeView,
+  approvals,
+  processes,
   state,
   sources,
-  subscriptionCount
+  subscriptionCount,
+  onViewChange
 }: {
+  readonly activeView: WorkspaceView;
+  readonly approvals: readonly ApprovalView[];
+  readonly processes: readonly ProcessView[];
   readonly state: GoosewebSnapshot;
   readonly sources: readonly SourceHealthView[];
   readonly subscriptionCount: number;
+  readonly onViewChange: (view: WorkspaceView) => void;
 }) {
   const source = sources[0];
   return (
@@ -512,9 +531,32 @@ function MissionChrome({
           <ChevronDownIcon />
         </Button>
       </div>
-      <div className="mission-titlebar">
-        <span className="mission-titlebar-slot" />
-      </div>
+      <nav className="mission-top-nav" aria-label="Workspace views">
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const count =
+            item.id === "inbox"
+              ? approvals.filter((approval) => approval.status === "pending").length
+              : item.id === "fleet"
+                ? processes.filter((process) => process.status === "running").length
+                : undefined;
+          return (
+            <Button
+              aria-current={activeView === item.id ? "page" : undefined}
+              className="mission-top-nav-button"
+              key={item.id}
+              size="sm"
+              type="button"
+              variant={activeView === item.id ? "secondary" : "ghost"}
+              onClick={() => onViewChange(item.id)}
+            >
+              <Icon data-icon="inline-start" />
+              <span>{item.label}</span>
+              {count ? <Badge variant="outline">{count}</Badge> : null}
+            </Button>
+          );
+        })}
+      </nav>
       <div className="mission-chrome-status">
         <ConnectionBadge connection={state.connection} />
         <MetricChip label="source" value={source?.displayName || source?.sourceId || "none"} />
@@ -526,7 +568,6 @@ function MissionChrome({
 }
 
 function MissionRosterRail({
-  activeView,
   approvals,
   rows,
   sessions,
@@ -547,7 +588,6 @@ function MissionRosterRail({
   onSelectProcess,
   onAddAgentToTeam
 }: {
-  readonly activeView: WorkspaceView;
   readonly approvals: readonly ApprovalView[];
   readonly rows: readonly FleetRowView[];
   readonly sessions: readonly SessionView[];
@@ -568,8 +608,7 @@ function MissionRosterRail({
   readonly onSelectProcess: (id: string) => void;
   readonly onAddAgentToTeam: () => void;
 }) {
-  const items = getEntityItems({
-    activeView,
+  const items = getAgentRosterItems({
     rows,
     sessions,
     teams,
@@ -586,48 +625,49 @@ function MissionRosterRail({
     onSelectApproval,
     onSelectProcess
   });
-  const visibleItems = items.slice(0, 9);
+  const visibleItems = items.slice(0, 12);
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending").length;
+  const runningProcesses = processes.filter((process) => process.status === "running").length;
+  const activeTeams = teams.filter((team) => team.members.length > 0).length;
 
   return (
     <aside className="mission-roster">
       <div className="mission-roster-scroll">
-        <div className="mission-nav-grid">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const count =
-              item.id === "inbox"
-                ? approvals.filter((approval) => approval.status === "pending").length
-                : item.id === "fleet"
-                  ? processes.filter((process) => process.status === "running").length
-                  : undefined;
-            return (
-              <Button
-                className="mission-nav-button"
-                key={item.id}
-                type="button"
-                variant={activeView === item.id ? "secondary" : "ghost"}
-                onClick={() => onViewChange(item.id)}
-              >
-                <Icon data-icon="inline-start" />
-                <span className="truncate">{item.label}</span>
-                {count ? <Badge variant="outline">{count}</Badge> : null}
-              </Button>
-            );
-          })}
+        <div className="mission-roster-summary">
+          <div>
+            <span className="mission-section-kicker">Active navigation</span>
+            <h2>Agents</h2>
+          </div>
+          <StatusBadge status={sourceGapActive ? "stale" : "live"} />
         </div>
-
-        <Separator className="mission-separator" />
+        <div className="mission-rail-metrics">
+          <button type="button" onClick={() => onViewChange("inbox")}>
+            <span>{pendingApprovals}</span>
+            <span>approvals</span>
+          </button>
+          <button type="button" onClick={() => onViewChange("teams")}>
+            <span>{activeTeams}</span>
+            <span>teams</span>
+          </button>
+          <button type="button" onClick={() => onViewChange("fleet")}>
+            <span>{runningProcesses}</span>
+            <span>processes</span>
+          </button>
+        </div>
 
         <div className="mission-rail-section">
           <div className="mission-section-label">
-            <span>{sidebarTitle(activeView)}</span>
+            <span>Sessions</span>
             <Badge variant={sourceGapActive ? "destructive" : "outline"}>
               {items.length}
             </Badge>
           </div>
           <div className="mission-roster-list">
             {visibleItems.length === 0 ? (
-              <EmptyBlock title="No entities" detail="Waiting for realtime snapshots." />
+              <EmptyBlock
+                title="No active agents"
+                detail="Connect a source or create a session to populate this rail."
+              />
             ) : (
               visibleItems.map((item) => (
                 <button
@@ -637,7 +677,10 @@ function MissionRosterRail({
                   )}
                   key={item.id}
                   type="button"
-                  onClick={item.onClick}
+                  onClick={() => {
+                    item.onClick();
+                    onViewChange("agents");
+                  }}
                 >
                   <span className="mission-roster-card-main">
                     <span className="truncate text-[0.95rem] font-medium">
@@ -3343,8 +3386,7 @@ function stringCommandValue(value: Record<string, unknown>, key: string): string
   return typeof next === "string" ? next : "";
 }
 
-function getEntityItems(input: {
-  readonly activeView: WorkspaceView;
+function getAgentRosterItems(input: {
   readonly rows: readonly FleetRowView[];
   readonly sessions: readonly SessionView[];
   readonly teams: readonly TeamView[];
@@ -3361,76 +3403,81 @@ function getEntityItems(input: {
   readonly onSelectApproval: (id: string) => void;
   readonly onSelectProcess: (id: string) => void;
 }) {
-  if (input.activeView === "teams") {
-    return input.teams.map((team) => ({
-      id: team.teamId,
-      title: team.name || team.teamId,
-      meta: `${team.members.length} members`,
-      status: team.leadMemberId ? "lead set" : "no lead",
-      selected: team.teamId === input.selectedTeamId,
-      onClick: () => input.onSelectTeam(team.teamId)
-    }));
+  const rowsBySessionId = new Map<string, FleetRowView>();
+  for (const row of input.rows) {
+    if (row.sessionId && !rowsBySessionId.has(row.sessionId)) {
+      rowsBySessionId.set(row.sessionId, row);
+    }
   }
-  if (input.activeView === "inbox") {
-    return input.approvals.map((approval) => ({
-      id: approval.approvalId,
-      title: approval.summary || approval.approvalId,
-      meta: approval.sessionId,
-      status: approval.status,
-      selected: approval.approvalId === input.selectedApprovalId,
-      onClick: () => input.onSelectApproval(approval.approvalId)
-    }));
+
+  if (input.sessions.length > 0) {
+    return input.sessions.map((session) => {
+      const row = rowsBySessionId.get(session.sessionId);
+      const pendingForSession = input.approvals.filter(
+        (approval) =>
+          approval.sessionId === session.sessionId && approval.status === "pending"
+      ).length;
+      return {
+        id: session.sessionId,
+        title: row?.title || session.sessionId,
+        meta: [
+          session.provider || row?.provider || "provider",
+          session.model || row?.model || "default",
+          row?.teamId ? `team ${row.teamId}` : undefined,
+          pendingForSession ? `${pendingForSession} approval` : undefined
+        ]
+          .filter(Boolean)
+          .join(" / "),
+        status: session.status || row?.status || "unknown",
+        selected:
+          session.sessionId === input.selectedSessionId ||
+          Boolean(row?.rowId && row.rowId === input.selectedRowId),
+        onClick: () => {
+          input.onSelectSession(session.sessionId);
+          if (row?.rowId) {
+            input.onSelectRow(row.rowId);
+          }
+        }
+      };
+    });
   }
-  if (input.activeView === "agents") {
-    return input.sessions.map((session) => ({
-      id: session.sessionId,
-      title: session.sessionId,
-      meta: `${session.provider}/${session.model || "default"}`,
-      status: session.status,
-      selected: session.sessionId === input.selectedSessionId,
-      onClick: () => input.onSelectSession(session.sessionId)
-    }));
-  }
-  if (input.activeView === "fleet") {
-    return input.processes.map((process) => ({
-      id: process.processId,
-      title: process.command || process.processId,
-      meta: process.processId,
-      status: process.status,
-      selected: process.processId === input.selectedProcessId,
-      onClick: () => input.onSelectProcess(process.processId)
-    }));
-  }
+
   return input.rows.map((row) => ({
     id: row.rowId,
     title: row.title || row.sessionId || row.rowId,
-    meta: `${row.provider || "provider"}/${row.model || "default"}`,
-    status: row.status,
+    meta: [
+      row.provider || "provider",
+      row.model || "default",
+      row.teamId ? `team ${row.teamId}` : undefined,
+      row.pendingApprovalCount ? `${row.pendingApprovalCount} approval` : undefined
+    ]
+      .filter(Boolean)
+      .join(" / "),
+    status: row.status || "unknown",
     selected: row.rowId === input.selectedRowId,
-    onClick: () => input.onSelectRow(row.rowId)
+    onClick: () => {
+      input.onSelectRow(row.rowId);
+      if (row.sessionId) {
+        input.onSelectSession(row.sessionId);
+      }
+      if (row.teamId) {
+        input.onSelectTeam(row.teamId);
+      }
+      const pendingApproval = input.approvals.find(
+        (approval) =>
+          approval.sessionId === row.sessionId && approval.status === "pending"
+      );
+      if (pendingApproval) {
+        input.onSelectApproval(pendingApproval.approvalId);
+      }
+      const rowProcess = input.processes.find(
+        (process) => process.sourceId === row.sourceId && process.status === "running"
+      );
+      if (rowProcess) {
+        input.onSelectProcess(rowProcess.processId);
+      }
+    }
   }));
-}
-
-function sidebarTitle(view: WorkspaceView): string {
-  switch (view) {
-    case "inbox":
-      return "Pending approvals";
-    case "teams":
-      return "Teams";
-    case "agents":
-      return "Sessions";
-    case "fleet":
-      return "Processes";
-    case "ledger":
-      return "Ledger scope";
-    case "playbooks":
-      return "Targets";
-    case "settings":
-      return "Runtime";
-    case "board":
-    default:
-      return "Board rows";
-  }
 }
 
 function buildLedgerEvents(input: {

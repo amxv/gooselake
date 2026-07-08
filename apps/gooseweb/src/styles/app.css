@@ -123,20 +123,21 @@
 @layer components {
   .mission-shell {
     display: grid;
-    grid-template-rows: 2.7rem minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     height: 100svh;
     overflow: hidden;
   }
 
   .mission-chrome {
     display: grid;
-    grid-template-columns: auto auto minmax(10rem, 1fr) auto;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.75rem;
     border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 28%);
     background:
       linear-gradient(180deg, oklch(0.13 0.002 255), oklch(0.102 0.002 255));
-    padding: 0 0.85rem;
+    min-height: 2.9rem;
+    padding: 0.35rem 0.85rem;
   }
 
   .mission-window-buttons,
@@ -171,26 +172,36 @@
     background: oklch(0.72 0.17 145);
   }
 
-  .mission-titlebar {
+  .mission-top-nav {
     display: flex;
-    justify-content: center;
+    align-items: center;
+    gap: 0.28rem;
     min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
-  .mission-titlebar-slot {
-    width: min(52rem, 72%);
-    height: 1.05rem;
-    border-radius: 999px;
-    background: oklch(0.075 0.002 255);
-    box-shadow: inset 0 1px 0 oklch(1 0 0 / 2%);
+  .mission-top-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mission-top-nav-button {
+    flex: 0 0 auto;
+    min-width: 6.3rem;
+    justify-content: center;
+    color: var(--muted-foreground);
+  }
+
+  .mission-top-nav-button[aria-current="page"] {
+    color: var(--foreground);
   }
 
   .mission-grid {
     display: grid;
-    grid-template-columns: minmax(16rem, 20rem) minmax(34rem, 1fr) minmax(18rem, 22rem);
-    gap: 1.7rem;
+    grid-template-columns: minmax(13.5rem, 16.5rem) minmax(38rem, 1fr) minmax(17rem, 21rem);
+    gap: 1.2rem;
     overflow: hidden;
-    padding: 1rem 1.35rem 1.15rem;
+    padding: 0.9rem 1.1rem 1.1rem;
   }
 
   .mission-roster,
@@ -213,7 +224,6 @@
     overflow: hidden;
   }
 
-  .mission-nav-grid,
   .mission-roster-list,
   .mission-process-list,
   .mission-context-stack,
@@ -223,14 +233,62 @@
     gap: 0.55rem;
   }
 
-  .mission-nav-grid {
-    padding: 0.25rem 0.25rem 0.9rem 0;
+  .mission-roster-summary {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.7rem;
+    padding: 0.55rem 0.35rem 0.75rem 0;
   }
 
-  .mission-nav-button {
-    width: 100%;
-    justify-content: flex-start;
+  .mission-roster-summary h2 {
+    margin: 0.2rem 0 0;
+    color: oklch(0.84 0.004 255);
+    font-size: 1.02rem;
+    font-weight: 780;
+    letter-spacing: 0;
+  }
+
+  .mission-section-kicker {
     color: var(--muted-foreground);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.065em;
+    text-transform: uppercase;
+  }
+
+  .mission-rail-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+    padding: 0 0.35rem 0.9rem 0;
+  }
+
+  .mission-rail-metrics button {
+    display: grid;
+    min-width: 0;
+    gap: 0.12rem;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 18%);
+    border-radius: 0.65rem;
+    background: oklch(0.13 0.003 255);
+    color: inherit;
+    padding: 0.45rem 0.35rem;
+    text-align: left;
+  }
+
+  .mission-rail-metrics button span:first-child {
+    color: oklch(0.82 0.004 255);
+    font-size: 0.92rem;
+    font-weight: 780;
+  }
+
+  .mission-rail-metrics button span:last-child {
+    overflow: hidden;
+    color: var(--muted-foreground);
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .mission-rail-section {
@@ -642,7 +700,7 @@
 
   @media (max-width: 1280px) {
     .mission-grid {
-      grid-template-columns: minmax(13rem, 16rem) minmax(22rem, 1fr) minmax(15rem, 18rem);
+      grid-template-columns: minmax(12rem, 14.5rem) minmax(24rem, 1fr) minmax(15rem, 18rem);
       gap: 0.85rem;
       padding-right: 0.85rem;
       padding-left: 0.85rem;
@@ -657,7 +715,7 @@
 
   @media (max-width: 1040px) {
     .mission-grid {
-      grid-template-columns: minmax(13rem, 17rem) minmax(24rem, 1fr);
+      grid-template-columns: minmax(12rem, 15rem) minmax(24rem, 1fr);
       gap: 1rem;
     }
 
@@ -681,9 +739,18 @@
       grid-template-columns: auto minmax(0, 1fr) auto;
     }
 
-    .mission-chrome-tools,
-    .mission-titlebar {
+    .mission-chrome-tools {
       display: none;
+    }
+
+    .mission-top-nav {
+      grid-column: 1 / -1;
+      order: 4;
+      width: 100%;
+    }
+
+    .mission-top-nav-button {
+      min-width: 5.7rem;
     }
 
     .mission-grid {
@@ -697,11 +764,6 @@
       border-right: 0;
       border-bottom: 1px solid var(--border);
       padding-right: 0;
-    }
-
-    .mission-nav-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .mission-roster-actions {

@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { create } from "@bufbuild/protobuf";
+import { code as streamdownCode } from "@streamdown/code";
+import { mermaid as streamdownMermaid } from "@streamdown/mermaid";
+import { Streamdown } from "streamdown";
 import {
   ActivityIcon,
   ArrowUpIcon,
@@ -216,6 +219,17 @@ type AgentThreadItem = {
   readonly processCard?: AgentProcessCard;
   readonly todos?: readonly AgentTodoItem[];
 };
+
+const STREAMDOWN_PLUGINS = {
+  code: streamdownCode,
+  mermaid: streamdownMermaid
+} as const;
+
+const STREAMDOWN_CONTROLS = {
+  code: { copy: true },
+  mermaid: { copy: true, download: true, fullscreen: true, panZoom: true },
+  table: { copy: true, download: false, fullscreen: false }
+} as const;
 
 type AgentTodoItem = {
   readonly id: string;
@@ -2388,6 +2402,7 @@ function AgentPane({
 }) {
   const showDevFixture = isThreadVisualFixtureEnabled();
   const showTodosFixture = isTodosVisualFixtureEnabled();
+  const showMarkdownFixture = isMarkdownVisualFixtureEnabled();
   const showCommitsFixture = isRecentCommitsVisualFixtureEnabled();
   const focusChangesFixture = isChangesVisualFixtureEnabled();
   const [changesPreviewOpen, setChangesPreviewOpen] = useState(false);
@@ -2422,9 +2437,11 @@ function AgentPane({
         message.recipientAgentIds.includes(selectedSession.sessionId)
       );
     });
-  const threadItems: readonly AgentThreadItem[] = !selectedSession && (showDevFixture || showTodosFixture)
+  const showAnyThreadFixture = showDevFixture || showTodosFixture || showMarkdownFixture;
+  const threadItems: readonly AgentThreadItem[] = !selectedSession && showAnyThreadFixture
     ? [
       ...(showTodosFixture ? DEV_TODOS_THREAD_ITEMS : []),
+      ...(showMarkdownFixture ? DEV_MARKDOWN_THREAD_ITEMS : []),
       ...(showDevFixture ? DEV_AGENT_THREAD_ITEMS : [])
     ]
     : [
@@ -2450,7 +2467,7 @@ function AgentPane({
             {selectedSession.activeTurnId ? <span>turn {selectedSession.activeTurnId}</span> : null}
             {selectedSession.cwd ? <span>{selectedSession.cwd}</span> : null}
           </div>
-        ) : showDevFixture || showTodosFixture ? (
+        ) : showAnyThreadFixture ? (
           <div className="mission-thread-meta" aria-label="Development thread visual fixture">
             <span>dev visual fixture</span>
             <span>query gated</span>
@@ -2461,7 +2478,7 @@ function AgentPane({
           <ChangesDiffPreviewPanel preview={DEV_CHANGES_DIFF_PREVIEW} />
         ) : (
           <div className="mission-thread-feed">
-            {!selectedSession && !showDevFixture && !showTodosFixture ? (
+            {!selectedSession && !showAnyThreadFixture ? (
               <div className="mission-thread-empty mission-thread-empty-quiet" aria-hidden="true" />
             ) : threadItems.length === 0 ? (
               <div className="mission-thread-empty">
@@ -2573,20 +2590,47 @@ function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
     );
   }
 
+  const isAssistant = item.kind === "assistant";
+
   return (
     <article
       className={cn(
         "mission-thread-row",
         item.kind === "human" ? "mission-thread-row-human" : "mission-thread-row-assistant"
       )}
+      data-markdown-fixture={
+        item.id.startsWith("dev-thread:markdown") ? "true" : undefined
+      }
       data-thread-row={item.kind}
     >
       <div className="mission-thread-row-label">
         <span>{item.title}</span>
         <span>{item.timestampUnixMs ? formatTime(item.timestampUnixMs) : item.meta}</span>
       </div>
-      <div className="mission-thread-row-body">{item.body}</div>
+      {isAssistant ? (
+        <AgentMarkdownBody body={item.body} />
+      ) : (
+        <div className="mission-thread-row-body">{item.body}</div>
+      )}
     </article>
+  );
+}
+
+function AgentMarkdownBody({ body }: { readonly body: string }) {
+  return (
+    <div className="mission-thread-row-body mission-thread-markdown">
+      <Streamdown
+        className="mission-streamdown"
+        controls={STREAMDOWN_CONTROLS}
+        mermaid={{ config: { theme: "dark", securityLevel: "strict" } }}
+        mode="streaming"
+        parseIncompleteMarkdown
+        plugins={STREAMDOWN_PLUGINS}
+        shikiTheme={["github-dark", "github-dark"]}
+      >
+        {body}
+      </Streamdown>
+    </div>
   );
 }
 
@@ -3132,6 +3176,13 @@ function isTodosVisualFixtureEnabled(): boolean {
   return new URLSearchParams(window.location.search).has("goosewebTodosFixture");
 }
 
+function isMarkdownVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebMarkdownFixture");
+}
+
 function isRosterVisualFixtureEnabled(): boolean {
   if (!import.meta.env.DEV || typeof window === "undefined") {
     return false;
@@ -3343,6 +3394,52 @@ const DEV_TODOS_THREAD_ITEMS: readonly AgentThreadItem[] = [
         status: "pending"
       }
     ]
+  }
+];
+
+const DEV_MARKDOWN_THREAD_ITEMS: readonly AgentThreadItem[] = [
+  {
+    id: "dev-thread:markdown-streamdown",
+    kind: "assistant",
+    title: "Agent",
+    meta: "streaming markdown",
+    body: [
+      "Markdown fixture validates **Streamdown** rendering for assistant output while keeping custom tool cards separate.",
+      "",
+      "> Operator note: tables, code, and diagrams must stay inside the thread viewport.",
+      "",
+      "- Bullet rows wrap without leaving the agent thread.",
+      "- Inline `code` stays compact inside prose.",
+      "- External links render safely, like [Gooseweb QA](https://example.com/gooseweb-qa).",
+      "",
+      "1. Verify table containment.",
+      "2. Verify fenced code rendering.",
+      "3. Verify Mermaid diagram support.",
+      "",
+      "| Surface | Expected behavior |",
+      "| --- | --- |",
+      "| Table | Scrolls or fits without document overflow |",
+      "| Code | Uses a bounded monospace block |",
+      "| Mermaid | Renders as a dark diagram surface |",
+      "",
+      "```ts",
+      "const supported = ['low', 'medium', 'high', 'extra-high', 'max'];",
+      "const selected = supported.includes(reasoningLevel) ? reasoningLevel : supported[0];",
+      "```",
+      "",
+      "```mermaid",
+      "flowchart LR",
+      "  A[Assistant markdown] --> B{Streamdown}",
+      "  B --> C[Tables and code]",
+      "  B --> D[Mermaid diagram]",
+      "  D --> E[Contained preview]",
+      "```",
+      "",
+      "Streaming fragment below intentionally ends mid-emphasis so incomplete markdown is still readable:",
+      "",
+      "- first streamed item",
+      "- second streamed item with **partial emphasis"
+    ].join("\n")
   }
 ];
 

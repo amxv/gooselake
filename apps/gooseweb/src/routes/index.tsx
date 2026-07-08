@@ -404,7 +404,12 @@ function Index() {
         subscriptionCount={activeSubscriptions.length}
         onViewChange={setActiveView}
       />
-      <div className="mission-grid min-h-0">
+      <div
+        className={cn(
+          "mission-grid min-h-0",
+          activeView === "agents" && "mission-grid-agents"
+        )}
+      >
         <MissionRosterRail
           rows={fleetRows}
           sessions={sessionOptions}
@@ -475,21 +480,23 @@ function Index() {
           />
         </main>
 
-        <MissionProcessRail
-          processes={processes}
-          selectedProcess={selectedProcess}
-          selectedRow={selectedRow}
-          selectedSession={selectedSession}
-          selectedTeam={selectedTeam}
-          selectedApproval={selectedApproval}
-          selectedWorktree={selectedWorktree}
-          sources={sources}
-          connection={state.connection}
-          staleSourceIds={staleSourceIds}
-          pendingCommandCount={pendingCommands.length}
-          sourceGapActive={sourceGapActive}
-          onSelectProcess={setSelectedProcessId}
-        />
+        {activeView === "agents" ? null : (
+          <MissionProcessRail
+            processes={processes}
+            selectedProcess={selectedProcess}
+            selectedRow={selectedRow}
+            selectedSession={selectedSession}
+            selectedTeam={selectedTeam}
+            selectedApproval={selectedApproval}
+            selectedWorktree={selectedWorktree}
+            sources={sources}
+            connection={state.connection}
+            staleSourceIds={staleSourceIds}
+            pendingCommandCount={pendingCommands.length}
+            sourceGapActive={sourceGapActive}
+            onSelectProcess={setSelectedProcessId}
+          />
+        )}
       </div>
     </div>
   );
@@ -647,7 +654,7 @@ function MissionRosterRail({
           </div>
           <div className="mission-roster-list">
             {visibleItems.length === 0 ? (
-              <div className="mission-roster-empty">No active agents</div>
+              null
             ) : (
               visibleItems.map((item) => (
                 <button
@@ -770,6 +777,7 @@ function MissionWorkspace({
   const [composerExpanded, setComposerExpanded] = useState(false);
   const hasAgentThreadComposer =
     activeView === "agents" && Boolean(selectedSession?.sessionId);
+  const showAgentThreadComposer = activeView === "agents";
   const isAgentThread = activeView === "agents";
   const sessionOptions = useMemo(
     () => mergeSessionOptions(sessions, rows),
@@ -926,11 +934,12 @@ function MissionWorkspace({
         />
       )}
 
-      {hasAgentThreadComposer ? (
+      {showAgentThreadComposer ? (
         <form className="mission-composer" onSubmit={submitComposer}>
           <Textarea
             aria-label="Agent thread composer"
             className={cn(composerExpanded && "mission-composer-input-expanded")}
+            disabled={!hasAgentThreadComposer}
             value={composerText}
             onChange={(event) => setComposerText(event.target.value)}
             onKeyDown={handleComposerKeyDown}
@@ -966,7 +975,7 @@ function MissionWorkspace({
               ) : (
                 <Button
                   aria-label="Send agent thread message"
-                  disabled={!composerText.trim() || sourceGapActive}
+                  disabled={!hasAgentThreadComposer || !composerText.trim() || sourceGapActive}
                   size="icon"
                   type="submit"
                   variant="secondary"

@@ -204,6 +204,10 @@
     padding: 0.9rem 1.1rem 1.1rem;
   }
 
+  .mission-grid-agents {
+    grid-template-columns: minmax(13.5rem, 16.5rem) minmax(0, 1fr);
+  }
+
   .mission-roster,
   .mission-processes {
     min-width: 0;
@@ -577,6 +581,11 @@
     box-shadow: none;
   }
 
+  .mission-composer textarea:disabled {
+    cursor: default;
+    opacity: 0.7;
+  }
+
   .mission-composer textarea.mission-composer-input-expanded {
     min-height: min(44svh, 24rem);
   }
@@ -777,6 +786,10 @@
       padding-left: 0.85rem;
     }
 
+    .mission-grid-agents {
+      grid-template-columns: minmax(12rem, 14.5rem) minmax(0, 1fr);
+    }
+
     .mission-workspace-header,
     .mission-workspace-scroll {
       padding-right: 1.75rem;
@@ -788,6 +801,10 @@
     .mission-grid {
       grid-template-columns: minmax(12rem, 15rem) minmax(24rem, 1fr);
       gap: 1rem;
+    }
+
+    .mission-grid-agents {
+      grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
     }
 
     .mission-processes {

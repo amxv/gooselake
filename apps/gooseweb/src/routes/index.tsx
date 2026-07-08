@@ -91,6 +91,13 @@ import {
   DialogTitle
 } from "~/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger
+} from "~/components/ui/dropdown-menu";
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -223,6 +230,17 @@ type RecentChangeItem = {
   readonly label: string;
   readonly count?: number;
 };
+
+type ComposerEffort = "medium" | "high" | "extra-high";
+
+const COMPOSER_EFFORT_OPTIONS: ReadonlyArray<{
+  readonly value: ComposerEffort;
+  readonly label: string;
+}> = [
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "extra-high", label: "Extra High" }
+];
 
 const NAV_ITEMS: ReadonlyArray<{
   readonly id: WorkspaceView;
@@ -873,6 +891,7 @@ function MissionWorkspace({
 }) {
   const [composerText, setComposerText] = useState("");
   const [composerExpanded, setComposerExpanded] = useState(false);
+  const [composerEffort, setComposerEffort] = useState<ComposerEffort>("high");
   const hasAgentThreadComposer =
     activeView === "agents" && Boolean(selectedSession?.sessionId);
   const showAgentThreadComposer = activeView === "agents";
@@ -1071,7 +1090,11 @@ function MissionWorkspace({
                 <span>{formatComposerModelLabel(selectedSession)}</span>
                 <ChevronDownIcon aria-hidden="true" />
               </span>
-              <span className="mission-composer-control">
+              <ComposerEffortDropdown
+                value={composerEffort}
+                onValueChange={setComposerEffort}
+              />
+              <span className="mission-composer-control mission-composer-control-static">
                 <span>{formatComposerModeLabel(selectedSession)}</span>
                 <ChevronDownIcon aria-hidden="true" />
               </span>
@@ -1253,6 +1276,49 @@ function MissionViewBody({
       selectedRowId={selectedRowId}
       setSelectedRowId={setSelectedRowId}
     />
+  );
+}
+
+function ComposerEffortDropdown({
+  value,
+  onValueChange
+}: {
+  readonly value: ComposerEffort;
+  readonly onValueChange: (value: ComposerEffort) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Reasoning effort selector"
+        className="mission-composer-control mission-composer-control-trigger"
+        data-composer-effort-trigger
+      >
+        <span>{formatComposerEffortLabel(value)}</span>
+        <ChevronDownIcon aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="mission-composer-menu"
+        side="top"
+        sideOffset={8}
+      >
+        <DropdownMenuRadioGroup
+          value={value}
+          onValueChange={(nextValue) => onValueChange(nextValue as ComposerEffort)}
+        >
+          {COMPOSER_EFFORT_OPTIONS.map((option) => (
+            <DropdownMenuRadioItem
+              className="mission-composer-menu-item"
+              data-composer-effort-option={option.value}
+              key={option.value}
+              value={option.value}
+            >
+              {option.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -1589,6 +1655,10 @@ function formatComposerModelLabel(selectedSession?: SessionView): string {
 
 function formatComposerModeLabel(selectedSession?: SessionView): string {
   return selectedSession?.provider || "Runtime";
+}
+
+function formatComposerEffortLabel(value: ComposerEffort): string {
+  return COMPOSER_EFFORT_OPTIONS.find((option) => option.value === value)?.label || "High";
 }
 
 function formatComposerContextLabel(selectedSession?: SessionView): string {

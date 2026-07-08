@@ -577,14 +577,22 @@
   }
 
   .mission-workspace-scroll {
+    height: 100%;
     min-height: 0;
+    overflow: hidden;
     padding: 0 2.7rem;
+  }
+
+  .mission-workspace-scroll [data-slot="scroll-area-viewport"] {
+    height: 100%;
+    min-height: 0;
   }
 
   .mission-worklog {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+    min-height: 100%;
     padding: 0.35rem 0 1.6rem;
   }
 

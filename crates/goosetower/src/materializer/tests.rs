@@ -6,12 +6,14 @@ use runtime_core::{
 };
 use serde_json::json;
 
+use crate::config::RuntimeSourceConfig;
+use crate::materializer::state::ModelCapabilityView;
 use crate::materializer::{
     snapshot_cross_source_board, ApprovalInboxSubscription, BoardSubscription,
     CoalescingPatchBuffer, LedgerSubscription, MaterializedPatchKind, MaterializedState,
     SelectedSessionSubscription, SelectedTeamSubscription,
 };
-use crate::runtime::events::SourceEvent;
+use crate::runtime::{events::SourceEvent, SourceHealthState};
 
 #[test]
 fn materializer_reduces_session_approval_team_and_process_events() {
@@ -93,6 +95,44 @@ fn materializer_creates_session_from_live_session_created_hint() {
         .iter()
         .any(|patch| patch.kind == MaterializedPatchKind::EntityUpsert
             && patch.view_kind == "fleet_board"));
+}
+
+#[test]
+fn apply_source_config_preserves_runtime_model_capabilities() {
+    let mut state = MaterializedState::new("local", "epoch");
+    state.source_metadata.model_capabilities = vec![ModelCapabilityView {
+        provider: "codex".to_string(),
+        model: "gpt-5.5".to_string(),
+        display_name: "GPT 5.5".to_string(),
+        reasoning_levels: vec![
+            "medium".to_string(),
+            "high".to_string(),
+            "extra-high".to_string(),
+        ],
+    }];
+
+    state.apply_source_config(&RuntimeSourceConfig {
+        display_name: "Local Gooselake Runtime".to_string(),
+        lifecycle: SourceHealthState::Live,
+        ..RuntimeSourceConfig::default()
+    });
+
+    assert_eq!(state.source_metadata.model_capabilities.len(), 1);
+    assert_eq!(
+        state.source_metadata.model_capabilities[0].reasoning_levels,
+        ["medium", "high", "extra-high"]
+    );
+
+    let source_health = state.source_health_view();
+    assert_eq!(source_health.model_capabilities.len(), 1);
+    assert_eq!(source_health.model_capabilities[0].model, "gpt-5.5");
+
+    let patch = state.transition_source_health(SourceHealthState::Live, None);
+    assert_eq!(patch.body["model_capabilities"][0]["model"], "gpt-5.5");
+    assert_eq!(
+        patch.body["model_capabilities"][0]["reasoning_levels"],
+        json!(["medium", "high", "extra-high"])
+    );
 }
 
 #[test]

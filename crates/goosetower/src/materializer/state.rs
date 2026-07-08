@@ -482,7 +482,9 @@ impl MaterializedState {
     }
 
     pub fn apply_source_config(&mut self, source: &RuntimeSourceConfig) {
+        let model_capabilities = self.source_metadata.model_capabilities.clone();
         self.source_metadata = SourceMetadataView::from_source_config(source);
+        self.source_metadata.model_capabilities = model_capabilities;
         self.source_health.state = source.lifecycle;
         self.bump_source_health_version();
     }
@@ -523,6 +525,14 @@ impl MaterializedState {
         self.source_health
             .transition(state, self.source_health.last_source_seq, error);
         let version = self.bump_source_health_version();
+        let body = serde_json::to_value(self.source_health_view()).unwrap_or_else(|_| {
+            serde_json::json!({
+                "source_id": self.source_id,
+                "previous": previous,
+                "current": self.source_health.state,
+                "last_error": self.source_health.last_error,
+            })
+        });
         MaterializedPatch {
             kind: MaterializedPatchKind::SourceHealthTransition,
             view_kind: "source_health".to_string(),
@@ -533,12 +543,7 @@ impl MaterializedState {
             )),
             version: Some(version),
             source_cursor: self.cursor(),
-            body: serde_json::json!({
-                "source_id": self.source_id,
-                "previous": previous,
-                "current": self.source_health.state,
-                "last_error": self.source_health.last_error,
-            }),
+            body,
         }
     }
 

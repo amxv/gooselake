@@ -2773,21 +2773,51 @@ function RecentCommitsPanel({
         removedLines={removedLines}
       />
 
-      <div className="mission-commit-action-area">
-        <button
-          aria-label={changedFileCount ? "Commit and push local changes" : "No changes to commit"}
-          className="mission-commit-action"
-          disabled={!changedFileCount}
-          type="button"
-        >
-          <ArrowUpIcon aria-hidden="true" />
-          <span>{changedFileCount ? "Commit & Push" : "No changes"}</span>
-          <ChevronDownIcon aria-hidden="true" />
-        </button>
+      <div className="mission-commit-action-area" data-commit-action-area="true">
+        <div className="mission-commit-action-group">
+          <button
+            aria-label={changedFileCount ? "Commit and push local changes" : "No changes to commit"}
+            className="mission-commit-action-primary"
+            disabled={!changedFileCount}
+            type="button"
+          >
+            <ArrowUpIcon aria-hidden="true" />
+            <span>{changedFileCount ? "Commit & Push" : "No changes"}</span>
+          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              aria-label="Open commit action menu"
+              className="mission-commit-action-menu-trigger"
+              disabled={!changedFileCount}
+            >
+              <ChevronDownIcon aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="mission-commit-menu"
+              side="top"
+              sideOffset={8}
+            >
+              <DropdownMenuRadioGroup value="commit-push">
+                <DropdownMenuRadioItem className="mission-commit-menu-item" value="commit-push">
+                  Commit & Push
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem className="mission-commit-menu-item" value="commit-only">
+                  Commit only
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem className="mission-commit-menu-item" value="copy-summary">
+                  Copy summary
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
-      <div className="mission-workspace-pill">
+      <div className="mission-workspace-pill" data-workspace-pill="true">
         <span>gooselake</span>
-        <ClipboardListIcon aria-hidden="true" />
+        <button type="button" aria-label="Copy workspace gooselake" title="Copy workspace">
+          <ClipboardListIcon aria-hidden="true" />
+        </button>
       </div>
     </aside>
   );

@@ -2561,33 +2561,91 @@
     padding: 0.9rem 0 0.65rem;
   }
 
-  .mission-commit-action {
+  .mission-commit-action-group {
     display: grid;
     width: 100%;
-    height: 2.7rem;
-    grid-template-columns: 1.25rem minmax(0, 1fr) 1.25rem;
-    align-items: center;
-    gap: 0.6rem;
+    height: 3.15rem;
+    grid-template-columns: minmax(0, 1fr) 3.55rem;
+    overflow: hidden;
     border: 1px solid color-mix(in oklch, var(--border), transparent 48%);
-    border-radius: 0.9rem;
-    background: oklch(0.07 0.002 255);
+    border-radius: 1rem;
+    background: oklch(0.055 0.002 255);
+  }
+
+  .mission-commit-action-primary,
+  .mission-commit-action-menu-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    border: 0;
+    background: transparent;
     color: oklch(0.88 0.004 255);
-    padding: 0 0.85rem;
-    font-size: 0.95rem;
-    font-weight: 760;
+    transition:
+      background 160ms ease,
+      color 160ms ease;
   }
 
-  .mission-commit-action svg {
-    width: 1rem;
-    height: 1rem;
+  .mission-commit-action-primary {
+    gap: 0.58rem;
+    padding: 0 1rem;
+    font-size: 1rem;
+    font-weight: 780;
   }
 
-  .mission-commit-action span {
+  .mission-commit-action-menu-trigger {
+    border-left: 1px solid color-mix(in oklch, var(--border), transparent 42%);
+  }
+
+  .mission-commit-action-primary:not(:disabled):hover,
+  .mission-commit-action-menu-trigger:not(:disabled):hover,
+  .mission-commit-action-menu-trigger[data-state="open"] {
+    background: oklch(0.16 0.003 255);
+    color: oklch(0.94 0.004 255);
+  }
+
+  .mission-commit-action-primary:disabled,
+  .mission-commit-action-menu-trigger:disabled {
+    color: oklch(0.48 0.004 255);
+  }
+
+  .mission-commit-action-primary svg,
+  .mission-commit-action-menu-trigger svg {
+    width: 1.08rem;
+    height: 1.08rem;
+    flex: 0 0 auto;
+  }
+
+  .mission-commit-action-primary span {
     min-width: 0;
     overflow: hidden;
     text-align: center;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mission-commit-menu {
+    min-width: 12.5rem;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 32%);
+    border-radius: 1rem;
+    background: oklch(0.095 0.002 255);
+    padding: 0.45rem;
+    color: oklch(0.78 0.004 255);
+    box-shadow: 0 1rem 2.4rem oklch(0 0 0 / 48%);
+  }
+
+  .mission-commit-menu-item {
+    min-height: 2.15rem;
+    border-radius: 0.72rem;
+    padding-right: 0.8rem;
+    padding-left: 2rem;
+    font-size: 0.92rem;
+    font-weight: 650;
+  }
+
+  .mission-commit-menu-item[data-state="checked"] {
+    background: oklch(0.21 0.003 255);
+    color: oklch(0.94 0.004 255);
   }
 
   .mission-changes-preview {
@@ -2802,32 +2860,53 @@
   }
 
   .mission-workspace-pill {
-    display: flex;
+    display: grid;
     align-items: center;
-    justify-content: center;
-    gap: 0.65rem;
+    grid-template-columns: minmax(0, 1fr) 2.35rem;
     min-width: 0;
-    height: 2.4rem;
+    height: 3rem;
     margin-left: 1.2rem;
     border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 5%);
-    border-radius: 0.8rem;
+    border-radius: 1rem;
     background: oklch(0.14 0.003 255);
     color: oklch(0.82 0.004 255);
-    font-size: 0.86rem;
-    font-weight: 720;
+    font-size: 0.95rem;
+    font-weight: 760;
   }
 
   .mission-workspace-pill span {
     min-width: 0;
     overflow: hidden;
+    padding-left: 2.35rem;
+    text-align: center;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mission-workspace-pill button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.35rem;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    color: oklch(0.54 0.004 255);
+    transition:
+      background 160ms ease,
+      color 160ms ease;
+  }
+
+  .mission-workspace-pill button:hover,
+  .mission-workspace-pill button:focus-visible {
+    background: oklch(0.19 0.003 255);
+    color: oklch(0.82 0.004 255);
+    outline: none;
   }
 
   .mission-workspace-pill svg {
     width: 1rem;
     height: 1rem;
-    color: oklch(0.54 0.004 255);
   }
 
   .mission-processes {

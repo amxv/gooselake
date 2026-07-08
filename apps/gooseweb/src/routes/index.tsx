@@ -251,6 +251,23 @@ type OpenAIAccountUsage = {
   readonly windows: readonly OpenAIUsageWindow[];
 };
 
+type ProcessMonitorFilter = "running" | "completed" | "all";
+type ProcessMonitorStream = "stdout" | "stderr";
+
+type ProcessMonitorItem = {
+  readonly processId: string;
+  readonly status: string;
+  readonly command: string;
+  readonly age: string;
+  readonly agentId: string;
+  readonly title: string;
+  readonly cwd: string;
+  readonly exitCode?: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly fixture?: boolean;
+};
+
 type ComposerEffort = "medium" | "high" | "extra-high";
 
 const COMPOSER_EFFORT_OPTIONS: ReadonlyArray<{
@@ -260,6 +277,15 @@ const COMPOSER_EFFORT_OPTIONS: ReadonlyArray<{
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
   { value: "extra-high", label: "Extra High" }
+];
+
+const PROCESS_MONITOR_FILTERS: ReadonlyArray<{
+  readonly id: ProcessMonitorFilter;
+  readonly label: string;
+}> = [
+  { id: "running", label: "Running" },
+  { id: "completed", label: "Completed" },
+  { id: "all", label: "All" }
 ];
 
 const NAV_ITEMS: ReadonlyArray<{
@@ -331,6 +357,7 @@ function Index() {
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [selectedProcessId, setSelectedProcessId] = useState("");
   const [addAgentDialogOpen, setAddAgentDialogOpen] = useState(false);
+  const [processMonitorOpen, setProcessMonitorOpen] = useState(false);
   const [filters, setFilters] = useState<BoardFilters>({
     sourceId: "all",
     teamId: "all",
@@ -499,6 +526,7 @@ function Index() {
         state={state}
         sources={sources}
         subscriptionCount={activeSubscriptions.length}
+        onProcessMonitorOpen={() => setProcessMonitorOpen(true)}
         onViewChange={setActiveView}
       />
       <div
@@ -596,6 +624,12 @@ function Index() {
           />
         )}
       </div>
+      <AgentsProcessMonitorSheet
+        open={processMonitorOpen}
+        processes={processes}
+        sourceGapActive={sourceGapActive}
+        onOpenChange={setProcessMonitorOpen}
+      />
     </div>
   );
 }
@@ -607,6 +641,7 @@ function MissionChrome({
   state,
   sources,
   subscriptionCount,
+  onProcessMonitorOpen,
   onViewChange
 }: {
   readonly activeView: WorkspaceView;
@@ -615,6 +650,7 @@ function MissionChrome({
   readonly state: GoosewebSnapshot;
   readonly sources: readonly SourceHealthView[];
   readonly subscriptionCount: number;
+  readonly onProcessMonitorOpen: () => void;
   readonly onViewChange: (view: WorkspaceView) => void;
 }) {
   const source = sources[0];
@@ -624,9 +660,24 @@ function MissionChrome({
         <Button size="icon-sm" type="button" variant="ghost">
           <FolderIcon />
         </Button>
-        <Button size="icon-sm" type="button" variant="ghost">
-          <SquareIcon />
-        </Button>
+        {activeView === "agents" ? (
+          <Button
+            aria-label="Open processes panel"
+            aria-pressed={false}
+            className="mission-chrome-tool-active"
+            size="icon-sm"
+            title="Processes"
+            type="button"
+            variant="ghost"
+            onClick={onProcessMonitorOpen}
+          >
+            <ActivityIcon />
+          </Button>
+        ) : (
+          <Button size="icon-sm" type="button" variant="ghost">
+            <SquareIcon />
+          </Button>
+        )}
         <Button size="icon-sm" type="button" variant="ghost">
           <ChevronDownIcon />
         </Button>
@@ -1451,6 +1502,173 @@ function OpenAIUsageRow({ window }: { readonly window: OpenAIUsageWindow }) {
       </div>
       <p>{window.resetText}</p>
     </div>
+  );
+}
+
+function AgentsProcessMonitorSheet({
+  open,
+  processes,
+  sourceGapActive,
+  onOpenChange
+}: {
+  readonly open: boolean;
+  readonly processes: readonly ProcessView[];
+  readonly sourceGapActive: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+}) {
+  const [filter, setFilter] = useState<ProcessMonitorFilter>("running");
+  const [activeStream, setActiveStream] = useState<ProcessMonitorStream>("stdout");
+  const [followTail, setFollowTail] = useState(true);
+  const processItems = getProcessMonitorItems(processes);
+  const filteredItems = processItems.filter((process) => processMatchesMonitorFilter(process, filter));
+  const selectedItem = filteredItems[0] ?? processItems[0];
+  const activeLog = selectedItem ? selectedItem[activeStream] : "";
+
+  useEffect(() => {
+    setActiveStream("stdout");
+    setFollowTail(true);
+  }, [open, selectedItem?.processId]);
+
+  function killProcess(process: ProcessMonitorItem) {
+    if (sourceGapActive || process.status !== "running" || process.fixture) {
+      return;
+    }
+    sendRealtimeCommand(
+      makeCommand("process", process.processId, "killProcess", {
+        processId: process.processId
+      })
+    );
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        className="mission-process-monitor-sheet"
+        side="right"
+        showCloseButton={false}
+      >
+        <div className="mission-process-monitor-toolbar" aria-label="Process monitor tools">
+          <button type="button" aria-label="Process logs" aria-pressed="true">
+            <ScrollTextIcon aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="Process options">
+            <ChevronDownIcon aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="Process settings">
+            <SettingsIcon aria-hidden="true" />
+          </button>
+          <button
+            aria-label="Close processes panel"
+            className="mission-process-monitor-close"
+            type="button"
+            onClick={() => onOpenChange(false)}
+          >
+            <XIcon aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="mission-process-monitor-header">
+          <SheetTitle className="mission-process-monitor-title">Processes</SheetTitle>
+          <div className="mission-process-monitor-tabs" role="tablist" aria-label="Process filters">
+            {PROCESS_MONITOR_FILTERS.map((option) => (
+              <button
+                aria-selected={filter === option.id}
+                key={option.id}
+                role="tab"
+                type="button"
+                onClick={() => setFilter(option.id)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mission-process-monitor-body">
+          {filteredItems.length ? (
+            filteredItems.map((process) => (
+              <article className="mission-process-monitor-card" data-process-monitor-card key={process.processId}>
+                <div className="mission-process-monitor-card-head">
+                  <span
+                    className="mission-process-monitor-status"
+                    data-status={process.status}
+                  >
+                    {process.status === "running" ? <span aria-hidden="true" /> : null}
+                    {process.status}
+                  </span>
+                  <span className="mission-process-monitor-age">{process.age}</span>
+                  {process.status === "running" ? (
+                    <button
+                      className="mission-process-monitor-kill"
+                      disabled={sourceGapActive && !process.fixture}
+                      type="button"
+                      onClick={() => killProcess(process)}
+                    >
+                      Kill
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="mission-process-monitor-command">{process.command}</div>
+                <div className="mission-process-monitor-meta">
+                  <span>
+                    <b>agent_id</b> {process.agentId}
+                  </span>
+                  <span>
+                    <b>title</b> {process.title}
+                  </span>
+                  <span>
+                    <b>cwd</b> {process.cwd}
+                  </span>
+                </div>
+
+                <div className="mission-process-monitor-log-shell">
+                  <div className="mission-process-monitor-log-tabs">
+                    <button
+                      aria-selected={activeStream === "stdout"}
+                      role="tab"
+                      type="button"
+                      onClick={() => setActiveStream("stdout")}
+                    >
+                      stdout
+                    </button>
+                    <button
+                      aria-selected={activeStream === "stderr"}
+                      role="tab"
+                      type="button"
+                      onClick={() => setActiveStream("stderr")}
+                    >
+                      stderr
+                    </button>
+                    <button
+                      aria-label={`Copy ${activeStream} output`}
+                      className="mission-process-monitor-copy"
+                      type="button"
+                    >
+                      <ClipboardListIcon aria-hidden="true" />
+                    </button>
+                  </div>
+                  <label className="mission-process-monitor-follow">
+                    <span>Follow tail</span>
+                    <input
+                      checked={followTail}
+                      type="checkbox"
+                      onChange={(event) => setFollowTail(event.target.checked)}
+                    />
+                    <span aria-hidden="true" />
+                  </label>
+                  <pre className="mission-process-monitor-log" data-process-log-output>
+                    {activeLog || "Log stream unavailable."}
+                  </pre>
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="mission-process-monitor-empty" aria-hidden="true" />
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -2459,6 +2677,45 @@ function getOpenAIAccountUsageFixture(): OpenAIAccountUsage | null {
   return isOpenAIAccountVisualFixtureEnabled() ? DEV_OPENAI_ACCOUNT_USAGE : null;
 }
 
+function isProcessMonitorVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebProcessFixture");
+}
+
+function getProcessMonitorItems(processes: readonly ProcessView[]): readonly ProcessMonitorItem[] {
+  if (isProcessMonitorVisualFixtureEnabled()) {
+    return DEV_PROCESS_MONITOR_ITEMS;
+  }
+
+  return processes.map((process) => ({
+    processId: process.processId,
+    status: process.status || "unknown",
+    command: process.command || process.processId,
+    age: "--",
+    agentId: process.sourceId || "unknown",
+    title: process.processId,
+    cwd: "--",
+    exitCode: process.exitCode,
+    stdout: "",
+    stderr: ""
+  }));
+}
+
+function processMatchesMonitorFilter(
+  process: ProcessMonitorItem,
+  filter: ProcessMonitorFilter
+): boolean {
+  if (filter === "all") {
+    return true;
+  }
+  if (filter === "running") {
+    return process.status === "running";
+  }
+  return process.status !== "running";
+}
+
 const DEV_AGENT_THREAD_ITEMS: readonly AgentThreadItem[] = [
   {
     id: "dev-thread:user",
@@ -2624,6 +2881,56 @@ const DEV_OPENAI_ACCOUNT_USAGE: OpenAIAccountUsage = {
     }
   ]
 };
+
+const DEV_PROCESS_MONITOR_ITEMS: readonly ProcessMonitorItem[] = [
+  {
+    processId: "proc_fixture_running",
+    status: "running",
+    command: "make dev",
+    age: "2h 39m",
+    agentId: "platinum_pearl",
+    title: "Gooseweb Browser QA Lead",
+    cwd: "/Users/ashray/code/amxv/gooselake",
+    stdout:
+      "2026-07-08T18:07:05.893880Z  INFO gateway audit subscribe.changed\n" +
+      "connection_id=conn_29\n" +
+      "subscription_id=sources:health\n" +
+      "view_kind=fleet\n" +
+      "2026-07-08T18:07:05.894033Z  INFO gateway audit subscribe.changed\n" +
+      "connection_id=conn_29\n" +
+      "subscription_id=teams:list\n" +
+      "view_kind=teams\n" +
+      "2026-07-08T18:07:05.894233Z  INFO gateway audit subscribe.changed\n" +
+      "connection_id=conn_29\n" +
+      "subscription_id=ledger:recent\n" +
+      "view_kind=ledger",
+    stderr:
+      "gooseweb dev stack watching local source changes\n" +
+      "vite dev server ready on http://127.0.0.1:13001\n" +
+      "runtime gateway ready on http://127.0.0.1:18090",
+    fixture: true
+  },
+  {
+    processId: "proc_fixture_completed",
+    status: "exited",
+    command: "bun run --cwd apps/gooseweb build",
+    age: "43s",
+    agentId: "agricultural_venture",
+    title: "Gooseweb Agents Fixer",
+    cwd: "/Users/ashray/code/amxv/gooselake",
+    exitCode: 0,
+    stdout:
+      "vite v7.3.6 building client environment for production...\n" +
+      "transforming...\n" +
+      "2332 modules transformed.\n" +
+      "rendering chunks...\n" +
+      "built in 10.73s",
+    stderr:
+      "WARNING Cannot find base config file \"astro/tsconfigs/strict\"\n" +
+      "external imports from TanStack SSR server were not used",
+    fixture: true
+  }
+];
 
 function TeamPane({
   teams,

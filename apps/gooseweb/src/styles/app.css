@@ -176,6 +176,10 @@
     color: var(--foreground);
   }
 
+  .mission-chrome-tool-active {
+    color: oklch(0.78 0.004 255);
+  }
+
   .mission-grid {
     display: grid;
     grid-template-columns: minmax(13.5rem, 16.5rem) minmax(38rem, 1fr) minmax(17rem, 21rem);
@@ -1093,6 +1097,295 @@
     height: 5rem;
     border-radius: 0.7rem;
     background: oklch(0.075 0.002 255);
+  }
+
+  .mission-process-monitor-sheet {
+    inset: 0 0 0 auto;
+    width: min(100vw, 34rem) !important;
+    max-width: min(100vw, 34rem) !important;
+    gap: 0;
+    overflow: hidden;
+    border-left: 1px solid color-mix(in oklch, var(--border), transparent 26%);
+    background: oklch(0.11 0.002 255);
+    color: oklch(0.76 0.004 255);
+    box-shadow: -1.4rem 0 3rem oklch(0 0 0 / 34%);
+  }
+
+  .mission-process-monitor-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.28rem;
+    min-height: 3rem;
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 48%);
+    padding: 0 1rem;
+  }
+
+  .mission-process-monitor-toolbar button {
+    display: inline-grid;
+    place-items: center;
+    width: 2.05rem;
+    height: 2.05rem;
+    border: 0;
+    border-radius: 0.55rem;
+    background: transparent;
+    color: oklch(0.54 0.004 255);
+    cursor: pointer;
+  }
+
+  .mission-process-monitor-toolbar button:hover,
+  .mission-process-monitor-toolbar button:focus-visible,
+  .mission-process-monitor-toolbar button[aria-pressed="true"] {
+    background: oklch(0.19 0.003 255);
+    color: oklch(0.78 0.004 255);
+  }
+
+  .mission-process-monitor-toolbar svg {
+    width: 1.1rem;
+    height: 1.1rem;
+  }
+
+  .mission-process-monitor-header {
+    display: grid;
+    gap: 0.95rem;
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 42%);
+    padding: 1.25rem 1.45rem 1.2rem;
+  }
+
+  .mission-process-monitor-title {
+    color: oklch(0.5 0.004 255);
+    font-size: 1rem;
+    font-weight: 780;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .mission-process-monitor-tabs,
+  .mission-process-monitor-log-tabs {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+  }
+
+  .mission-process-monitor-tabs button,
+  .mission-process-monitor-log-tabs button {
+    border: 0;
+    border-radius: 0.72rem;
+    background: transparent;
+    color: oklch(0.48 0.004 255);
+    padding: 0.48rem 0.86rem;
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 720;
+    cursor: pointer;
+  }
+
+  .mission-process-monitor-tabs button[aria-selected="true"],
+  .mission-process-monitor-log-tabs button[aria-selected="true"] {
+    background: oklch(0.25 0.004 255);
+    color: oklch(0.88 0.004 255);
+  }
+
+  .mission-process-monitor-body {
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.85rem 0.8rem 1rem;
+  }
+
+  .mission-process-monitor-card {
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 5%);
+    border-radius: 0.78rem;
+    background: oklch(0.16 0.003 255);
+    box-shadow: inset 0 1px 0 oklch(1 0 0 / 4%);
+  }
+
+  .mission-process-monitor-card + .mission-process-monitor-card {
+    margin-top: 0.75rem;
+  }
+
+  .mission-process-monitor-card-head {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) 1fr auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem 0.55rem;
+  }
+
+  .mission-process-monitor-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.42rem;
+    width: fit-content;
+    border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 8%);
+    border-radius: 0.44rem;
+    color: oklch(0.57 0.004 255);
+    padding: 0.36rem 0.62rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9rem;
+    line-height: 1;
+  }
+
+  .mission-process-monitor-status span {
+    width: 0.72rem;
+    height: 0.72rem;
+    border: 2px solid oklch(0.67 0.14 220);
+    border-top-color: transparent;
+    border-radius: 999px;
+    animation: mission-process-spin 0.9s linear infinite;
+  }
+
+  .mission-process-monitor-age {
+    justify-self: end;
+    color: oklch(0.48 0.004 255);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9rem;
+  }
+
+  .mission-process-monitor-kill {
+    border: 1px solid oklch(0.6 0.19 25);
+    border-radius: 0.48rem;
+    background: transparent;
+    color: oklch(0.72 0.18 28);
+    padding: 0.36rem 0.62rem;
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 730;
+    cursor: pointer;
+  }
+
+  .mission-process-monitor-kill:hover,
+  .mission-process-monitor-kill:focus-visible {
+    background: oklch(0.6 0.19 25 / 12%);
+    color: oklch(0.8 0.17 28);
+  }
+
+  .mission-process-monitor-kill:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .mission-process-monitor-command {
+    overflow-wrap: anywhere;
+    padding: 0.25rem 1rem 0.75rem;
+    color: oklch(0.86 0.004 255);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.98rem;
+    line-height: 1.45;
+  }
+
+  .mission-process-monitor-meta {
+    display: grid;
+    gap: 0.55rem;
+    padding: 0 1rem 1rem;
+    color: oklch(0.48 0.004 255);
+    font-size: 0.9rem;
+    line-height: 1.2;
+  }
+
+  .mission-process-monitor-meta span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-process-monitor-meta b {
+    color: oklch(0.38 0.004 255);
+    font-weight: 650;
+  }
+
+  .mission-process-monitor-log-shell {
+    display: grid;
+    gap: 0.8rem;
+    border-top: 1px solid color-mix(in oklch, var(--border), transparent 36%);
+    padding: 0.85rem 1rem 1rem;
+  }
+
+  .mission-process-monitor-log-tabs {
+    gap: 0.35rem;
+  }
+
+  .mission-process-monitor-log-tabs button {
+    padding: 0.42rem 0.78rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  .mission-process-monitor-copy {
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+    padding-right: 0 !important;
+    padding-left: 0 !important;
+  }
+
+  .mission-process-monitor-copy svg {
+    width: 1.05rem;
+    height: 1.05rem;
+  }
+
+  .mission-process-monitor-follow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: fit-content;
+    color: oklch(0.5 0.004 255);
+    font-size: 0.9rem;
+    font-weight: 650;
+  }
+
+  .mission-process-monitor-follow input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .mission-process-monitor-follow > span:last-child {
+    width: 3.1rem;
+    height: 1.85rem;
+    border-radius: 999px;
+    background: oklch(0.26 0.004 255);
+    position: relative;
+  }
+
+  .mission-process-monitor-follow > span:last-child::after {
+    content: "";
+    position: absolute;
+    top: 0.16rem;
+    left: 0.18rem;
+    width: 1.52rem;
+    height: 1.52rem;
+    border-radius: 999px;
+    background: oklch(0.84 0.004 255);
+    transition: transform 140ms ease;
+  }
+
+  .mission-process-monitor-follow input:checked + span::after {
+    transform: translateX(1.2rem);
+    background: oklch(0.06 0.002 255);
+  }
+
+  .mission-process-monitor-log {
+    max-height: min(44svh, 25rem);
+    min-height: 16rem;
+    overflow: auto;
+    margin: 0;
+    border-top: 1px solid color-mix(in oklch, var(--border), transparent 46%);
+    color: oklch(0.78 0.004 255);
+    padding: 0.85rem 0.1rem 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.93rem;
+    line-height: 1.48;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .mission-process-monitor-empty {
+    min-height: 14rem;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 34%);
+    border-radius: 0.78rem;
+    background: oklch(0.145 0.003 255);
   }
 
   .mission-composer-actions {
@@ -2220,6 +2513,57 @@
     }
 
     .mission-openai-auth-path {
+      font-size: 0.82rem;
+    }
+
+    .mission-process-monitor-sheet {
+      width: 100vw !important;
+      max-width: 100vw !important;
+    }
+
+    .mission-process-monitor-toolbar {
+      min-height: 2.85rem;
+      padding: 0 0.75rem;
+    }
+
+    .mission-process-monitor-header {
+      gap: 0.8rem;
+      padding: 1rem 1rem 0.95rem;
+    }
+
+    .mission-process-monitor-tabs {
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .mission-process-monitor-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .mission-process-monitor-body {
+      padding: 0.75rem 0.7rem 0.9rem;
+    }
+
+    .mission-process-monitor-card-head {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 0.6rem;
+      padding: 0.8rem 0.85rem 0.5rem;
+    }
+
+    .mission-process-monitor-kill {
+      grid-column: 2;
+    }
+
+    .mission-process-monitor-command,
+    .mission-process-monitor-meta,
+    .mission-process-monitor-log-shell {
+      padding-right: 0.85rem;
+      padding-left: 0.85rem;
+    }
+
+    .mission-process-monitor-log {
+      min-height: 13rem;
+      max-height: 34svh;
       font-size: 0.82rem;
     }
   }

@@ -24,6 +24,7 @@ import {
   SettingsIcon,
   ShieldAlertIcon,
   SquareIcon,
+  ImageIcon,
   TerminalIcon,
   UsersIcon,
   WorkflowIcon,
@@ -67,6 +68,7 @@ import type {
   GoosewebSnapshot,
   PendingCommandState,
   SessionDetailState,
+  TeamMessageState,
   TeamWorkspaceState
 } from "../../app/realtime/types";
 import {
@@ -149,6 +151,7 @@ type WorkspaceView =
   | "board"
   | "inbox"
   | "teams"
+  | "team-comms"
   | "agents"
   | "ledger"
   | "fleet"
@@ -181,6 +184,18 @@ type TeamFeedItem = {
   readonly status?: string;
   readonly deliveryId?: string;
   readonly cancelMessageId?: string;
+};
+
+type TeamCommsScope = "all" | "broadcast" | "direct";
+
+type TeamCommsMessageItem = {
+  readonly id: string;
+  readonly scope: "broadcast" | "direct";
+  readonly sender: string;
+  readonly recipient: string;
+  readonly body: string;
+  readonly timestampUnixMs: number;
+  readonly attachmentCount: number;
 };
 
 type AgentThreadItem = {
@@ -533,7 +548,8 @@ function Index() {
       <div
         className={cn(
           "mission-grid min-h-0",
-          activeView === "agents" && "mission-grid-agents"
+          (activeView === "agents" || activeView === "team-comms") &&
+            "mission-grid-agents"
         )}
       >
         <MissionRosterRail
@@ -607,7 +623,7 @@ function Index() {
           />
         </main>
 
-        {activeView === "agents" ? null : (
+        {activeView === "agents" || activeView === "team-comms" ? null : (
           <MissionProcessRail
             processes={processes}
             selectedProcess={selectedProcess}
@@ -867,7 +883,7 @@ function MissionRosterRail({
           <PlusIcon data-icon="inline-start" />
           Add Agent to Team
         </Button>
-        <Button type="button" variant="outline" onClick={() => onViewChange("teams")}>
+        <Button type="button" variant="outline" onClick={() => onViewChange("team-comms")}>
           <RadioIcon data-icon="inline-start" />
           Team Comms
         </Button>
@@ -980,6 +996,39 @@ function MissionWorkspace({
   );
   const canInterruptSelectedTurn =
     hasAgentThreadComposer && Boolean(selectedSession?.activeTurnId) && !sourceGapActive;
+  const viewBody = (
+    <MissionViewBody
+      state={state}
+      activeView={activeView}
+      rows={rows}
+      sessions={sessionOptions}
+      teams={teams}
+      approvals={approvals}
+      processes={processes}
+      sources={sources}
+      filters={filters}
+      setFilters={setFilters}
+      selectedRowId={selectedRowId}
+      selectedSession={selectedSession}
+      selectedTeam={selectedTeam}
+      sessionDetails={sessionDetails}
+      teamWorkspaces={teamWorkspaces}
+      selectedApproval={selectedApproval}
+      selectedApprovalId={selectedApprovalId}
+      setSelectedRowId={setSelectedRowId}
+      setSelectedSessionId={setSelectedSessionId}
+      setSelectedTeamId={setSelectedTeamId}
+      setSelectedApprovalId={setSelectedApprovalId}
+      pendingCommands={pendingCommands}
+      ledgerEvents={ledgerEvents}
+      connection={connection}
+      subscriptionCount={subscriptionCount}
+      sourceGapActive={sourceGapActive}
+      staleSourceIds={staleSourceIds}
+      addAgentDialogOpen={addAgentDialogOpen}
+      onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
+    />
+  );
 
   useEffect(() => {
     if (!hasAgentThreadComposer && composerText) {
@@ -1047,7 +1096,9 @@ function MissionWorkspace({
     <section
       className={cn(
         "mission-workspace",
-        isAgentThread
+        activeView === "team-comms"
+          ? "mission-workspace-team-comms"
+          : isAgentThread
           ? "mission-workspace-thread"
           : "mission-workspace-dashboard",
         isAgentThread && !selectedSession && "mission-workspace-thread-empty"
@@ -1069,42 +1120,12 @@ function MissionWorkspace({
 
           <ScrollArea className="mission-workspace-scroll">
             <div className="mission-worklog">
-              <div className="mission-embedded-pane">
-                <MissionViewBody
-                  state={state}
-                  activeView={activeView}
-                  rows={rows}
-                  sessions={sessionOptions}
-                  teams={teams}
-                  approvals={approvals}
-                  processes={processes}
-                  sources={sources}
-                  filters={filters}
-                  setFilters={setFilters}
-                  selectedRowId={selectedRowId}
-                  selectedSession={selectedSession}
-                  selectedTeam={selectedTeam}
-                  sessionDetails={sessionDetails}
-                  teamWorkspaces={teamWorkspaces}
-                  selectedApproval={selectedApproval}
-                  selectedApprovalId={selectedApprovalId}
-                  setSelectedRowId={setSelectedRowId}
-                  setSelectedSessionId={setSelectedSessionId}
-                  setSelectedTeamId={setSelectedTeamId}
-                  setSelectedApprovalId={setSelectedApprovalId}
-                  pendingCommands={pendingCommands}
-                  ledgerEvents={ledgerEvents}
-                  connection={connection}
-                  subscriptionCount={subscriptionCount}
-                  sourceGapActive={sourceGapActive}
-                  staleSourceIds={staleSourceIds}
-                  addAgentDialogOpen={addAgentDialogOpen}
-                  onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
-                />
-              </div>
+              <div className="mission-embedded-pane">{viewBody}</div>
             </div>
           </ScrollArea>
         </>
+      ) : activeView === "team-comms" ? (
+        viewBody
       ) : (
         <DashboardWorkspace
           state={state}
@@ -1326,6 +1347,15 @@ function MissionViewBody({
         sourceGapActive={sourceGapActive}
         addAgentDialogOpen={addAgentDialogOpen}
         onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
+      />
+    );
+  }
+  if (activeView === "team-comms") {
+    return (
+      <TeamCommsPane
+        selectedTeam={selectedTeam}
+        teamWorkspace={selectedTeam ? teamWorkspaces[selectedTeam.teamId] : undefined}
+        sourceGapActive={sourceGapActive}
       />
     );
   }
@@ -2015,6 +2045,9 @@ function workspaceTitle(
   if (activeView === "teams") {
     return selectedTeam?.name || "Coordinating team workspace";
   }
+  if (activeView === "team-comms") {
+    return selectedTeam?.name || "Team Comms";
+  }
   if (activeView === "agents") {
     return selectedSession?.sessionId || "Investigating agent session";
   }
@@ -2127,6 +2160,8 @@ function dashboardTitle(view: WorkspaceView): { readonly kicker: string; readonl
       return { kicker: "Approval operations", heading: "Inbox" };
     case "teams":
       return { kicker: "Coordination operations", heading: "Teams" };
+    case "team-comms":
+      return { kicker: "Coordination stream", heading: "Team Comms" };
     case "agents":
       return { kicker: "Agent workspace", heading: "Select an agent session" };
     case "ledger":
@@ -2149,6 +2184,8 @@ function dashboardDescription(view: WorkspaceView): string {
       return "Review pending approvals, stale-source guards, and command-safe resolution controls.";
     case "teams":
       return "Inspect team membership, delivery state, and coordination commands without chat-thread chrome.";
+    case "team-comms":
+      return "Read and compose team broadcasts and direct messages.";
     case "agents":
       return "Choose a session from the roster to open the agent thread and reveal the anchored composer.";
     case "ledger":
@@ -3049,6 +3086,208 @@ const DEV_REASONING_MODEL_CAPABILITIES: readonly ComposerModelCapability[] = [
     reasoningLevels: ["swift", "focused"]
   }
 ];
+
+const DEV_TEAM_COMMS_MESSAGES: readonly TeamCommsMessageItem[] = [
+  {
+    id: "team-comms-fixture:broadcast",
+    scope: "broadcast",
+    sender: "Gooseweb Browser QA Lead (Platinum Pearl)",
+    recipient: "team",
+    body:
+      "Accepted the reasoning capabilities source-of-truth work. Continue with the Team Comms surface and keep the commit focused.",
+    timestampUnixMs: 1783545212000,
+    attachmentCount: 1
+  },
+  {
+    id: "team-comms-fixture:direct",
+    scope: "direct",
+    sender: "Gooseweb Agents Fixer (Agricultural Venture)",
+    recipient: "Lead (Finished Cove)",
+    body:
+      "I am adapting the desktop Team Comms stream: segmented filters, message cards, and an anchored composer without bringing back dashboard chrome.",
+    timestampUnixMs: 1783545272000,
+    attachmentCount: 0
+  },
+  {
+    id: "team-comms-fixture:broadcast-2",
+    scope: "broadcast",
+    sender: "Lead (Finished Cove)",
+    recipient: "team",
+    body:
+      "Use the fixture only for visual QA. Live team messages should render from Goosetower data when present.",
+    timestampUnixMs: 1783545332000,
+    attachmentCount: 2
+  }
+];
+
+function TeamCommsPane({
+  selectedTeam,
+  teamWorkspace,
+  sourceGapActive
+}: {
+  readonly selectedTeam?: TeamView;
+  readonly teamWorkspace?: TeamWorkspaceState;
+  readonly sourceGapActive: boolean;
+}) {
+  const [scope, setScope] = useState<TeamCommsScope>("all");
+  const [messageText, setMessageText] = useState("");
+  const fixtureMessages = getTeamCommsFixtureMessages();
+  const messages = useMemo(
+    () =>
+      fixtureMessages.length
+        ? fixtureMessages
+        : teamWorkspace?.messages
+            .map(teamMessageToCommsItem)
+            .sort((left, right) => left.timestampUnixMs - right.timestampUnixMs) ?? [],
+    [fixtureMessages, teamWorkspace?.messages]
+  );
+  const visibleMessages = messages.filter((message) =>
+    scope === "all" ? true : message.scope === scope
+  );
+  const canSend =
+    Boolean(selectedTeam?.teamId) && Boolean(messageText.trim()) && !sourceGapActive;
+
+  function sendTeamCommsMessage(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedTeam?.teamId || !messageText.trim() || sourceGapActive) {
+      return;
+    }
+    sendRealtimeCommand(
+      makeCommand("team", selectedTeam.teamId, "broadcastTeamMessage", {
+        teamId: selectedTeam.teamId,
+        text: messageText.trim()
+      })
+    );
+    setMessageText("");
+  }
+
+  return (
+    <section className="mission-team-comms" data-team-comms-surface="true">
+      <div className="mission-team-comms-filter">
+        <div
+          aria-label="Team communication filter"
+          className="mission-team-comms-segments"
+          role="tablist"
+        >
+          <button
+            aria-pressed={scope === "all"}
+            aria-label="Show all team messages"
+            role="tab"
+            type="button"
+            onClick={() => setScope("all")}
+          >
+            All
+          </button>
+          <button
+            aria-pressed={scope === "broadcast"}
+            aria-label="Show broadcast messages"
+            role="tab"
+            type="button"
+            onClick={() => setScope("broadcast")}
+          >
+            Broadcast
+          </button>
+          <button
+            aria-pressed={scope === "direct"}
+            aria-label="Show direct messages"
+            role="tab"
+            type="button"
+            onClick={() => setScope("direct")}
+          >
+            DMs
+          </button>
+        </div>
+      </div>
+
+      <ScrollArea className="mission-team-comms-scroll">
+        <div className="mission-team-comms-list">
+          {visibleMessages.length ? (
+            visibleMessages.map((message) => (
+              <article
+                className="mission-team-comms-card"
+                data-scope={message.scope}
+                data-team-comms-message="true"
+                key={message.id}
+              >
+                <header className="mission-team-comms-card-header">
+                  <div className="mission-team-comms-route">
+                    <span>{message.sender}</span>
+                    <span aria-hidden="true">-&gt;</span>
+                    <span>{message.recipient}</span>
+                  </div>
+                  <time>{formatTime(message.timestampUnixMs)}</time>
+                </header>
+                <div className="mission-team-comms-body">{message.body}</div>
+                {message.attachmentCount ? (
+                  <div className="mission-team-comms-attachments">
+                    <ImageIcon aria-hidden="true" />
+                    <span>
+                      {message.attachmentCount} image
+                      {message.attachmentCount === 1 ? "" : "s"} attached
+                    </span>
+                  </div>
+                ) : null}
+              </article>
+            ))
+          ) : (
+            <div className="mission-team-comms-empty" aria-hidden="true" />
+          )}
+        </div>
+      </ScrollArea>
+
+      <form className="mission-team-comms-composer" onSubmit={sendTeamCommsMessage}>
+        <Textarea
+          aria-label="Team comms composer"
+          disabled={!selectedTeam?.teamId || sourceGapActive}
+          placeholder="Message the whole team..."
+          rows={5}
+          value={messageText}
+          onChange={(event) => setMessageText(event.target.value)}
+        />
+        <Button
+          aria-label="Send team comms message"
+          className="mission-team-comms-send"
+          disabled={!canSend}
+          size="icon"
+          type="submit"
+          variant="secondary"
+        >
+          <ArrowUpIcon />
+        </Button>
+      </form>
+    </section>
+  );
+}
+
+function getTeamCommsFixtureMessages(): readonly TeamCommsMessageItem[] {
+  if (!isTeamCommsVisualFixtureEnabled()) {
+    return [];
+  }
+  return DEV_TEAM_COMMS_MESSAGES;
+}
+
+function isTeamCommsVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebTeamCommsFixture");
+}
+
+function teamMessageToCommsItem(message: TeamMessageState): TeamCommsMessageItem {
+  const isDirect =
+    message.scope === "direct" || message.recipientAgentIds.length > 0;
+  return {
+    id: message.id,
+    scope: isDirect ? "direct" : "broadcast",
+    sender: message.senderAgentId || "unknown sender",
+    recipient: isDirect
+      ? message.recipientAgentIds.join(", ") || "direct message"
+      : "team",
+    body: message.text,
+    timestampUnixMs: message.createdAtUnixMs,
+    attachmentCount: 0
+  };
+}
 
 function TeamPane({
   teams,

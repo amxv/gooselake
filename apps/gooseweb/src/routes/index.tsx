@@ -842,24 +842,23 @@ function MissionWorkspace({
         "mission-workspace",
         isAgentThread
           ? "mission-workspace-thread"
-          : "mission-workspace-dashboard"
+          : "mission-workspace-dashboard",
+        isAgentThread && !selectedSession && "mission-workspace-thread-empty"
       )}
     >
       {isAgentThread ? (
         <>
           <div className="mission-workspace-tab" aria-hidden="true" />
-          <div className="mission-workspace-header">
-            <div>
-              <div className="mission-kicker">
-                {selectedSession ? agentThreadKicker(selectedSession) : "Agent workspace"}
+          {selectedSession ? (
+            <div className="mission-workspace-header">
+              <div>
+                <div className="mission-kicker">
+                  {agentThreadKicker(selectedSession)}
+                </div>
+                <h1>{workspaceTitle(activeView, selectedRow, selectedSession, selectedTeam)}</h1>
               </div>
-              <h1>
-                {selectedSession
-                  ? workspaceTitle(activeView, selectedRow, selectedSession, selectedTeam)
-                  : "Select an agent session"}
-              </h1>
             </div>
-          </div>
+          ) : null}
 
           <ScrollArea className="mission-workspace-scroll">
             <div className="mission-worklog">
@@ -1710,7 +1709,7 @@ function AgentPane({
 
       <div className="mission-thread-feed">
         {!selectedSession ? (
-          <div className="mission-thread-empty">Select a session from the left rail.</div>
+          <div className="mission-thread-empty mission-thread-empty-quiet" aria-hidden="true" />
         ) : threadItems.length === 0 ? (
           <div className="mission-thread-empty">
             {selectedSession.activeTurnId

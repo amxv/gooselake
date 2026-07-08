@@ -7,6 +7,39 @@ The canonical working directory for this repo is:
 
 For future team agents, attach/use this project path as the working directory unless the user explicitly provides a different worktree or path.
 
+## Local Gooseweb Live Dev Stack
+
+Use the single repo target to run the local Gooselake runtime, Goosetower gateway, and Gooseweb app together:
+
+```bash
+make dev
+```
+
+Equivalent Bun alias:
+
+```bash
+bun run dev:gooseweb
+```
+
+Default local endpoints:
+
+- Gooseweb: `http://127.0.0.1:13001`
+- Goosetower: `http://127.0.0.1:18090`
+- Runtime server: `http://127.0.0.1:18080`
+
+`make dev` runs `scripts/dev-gooseweb-stack.sh`, writes generated local configs under `tmp/gooseweb-dev/`, starts all three processes, waits for HTTP readiness, and stops all child processes on `Ctrl-C`.
+
+Common overrides:
+
+```bash
+make dev DEV_GOOSEWEB_PORT=13002
+make dev DEV_RUNTIME_PORT=18081 DEV_GOOSETOWER_PORT=18091 DEV_GOOSEWEB_PORT=13002
+```
+
+Use `make gooseweb-dev` only when runtime and Goosetower are already running; it starts just the Vite app pointed at `DEV_GOOSETOWER_PORT` and `DEV_GOOSEWEB_PORT`.
+
+When starting `make dev` as an agent, use the long-running process tool (`gg_process_run`) so the stack can stay alive while browser QA continues. Do not run a second stack on the same ports; stop the existing listener or override ports.
+
 ## Repo-Wide Validation
 
 Use the repo-wide check target before pushing broad Rust changes:

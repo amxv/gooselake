@@ -554,6 +554,10 @@
     min-height: 100%;
   }
 
+  .mission-workspace-thread-empty .mission-workspace-scroll {
+    padding-top: 1.5rem;
+  }
+
   .mission-embedded-pane > [data-slot="card"],
   .mission-embedded-pane [data-slot="card"] {
     border-radius: 1rem;
@@ -690,6 +694,10 @@
     color: var(--muted-foreground);
     font-size: 0.98rem;
     text-align: center;
+  }
+
+  .mission-thread-empty-quiet {
+    min-height: 100%;
   }
 
   .mission-thread-approval {

@@ -7,6 +7,9 @@ SERVICE ?= gg-runtime.service
 SCOPE ?= user
 BASE_URL ?=
 TOKEN ?=
+DEV_RUNTIME_PORT ?= 18080
+DEV_GOOSETOWER_PORT ?= 18090
+DEV_GOOSEWEB_PORT ?= 13001
 
 RUNTIME_BIN ?= $(HOME)/.local/share/gg-runtime/current/bin/gg-runtime-server
 GOOSETOWER_BIN ?= $(HOME)/.local/share/gg-runtime/current/bin/gg-goosetower
@@ -23,6 +26,9 @@ help: ## Show available targets
 	@echo "  SCOPE=<user|system>  (default: user)"
 	@echo "  BASE_URL=<url>       (optional)"
 	@echo "  TOKEN=<bearer>       (optional)"
+	@echo "  DEV_RUNTIME_PORT=<port> (default: 18080)"
+	@echo "  DEV_GOOSETOWER_PORT=<port> (default: 18090)"
+	@echo "  DEV_GOOSEWEB_PORT=<port> (default: 13001)"
 	@echo "  RUNTIME_BIN=<path>   (default: $(HOME)/.local/share/gg-runtime/current/bin/gg-runtime-server)"
 	@echo "  GOOSETOWER_BIN=<path> (default: $(HOME)/.local/share/gg-runtime/current/bin/gg-goosetower)"
 	@echo ""
@@ -66,7 +72,11 @@ goosetower-preflight: ## Run Goosetower deployment preflight checks
 
 .PHONY: gooseweb-dev
 gooseweb-dev: ## Start Gooseweb dev server
-	VITE_GOOSETOWER_URL=ws://127.0.0.1:8090/v1/realtime VITE_GOOSEWEB_DEV_TICKET_ROUTE_ENABLED=true bun run --cwd apps/gooseweb dev
+	VITE_GOOSETOWER_URL=ws://127.0.0.1:$(DEV_GOOSETOWER_PORT)/v1/realtime VITE_GOOSEWEB_DEV_TICKET_ROUTE_ENABLED=true bun run --cwd apps/gooseweb dev --host 127.0.0.1 --port $(DEV_GOOSEWEB_PORT)
+
+.PHONY: dev
+dev: ## Start local runtime, Goosetower, and Gooseweb together
+	RUNTIME_PORT=$(DEV_RUNTIME_PORT) GOOSETOWER_PORT=$(DEV_GOOSETOWER_PORT) GOOSEWEB_PORT=$(DEV_GOOSEWEB_PORT) ./scripts/dev-gooseweb-stack.sh
 
 .PHONY: gooseweb-build
 gooseweb-build: ## Build Gooseweb app

@@ -396,31 +396,23 @@ function Index() {
   return (
     <div className="mission-shell bg-background text-foreground">
       <MissionChrome
+        activeView={activeView}
+        approvals={approvals}
+        processes={processes}
         state={state}
         sources={sources}
         subscriptionCount={activeSubscriptions.length}
+        onViewChange={setActiveView}
       />
       <div className="mission-grid min-h-0">
         <MissionRosterRail
           activeView={activeView}
-          approvals={approvals}
-          rows={fleetRows}
           sessions={sessionOptions}
-          teams={teams}
-          processes={processes}
-          selectedRowId={selectedRow?.rowId ?? ""}
           selectedSessionId={selectedSessionId}
-          selectedTeamId={selectedTeam?.teamId ?? ""}
-          selectedApprovalId={selectedApproval?.approvalId ?? ""}
-          selectedProcessId={selectedProcess?.processId ?? ""}
           sourceGapActive={sourceGapActive}
           addAgentDisabled={sourceGapActive || (!sessionOptions.length && !sources.length)}
           onViewChange={setActiveView}
-          onSelectRow={setSelectedRowId}
           onSelectSession={setSelectedSessionId}
-          onSelectTeam={setSelectedTeamId}
-          onSelectApproval={setSelectedApprovalId}
-          onSelectProcess={setSelectedProcessId}
           onAddAgentToTeam={addSelectedAgentToTeam}
         />
 

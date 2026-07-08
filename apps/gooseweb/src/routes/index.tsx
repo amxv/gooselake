@@ -179,6 +179,22 @@ type AgentThreadItem = {
   readonly timestampUnixMs?: number;
   readonly status?: string;
   readonly output?: string;
+  readonly toolDiff?: AgentToolDiff;
+};
+
+type AgentToolDiffLine = {
+  readonly oldLine?: number;
+  readonly newLine?: number;
+  readonly kind: "context" | "add" | "remove";
+  readonly text: string;
+};
+
+type AgentToolDiff = {
+  readonly path: string;
+  readonly added: number;
+  readonly removed: number;
+  readonly summary: string;
+  readonly rows: readonly AgentToolDiffLine[];
 };
 
 type SessionTranscriptEntry = SessionDetailState["transcript"][number];
@@ -1868,6 +1884,10 @@ function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
   }
 
   if (item.kind === "tool") {
+    if (item.toolDiff) {
+      return <AgentToolDiffCard item={item} diff={item.toolDiff} />;
+    }
+
     return (
       <article className="mission-thread-row mission-thread-tool" data-thread-row="tool">
         <div className="mission-thread-tool-header">
@@ -1933,6 +1953,73 @@ function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
         <span>{item.timestampUnixMs ? formatTime(item.timestampUnixMs) : item.meta}</span>
       </div>
       <div className="mission-thread-row-body">{item.body}</div>
+    </article>
+  );
+}
+
+function AgentToolDiffCard({
+  item,
+  diff
+}: {
+  readonly item: AgentThreadItem;
+  readonly diff: AgentToolDiff;
+}) {
+  return (
+    <article
+      className="mission-thread-row mission-thread-tool mission-thread-tool-rich"
+      data-thread-row="tool"
+      data-tool-diff-card
+    >
+      <div className="mission-thread-diff-header">
+        <button
+          aria-expanded="true"
+          aria-label={`Collapse diff for ${diff.path}`}
+          className="mission-thread-diff-toggle"
+          type="button"
+        >
+          <ChevronDownIcon aria-hidden="true" />
+        </button>
+        <div className="mission-thread-diff-title">
+          <span>{item.title}</span>
+          <strong>{diff.path}</strong>
+        </div>
+        <div className="mission-thread-diff-actions">
+          <span className="mission-thread-diff-count mission-thread-diff-count-add">
+            +{diff.added}
+          </span>
+          <span className="mission-thread-diff-count mission-thread-diff-count-remove">
+            -{diff.removed}
+          </span>
+          <button type="button" aria-label="Copy diff preview" title="Copy diff preview">
+            <ClipboardListIcon aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="Show tool JSON" title="Show tool JSON">
+            <span aria-hidden="true">{"{}"}</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="mission-thread-diff-subheader">
+        <span>{item.meta || "tool result"}</span>
+        {item.status ? <span>{item.status}</span> : null}
+        <span>{diff.summary}</span>
+      </div>
+
+      <div className="mission-thread-diff-body" role="table" aria-label={`Diff preview for ${diff.path}`}>
+        {diff.rows.map((row, index) => (
+          <div
+            className={cn("mission-thread-diff-line", `mission-thread-diff-line-${row.kind}`)}
+            key={`${item.id}:diff:${index}`}
+            role="row"
+          >
+            <span role="cell">{typeof row.oldLine === "number" ? row.oldLine : ""}</span>
+            <span role="cell">{typeof row.newLine === "number" ? row.newLine : ""}</span>
+            <code role="cell">{row.text}</code>
+          </div>
+        ))}
+      </div>
+
+      <div className="mission-thread-tool-output">{item.body}</div>
     </article>
   );
 }
@@ -2100,11 +2187,38 @@ const DEV_AGENT_THREAD_ITEMS: readonly AgentThreadItem[] = [
   {
     id: "dev-thread:tool",
     kind: "tool",
-    title: "Read app.css",
-    body: "20 matches found",
+    title: "Edited",
+    body: "Updated the dev stack readiness loop and kept the process-exit path explicit.",
     meta: "tool result",
     status: "completed",
-    output: "rg \"mission-agent-thread|mission-composer\" apps/gooseweb/src/styles/app.css"
+    output: "apply_patch scripts/dev-gooseweb-stack.sh",
+    toolDiff: {
+      path: "scripts/dev-gooseweb-stack.sh",
+      added: 9,
+      removed: 4,
+      summary: "readiness loop",
+      rows: [
+        { oldLine: 188, newLine: 188, kind: "context", text: "local label=\"$2\"" },
+        { oldLine: 189, kind: "remove", text: "local attempts=\"${3:-120}\"" },
+        { newLine: 189, kind: "add", text: "local pid=\"${3:-}\"" },
+        { newLine: 190, kind: "add", text: "local attempts=\"${4:-1200}\"" },
+        { oldLine: 190, newLine: 191, kind: "context", text: "local delay=\"${4:-0.5}\"" },
+        { oldLine: 196, newLine: 197, kind: "context", text: "fi" },
+        {
+          newLine: 198,
+          kind: "add",
+          text: "if [[ -n \"${pid}\" ]] && ! kill -0 \"${pid}\" 2>/dev/null; then"
+        },
+        {
+          newLine: 199,
+          kind: "add",
+          text: "  echo \"${label} process exited before ${url} became ready\" >&2"
+        },
+        { newLine: 200, kind: "add", text: "  exit 1" },
+        { newLine: 201, kind: "add", text: "fi" },
+        { oldLine: 197, newLine: 202, kind: "context", text: "sleep \"${delay}\"" }
+      ]
+    }
   },
   {
     id: "dev-thread:team",

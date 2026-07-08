@@ -1026,6 +1026,167 @@
     white-space: pre-wrap;
   }
 
+  .mission-thread-tool-rich {
+    background:
+      linear-gradient(180deg, oklch(0.145 0.002 255), oklch(0.118 0.002 255));
+    border-color: color-mix(in oklch, var(--border), transparent 10%);
+  }
+
+  .mission-thread-diff-header {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.55rem;
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 28%);
+    padding: 0.72rem 0.82rem;
+  }
+
+  .mission-thread-diff-toggle,
+  .mission-thread-diff-actions button {
+    display: inline-grid;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 0;
+    background: transparent;
+    color: oklch(0.58 0.004 255);
+    padding: 0;
+  }
+
+  .mission-thread-diff-toggle svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .mission-thread-diff-title {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: baseline;
+    gap: 0.42rem;
+    color: oklch(0.86 0.004 255);
+    font-size: 1rem;
+    font-weight: 780;
+    line-height: 1.25;
+  }
+
+  .mission-thread-diff-title span {
+    flex: 0 0 auto;
+  }
+
+  .mission-thread-diff-title strong {
+    min-width: 0;
+    overflow: hidden;
+    color: oklch(0.73 0.13 230);
+    font: inherit;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-thread-diff-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 0.52rem;
+    color: oklch(0.57 0.004 255);
+  }
+
+  .mission-thread-diff-actions svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .mission-thread-diff-actions button span {
+    color: oklch(0.58 0.004 255);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9rem;
+    font-weight: 760;
+    line-height: 1;
+  }
+
+  .mission-thread-diff-count {
+    font-size: 0.9rem;
+    font-weight: 780;
+    line-height: 1;
+  }
+
+  .mission-thread-diff-count-add {
+    color: oklch(0.78 0.18 162);
+  }
+
+  .mission-thread-diff-count-remove {
+    color: oklch(0.72 0.18 18);
+  }
+
+  .mission-thread-diff-subheader {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    padding: 0.56rem 0.82rem;
+    color: oklch(0.54 0.004 255);
+    font-size: 0.72rem;
+  }
+
+  .mission-thread-diff-subheader span {
+    max-width: 16rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: oklch(0.18 0.003 255);
+    padding: 0.14rem 0.44rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-thread-diff-body {
+    max-height: 21rem;
+    min-width: 0;
+    overflow: auto;
+    border-top: 1px solid color-mix(in oklch, var(--border), transparent 48%);
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 48%);
+    background: oklch(0.081 0.002 255);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+    line-height: 1.65;
+  }
+
+  .mission-thread-diff-line {
+    display: grid;
+    min-width: max-content;
+    grid-template-columns: 3.8rem 3.8rem minmax(26rem, 1fr);
+    color: oklch(0.76 0.004 255);
+  }
+
+  .mission-thread-diff-line span {
+    user-select: none;
+    border-right: 1px solid oklch(1 0 0 / 4%);
+    color: oklch(0.48 0.004 255);
+    padding: 0.12rem 0.78rem;
+    text-align: right;
+  }
+
+  .mission-thread-diff-line code {
+    min-width: 0;
+    color: inherit;
+    padding: 0.12rem 0.82rem;
+    white-space: pre;
+  }
+
+  .mission-thread-diff-line-add {
+    background: oklch(0.18 0.048 158 / 68%);
+  }
+
+  .mission-thread-diff-line-remove {
+    background: oklch(0.18 0.045 22 / 72%);
+  }
+
+  .mission-thread-diff-line-add code {
+    color: oklch(0.85 0.125 164);
+  }
+
+  .mission-thread-diff-line-remove code {
+    color: oklch(0.82 0.122 20);
+  }
+
   .mission-thread-team-header {
     justify-content: flex-start;
   }

@@ -38,7 +38,9 @@ import {
   XIcon
 } from "lucide-react";
 import {
+  type ChangeEvent,
   type CSSProperties,
+  type DragEvent,
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
@@ -148,6 +150,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Textarea } from "~/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
+import {
+  COMPOSER_IMAGE_MAX_COUNT,
+  type ComposerImageAttachment,
+  buildComposerSendTurnPayload,
+  formatComposerAttachmentSize,
+  isAllowedComposerImage,
+  parseComposerImageAttachment
+} from "~/lib/composer-attachments";
 
 export const Route = createFileRoute("/")({
   component: Index
@@ -408,7 +418,7 @@ function Index() {
   const sessionDetails = state.entities.sessionDetails;
   const teamWorkspaces = state.entities.teamWorkspaces;
   const sessionOptions = useMemo(
-    () => mergeSessionOptions(sessions, fleetRows),
+    () => mergeSessionOptions(sessions, fleetRows, getDevComposerAttachmentSessions()),
     [fleetRows, sessions]
   );
   const [activeView, setActiveView] = useState<WorkspaceView>("board");
@@ -1025,7 +1035,13 @@ function MissionWorkspace({
   const [composerText, setComposerText] = useState("");
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [composerReasoningLevel, setComposerReasoningLevel] = useState("");
+  const [composerImageAttachments, setComposerImageAttachments] = useState<
+    readonly ComposerImageAttachment[]
+  >([]);
+  const [composerAttachmentError, setComposerAttachmentError] = useState("");
+  const [composerDropActive, setComposerDropActive] = useState(false);
   const [openAIAccountOpen, setOpenAIAccountOpen] = useState(false);
+  const composerFileInputRef = useRef<HTMLInputElement | null>(null);
   const openAIAccountUsage = getOpenAIAccountUsageFixture();
   const reasoningOptions = useMemo(
     () => composerReasoningOptions(sources, selectedSession),
@@ -1079,7 +1095,18 @@ function MissionWorkspace({
     if (!hasAgentThreadComposer && composerText) {
       setComposerText("");
     }
-  }, [composerText, hasAgentThreadComposer]);
+    if (!hasAgentThreadComposer && composerImageAttachments.length) {
+      setComposerImageAttachments([]);
+    }
+    if (!hasAgentThreadComposer && composerAttachmentError) {
+      setComposerAttachmentError("");
+    }
+  }, [
+    composerAttachmentError,
+    composerImageAttachments.length,
+    composerText,
+    hasAgentThreadComposer
+  ]);
 
   useEffect(() => {
     if (!reasoningOptions.length) {
@@ -1094,21 +1121,27 @@ function MissionWorkspace({
   }, [composerReasoningLevel, reasoningOptions]);
 
   function dispatchComposerMessage() {
+    const hasComposerPayload =
+      Boolean(composerText.trim()) || composerImageAttachments.length > 0;
     if (
       !hasAgentThreadComposer ||
       !selectedSession ||
-      !composerText.trim() ||
+      !hasComposerPayload ||
       sourceGapActive
     ) {
       return false;
     }
+    const payload = buildComposerSendTurnPayload(
+      selectedSession.sessionId,
+      composerText,
+      composerImageAttachments
+    );
     sendRealtimeCommand(
-      makeCommand("session", selectedSession.sessionId, "sendTurn", {
-        sessionId: selectedSession.sessionId,
-        text: composerText.trim()
-      })
+      makeCommand("session", selectedSession.sessionId, "sendTurn", payload)
     );
     setComposerText("");
+    setComposerImageAttachments([]);
+    setComposerAttachmentError("");
     return true;
   }
 
@@ -1123,6 +1156,84 @@ function MissionWorkspace({
     }
     event.preventDefault();
     dispatchComposerMessage();
+  }
+
+  async function addComposerImageFiles(files: readonly File[]) {
+    if (!hasAgentThreadComposer) {
+      return;
+    }
+    const nextAttachments: ComposerImageAttachment[] = [];
+    let error = "";
+    for (const file of files) {
+      if (composerImageAttachments.length + nextAttachments.length >= COMPOSER_IMAGE_MAX_COUNT) {
+        error = `Attach up to ${COMPOSER_IMAGE_MAX_COUNT} images.`;
+        break;
+      }
+      if (!isAllowedComposerImage(file)) {
+        error = "Only PNG, JPEG, WebP, or GIF images can be attached.";
+        continue;
+      }
+      try {
+        nextAttachments.push(await parseComposerImageAttachment(file));
+      } catch (attachmentError) {
+        error =
+          attachmentError instanceof Error
+            ? attachmentError.message
+            : "Could not attach image.";
+      }
+    }
+    if (nextAttachments.length) {
+      setComposerImageAttachments((attachments) => [
+        ...attachments,
+        ...nextAttachments
+      ]);
+    }
+    setComposerAttachmentError(error);
+  }
+
+  function handleComposerFileInput(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    void addComposerImageFiles(files);
+    event.target.value = "";
+  }
+
+  function handleComposerDragEnter(event: DragEvent<HTMLFormElement>) {
+    if (!hasAgentThreadComposer || !Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    setComposerDropActive(true);
+  }
+
+  function handleComposerDragOver(event: DragEvent<HTMLFormElement>) {
+    if (!hasAgentThreadComposer || !Array.from(event.dataTransfer.types).includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setComposerDropActive(true);
+  }
+
+  function handleComposerDragLeave(event: DragEvent<HTMLFormElement>) {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setComposerDropActive(false);
+    }
+  }
+
+  function handleComposerDrop(event: DragEvent<HTMLFormElement>) {
+    if (!hasAgentThreadComposer) {
+      return;
+    }
+    event.preventDefault();
+    setComposerDropActive(false);
+    void addComposerImageFiles(Array.from(event.dataTransfer.files));
+  }
+
+  function removeComposerImageAttachment(attachmentId: string) {
+    setComposerImageAttachments((attachments) =>
+      attachments.filter((attachment) => attachment.id !== attachmentId)
+    );
+    setComposerAttachmentError("");
   }
 
   function interruptSelectedTurn() {
@@ -1207,7 +1318,25 @@ function MissionWorkspace({
       )}
 
       {showAgentThreadComposer ? (
-        <form className="mission-composer" onSubmit={submitComposer}>
+        <form
+          className="mission-composer"
+          data-drop-active={composerDropActive ? "true" : undefined}
+          onDragEnter={handleComposerDragEnter}
+          onDragLeave={handleComposerDragLeave}
+          onDragOver={handleComposerDragOver}
+          onDrop={handleComposerDrop}
+          onSubmit={submitComposer}
+        >
+          <input
+            ref={composerFileInputRef}
+            aria-label="Upload composer images"
+            className="mission-composer-file-input"
+            disabled={!hasAgentThreadComposer}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            onChange={handleComposerFileInput}
+          />
           <div className="mission-composer-input-frame">
             <Button
               aria-label={composerExpanded ? "Minimize composer" : "Maximize composer"}
@@ -1219,6 +1348,43 @@ function MissionWorkspace({
             >
               {composerExpanded ? <Minimize2Icon /> : <Maximize2Icon />}
             </Button>
+            {composerImageAttachments.length || composerAttachmentError ? (
+              <div
+                className="mission-composer-attachments"
+                data-composer-attachments="true"
+              >
+                {composerImageAttachments.map((attachment) => (
+                  <div
+                    className="mission-composer-attachment"
+                    data-composer-image-attachment="true"
+                    key={attachment.id}
+                  >
+                    <img alt="" src={attachment.previewUrl} />
+                    <span className="mission-composer-attachment-meta">
+                      <span className="mission-composer-attachment-name">
+                        {attachment.fileName}
+                      </span>
+                      <span className="mission-composer-attachment-size">
+                        {formatComposerAttachmentSize(attachment.sizeBytes)}
+                      </span>
+                    </span>
+                    <button
+                      aria-label={`Remove ${attachment.fileName}`}
+                      className="mission-composer-attachment-remove"
+                      type="button"
+                      onClick={() => removeComposerImageAttachment(attachment.id)}
+                    >
+                      <XIcon aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+                {composerAttachmentError ? (
+                  <p className="mission-composer-attachment-error">
+                    {composerAttachmentError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <Textarea
               aria-label="Agent thread composer"
               className={cn(composerExpanded && "mission-composer-input-expanded")}
@@ -1234,11 +1400,12 @@ function MissionWorkspace({
             <div className="mission-composer-tools">
               <Button
                 aria-label="Add attachment"
-                disabled
+                disabled={!hasAgentThreadComposer}
                 size="icon-sm"
-                title="Attachments are not available in Gooseweb yet"
+                title="Upload images"
                 type="button"
                 variant="ghost"
+                onClick={() => composerFileInputRef.current?.click()}
               >
                 <PlusIcon />
               </Button>
@@ -1281,7 +1448,11 @@ function MissionWorkspace({
                 <Button
                   aria-label="Send agent thread message"
                   className="mission-composer-submit"
-                  disabled={!hasAgentThreadComposer || !composerText.trim() || sourceGapActive}
+                  disabled={
+                    !hasAgentThreadComposer ||
+                    (!composerText.trim() && composerImageAttachments.length === 0) ||
+                    sourceGapActive
+                  }
                   size="icon"
                   type="submit"
                   variant="secondary"
@@ -2249,7 +2420,8 @@ function dashboardDescription(view: WorkspaceView): string {
 
 function mergeSessionOptions(
   sessions: readonly SessionView[],
-  rows: readonly FleetRowView[]
+  rows: readonly FleetRowView[],
+  extraSessions: readonly SessionView[] = []
 ): readonly SessionView[] {
   const byId = new Map<string, SessionView>();
   for (const session of sessions) {
@@ -2274,6 +2446,11 @@ function mergeSessionOptions(
         activeTurnId: ""
       })
     );
+  }
+  for (const session of extraSessions) {
+    if (session.sessionId && !byId.has(session.sessionId)) {
+      byId.set(session.sessionId, session);
+    }
   }
   return Array.from(byId.values());
 }
@@ -3183,12 +3360,25 @@ function isMarkdownVisualFixtureEnabled(): boolean {
   return new URLSearchParams(window.location.search).has("goosewebMarkdownFixture");
 }
 
+function isComposerAttachmentVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has(
+    "goosewebComposerAttachmentFixture"
+  );
+}
+
 function isRosterVisualFixtureEnabled(): boolean {
   if (!import.meta.env.DEV || typeof window === "undefined") {
     return false;
   }
   const params = new URLSearchParams(window.location.search);
-  return params.has("goosewebRosterFixture") || params.has("goosewebThreadFixture");
+  return (
+    params.has("goosewebRosterFixture") ||
+    params.has("goosewebThreadFixture") ||
+    params.has("goosewebComposerAttachmentFixture")
+  );
 }
 
 function isRecentCommitsVisualFixtureEnabled(): boolean {
@@ -3245,6 +3435,34 @@ function getProcessMonitorItems(processes: readonly ProcessView[]): readonly Pro
     stdout: "",
     stderr: ""
   }));
+}
+
+function getDevComposerAttachmentSessions(): readonly SessionView[] {
+  if (!isComposerAttachmentVisualFixtureEnabled()) {
+    return [];
+  }
+  return [
+    create(SessionViewSchema, {
+      sourceId: "local",
+      sessionId: "dev-roster-browser",
+      provider: "codex",
+      model: "gpt-5.5",
+      status: "ready",
+      cwd: "/Users/ashray/code/amxv/gooselake",
+      worktreePath: "/Users/ashray/code/amxv/gooselake",
+      activeTurnId: ""
+    }),
+    create(SessionViewSchema, {
+      sourceId: "local",
+      sessionId: "dev-roster-composer",
+      provider: "codex",
+      model: "gpt-5.5",
+      status: "ready",
+      cwd: "/Users/ashray/code/amxv/gooselake",
+      worktreePath: "/Users/ashray/code/amxv/gooselake",
+      activeTurnId: ""
+    })
+  ];
 }
 
 function processMatchesMonitorFilter(

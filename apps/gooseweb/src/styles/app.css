@@ -696,6 +696,7 @@
 
   .mission-composer {
     display: grid;
+    gap: 0.25rem;
     min-height: 11.2rem;
     margin: 0 1.05rem 1.05rem;
     border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 5%);
@@ -705,6 +706,24 @@
     box-shadow:
       inset 0 1px 0 oklch(1 0 0 / 5%),
       0 0.8rem 2.2rem oklch(0 0 0 / 24%);
+  }
+
+  .mission-composer[data-drop-active="true"] {
+    border-color: oklch(0.7 0.14 220 / 70%);
+    box-shadow:
+      inset 0 0 0 1px oklch(0.7 0.14 220 / 40%),
+      inset 0 1px 0 oklch(1 0 0 / 6%),
+      0 0.8rem 2.2rem oklch(0 0 0 / 24%);
+  }
+
+  .mission-composer-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    clip-path: inset(50%);
   }
 
   .mission-composer-input-frame {
@@ -721,6 +740,95 @@
     height: 2rem;
     border-radius: 999px;
     color: var(--muted-foreground);
+  }
+
+  .mission-composer-attachments {
+    display: flex;
+    max-height: 5.6rem;
+    align-items: center;
+    gap: 0.45rem;
+    overflow: auto;
+    padding: 0.05rem 2.45rem 0.35rem 0.05rem;
+  }
+
+  .mission-composer-attachment {
+    display: inline-grid;
+    grid-template-columns: 2.15rem minmax(0, 8.5rem) 1.55rem;
+    width: min(14rem, 100%);
+    min-width: min(14rem, 100%);
+    height: 2.65rem;
+    align-items: center;
+    gap: 0.45rem;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 35%);
+    border-radius: 0.95rem;
+    background: oklch(0.205 0.004 255);
+    padding: 0.24rem 0.26rem;
+  }
+
+  .mission-composer-attachment img {
+    width: 2.15rem;
+    height: 2.15rem;
+    border-radius: 0.68rem;
+    background: oklch(0.11 0.003 255);
+    object-fit: cover;
+  }
+
+  .mission-composer-attachment-meta {
+    display: grid;
+    min-width: 0;
+    gap: 0.12rem;
+  }
+
+  .mission-composer-attachment-name,
+  .mission-composer-attachment-size {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-composer-attachment-name {
+    color: oklch(0.84 0.004 255);
+    font-size: 0.78rem;
+    font-weight: 650;
+    line-height: 1.05;
+  }
+
+  .mission-composer-attachment-size {
+    color: var(--muted-foreground);
+    font-size: 0.68rem;
+    line-height: 1;
+  }
+
+  .mission-composer-attachment-remove {
+    display: inline-grid;
+    width: 1.55rem;
+    height: 1.55rem;
+    place-items: center;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted-foreground);
+    cursor: pointer;
+  }
+
+  .mission-composer-attachment-remove:hover {
+    background: oklch(0.27 0.005 255);
+    color: var(--foreground);
+  }
+
+  .mission-composer-attachment-remove svg {
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+
+  .mission-composer-attachment-error {
+    flex: 0 0 auto;
+    max-width: min(18rem, 100%);
+    margin: 0;
+    color: oklch(0.76 0.15 25);
+    font-size: 0.75rem;
+    line-height: 1.25;
   }
 
   .mission-composer textarea {

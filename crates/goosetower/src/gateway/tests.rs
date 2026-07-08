@@ -15,8 +15,8 @@ use super::*;
 use crate::materializer::state::SourceCursorView;
 use crate::protocol::generated::goosetower::v1::command::Payload as CommandPayload;
 use crate::protocol::generated::goosetower::v1::{
-    Command, CommandCreateSession, CommandCreateTeam, CommandJoinTeamMember, CommandSendTurn,
-    EntityRef,
+    Command, CommandCreateSession, CommandCreateTeam, CommandInputItem, CommandJoinTeamMember,
+    CommandSendTurn, EntityRef,
 };
 
 mod team_commands;
@@ -274,6 +274,50 @@ async fn command_routes_to_materialized_owner_source() {
     ));
     assert!(west_hits.lock().unwrap().is_empty());
     assert_eq!(east_hits.lock().unwrap().as_slice(), ["east:east_session"]);
+}
+
+#[tokio::test]
+async fn send_turn_command_routes_structured_image_input() {
+    let captured = Arc::new(StdMutex::new(Vec::new()));
+    let runtime_addr = spawn_capturing_turn_runtime(captured.clone()).await;
+    let mut config = GoosetowerConfig::default();
+    config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
+    let gateway = live_gateway_with_session_version(config, 1).await;
+    let mut conn = test_connection(&gateway);
+    let mut command = send_turn_command("cmd_image_input");
+    if let Some(CommandPayload::SendTurn(input)) = command.payload.as_mut() {
+        input.text = "fallback text".to_string();
+        input.input = vec![
+            CommandInputItem {
+                r#type: "text".to_string(),
+                text: "Inspect this image".to_string(),
+                ..CommandInputItem::default()
+            },
+            CommandInputItem {
+                r#type: "image".to_string(),
+                media_type: "image/png".to_string(),
+                data: "iVBORw0KGgo=".to_string(),
+                ..CommandInputItem::default()
+            },
+        ];
+    }
+
+    let response = gateway.admit_and_route_command(&mut conn, command).await;
+
+    assert!(matches!(
+        response.payload,
+        Some(Payload::CommandAccepted(_))
+    ));
+    let body = captured
+        .lock()
+        .unwrap()
+        .pop()
+        .expect("captured runtime turn body");
+    assert_eq!(body["input"][0]["type"], "text");
+    assert_eq!(body["input"][0]["text"], "Inspect this image");
+    assert_eq!(body["input"][1]["type"], "image");
+    assert_eq!(body["input"][1]["media_type"], "image/png");
+    assert_eq!(body["input"][1]["data"], "iVBORw0KGgo=");
 }
 
 #[tokio::test]
@@ -556,6 +600,7 @@ fn send_turn_command_for_session(command_id: &str, session_id: &str) -> Command 
         payload: Some(CommandPayload::SendTurn(CommandSendTurn {
             session_id: session_id.to_string(),
             text: "hello".to_string(),
+            input: Vec::new(),
         })),
         ..Command::default()
     }
@@ -733,6 +778,36 @@ async fn spawn_accepting_command_runtime(
         axum::serve(listener, app)
             .await
             .expect("serve accepting runtime");
+    });
+    addr
+}
+
+async fn spawn_capturing_turn_runtime(captured: Arc<StdMutex<Vec<Value>>>) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind capturing runtime");
+    let addr = listener.local_addr().expect("runtime addr");
+    tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/v1/sessions/{session_id}/turns",
+            axum::routing::post(
+                move |axum::extract::Path(session_id): axum::extract::Path<String>,
+                      Json(input): Json<Value>| {
+                    let captured = captured.clone();
+                    async move {
+                        captured.lock().unwrap().push(input);
+                        Json(json!({
+                            "session_id": session_id,
+                            "turn_id": "turn_accepted",
+                            "status": "accepted"
+                        }))
+                    }
+                },
+            ),
+        );
+        axum::serve(listener, app)
+            .await
+            .expect("serve capturing runtime");
     });
     addr
 }

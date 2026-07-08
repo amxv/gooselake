@@ -57,6 +57,16 @@ message CommandJoinTeamMember {
 message CommandSendTurn {
   string session_id = 1;
   string text = 2;
+  repeated CommandInputItem input = 3;
+  reserved 20 to 39;
+}
+
+message CommandInputItem {
+  string type = 1;
+  string text = 2;
+  string media_type = 3;
+  string data = 4;
+  string path = 5;
   reserved 20 to 39;
 }
 

@@ -203,6 +203,47 @@ const fallbackCommandEnvelope = fromBinary(
 assert.equal(fallbackCommandEnvelope.payload.case, "command");
 assert.equal(fallbackCommandEnvelope.payload.value.payload.case, "createSession");
 
+const sentBeforeImageTurnCommand = sockets[2]?.sent.length ?? 0;
+await core.handleMessage({
+  type: "command",
+  command: {
+    commandId: "cmd_image_turn",
+    idempotencyKey: "cmd_image_turn",
+    target: {
+      scope: "session",
+      scopeId: "session_1",
+      entityId: "session_1"
+    },
+    createdAtClientUnixMs: BigInt(Date.now()),
+    payload: {
+      case: "sendTurn",
+      value: {
+        sessionId: "session_1",
+        text: "Inspect this image",
+        input: [
+          { type: "text", text: "Inspect this image" },
+          {
+            type: "image",
+            mediaType: "image/png",
+            data: "iVBORw0KGgo="
+          }
+        ]
+      }
+    }
+  }
+});
+assert.equal((sockets[2]?.sent.length ?? 0) > sentBeforeImageTurnCommand, true);
+const imageTurnFrame = sockets[2]?.sent.at(-1);
+assert.ok(imageTurnFrame instanceof Uint8Array);
+const imageTurnEnvelope = fromBinary(RealtimeEnvelopeSchema, imageTurnFrame);
+assert.equal(imageTurnEnvelope.payload.case, "command");
+assert.equal(imageTurnEnvelope.payload.value.payload.case, "sendTurn");
+const imageTurnPayload = imageTurnEnvelope.payload.value.payload.value;
+assert.equal(imageTurnPayload.input.length, 2);
+assert.equal(imageTurnPayload.input[1]?.type, "image");
+assert.equal(imageTurnPayload.input[1]?.mediaType, "image/png");
+assert.equal(imageTurnPayload.input[1]?.data, "iVBORw0KGgo=");
+
 const sentBeforeJoinCommand = sockets[2]?.sent.length ?? 0;
 await core.handleMessage({
   type: "command",

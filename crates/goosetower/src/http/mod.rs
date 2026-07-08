@@ -825,6 +825,7 @@ mod tests {
             payload: Some(CommandPayload::SendTurn(CommandSendTurn {
                 session_id: "session_1".to_string(),
                 text: "hello".to_string(),
+                input: Vec::new(),
             })),
             ..Command::default()
         }))

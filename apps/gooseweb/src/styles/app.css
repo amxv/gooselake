@@ -130,7 +130,7 @@
 
   .mission-chrome {
     display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 0.75rem;
     border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 28%);
@@ -140,7 +140,6 @@
     padding: 0.35rem 0.85rem;
   }
 
-  .mission-window-buttons,
   .mission-chrome-tools,
   .mission-chrome-status,
   .mission-composer-tools,
@@ -151,25 +150,6 @@
     align-items: center;
     gap: 0.45rem;
     min-width: 0;
-  }
-
-  .mission-dot {
-    display: block;
-    width: 0.76rem;
-    height: 0.76rem;
-    border-radius: 999px;
-  }
-
-  .mission-dot-red {
-    background: oklch(0.68 0.22 25);
-  }
-
-  .mission-dot-yellow {
-    background: oklch(0.78 0.16 82);
-  }
-
-  .mission-dot-green {
-    background: oklch(0.72 0.17 145);
   }
 
   .mission-top-nav {

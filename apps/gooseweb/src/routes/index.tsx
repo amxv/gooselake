@@ -522,11 +522,6 @@ function MissionChrome({
   const source = sources[0];
   return (
     <header className="mission-chrome">
-      <div className="mission-window-buttons" aria-hidden="true">
-        <span className="mission-dot mission-dot-red" />
-        <span className="mission-dot mission-dot-yellow" />
-        <span className="mission-dot mission-dot-green" />
-      </div>
       <div className="mission-chrome-tools">
         <Button size="icon-sm" type="button" variant="ghost">
           <FolderIcon />

@@ -259,6 +259,23 @@ type RecentChangeItem = {
   readonly removed: number;
 };
 
+type ChangeDiffPreviewLine = {
+  readonly oldLine?: number;
+  readonly newLine?: number;
+  readonly kind: "hunk" | "context" | "add" | "remove";
+  readonly text: string;
+};
+
+type ChangeDiffPreview = {
+  readonly path: string;
+  readonly status: string;
+  readonly artifactKind: string;
+  readonly summary: string;
+  readonly added: number;
+  readonly removed: number;
+  readonly rows: readonly ChangeDiffPreviewLine[];
+};
+
 type OpenAIUsageWindow = {
   readonly label: string;
   readonly remainingPercent: number;
@@ -2365,6 +2382,15 @@ function AgentPane({
   const showDevFixture = isThreadVisualFixtureEnabled();
   const showCommitsFixture = isRecentCommitsVisualFixtureEnabled();
   const focusChangesFixture = isChangesVisualFixtureEnabled();
+  const [changesPreviewOpen, setChangesPreviewOpen] = useState(false);
+  const showChangesPreview = focusChangesFixture && changesPreviewOpen;
+
+  useEffect(() => {
+    if (!focusChangesFixture) {
+      setChangesPreviewOpen(false);
+    }
+  }, [focusChangesFixture]);
+
   const sessionApprovals = approvals.filter(
     (approval) => approval.sessionId === selectedSession?.sessionId
   );
@@ -2420,28 +2446,37 @@ function AgentPane({
           </div>
         ) : null}
 
-        <div className="mission-thread-feed">
-          {!selectedSession && !showDevFixture ? (
-            <div className="mission-thread-empty mission-thread-empty-quiet" aria-hidden="true" />
-          ) : threadItems.length === 0 ? (
-            <div className="mission-thread-empty">
-              {selectedSession?.activeTurnId
-                ? `Streaming turn ${selectedSession.activeTurnId}.`
-                : "No messages yet."}
-            </div>
-          ) : (
-            threadItems.map((item) => <AgentThreadRow item={item} key={item.id} />)
-          )}
-        </div>
+        {showChangesPreview ? (
+          <ChangesDiffPreviewPanel preview={DEV_CHANGES_DIFF_PREVIEW} />
+        ) : (
+          <div className="mission-thread-feed">
+            {!selectedSession && !showDevFixture ? (
+              <div className="mission-thread-empty mission-thread-empty-quiet" aria-hidden="true" />
+            ) : threadItems.length === 0 ? (
+              <div className="mission-thread-empty">
+                {selectedSession?.activeTurnId
+                  ? `Streaming turn ${selectedSession.activeTurnId}.`
+                  : "No messages yet."}
+              </div>
+            ) : (
+              threadItems.map((item) => <AgentThreadRow item={item} key={item.id} />)
+            )}
+          </div>
+        )}
 
-        {focusedApproval ? (
+        {focusedApproval && !showChangesPreview ? (
           <div className="mission-thread-approval">
             <ApprovalCard approval={focusedApproval} sourceGapActive={sourceGapActive} />
           </div>
         ) : null}
       </div>
 
-      {showCommitsFixture ? <RecentCommitsPanel focusChanges={focusChangesFixture} /> : null}
+      {showCommitsFixture ? (
+        <RecentCommitsPanel
+          focusChanges={focusChangesFixture}
+          onOpenChangesPreview={() => setChangesPreviewOpen(true)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -2678,9 +2713,11 @@ function AgentToolDiffCard({
 }
 
 function RecentCommitsPanel({
-  focusChanges
+  focusChanges,
+  onOpenChangesPreview
 }: {
   readonly focusChanges?: boolean;
+  readonly onOpenChangesPreview?: () => void;
 }) {
   const changedFileCount = DEV_RECENT_CHANGES.length;
   const addedLines = DEV_RECENT_CHANGES.reduce((total, change) => total + change.added, 0);
@@ -2732,6 +2769,7 @@ function RecentCommitsPanel({
         addedLines={addedLines}
         changedFileCount={changedFileCount}
         changes={DEV_RECENT_CHANGES}
+        onOpenPreview={onOpenChangesPreview}
         removedLines={removedLines}
       />
 
@@ -2759,11 +2797,13 @@ function ChangesInspectorPanel({
   addedLines,
   changedFileCount,
   changes,
+  onOpenPreview,
   removedLines
 }: {
   readonly addedLines: number;
   readonly changedFileCount: number;
   readonly changes: readonly RecentChangeItem[];
+  readonly onOpenPreview?: () => void;
   readonly removedLines: number;
 }) {
   return (
@@ -2779,7 +2819,12 @@ function ChangesInspectorPanel({
           <button type="button" aria-label="Refresh changes" title="Refresh changes">
             <RefreshCwIcon aria-hidden="true" />
           </button>
-          <button type="button" aria-label="Expand changes" title="Expand changes">
+          <button
+            type="button"
+            aria-label="Open diff preview"
+            onClick={onOpenPreview}
+            title="Open diff preview"
+          >
             <Maximize2Icon aria-hidden="true" />
           </button>
           <button type="button" aria-label="Toggle changes list" title="List changes">
@@ -2807,7 +2852,12 @@ function ChangesInspectorPanel({
             <ChangeTreeFolder depth={2} name="src">
               <ChangeTreeFolder depth={3} name="routes">
                 {changes.map((change) => (
-                  <ChangeTreeFile change={change} depth={4} key={change.path} />
+                  <ChangeTreeFile
+                    change={change}
+                    depth={4}
+                    key={change.path}
+                    onOpenPreview={onOpenPreview}
+                  />
                 ))}
               </ChangeTreeFolder>
             </ChangeTreeFolder>
@@ -2845,16 +2895,20 @@ function ChangeTreeFolder({
 
 function ChangeTreeFile({
   change,
-  depth
+  depth,
+  onOpenPreview
 }: {
   readonly change: RecentChangeItem;
   readonly depth: number;
+  readonly onOpenPreview?: () => void;
 }) {
   const fileName = change.path.split("/").filter(Boolean).at(-1) ?? change.path;
   return (
-    <div
+    <button
+      type="button"
       className="mission-changes-tree-label mission-changes-tree-file"
       data-changes-file="true"
+      onClick={onOpenPreview}
       role="treeitem"
       style={{ "--change-tree-depth": depth } as CSSProperties}
     >
@@ -2865,7 +2919,74 @@ function ChangeTreeFile({
         <span className="mission-changes-removed">-{change.removed}</span>
         <span className="mission-changes-status">{change.status}</span>
       </span>
-    </div>
+    </button>
+  );
+}
+
+function ChangesDiffPreviewPanel({
+  preview
+}: {
+  readonly preview: ChangeDiffPreview;
+}) {
+  return (
+    <section
+      aria-label={`Diff preview for ${preview.path}`}
+      className="mission-changes-preview"
+      data-changes-diff-preview="true"
+    >
+      <header className="mission-changes-preview-summary">
+        <span className="mission-changes-preview-chip">
+          <GitBranchIcon aria-hidden="true" />
+          main
+        </span>
+        <span className="mission-changes-preview-chip">
+          <FileIcon aria-hidden="true" />1 file
+        </span>
+        <span className="mission-changes-added">+{preview.added}</span>
+        <span className="mission-changes-removed">-{preview.removed}</span>
+      </header>
+
+      <div className="mission-changes-preview-shell">
+        <aside className="mission-changes-preview-file" aria-label="Selected file">
+          <div className="mission-changes-preview-file-title">
+            <span>{preview.path}</span>
+            <span className="mission-changes-added">+{preview.added}</span>
+            <span className="mission-changes-removed">-{preview.removed}</span>
+          </div>
+          <p>{preview.status} · source</p>
+        </aside>
+
+        <article className="mission-changes-preview-diff">
+          <div className="mission-changes-preview-file-header">
+            <div>
+              <strong>{preview.path}</strong>
+              <span>{preview.summary}</span>
+            </div>
+            <button type="button" aria-label="Copy diff preview" title="Copy diff preview">
+              <ClipboardListIcon aria-hidden="true" />
+            </button>
+          </div>
+
+          <div className="mission-changes-preview-body" role="table" aria-label="Complete diff preview">
+            {preview.rows.map((row, index) => (
+              <div
+                className={cn("mission-changes-preview-line", `mission-changes-preview-line-${row.kind}`)}
+                data-changes-diff-line={row.kind}
+                key={`${preview.path}:line:${index}`}
+                role="row"
+              >
+                <span role="cell">{typeof row.oldLine === "number" ? row.oldLine : ""}</span>
+                <span role="cell">{typeof row.newLine === "number" ? row.newLine : ""}</span>
+                <span aria-hidden="true" role="cell">
+                  {row.kind === "add" ? "+" : row.kind === "remove" ? "-" : " "}
+                </span>
+                <code role="cell">{row.text}</code>
+              </div>
+            ))}
+          </div>
+        </article>
+      </div>
+    </section>
   );
 }
 
@@ -3162,6 +3283,65 @@ const DEV_RECENT_CHANGES: readonly RecentChangeItem[] = [
     removed: 3
   }
 ];
+
+const DEV_CHANGES_DIFF_PREVIEW: ChangeDiffPreview = {
+  path: "apps/gooseweb/src/routes/index.tsx",
+  status: "Modified",
+  artifactKind: "source",
+  summary: "Complete preview",
+  added: 117,
+  removed: 3,
+  rows: [
+    { kind: "hunk", text: "@@ -179,6 +179,22 @@ type AgentThreadItem = {" },
+    { oldLine: 179, newLine: 179, kind: "context", text: "  readonly timestampUnixMs?: number;" },
+    { oldLine: 180, newLine: 180, kind: "context", text: "  readonly status?: string;" },
+    { oldLine: 181, newLine: 181, kind: "context", text: "  readonly output?: string;" },
+    { newLine: 182, kind: "add", text: "  readonly toolDiff?: AgentToolDiff;" },
+    { newLine: 183, kind: "add", text: "};" },
+    { newLine: 184, kind: "add", text: "" },
+    { newLine: 185, kind: "add", text: "type AgentToolDiffLine = {" },
+    { newLine: 186, kind: "add", text: "  readonly oldLine?: number;" },
+    { newLine: 187, kind: "add", text: "  readonly newLine?: number;" },
+    { newLine: 188, kind: "add", text: "  readonly kind: \"context\" | \"add\" | \"remove\";" },
+    { newLine: 189, kind: "add", text: "  readonly text: string;" },
+    { newLine: 190, kind: "add", text: "};" },
+    { newLine: 191, kind: "add", text: "" },
+    { newLine: 192, kind: "add", text: "type AgentToolDiff = {" },
+    { newLine: 193, kind: "add", text: "  readonly path: string;" },
+    { newLine: 194, kind: "add", text: "  readonly added: number;" },
+    { newLine: 195, kind: "add", text: "  readonly removed: number;" },
+    { newLine: 196, kind: "add", text: "  readonly summary: string;" },
+    { newLine: 197, kind: "add", text: "  readonly rows: readonly AgentToolDiffLine[];" },
+    { oldLine: 182, newLine: 198, kind: "context", text: "};" },
+    { oldLine: 183, newLine: 199, kind: "context", text: "" },
+    { kind: "hunk", text: "@@ -2680,8 +2704,21 @@ function RecentCommitsPanel({" },
+    { oldLine: 2680, newLine: 2704, kind: "context", text: "function RecentCommitsPanel({" },
+    { oldLine: 2681, kind: "remove", text: "  focusChanges" },
+    { newLine: 2705, kind: "add", text: "  focusChanges," },
+    { newLine: 2706, kind: "add", text: "  onOpenChangesPreview" },
+    { oldLine: 2682, newLine: 2707, kind: "context", text: "}: {" },
+    { oldLine: 2683, newLine: 2708, kind: "context", text: "  readonly focusChanges?: boolean;" },
+    { newLine: 2709, kind: "add", text: "  readonly onOpenChangesPreview?: () => void;" },
+    { oldLine: 2684, newLine: 2710, kind: "context", text: "}) {" },
+    { kind: "hunk", text: "@@ -2758,9 +2797,30 @@ function ChangesInspectorPanel({" },
+    { oldLine: 2758, newLine: 2797, kind: "context", text: "function ChangesInspectorPanel({" },
+    { oldLine: 2759, newLine: 2798, kind: "context", text: "  addedLines," },
+    { oldLine: 2760, newLine: 2799, kind: "context", text: "  changedFileCount," },
+    { oldLine: 2761, newLine: 2800, kind: "context", text: "  changes," },
+    { newLine: 2801, kind: "add", text: "  onOpenPreview," },
+    { oldLine: 2762, newLine: 2802, kind: "context", text: "  removedLines" },
+    { oldLine: 2763, newLine: 2803, kind: "context", text: "}: {" },
+    { newLine: 2804, kind: "add", text: "  readonly onOpenPreview?: () => void;" },
+    { kind: "hunk", text: "@@ -2860,6 +2920,12 @@ function ChangeTreeFile({" },
+    { oldLine: 2860, newLine: 2920, kind: "context", text: "      <span className=\"mission-changes-file-name\">{fileName}</span>" },
+    { newLine: 2921, kind: "add", text: "      <span className=\"mission-changes-file-stats\">" },
+    { newLine: 2922, kind: "add", text: "        <span className=\"mission-changes-added\">+{change.added}</span>" },
+    { newLine: 2923, kind: "add", text: "        <span className=\"mission-changes-removed\">-{change.removed}</span>" },
+    { newLine: 2924, kind: "add", text: "        <span className=\"mission-changes-status\">{change.status}</span>" },
+    { newLine: 2925, kind: "add", text: "      </span>" },
+    { oldLine: 2861, newLine: 2926, kind: "context", text: "    </button>" }
+  ]
+};
 
 const DEV_OPENAI_ACCOUNT_USAGE: OpenAIAccountUsage = {
   email: "gooseweb.fixture@example.com",

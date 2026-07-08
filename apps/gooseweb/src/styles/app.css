@@ -2539,7 +2539,17 @@
   }
 
   .mission-changes-tree-file {
+    width: 100%;
+    border: 0;
+    background: transparent;
     color: oklch(0.82 0.004 255);
+    text-align: left;
+  }
+
+  .mission-changes-tree-file:hover,
+  .mission-changes-tree-file:focus-visible {
+    background: oklch(0.16 0.003 255);
+    outline: none;
   }
 
   .mission-changes-file-name {
@@ -2578,6 +2588,217 @@
     text-align: center;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .mission-changes-preview {
+    display: grid;
+    min-width: 0;
+    height: min(42rem, calc(100svh - 16rem));
+    min-height: 24rem;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 38%);
+    border-radius: 1rem;
+    background: oklch(0.085 0.002 255);
+  }
+
+  .mission-changes-preview-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 46%);
+    padding: 0.75rem 0.9rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.8rem;
+    font-weight: 720;
+    tab-size: 4;
+  }
+
+  .mission-changes-preview-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+    max-width: 14rem;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 48%);
+    border-radius: 0.72rem;
+    background: oklch(0.105 0.002 255);
+    color: oklch(0.72 0.004 255);
+    padding: 0.42rem 0.65rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-changes-preview-chip svg {
+    width: 0.95rem;
+    height: 0.95rem;
+    flex: 0 0 auto;
+    color: oklch(0.52 0.004 255);
+  }
+
+  .mission-changes-preview-shell {
+    display: grid;
+    min-height: 0;
+    min-width: 0;
+    grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .mission-changes-preview-file {
+    min-width: 0;
+    overflow: hidden;
+    border-right: 1px solid color-mix(in oklch, var(--border), transparent 42%);
+    background: oklch(0.07 0.002 255);
+  }
+
+  .mission-changes-preview-file-title {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.45rem;
+    background: oklch(0.18 0.003 255);
+    padding: 0.85rem 0.9rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.86rem;
+    font-weight: 650;
+  }
+
+  .mission-changes-preview-file-title > span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    color: oklch(0.88 0.004 255);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-changes-preview-file p {
+    margin: 0;
+    overflow: hidden;
+    color: oklch(0.47 0.004 255);
+    padding: 0.45rem 0.9rem 0.75rem;
+    font-size: 0.82rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-changes-preview-diff {
+    display: grid;
+    min-height: 0;
+    min-width: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .mission-changes-preview-file-header {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 48%);
+    background: oklch(0.18 0.003 255);
+    padding: 0.78rem 0.9rem;
+  }
+
+  .mission-changes-preview-file-header strong,
+  .mission-changes-preview-file-header span {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mission-changes-preview-file-header strong {
+    color: oklch(0.9 0.004 255);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.86rem;
+    font-weight: 650;
+  }
+
+  .mission-changes-preview-file-header span {
+    margin-top: 0.24rem;
+    color: oklch(0.47 0.004 255);
+    font-size: 0.78rem;
+  }
+
+  .mission-changes-preview-file-header button {
+    display: inline-grid;
+    place-items: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: oklch(0.53 0.004 255);
+  }
+
+  .mission-changes-preview-file-header button:hover,
+  .mission-changes-preview-file-header button:focus-visible {
+    background: oklch(0.22 0.003 255);
+    color: oklch(0.82 0.004 255);
+  }
+
+  .mission-changes-preview-file-header svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .mission-changes-preview-body {
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+    background: oklch(0.064 0.002 255);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.86rem;
+    line-height: 1.55;
+    tab-size: 2;
+  }
+
+  .mission-changes-preview-line {
+    display: grid;
+    min-width: max-content;
+    grid-template-columns: 4rem 4rem 1.7rem minmax(34rem, 1fr);
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 72%);
+    color: oklch(0.82 0.004 255);
+  }
+
+  .mission-changes-preview-line > span {
+    border-right: 1px solid color-mix(in oklch, var(--border), transparent 70%);
+    color: oklch(0.43 0.004 255);
+    padding: 0.32rem 0.6rem;
+    text-align: right;
+    user-select: none;
+  }
+
+  .mission-changes-preview-line > span:nth-child(3) {
+    color: oklch(0.48 0.004 255);
+    text-align: center;
+  }
+
+  .mission-changes-preview-line code {
+    min-width: 0;
+    color: inherit;
+    padding: 0.32rem 0.85rem;
+    white-space: pre;
+  }
+
+  .mission-changes-preview-line-hunk {
+    background: oklch(0.23 0.045 240 / 34%);
+    color: oklch(0.77 0.12 230);
+  }
+
+  .mission-changes-preview-line-add {
+    background: oklch(0.22 0.08 160 / 38%);
+    color: oklch(0.88 0.05 165);
+  }
+
+  .mission-changes-preview-line-remove {
+    background: oklch(0.22 0.08 22 / 42%);
+    color: oklch(0.9 0.05 20);
   }
 
   .mission-workspace-pill {
@@ -2886,6 +3107,31 @@
       scroll-margin-bottom: clamp(10rem, 24svh, 14rem);
     }
 
+    .mission-changes-preview {
+      height: min(24rem, calc(100svh - 14rem));
+      min-height: 19rem;
+    }
+
+    .mission-changes-preview-summary {
+      flex-wrap: wrap;
+      gap: 0.45rem;
+    }
+
+    .mission-changes-preview-shell {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .mission-changes-preview-file {
+      border-right: 0;
+      border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 42%);
+    }
+
+    .mission-changes-preview-line {
+      grid-template-columns: 3.15rem 3.15rem 1.4rem minmax(28rem, 1fr);
+      font-size: 0.78rem;
+    }
+
     .mission-commit-timeline {
       gap: 0.8rem;
     }
@@ -3023,6 +3269,42 @@
       min-height: 13rem;
       max-height: 34svh;
       font-size: 0.82rem;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .mission-changes-preview {
+      height: min(18rem, calc(100svh - 15rem));
+      min-height: 18rem;
+    }
+
+    .mission-changes-preview-summary {
+      padding: 0.65rem 0.7rem;
+    }
+
+    .mission-changes-preview-chip {
+      max-width: 10rem;
+      padding: 0.35rem 0.55rem;
+    }
+
+    .mission-changes-preview-file-title {
+      padding: 0.7rem;
+      font-size: 0.78rem;
+    }
+
+    .mission-changes-preview-file-header {
+      padding: 0.7rem;
+    }
+
+    .mission-changes-preview-line {
+      grid-template-columns: 2.75rem 2.75rem 1.25rem minmax(26rem, 1fr);
+      font-size: 0.72rem;
+    }
+
+    .mission-changes-preview-line > span,
+    .mission-changes-preview-line code {
+      padding-top: 0.28rem;
+      padding-bottom: 0.28rem;
     }
   }
 }

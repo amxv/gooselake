@@ -26,7 +26,8 @@ import {
   SquareIcon,
   TerminalIcon,
   UsersIcon,
-  WorkflowIcon
+  WorkflowIcon,
+  XIcon
 } from "lucide-react";
 import {
   type FormEvent,
@@ -120,6 +121,11 @@ import {
   SelectValue
 } from "~/components/ui/select";
 import { Separator } from "~/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle
+} from "~/components/ui/sheet";
 import {
   Table,
   TableBody,
@@ -229,6 +235,20 @@ type RecentCommitItem = {
 type RecentChangeItem = {
   readonly label: string;
   readonly count?: number;
+};
+
+type OpenAIUsageWindow = {
+  readonly label: string;
+  readonly remainingPercent: number;
+  readonly resetText: string;
+};
+
+type OpenAIAccountUsage = {
+  readonly email: string;
+  readonly plan: string;
+  readonly authMode: string;
+  readonly authFilePath: string;
+  readonly windows: readonly OpenAIUsageWindow[];
 };
 
 type ComposerEffort = "medium" | "high" | "extra-high";
@@ -892,6 +912,8 @@ function MissionWorkspace({
   const [composerText, setComposerText] = useState("");
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [composerEffort, setComposerEffort] = useState<ComposerEffort>("high");
+  const [openAIAccountOpen, setOpenAIAccountOpen] = useState(false);
+  const openAIAccountUsage = getOpenAIAccountUsageFixture();
   const hasAgentThreadComposer =
     activeView === "agents" && Boolean(selectedSession?.sessionId);
   const showAgentThreadComposer = activeView === "agents";
@@ -1098,12 +1120,15 @@ function MissionWorkspace({
                 <span>{formatComposerModeLabel(selectedSession)}</span>
                 <ChevronDownIcon aria-hidden="true" />
               </span>
-              <span
+              <button
+                aria-label="Open OpenAI account and usage"
                 className="mission-composer-info"
+                type="button"
                 title={formatComposerContextLabel(selectedSession)}
+                onClick={() => setOpenAIAccountOpen(true)}
               >
                 <InfoIcon aria-hidden="true" />
-              </span>
+              </button>
             </div>
             <div className="mission-composer-actions">
               {canInterruptSelectedTurn ? (
@@ -1131,6 +1156,11 @@ function MissionWorkspace({
               )}
             </div>
           </div>
+          <OpenAIAccountUsageSheet
+            account={openAIAccountUsage}
+            open={openAIAccountOpen}
+            onOpenChange={setOpenAIAccountOpen}
+          />
         </form>
       ) : null}
     </section>
@@ -1319,6 +1349,108 @@ function ComposerEffortDropdown({
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function OpenAIAccountUsageSheet({
+  account,
+  open,
+  onOpenChange
+}: {
+  readonly account: OpenAIAccountUsage | null;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        className="mission-openai-sheet"
+        side="right"
+        showCloseButton={false}
+      >
+        <div className="mission-openai-sheet-header">
+          <SheetTitle className="mission-openai-title">OpenAI</SheetTitle>
+          <button
+            aria-label="Close OpenAI account and usage"
+            className="mission-openai-close"
+            type="button"
+            onClick={() => onOpenChange(false)}
+          >
+            <XIcon aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="mission-openai-sheet-body">
+          <section className="mission-openai-section" aria-label="OpenAI account">
+            <h2>Account</h2>
+            <div className="mission-openai-account-card" data-openai-account-card>
+              {account ? (
+                <>
+                  <div className="mission-openai-account-main">
+                    <div className="mission-openai-account-copy">
+                      <strong>{account.email}</strong>
+                      <div className="mission-openai-chips">
+                        <span>{account.plan}</span>
+                        <span>{account.authMode}</span>
+                      </div>
+                    </div>
+                    <div className="mission-openai-actions">
+                      <button type="button">Refresh</button>
+                      <button type="button">Sign out</button>
+                    </div>
+                  </div>
+                  <div className="mission-openai-auth-path">{account.authFilePath}</div>
+                </>
+              ) : (
+                <div className="mission-openai-unavailable">
+                  <strong>Not connected</strong>
+                  <div className="mission-openai-chips">
+                    <span>local</span>
+                    <span>no usage data</span>
+                  </div>
+                  <div className="mission-openai-auth-path">OpenAI account data unavailable</div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="mission-openai-section" aria-label="OpenAI usage">
+            <h2>Usage</h2>
+            <div className="mission-openai-usage-card" data-openai-usage-card>
+              {account ? (
+                <>
+                  {account.windows.map((window) => (
+                    <OpenAIUsageRow key={window.label} window={window} />
+                  ))}
+                  <div className="mission-openai-refresh-row">
+                    <button type="button">Refresh usage</button>
+                  </div>
+                </>
+              ) : (
+                <div className="mission-openai-empty-usage" aria-hidden="true" />
+              )}
+            </div>
+          </section>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function OpenAIUsageRow({ window }: { readonly window: OpenAIUsageWindow }) {
+  const progress = Math.min(100, Math.max(0, window.remainingPercent));
+
+  return (
+    <div className="mission-openai-usage-row" data-openai-usage-row={window.label}>
+      <div className="mission-openai-usage-heading">
+        <span>{window.label}</span>
+        <span>{progress}%</span>
+      </div>
+      <div className="mission-openai-progress" aria-label={`${window.label} ${progress}%`}>
+        <span style={{ width: `${progress}%` }} />
+      </div>
+      <p>{window.resetText}</p>
+    </div>
   );
 }
 
@@ -2316,6 +2448,17 @@ function isRecentCommitsVisualFixtureEnabled(): boolean {
   return params.has("goosewebCommitsFixture") || params.has("goosewebThreadFixture");
 }
 
+function isOpenAIAccountVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebOpenAIFixture");
+}
+
+function getOpenAIAccountUsageFixture(): OpenAIAccountUsage | null {
+  return isOpenAIAccountVisualFixtureEnabled() ? DEV_OPENAI_ACCOUNT_USAGE : null;
+}
+
 const DEV_AGENT_THREAD_ITEMS: readonly AgentThreadItem[] = [
   {
     id: "dev-thread:user",
@@ -2462,6 +2605,25 @@ const DEV_RECENT_COMMITS: readonly RecentCommitItem[] = [
 ];
 
 const DEV_RECENT_CHANGES: readonly RecentChangeItem[] = [];
+
+const DEV_OPENAI_ACCOUNT_USAGE: OpenAIAccountUsage = {
+  email: "gooseweb.fixture@example.com",
+  plan: "pro",
+  authMode: "ChatGPT OAuth",
+  authFilePath: "/Users/ashray/.gg/codex/auth.json",
+  windows: [
+    {
+      label: "5-hour window",
+      remainingPercent: 83,
+      resetText: "Resets Jul 9 at 1:54 AM"
+    },
+    {
+      label: "Weekly window",
+      remainingPercent: 89,
+      resetText: "Resets Jul 14 at 12:16 PM"
+    }
+  ]
+};
 
 function TeamPane({
   teams,

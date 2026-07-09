@@ -9,6 +9,7 @@ import {
   BotIcon,
   BoxesIcon,
   ChevronDownIcon,
+  ChevronUpIcon,
   ClipboardListIcon,
   FileIcon,
   FolderIcon,
@@ -236,6 +237,31 @@ type BehaviorDisplaySettings = {
   readonly setThinkingTraces: (value: ThinkingTraceDefaultState) => void;
 };
 
+type ModelPresetDraft = {
+  readonly name: string;
+  readonly model: string;
+  readonly thinkingEffort: string;
+};
+
+type ModelPresetSettings = {
+  readonly presets: readonly ModelPresetDraft[];
+  readonly setPresets: (presets: readonly ModelPresetDraft[]) => void;
+  readonly addPreset: () => void;
+  readonly updatePreset: (
+    index: number,
+    patch: Partial<ModelPresetDraft>
+  ) => void;
+  readonly movePreset: (index: number, direction: -1 | 1) => void;
+  readonly removePreset: (index: number) => void;
+};
+
+type ModelPresetSpawnFixturePayload = {
+  readonly teamId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly modelPreset: string;
+};
+
 type StopAgentTarget = {
   readonly sessionId: string;
   readonly turnId: string;
@@ -386,6 +412,12 @@ type ComposerModelCapability = {
   readonly reasoningLevels: readonly string[];
 };
 
+type ModelPresetModelOption = {
+  readonly model: string;
+  readonly label: string;
+  readonly reasoningLevels: readonly string[];
+};
+
 const PROCESS_MONITOR_FILTERS: ReadonlyArray<{
   readonly id: ProcessMonitorFilter;
   readonly label: string;
@@ -416,6 +448,20 @@ const TOOL_TIMELINE_VERBOSITY_STORAGE_KEY =
   "gooseweb.agents.settings.toolTimelineVerbosity";
 const THINKING_TRACES_STORAGE_KEY =
   "gooseweb.agents.settings.thinkingTraces";
+const MODEL_PRESETS_STORAGE_KEY =
+  "gooseweb.agents.settings.modelPresets";
+const MAX_MODEL_PRESETS = 12;
+
+const DEFAULT_MODEL_PRESETS: readonly ModelPresetDraft[] = [
+  { name: "planner", model: "gpt-5.5", thinkingEffort: "high" },
+  { name: "designer", model: "claude-opus-4-8", thinkingEffort: "high" },
+  { name: "frontend", model: "gpt-5.5", thinkingEffort: "high" },
+  { name: "fast", model: "gpt-5.4-mini", thinkingEffort: "low" },
+  { name: "codex", model: "gpt-5.5", thinkingEffort: "high" },
+  { name: "deep", model: "claude-opus-4-8", thinkingEffort: "high" },
+  { name: "opus", model: "claude-opus-4-8", thinkingEffort: "high" },
+  { name: "sonnet", model: "claude-sonnet-5", thinkingEffort: "high" }
+];
 
 const TOOL_TIMELINE_VERBOSITY_OPTIONS: ReadonlyArray<{
   readonly value: ToolTimelineVerbosity;
@@ -531,6 +577,145 @@ function readThinkingTracesPreference(): ThinkingTraceDefaultState {
   return normalizeThinkingTraces(
     window.localStorage.getItem(THINKING_TRACES_STORAGE_KEY)
   );
+}
+
+function normalizePresetName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function normalizeModelPresetDraft(preset: Partial<ModelPresetDraft>): ModelPresetDraft {
+  return {
+    name: normalizePresetName(preset.name ?? ""),
+    model: (preset.model ?? "").trim(),
+    thinkingEffort: (preset.thinkingEffort ?? "").trim().toLowerCase()
+  };
+}
+
+function normalizeModelPresetDrafts(value: unknown): readonly ModelPresetDraft[] {
+  if (!Array.isArray(value)) {
+    return DEFAULT_MODEL_PRESETS;
+  }
+  const seen = new Set<string>();
+  const presets: ModelPresetDraft[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const preset = normalizeModelPresetDraft({
+      name: typeof record.name === "string" ? record.name : "",
+      model: typeof record.model === "string" ? record.model : "",
+      thinkingEffort:
+        typeof record.thinkingEffort === "string"
+          ? record.thinkingEffort
+          : typeof record.thinking_effort === "string"
+            ? record.thinking_effort
+            : ""
+    });
+    if (!preset.name || !preset.model || seen.has(preset.name)) {
+      continue;
+    }
+    seen.add(preset.name);
+    presets.push(preset);
+    if (presets.length >= MAX_MODEL_PRESETS) {
+      break;
+    }
+  }
+  return presets.length ? presets : DEFAULT_MODEL_PRESETS;
+}
+
+function readModelPresetPreference(): readonly ModelPresetDraft[] {
+  if (typeof window === "undefined") {
+    return DEFAULT_MODEL_PRESETS;
+  }
+  const raw = window.localStorage.getItem(MODEL_PRESETS_STORAGE_KEY);
+  if (!raw) {
+    return DEFAULT_MODEL_PRESETS;
+  }
+  try {
+    return normalizeModelPresetDrafts(JSON.parse(raw));
+  } catch {
+    return DEFAULT_MODEL_PRESETS;
+  }
+}
+
+function writeModelPresetPreference(presets: readonly ModelPresetDraft[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(MODEL_PRESETS_STORAGE_KEY, JSON.stringify(presets));
+}
+
+function useModelPresetSettings(): ModelPresetSettings {
+  const [presets, setPresetState] = useState<readonly ModelPresetDraft[]>(() =>
+    readModelPresetPreference()
+  );
+
+  function commitPresets(nextPresets: readonly ModelPresetDraft[]) {
+    const normalized = normalizeModelPresetDrafts(nextPresets);
+    setPresetState(normalized);
+    writeModelPresetPreference(normalized);
+  }
+
+  function addPreset() {
+    if (presets.length >= MAX_MODEL_PRESETS) {
+      return;
+    }
+    const baseName = "custom";
+    const existingNames = new Set(presets.map((preset) => preset.name));
+    let nextName = baseName;
+    let suffix = 2;
+    while (existingNames.has(nextName)) {
+      nextName = `${baseName}_${suffix}`;
+      suffix += 1;
+    }
+    commitPresets([
+      ...presets,
+      {
+        name: nextName,
+        model: presets[0]?.model || DEFAULT_MODEL_PRESETS[0].model,
+        thinkingEffort:
+          presets[0]?.thinkingEffort || DEFAULT_MODEL_PRESETS[0].thinkingEffort
+      }
+    ]);
+  }
+
+  function updatePreset(index: number, patch: Partial<ModelPresetDraft>) {
+    commitPresets(
+      presets.map((preset, presetIndex) =>
+        presetIndex === index
+          ? normalizeModelPresetDraft({ ...preset, ...patch })
+          : preset
+      )
+    );
+  }
+
+  function movePreset(index: number, direction: -1 | 1) {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= presets.length) {
+      return;
+    }
+    const next = [...presets];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    commitPresets(next);
+  }
+
+  function removePreset(index: number) {
+    commitPresets(presets.filter((_, presetIndex) => presetIndex !== index));
+  }
+
+  return {
+    presets,
+    setPresets: commitPresets,
+    addPreset,
+    updatePreset,
+    movePreset,
+    removePreset
+  };
 }
 
 function useBehaviorDisplaySettings(): BehaviorDisplaySettings {
@@ -851,6 +1036,7 @@ function Index() {
   );
   const turnNotificationSettings = useTurnNotificationSettings();
   const behaviorDisplaySettings = useBehaviorDisplaySettings();
+  const modelPresetSettings = useModelPresetSettings();
   useTurnCompletionNotifications({
     mode: turnNotificationSettings.mode,
     sessions: sessionOptions,
@@ -1116,6 +1302,7 @@ function Index() {
             addAgentDialogOpen={addAgentDialogOpen}
             turnNotificationSettings={turnNotificationSettings}
             behaviorDisplaySettings={behaviorDisplaySettings}
+            modelPresetSettings={modelPresetSettings}
             onAddAgentDialogOpenChange={setAddAgentDialogOpen}
           />
         </main>
@@ -1656,6 +1843,7 @@ function MissionWorkspace({
   addAgentDialogOpen,
   turnNotificationSettings,
   behaviorDisplaySettings,
+  modelPresetSettings,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -1689,6 +1877,7 @@ function MissionWorkspace({
   readonly addAgentDialogOpen: boolean;
   readonly turnNotificationSettings: TurnNotificationSettings;
   readonly behaviorDisplaySettings: BehaviorDisplaySettings;
+  readonly modelPresetSettings: ModelPresetSettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const [composerText, setComposerText] = useState("");
@@ -1749,6 +1938,7 @@ function MissionWorkspace({
       addAgentDialogOpen={addAgentDialogOpen}
       turnNotificationSettings={turnNotificationSettings}
       behaviorDisplaySettings={behaviorDisplaySettings}
+      modelPresetSettings={modelPresetSettings}
       onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
     />
   );
@@ -1978,6 +2168,7 @@ function MissionWorkspace({
           addAgentDialogOpen={addAgentDialogOpen}
           turnNotificationSettings={turnNotificationSettings}
           behaviorDisplaySettings={behaviorDisplaySettings}
+          modelPresetSettings={modelPresetSettings}
           onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       )}
@@ -2172,6 +2363,7 @@ function MissionViewBody({
   addAgentDialogOpen,
   turnNotificationSettings,
   behaviorDisplaySettings,
+  modelPresetSettings,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -2204,6 +2396,7 @@ function MissionViewBody({
   readonly addAgentDialogOpen: boolean;
   readonly turnNotificationSettings: TurnNotificationSettings;
   readonly behaviorDisplaySettings: BehaviorDisplaySettings;
+  readonly modelPresetSettings: ModelPresetSettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   if (activeView === "agents") {
@@ -2235,6 +2428,7 @@ function MissionViewBody({
         pendingCommands={pendingCommands}
         sourceGapActive={sourceGapActive}
         addAgentDialogOpen={addAgentDialogOpen}
+        modelPresetSettings={modelPresetSettings}
         onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
       />
     );
@@ -2288,6 +2482,8 @@ function MissionViewBody({
         subscriptionCount={subscriptionCount}
         turnNotificationSettings={turnNotificationSettings}
         behaviorDisplaySettings={behaviorDisplaySettings}
+        modelPresetSettings={modelPresetSettings}
+        sources={sources}
         sessions={sessions}
         teams={teams}
       />
@@ -2668,6 +2864,7 @@ function DashboardWorkspace({
   addAgentDialogOpen,
   turnNotificationSettings,
   behaviorDisplaySettings,
+  modelPresetSettings,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -2701,6 +2898,7 @@ function DashboardWorkspace({
   readonly addAgentDialogOpen: boolean;
   readonly turnNotificationSettings: TurnNotificationSettings;
   readonly behaviorDisplaySettings: BehaviorDisplaySettings;
+  readonly modelPresetSettings: ModelPresetSettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const runningProcesses = processes.filter((process) => process.status === "running").length;
@@ -2765,6 +2963,7 @@ function DashboardWorkspace({
           addAgentDialogOpen={addAgentDialogOpen}
           turnNotificationSettings={turnNotificationSettings}
           behaviorDisplaySettings={behaviorDisplaySettings}
+          modelPresetSettings={modelPresetSettings}
           onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       </div>
@@ -3020,6 +3219,49 @@ function getComposerReasoningCapabilities(
     return DEV_REASONING_MODEL_CAPABILITIES;
   }
   return sources.flatMap((source) => source.modelCapabilities);
+}
+
+function getModelPresetModelOptions(
+  sources: readonly SourceHealthView[],
+  presets: readonly ModelPresetDraft[]
+): readonly ModelPresetModelOption[] {
+  const byModel = new Map<string, ModelPresetModelOption>();
+  for (const capability of getComposerReasoningCapabilities(sources)) {
+    if (!capability.model || byModel.has(capability.model)) {
+      continue;
+    }
+    byModel.set(capability.model, {
+      model: capability.model,
+      label: capability.displayName || capability.model,
+      reasoningLevels: capability.reasoningLevels
+    });
+  }
+  for (const preset of presets) {
+    if (!preset.model || byModel.has(preset.model)) {
+      continue;
+    }
+    byModel.set(preset.model, {
+      model: preset.model,
+      label: preset.model,
+      reasoningLevels: preset.thinkingEffort ? [preset.thinkingEffort] : []
+    });
+  }
+  return Array.from(byModel.values()).sort((left, right) =>
+    left.label.localeCompare(right.label)
+  );
+}
+
+function modelPresetEffortOptions(
+  sources: readonly SourceHealthView[],
+  preset: ModelPresetDraft
+): readonly string[] {
+  const capability = getComposerReasoningCapabilities(sources).find(
+    (candidate) => candidate.model === preset.model
+  );
+  return dedupeStrings([
+    ...(capability?.reasoningLevels ?? []),
+    preset.thinkingEffort
+  ]);
 }
 
 function isReasoningCapabilitiesVisualFixtureEnabled(): boolean {
@@ -4910,6 +5152,7 @@ function TeamPane({
   pendingCommands,
   sourceGapActive,
   addAgentDialogOpen,
+  modelPresetSettings,
   onAddAgentDialogOpenChange
 }: {
   readonly teams: readonly TeamView[];
@@ -4922,6 +5165,7 @@ function TeamPane({
   readonly pendingCommands: readonly PendingCommandState[];
   readonly sourceGapActive: boolean;
   readonly addAgentDialogOpen: boolean;
+  readonly modelPresetSettings: ModelPresetSettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const leadOptions = unique([
@@ -4945,6 +5189,9 @@ function TeamPane({
   const [message, setMessage] = useState("");
   const [spawnTitle, setSpawnTitle] = useState("");
   const [spawnPrompt, setSpawnPrompt] = useState("");
+  const [spawnModelPreset, setSpawnModelPreset] = useState(
+    modelPresetSettings.presets[0]?.name ?? ""
+  );
   const [teamSourceId, setTeamSourceId] = useState(defaultSourceId);
   const [teamName, setTeamName] = useState("Live Team");
   const [leadAgentId, setLeadAgentId] = useState(defaultLeadId);
@@ -4971,6 +5218,14 @@ function TeamPane({
   ]).filter((sessionId) => sessionId && !memberAgentIds.has(sessionId));
   const lead = members.find((member) => member.memberId === selectedTeam?.leadMemberId);
   const hasLeadForNewTeam = Boolean(leadAgentId || defaultLeadId);
+  const selectedSpawnModelPreset =
+    modelPresetSettings.presets.find((preset) => preset.name === spawnModelPreset) ??
+    modelPresetSettings.presets[0];
+  const modelPresetFixtureEnabled = isModelPresetVisualFixtureEnabled();
+  const spawnTargetTeamId =
+    selectedTeam?.teamId || (modelPresetFixtureEnabled ? "dev-model-preset-team" : "");
+  const spawnTargetTeamLabel =
+    selectedTeam?.name || selectedTeam?.teamId || (modelPresetFixtureEnabled ? "Preset fixture team" : "");
 
   useEffect(() => {
     if (!teamSourceId && defaultSourceId) {
@@ -4986,6 +5241,18 @@ function TeamPane({
       setJoinAgentId("");
     }
   }, [defaultLeadId, defaultSourceId, joinAgentId, joinOptions, leadAgentId, teamSourceId]);
+
+  useEffect(() => {
+    if (
+      modelPresetSettings.presets.length &&
+      !modelPresetSettings.presets.some((preset) => preset.name === spawnModelPreset)
+    ) {
+      setSpawnModelPreset(modelPresetSettings.presets[0].name);
+    }
+    if (!modelPresetSettings.presets.length && spawnModelPreset) {
+      setSpawnModelPreset("");
+    }
+  }, [modelPresetSettings.presets, spawnModelPreset]);
 
   function createTeam() {
     const sourceId = teamSourceId || defaultSourceId;
@@ -5055,17 +5322,18 @@ function TeamPane({
 
   function spawnMember(event: FormEvent) {
     event.preventDefault();
-    if (!selectedTeam || !spawnTitle.trim() || sourceGapActive) {
+    if (!spawnTargetTeamId || !spawnTitle.trim() || !spawnModelPreset || sourceGapActive) {
       return;
     }
-    sendRealtimeCommand(
-      makeCommand("team", selectedTeam.teamId, "spawnTeamMember", {
-        teamId: selectedTeam.teamId,
-        title: spawnTitle.trim(),
-        prompt: spawnPrompt.trim(),
-        modelPreset: ""
-      })
-    );
+    const payload = {
+      teamId: spawnTargetTeamId,
+      title: spawnTitle.trim(),
+      prompt: spawnPrompt.trim(),
+      modelPreset: spawnModelPreset
+    };
+    if (!recordModelPresetSpawnFixture(payload)) {
+      sendRealtimeCommand(makeCommand("team", spawnTargetTeamId, "spawnTeamMember", payload));
+    }
     onAddAgentDialogOpenChange(false);
     setSpawnTitle("");
     setSpawnPrompt("");
@@ -5208,6 +5476,8 @@ function TeamPane({
             <DialogDescription>
               {selectedTeam
                 ? `Target team: ${selectedTeam.name || selectedTeam.teamId}.`
+                : modelPresetFixtureEnabled
+                  ? "Dev fixture target: Preset fixture team."
                 : "Select an existing team to join or spawn members, or create a team from a live source."}
             </DialogDescription>
           </DialogHeader>
@@ -5259,7 +5529,7 @@ function TeamPane({
                 Create team
               </Button>
             </form>
-            {selectedTeam ? (
+            {selectedTeam || modelPresetFixtureEnabled ? (
               <div className="grid grid-cols-2 gap-3">
                 <form
                   className="grid gap-3 rounded-md border bg-muted/20 p-3"
@@ -5289,6 +5559,38 @@ function TeamPane({
                   </button>
                 </form>
                 <form className="grid gap-3 rounded-md border bg-muted/20 p-3" onSubmit={spawnMember}>
+                  {spawnTargetTeamLabel ? (
+                    <p className="mission-add-agent-preset-summary">
+                      Target team: {spawnTargetTeamLabel}
+                    </p>
+                  ) : null}
+                  <Field>
+                    <FieldLabel>Model preset</FieldLabel>
+                    <Select
+                      value={spawnModelPreset}
+                      onValueChange={(value) => {
+                        if (value) {
+                          setSpawnModelPreset(value);
+                        }
+                      }}
+                    >
+                      <SelectTrigger data-add-agent-model-preset-select>
+                        <SelectValue placeholder="Select preset" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {modelPresetSettings.presets.map((preset) => (
+                          <SelectItem key={preset.name} value={preset.name}>
+                            {preset.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedSpawnModelPreset ? (
+                      <p className="mission-add-agent-preset-summary">
+                        {selectedSpawnModelPreset.model} · {formatReasoningLevelLabel(selectedSpawnModelPreset.thinkingEffort)}
+                      </p>
+                    ) : null}
+                  </Field>
                   <Field>
                     <FieldLabel htmlFor="spawn-title">Title</FieldLabel>
                     <Input
@@ -5306,7 +5608,11 @@ function TeamPane({
                       rows={4}
                     />
                   </Field>
-                  <Button disabled={!spawnTitle.trim() || sourceGapActive} type="submit">
+                  <Button
+                    data-add-agent-spawn
+                    disabled={!spawnTitle.trim() || !spawnModelPreset || sourceGapActive}
+                    type="submit"
+                  >
                     Spawn teammate
                   </Button>
                 </form>
@@ -5682,11 +5988,15 @@ function PlaybooksPane({
 function TurnNotificationsSettingsCard({
   settings,
   behaviorDisplaySettings,
+  modelPresetSettings,
+  sources,
   sessions,
   teams
 }: {
   readonly settings: TurnNotificationSettings;
   readonly behaviorDisplaySettings: BehaviorDisplaySettings;
+  readonly modelPresetSettings: ModelPresetSettings;
+  readonly sources: readonly SourceHealthView[];
   readonly sessions: readonly SessionView[];
   readonly teams: readonly TeamView[];
 }) {
@@ -5759,6 +6069,10 @@ function TurnNotificationsSettingsCard({
 
       <BehaviorSettingsSection settings={behaviorDisplaySettings} />
       <ConversationDisplaySettingsSection settings={behaviorDisplaySettings} />
+      <ModelPresetsSettingsSection
+        settings={modelPresetSettings}
+        sources={sources}
+      />
     </section>
   );
 }
@@ -5896,6 +6210,171 @@ function ConversationDisplaySettingsSection({
   );
 }
 
+function ModelPresetsSettingsSection({
+  settings,
+  sources
+}: {
+  readonly settings: ModelPresetSettings;
+  readonly sources: readonly SourceHealthView[];
+}) {
+  const modelOptions = getModelPresetModelOptions(sources, settings.presets);
+
+  return (
+    <section className="mission-settings-section" data-settings-section="model-presets">
+      <div className="mission-notification-heading">
+        <div className="mission-dashboard-kicker">Presets</div>
+        <p>Shorthand names shown as model_preset options in add-member.</p>
+      </div>
+      <div
+        className="mission-settings-card mission-model-presets-card"
+        data-model-presets-settings
+      >
+        <div className="mission-model-presets-header">
+          <div>
+            <h2>Model Presets</h2>
+            <p>{settings.presets.length} / {MAX_MODEL_PRESETS} configured</p>
+          </div>
+          <Button
+            data-model-preset-add
+            disabled={settings.presets.length >= MAX_MODEL_PRESETS}
+            type="button"
+            variant="ghost"
+            onClick={settings.addPreset}
+          >
+            <PlusIcon data-icon="inline-start" />
+            Add
+          </Button>
+        </div>
+        <div className="mission-model-presets-grid" role="table">
+          <div className="mission-model-presets-head" role="row">
+            <span>#</span>
+            <span>Name</span>
+            <span>Model</span>
+            <span>Effort</span>
+            <span>Actions</span>
+          </div>
+          {settings.presets.map((preset, index) => {
+            const effortOptions = modelPresetEffortOptions(sources, preset);
+            return (
+              <div
+                className="mission-model-preset-row"
+                data-model-preset-row={preset.name}
+                key={`${preset.name}-${index}`}
+                role="row"
+              >
+                <span className="mission-model-preset-index">{index + 1}</span>
+                <Input
+                  aria-label={`Preset ${index + 1} name`}
+                  className="mission-model-preset-input"
+                  data-model-preset-name
+                  value={preset.name}
+                  onChange={(event) =>
+                    settings.updatePreset(index, { name: event.target.value })
+                  }
+                />
+                <Select
+                  value={preset.model}
+                  onValueChange={(model) => {
+                    if (!model) {
+                      return;
+                    }
+                    const nextOption = modelOptions.find((option) => option.model === model);
+                    settings.updatePreset(index, {
+                      model,
+                      thinkingEffort:
+                        nextOption?.reasoningLevels[0] ?? preset.thinkingEffort
+                    });
+                  }}
+                >
+                  <SelectTrigger
+                    className="mission-settings-select-trigger mission-model-preset-select"
+                    data-model-preset-model
+                  >
+                    <span>
+                      {modelOptions.find((option) => option.model === preset.model)?.label ??
+                        preset.model}
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {modelOptions.map((option) => (
+                      <SelectItem key={option.model} value={option.model}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {effortOptions.length ? (
+                  <Select
+                    value={preset.thinkingEffort}
+                    onValueChange={(thinkingEffort) => {
+                      if (thinkingEffort) {
+                        settings.updatePreset(index, { thinkingEffort });
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      className="mission-settings-select-trigger mission-model-preset-select"
+                      data-model-preset-effort
+                    >
+                      <span>{formatReasoningLevelLabel(preset.thinkingEffort)}</span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {effortOptions.map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {formatReasoningLevelLabel(option)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <span
+                    className="mission-model-preset-unavailable"
+                    data-model-preset-effort="unavailable"
+                  >
+                    N/A
+                  </span>
+                )}
+                <div className="mission-model-preset-actions">
+                  <Button
+                    aria-label={`Move ${preset.name} up`}
+                    disabled={index === 0}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                    onClick={() => settings.movePreset(index, -1)}
+                  >
+                    <ChevronUpIcon />
+                  </Button>
+                  <Button
+                    aria-label={`Move ${preset.name} down`}
+                    disabled={index === settings.presets.length - 1}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                    onClick={() => settings.movePreset(index, 1)}
+                  >
+                    <ChevronDownIcon />
+                  </Button>
+                  <Button
+                    aria-label={`Delete ${preset.name}`}
+                    disabled={settings.presets.length <= 1}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                    onClick={() => settings.removePreset(index)}
+                  >
+                    <XIcon />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function notificationPermissionCopy(permission: BrowserNotificationPermission): string {
   if (permission === "granted") {
     return "Browser notification permission is granted.";
@@ -5914,6 +6393,8 @@ function SettingsPane({
   subscriptionCount,
   turnNotificationSettings,
   behaviorDisplaySettings,
+  modelPresetSettings,
+  sources,
   sessions,
   teams
 }: {
@@ -5921,6 +6402,8 @@ function SettingsPane({
   readonly subscriptionCount: number;
   readonly turnNotificationSettings: TurnNotificationSettings;
   readonly behaviorDisplaySettings: BehaviorDisplaySettings;
+  readonly modelPresetSettings: ModelPresetSettings;
+  readonly sources: readonly SourceHealthView[];
   readonly sessions: readonly SessionView[];
   readonly teams: readonly TeamView[];
 }) {
@@ -5988,6 +6471,8 @@ function SettingsPane({
         <TurnNotificationsSettingsCard
           settings={turnNotificationSettings}
           behaviorDisplaySettings={behaviorDisplaySettings}
+          modelPresetSettings={modelPresetSettings}
+          sources={sources}
           sessions={sessions}
           teams={teams}
         />
@@ -6732,6 +7217,27 @@ function dispatchStopAgentTargets(
   for (const command of commands) {
     sendRealtimeCommand(command);
   }
+}
+
+function isModelPresetVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebModelPresetFixture");
+}
+
+function recordModelPresetSpawnFixture(payload: ModelPresetSpawnFixturePayload): boolean {
+  if (!isModelPresetVisualFixtureEnabled() || typeof window === "undefined") {
+    return false;
+  }
+  const fixtureWindow = window as Window & {
+    __goosewebModelPresetDispatches?: readonly ModelPresetSpawnFixturePayload[];
+  };
+  fixtureWindow.__goosewebModelPresetDispatches = [
+    ...(fixtureWindow.__goosewebModelPresetDispatches ?? []),
+    payload
+  ];
+  return true;
 }
 
 function stringCommandValue(value: Record<string, unknown>, key: string): string {

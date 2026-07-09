@@ -878,6 +878,108 @@
     font-weight: 620;
   }
 
+  .mission-model-presets-card {
+    display: grid;
+    gap: 1rem;
+    padding: 1.25rem;
+  }
+
+  .mission-model-presets-header {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .mission-model-presets-header h2 {
+    margin: 0;
+    color: oklch(0.8 0.004 255);
+    font-size: 1rem;
+    font-weight: 760;
+    line-height: 1.25;
+  }
+
+  .mission-model-presets-header p,
+  .mission-add-agent-preset-summary {
+    margin: 0.45rem 0 0;
+    color: var(--muted-foreground);
+    font-size: 0.88rem;
+    line-height: 1.35;
+  }
+
+  .mission-model-presets-grid {
+    display: grid;
+    min-width: 0;
+    gap: 0.7rem;
+  }
+
+  .mission-model-presets-head,
+  .mission-model-preset-row {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 4rem minmax(8rem, 0.9fr) minmax(12rem, 1.8fr) minmax(8rem, 0.85fr) 8.6rem;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .mission-model-presets-head {
+    color: var(--muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 760;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .mission-model-preset-row {
+    padding: 0;
+  }
+
+  .mission-model-preset-index {
+    display: inline-flex;
+    width: 100%;
+    height: 3.15rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 42%);
+    border-radius: 0.75rem;
+    color: var(--muted-foreground);
+    font-weight: 720;
+  }
+
+  .mission-model-preset-input {
+    height: 3.15rem;
+    border-radius: 0.75rem;
+    border-color: color-mix(in oklch, var(--border), transparent 42%);
+    background: color-mix(in oklch, var(--background), transparent 24%);
+    color: oklch(0.9 0.004 255);
+    font-size: 0.98rem;
+    font-weight: 620;
+  }
+
+  .mission-model-preset-select {
+    height: 3.15rem;
+  }
+
+  .mission-model-preset-unavailable {
+    display: inline-flex;
+    height: 3.15rem;
+    align-items: center;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 50%);
+    border-radius: 0.75rem;
+    padding: 0 0.95rem;
+    color: var(--muted-foreground);
+    font-weight: 650;
+  }
+
+  .mission-model-preset-actions {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.3rem;
+  }
+
   .mission-workspace-tab {
     justify-self: center;
     width: min(64rem, 78%);
@@ -3962,6 +4064,48 @@
     .mission-settings-card-conversation {
       gap: 1rem;
       padding: 1rem;
+    }
+
+    .mission-model-presets-card {
+      padding: 1rem;
+    }
+
+    .mission-model-presets-header {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .mission-model-presets-header [data-slot="button"] {
+      align-self: flex-start;
+    }
+
+    .mission-model-presets-head {
+      display: none;
+    }
+
+    .mission-model-preset-row {
+      grid-template-columns: 3.25rem minmax(0, 1fr);
+      gap: 0.65rem;
+      border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 56%);
+      padding-bottom: 0.75rem;
+    }
+
+    .mission-model-preset-row:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .mission-model-preset-row > :not(.mission-model-preset-index) {
+      grid-column: 2;
+    }
+
+    .mission-model-preset-index {
+      grid-row: 1 / span 4;
+      height: 3rem;
+    }
+
+    .mission-model-preset-actions {
+      justify-content: flex-start;
     }
 
     .mission-chrome-status {

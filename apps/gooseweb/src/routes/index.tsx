@@ -5253,7 +5253,11 @@ function TeamBootstrapPanel({
               />
             </Field>
           </div>
-          <Button disabled={!canBootstrapLead} type="submit">
+          <Button
+            disabled={!canBootstrapLead}
+            type="button"
+            onClick={onCreateLeadSession}
+          >
             <PowerIcon data-icon="inline-start" />
             Start lead
           </Button>
@@ -5294,7 +5298,7 @@ function TeamBootstrapPanel({
               )}
             </Field>
           </div>
-          <Button disabled={!canCreateTeam} type="submit">
+          <Button disabled={!canCreateTeam} type="button" onClick={onCreateTeam}>
             <PlusIcon data-icon="inline-start" />
             Create team
           </Button>

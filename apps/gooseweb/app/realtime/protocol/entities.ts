@@ -247,6 +247,9 @@ function normalizeSession(value: unknown) {
   if (!sessionId) {
     return undefined;
   }
+  const metadata = recordFrom(record.metadata);
+  const contextWindow = recordFrom(metadata.context_window);
+  const hasContextWindow = typeof contextWindow.remaining_percent === "number";
   return create(SessionViewSchema, {
     sourceId: stringFrom(detail.source_id),
     sessionId,
@@ -255,7 +258,14 @@ function normalizeSession(value: unknown) {
     status: stringFrom(record.status),
     cwd: stringFrom(record.cwd),
     worktreePath: stringFrom(record.worktree_path),
-    activeTurnId: stringFrom(record.active_turn_id)
+    activeTurnId: stringFrom(record.active_turn_id),
+    ...(hasContextWindow
+      ? {
+          contextRemainingPercent: numberFrom(contextWindow.remaining_percent),
+          contextWindowTokens: bigintFrom(contextWindow.window_tokens),
+          contextUsedTokens: bigintFrom(contextWindow.used_tokens)
+        }
+      : {})
   });
 }
 

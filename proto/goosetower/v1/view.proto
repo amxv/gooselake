@@ -59,7 +59,10 @@ message SessionView {
   string cwd = 6;
   string worktree_path = 7;
   string active_turn_id = 8;
-  reserved 30 to 79;
+  optional uint32 context_remaining_percent = 30;
+  optional uint64 context_window_tokens = 31;
+  optional uint64 context_used_tokens = 32;
+  reserved 33 to 79;
 }
 
 message TeamView {

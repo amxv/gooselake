@@ -14,6 +14,7 @@ use crate::runtime::events::{SourceEvent, SourceHealth, SourceHealthState};
 pub const DEFAULT_LEDGER_LIMIT: usize = 2_000;
 pub const DEFAULT_TEXT_LIMIT: usize = 128;
 pub const DEFAULT_LOG_LIMIT: usize = 256;
+const SESSION_CONTEXT_METADATA_KEY: &str = "context_window";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaterializerStatus {
@@ -608,6 +609,31 @@ impl MaterializedState {
         self.bump_version("session", id)
     }
 
+    pub fn update_session_context_usage(
+        &mut self,
+        session_id: &str,
+        usage: &Value,
+    ) -> Option<SessionContextUsageView> {
+        let context = SessionContextUsageView::from_usage(usage)?;
+        let session = self.sessions.get_mut(session_id)?;
+        let Some(metadata) = session.metadata.as_object_mut() else {
+            session.metadata = serde_json::json!({});
+            let metadata = session.metadata.as_object_mut()?;
+            metadata.insert(
+                SESSION_CONTEXT_METADATA_KEY.to_string(),
+                serde_json::to_value(&context).ok()?,
+            );
+            self.bump_version("session", session_id);
+            return Some(context);
+        };
+        metadata.insert(
+            SESSION_CONTEXT_METADATA_KEY.to_string(),
+            serde_json::to_value(&context).ok()?,
+        );
+        self.bump_version("session", session_id);
+        Some(context)
+    }
+
     pub fn upsert_approval(&mut self, approval: ApprovalRecord) -> EntityVersion {
         let id = approval.id.clone();
         self.approvals.insert(id.clone(), approval);
@@ -933,6 +959,108 @@ impl MaterializedState {
     fn bump_source_health_version(&mut self) -> EntityVersion {
         self.bump_version("source", self.source_id.clone())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionContextUsageView {
+    pub remaining_percent: u8,
+    pub window_tokens: u64,
+    pub used_tokens: u64,
+}
+
+impl SessionContextUsageView {
+    pub fn from_session(session: &SessionRecord) -> Option<Self> {
+        serde_json::from_value(
+            session
+                .metadata
+                .get(SESSION_CONTEXT_METADATA_KEY)?
+                .clone(),
+        )
+        .ok()
+    }
+
+    pub fn from_usage(usage: &Value) -> Option<Self> {
+        let window_tokens = context_window_tokens_from_usage(usage)?;
+        if window_tokens == 0 {
+            return None;
+        }
+        let used_tokens = total_tokens_from_usage(usage)?;
+        let remaining_tokens = window_tokens.saturating_sub(used_tokens);
+        let remaining_percent =
+            ((remaining_tokens as f64 / window_tokens as f64) * 100.0).round() as i64;
+        Some(Self {
+            remaining_percent: remaining_percent.clamp(0, 100) as u8,
+            window_tokens,
+            used_tokens,
+        })
+    }
+}
+
+fn context_window_tokens_from_usage(usage: &Value) -> Option<u64> {
+    find_numeric_field(
+        usage,
+        &[
+            "contextWindowSize",
+            "context_window_size",
+            "contextWindow",
+            "context_window",
+            "modelContextWindow",
+            "model_context_window",
+        ],
+    )
+    .or_else(|| {
+        usage
+            .get("raw_usage")
+            .and_then(context_window_tokens_from_usage)
+    })
+}
+
+fn total_tokens_from_usage(usage: &Value) -> Option<u64> {
+    find_numeric_field(usage, &["last_total_tokens", "lastTotalTokens"])
+        .or_else(|| {
+            usage
+                .get("last")
+                .or_else(|| usage.get("last_token_usage"))
+                .or_else(|| usage.get("lastTokenUsage"))
+                .and_then(total_tokens_from_usage)
+        })
+        .or_else(|| extract_total_tokens_from_usage(usage))
+        .or_else(|| usage.get("raw_usage").and_then(total_tokens_from_usage))
+}
+
+fn extract_total_tokens_from_usage(value: &Value) -> Option<u64> {
+    find_numeric_field(value, &["total_tokens", "totalTokens", "total"]).or_else(|| {
+        let input = find_numeric_field(value, &["input_tokens", "inputTokens"]).unwrap_or(0);
+        let output = find_numeric_field(value, &["output_tokens", "outputTokens"]).unwrap_or(0);
+        let cache_creation = find_numeric_field(
+            value,
+            &["cache_creation_input_tokens", "cacheCreationInputTokens"],
+        )
+        .unwrap_or(0);
+        let cache_read =
+            find_numeric_field(value, &["cache_read_input_tokens", "cacheReadInputTokens"])
+                .unwrap_or(0);
+        let total = input
+            .saturating_add(output)
+            .saturating_add(cache_creation)
+            .saturating_add(cache_read);
+        (total > 0).then_some(total)
+    })
+}
+
+fn find_numeric_field(value: &Value, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(json_number_as_u64))
+}
+
+fn json_number_as_u64(value: &Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        value
+            .as_i64()
+            .and_then(|value| u64::try_from(value).ok())
+            .or_else(|| value.as_f64().filter(|value| *value >= 0.0).map(|value| value as u64))
+            .or_else(|| value.as_str().and_then(|value| value.parse::<u64>().ok()))
+    })
 }
 
 fn latest_session_activity(state: &MaterializedState, session: &SessionRecord) -> i64 {

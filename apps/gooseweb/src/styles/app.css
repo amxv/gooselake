@@ -1675,7 +1675,45 @@
   }
 
   .mission-composer-actions {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.72rem;
     justify-content: flex-end;
+  }
+
+  .mission-composer-context-usage {
+    display: inline-flex;
+    min-width: 0;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 0.48rem;
+    color: color-mix(in oklch, var(--muted-foreground), var(--foreground) 12%);
+    font-size: 0.9rem;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .mission-composer-context-usage svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: 0 0 auto;
+    transform: rotate(-90deg);
+  }
+
+  .mission-composer-context-track,
+  .mission-composer-context-progress {
+    fill: none;
+  }
+
+  .mission-composer-context-track {
+    stroke: color-mix(in oklch, var(--border), transparent 8%);
+  }
+
+  .mission-composer-context-progress {
+    stroke: color-mix(in oklch, var(--muted-foreground), var(--foreground) 18%);
+    stroke-linecap: round;
+    transition: stroke-dashoffset 180ms ease;
   }
 
   .mission-composer-actions > [data-slot="button"],
@@ -3565,6 +3603,17 @@
 
     .mission-composer-actions {
       flex: 0 0 auto;
+      gap: 0.5rem;
+    }
+
+    .mission-composer-context-usage {
+      gap: 0.36rem;
+      font-size: 0.82rem;
+    }
+
+    .mission-composer-context-usage svg {
+      width: 1.1rem;
+      height: 1.1rem;
     }
 
     .mission-openai-sheet {

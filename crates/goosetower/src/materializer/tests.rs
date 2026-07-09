@@ -136,6 +136,51 @@ fn apply_source_config_preserves_runtime_model_capabilities() {
 }
 
 #[test]
+fn terminal_turn_usage_updates_session_context_window() {
+    let mut state = seeded_state();
+
+    let effect = state.reduce_source_event(source_event(
+        14,
+        "turn.completed",
+        RuntimeEventScope::Session,
+        "sess_1",
+        json!({
+            "status": "completed",
+            "assistant_text": "done",
+            "usage": {
+                "context_window_size": 1000,
+                "last_total_tokens": 730
+            }
+        }),
+    ));
+
+    assert!(!effect.duplicate);
+    let snapshot = state
+        .snapshot_session(&SelectedSessionSubscription {
+            session_id: "sess_1".to_string(),
+            include_text: true,
+        })
+        .expect("session snapshot");
+    assert_eq!(
+        snapshot.session.metadata["context_window"]["remaining_percent"],
+        27
+    );
+    assert_eq!(
+        snapshot.session.metadata["context_window"]["window_tokens"],
+        1000
+    );
+    assert_eq!(
+        snapshot.session.metadata["context_window"]["used_tokens"],
+        730
+    );
+    assert!(effect
+        .patches
+        .iter()
+        .any(|patch| patch.kind == MaterializedPatchKind::EntityUpsert
+            && patch.view_kind == "fleet_board"));
+}
+
+#[test]
 fn materializer_snapshots_board_inbox_session_team_and_ledger() {
     let mut state = seeded_state();
     state.reduce_source_event(source_event(

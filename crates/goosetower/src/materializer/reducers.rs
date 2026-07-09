@@ -199,6 +199,11 @@ impl MaterializedState {
         }
         session.updated_at = event.created_at.max(session.updated_at);
         self.upsert_session(session);
+        if matches!(event.kind.as_str(), "turn.completed" | "turn.interrupted") {
+            if let Some(usage) = turn_usage(event) {
+                self.update_session_context_usage(session_id, usage);
+            }
+        }
 
         let mut patches = self.session_patches(session_id, cursor.clone());
         if let Some(text) = assistant_text(event) {
@@ -814,4 +819,8 @@ fn assistant_text(event: &SourceEvent) -> Option<String> {
                 .and_then(Value::as_str)
         })
         .map(str::to_string)
+}
+
+fn turn_usage(event: &SourceEvent) -> Option<&Value> {
+    event.payload.pointer("/runtime_event/usage")
 }

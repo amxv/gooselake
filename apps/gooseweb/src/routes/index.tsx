@@ -1047,6 +1047,7 @@ function MissionWorkspace({
     () => composerReasoningOptions(sources, selectedSession),
     [selectedSession, sources]
   );
+  const composerContextUsage = getComposerContextUsage(selectedSession);
   const hasAgentThreadComposer =
     activeView === "agents" && Boolean(selectedSession?.sessionId);
   const showAgentThreadComposer = activeView === "agents";
@@ -1433,6 +1434,9 @@ function MissionWorkspace({
               </button>
             </div>
             <div className="mission-composer-actions">
+              {composerContextUsage ? (
+                <ComposerContextUsageIndicator usage={composerContextUsage} />
+              ) : null}
               {canInterruptSelectedTurn ? (
                 <Button
                   aria-label="Stop active turn"
@@ -2368,6 +2372,81 @@ function formatComposerContextLabel(selectedSession?: SessionView): string {
     return "No active context";
   }
   return `Session ${selectedSession.sessionId}`;
+}
+
+type ComposerContextUsage = {
+  readonly remainingPercent: number;
+  readonly windowTokens?: bigint;
+  readonly usedTokens?: bigint;
+};
+
+function getComposerContextUsage(
+  selectedSession?: SessionView
+): ComposerContextUsage | undefined {
+  const remainingPercent = selectedSession?.contextRemainingPercent;
+  if (typeof remainingPercent !== "number" || !Number.isFinite(remainingPercent)) {
+    return undefined;
+  }
+  const windowTokens = selectedSession?.contextWindowTokens;
+  const usedTokens = selectedSession?.contextUsedTokens;
+  return {
+    remainingPercent: clampPercentage(remainingPercent),
+    windowTokens,
+    usedTokens
+  };
+}
+
+function clampPercentage(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function ComposerContextUsageIndicator({
+  usage
+}: {
+  readonly usage: ComposerContextUsage;
+}) {
+  const radius = 7;
+  const circumference = 2 * Math.PI * radius;
+  const progressRatio = usage.remainingPercent / 100;
+  const strokeDashoffset = circumference * (1 - progressRatio);
+  const title = [
+    `Context window remaining: ${usage.remainingPercent}%`,
+    usage.usedTokens !== undefined && usage.windowTokens !== undefined
+      ? `${usage.usedTokens.toLocaleString()} of ${usage.windowTokens.toLocaleString()} tokens used`
+      : undefined
+  ].filter(Boolean).join("\n");
+
+  return (
+    <div
+      aria-label={`Context window remaining ${usage.remainingPercent}%`}
+      className="mission-composer-context-usage"
+      data-context-usage-indicator="true"
+      title={title}
+    >
+      <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20">
+        <circle
+          className="mission-composer-context-track"
+          cx="10"
+          cy="10"
+          r={radius}
+          strokeWidth="2"
+        />
+        <circle
+          className="mission-composer-context-progress"
+          cx="10"
+          cy="10"
+          r={radius}
+          strokeWidth="2"
+          strokeDasharray={`${circumference} ${circumference}`}
+          strokeDashoffset={strokeDashoffset}
+        />
+      </svg>
+      <span>{usage.remainingPercent}% left</span>
+    </div>
+  );
 }
 
 function dashboardTitle(view: WorkspaceView): { readonly kicker: string; readonly heading: string } {
@@ -3369,6 +3448,13 @@ function isComposerAttachmentVisualFixtureEnabled(): boolean {
   );
 }
 
+function isContextUsageVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebContextFixture");
+}
+
 function isRosterVisualFixtureEnabled(): boolean {
   if (!import.meta.env.DEV || typeof window === "undefined") {
     return false;
@@ -3377,7 +3463,8 @@ function isRosterVisualFixtureEnabled(): boolean {
   return (
     params.has("goosewebRosterFixture") ||
     params.has("goosewebThreadFixture") ||
-    params.has("goosewebComposerAttachmentFixture")
+    params.has("goosewebComposerAttachmentFixture") ||
+    params.has("goosewebContextFixture")
   );
 }
 
@@ -3438,9 +3525,18 @@ function getProcessMonitorItems(processes: readonly ProcessView[]): readonly Pro
 }
 
 function getDevComposerAttachmentSessions(): readonly SessionView[] {
-  if (!isComposerAttachmentVisualFixtureEnabled()) {
+  const showAttachmentFixture = isComposerAttachmentVisualFixtureEnabled();
+  const showContextFixture = isContextUsageVisualFixtureEnabled();
+  if (!showAttachmentFixture && !showContextFixture) {
     return [];
   }
+  const contextFields = showContextFixture
+    ? {
+        contextRemainingPercent: 27,
+        contextWindowTokens: 1_000_000n,
+        contextUsedTokens: 730_000n
+      }
+    : {};
   return [
     create(SessionViewSchema, {
       sourceId: "local",
@@ -3450,7 +3546,8 @@ function getDevComposerAttachmentSessions(): readonly SessionView[] {
       status: "ready",
       cwd: "/Users/ashray/code/amxv/gooselake",
       worktreePath: "/Users/ashray/code/amxv/gooselake",
-      activeTurnId: ""
+      activeTurnId: "",
+      ...contextFields
     }),
     create(SessionViewSchema, {
       sourceId: "local",
@@ -3460,7 +3557,8 @@ function getDevComposerAttachmentSessions(): readonly SessionView[] {
       status: "ready",
       cwd: "/Users/ashray/code/amxv/gooselake",
       worktreePath: "/Users/ashray/code/amxv/gooselake",
-      activeTurnId: ""
+      activeTurnId: "",
+      ...contextFields
     })
   ];
 }

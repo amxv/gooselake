@@ -355,6 +355,29 @@ Most operational commands in this repo are exposed through `make`:
 make help
 ```
 
+### Local development
+
+For repo contributors and agents working from source, the fastest full-stack loop is:
+
+```bash
+make dev
+```
+
+That starts the local runtime server, Goosetower gateway, and Gooseweb app together:
+
+- Gooseweb: `http://127.0.0.1:13001`
+- Goosetower: `http://127.0.0.1:18090`
+- Runtime server: `http://127.0.0.1:18080`
+
+Use alternate ports and a separate `DEV_DIR` when you need a clean first-run state without disturbing another local stack:
+
+```bash
+DEV_DIR="$PWD/tmp/gooseweb-qa-stack" \
+  make dev DEV_RUNTIME_PORT=18087 DEV_GOOSETOWER_PORT=18097 DEV_GOOSEWEB_PORT=13007
+```
+
+Gooseweb contributor details, browser-QA expectations, fixture conventions, and validation guidance live in [`AGENTS.md`](AGENTS.md).
+
 ### Install the release bundle
 
 ```bash

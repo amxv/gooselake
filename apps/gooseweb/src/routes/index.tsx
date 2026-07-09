@@ -205,6 +205,13 @@ type TeamFeedItem = {
 };
 
 type TeamCommsScope = "all" | "broadcast" | "direct";
+type StopAgentsScope = "all" | "team";
+
+type StopAgentTarget = {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly teamId: string;
+};
 
 type TeamCommsMessageItem = {
   readonly id: string;
@@ -594,9 +601,13 @@ function Index() {
         activeView={activeView}
         approvals={approvals}
         processes={processes}
+        selectedSession={selectedSession}
+        selectedTeamId={selectedTeamId}
+        sessions={sessionOptions}
         state={state}
         sources={sources}
         subscriptionCount={activeSubscriptions.length}
+        teams={teams}
         onProcessMonitorOpen={() => setProcessMonitorOpen(true)}
         onViewChange={setActiveView}
       />
@@ -710,22 +721,99 @@ function MissionChrome({
   activeView,
   approvals,
   processes,
+  selectedSession,
+  selectedTeamId,
+  sessions,
   state,
   sources,
   subscriptionCount,
+  teams,
   onProcessMonitorOpen,
   onViewChange
 }: {
   readonly activeView: WorkspaceView;
   readonly approvals: readonly ApprovalView[];
   readonly processes: readonly ProcessView[];
+  readonly selectedSession?: SessionView;
+  readonly selectedTeamId: string;
+  readonly sessions: readonly SessionView[];
   readonly state: GoosewebSnapshot;
   readonly sources: readonly SourceHealthView[];
   readonly subscriptionCount: number;
+  readonly teams: readonly TeamView[];
   readonly onProcessMonitorOpen: () => void;
   readonly onViewChange: (view: WorkspaceView) => void;
 }) {
   const source = sources[0];
+  const [stopMenuOpen, setStopMenuOpen] = useState(false);
+  const [confirmStopScope, setConfirmStopScope] = useState<StopAgentsScope | "">("");
+  const [stopAgentsStatus, setStopAgentsStatus] = useState("");
+  const stopConfirmationRef = useRef<{
+    readonly scope: StopAgentsScope | "";
+    readonly armedAt: number;
+  }>({ scope: "", armedAt: 0 });
+  const stopMenuReopenAfterArmRef = useRef(false);
+  const stopAgentTargets = getStopAgentTargets(sessions, teams);
+  const currentTeamId = getCurrentStopAgentsTeamId(
+    selectedTeamId,
+    selectedSession,
+    teams
+  );
+  const teamStopAgentTargets = currentTeamId
+    ? stopAgentTargets.filter((target) => target.teamId === currentTeamId)
+    : [];
+  const isStoppingUnsafe =
+    state.connection === "stale" ||
+    state.connection === "offline" ||
+    state.connection === "connecting" ||
+    state.connection === "reconnecting";
+  const stopAllDisabled = isStoppingUnsafe || stopAgentTargets.length === 0;
+  const stopTeamDisabled = isStoppingUnsafe || teamStopAgentTargets.length === 0;
+
+  function resetStopAgentsConfirmation() {
+    stopConfirmationRef.current = { scope: "", armedAt: 0 };
+    setConfirmStopScope("");
+  }
+
+  function handleStopAgents(scope: StopAgentsScope) {
+    const targets = scope === "all" ? stopAgentTargets : teamStopAgentTargets;
+    if (
+      (scope === "all" && stopAllDisabled) ||
+      (scope === "team" && stopTeamDisabled)
+    ) {
+      return;
+    }
+    const now = Date.now();
+    const armedForScope =
+      stopConfirmationRef.current.scope === scope &&
+      confirmStopScope === scope &&
+      now - stopConfirmationRef.current.armedAt > 250;
+    if (!armedForScope) {
+      stopConfirmationRef.current = { scope, armedAt: now };
+      setConfirmStopScope(scope);
+      setStopAgentsStatus(
+        `Click again to confirm stopping ${targets.length} ${
+          targets.length === 1 ? "agent" : "agents"
+        }.`
+      );
+      stopMenuReopenAfterArmRef.current = true;
+      window.setTimeout(() => {
+        setStopMenuOpen(true);
+        stopMenuReopenAfterArmRef.current = false;
+      }, 0);
+      return;
+    }
+    dispatchStopAgentTargets(scope, targets);
+    resetStopAgentsConfirmation();
+    setStopAgentsStatus(
+      `Sent ${targets.length} interrupt ${
+        targets.length === 1 ? "command" : "commands"
+      }.`
+    );
+    window.setTimeout(() => setStopAgentsStatus(""), 2500);
+    setStopMenuOpen(false);
+  }
+
   return (
     <header className="mission-chrome">
       <div className="mission-chrome-tools">
@@ -733,18 +821,116 @@ function MissionChrome({
           <FolderIcon />
         </Button>
         {activeView === "agents" ? (
-          <Button
-            aria-label="Open processes panel"
-            aria-pressed={false}
-            className="mission-chrome-tool-active"
-            size="icon-sm"
-            title="Processes"
-            type="button"
-            variant="ghost"
-            onClick={onProcessMonitorOpen}
-          >
-            <ActivityIcon />
-          </Button>
+          <>
+            <DropdownMenu
+              open={stopMenuOpen}
+              onOpenChange={(open) => {
+                if (!open && stopMenuReopenAfterArmRef.current) {
+                  setStopMenuOpen(true);
+                  return;
+                }
+                setStopMenuOpen(open);
+                if (!open) {
+                  resetStopAgentsConfirmation();
+                }
+              }}
+            >
+              <div className="mission-stop-agents-control">
+                <Button
+                  aria-label="Stop all agents"
+                  className="mission-stop-agents-primary"
+                  data-stop-agents-primary
+                  disabled={stopAllDisabled}
+                  size="icon-sm"
+                  title={
+                    stopAllDisabled
+                      ? "No active agent responses to stop"
+                      : "Stop all running agent responses"
+                  }
+                  type="button"
+                  variant="ghost"
+                  onClick={() => handleStopAgents("all")}
+                >
+                  <SquareIcon />
+                </Button>
+                <DropdownMenuTrigger
+                  aria-label="Stop all agents menu"
+                  className="mission-stop-agents-trigger"
+                  data-stop-agents-trigger
+                  disabled={isStoppingUnsafe}
+                  title="Stop all options"
+                >
+                  <ChevronDownIcon />
+                </DropdownMenuTrigger>
+              </div>
+              <DropdownMenuContent
+                align="start"
+                className="mission-stop-agents-menu"
+                data-stop-agents-menu
+                sideOffset={7}
+              >
+                <button
+                  className="mission-stop-agents-menu-item"
+                  data-confirming={confirmStopScope === "all" ? "true" : undefined}
+                  data-stop-agents-option="all"
+                  disabled={stopAllDisabled}
+                  title={
+                    stopAllDisabled
+                      ? "No active agent responses to stop"
+                      : "Stop all running agent responses"
+                  }
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    handleStopAgents("all");
+                  }}
+                >
+                  {confirmStopScope === "all"
+                    ? "Confirm Stop All Agents"
+                    : "Stop All Agents"}
+                </button>
+                <button
+                  className="mission-stop-agents-menu-item"
+                  data-confirming={confirmStopScope === "team" ? "true" : undefined}
+                  data-stop-agents-option="team"
+                  disabled={stopTeamDisabled}
+                  title={
+                    !currentTeamId
+                      ? "No current team was found for the selected agent"
+                      : stopTeamDisabled
+                        ? "No active agent responses in the current team"
+                        : "Stop running agent responses in the current team"
+                  }
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    handleStopAgents("team");
+                  }}
+                >
+                  {confirmStopScope === "team"
+                    ? "Confirm Stop All Agents in Current Team"
+                    : "Stop All Agents in Current Team"}
+                </button>
+                {stopAgentsStatus ? (
+                  <div className="mission-stop-agents-status" data-stop-agents-status>
+                    {stopAgentsStatus}
+                  </div>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              aria-label="Open processes panel"
+              aria-pressed={false}
+              className="mission-chrome-tool-active"
+              size="icon-sm"
+              title="Processes"
+              type="button"
+              variant="ghost"
+              onClick={onProcessMonitorOpen}
+            >
+              <ActivityIcon />
+            </Button>
+          </>
         ) : (
           <Button size="icon-sm" type="button" variant="ghost">
             <SquareIcon />
@@ -3455,6 +3641,13 @@ function isContextUsageVisualFixtureEnabled(): boolean {
   return new URLSearchParams(window.location.search).has("goosewebContextFixture");
 }
 
+function isStopAgentsVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebStopAgentsFixture");
+}
+
 function isRosterVisualFixtureEnabled(): boolean {
   if (!import.meta.env.DEV || typeof window === "undefined") {
     return false;
@@ -3464,7 +3657,8 @@ function isRosterVisualFixtureEnabled(): boolean {
     params.has("goosewebRosterFixture") ||
     params.has("goosewebThreadFixture") ||
     params.has("goosewebComposerAttachmentFixture") ||
-    params.has("goosewebContextFixture")
+    params.has("goosewebContextFixture") ||
+    params.has("goosewebStopAgentsFixture")
   );
 }
 
@@ -3527,7 +3721,8 @@ function getProcessMonitorItems(processes: readonly ProcessView[]): readonly Pro
 function getDevComposerAttachmentSessions(): readonly SessionView[] {
   const showAttachmentFixture = isComposerAttachmentVisualFixtureEnabled();
   const showContextFixture = isContextUsageVisualFixtureEnabled();
-  if (!showAttachmentFixture && !showContextFixture) {
+  const showStopAgentsFixture = isStopAgentsVisualFixtureEnabled();
+  if (!showAttachmentFixture && !showContextFixture && !showStopAgentsFixture) {
     return [];
   }
   const contextFields = showContextFixture
@@ -3537,16 +3732,34 @@ function getDevComposerAttachmentSessions(): readonly SessionView[] {
         contextUsedTokens: 730_000n
       }
     : {};
+  const activeTurnFields = showStopAgentsFixture
+    ? { activeTurnId: "dev-turn-browser" }
+    : { activeTurnId: "" };
   return [
+    ...(showStopAgentsFixture
+      ? [
+          create(SessionViewSchema, {
+            sourceId: "local",
+            sessionId: "dev-roster-lead",
+            provider: "codex",
+            model: "gpt-5.5",
+            status: "running",
+            cwd: "/Users/ashray/code/amxv/gooselake",
+            worktreePath: "/Users/ashray/code/amxv/gooselake",
+            activeTurnId: "dev-turn-lead",
+            ...contextFields
+          })
+        ]
+      : []),
     create(SessionViewSchema, {
       sourceId: "local",
       sessionId: "dev-roster-browser",
       provider: "codex",
       model: "gpt-5.5",
-      status: "ready",
+      status: showStopAgentsFixture ? "running" : "ready",
       cwd: "/Users/ashray/code/amxv/gooselake",
       worktreePath: "/Users/ashray/code/amxv/gooselake",
-      activeTurnId: "",
+      ...activeTurnFields,
       ...contextFields
     }),
     create(SessionViewSchema, {
@@ -3554,10 +3767,10 @@ function getDevComposerAttachmentSessions(): readonly SessionView[] {
       sessionId: "dev-roster-composer",
       provider: "codex",
       model: "gpt-5.5",
-      status: "ready",
+      status: showStopAgentsFixture ? "running" : "ready",
       cwd: "/Users/ashray/code/amxv/gooselake",
       worktreePath: "/Users/ashray/code/amxv/gooselake",
-      activeTurnId: "",
+      activeTurnId: showStopAgentsFixture ? "dev-turn-composer" : "",
       ...contextFields
     })
   ];
@@ -5653,6 +5866,86 @@ function makeCommand(
       value: payloadValue
     }
   };
+}
+
+function getStopAgentTargets(
+  sessions: readonly SessionView[],
+  teams: readonly TeamView[]
+): readonly StopAgentTarget[] {
+  return sessions.flatMap((session) => {
+    if (!session.sessionId || !session.activeTurnId) {
+      return [];
+    }
+    return [
+      {
+        sessionId: session.sessionId,
+        turnId: session.activeTurnId,
+        teamId: getStopAgentTeamId(session.sessionId, teams)
+      }
+    ];
+  });
+}
+
+function getStopAgentTeamId(
+  sessionId: string,
+  teams: readonly TeamView[]
+): string {
+  const team = teams.find((candidate) =>
+    candidate.members.some((member) => member.sessionId === sessionId)
+  );
+  if (team?.teamId) {
+    return team.teamId;
+  }
+  if (
+    isStopAgentsVisualFixtureEnabled() &&
+    ["dev-roster-lead", "dev-roster-browser", "dev-roster-composer"].includes(sessionId)
+  ) {
+    return "dev-roster-team";
+  }
+  return "";
+}
+
+function getCurrentStopAgentsTeamId(
+  selectedTeamId: string,
+  selectedSession: SessionView | undefined,
+  teams: readonly TeamView[]
+): string {
+  if (selectedTeamId) {
+    return selectedTeamId;
+  }
+  const selectedSessionId = selectedSession?.sessionId ?? "";
+  if (!selectedSessionId) {
+    return "";
+  }
+  return getStopAgentTeamId(selectedSessionId, teams);
+}
+
+function dispatchStopAgentTargets(
+  scope: StopAgentsScope,
+  targets: readonly StopAgentTarget[]
+) {
+  const commands = targets.map((target) =>
+    makeCommand("session", target.sessionId, "interruptTurn", {
+      sessionId: target.sessionId,
+      turnId: target.turnId
+    })
+  );
+  if (isStopAgentsVisualFixtureEnabled() && typeof window !== "undefined") {
+    const fixtureWindow = window as Window & {
+      __goosewebStopAgentsDispatches?: readonly {
+        readonly scope: StopAgentsScope;
+        readonly commands: readonly CommandIntent[];
+      }[];
+    };
+    fixtureWindow.__goosewebStopAgentsDispatches = [
+      ...(fixtureWindow.__goosewebStopAgentsDispatches ?? []),
+      { scope, commands }
+    ];
+    return;
+  }
+  for (const command of commands) {
+    sendRealtimeCommand(command);
+  }
 }
 
 function stringCommandValue(value: Record<string, unknown>, key: string): string {

@@ -181,6 +181,78 @@
     color: oklch(0.78 0.004 255);
   }
 
+  .mission-stop-agents-control {
+    display: inline-flex;
+    align-items: center;
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 22%);
+    border-radius: 0.55rem;
+    background: color-mix(in oklch, var(--card), transparent 18%);
+  }
+
+  .mission-stop-agents-control [data-slot="button"] {
+    border-radius: 0;
+  }
+
+  .mission-stop-agents-primary {
+    color: color-mix(in oklch, var(--foreground), transparent 26%);
+  }
+
+  .mission-stop-agents-trigger {
+    width: 1.65rem;
+    border-left: 1px solid color-mix(in oklch, var(--border), transparent 24%);
+    color: color-mix(in oklch, var(--foreground), transparent 32%);
+  }
+
+  .mission-stop-agents-trigger[data-popup-open] svg,
+  .mission-stop-agents-trigger[aria-expanded="true"] svg {
+    transform: rotate(180deg);
+  }
+
+  .mission-stop-agents-menu {
+    width: min(18rem, calc(100vw - 1.5rem)) !important;
+    min-width: min(18rem, calc(100vw - 1.5rem)) !important;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 18%);
+    border-radius: 0.9rem;
+    background: oklch(0.122 0.002 255);
+    padding: 0.55rem;
+    color: var(--foreground);
+    box-shadow: 0 1.25rem 3rem color-mix(in oklch, black, transparent 24%);
+  }
+
+  .mission-stop-agents-menu-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    min-height: 2.8rem;
+    border-radius: 0.62rem;
+    padding: 0.65rem 0.85rem;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 1rem;
+    line-height: 1.25;
+    text-align: left;
+  }
+
+  .mission-stop-agents-menu-item:hover,
+  .mission-stop-agents-menu-item:focus,
+  .mission-stop-agents-menu-item[data-confirming="true"] {
+    background: color-mix(in oklch, var(--foreground), transparent 86%);
+  }
+
+  .mission-stop-agents-menu-item:disabled {
+    cursor: default;
+    opacity: 0.48;
+  }
+
+  .mission-stop-agents-status {
+    margin: 0.35rem 0.35rem 0.1rem;
+    color: var(--muted-foreground);
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+
   .mission-grid {
     display: grid;
     grid-template-columns: minmax(13.5rem, 16.5rem) minmax(38rem, 1fr) minmax(17rem, 21rem);

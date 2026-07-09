@@ -624,6 +624,7 @@ function Index() {
           teams={teams}
           approvals={approvals}
           processes={processes}
+          worktrees={worktrees}
           sources={sources}
           selectedRowId={selectedRowId}
           selectedSessionId={selectedSessionId}
@@ -982,6 +983,7 @@ function MissionRosterRail({
   sessions,
   teams,
   processes,
+  worktrees,
   sources,
   selectedRowId,
   selectedSessionId,
@@ -1003,6 +1005,7 @@ function MissionRosterRail({
   readonly sessions: readonly SessionView[];
   readonly teams: readonly TeamView[];
   readonly processes: readonly ProcessView[];
+  readonly worktrees: readonly WorktreeView[];
   readonly sources: readonly SourceHealthView[];
   readonly selectedRowId: string;
   readonly selectedSessionId: string;
@@ -1025,6 +1028,7 @@ function MissionRosterRail({
     teams,
     approvals,
     processes,
+    worktrees,
     sources,
     selectedRowId,
     selectedSessionId,
@@ -1073,7 +1077,10 @@ function MissionRosterRail({
                         item.selected && "mission-roster-card-active"
                       )}
                       key={item.id}
-                      title={item.title}
+                      data-roster-row="true"
+                      title={[item.title, item.meta, item.worktree?.label]
+                        .filter(Boolean)
+                        .join(" - ")}
                       type="button"
                       onClick={() => {
                         item.onClick();
@@ -1095,9 +1102,34 @@ function MissionRosterRail({
                         <span className="mission-roster-card-title">
                           {item.title}
                         </span>
-                        <span className="mission-roster-card-meta">
+                        <span className="mission-roster-card-meta" data-roster-identity="true">
                           {item.meta}
                         </span>
+                        {item.worktree ? (
+                          <span
+                            className="mission-roster-card-worktree"
+                            data-roster-worktree="true"
+                          >
+                            <GitBranchIcon aria-hidden="true" />
+                            <span className="mission-roster-card-worktree-label">
+                              {item.worktree.label}
+                            </span>
+                            {item.worktree.added || item.worktree.removed ? (
+                              <span className="mission-roster-card-worktree-stats">
+                                {item.worktree.added ? (
+                                  <span className="mission-roster-change-add">
+                                    +{item.worktree.added}
+                                  </span>
+                                ) : null}
+                                {item.worktree.removed ? (
+                                  <span className="mission-roster-change-remove">
+                                    -{item.worktree.removed}
+                                  </span>
+                                ) : null}
+                              </span>
+                            ) : null}
+                          </span>
+                        ) : null}
                       </span>
                       <span className="mission-roster-card-side">
                         <span>{item.aside}</span>
@@ -1141,11 +1173,18 @@ type AgentRosterItem = {
   readonly id: string;
   readonly title: string;
   readonly meta: string;
+  readonly worktree?: AgentRosterWorktreeLine;
   readonly aside: string;
   readonly status: string;
   readonly activity: "turn" | "process" | "unread" | "idle";
   readonly selected: boolean;
   readonly onClick: () => void;
+};
+
+type AgentRosterWorktreeLine = {
+  readonly label: string;
+  readonly added?: number;
+  readonly removed?: number;
 };
 
 type AgentRosterGroup = {
@@ -5959,6 +5998,7 @@ function getAgentRosterGroups(input: {
   readonly teams: readonly TeamView[];
   readonly approvals: readonly ApprovalView[];
   readonly processes: readonly ProcessView[];
+  readonly worktrees: readonly WorktreeView[];
   readonly sources: readonly SourceHealthView[];
   readonly selectedRowId: string;
   readonly selectedSessionId: string;
@@ -5997,6 +6037,7 @@ function getAgentRosterGroups(input: {
       member: teamMemberBySessionId.get(session.sessionId),
       approvals: input.approvals,
       processes: input.processes,
+      worktrees: input.worktrees,
       selectedRowId: input.selectedRowId,
       selectedSessionId: input.selectedSessionId,
       selectedTeamId: input.selectedTeamId,
@@ -6015,6 +6056,7 @@ function getAgentRosterGroups(input: {
           row,
           approvals: input.approvals,
           processes: input.processes,
+          worktrees: input.worktrees,
           selectedRowId: input.selectedRowId,
           onSelectRow: input.onSelectRow,
           onSelectSession: input.onSelectSession,
@@ -6102,6 +6144,7 @@ function getDevAgentRosterGroups(input: {
       id: "dev-roster:team:dev-roster-team:session:dev-roster-lead",
       title: "Lead",
       meta: "Finished Cove",
+      worktree: { label: "main", added: 581, removed: 4 },
       aside: "4m",
       status: "running",
       activity: "turn",
@@ -6112,6 +6155,7 @@ function getDevAgentRosterGroups(input: {
       id: "dev-roster:team:dev-roster-team:session:dev-roster-browser",
       title: "Gooseweb Browser QA",
       meta: "Platinum Pearl",
+      worktree: { label: "main", added: 582, removed: 4 },
       aside: "now",
       status: "running",
       activity: "process",
@@ -6123,6 +6167,7 @@ function getDevAgentRosterGroups(input: {
       id: "dev-roster:team:dev-roster-team:session:dev-roster-composer",
       title: "Gooseweb Agents Composer",
       meta: "Social Spring",
+      worktree: { label: "main", added: 581, removed: 4 },
       aside: "now",
       status: "completed",
       activity: "unread",
@@ -6147,6 +6192,7 @@ function makeSessionRosterItem(input: {
   readonly member?: TeamMemberView;
   readonly approvals: readonly ApprovalView[];
   readonly processes: readonly ProcessView[];
+  readonly worktrees: readonly WorktreeView[];
   readonly selectedRowId: string;
   readonly selectedSessionId: string;
   readonly selectedTeamId: string;
@@ -6166,20 +6212,17 @@ function makeSessionRosterItem(input: {
   );
   const activity = toNumber(row?.latestActivityUnixMs ?? 0n);
   const title = member?.title || row?.title || compactSessionId(session.sessionId);
-  const meta = [
-    team ? "Lead" : undefined,
-    session.provider || row?.provider || "runtime",
-    session.model || row?.model || "default",
-    session.cwd || session.worktreePath ? basename(session.cwd || session.worktreePath) : undefined,
-    pendingForSession ? `${pendingForSession} approval` : undefined
-  ]
-    .filter(Boolean)
-    .join(" / ");
+  const durableIdentity = member?.memberId || session.sessionId;
+  const worktree = buildRosterWorktreeLine({
+    path: session.worktreePath || row?.worktreePath || session.cwd,
+    worktrees: input.worktrees
+  });
 
   return {
     id: `${session.sourceId}:team:${team?.teamId ?? ""}:session:${session.sessionId}`,
     title,
-    meta,
+    meta: durableIdentity,
+    worktree,
     aside: activity ? ageFrom(activity) : session.activeTurnId ? "now" : session.status || "",
     status: session.status || row?.status || "unknown",
     activity: session.activeTurnId ? "turn" : activeProcess ? "process" : "idle",
@@ -6213,6 +6256,7 @@ function makeRowRosterItem(input: {
   readonly row: FleetRowView;
   readonly approvals: readonly ApprovalView[];
   readonly processes: readonly ProcessView[];
+  readonly worktrees: readonly WorktreeView[];
   readonly selectedRowId: string;
   readonly onSelectRow: (id: string) => void;
   readonly onSelectSession: (id: string) => void;
@@ -6227,14 +6271,11 @@ function makeRowRosterItem(input: {
   return {
     id: `${row.sourceId}:team:${row.teamId}:row:${row.rowId}`,
     title: row.title || compactSessionId(row.sessionId) || row.rowId,
-    meta: [
-      row.provider || "runtime",
-      row.model || "default",
-      row.worktreePath ? basename(row.worktreePath) : undefined,
-      row.pendingApprovalCount ? `${row.pendingApprovalCount} approval` : undefined
-    ]
-      .filter(Boolean)
-      .join(" / "),
+    meta: row.sessionId || row.rowId,
+    worktree: buildRosterWorktreeLine({
+      path: row.worktreePath,
+      worktrees: input.worktrees
+    }),
     aside: ageFrom(toNumber(row.latestActivityUnixMs)),
     status: row.status || "unknown",
     activity: row.status === "running" ? "turn" : activeProcess ? "process" : "idle",
@@ -6267,6 +6308,40 @@ function compactSessionId(sessionId: string): string {
   }
   const parts = sessionId.split(/[_:.-]/).filter(Boolean);
   return parts.slice(-2).join(" ") || sessionId;
+}
+
+function buildRosterWorktreeLine(input: {
+  readonly path?: string;
+  readonly worktrees: readonly WorktreeView[];
+}): AgentRosterWorktreeLine | undefined {
+  const path = input.path?.trim() ?? "";
+  const worktree = findRosterWorktree(path, input.worktrees);
+  const label =
+    worktree?.branch.trim() ||
+    (worktree?.path ? basename(worktree.path) : "") ||
+    (path ? basename(path) : "");
+  return label ? { label } : undefined;
+}
+
+function findRosterWorktree(
+  path: string,
+  worktrees: readonly WorktreeView[]
+): WorktreeView | undefined {
+  const normalized = normalizePathForMatch(path);
+  if (!normalized) {
+    return undefined;
+  }
+  return worktrees.find((worktree) => {
+    const worktreePath = normalizePathForMatch(worktree.path);
+    if (!worktreePath) {
+      return false;
+    }
+    return worktreePath === normalized || normalized.startsWith(`${worktreePath}/`);
+  });
+}
+
+function normalizePathForMatch(path: string): string {
+  return path.trim().replace(/\/+$/, "");
 }
 
 function basename(path: string): string {

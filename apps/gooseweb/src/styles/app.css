@@ -378,7 +378,7 @@
     align-items: start;
     gap: 0.6rem;
     width: 100%;
-    min-height: 3.15rem;
+    min-height: 4.05rem;
     border: 1px solid transparent;
     border-radius: 1.05rem;
     background: transparent;
@@ -460,7 +460,9 @@
   }
 
   .mission-roster-card-title,
-  .mission-roster-card-meta {
+  .mission-roster-card-meta,
+  .mission-roster-card-worktree,
+  .mission-roster-card-worktree-label {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -478,6 +480,46 @@
     color: oklch(0.5 0.004 255);
     font-size: 0.76rem;
     line-height: 1.25;
+  }
+
+  .mission-roster-card-worktree {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38rem;
+    max-width: 100%;
+    color: oklch(0.5 0.004 255);
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 620;
+    line-height: 1.2;
+  }
+
+  .mission-roster-card-worktree > svg {
+    width: 0.86rem;
+    height: 0.86rem;
+    flex: 0 0 auto;
+    color: oklch(0.54 0.004 255);
+  }
+
+  .mission-roster-card-worktree-label {
+    flex: 0 1 auto;
+  }
+
+  .mission-roster-card-worktree-stats {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    flex: 0 0 auto;
+    color: oklch(0.56 0.004 255);
+    font-weight: 520;
+  }
+
+  .mission-roster-change-add {
+    color: oklch(0.73 0.16 165);
+  }
+
+  .mission-roster-change-remove {
+    color: oklch(0.68 0.2 18);
   }
 
   .mission-roster-card-side {

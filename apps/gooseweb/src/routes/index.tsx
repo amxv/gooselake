@@ -206,6 +206,20 @@ type TeamFeedItem = {
 
 type TeamCommsScope = "all" | "broadcast" | "direct";
 type StopAgentsScope = "all" | "team";
+type TurnNotificationMode = "all" | "none" | "leads_only";
+
+type BrowserNotificationPermission = NotificationPermission | "unsupported";
+
+type TurnNotificationSettings = {
+  readonly mode: TurnNotificationMode;
+  readonly permission: BrowserNotificationPermission;
+  readonly requestPermission: () => Promise<void>;
+  readonly setMode: (mode: TurnNotificationMode) => void;
+  readonly simulateCompletion: (
+    sessions: readonly SessionView[],
+    teams: readonly TeamView[]
+  ) => void;
+};
 
 type StopAgentTarget = {
   readonly sessionId: string;
@@ -366,6 +380,18 @@ const PROCESS_MONITOR_FILTERS: ReadonlyArray<{
   { id: "all", label: "All" }
 ];
 
+const TURN_NOTIFICATION_MODE_OPTIONS: ReadonlyArray<{
+  readonly value: TurnNotificationMode;
+  readonly label: string;
+}> = [
+  { value: "all", label: "Enable all notifications" },
+  { value: "none", label: "Disable all notifications" },
+  { value: "leads_only", label: "Enable notifications from leads only" }
+];
+
+const TURN_NOTIFICATION_MODE_STORAGE_KEY =
+  "gooseweb.agents.turnCompletionNotificationMode";
+
 const NAV_ITEMS: ReadonlyArray<{
   readonly id: WorkspaceView;
   readonly label: string;
@@ -380,6 +406,240 @@ const NAV_ITEMS: ReadonlyArray<{
   { id: "playbooks", label: "Playbooks", icon: WorkflowIcon },
   { id: "settings", label: "Settings", icon: SettingsIcon }
 ];
+
+function normalizeTurnNotificationMode(value: unknown): TurnNotificationMode {
+  if (value === "all" || value === "none" || value === "leads_only") {
+    return value;
+  }
+  return "all";
+}
+
+function readTurnNotificationModePreference(): TurnNotificationMode {
+  if (typeof window === "undefined") {
+    return "all";
+  }
+  return normalizeTurnNotificationMode(
+    window.localStorage.getItem(TURN_NOTIFICATION_MODE_STORAGE_KEY)
+  );
+}
+
+function writeTurnNotificationModePreference(mode: TurnNotificationMode) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(TURN_NOTIFICATION_MODE_STORAGE_KEY, mode);
+}
+
+function readBrowserNotificationPermission(): BrowserNotificationPermission {
+  if (typeof window === "undefined" || !("Notification" in window)) {
+    return "unsupported";
+  }
+  return window.Notification.permission;
+}
+
+function useTurnNotificationSettings(): TurnNotificationSettings {
+  const [mode, setModeState] = useState<TurnNotificationMode>(() =>
+    readTurnNotificationModePreference()
+  );
+  const [permission, setPermission] = useState<BrowserNotificationPermission>(() =>
+    readBrowserNotificationPermission()
+  );
+
+  function setMode(nextMode: TurnNotificationMode) {
+    setModeState(nextMode);
+    writeTurnNotificationModePreference(nextMode);
+  }
+
+  async function requestPermission() {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setPermission("unsupported");
+      return;
+    }
+    if (window.Notification.permission === "granted" || window.Notification.permission === "denied") {
+      setPermission(window.Notification.permission);
+      return;
+    }
+    const nextPermission = await window.Notification.requestPermission();
+    setPermission(nextPermission);
+  }
+
+  function simulateCompletion(
+    sessions: readonly SessionView[],
+    teams: readonly TeamView[]
+  ) {
+    const session =
+      sessions.find((candidate) => candidate.sessionId === "dev-roster-browser") ??
+      sessions[0] ??
+      create(SessionViewSchema, {
+        sourceId: "local",
+        sessionId: "dev-notification-agent",
+        provider: "codex",
+        model: "gpt-5.5",
+        status: "ready"
+      });
+    const metadata = buildTurnNotificationMetadata(teams);
+    maybeDispatchTurnCompletionNotification({
+      mode,
+      session,
+      metadata,
+      turnId: "dev-notification-turn"
+    });
+  }
+
+  return {
+    mode,
+    permission,
+    requestPermission,
+    setMode,
+    simulateCompletion
+  };
+}
+
+function useTurnCompletionNotifications({
+  mode,
+  sessions,
+  teams
+}: {
+  readonly mode: TurnNotificationMode;
+  readonly sessions: readonly SessionView[];
+  readonly teams: readonly TeamView[];
+}) {
+  const previousSessionsRef = useRef<Map<string, string | undefined> | null>(null);
+
+  useEffect(() => {
+    const nextSessions = new Map<string, string | undefined>();
+    for (const session of sessions) {
+      if (session.sessionId) {
+        nextSessions.set(session.sessionId, session.activeTurnId || undefined);
+      }
+    }
+
+    const previousSessions = previousSessionsRef.current;
+    previousSessionsRef.current = nextSessions;
+    if (!previousSessions) {
+      return;
+    }
+
+    const metadata = buildTurnNotificationMetadata(teams);
+    for (const session of sessions) {
+      if (!session.sessionId) {
+        continue;
+      }
+      const previousTurnId = previousSessions.get(session.sessionId);
+      if (!previousTurnId || session.activeTurnId) {
+        continue;
+      }
+      maybeDispatchTurnCompletionNotification({
+        mode,
+        session,
+        metadata,
+        turnId: previousTurnId
+      });
+    }
+  }, [mode, sessions, teams]);
+}
+
+function buildTurnNotificationMetadata(teams: readonly TeamView[]) {
+  const leadSessionIds = new Set<string>();
+  const memberBySessionId = new Map<string, TeamMemberView>();
+  for (const team of teams) {
+    const leadMember = team.members.find(
+      (member) =>
+        member.memberId === team.leadMemberId ||
+        member.sessionId === team.leadMemberId
+    );
+    if (leadMember?.sessionId) {
+      leadSessionIds.add(leadMember.sessionId);
+    }
+    if (team.leadMemberId) {
+      leadSessionIds.add(team.leadMemberId);
+    }
+    for (const member of team.members) {
+      if (member.sessionId) {
+        memberBySessionId.set(member.sessionId, member);
+      }
+    }
+  }
+  return { leadSessionIds, memberBySessionId };
+}
+
+function maybeDispatchTurnCompletionNotification({
+  mode,
+  session,
+  metadata,
+  turnId
+}: {
+  readonly mode: TurnNotificationMode;
+  readonly session: SessionView;
+  readonly metadata: ReturnType<typeof buildTurnNotificationMetadata>;
+  readonly turnId: string;
+}) {
+  if (mode === "none" || !session.sessionId || !turnId) {
+    return;
+  }
+  if (mode === "leads_only" && !metadata.leadSessionIds.has(session.sessionId)) {
+    return;
+  }
+  dispatchTurnCompletionNotification({ session, metadata, turnId });
+}
+
+function dispatchTurnCompletionNotification({
+  session,
+  metadata,
+  turnId
+}: {
+  readonly session: SessionView;
+  readonly metadata: ReturnType<typeof buildTurnNotificationMetadata>;
+  readonly turnId: string;
+}) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const member = metadata.memberBySessionId.get(session.sessionId);
+  const agentTitle =
+    firstNonEmptyString(member?.title, compactSessionId(session.sessionId)) ??
+    "Agent";
+  const agentIdentity =
+    firstNonEmptyString(member?.memberId, session.sessionId) ?? session.sessionId;
+  const title = `${agentTitle} finished`;
+  const body = `${agentIdentity} completed a turn.`;
+  const payload = {
+    body,
+    sessionId: session.sessionId,
+    title,
+    turnId
+  };
+  if (isNotificationVisualFixtureEnabled()) {
+    const recorderWindow = window as typeof window & {
+      __goosewebNotificationDispatches?: typeof payload[];
+    };
+    recorderWindow.__goosewebNotificationDispatches = [
+      ...(recorderWindow.__goosewebNotificationDispatches ?? []),
+      payload
+    ];
+  }
+  if (!("Notification" in window) || window.Notification.permission !== "granted") {
+    return;
+  }
+  try {
+    new window.Notification(title, {
+      body,
+      tag: `gooseweb-turn:${session.sessionId}:${turnId}`
+    });
+  } catch (error) {
+    console.warn("Unable to dispatch Gooseweb turn notification", error);
+  }
+}
+
+function firstNonEmptyString(...values: readonly (string | undefined | null)[]) {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return undefined;
+}
 
 function Index() {
   const state = useGoosewebState();
@@ -428,6 +688,12 @@ function Index() {
     () => mergeSessionOptions(sessions, fleetRows, getDevComposerAttachmentSessions()),
     [fleetRows, sessions]
   );
+  const turnNotificationSettings = useTurnNotificationSettings();
+  useTurnCompletionNotifications({
+    mode: turnNotificationSettings.mode,
+    sessions: sessionOptions,
+    teams
+  });
   const [activeView, setActiveView] = useState<WorkspaceView>("board");
   const [selectedRowId, setSelectedRowId] = useState("");
   const [selectedSessionId, setSelectedSessionId] = useState("");
@@ -686,6 +952,7 @@ function Index() {
             sourceGapActive={sourceGapActive}
             staleSourceIds={staleSourceIds}
             addAgentDialogOpen={addAgentDialogOpen}
+            turnNotificationSettings={turnNotificationSettings}
             onAddAgentDialogOpenChange={setAddAgentDialogOpen}
           />
         </main>
@@ -1224,6 +1491,7 @@ function MissionWorkspace({
   sourceGapActive,
   staleSourceIds,
   addAgentDialogOpen,
+  turnNotificationSettings,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -1255,6 +1523,7 @@ function MissionWorkspace({
   readonly sourceGapActive: boolean;
   readonly staleSourceIds: readonly string[];
   readonly addAgentDialogOpen: boolean;
+  readonly turnNotificationSettings: TurnNotificationSettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const [composerText, setComposerText] = useState("");
@@ -1313,6 +1582,7 @@ function MissionWorkspace({
       sourceGapActive={sourceGapActive}
       staleSourceIds={staleSourceIds}
       addAgentDialogOpen={addAgentDialogOpen}
+      turnNotificationSettings={turnNotificationSettings}
       onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
     />
   );
@@ -1483,6 +1753,7 @@ function MissionWorkspace({
           : isAgentThread
           ? "mission-workspace-thread"
           : "mission-workspace-dashboard",
+        activeView === "settings" && "mission-workspace-settings",
         isAgentThread && !selectedSession && "mission-workspace-thread-empty"
       )}
     >
@@ -1539,6 +1810,7 @@ function MissionWorkspace({
           sourceGapActive={sourceGapActive}
           staleSourceIds={staleSourceIds}
           addAgentDialogOpen={addAgentDialogOpen}
+          turnNotificationSettings={turnNotificationSettings}
           onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       )}
@@ -1731,6 +2003,7 @@ function MissionViewBody({
   sourceGapActive,
   staleSourceIds,
   addAgentDialogOpen,
+  turnNotificationSettings,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -1761,6 +2034,7 @@ function MissionViewBody({
   readonly sourceGapActive: boolean;
   readonly staleSourceIds: readonly string[];
   readonly addAgentDialogOpen: boolean;
+  readonly turnNotificationSettings: TurnNotificationSettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   if (activeView === "agents") {
@@ -1838,7 +2112,15 @@ function MissionViewBody({
     );
   }
   if (activeView === "settings") {
-    return <SettingsPane state={state} subscriptionCount={subscriptionCount} />;
+    return (
+      <SettingsPane
+        state={state}
+        subscriptionCount={subscriptionCount}
+        turnNotificationSettings={turnNotificationSettings}
+        sessions={sessions}
+        teams={teams}
+      />
+    );
   }
   return (
     <BoardPane
@@ -2213,6 +2495,7 @@ function DashboardWorkspace({
   sourceGapActive,
   staleSourceIds,
   addAgentDialogOpen,
+  turnNotificationSettings,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -2244,6 +2527,7 @@ function DashboardWorkspace({
   readonly sourceGapActive: boolean;
   readonly staleSourceIds: readonly string[];
   readonly addAgentDialogOpen: boolean;
+  readonly turnNotificationSettings: TurnNotificationSettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const runningProcesses = processes.filter((process) => process.status === "running").length;
@@ -2306,6 +2590,7 @@ function DashboardWorkspace({
           sourceGapActive={sourceGapActive}
           staleSourceIds={staleSourceIds}
           addAgentDialogOpen={addAgentDialogOpen}
+          turnNotificationSettings={turnNotificationSettings}
           onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       </div>
@@ -3685,6 +3970,13 @@ function isStopAgentsVisualFixtureEnabled(): boolean {
     return false;
   }
   return new URLSearchParams(window.location.search).has("goosewebStopAgentsFixture");
+}
+
+function isNotificationVisualFixtureEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location.search).has("goosewebNotificationFixture");
 }
 
 function isRosterVisualFixtureEnabled(): boolean {
@@ -5179,12 +5471,110 @@ function PlaybooksPane({
   );
 }
 
+function TurnNotificationsSettingsCard({
+  settings,
+  sessions,
+  teams
+}: {
+  readonly settings: TurnNotificationSettings;
+  readonly sessions: readonly SessionView[];
+  readonly teams: readonly TeamView[];
+}) {
+  const fixtureEnabled = isNotificationVisualFixtureEnabled();
+  const permissionCopy = notificationPermissionCopy(settings.permission);
+  const permissionRequestDisabled =
+    settings.permission === "unsupported" ||
+    settings.permission === "granted" ||
+    settings.permission === "denied";
+
+  return (
+    <section className="mission-notification-settings" data-notification-settings>
+      <div className="mission-notification-heading">
+        <div className="mission-dashboard-kicker">Notifications</div>
+        <p>Choose which turn-completion browser notifications are sent.</p>
+      </div>
+
+      <div className="mission-notification-card">
+        <div className="mission-notification-card-header">
+          <div>
+            <h2>Turn completion notifications</h2>
+            <p>{permissionCopy}</p>
+          </div>
+          <Button
+            disabled={permissionRequestDisabled}
+            type="button"
+            variant="outline"
+            onClick={() => void settings.requestPermission()}
+          >
+            {settings.permission === "granted" ? "Allowed" : "Allow notifications"}
+          </Button>
+        </div>
+
+        <div className="mission-notification-options" role="radiogroup">
+          {TURN_NOTIFICATION_MODE_OPTIONS.map((option) => (
+            <button
+              aria-checked={settings.mode === option.value}
+              className="mission-notification-option"
+              data-notification-mode={option.value}
+              key={option.value}
+              role="radio"
+              type="button"
+              onClick={() => settings.setMode(option.value)}
+            >
+              <span className="mission-notification-radio" aria-hidden="true" />
+              <span>{option.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="mission-notification-notes">
+          <p>Leads-only mode always notifies the team lead.</p>
+          <p>For non-leads, opt in per agent from the sidebar context menu.</p>
+        </div>
+
+        {fixtureEnabled ? (
+          <div className="mission-notification-fixture">
+            <Button
+              data-notification-simulate
+              type="button"
+              variant="secondary"
+              onClick={() => settings.simulateCompletion(sessions, teams)}
+            >
+              Simulate turn completion
+            </Button>
+            <span>Dev notification fixture</span>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function notificationPermissionCopy(permission: BrowserNotificationPermission): string {
+  if (permission === "granted") {
+    return "Browser notification permission is granted.";
+  }
+  if (permission === "denied") {
+    return "Browser notifications are blocked in this browser.";
+  }
+  if (permission === "unsupported") {
+    return "Browser notifications are unavailable in this environment.";
+  }
+  return "Permission has not been requested yet.";
+}
+
 function SettingsPane({
   state,
-  subscriptionCount
+  subscriptionCount,
+  turnNotificationSettings,
+  sessions,
+  teams
 }: {
   readonly state: GoosewebSnapshot;
   readonly subscriptionCount: number;
+  readonly turnNotificationSettings: TurnNotificationSettings;
+  readonly sessions: readonly SessionView[];
+  readonly teams: readonly TeamView[];
 }) {
   const [ticket, setTicket] = useState(goosewebConfig.pastedDevTicket);
   const [ticketStatus, setTicketStatus] = useState("");
@@ -5239,12 +5629,20 @@ function SettingsPane({
   }
 
   return (
-    <Tabs className="h-full" defaultValue="connection">
+    <Tabs className="h-full" defaultValue="notifications">
       <TabsList>
+        <TabsTrigger value="notifications">Notifications</TabsTrigger>
         <TabsTrigger value="connection">Connection</TabsTrigger>
         <TabsTrigger value="flags">Flags</TabsTrigger>
         <TabsTrigger value="debug">Debug export</TabsTrigger>
       </TabsList>
+      <TabsContent className="min-h-0" value="notifications">
+        <TurnNotificationsSettingsCard
+          settings={turnNotificationSettings}
+          sessions={sessions}
+          teams={teams}
+        />
+      </TabsContent>
       <TabsContent className="min-h-0" value="connection">
         <Card>
           <CardHeader>

@@ -207,6 +207,8 @@ type TeamFeedItem = {
 type TeamCommsScope = "all" | "broadcast" | "direct";
 type StopAgentsScope = "all" | "team";
 type TurnNotificationMode = "all" | "none" | "leads_only";
+type ToolTimelineVerbosity = "hidden" | "summary" | "full";
+type ThinkingTraceDefaultState = "collapsed" | "expanded";
 
 type BrowserNotificationPermission = NotificationPermission | "unsupported";
 
@@ -219,6 +221,19 @@ type TurnNotificationSettings = {
     sessions: readonly SessionView[],
     teams: readonly TeamView[]
   ) => void;
+};
+
+type BehaviorDisplaySettings = {
+  readonly autoHideCompletedTasks: boolean;
+  readonly autoExpandBashOutput: boolean;
+  readonly showSidebarToggleButtons: boolean;
+  readonly toolTimelineVerbosity: ToolTimelineVerbosity;
+  readonly thinkingTraces: ThinkingTraceDefaultState;
+  readonly setAutoHideCompletedTasks: (checked: boolean) => void;
+  readonly setAutoExpandBashOutput: (checked: boolean) => void;
+  readonly setShowSidebarToggleButtons: (checked: boolean) => void;
+  readonly setToolTimelineVerbosity: (value: ToolTimelineVerbosity) => void;
+  readonly setThinkingTraces: (value: ThinkingTraceDefaultState) => void;
 };
 
 type StopAgentTarget = {
@@ -391,6 +406,33 @@ const TURN_NOTIFICATION_MODE_OPTIONS: ReadonlyArray<{
 
 const TURN_NOTIFICATION_MODE_STORAGE_KEY =
   "gooseweb.agents.turnCompletionNotificationMode";
+const AUTO_HIDE_COMPLETED_TASKS_STORAGE_KEY =
+  "gooseweb.agents.settings.autoHideCompletedTasks";
+const AUTO_EXPAND_BASH_OUTPUT_STORAGE_KEY =
+  "gooseweb.agents.settings.autoExpandBashOutput";
+const SHOW_SIDEBAR_TOGGLE_BUTTONS_STORAGE_KEY =
+  "gooseweb.agents.settings.showSidebarToggleButtons";
+const TOOL_TIMELINE_VERBOSITY_STORAGE_KEY =
+  "gooseweb.agents.settings.toolTimelineVerbosity";
+const THINKING_TRACES_STORAGE_KEY =
+  "gooseweb.agents.settings.thinkingTraces";
+
+const TOOL_TIMELINE_VERBOSITY_OPTIONS: ReadonlyArray<{
+  readonly value: ToolTimelineVerbosity;
+  readonly label: string;
+}> = [
+  { value: "hidden", label: "Hidden" },
+  { value: "summary", label: "Summary" },
+  { value: "full", label: "Full" }
+];
+
+const THINKING_TRACE_OPTIONS: ReadonlyArray<{
+  readonly value: ThinkingTraceDefaultState;
+  readonly label: string;
+}> = [
+  { value: "collapsed", label: "Always collapsed" },
+  { value: "expanded", label: "Always expanded" }
+];
 
 const NAV_ITEMS: ReadonlyArray<{
   readonly id: WorkspaceView;
@@ -428,6 +470,125 @@ function writeTurnNotificationModePreference(mode: TurnNotificationMode) {
     return;
   }
   window.localStorage.setItem(TURN_NOTIFICATION_MODE_STORAGE_KEY, mode);
+}
+
+function readBooleanPreference(key: string, fallback: boolean): boolean {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const value = window.localStorage.getItem(key);
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return fallback;
+}
+
+function writeBooleanPreference(key: string, value: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(key, String(value));
+}
+
+function normalizeToolTimelineVerbosity(value: unknown): ToolTimelineVerbosity {
+  if (value === "hidden" || value === "summary" || value === "full") {
+    return value;
+  }
+  return "full";
+}
+
+function normalizeThinkingTraces(value: unknown): ThinkingTraceDefaultState {
+  if (value === "collapsed" || value === "expanded") {
+    return value;
+  }
+  return "expanded";
+}
+
+function toolTimelineVerbosityLabel(value: ToolTimelineVerbosity): string {
+  return TOOL_TIMELINE_VERBOSITY_OPTIONS.find((option) => option.value === value)?.label ?? "Full";
+}
+
+function thinkingTracesLabel(value: ThinkingTraceDefaultState): string {
+  return THINKING_TRACE_OPTIONS.find((option) => option.value === value)?.label ?? "Always expanded";
+}
+
+function readToolTimelineVerbosityPreference(): ToolTimelineVerbosity {
+  if (typeof window === "undefined") {
+    return "full";
+  }
+  return normalizeToolTimelineVerbosity(
+    window.localStorage.getItem(TOOL_TIMELINE_VERBOSITY_STORAGE_KEY)
+  );
+}
+
+function readThinkingTracesPreference(): ThinkingTraceDefaultState {
+  if (typeof window === "undefined") {
+    return "expanded";
+  }
+  return normalizeThinkingTraces(
+    window.localStorage.getItem(THINKING_TRACES_STORAGE_KEY)
+  );
+}
+
+function useBehaviorDisplaySettings(): BehaviorDisplaySettings {
+  const [autoHideCompletedTasks, setAutoHideCompletedTasksState] = useState(() =>
+    readBooleanPreference(AUTO_HIDE_COMPLETED_TASKS_STORAGE_KEY, true)
+  );
+  const [autoExpandBashOutput, setAutoExpandBashOutputState] = useState(() =>
+    readBooleanPreference(AUTO_EXPAND_BASH_OUTPUT_STORAGE_KEY, true)
+  );
+  const [showSidebarToggleButtons, setShowSidebarToggleButtonsState] = useState(() =>
+    readBooleanPreference(SHOW_SIDEBAR_TOGGLE_BUTTONS_STORAGE_KEY, false)
+  );
+  const [toolTimelineVerbosity, setToolTimelineVerbosityState] =
+    useState<ToolTimelineVerbosity>(() => readToolTimelineVerbosityPreference());
+  const [thinkingTraces, setThinkingTracesState] =
+    useState<ThinkingTraceDefaultState>(() => readThinkingTracesPreference());
+
+  function setAutoHideCompletedTasks(checked: boolean) {
+    setAutoHideCompletedTasksState(checked);
+    writeBooleanPreference(AUTO_HIDE_COMPLETED_TASKS_STORAGE_KEY, checked);
+  }
+
+  function setAutoExpandBashOutput(checked: boolean) {
+    setAutoExpandBashOutputState(checked);
+    writeBooleanPreference(AUTO_EXPAND_BASH_OUTPUT_STORAGE_KEY, checked);
+  }
+
+  function setShowSidebarToggleButtons(checked: boolean) {
+    setShowSidebarToggleButtonsState(checked);
+    writeBooleanPreference(SHOW_SIDEBAR_TOGGLE_BUTTONS_STORAGE_KEY, checked);
+  }
+
+  function setToolTimelineVerbosity(value: ToolTimelineVerbosity) {
+    setToolTimelineVerbosityState(value);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(TOOL_TIMELINE_VERBOSITY_STORAGE_KEY, value);
+    }
+  }
+
+  function setThinkingTraces(value: ThinkingTraceDefaultState) {
+    setThinkingTracesState(value);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(THINKING_TRACES_STORAGE_KEY, value);
+    }
+  }
+
+  return {
+    autoHideCompletedTasks,
+    autoExpandBashOutput,
+    showSidebarToggleButtons,
+    toolTimelineVerbosity,
+    thinkingTraces,
+    setAutoHideCompletedTasks,
+    setAutoExpandBashOutput,
+    setShowSidebarToggleButtons,
+    setToolTimelineVerbosity,
+    setThinkingTraces
+  };
 }
 
 function readBrowserNotificationPermission(): BrowserNotificationPermission {
@@ -689,6 +850,7 @@ function Index() {
     [fleetRows, sessions]
   );
   const turnNotificationSettings = useTurnNotificationSettings();
+  const behaviorDisplaySettings = useBehaviorDisplaySettings();
   useTurnCompletionNotifications({
     mode: turnNotificationSettings.mode,
     sessions: sessionOptions,
@@ -953,6 +1115,7 @@ function Index() {
             staleSourceIds={staleSourceIds}
             addAgentDialogOpen={addAgentDialogOpen}
             turnNotificationSettings={turnNotificationSettings}
+            behaviorDisplaySettings={behaviorDisplaySettings}
             onAddAgentDialogOpenChange={setAddAgentDialogOpen}
           />
         </main>
@@ -1492,6 +1655,7 @@ function MissionWorkspace({
   staleSourceIds,
   addAgentDialogOpen,
   turnNotificationSettings,
+  behaviorDisplaySettings,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -1524,6 +1688,7 @@ function MissionWorkspace({
   readonly staleSourceIds: readonly string[];
   readonly addAgentDialogOpen: boolean;
   readonly turnNotificationSettings: TurnNotificationSettings;
+  readonly behaviorDisplaySettings: BehaviorDisplaySettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const [composerText, setComposerText] = useState("");
@@ -1583,6 +1748,7 @@ function MissionWorkspace({
       staleSourceIds={staleSourceIds}
       addAgentDialogOpen={addAgentDialogOpen}
       turnNotificationSettings={turnNotificationSettings}
+      behaviorDisplaySettings={behaviorDisplaySettings}
       onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
     />
   );
@@ -1811,6 +1977,7 @@ function MissionWorkspace({
           staleSourceIds={staleSourceIds}
           addAgentDialogOpen={addAgentDialogOpen}
           turnNotificationSettings={turnNotificationSettings}
+          behaviorDisplaySettings={behaviorDisplaySettings}
           onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       )}
@@ -2004,6 +2171,7 @@ function MissionViewBody({
   staleSourceIds,
   addAgentDialogOpen,
   turnNotificationSettings,
+  behaviorDisplaySettings,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -2035,6 +2203,7 @@ function MissionViewBody({
   readonly staleSourceIds: readonly string[];
   readonly addAgentDialogOpen: boolean;
   readonly turnNotificationSettings: TurnNotificationSettings;
+  readonly behaviorDisplaySettings: BehaviorDisplaySettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   if (activeView === "agents") {
@@ -2049,6 +2218,7 @@ function MissionViewBody({
         selectedApproval={selectedApproval}
         teamWorkspaces={teamWorkspaces}
         sourceGapActive={sourceGapActive}
+        behaviorDisplaySettings={behaviorDisplaySettings}
       />
     );
   }
@@ -2117,6 +2287,7 @@ function MissionViewBody({
         state={state}
         subscriptionCount={subscriptionCount}
         turnNotificationSettings={turnNotificationSettings}
+        behaviorDisplaySettings={behaviorDisplaySettings}
         sessions={sessions}
         teams={teams}
       />
@@ -2496,6 +2667,7 @@ function DashboardWorkspace({
   staleSourceIds,
   addAgentDialogOpen,
   turnNotificationSettings,
+  behaviorDisplaySettings,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -2528,6 +2700,7 @@ function DashboardWorkspace({
   readonly staleSourceIds: readonly string[];
   readonly addAgentDialogOpen: boolean;
   readonly turnNotificationSettings: TurnNotificationSettings;
+  readonly behaviorDisplaySettings: BehaviorDisplaySettings;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const runningProcesses = processes.filter((process) => process.status === "running").length;
@@ -2591,6 +2764,7 @@ function DashboardWorkspace({
           staleSourceIds={staleSourceIds}
           addAgentDialogOpen={addAgentDialogOpen}
           turnNotificationSettings={turnNotificationSettings}
+          behaviorDisplaySettings={behaviorDisplaySettings}
           onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       </div>
@@ -3156,7 +3330,8 @@ function AgentPane({
   sessionDetail,
   selectedApproval,
   teamWorkspaces,
-  sourceGapActive
+  sourceGapActive,
+  behaviorDisplaySettings
 }: {
   readonly approvals: readonly ApprovalView[];
   readonly processes: readonly ProcessView[];
@@ -3165,6 +3340,7 @@ function AgentPane({
   readonly selectedApproval?: ApprovalView;
   readonly teamWorkspaces: Readonly<Record<string, TeamWorkspaceState>>;
   readonly sourceGapActive: boolean;
+  readonly behaviorDisplaySettings: BehaviorDisplaySettings;
 }) {
   const showDevFixture = isThreadVisualFixtureEnabled();
   const showTodosFixture = isTodosVisualFixtureEnabled();
@@ -3253,7 +3429,13 @@ function AgentPane({
                   : "No messages yet."}
               </div>
             ) : (
-              threadItems.map((item) => <AgentThreadRow item={item} key={item.id} />)
+              threadItems.map((item) => (
+                <AgentThreadRow
+                  behaviorDisplaySettings={behaviorDisplaySettings}
+                  item={item}
+                  key={item.id}
+                />
+              ))
             )}
           </div>
         )}
@@ -3275,23 +3457,41 @@ function AgentPane({
   );
 }
 
-function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
+function AgentThreadRow({
+  item,
+  behaviorDisplaySettings
+}: {
+  readonly item: AgentThreadItem;
+  readonly behaviorDisplaySettings: BehaviorDisplaySettings;
+}) {
   if (item.kind === "todos") {
-    return <AgentTodosCard item={item} todos={item.todos ?? []} />;
+    return (
+      <AgentTodosCard
+        autoHideCompletedTasks={behaviorDisplaySettings.autoHideCompletedTasks}
+        item={item}
+        todos={item.todos ?? []}
+      />
+    );
   }
 
   if (item.kind === "thinking") {
+    const thinkingExpanded = behaviorDisplaySettings.thinkingTraces === "expanded";
     return (
-      <article className="mission-thread-row mission-thread-thinking">
+      <article
+        className="mission-thread-row mission-thread-thinking"
+        data-thinking-expanded={thinkingExpanded ? "true" : "false"}
+      >
         <button
-          aria-expanded="true"
+          aria-expanded={thinkingExpanded}
           className="mission-thread-thinking-toggle"
           type="button"
         >
           <span>Thinking</span>
           <ChevronDownIcon aria-hidden="true" />
         </button>
-        <div className="mission-thread-thinking-body">{item.body}</div>
+        {thinkingExpanded ? (
+          <div className="mission-thread-thinking-body">{item.body}</div>
+        ) : null}
       </article>
     );
   }
@@ -3303,6 +3503,9 @@ function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
     if (item.processCard) {
       return <AgentProcessCardRow item={item} process={item.processCard} />;
     }
+
+    const showToolBody = behaviorDisplaySettings.toolTimelineVerbosity !== "hidden";
+    const showToolCode = behaviorDisplaySettings.toolTimelineVerbosity === "full";
 
     return (
       <article className="mission-thread-row mission-thread-tool" data-thread-row="tool">
@@ -3316,10 +3519,10 @@ function AgentThreadRow({ item }: { readonly item: AgentThreadItem }) {
           </div>
           {item.status ? <span className="mission-thread-tool-status">{item.status}</span> : null}
         </div>
-        {item.output ? (
+        {showToolCode && item.output ? (
           <pre className="mission-thread-tool-code">{item.output}</pre>
         ) : null}
-        <div className="mission-thread-tool-output">{item.body}</div>
+        {showToolBody ? <div className="mission-thread-tool-output">{item.body}</div> : null}
       </article>
     );
   }
@@ -3402,12 +3605,17 @@ function AgentMarkdownBody({ body }: { readonly body: string }) {
 
 function AgentTodosCard({
   item,
-  todos
+  todos,
+  autoHideCompletedTasks
 }: {
   readonly item: AgentThreadItem;
   readonly todos: readonly AgentTodoItem[];
+  readonly autoHideCompletedTasks: boolean;
 }) {
   const completed = todos.filter((todo) => todo.status === "completed").length;
+  const visibleTodos = autoHideCompletedTasks
+    ? todos.filter((todo) => todo.status !== "completed")
+    : todos;
 
   return (
     <article className="mission-thread-row mission-thread-todos" data-thread-row="todos" data-todos-card="true">
@@ -3416,7 +3624,7 @@ function AgentTodosCard({
         <span>{completed}/{todos.length}</span>
       </div>
       <div className="mission-thread-todos-list">
-        {todos.map((todo) => (
+        {visibleTodos.map((todo) => (
           <div className="mission-thread-todo-row" data-todo-status={todo.status} key={todo.id}>
             <span aria-hidden="true" />
             <p>{todo.title}</p>
@@ -5473,10 +5681,12 @@ function PlaybooksPane({
 
 function TurnNotificationsSettingsCard({
   settings,
+  behaviorDisplaySettings,
   sessions,
   teams
 }: {
   readonly settings: TurnNotificationSettings;
+  readonly behaviorDisplaySettings: BehaviorDisplaySettings;
   readonly sessions: readonly SessionView[];
   readonly teams: readonly TeamView[];
 }) {
@@ -5546,6 +5756,142 @@ function TurnNotificationsSettingsCard({
           </div>
         ) : null}
       </div>
+
+      <BehaviorSettingsSection settings={behaviorDisplaySettings} />
+      <ConversationDisplaySettingsSection settings={behaviorDisplaySettings} />
+    </section>
+  );
+}
+
+function BehaviorSettingsSection({
+  settings
+}: {
+  readonly settings: BehaviorDisplaySettings;
+}) {
+  return (
+    <section className="mission-settings-section" data-settings-section="behavior">
+      <div className="mission-notification-heading">
+        <div className="mission-dashboard-kicker">Behavior</div>
+      </div>
+      <div className="mission-settings-card">
+        <SettingsSwitchRow
+          checked={settings.autoHideCompletedTasks}
+          description="Hide completed todo items in the composer task list to reduce clutter."
+          label="Auto-hide completed tasks"
+          onCheckedChange={settings.setAutoHideCompletedTasks}
+        />
+        <SettingsSwitchRow
+          checked={settings.autoExpandBashOutput}
+          description="When enabled, Bash command output is shown expanded by default."
+          label="Auto-expand Bash output"
+          onCheckedChange={settings.setAutoExpandBashOutput}
+        />
+        <SettingsSwitchRow
+          checked={settings.showSidebarToggleButtons}
+          description="Display left/right sidebar toggle buttons in the title bar."
+          label="Show sidebar toggle buttons"
+          onCheckedChange={settings.setShowSidebarToggleButtons}
+        />
+      </div>
+    </section>
+  );
+}
+
+function SettingsSwitchRow({
+  checked,
+  description,
+  label,
+  onCheckedChange
+}: {
+  readonly checked: boolean;
+  readonly description: string;
+  readonly label: string;
+  readonly onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="mission-settings-switch-row">
+      <div className="min-w-0">
+        <h3>{label}</h3>
+        <p>{description}</p>
+      </div>
+      <button
+        aria-checked={checked}
+        aria-label={label}
+        className="mission-settings-switch"
+        role="switch"
+        type="button"
+        onClick={() => onCheckedChange(!checked)}
+      >
+        <span aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function ConversationDisplaySettingsSection({
+  settings
+}: {
+  readonly settings: BehaviorDisplaySettings;
+}) {
+  return (
+    <section className="mission-settings-section" data-settings-section="conversation-display">
+      <div className="mission-notification-heading">
+        <div className="mission-dashboard-kicker">Conversation Display</div>
+        <p>Controls for how runtime details appear in chat.</p>
+      </div>
+      <div className="mission-settings-card mission-settings-card-conversation">
+        <div className="mission-settings-select-field">
+          <label htmlFor="tool-timeline-verbosity">Tool Timeline Verbosity</label>
+          <Select
+            value={settings.toolTimelineVerbosity}
+            onValueChange={(value) =>
+              settings.setToolTimelineVerbosity(normalizeToolTimelineVerbosity(value))
+            }
+          >
+            <SelectTrigger
+              className="mission-settings-select-trigger"
+              data-settings-select="tool-verbosity"
+              id="tool-timeline-verbosity"
+            >
+              <span>{toolTimelineVerbosityLabel(settings.toolTimelineVerbosity)}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {TOOL_TIMELINE_VERBOSITY_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p>Control how tool-call details are shown in the conversation timeline.</p>
+        </div>
+
+        <div className="mission-settings-select-field">
+          <label htmlFor="thinking-traces">Thinking Traces</label>
+          <Select
+            value={settings.thinkingTraces}
+            onValueChange={(value) =>
+              settings.setThinkingTraces(normalizeThinkingTraces(value))
+            }
+          >
+            <SelectTrigger
+              className="mission-settings-select-trigger"
+              data-settings-select="thinking-traces"
+              id="thinking-traces"
+            >
+              <span>{thinkingTracesLabel(settings.thinkingTraces)}</span>
+            </SelectTrigger>
+            <SelectContent>
+              {THINKING_TRACE_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p>Choose whether Codex thinking summaries start expanded or collapsed.</p>
+        </div>
+      </div>
     </section>
   );
 }
@@ -5567,12 +5913,14 @@ function SettingsPane({
   state,
   subscriptionCount,
   turnNotificationSettings,
+  behaviorDisplaySettings,
   sessions,
   teams
 }: {
   readonly state: GoosewebSnapshot;
   readonly subscriptionCount: number;
   readonly turnNotificationSettings: TurnNotificationSettings;
+  readonly behaviorDisplaySettings: BehaviorDisplaySettings;
   readonly sessions: readonly SessionView[];
   readonly teams: readonly TeamView[];
 }) {
@@ -5639,6 +5987,7 @@ function SettingsPane({
       <TabsContent className="min-h-0" value="notifications">
         <TurnNotificationsSettingsCard
           settings={turnNotificationSettings}
+          behaviorDisplaySettings={behaviorDisplaySettings}
           sessions={sessions}
           teams={teams}
         />

@@ -779,6 +779,105 @@
     padding-top: 0.9rem;
   }
 
+  .mission-settings-section {
+    margin-top: 1.65rem;
+  }
+
+  .mission-settings-card {
+    overflow: hidden;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 44%);
+    border-radius: 1.15rem;
+    background: color-mix(in oklch, var(--card), transparent 18%);
+  }
+
+  .mission-settings-switch-row {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1.2rem;
+    border-bottom: 1px solid color-mix(in oklch, var(--border), transparent 52%);
+    padding: 1.2rem 1.25rem;
+  }
+
+  .mission-settings-switch-row:last-child {
+    border-bottom: 0;
+  }
+
+  .mission-settings-switch-row h3,
+  .mission-settings-select-field label {
+    margin: 0;
+    color: oklch(0.8 0.004 255);
+    font-size: 1rem;
+    font-weight: 760;
+    line-height: 1.25;
+  }
+
+  .mission-settings-switch-row p,
+  .mission-settings-select-field p {
+    margin: 0.5rem 0 0;
+    color: var(--muted-foreground);
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+
+  .mission-settings-switch {
+    display: inline-flex;
+    width: 3.15rem;
+    height: 1.8rem;
+    flex: 0 0 auto;
+    align-items: center;
+    border: 0;
+    border-radius: 999px;
+    background: oklch(0.22 0.004 255);
+    padding: 0.2rem;
+    transition: background 160ms ease;
+  }
+
+  .mission-settings-switch[aria-checked="true"] {
+    background: oklch(0.82 0.004 255);
+  }
+
+  .mission-settings-switch span {
+    display: block;
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 999px;
+    background: oklch(0.94 0.004 255);
+    box-shadow: 0 0.12rem 0.5rem oklch(0 0 0 / 32%);
+    transform: translateX(0);
+    transition: transform 160ms ease;
+  }
+
+  .mission-settings-switch[aria-checked="true"] span {
+    transform: translateX(1.35rem);
+  }
+
+  .mission-settings-card-conversation {
+    display: grid;
+    gap: 1.2rem;
+    padding: 1.25rem;
+  }
+
+  .mission-settings-select-field {
+    display: grid;
+    min-width: 0;
+    gap: 0.65rem;
+  }
+
+  .mission-settings-select-trigger {
+    width: 100%;
+    min-width: 0;
+    height: 3.15rem;
+    justify-content: space-between;
+    border-radius: 0.75rem;
+    border-color: color-mix(in oklch, var(--border), transparent 42%);
+    background: color-mix(in oklch, var(--background), transparent 24%);
+    color: oklch(0.9 0.004 255);
+    font-size: 0.98rem;
+    font-weight: 620;
+  }
+
   .mission-workspace-tab {
     justify-self: center;
     width: min(64rem, 78%);
@@ -3840,6 +3939,29 @@
     .mission-notification-option {
       min-height: 3.25rem;
       font-size: 0.94rem;
+    }
+
+    .mission-settings-section {
+      margin-top: 1.35rem;
+    }
+
+    .mission-settings-card {
+      border-radius: 1rem;
+    }
+
+    .mission-settings-switch-row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.85rem;
+      padding: 1rem;
+    }
+
+    .mission-settings-switch {
+      justify-self: start;
+    }
+
+    .mission-settings-card-conversation {
+      gap: 1rem;
+      padding: 1rem;
     }
 
     .mission-chrome-status {

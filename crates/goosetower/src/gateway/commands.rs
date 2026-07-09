@@ -313,6 +313,7 @@ impl GatewayState {
                         },
                     )
                     .await?;
+                self.refresh_source_after_command(command).await;
             }
             crate::protocol::generated::goosetower::v1::command::Payload::BroadcastTeamMessage(
                 input,
@@ -334,6 +335,7 @@ impl GatewayState {
                         },
                     )
                     .await?;
+                self.refresh_source_after_command(command).await;
             }
             crate::protocol::generated::goosetower::v1::command::Payload::SpawnTeamMember(
                 input,
@@ -665,28 +667,38 @@ impl GatewayState {
     }
 
     async fn refresh_source_after_command(&self, command: &Command) {
-        let Some(source_id) = command
-            .target
-            .as_ref()
-            .map(|target| target.scope_id.as_str())
-            .filter(|value| !value.is_empty())
-        else {
+        let Some(payload) = command.payload.as_ref() else {
             tracing::warn!(
                 command_id = %command.command_id,
-                "skipping post-command source refresh because target.scope_id is missing"
+                "skipping post-command source refresh because payload is missing"
             );
             return;
+        };
+        let source_id = match self
+            .resolve_command_owner_source(command, payload, command_explicit_source_id(command))
+            .await
+        {
+            Ok(source_id) => source_id,
+            Err(error) => {
+                tracing::warn!(
+                    command_id = %command.command_id,
+                    error_code = %error.code,
+                    error = %error.message,
+                    "skipping post-command source refresh because command source could not be resolved"
+                );
+                return;
+            }
         };
         let Some(source) = self
             .config
             .runtimes
             .sources
             .iter()
-            .find(|candidate| candidate.enabled && candidate.source_id == source_id)
+            .find(|candidate| candidate.enabled && candidate.source_id == source_id.as_str())
         else {
             tracing::warn!(
                 command_id = %command.command_id,
-                source_id,
+                source_id = %source_id,
                 "skipping post-command source refresh because source is unavailable"
             );
             return;
@@ -696,7 +708,7 @@ impl GatewayState {
             Err(error) => {
                 tracing::warn!(
                     command_id = %command.command_id,
-                    source_id,
+                    source_id = %source_id,
                     error = %error,
                     "skipping post-command source refresh because runtime client could not be created"
                 );
@@ -713,7 +725,7 @@ impl GatewayState {
             Err(error) => {
                 tracing::warn!(
                     command_id = %command.command_id,
-                    source_id,
+                    source_id = %source_id,
                     error = %error,
                     "skipping post-command source refresh because runtime bootstrap failed"
                 );
@@ -724,7 +736,7 @@ impl GatewayState {
 
         let patches = {
             let mut materialized = self.materialized.write().await;
-            let previous = materialized.get(source_id);
+            let previous = materialized.get(&source_id);
             let mut patches = Vec::new();
 
             for session_id in next.sessions.keys() {
@@ -734,7 +746,7 @@ impl GatewayState {
                             kind: MaterializedPatchKind::ListInsert,
                             view_kind: "board".to_string(),
                             entity: Some(crate::materializer::EntityKey::new(
-                                source_id,
+                                source_id.clone(),
                                 "session",
                                 session_id.clone(),
                             )),
@@ -747,12 +759,21 @@ impl GatewayState {
             }
 
             for team_id in next.teams.keys() {
-                if previous.is_none_or(|state| !state.teams.contains_key(team_id)) {
+                let team_changed = previous.is_none_or(|state| {
+                    state.version("team", team_id) != next.version("team", team_id)
+                });
+                let messages_changed = previous.is_none_or(|state| {
+                    state.messages_by_team.get(team_id) != next.messages_by_team.get(team_id)
+                });
+                let deliveries_changed = previous.is_none_or(|state| {
+                    state.deliveries_by_team.get(team_id) != next.deliveries_by_team.get(team_id)
+                });
+                if team_changed || messages_changed || deliveries_changed {
                     patches.push(MaterializedPatch {
-                        kind: MaterializedPatchKind::ListInsert,
+                        kind: MaterializedPatchKind::EntityUpsert,
                         view_kind: "team".to_string(),
                         entity: Some(crate::materializer::EntityKey::new(
-                            source_id,
+                            source_id.clone(),
                             "team",
                             team_id.clone(),
                         )),
@@ -770,14 +791,16 @@ impl GatewayState {
                 kind: MaterializedPatchKind::EntityUpsert,
                 view_kind: "source_health".to_string(),
                 entity: Some(crate::materializer::EntityKey::new(
-                    source_id, "source", source_id,
+                    source_id.clone(),
+                    "source",
+                    source_id.clone(),
                 )),
                 version: None,
                 source_cursor: None,
                 body: json!(next.snapshot_source_health()),
             });
 
-            materialized.insert(source_id.to_string(), next);
+            materialized.insert(source_id.clone(), next);
             patches
         };
 

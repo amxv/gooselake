@@ -15,8 +15,8 @@ use super::*;
 use crate::materializer::state::SourceCursorView;
 use crate::protocol::generated::goosetower::v1::command::Payload as CommandPayload;
 use crate::protocol::generated::goosetower::v1::{
-    Command, CommandCreateSession, CommandCreateTeam, CommandInputItem, CommandJoinTeamMember,
-    CommandSendTurn, EntityRef,
+    Command, CommandBroadcastTeamMessage, CommandCreateSession, CommandCreateTeam,
+    CommandInputItem, CommandJoinTeamMember, CommandSendTurn, EntityRef,
 };
 
 mod resume;
@@ -530,6 +530,26 @@ fn join_team_member_command(command_id: &str, team_id: &str) -> Command {
             title: "Second".to_string(),
             added_by: "session_1".to_string(),
         })),
+        ..Command::default()
+    }
+}
+
+fn broadcast_team_message_command(command_id: &str, team_id: &str, text: &str) -> Command {
+    Command {
+        command_id: command_id.to_string(),
+        target: Some(EntityRef {
+            scope: Scope::Team as i32,
+            scope_id: team_id.to_string(),
+            entity_id: team_id.to_string(),
+            entity_version: 0,
+        }),
+        created_at_client_unix_ms: 1,
+        payload: Some(CommandPayload::BroadcastTeamMessage(
+            CommandBroadcastTeamMessage {
+                team_id: team_id.to_string(),
+                text: text.to_string(),
+            },
+        )),
         ..Command::default()
     }
 }

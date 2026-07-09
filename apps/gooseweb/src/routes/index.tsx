@@ -1050,6 +1050,7 @@ function Index() {
   const [selectedProcessId, setSelectedProcessId] = useState("");
   const [addAgentDialogOpen, setAddAgentDialogOpen] = useState(false);
   const [processMonitorOpen, setProcessMonitorOpen] = useState(false);
+  const [landInTeamCommsAfterCreate, setLandInTeamCommsAfterCreate] = useState(false);
   const [filters, setFilters] = useState<BoardFilters>({
     sourceId: "all",
     teamId: "all",
@@ -1180,6 +1181,19 @@ function Index() {
     }
   }, [selectedProcess?.processId]);
 
+  useEffect(() => {
+    if (!landInTeamCommsAfterCreate || !teams.length) {
+      return;
+    }
+    const nextTeam = teams[0];
+    setSelectedTeamId(nextTeam.teamId);
+    subscribeRealtime(`team:${nextTeam.teamId}`, "team", {
+      team_id: nextTeam.teamId
+    });
+    setActiveView("team-comms");
+    setLandInTeamCommsAfterCreate(false);
+  }, [landInTeamCommsAfterCreate, teams]);
+
   const staleSourceIds = Object.keys(state.staleSources);
   const ledgerEvents = useMemo(
     () =>
@@ -1303,6 +1317,7 @@ function Index() {
             turnNotificationSettings={turnNotificationSettings}
             behaviorDisplaySettings={behaviorDisplaySettings}
             modelPresetSettings={modelPresetSettings}
+            onTeamBootstrapStarted={() => setLandInTeamCommsAfterCreate(true)}
             onAddAgentDialogOpenChange={setAddAgentDialogOpen}
           />
         </main>
@@ -1844,6 +1859,7 @@ function MissionWorkspace({
   turnNotificationSettings,
   behaviorDisplaySettings,
   modelPresetSettings,
+  onTeamBootstrapStarted,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -1878,6 +1894,7 @@ function MissionWorkspace({
   readonly turnNotificationSettings: TurnNotificationSettings;
   readonly behaviorDisplaySettings: BehaviorDisplaySettings;
   readonly modelPresetSettings: ModelPresetSettings;
+  readonly onTeamBootstrapStarted: () => void;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const [composerText, setComposerText] = useState("");
@@ -1939,6 +1956,7 @@ function MissionWorkspace({
       turnNotificationSettings={turnNotificationSettings}
       behaviorDisplaySettings={behaviorDisplaySettings}
       modelPresetSettings={modelPresetSettings}
+      onTeamBootstrapStarted={onTeamBootstrapStarted}
       onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
     />
   );
@@ -2169,6 +2187,7 @@ function MissionWorkspace({
           turnNotificationSettings={turnNotificationSettings}
           behaviorDisplaySettings={behaviorDisplaySettings}
           modelPresetSettings={modelPresetSettings}
+          onTeamBootstrapStarted={onTeamBootstrapStarted}
           onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       )}
@@ -2364,6 +2383,7 @@ function MissionViewBody({
   turnNotificationSettings,
   behaviorDisplaySettings,
   modelPresetSettings,
+  onTeamBootstrapStarted,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -2397,6 +2417,7 @@ function MissionViewBody({
   readonly turnNotificationSettings: TurnNotificationSettings;
   readonly behaviorDisplaySettings: BehaviorDisplaySettings;
   readonly modelPresetSettings: ModelPresetSettings;
+  readonly onTeamBootstrapStarted: () => void;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   if (activeView === "agents") {
@@ -2429,6 +2450,7 @@ function MissionViewBody({
         sourceGapActive={sourceGapActive}
         addAgentDialogOpen={addAgentDialogOpen}
         modelPresetSettings={modelPresetSettings}
+        onTeamBootstrapStarted={onTeamBootstrapStarted}
         onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
       />
     );
@@ -2865,6 +2887,7 @@ function DashboardWorkspace({
   turnNotificationSettings,
   behaviorDisplaySettings,
   modelPresetSettings,
+  onTeamBootstrapStarted,
   onAddAgentDialogOpenChange
 }: {
   readonly state: GoosewebSnapshot;
@@ -2899,6 +2922,7 @@ function DashboardWorkspace({
   readonly turnNotificationSettings: TurnNotificationSettings;
   readonly behaviorDisplaySettings: BehaviorDisplaySettings;
   readonly modelPresetSettings: ModelPresetSettings;
+  readonly onTeamBootstrapStarted: () => void;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const runningProcesses = processes.filter((process) => process.status === "running").length;
@@ -2964,6 +2988,7 @@ function DashboardWorkspace({
           turnNotificationSettings={turnNotificationSettings}
           behaviorDisplaySettings={behaviorDisplaySettings}
           modelPresetSettings={modelPresetSettings}
+          onTeamBootstrapStarted={onTeamBootstrapStarted}
           onAddAgentDialogOpenChange={onAddAgentDialogOpenChange}
         />
       </div>
@@ -5141,6 +5166,165 @@ function teamMessageToCommsItem(message: TeamMessageState): TeamCommsMessageItem
   };
 }
 
+function TeamBootstrapPanel({
+  sources,
+  selectedSourceId,
+  teamName,
+  leadTitle,
+  leadAgentId,
+  leadOptions,
+  defaultLeadId,
+  leadBootstrapProvider,
+  leadBootstrapModel,
+  canBootstrapLead,
+  canCreateTeam,
+  onSourceChange,
+  onTeamNameChange,
+  onLeadTitleChange,
+  onLeadAgentIdChange,
+  onCreateLeadSession,
+  onCreateTeam
+}: {
+  readonly sources: readonly SourceHealthView[];
+  readonly selectedSourceId: string;
+  readonly teamName: string;
+  readonly leadTitle: string;
+  readonly leadAgentId: string;
+  readonly leadOptions: readonly string[];
+  readonly defaultLeadId: string;
+  readonly leadBootstrapProvider: string;
+  readonly leadBootstrapModel: string;
+  readonly canBootstrapLead: boolean;
+  readonly canCreateTeam: boolean;
+  readonly onSourceChange: (sourceId: string) => void;
+  readonly onTeamNameChange: (name: string) => void;
+  readonly onLeadTitleChange: (title: string) => void;
+  readonly onLeadAgentIdChange: (agentId: string) => void;
+  readonly onCreateLeadSession: () => void;
+  readonly onCreateTeam: () => void;
+}) {
+  return (
+    <section className="mission-team-bootstrap" data-team-bootstrap="true">
+      <div className="mission-team-bootstrap-heading">
+        <div>
+          <div className="mission-dashboard-kicker">First run</div>
+          <h2>Start a team from this UI</h2>
+        </div>
+        <Badge variant={leadOptions.length ? "secondary" : "outline"}>
+          {leadOptions.length ? "lead ready" : "lead needed"}
+        </Badge>
+      </div>
+
+      <div className="mission-team-bootstrap-grid">
+        <form
+          className="mission-team-bootstrap-card"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onCreateLeadSession();
+          }}
+        >
+          <div>
+            <div className="mission-team-bootstrap-title">Lead agent</div>
+            <p className="mission-team-bootstrap-detail">
+              {leadBootstrapProvider
+                ? `${leadBootstrapProvider}${leadBootstrapModel ? ` / ${leadBootstrapModel}` : ""}`
+                : "Select a live source first"}
+            </p>
+          </div>
+          <div className="mission-team-bootstrap-fields">
+            <Field>
+              <FieldLabel>Source</FieldLabel>
+              {sources.length ? (
+                <SelectFilter
+                  value={selectedSourceId}
+                  options={sources.map((source) => source.sourceId)}
+                  onChange={onSourceChange}
+                />
+              ) : (
+                <Input readOnly value="No source connected" />
+              )}
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="bootstrap-lead-title">Title</FieldLabel>
+              <Input
+                id="bootstrap-lead-title"
+                value={leadTitle}
+                onChange={(event) => onLeadTitleChange(event.target.value)}
+              />
+            </Field>
+          </div>
+          <Button disabled={!canBootstrapLead} type="submit">
+            <PowerIcon data-icon="inline-start" />
+            Start lead
+          </Button>
+        </form>
+
+        <form
+          className="mission-team-bootstrap-card"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onCreateTeam();
+          }}
+        >
+          <div>
+            <div className="mission-team-bootstrap-title">Team</div>
+            <p className="mission-team-bootstrap-detail">
+              {leadOptions.length ? "Create the workspace and open comms." : "Start a lead first."}
+            </p>
+          </div>
+          <div className="mission-team-bootstrap-fields">
+            <Field>
+              <FieldLabel htmlFor="bootstrap-team-name">Team name</FieldLabel>
+              <Input
+                id="bootstrap-team-name"
+                value={teamName}
+                onChange={(event) => onTeamNameChange(event.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Lead</FieldLabel>
+              {leadOptions.length ? (
+                <SelectFilter
+                  value={leadAgentId || defaultLeadId}
+                  options={leadOptions}
+                  onChange={onLeadAgentIdChange}
+                />
+              ) : (
+                <Input readOnly value="No lead session" />
+              )}
+            </Field>
+          </div>
+          <Button disabled={!canCreateTeam} type="submit">
+            <PlusIcon data-icon="inline-start" />
+            Create team
+          </Button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+function getSourceDefaultProvider(source?: SourceHealthView): string {
+  return (
+    source?.providerKinds.find((provider) => provider.trim()) ||
+    source?.modelCapabilities.find((capability) => capability.provider.trim())?.provider ||
+    "codex"
+  );
+}
+
+function getSourceDefaultModel(
+  source: SourceHealthView | undefined,
+  provider: string
+): string {
+  return (
+    source?.modelCapabilities.find(
+      (capability) => capability.provider === provider && capability.model.trim()
+    )?.model ||
+    source?.models.find((model) => model.trim()) ||
+    ""
+  );
+}
+
 function TeamPane({
   teams,
   rows,
@@ -5153,6 +5337,7 @@ function TeamPane({
   sourceGapActive,
   addAgentDialogOpen,
   modelPresetSettings,
+  onTeamBootstrapStarted,
   onAddAgentDialogOpenChange
 }: {
   readonly teams: readonly TeamView[];
@@ -5166,6 +5351,7 @@ function TeamPane({
   readonly sourceGapActive: boolean;
   readonly addAgentDialogOpen: boolean;
   readonly modelPresetSettings: ModelPresetSettings;
+  readonly onTeamBootstrapStarted: () => void;
   readonly onAddAgentDialogOpenChange: (open: boolean) => void;
 }) {
   const leadOptions = unique([
@@ -5194,6 +5380,7 @@ function TeamPane({
   );
   const [teamSourceId, setTeamSourceId] = useState(defaultSourceId);
   const [teamName, setTeamName] = useState("Live Team");
+  const [leadTitle, setLeadTitle] = useState("Lead");
   const [leadAgentId, setLeadAgentId] = useState(defaultLeadId);
   const [joinAgentId, setJoinAgentId] = useState("");
   const joinActivationHandledRef = useRef(false);
@@ -5226,6 +5413,21 @@ function TeamPane({
     selectedTeam?.teamId || (modelPresetFixtureEnabled ? "dev-model-preset-team" : "");
   const spawnTargetTeamLabel =
     selectedTeam?.name || selectedTeam?.teamId || (modelPresetFixtureEnabled ? "Preset fixture team" : "");
+  const selectedTeamSource =
+    sources.find((source) => source.sourceId === (teamSourceId || defaultSourceId)) ??
+    sources[0];
+  const leadBootstrapProvider = getSourceDefaultProvider(selectedTeamSource);
+  const leadBootstrapModel = getSourceDefaultModel(selectedTeamSource, leadBootstrapProvider);
+  const canBootstrapLead =
+    Boolean(selectedTeamSource?.sourceId) &&
+    Boolean(leadBootstrapProvider) &&
+    Boolean(leadTitle.trim()) &&
+    !sourceGapActive;
+  const canCreateTeam =
+    Boolean(teamSourceId || defaultSourceId) &&
+    Boolean(leadAgentId || defaultLeadId) &&
+    Boolean(teamName.trim()) &&
+    !sourceGapActive;
 
   useEffect(() => {
     if (!teamSourceId && defaultSourceId) {
@@ -5266,6 +5468,26 @@ function TeamPane({
         leadAgentId: leadId,
         memberAgentIds: [],
         createdBy: leadId
+      })
+    );
+    if (!teams.length) {
+      onTeamBootstrapStarted();
+    }
+  }
+
+  function createLeadSession() {
+    const sourceId = selectedTeamSource?.sourceId || teamSourceId || defaultSourceId;
+    const provider = leadBootstrapProvider;
+    if (!sourceId || !provider || !leadTitle.trim() || sourceGapActive) {
+      return;
+    }
+    sendRealtimeCommand(
+      makeCommand("source", sourceId, "createSession", {
+        provider,
+        model: leadBootstrapModel,
+        cwd: "",
+        title: leadTitle.trim(),
+        permissionMode: ""
       })
     );
   }
@@ -5341,7 +5563,7 @@ function TeamPane({
 
   return (
     <>
-      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_19rem] gap-3">
+      <div className="mission-team-pane-grid grid h-full min-h-0 grid-cols-[minmax(0,1fr)_19rem] gap-3">
         <Card className="min-h-0">
           <CardHeader className="border-b">
             <CardTitle>Team workspace</CardTitle>
@@ -5363,6 +5585,27 @@ function TeamPane({
             </CardAction>
           </CardHeader>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+            {!teams.length ? (
+              <TeamBootstrapPanel
+                canBootstrapLead={canBootstrapLead}
+                canCreateTeam={canCreateTeam}
+                defaultLeadId={defaultLeadId}
+                leadBootstrapModel={leadBootstrapModel}
+                leadBootstrapProvider={leadBootstrapProvider}
+                leadAgentId={leadAgentId}
+                leadOptions={leadOptions}
+                leadTitle={leadTitle}
+                selectedSourceId={teamSourceId || defaultSourceId}
+                sources={sources}
+                teamName={teamName}
+                onCreateLeadSession={createLeadSession}
+                onCreateTeam={createTeam}
+                onLeadAgentIdChange={setLeadAgentId}
+                onLeadTitleChange={setLeadTitle}
+                onSourceChange={setTeamSourceId}
+                onTeamNameChange={setTeamName}
+              />
+            ) : null}
             <div className="grid grid-cols-3 gap-2">
               <MetricCard label="lead" value={lead?.title || lead?.memberId || "unset"} />
               <MetricCard label="members" value={String(members.length)} />
@@ -5482,6 +5725,36 @@ function TeamPane({
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
+            {!leadOptions.length ? (
+              <form
+                className="mission-team-bootstrap-card"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  createLeadSession();
+                }}
+              >
+                <div>
+                  <div className="mission-team-bootstrap-title">Start first lead</div>
+                  <p className="mission-team-bootstrap-detail">
+                    {leadBootstrapProvider
+                      ? `${leadBootstrapProvider}${leadBootstrapModel ? ` / ${leadBootstrapModel}` : ""}`
+                      : "No provider reported"}
+                  </p>
+                </div>
+                <Field>
+                  <FieldLabel htmlFor="dialog-lead-title">Lead title</FieldLabel>
+                  <Input
+                    id="dialog-lead-title"
+                    value={leadTitle}
+                    onChange={(event) => setLeadTitle(event.target.value)}
+                  />
+                </Field>
+                <Button disabled={!canBootstrapLead} type="submit">
+                  <PowerIcon data-icon="inline-start" />
+                  Start lead
+                </Button>
+              </form>
+            ) : null}
             <form
               className="grid gap-3 rounded-md border bg-muted/20 p-3"
               onSubmit={(event) => {
@@ -5489,7 +5762,7 @@ function TeamPane({
                 createTeam();
               }}
             >
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
                 <Field>
                   <FieldLabel>Source</FieldLabel>
                   <SelectFilter
@@ -5516,13 +5789,7 @@ function TeamPane({
                 </Field>
               </div>
               <Button
-                disabled={
-                  !sources.length ||
-                  !leadOptions.length ||
-                  !teamName.trim() ||
-                  !hasLeadForNewTeam ||
-                  sourceGapActive
-                }
+                disabled={!sources.length || !hasLeadForNewTeam || !canCreateTeam}
                 type="submit"
               >
                 <PlusIcon data-icon="inline-start" />
@@ -5530,7 +5797,7 @@ function TeamPane({
               </Button>
             </form>
             {selectedTeam || modelPresetFixtureEnabled ? (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <form
                   className="grid gap-3 rounded-md border bg-muted/20 p-3"
                   onSubmit={(event) => {

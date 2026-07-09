@@ -908,6 +908,71 @@
     line-height: 1.35;
   }
 
+  .mission-team-bootstrap {
+    display: grid;
+    gap: 0.85rem;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 18%);
+    border-radius: 0.75rem;
+    background: color-mix(in oklch, var(--card), var(--muted) 18%);
+    padding: 0.9rem;
+  }
+
+  .mission-team-bootstrap-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+
+  .mission-team-bootstrap-heading h2 {
+    margin: 0.15rem 0 0;
+    color: var(--foreground);
+    font-size: 1.05rem;
+    font-weight: 760;
+    letter-spacing: 0;
+    line-height: 1.2;
+  }
+
+  .mission-team-bootstrap-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .mission-team-bootstrap-card {
+    display: grid;
+    align-content: start;
+    gap: 0.75rem;
+    min-width: 0;
+    border: 1px solid color-mix(in oklch, var(--border), transparent 12%);
+    border-radius: 0.65rem;
+    background: color-mix(in oklch, var(--background), transparent 28%);
+    padding: 0.8rem;
+  }
+
+  .mission-team-bootstrap-title {
+    color: var(--foreground);
+    font-size: 0.92rem;
+    font-weight: 740;
+    line-height: 1.2;
+  }
+
+  .mission-team-bootstrap-detail {
+    margin: 0.25rem 0 0;
+    min-height: 1.2rem;
+    color: var(--muted-foreground);
+    font-size: 0.78rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .mission-team-bootstrap-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.65rem;
+  }
+
   .mission-model-presets-grid {
     display: grid;
     min-width: 0;
@@ -3894,6 +3959,16 @@
 
     .mission-workspace-settings .mission-dashboard-body {
       overflow: auto;
+    }
+
+    .mission-team-pane-grid {
+      grid-template-columns: minmax(0, 1fr) !important;
+      grid-auto-rows: minmax(0, auto);
+      overflow: auto;
+    }
+
+    .mission-team-bootstrap-grid {
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .mission-workspace-dashboard .mission-dashboard-body > [data-slot="card"],

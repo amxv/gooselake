@@ -1,6 +1,8 @@
 ---
 title: Goosetower And Gooseweb Deployment
 description: "Deploy the Gooseweb browser app and Goosetower realtime gateway with Gooselake as the source of truth."
+order: 56
+category: "Operators"
 summary: "The production topology, config expectations, preflight checks, and reverse proxy notes for Gooseweb and Goosetower."
 ---
 

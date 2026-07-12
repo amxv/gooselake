@@ -7,8 +7,7 @@
   "required": ["schema_revision", "manifest_id", "manifest_revision", "approved_plan", "browser_contract", "scenario", "ownership", "reconstruction", "responsive", "states", "fixtures", "allowlists", "baseline_detected", "known_defects", "non_applicable", "provenance"],
   "properties": {
     "schema_revision": {
-      "type": "string",
-      "pattern": "^gooseweb-acceptance-manifest/v[1-9][0-9]*$"
+      "const": "gooseweb-acceptance-manifest/v4"
     },
     "manifest_id": {
       "type": "string",

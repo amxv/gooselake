@@ -69,7 +69,7 @@
           "const": "verification/gooseweb/ledger/phase-graph-seed.json"
         },
         "schema_revision": {
-          "const": "gooseweb-phase-graph-seed/v8"
+          "const": "gooseweb-phase-graph-seed/v9"
         },
         "candidate_head_sha": {
           "type": "string",

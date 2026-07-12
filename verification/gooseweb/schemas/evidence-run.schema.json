@@ -1,16 +1,242 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gooseweb://schemas/evidence-run/v1",
-  "title": "Gooseweb evidence run descriptor v1",
+  "$id": "gooseweb://schemas/evidence-run/v2",
+  "title": "Gooseweb evidence run descriptor v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_revision", "phase_id", "sha7", "attempt", "root", "manifest", "environment", "screenshots", "console", "network", "websocket", "runtime_state_redacted", "tower_state_redacted", "store_state_redacted", "checks", "metrics", "report", "clearance", "redaction"],
+  "required": [
+    "schema_revision",
+    "phase_id",
+    "candidate_head_sha",
+    "candidate_tree_sha",
+    "sha7",
+    "attempt",
+    "root",
+    "manifest",
+    "browser",
+    "environment",
+    "screenshots",
+    "console",
+    "network",
+    "websocket",
+    "runtime_state_redacted",
+    "tower_state_redacted",
+    "store_state_redacted",
+    "checks",
+    "metrics",
+    "report",
+    "clearance",
+    "redaction"
+  ],
   "properties": {
-    "schema_revision": { "const": "gooseweb-evidence-run/v1" }, "phase_id": { "type": "string" }, "sha7": { "pattern": "^[a-f0-9]{7}$" },
-    "attempt": { "type": "integer", "minimum": 1 }, "root": { "type": "string" }, "manifest": { "type": "object" },
-    "environment": { "type": "string" }, "screenshots": { "type": "array", "minItems": 3 }, "console": { "type": "string" },
-    "network": { "type": "string" }, "websocket": { "type": "string" }, "runtime_state_redacted": { "type": "string" },
-    "tower_state_redacted": { "type": "string" }, "store_state_redacted": { "type": "string" }, "checks": { "type": "string" },
-    "metrics": { "type": ["string", "object"] }, "report": { "type": "string" }, "clearance": { "type": "string" }, "redaction": { "type": "object" }
+    "schema_revision": {
+      "const": "gooseweb-evidence-run/v2"
+    },
+    "phase_id": {
+      "type": "string",
+      "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+    },
+    "candidate_head_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "candidate_tree_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sha7": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{7}$"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "copy",
+        "revision",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "verification/gooseweb/manifests/p01-team-comms-live.json"
+        },
+        "copy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "const": 2
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "browser": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mechanism",
+        "execution_mode",
+        "headed_mode_prohibited",
+        "fresh_unique_session_required",
+        "chromium_binary",
+        "chromium_version",
+        "profile_policy"
+        ,"session_name"
+      ],
+      "properties": {
+        "mechanism": {
+          "const": "agent-browser"
+        },
+        "execution_mode": {
+          "const": "headless"
+        },
+        "headed_mode_prohibited": {
+          "const": true
+        },
+        "fresh_unique_session_required": {
+          "const": true
+        },
+        "chromium_binary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chromium_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "profile_policy": {
+          "enum": [
+            "fresh_ephemeral",
+            "fresh_cleared_persistent"
+          ]
+        },
+        "session_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "environment": {
+      "type": "string",
+      "minLength": 1
+    },
+    "screenshots": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "console": {
+      "type": "string",
+      "minLength": 1
+    },
+    "network": {
+      "type": "string",
+      "minLength": 1
+    },
+    "websocket": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime_state_redacted": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tower_state_redacted": {
+      "type": "string",
+      "minLength": 1
+    },
+    "store_state_redacted": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checks": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reason",
+        "artifacts"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "not_applicable",
+            "captured"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifacts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "report": {
+      "type": "string",
+      "minLength": 1
+    },
+    "clearance": {
+      "type": "string",
+      "minLength": 1
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capture_time",
+        "prohibited"
+      ],
+      "properties": {
+        "capture_time": {
+          "const": true
+        },
+        "prohibited": {
+          "type": "array",
+          "minItems": 9,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "credentials",
+              "cookies",
+              "CSRF values",
+              "bearer tokens",
+              "realtime tickets/query secrets",
+              "provider auth",
+              "raw image bytes",
+              "secret config",
+              "private keys"
+            ]
+          }
+        }
+      }
+    }
   }
 }

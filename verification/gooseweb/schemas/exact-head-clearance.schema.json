@@ -1,19 +1,425 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gooseweb://schemas/exact-head-clearance/v1",
-  "title": "Gooseweb exact-head clearance v1",
+  "$id": "gooseweb://schemas/exact-head-clearance/v2",
+  "title": "Gooseweb exact-head clearance v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_revision", "phase_id", "attempt", "base_sha", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "clean_tree", "hot_reload", "manifest", "approved_plan_sha256", "lease", "stack", "review", "baseline_detected", "known_defects", "clearance"],
+  "required": [
+    "schema_revision",
+    "phase_id",
+    "attempt",
+    "base_sha",
+    "candidate_head_sha",
+    "candidate_tree_sha",
+    "served_head_sha",
+    "served_tree_sha",
+    "clean_tree",
+    "hot_reload",
+    "manifest",
+    "approved_plan_sha256",
+    "lease",
+    "stack",
+    "review",
+    "browser",
+    "baseline_detected",
+    "known_defects",
+    "clearance"
+  ],
   "properties": {
-    "schema_revision": { "const": "gooseweb-exact-head-clearance/v1" },
-    "phase_id": { "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$" },
-    "attempt": { "type": "integer", "minimum": 1 },
-    "base_sha": { "pattern": "^[a-f0-9]{40}$" }, "candidate_head_sha": { "pattern": "^[a-f0-9]{40}$" },
-    "candidate_tree_sha": { "pattern": "^[a-f0-9]{40}$" }, "served_head_sha": { "pattern": "^[a-f0-9]{40}$" },
-    "clean_tree": { "const": true }, "hot_reload": { "const": false },
-    "manifest": { "type": "object" }, "approved_plan_sha256": { "pattern": "^[a-f0-9]{64}$" },
-    "lease": { "type": "object" }, "stack": { "type": "object" }, "review": { "type": "object" },
-    "baseline_detected": { "type": "array" }, "known_defects": { "maxItems": 0 }, "clearance": { "type": "object" }
+    "schema_revision": {
+      "const": "gooseweb-exact-head-clearance/v2"
+    },
+    "phase_id": {
+      "type": "string",
+      "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "candidate_head_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "candidate_tree_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "served_head_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "served_tree_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "clean_tree": {
+      "const": true
+    },
+    "hot_reload": {
+      "const": false
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "revision",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "const": "verification/gooseweb/manifests/p01-team-comms-live.json"
+        },
+        "revision": {
+          "const": 2
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "approved_plan_sha256": {
+      "const": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
+    },
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lease_id",
+        "sequence",
+        "phase_id",
+        "owner_role",
+        "owner_identity",
+        "acquired_at",
+        "released_at",
+        "prior_lease_termination_evidence",
+        "managed_process"
+      ],
+      "properties": {
+        "lease_id": {
+          "type": "string",
+          "pattern": "^gooseweb-migration-[0-9]{6,}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "phase_id": {
+          "type": "string",
+          "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+        },
+        "owner_role": {
+          "const": "supervisor"
+        },
+        "owner_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acquired_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "released_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "prior_lease_termination_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reference"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "no_prior_lease",
+                "terminated_and_cleaned"
+              ]
+            },
+            "reference": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "managed_process": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "identity",
+            "started_at",
+            "stopped_at",
+            "cleanup_completed_at",
+            "termination_evidence"
+          ],
+          "properties": {
+            "identity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "started_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "stopped_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "cleanup_completed_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "termination_evidence": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "stack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dev_dir",
+        "runtime_port",
+        "tower_port",
+        "gooseweb_port",
+        "source_configuration",
+        "branch",
+        "mode",
+        "configuration_sha256"
+      ],
+      "properties": {
+        "dev_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "tower_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "gooseweb_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "source_configuration": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "configuration_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementer_identity",
+        "reviewer_identity",
+        "reviewer_role",
+        "browser_mechanism",
+        "browser_session",
+        "concurrent_mutation_build_format_generation",
+        "findings_route",
+        "final_approval_routed_to_implementer",
+        "replacement_reviewer_full_rerun_required"
+      ],
+      "properties": {
+        "implementer_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewer_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewer_role": {
+          "const": "read_only"
+        },
+        "browser_mechanism": {
+          "const": "agent-browser"
+        },
+        "browser_session": {
+          "type": "string",
+          "minLength": 1
+        },
+        "concurrent_mutation_build_format_generation": {
+          "const": false
+        },
+        "findings_route": {
+          "const": "reviewer_to_implementer"
+        },
+        "final_approval_routed_to_implementer": {
+          "const": false
+        },
+        "replacement_reviewer_full_rerun_required": {
+          "const": true
+        }
+      }
+    },
+    "browser": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mechanism",
+        "execution_mode",
+        "headed_mode_prohibited",
+        "fresh_unique_session_required",
+        "chromium_binary",
+        "chromium_version",
+        "profile_policy"
+        ,"session_name"
+      ],
+      "properties": {
+        "mechanism": {
+          "const": "agent-browser"
+        },
+        "execution_mode": {
+          "const": "headless"
+        },
+        "headed_mode_prohibited": {
+          "const": true
+        },
+        "fresh_unique_session_required": {
+          "const": true
+        },
+        "chromium_binary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chromium_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "profile_policy": {
+          "enum": [
+            "fresh_ephemeral",
+            "fresh_cleared_persistent"
+          ]
+        },
+        "session_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "baseline_detected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scenario_id",
+          "defect_id",
+          "first_divergent_layer",
+          "evidence_references",
+          "owning_correction_phase",
+          "affected_downstream_gates",
+          "product_scenario_status",
+          "description"
+        ],
+        "properties": {
+          "scenario_id": {
+            "type": "string",
+            "pattern": "^GW-[A-Z0-9-]+$"
+          },
+          "defect_id": {
+            "type": "string",
+            "pattern": "^BASE-[A-Z0-9-]+$"
+          },
+          "first_divergent_layer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_references": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "owning_correction_phase": {
+            "type": "string",
+            "pattern": "^P(0[6-9]|10)$"
+          },
+          "affected_downstream_gates": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "product_scenario_status": {
+            "const": "blocked_not_approved"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "known_defects": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "clearance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "recipient_role",
+        "recipient_identity",
+        "product_approved",
+        "issued_at"
+      ],
+      "properties": {
+        "scope": {
+          "const": "verification_infrastructure_only"
+        },
+        "recipient_role": {
+          "const": "lead"
+        },
+        "recipient_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "product_approved": {
+          "const": false
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
   }
 }

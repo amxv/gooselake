@@ -1,13 +1,26 @@
 {
-  "schema_revision": "gooseweb-evidence-run/v1",
+  "schema_revision": "gooseweb-evidence-run/v2",
   "phase_id": "P01",
-  "sha7": "1111111",
-  "attempt": 1,
-  "root": "tmp/gg/gooseweb-migration/P01/1111111/attempt-1/",
+  "candidate_head_sha": "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
+  "candidate_tree_sha": "2c964761367fa4d5fb516bc6130c1af509cfea7d",
+  "sha7": "7adbae8",
+  "attempt": 3,
+  "root": "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-3/",
   "manifest": {
     "copy": "manifest.json",
-    "sha256": "e0cf4748b44aa342abcadfc8ace379926dfb429b928683548a800fb8f1c6d9eb",
-    "revision": 1
+    "sha256": "906d4ba1b7faf72203e475d7c1ccbcc1d3bef26b2ea09dc946525f35924e47a7",
+    "revision": 2,
+    "path": "verification/gooseweb/manifests/p01-team-comms-live.json"
+  },
+  "browser": {
+    "mechanism": "agent-browser",
+    "execution_mode": "headless",
+    "headed_mode_prohibited": true,
+    "fresh_unique_session_required": true,
+    "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "chromium_version": "150.0.7871.115",
+    "profile_policy": "fresh_ephemeral"
+    ,"session_name": "gooseweb-p01-review-attempt-3-headless"
   },
   "environment": "environment.json",
   "screenshots": [
@@ -24,7 +37,8 @@
   "checks": "checks.json",
   "metrics": {
     "status": "not_applicable",
-    "reason": "P01 has no product performance gate."
+    "reason": "P01 has no product performance gate.",
+    "artifacts": []
   },
   "report": "report.md",
   "clearance": "exact-head-clearance.json",
@@ -38,7 +52,8 @@
       "realtime tickets/query secrets",
       "provider auth",
       "raw image bytes",
-      "secret config"
+      "secret config",
+      "private keys"
     ]
   }
 }

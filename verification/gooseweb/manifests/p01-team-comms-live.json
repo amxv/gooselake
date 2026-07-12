@@ -1,10 +1,19 @@
 {
-  "schema_revision": "gooseweb-acceptance-manifest/v1",
+  "schema_revision": "gooseweb-acceptance-manifest/v2",
   "manifest_id": "GW-P01-TEAM-COMMS-LIVE-001",
-  "manifest_revision": 1,
+  "manifest_revision": 2,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
-    "sha256": "d3e55db431e8827ffbd7c4f7e41193a7fb77a99fdb446ea5dcf1fdfdc2b232b8"
+    "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
+  },
+  "browser_contract": {
+    "mechanism": "agent-browser",
+    "execution_mode": "headless",
+    "headed_mode_prohibited": true,
+    "fresh_unique_session_required": true,
+    "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "chromium_version": "150.0.7871.115",
+    "profile_policy": "fresh_ephemeral"
   },
   "scenario": {
     "phase_id": "P01",
@@ -216,6 +225,86 @@
       ],
       "product_scenario_status": "blocked_not_approved",
       "description": "Runtime terminal truth succeeds while the materialized/browser session remains turn_running."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-START-LEAD-NO-ADMISSION",
+      "first_divergent_layer": "browser-command to Goosetower admission/routing boundary",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/report.md#honest-headless-browser-baseline"
+      ],
+      "owning_correction_phase": "P07",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P44",
+        "P45",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "The semantic Start lead control produces no runtime/materialized session, pending state, or visible terminal rejection, so the source-backed Team Comms precondition cannot be established."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-RECONNECT-STATE-DISAGREEMENT",
+      "first_divergent_layer": "Gooseweb Worker/store to React connection-state projection",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/tower-state.redacted.json",
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/websocket.json"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P25",
+        "M3",
+        "P45",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Offline/online and fresh-context reconstruction do not expose an honest connection state; the top level reports degraded while source health reports live."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-MOBILE-COMMS-UNREACHABLE",
+      "first_divergent_layer": "Gooseweb React responsive navigation",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/viewport-results.json",
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/screenshots/520x900.png"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "P47",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "After reload at 520x900, Team Comms is absent from exposed semantic controls, so the critical surface is unreachable."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-WEBSOCKET-OBSERVER-UNAVAILABLE",
+      "first_divergent_layer": "verification observer boundary",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/websocket.json"
+      ],
+      "owning_correction_phase": "P06",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "P01 and agent-browser provide no redacted WebSocket frame observer, so frame behavior is recorded as unavailable and never inferred."
     }
   ],
   "known_defects": [],

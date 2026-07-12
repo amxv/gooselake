@@ -1,8 +1,22 @@
 {
-  "schema_revision": "gooseweb-network-allowlist/v1",
-  "exact_expected": [
-    { "method": "GET", "path": "/", "status": 200 },
-    { "method": "GET", "path": "/v1/realtime", "status": 101 }
+  "schema_revision": "gooseweb-network-allowlist/v2",
+  "exact_http": [
+    {
+      "method": "GET",
+      "path": "/",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/dev-ticket",
+      "status": 200
+    }
   ],
-  "policy": "Unexpected failed HTTP, protocol, network, or WebSocket activity is a failure. Entries match exact method, path, and status; regex and broad suppression are forbidden."
+  "exact_websocket_events": [
+    {
+      "event": "open",
+      "code": 0
+    }
+  ],
+  "policy": "Captures are compared as exact method/path/status and event/code multisets with query strings and secrets excluded at capture. Unexpected HTTP, protocol, network, or WebSocket activity fails. Unavailable WebSocket capture requires an explicit blocked baseline mapping and prohibits inference."
 }

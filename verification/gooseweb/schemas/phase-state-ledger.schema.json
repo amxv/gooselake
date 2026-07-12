@@ -1,12 +1,334 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gooseweb://schemas/phase-state-ledger/v1",
-  "title": "Gooseweb phase state and lease ledger v1",
+  "$id": "gooseweb://schemas/phase-state-ledger/v2",
+  "title": "Gooseweb phase state and lease ledger v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_revision", "approved_plan_sha256", "phases", "lease_history", "clearance_history"],
+  "required": [
+    "schema_revision",
+    "approved_plan_sha256",
+    "phases",
+    "lease_history",
+    "clearance_history"
+  ],
   "properties": {
-    "schema_revision": { "const": "gooseweb-phase-state-ledger/v1" }, "approved_plan_sha256": { "pattern": "^[a-f0-9]{64}$" },
-    "phases": { "type": "array", "minItems": 57, "maxItems": 57 }, "lease_history": { "type": "array" }, "clearance_history": { "type": "array" }
+    "schema_revision": {
+      "const": "gooseweb-phase-state-ledger/v2"
+    },
+    "approved_plan_sha256": {
+      "const": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
+    },
+    "phases": {
+      "type": "array",
+      "minItems": 57,
+      "maxItems": 57,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "phase_id",
+          "prerequisites",
+          "state",
+          "state_reason",
+          "history"
+        ],
+        "properties": {
+          "phase_id": {
+            "type": "string",
+            "pattern": "^P(0[0-9]|[1-4][0-9]|5[0-6])$"
+          },
+          "prerequisites": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^P(0[0-9]|[1-4][0-9]|5[0-6])$"
+            }
+          },
+          "state": {
+            "enum": [
+              "blocked",
+              "cleared",
+              "candidate_ready_for_review"
+            ]
+          },
+          "state_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sequence",
+                "from",
+                "to",
+                "at",
+                "reason",
+                "lease_id",
+                "clearance_ref"
+              ],
+              "properties": {
+                "sequence": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "from": {
+                  "enum": [
+                    "blocked",
+                    "implementing",
+                    "candidate_ready_for_review",
+                    "under_review",
+                    "changes_required",
+                    "cleared"
+                  ]
+                },
+                "to": {
+                  "enum": [
+                    "implementing",
+                    "candidate_ready_for_review",
+                    "under_review",
+                    "changes_required",
+                    "cleared"
+                  ]
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "lease_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "clearance_ref": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "lease_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lease_id",
+          "sequence",
+          "phase_id",
+          "owner_role",
+          "owner_identity",
+          "acquired_at",
+          "released_at",
+          "prior_lease_termination_evidence",
+          "managed_process",
+          "plan_sha256",
+          "candidate",
+          "manifest",
+          "stack",
+          "reviewer",
+          "outcome",
+          "evidence_root"
+        ],
+        "properties": {
+          "lease_id": {
+            "type": "string",
+            "pattern": "^gooseweb-migration-[0-9]{6,}$"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "phase_id": {
+            "type": "string",
+            "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+          },
+          "owner_role": {
+            "const": "supervisor"
+          },
+          "owner_identity": {
+            "type": "string",
+            "minLength": 1
+          },
+          "acquired_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "released_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "prior_lease_termination_evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "reference"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "no_prior_lease",
+                  "terminated_and_cleaned"
+                ]
+              },
+              "reference": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "managed_process": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "identity",
+              "started_at",
+              "stopped_at",
+              "cleanup_completed_at",
+              "termination_evidence"
+            ],
+            "properties": {
+              "identity": {
+                "type": "string",
+                "minLength": 1
+              },
+              "started_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "stopped_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "cleanup_completed_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "termination_evidence": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "plan_sha256": {
+            "const": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
+          },
+          "candidate": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["branch", "head_sha", "tree_sha", "clean_tree", "hot_reload"],
+            "properties": {
+              "branch": { "type": "string", "minLength": 1 },
+              "head_sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+              "tree_sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+              "clean_tree": { "const": true },
+              "hot_reload": { "const": false }
+            }
+          },
+          "manifest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "revision", "sha256"],
+            "properties": {
+              "path": { "const": "verification/gooseweb/manifests/p01-team-comms-live.json" },
+              "revision": { "type": "integer", "minimum": 1 },
+              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            }
+          },
+          "stack": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["dev_dir", "runtime_port", "tower_port", "gooseweb_port", "source_configuration", "mode"],
+            "properties": {
+              "dev_dir": { "type": "string", "minLength": 1 },
+              "runtime_port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+              "tower_port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+              "gooseweb_port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+              "source_configuration": { "type": "string", "minLength": 1 },
+              "mode": { "type": "string", "minLength": 1 }
+            }
+          },
+          "reviewer": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["identity", "browser_session", "browser_execution_mode"],
+            "properties": {
+              "identity": { "type": "string", "minLength": 1 },
+              "browser_session": { "type": "string", "minLength": 1 },
+              "browser_execution_mode": { "const": "headless" }
+            }
+          },
+          "outcome": {
+            "enum": ["changes_required", "cleared"]
+          },
+          "evidence_root": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "clearance_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "phase_id",
+          "lease_id",
+          "clearance_path",
+          "candidate_head_sha",
+          "candidate_tree_sha",
+          "manifest_sha256",
+          "status"
+        ],
+        "properties": {
+          "phase_id": {
+            "type": "string",
+            "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+          },
+          "lease_id": {
+            "type": "string",
+            "pattern": "^gooseweb-migration-[0-9]{6,}$"
+          },
+          "clearance_path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "candidate_head_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "candidate_tree_sha": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "manifest_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "status": {
+            "enum": [
+              "cleared",
+              "changes_required"
+            ]
+          }
+        }
+      }
+    }
   }
 }

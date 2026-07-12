@@ -657,7 +657,6 @@ pub(super) fn runtime_client_from_source(
     let token = config.resolve_runtime_auth(source)?;
     GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
         source.source_id.clone(),
-        source.source_epoch.clone(),
         source.base_url.clone(),
         token,
     ))

@@ -79,6 +79,8 @@ Docs-signal files:
 - provider-specific auth/model behavior
 - ACP v1 limitations
 - SSE replay semantics and cursor precedence
+- source bootstrap snapshot, runtime-issued epoch, empty-source watermark, and
+  old-runtime compatibility semantics
 - operational examples and runbooks
 - process/worktree ownership rules
 - team delivery policy and recovery semantics

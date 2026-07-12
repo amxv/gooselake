@@ -40,13 +40,13 @@ impl SourceHealthState {
             ) => true,
             (Provisioning, Booting | Failed | Terminated) => true,
             (Booting, Live | Failed | Offline | Terminated) => true,
-            (Live, Draining | Stale | Offline | Failed) => true,
+            (Live, Draining | Stale | Offline | Failed | GapDetected | Replaying) => true,
             (Replaying, Live | Stale | Offline | GapDetected | Failed) => true,
             (Draining, Offline | Terminated | Failed) => true,
             (Stale, Live | Offline | GapDetected | Draining | Failed) => true,
             (Offline, Booting | Replaying | Live | Failed | Terminated) => true,
             (Failed, Booting | Offline | Terminated) => true,
-            (GapDetected, Replaying | Stale | Offline | Failed) => true,
+            (GapDetected, Replaying | Stale | Offline | Failed | Live) => true,
             _ => false,
         }
     }
@@ -104,7 +104,10 @@ impl SourceHealth {
         );
         self.state = state;
         if let Some(last_source_seq) = last_source_seq {
-            self.last_source_seq = Some(last_source_seq);
+            self.last_source_seq = Some(
+                self.last_source_seq
+                    .map_or(last_source_seq, |current| current.max(last_source_seq)),
+            );
         }
         self.last_error = last_error;
         self.updated_at = now_ms();

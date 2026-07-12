@@ -117,12 +117,39 @@ async fn spawn_team_broadcast_refresh_runtime(sent: Arc<AtomicBool>) -> SocketAd
                 }))
             }
         };
+        let bootstrap_sent = sent.clone();
+        let source_bootstrap = move || {
+            let sent = bootstrap_sent.clone();
+            async move {
+                let messages = if sent.load(Ordering::SeqCst) {
+                    vec![team_message_json("team_1", "Visible team message")]
+                } else {
+                    Vec::new()
+                };
+                Json(json!({
+                    "source_epoch": "runtime-team-epoch",
+                    "high_watermark": if messages.is_empty() { 0 } else { 1 },
+                    "records": {
+                        "sessions": [session_record()],
+                        "approvals": [],
+                        "teams": [team_with_members_json("team_1")["team"].clone()],
+                        "team_members": team_with_members_json("team_1")["members"].clone(),
+                        "team_messages": messages,
+                        "team_deliveries": [],
+                        "managed_worktrees": [],
+                        "managed_worktree_claims": [],
+                        "processes": []
+                    }
+                }))
+            }
+        };
         let app = Router::new()
             .route(
                 "/v1/teams/{team_id}/broadcasts",
                 axum::routing::post(post_broadcast),
             )
             .route("/v1/events", get(|| async { Json(Vec::<Value>::new()) }))
+            .route("/v1/bootstrap", get(source_bootstrap))
             .route(
                 "/v1/sessions",
                 get(|| async { Json(vec![session_record()]) }),

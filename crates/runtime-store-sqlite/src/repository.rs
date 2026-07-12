@@ -4,8 +4,8 @@ use runtime_core::{NewRuntimeEvent, RuntimeError, RuntimeEventRecord, RuntimeEve
 use rusqlite::{params, TransactionBehavior};
 
 use crate::db::{
-    apply_schema, collect_rows, db_error, fetch_runtime_event_by_event_id, json_to_string,
-    open_connection, runtime_event_from_row,
+    apply_schema, collect_rows, db_error, fetch_runtime_event_by_event_id,
+    initialize_source_identity, json_to_string, open_connection, runtime_event_from_row,
 };
 
 #[derive(Debug, Clone)]
@@ -21,6 +21,7 @@ impl SqliteRuntimeRepository {
     pub fn initialize_schema(&self) -> Result<(), RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         apply_schema(&mut connection)?;
+        initialize_source_identity(&mut connection, &self.database_path)?;
         Ok(())
     }
 

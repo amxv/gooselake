@@ -12,10 +12,10 @@ use std::time::Duration;
 use reqwest::{Client, Method};
 use runtime_core::{
     ApprovalResponseInput, ManagedWorktreeRecord, ProcessDetails, ProcessLogsChunk, ProcessSummary,
-    ProviderAuthStatus, ProviderKind, ResumeSessionInput, RuntimeEventRecord, SendTurnAccepted,
-    SendTurnInput, SessionRecord, TeamDeliveryRecord, TeamInterruptAllResponse,
-    TeamMemberSpawnResponse, TeamMessageAck, TeamViewSnapshotResponse, TeamWithMembers,
-    WorktreeClaimResponse, WorktreeCleanupResponse, WorktreeCreateResponse,
+    ProviderAuthStatus, ProviderKind, ResumeSessionInput, RuntimeEventRecord,
+    RuntimeSourceBootstrap, SendTurnAccepted, SendTurnInput, SessionRecord, TeamDeliveryRecord,
+    TeamInterruptAllResponse, TeamMemberSpawnResponse, TeamMessageAck, TeamViewSnapshotResponse,
+    TeamWithMembers, WorktreeClaimResponse, WorktreeCleanupResponse, WorktreeCreateResponse,
     WorktreeReleaseResponse,
 };
 use serde::de::DeserializeOwned;
@@ -25,7 +25,6 @@ use serde_json::Value;
 #[derive(Debug, Clone)]
 pub struct GooselakeRuntimeClientConfig {
     pub source_id: String,
-    pub source_epoch: String,
     pub base_url: String,
     pub bearer_token: Option<String>,
     pub timeout: Duration,
@@ -34,13 +33,11 @@ pub struct GooselakeRuntimeClientConfig {
 impl GooselakeRuntimeClientConfig {
     pub fn new(
         source_id: impl Into<String>,
-        source_epoch: impl Into<String>,
         base_url: impl Into<String>,
         bearer_token: Option<String>,
     ) -> Self {
         Self {
             source_id: source_id.into(),
-            source_epoch: source_epoch.into(),
             base_url: base_url.into(),
             bearer_token,
             timeout: Duration::from_secs(30),
@@ -51,6 +48,7 @@ impl GooselakeRuntimeClientConfig {
 #[derive(Clone)]
 pub struct GooselakeRuntimeClient {
     http: Client,
+    sse_http: Client,
     config: GooselakeRuntimeClientConfig,
 }
 
@@ -58,7 +56,6 @@ impl fmt::Debug for GooselakeRuntimeClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GooselakeRuntimeClient")
             .field("source_id", &self.config.source_id)
-            .field("source_epoch", &self.config.source_epoch)
             .field("base_url", &self.config.base_url)
             .finish_non_exhaustive()
     }
@@ -70,15 +67,19 @@ impl GooselakeRuntimeClient {
             .timeout(config.timeout)
             .build()
             .map_err(RuntimeClientError::Transport)?;
-        Ok(Self { http, config })
+        // Infinite SSE responses must not inherit the finite JSON request deadline.
+        let sse_http = Client::builder()
+            .build()
+            .map_err(RuntimeClientError::Transport)?;
+        Ok(Self {
+            http,
+            sse_http,
+            config,
+        })
     }
 
     pub fn source_id(&self) -> &str {
         self.config.source_id.as_str()
-    }
-
-    pub fn source_epoch(&self) -> &str {
-        self.config.source_epoch.as_str()
     }
 
     pub fn base_url(&self) -> &str {
@@ -91,6 +92,10 @@ impl GooselakeRuntimeClient {
 
     pub fn http(&self) -> &Client {
         &self.http
+    }
+
+    pub fn sse_http(&self) -> &Client {
+        &self.sse_http
     }
 
     pub fn endpoint(&self, path: &str) -> String {
@@ -111,6 +116,11 @@ impl GooselakeRuntimeClient {
 
     pub async fn version(&self) -> Result<RuntimeVersionResponse, RuntimeClientError> {
         self.request_json(Method::GET, "/v1/version", Option::<&()>::None)
+            .await
+    }
+
+    pub async fn source_bootstrap(&self) -> Result<RuntimeSourceBootstrap, RuntimeClientError> {
+        self.request_json(Method::GET, "/v1/bootstrap", Option::<&()>::None)
             .await
     }
 

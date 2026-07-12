@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, Mutex};
 
-pub const SEED_VERSION: &str = "p02-fake-gooselake/v1";
+pub const SEED_VERSION: &str = "p02-fake-gooselake/v2";
 pub const FIXED_CLOCK_MS: i64 = 1_700_100_000_000;
 pub const SOURCE_ID: &str = "p02-source";
 pub const INITIAL_EPOCH: &str = "p02-epoch-001";
@@ -200,6 +200,7 @@ impl FakeGooselakeSource {
         let public_contract = Router::new()
             .route("/v1/health", get(health))
             .route("/v1/version", get(version))
+            .route("/v1/bootstrap", get(source_bootstrap))
             .route("/v1/providers", get(providers))
             .route("/v1/providers/{provider}/models", get(provider_models))
             .route("/v1/providers/{provider}/auth/status", get(provider_auth))
@@ -295,6 +296,38 @@ async fn health() -> Json<Value> {
 
 async fn version() -> Json<Value> {
     Json(json!({"version":SEED_VERSION}))
+}
+
+async fn source_bootstrap(State(state): State<Shared>) -> Json<Value> {
+    let state = state.lock().await;
+    let team = state.records[1].clone();
+    let high_watermark = state
+        .events
+        .iter()
+        .map(|event| event.row_id)
+        .max()
+        .unwrap_or(0);
+    Json(json!({
+        "source_epoch": state.epoch(),
+        "high_watermark": high_watermark,
+        "records": {
+            "sessions": [state.records[0].clone()],
+            "approvals": [],
+            "teams": [team["team"].clone()],
+            "team_members": team["members"].clone(),
+            "team_messages": message_records(&state.records),
+            "team_deliveries": delivery_records(&state.records),
+            "managed_worktrees": [],
+            "managed_worktree_claims": [],
+            "processes": [{
+                "id":"p02-process-001","session_id":"p02-session-001","tool_call_id":null,
+                "pid":4242,"command":{"argv":["printf","P02 deterministic log"]},
+                "cwd":"/p02/workspace","status":"completed","exit_code":0,"signal":null,
+                "stdout_path":null,"stderr_path":null,"started_at":FIXED_CLOCK_MS+40,
+                "ended_at":FIXED_CLOCK_MS+50,"timeout_ms":1000
+            }]
+        }
+    }))
 }
 
 async fn providers() -> Json<Value> {

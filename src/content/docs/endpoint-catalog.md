@@ -26,6 +26,8 @@ Auth legend:
 - `GET /v1/health` (Bearer)
 - `GET /v1/openapi.yaml` (Bearer)
 - `GET /v1/version` (Bearer)
+- `GET /v1/bootstrap` (Bearer; coherent current records + runtime-issued
+  `source_epoch` + global `high_watermark`)
 
 ## Providers
 
@@ -73,6 +75,17 @@ Session event query parameters:
 Global event query parameters:
 - replay: `after_seq`, `limit`
 - stream: `after_seq`, `limit`, optional `Last-Event-ID` header fallback
+
+Bootstrap contract notes:
+
+- `high_watermark` is `0` for an empty source and otherwise the greatest global
+  runtime event row visible in the same SQLite snapshot as `records`.
+- `source_epoch` belongs to the runtime database generation, not Goosetower
+  configuration.
+- Old or unreachable runtimes are unavailable for continuity-sensitive
+  materialization; clients must not substitute a static epoch.
+- Participating bootstrap tables are capped at 10,000 rows each; overflow is an
+  explicit error, never a partial snapshot.
 
 ## Teams + Comms
 

@@ -61,7 +61,6 @@ async fn client_paginates_global_replay_with_after_seq() {
 fn test_client(addr: SocketAddr, token: Option<String>) -> GooselakeRuntimeClient {
     GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
         "local",
-        "epoch-test",
         format!("http://{addr}"),
         token,
     ))

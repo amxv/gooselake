@@ -1,0 +1,104 @@
+{
+  "schema_revision": "gooseweb-acceptance-manifest/v4",
+  "manifest_id": "GW-P06-SOURCE-BOOTSTRAP-001",
+  "manifest_revision": 1,
+  "approved_plan": {
+    "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
+    "sha256": "3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d"
+  },
+  "browser_contract": {
+    "mechanism": "agent-browser",
+    "execution_mode": "headless",
+    "headed_mode_prohibited": true,
+    "fresh_unique_session_required": true,
+    "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "chromium_version": "150.0.7871.115",
+    "profile_policy": "fresh_ephemeral"
+  },
+  "scenario": {
+    "phase_id": "P06",
+    "title": "Runtime-issued source epoch and coherent bootstrap watermark",
+    "product_clearance": "pending",
+    "stable_scenario_id": "GW-P06-SOURCE-BOOTSTRAP-001",
+    "preconditions": [
+      "The runtime SQLite store is initialized or safely migrated to schema v2.",
+      "Goosetower is configured with a deliberately incorrect legacy source_epoch to prove runtime authority wins.",
+      "The fake source emits the deterministic rows 4 through 11 sequence through public runtime contracts."
+    ],
+    "actions": [
+      {
+        "id": "bootstrap-through-row-10-then-reduce-row-11",
+        "control": {"role": "textbox", "accessible_name": "Team comms composer"},
+        "submit": {"role": "button", "accessible_name": "Send team comms message"},
+        "expected_command_count": 1,
+        "command": "sendTeamMessage",
+        "expected_runtime": ["one transaction returns current materializer records, runtime source epoch, and high_watermark 10"],
+        "expected_goosetower": ["bootstrap cursor is 10 and row 11 reduces without a false gap or cursor regression"],
+        "expected_worker_store": ["source cursor remains monotonic across reload and Tower restart"],
+        "expected_visible": ["source health is live or honestly stale/offline; it never claims configured-epoch continuity"]
+      },
+      {
+        "id": "sse-deadline-and-live-gap-baseline-closures",
+        "control": {"role": "button", "accessible_name": "Reconnect"},
+        "submit": {"role": "button", "accessible_name": "Reconnect"},
+        "expected_command_count": 1,
+        "command": "not_applicable_read_only_reconnect",
+        "expected_runtime": ["SSE remains open beyond the 30-second finite JSON deadline"],
+        "expected_goosetower": ["rows 2 and 3 retain cursor 3; Live to GapDetected is legal and retains the contiguous cursor"],
+        "expected_worker_store": ["not_applicable: P09 owns Worker gap algebra"],
+        "expected_visible": ["not_applicable: backend contract closure precedes later UI repair phases"]
+      }
+    ],
+    "authority_chain": [
+      {"layer": "Gooselake", "required": ["durable source epoch", "single SQLite snapshot for records plus high watermark", "zero watermark for an empty source"]},
+      {"layer": "Goosetower", "required": ["runtime epoch overrides configured legacy value", "SSE uses no total deadline", "cursor and health transitions are monotonic"]},
+      {"layer": "Gooseweb Worker/store", "required": ["observed only; P09 owns browser cursor repair algebra", "no P06 browser-store authority is introduced"]},
+      {"layer": "Gooseweb React", "required": ["observed only; no P06 UI redesign", "honest stale or offline state remains required for reviewer acceptance"]}
+    ],
+    "cardinality": {"browser_actions": 2, "commands": 2, "runtime_messages": 1, "visible_message_instances": 1, "duplicates": 0},
+    "chronology": "oldest_first_by_authoritative_order_not_client_timestamp",
+    "golden_goose_acceptance_lessons": ["consistent SQLite read snapshot", "runtime-issued epoch authority", "monotonic reconnect cursor", "explicit stale or unavailable compatibility", "gap detection retains contiguous authority", "overlap remains idempotent", "fresh bootstrap never uses oldest-row inference", "empty sources have explicit zero watermark", "credentials never enter materializer bootstrap"]
+  },
+  "ownership": {
+    "gooselake": {"impact": "changed", "reason": "SQLite schema/store and authenticated HTTP now own a durable source epoch and coherent bootstrap snapshot."},
+    "goosetower": {"impact": "changed", "reason": "Runtime client, bootstrap, SSE fan-in, and health compatibility consume runtime authority and never infer continuity from configured epoch or ascending replay."},
+    "gooseweb": {"impact": "no_change", "reason": "P06 changes no Worker, store, or React behavior."},
+    "auth_account_state": {"impact": "no_change", "reason": "The new route uses the existing runtime bearer boundary and adds no account state."},
+    "protocol_generated_code": {"impact": "no_change", "reason": "No Protobuf schema or generated code changes."},
+    "api_narrative_docs": {"impact": "changed", "reason": "OpenAPI is regenerated and runtime API narrative documents the bootstrap, epoch, high-watermark, and old-runtime behavior."}
+  },
+  "reconstruction": ["ordinary_reload", "fresh_chromium_context_profile", "websocket_loss_reconnect", "navigation_away_and_back"],
+  "responsive": {"viewports": ["1440x1000", "820x1000", "520x900"], "assertions": ["reviewer observes honest source health at each required viewport", "document width does not overflow", "composer bottom remains inside the viewport", "critical actions remain reachable while source health is stale or unavailable"]},
+  "states": {
+    "empty": {"applicability": "required", "expectation": "Runtime epoch is nonempty and high_watermark is zero."},
+    "loading": {"applicability": "required", "expectation": "Bootstrap reports replaying until the coherent snapshot is installed."},
+    "stale_gap_replaying": {"applicability": "required", "expectation": "A gap retains the last contiguous cursor and never panics."},
+    "rejection_conflict": {"applicability": "not_applicable", "reason": "P06 adds a read-only bootstrap route."},
+    "permission_denied": {"applicability": "required", "expectation": "The bootstrap route requires the existing runtime bearer token."},
+    "unsupported_provider": {"applicability": "not_applicable", "reason": "Source authority is provider-neutral."},
+    "terminal_error": {"applicability": "required", "expectation": "404 old runtime and unavailable runtime remain offline with source_epoch unavailable."}
+  },
+  "fixtures": {"allowed_use": "source_fixture_through_real_tower_only", "product_correctness_use": false, "default_fixture_leak_assertions": ["No fake data enters production bootstrap.", "P02 controls remain verification-only.", "Default and production URLs contain no fixture query parameter."], "gating": "P02 fake source only under test or p02-verification feature."},
+  "allowlists": {"console": "verification/gooseweb/allowlists/console.json", "network": "verification/gooseweb/allowlists/network.json", "unexpected_console_network_protocol_websocket_failure": "fail"},
+  "baseline_detected": [],
+  "known_defects": [],
+  "non_applicable": {
+    "schema_migration": {"status": "required", "reason": "Existing stores add source_metadata and safely initialize epoch/generation marker."},
+    "backfill": {"status": "required", "reason": "Existing stores receive one durable epoch without rewriting runtime records."},
+    "compatibility": {"status": "required", "reason": "Old/404 and unavailable runtimes are explicit offline/unavailable and cannot fake continuity."},
+    "rollback": {"status": "required", "reason": "Code rollback leaves additive source_metadata harmless; old binaries ignore it."},
+    "performance": {"status": "observed_only", "reason": "One bounded bootstrap request replaces many record requests and the ascending cursor probe."},
+    "security": {"status": "required", "reason": "Bootstrap excludes credentials, turn internals, and diagnostics journals and remains bearer-authenticated."},
+    "data_retention_gc": {"status": "not_applicable", "reason": "Epoch metadata is durable identity and is not GC data."},
+    "deployment": {"status": "observed_only", "reason": "Tower requires the new runtime contract and explicitly reports older runtimes unavailable."},
+    "provenance_reuse": {"status": "reference_only", "reason": "Golden Goose consistent-snapshot queries/tests informed transaction design; no code was copied."}
+  },
+  "provenance": {
+    "source_repository": "/Users/ashray/code/amxv/gg-desktop",
+    "source_commit": "f6b39b01a57f491bdf52314367c0a04219651989",
+    "references": ["src-tauri/src/agent_runtime/timeline_store/queries.rs#get_session_snapshot", "src-tauri/src/agent_runtime/timeline_store/tests.rs#window_query_uses_single_snapshot_when_writer_commits_mid_read"],
+    "reuse_status": "reference_only",
+    "destination_symbols": ["SqliteRuntimeRepository::source_bootstrap"],
+    "native_tauri_assumptions_removed": {"status": "not_applicable", "reason": "Only the SQLite snapshot invariant was referenced."}
+  }
+}

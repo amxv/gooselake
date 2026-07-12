@@ -1,9 +1,16 @@
-pub(crate) const SCHEMA_VERSION: i64 = 1;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 pub(crate) const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
   applied_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS source_metadata (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  source_epoch TEXT NOT NULL,
+  generation_marker TEXT NOT NULL,
+  database_fingerprint TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

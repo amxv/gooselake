@@ -9,6 +9,7 @@ authors.workspace = true
 async-trait.workspace = true
 rusqlite = { version = "0.32", features = ["bundled"] }
 runtime-core = { path = "../runtime-core" }
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

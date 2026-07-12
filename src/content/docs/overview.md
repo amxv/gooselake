@@ -93,6 +93,8 @@ Gooselake owns these responsibilities because clients are poor places to keep th
 - one-active-turn session coordination
 - durable turns, approvals, and terminal states
 - replayable session/team/process/global events
+- a durable source generation epoch and transactionally coherent bootstrap
+  high watermark for rebuildable clients
 - provider auth staging and provider readiness checks
 - process execution and bounded log capture
 - team messages, deliveries, retries, cancellation, and spawn operations

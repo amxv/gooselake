@@ -37,17 +37,23 @@ pub struct SseFrame {
 #[derive(Clone)]
 pub struct RuntimeSseFanIn {
     client: GooselakeRuntimeClient,
+    source_epoch: String,
     config: RuntimeSseFanInConfig,
     health_tx: watch::Sender<SourceHealth>,
 }
 
 impl RuntimeSseFanIn {
-    pub fn new(client: GooselakeRuntimeClient, config: RuntimeSseFanInConfig) -> Self {
+    pub fn new(
+        client: GooselakeRuntimeClient,
+        source_epoch: impl Into<String>,
+        config: RuntimeSseFanInConfig,
+    ) -> Self {
         let source_id = client.source_id().to_string();
-        let source_epoch = client.source_epoch().to_string();
-        let (health_tx, _) = watch::channel(SourceHealth::new(source_id, source_epoch));
+        let source_epoch = source_epoch.into();
+        let (health_tx, _) = watch::channel(SourceHealth::new(source_id, source_epoch.clone()));
         Self {
             client,
+            source_epoch,
             config,
             health_tx,
         }
@@ -87,6 +93,7 @@ impl RuntimeSseFanIn {
                     self.transition(SourceHealthState::Stale, cursor, None);
                 }
                 Err(error) => {
+                    cursor = self.health().last_source_seq.or(cursor);
                     self.transition(SourceHealthState::Offline, cursor, Some(error.to_string()));
                 }
             }
@@ -114,7 +121,7 @@ impl RuntimeSseFanIn {
             }
         }
 
-        let mut request = self.client.http().get(url).headers(headers);
+        let mut request = self.client.sse_http().get(url).headers(headers);
         if let Some(token) = self.client.bearer_token() {
             request = request.bearer_auth(token);
         }
@@ -152,15 +159,16 @@ impl RuntimeSseFanIn {
                 if let Some(previous) = last_seq {
                     if source_seq > previous + 1 {
                         self.transition(SourceHealthState::GapDetected, Some(previous), None);
+                        return Ok(last_seq);
                     }
                 }
-                last_seq = Some(source_seq);
                 if !seen_source_seqs.insert(source_seq) {
                     continue;
                 }
+                last_seq = Some(source_seq);
                 let source_event = SourceEvent::from_runtime_event(
                     self.client.source_id().to_string(),
-                    self.client.source_epoch().to_string(),
+                    self.source_epoch.clone(),
                     runtime_event,
                 );
                 self.transition(SourceHealthState::Live, Some(source_seq), None);
@@ -280,12 +288,11 @@ mod tests {
         let addr = spawn_sse_mock(observed.clone()).await;
         let client = GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
             "local",
-            "epoch-test",
             format!("http://{addr}"),
             Some("runtime-token".to_string()),
         ))
         .expect("client");
-        let fan_in = RuntimeSseFanIn::new(client, RuntimeSseFanInConfig::default());
+        let fan_in = RuntimeSseFanIn::new(client, "epoch-test", RuntimeSseFanInConfig::default());
         let (tx, mut rx) = mpsc::channel(8);
         let mut seen = HashSet::new();
 
@@ -321,12 +328,11 @@ mod tests {
         let addr = spawn_decode_then_session_mock(calls.clone()).await;
         let client = GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
             "local",
-            "epoch-test",
             format!("http://{addr}"),
             None,
         ))
         .expect("client");
-        let fan_in = RuntimeSseFanIn::new(client, RuntimeSseFanInConfig::default());
+        let fan_in = RuntimeSseFanIn::new(client, "epoch-test", RuntimeSseFanInConfig::default());
         let (tx, mut rx) = mpsc::channel(8);
         let mut seen = HashSet::new();
 

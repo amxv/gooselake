@@ -160,7 +160,6 @@ impl MaterializedState {
         let model_capabilities = self.source_metadata.model_capabilities.clone();
         self.source_metadata = SourceMetadataView::from_source_config(source);
         self.source_metadata.model_capabilities = model_capabilities;
-        self.source_health.state = source.lifecycle;
         self.bump_source_health_version();
     }
 

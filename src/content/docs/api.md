@@ -56,7 +56,7 @@ See [Endpoint Catalog](/docs/endpoint-catalog) for the full route list.
 
 Top-level groups:
 
-- Runtime/meta: health, version, OpenAPI, diagnostics
+- Runtime/meta: health, version, consistent source bootstrap, OpenAPI, diagnostics
 - Providers/auth: provider list/models plus Codex, Claude, and ACP auth endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
 - Global events: replay and stream
@@ -242,6 +242,35 @@ The runtime normalizes to provider approval behavior when the provider supports 
 
 ## SSE and replay model
 
+### Consistent source bootstrap
+
+`GET /v1/bootstrap` is the bearer-protected reconstruction boundary for
+Goosetower. It returns:
+
+- `source_epoch`: a runtime-issued durable-store generation identifier
+- `high_watermark`: the greatest global `runtime_events.id` visible to the read,
+  or `0` for an empty event ledger
+- `records`: the current sessions, approvals, teams, team members, bounded-use
+  team messages/deliveries, managed worktrees/claims, and processes needed by
+  the materializer
+
+The runtime reads the epoch, watermark, and all returned records from one
+SQLite read transaction. A concurrent commit after the watermark read is not
+partially visible in `records`. The response intentionally excludes provider
+credentials, turn internals, and diagnostic journals. Bootstrap reads are
+bounded to 10,000 rows per participating SQLite table; an oversized source
+fails explicitly instead of returning a partial snapshot.
+
+The source epoch persists across ordinary runtime restarts. It rotates when a
+database is copied or replaced: the runtime validates both a generation marker
+and the database file identity, so copying the marker with the database does
+not preserve the old epoch. A reused global row ID therefore cannot be mistaken
+for continuity. Goosetower treats this runtime value as authoritative; legacy
+configured `source_epoch` values do not override it. A runtime that does not
+implement this endpoint, or cannot be reached, is reported as
+offline/unavailable and requires resynchronization rather than receiving a
+fabricated epoch.
+
 SSE endpoints:
 
 - `GET /v1/events/stream`
@@ -264,6 +293,9 @@ Behavior:
 - otherwise stream endpoints use the `Last-Event-ID` header
 - invalid `Last-Event-ID` returns HTTP `400`
 - keepalive pings are sent every 10 seconds
+- infinite SSE requests do not use the finite JSON request deadline
+- reconnect cursors retain the highest contiguous row already decoded; health
+  updates cannot move the cursor backward
 
 SSE event envelope:
 

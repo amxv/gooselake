@@ -47,7 +47,7 @@ impl RuntimeHealthClient {
         source: &RuntimeSourceConfig,
     ) -> RuntimeSourceStatus {
         if !source.enabled {
-            return RuntimeSourceStatus::from_source(source, "disabled", None, None);
+            return RuntimeSourceStatus::from_source(source, None, "disabled", None, None);
         }
 
         let token = match config.resolve_runtime_auth(source) {
@@ -55,6 +55,7 @@ impl RuntimeHealthClient {
             Err(error) => {
                 return RuntimeSourceStatus::from_source(
                     source,
+                    None,
                     "auth_error",
                     None,
                     Some(error.to_string()),
@@ -64,7 +65,6 @@ impl RuntimeHealthClient {
 
         let runtime_client = match GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
             source.source_id.clone(),
-            source.source_epoch.clone(),
             source.base_url.clone(),
             token,
         )) {
@@ -72,6 +72,7 @@ impl RuntimeHealthClient {
             Err(error) => {
                 return RuntimeSourceStatus::from_source(
                     source,
+                    None,
                     "offline",
                     None,
                     Some(error.to_string()),
@@ -84,6 +85,7 @@ impl RuntimeHealthClient {
             Err(error) => {
                 return RuntimeSourceStatus::from_source(
                     source,
+                    None,
                     "offline",
                     None,
                     Some(error.to_string()),
@@ -91,16 +93,34 @@ impl RuntimeHealthClient {
             }
         }
 
+        let bootstrap = match runtime_client.source_bootstrap().await {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => {
+                return RuntimeSourceStatus::from_source(
+                    source,
+                    None,
+                    "incompatible",
+                    None,
+                    Some(format!("runtime bootstrap authority unavailable: {error}")),
+                );
+            }
+        };
+
         match runtime_client.version().await {
             Ok(version_payload) => RuntimeSourceStatus::from_source(
                 source,
+                Some(bootstrap.source_epoch),
                 "healthy",
                 Some(version_payload.version),
                 None,
             ),
-            Err(error) => {
-                RuntimeSourceStatus::from_source(source, "unhealthy", None, Some(error.to_string()))
-            }
+            Err(error) => RuntimeSourceStatus::from_source(
+                source,
+                Some(bootstrap.source_epoch),
+                "unhealthy",
+                None,
+                Some(error.to_string()),
+            ),
         }
     }
 }
@@ -332,13 +352,14 @@ pub struct RuntimeSourceStatus {
 impl RuntimeSourceStatus {
     fn from_source(
         source: &RuntimeSourceConfig,
+        source_epoch: Option<String>,
         health: &'static str,
         version: Option<String>,
         error: Option<String>,
     ) -> Self {
         Self {
             source_id: source.source_id.clone(),
-            source_epoch: source.source_epoch.clone(),
+            source_epoch: source_epoch.unwrap_or_else(|| "unavailable".to_string()),
             source_kind: source.source_kind.clone(),
             base_url: source.base_url.clone(),
             enabled: source.enabled,
@@ -548,6 +569,7 @@ mod tests {
         let json: Value = serde_json::from_slice(&body).expect("sources json");
         let source = &json["sources"][0];
         assert_eq!(source["source_id"], "local");
+        assert_eq!(source["source_epoch"], "runtime-health-epoch");
         assert_eq!(source["health"], "healthy");
         assert_eq!(source["version"], "9.9.9-test");
         assert_eq!(source["workspace_id"], "default");
@@ -876,6 +898,28 @@ mod tests {
                         return StatusCode::UNAUTHORIZED.into_response();
                     }
                     Json(serde_json::json!({ "version": "9.9.9-test" })).into_response()
+                }),
+            )
+            .route(
+                "/v1/bootstrap",
+                get(move |headers: HeaderMap| async move {
+                    let authorized = headers
+                        .get(header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        == Some(format!("Bearer {expected_token}").as_str());
+                    if !authorized {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    Json(serde_json::json!({
+                        "source_epoch": "runtime-health-epoch",
+                        "high_watermark": 0,
+                        "records": {
+                            "sessions": [], "approvals": [], "teams": [],
+                            "team_members": [], "team_messages": [], "team_deliveries": [],
+                            "managed_worktrees": [], "managed_worktree_claims": [], "processes": []
+                        }
+                    }))
+                    .into_response()
                 }),
             );
         let listener = TcpListener::bind("127.0.0.1:0")

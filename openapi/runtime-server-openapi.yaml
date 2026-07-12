@@ -40,6 +40,16 @@ paths:
             application/yaml:
               schema:
                 type: string
+  /v1/bootstrap:
+    get:
+      summary: Consistent runtime source bootstrap and high watermark
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v1/diagnostics:
     get:
       summary: Runtime diagnostics summary

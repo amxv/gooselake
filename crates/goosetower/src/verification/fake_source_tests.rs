@@ -30,7 +30,6 @@ async fn spawn_source(source: FakeGooselakeSource) -> (FakeGooselakeSource, Stri
 fn client(base: String) -> GooselakeRuntimeClient {
     GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
         SOURCE_ID,
-        INITIAL_EPOCH,
         base,
         Some(RUNTIME_BEARER.into()),
     ))
@@ -42,7 +41,7 @@ fn gateway(base: String) -> GatewayState {
     config.debug.endpoints_enabled = true;
     config.runtimes.sources = vec![RuntimeSourceConfig {
         source_id: SOURCE_ID.into(),
-        source_epoch: INITIAL_EPOCH.into(),
+        source_epoch: "configured-epoch-must-not-win".into(),
         base_url: base,
         bearer_token: Some(RUNTIME_BEARER.into()),
         display_name: "P02 deterministic source".into(),
@@ -66,20 +65,98 @@ async fn fake_source_public_contract_bootstraps_real_materializer() {
     let (_source, base) = spawn().await;
     let client = client(base);
     assert_eq!(client.version().await.unwrap().version, SEED_VERSION);
-    let bootstrap = SourceBootstrap::from_runtime_client(
-        &client,
-        BootstrapOptions {
-            replay_cursor_limit: 3,
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
+    let bootstrap = SourceBootstrap::from_runtime_client(&client, BootstrapOptions::default())
+        .await
+        .unwrap();
     assert_eq!(bootstrap.state.sessions.len(), 1);
     assert_eq!(bootstrap.state.teams.len(), 1);
     assert_eq!(bootstrap.state.messages_by_team["p02-team-001"].len(), 1);
     assert_eq!(bootstrap.state.processes.len(), 1);
     assert_eq!(bootstrap.state.source_health.last_source_seq, Some(3));
+}
+
+#[tokio::test]
+async fn rows_4_through_11_remain_eligible_after_authoritative_bootstrap() {
+    let (source, base) = spawn().await;
+    apply_control(&base, FaultControl::EmitBatch { count: 7 }).await;
+    let runtime = client(base.clone());
+    let bootstrap = SourceBootstrap::from_runtime_client(&runtime, BootstrapOptions::default())
+        .await
+        .expect("bootstrap through row 10");
+    assert_eq!(bootstrap.state.source_health.last_source_seq, Some(10));
+
+    apply_control(&base, FaultControl::EmitNext).await;
+    let fan_in = RuntimeSseFanIn::new(
+        runtime,
+        INITIAL_EPOCH,
+        RuntimeSseFanInConfig {
+            stale_after: Duration::from_millis(50),
+            ..Default::default()
+        },
+    );
+    let (tx, mut rx) = mpsc::channel(4);
+    let mut seen = HashSet::new();
+    assert_eq!(
+        fan_in.consume_once(Some(10), &tx, &mut seen).await.unwrap(),
+        Some(11)
+    );
+    drop(tx);
+    let row_11 = rx.recv().await.expect("row 11 remains replay eligible");
+    assert_eq!(row_11.source_seq, 11);
+    let mut state = bootstrap.state;
+    let effect = state.reduce_source_event(row_11);
+    assert!(!effect.duplicate);
+    assert_eq!(state.source_health.last_source_seq, Some(11));
+    assert_eq!(source.observer().await.events.last().unwrap().row_id, 11);
+}
+
+#[tokio::test]
+async fn old_runtime_without_bootstrap_contract_is_explicitly_offline() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = axum::Router::new().route(
+        "/v1/sessions",
+        axum::routing::get(|| async { axum::Json(serde_json::json!([])) }),
+    );
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    let mut config = GoosetowerConfig::default();
+    config.runtimes.sources = vec![RuntimeSourceConfig {
+        source_id: "old-runtime".into(),
+        source_epoch: "configured-epoch-must-not-win".into(),
+        base_url: format!("http://{address}"),
+        bearer_token: None,
+        ..Default::default()
+    }];
+    let gateway = GatewayState::new(Arc::new(config)).unwrap();
+    gateway.bootstrap_enabled_sources().await;
+    let observer = gateway.debug_materializer_summary().await;
+    assert_eq!(observer[0].source_epoch, "unavailable");
+    assert_eq!(observer[0].source_health.state, SourceHealthState::Offline);
+    assert!(observer[0]
+        .source_health
+        .last_error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("unsupported"));
+}
+
+#[tokio::test]
+async fn unavailable_runtime_does_not_claim_configured_epoch_continuity() {
+    let mut config = GoosetowerConfig::default();
+    config.runtimes.sources = vec![RuntimeSourceConfig {
+        source_id: "offline-runtime".into(),
+        source_epoch: "configured-epoch-must-not-win".into(),
+        base_url: "http://127.0.0.1:9".into(),
+        bearer_token: None,
+        ..Default::default()
+    }];
+    let gateway = GatewayState::new(Arc::new(config)).unwrap();
+    gateway.bootstrap_enabled_sources().await;
+    let observer = gateway.debug_materializer_summary().await;
+    assert_eq!(observer[0].source_epoch, "unavailable");
+    assert_eq!(observer[0].source_health.state, SourceHealthState::Offline);
+    assert!(observer[0].source_health.last_error.is_some());
 }
 
 #[tokio::test]
@@ -286,7 +363,7 @@ async fn fake_source_bootstraps_real_gateway_materialized_observer() {
     assert_eq!(observer[0].sessions, 1);
     assert_eq!(observer[0].teams, 1);
     assert_eq!(observer[0].processes, 1);
-    assert_eq!(observer[0].source_health.last_source_seq, Some(1));
+    assert_eq!(observer[0].source_health.last_source_seq, Some(3));
 }
 
 #[tokio::test]
@@ -319,6 +396,7 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
     );
     let fan_in = RuntimeSseFanIn::new(
         runtime_client,
+        INITIAL_EPOCH,
         RuntimeSseFanInConfig {
             stale_after: Duration::from_millis(50),
             ..Default::default()
@@ -510,7 +588,6 @@ async fn supervisor_epoch_restart_pairs_fresh_source_and_tower_configuration() {
     gateway.bootstrap_enabled_sources().await;
     let runtime = GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
         SOURCE_ID,
-        "p02-epoch-002",
         base,
         Some(RUNTIME_BEARER.into()),
     ))
@@ -528,6 +605,7 @@ async fn supervisor_epoch_restart_pairs_fresh_source_and_tower_configuration() {
         .unwrap();
     let fan_in = RuntimeSseFanIn::new(
         runtime,
+        "p02-epoch-002",
         RuntimeSseFanInConfig {
             stale_after: Duration::from_millis(25),
             ..Default::default()
@@ -577,6 +655,7 @@ async fn replay_paginates_and_sse_handoff_dedupes_overlap() {
     apply_control(&base, FaultControl::EmitNext).await;
     let fan_in = RuntimeSseFanIn::new(
         client,
+        INITIAL_EPOCH,
         RuntimeSseFanInConfig {
             stale_after: Duration::from_millis(50),
             ..Default::default()
@@ -600,6 +679,7 @@ async fn keepalive_covers_global_and_scoped_idle_streams_without_offline_churn()
     let (_source, base) = spawn().await;
     let fan_in = RuntimeSseFanIn::new(
         client(base.clone()),
+        INITIAL_EPOCH,
         RuntimeSseFanInConfig {
             stale_after: Duration::from_millis(10_500),
             reconnect_delay: Duration::from_millis(25),
@@ -669,20 +749,20 @@ async fn keepalive_covers_global_and_scoped_idle_streams_without_offline_churn()
 }
 
 #[tokio::test]
-async fn sse_total_deadline_reconnect_loses_cursor_at_real_stale_window() {
+async fn sse_stream_has_no_total_deadline_and_retains_reconnect_cursor() {
     let (_source, base) = spawn().await;
     let config = RuntimeSseFanInConfig {
         replay_page_limit: 1_000,
         reconnect_delay: Duration::from_millis(250),
         stale_after: Duration::from_millis(30_000),
     };
-    let direct = RuntimeSseFanIn::new(client(base.clone()), config.clone());
+    let direct = RuntimeSseFanIn::new(client(base.clone()), INITIAL_EPOCH, config.clone());
     let (direct_tx, _direct_output) = mpsc::channel(16);
-    let direct_task = tokio::spawn(async move {
+    let mut direct_task = tokio::spawn(async move {
         let mut seen = HashSet::new();
         direct.consume_once(Some(1), &direct_tx, &mut seen).await
     });
-    let fan_in = RuntimeSseFanIn::new(client(base.clone()), config);
+    let fan_in = RuntimeSseFanIn::new(client(base.clone()), INITIAL_EPOCH, config);
     let observed_health = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let mut health_rx = fan_in.subscribe_health();
     let observed_health_task = observed_health.clone();
@@ -706,69 +786,49 @@ async fn sse_total_deadline_reconnect_loses_cursor_at_real_stale_window() {
         .unwrap();
     assert_eq!([replay_two.source_seq, replay_three.source_seq], [2, 3]);
 
-    let direct_error = tokio::time::timeout(Duration::from_secs(32), direct_task)
-        .await
-        .expect("the configured total request deadline must expire")
-        .expect("direct consume task must not panic")
-        .expect_err("infinite SSE currently inherits the finite request deadline");
-    match direct_error {
-        crate::runtime::RuntimeClientError::Transport(error) => {
-            assert!(error.is_timeout());
-            assert_eq!(error.to_string(), "error decoding response body");
-        }
-        other => panic!("expected timeout transport error, received {other:?}"),
-    }
+    assert!(
+        tokio::time::timeout(Duration::from_secs(32), &mut direct_task)
+            .await
+            .is_err()
+    );
+    direct_task.abort();
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(fan_in.health().state, SourceHealthState::Live);
-    assert_eq!(fan_in.health().last_source_seq, Some(1));
+    assert_eq!(fan_in.health().last_source_seq, Some(3));
     assert!(output.try_recv().is_err());
     let health = observed_health.lock().await.clone();
-    assert!(health.iter().any(|health| {
-        health.state == SourceHealthState::Offline
-            && health.last_source_seq == Some(1)
-            && health.last_error.as_deref()
-                == Some("runtime transport error: error decoding response body")
-    }));
-    assert!(health.iter().any(|health| {
-        health.state == SourceHealthState::Replaying && health.last_source_seq == Some(1)
-    }));
     let cursors = health
         .iter()
         .filter_map(|health| health.last_source_seq)
         .collect::<Vec<_>>();
-    assert!(cursors.windows(2).any(|pair| pair == [3, 1]));
+    assert!(!cursors.windows(2).any(|pair| pair[1] < pair[0]));
     fan_in_task.abort();
     health_task.abort();
 }
 
 #[tokio::test]
-async fn gap_fault_localizes_existing_live_to_gap_transition_baseline() {
+async fn live_to_gap_transition_is_legal_and_retains_contiguous_cursor() {
     let (_source, base) = spawn().await;
     apply_control(&base, FaultControl::GapNext).await;
     apply_control(&base, FaultControl::EmitNext).await;
     let fan_in = RuntimeSseFanIn::new(
         client(base),
+        INITIAL_EPOCH,
         RuntimeSseFanInConfig {
             stale_after: Duration::from_millis(50),
             ..Default::default()
         },
     );
     let (tx, _rx) = mpsc::channel(16);
+    let health = fan_in.clone();
     let task = tokio::spawn(async move {
         let mut seen = HashSet::new();
         fan_in.consume_once(Some(3), &tx, &mut seen).await
     });
-    let failure = task
-        .await
-        .expect_err("P06 baseline must remain detected in P02");
-    assert!(failure.is_panic());
-    let panic = failure.into_panic();
-    let message = panic
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| panic.downcast_ref::<&str>().copied())
-        .unwrap_or_default();
-    assert!(message.contains("invalid source lifecycle transition Live -> GapDetected"));
+    let result = task.await.expect("gap handling must not panic").unwrap();
+    assert_eq!(result, Some(3));
+    assert_eq!(health.health().state, SourceHealthState::GapDetected);
+    assert_eq!(health.health().last_source_seq, Some(3));
 }
 
 #[tokio::test]

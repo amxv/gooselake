@@ -88,6 +88,9 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         }
         (HttpMethod::Get, "/v1/health") => "Authenticated health check".to_string(),
         (HttpMethod::Get, "/v1/version") => "Runtime version".to_string(),
+        (HttpMethod::Get, "/v1/bootstrap") => {
+            "Consistent runtime source bootstrap and high watermark".to_string()
+        }
         (HttpMethod::Get, "/v1/providers") => "List providers".to_string(),
         (HttpMethod::Get, "/v1/providers/{provider}/models") => {
             "List models for provider".to_string()

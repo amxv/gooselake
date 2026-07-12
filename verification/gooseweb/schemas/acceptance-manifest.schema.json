@@ -303,10 +303,7 @@
           ],
           "properties": {
             "impact": {
-              "enum": [
-                "no_change",
-                "observed_only"
-              ]
+            "enum": ["no_change", "observed_only", "changed"]
             },
             "reason": {
               "type": "string",
@@ -323,10 +320,7 @@
           ],
           "properties": {
             "impact": {
-              "enum": [
-                "no_change",
-                "observed_only"
-              ]
+            "enum": ["no_change", "observed_only", "changed"]
             },
             "reason": {
               "type": "string",
@@ -343,10 +337,7 @@
           ],
           "properties": {
             "impact": {
-              "enum": [
-                "no_change",
-                "observed_only"
-              ]
+            "enum": ["no_change", "observed_only", "changed"]
             },
             "reason": {
               "type": "string",
@@ -363,10 +354,7 @@
           ],
           "properties": {
             "impact": {
-              "enum": [
-                "no_change",
-                "observed_only"
-              ]
+            "enum": ["no_change", "observed_only", "changed"]
             },
             "reason": {
               "type": "string",
@@ -383,10 +371,7 @@
           ],
           "properties": {
             "impact": {
-              "enum": [
-                "no_change",
-                "observed_only"
-              ]
+            "enum": ["no_change", "observed_only", "changed"]
             },
             "reason": {
               "type": "string",
@@ -403,10 +388,7 @@
           ],
           "properties": {
             "impact": {
-              "enum": [
-                "no_change",
-                "observed_only"
-              ]
+            "enum": ["no_change", "observed_only", "changed"]
             },
             "reason": {
               "type": "string",
@@ -779,6 +761,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",
@@ -801,6 +784,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",
@@ -823,6 +807,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",
@@ -845,6 +830,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",
@@ -867,6 +853,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",
@@ -889,6 +876,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",
@@ -911,6 +899,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",
@@ -933,6 +922,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",
@@ -955,6 +945,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",
@@ -1002,7 +993,8 @@
         },
         "destination_symbols": {
           "type": "array",
-          "maxItems": 0
+          "maxItems": 128,
+          "items": {"type": "string", "minLength": 1}
         },
         "native_tauri_assumptions_removed": {
           "type": "object",
@@ -1014,6 +1006,7 @@
           "properties": {
             "status": {
               "enum": [
+                "required",
                 "not_applicable",
                 "observed_only",
                 "no_change",

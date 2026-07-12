@@ -15,7 +15,6 @@ pub struct BootstrapOptions {
     pub team_message_limit: usize,
     pub process_tail_lines: usize,
     pub process_log_max_bytes: usize,
-    pub replay_cursor_limit: usize,
 }
 
 impl Default for BootstrapOptions {
@@ -26,7 +25,6 @@ impl Default for BootstrapOptions {
             team_message_limit: 100,
             process_tail_lines: 100,
             process_log_max_bytes: 128 * 1024,
-            replay_cursor_limit: 1,
         }
     }
 }
@@ -62,27 +60,26 @@ impl SourceBootstrap {
         client: &GooselakeRuntimeClient,
         options: BootstrapOptions,
     ) -> Result<Self, BootstrapError> {
+        let bootstrap = client.source_bootstrap().await?;
         let mut state = MaterializedState::new(
             client.source_id().to_string(),
-            client.source_epoch().to_string(),
+            bootstrap.source_epoch.clone(),
         );
         state.mark_replaying();
 
-        let sessions = client.list_sessions().await?;
-        for session in sessions {
+        for session in bootstrap.records.sessions {
             state.upsert_session(session);
         }
 
-        let teams = client.list_teams().await?;
-        for team_with_members in teams {
-            let team_id = team_with_members.team.id.clone();
-            state.upsert_team(team_with_members.team);
-            for member in team_with_members.members {
-                state.upsert_team_member(member);
-            }
+        for team in bootstrap.records.teams {
+            let team_id = team.id.clone();
+            state.upsert_team(team);
             if state.default_team_ids.len() < options.default_team_limit {
                 state.default_team_ids.insert(team_id.clone());
             }
+        }
+        for member in bootstrap.records.team_members {
+            state.upsert_team_member(member);
         }
         state.selected_team_ids = options.selected_team_ids.clone();
 
@@ -90,33 +87,41 @@ impl SourceBootstrap {
             .default_team_ids
             .union(&state.selected_team_ids)
             .cloned()
-            .collect::<Vec<_>>();
-        for team_id in team_snapshot_ids {
-            let snapshot = client
-                .team_view(
-                    &team_id,
-                    None,
-                    Some(options.team_message_limit),
-                    Some(true),
-                    None,
-                )
-                .await?;
-            state.upsert_team(snapshot.team.team);
-            for member in snapshot.team.members {
-                state.upsert_team_member(member);
+            .collect::<BTreeSet<_>>();
+        let mut messages = bootstrap.records.team_messages;
+        messages.reverse();
+        let mut message_counts = std::collections::BTreeMap::<String, usize>::new();
+        let mut included_message_ids = BTreeSet::new();
+        for message in messages {
+            if !team_snapshot_ids.contains(&message.team_id) {
+                continue;
             }
-            for message in snapshot.messages {
-                state.upsert_message(message);
+            let count = message_counts.entry(message.team_id.clone()).or_default();
+            if *count >= options.team_message_limit {
+                continue;
             }
-            for delivery in snapshot.deliveries_by_message_id.into_values().flatten() {
+            *count += 1;
+            included_message_ids.insert(message.id.clone());
+            state.upsert_message(message);
+        }
+        for delivery in bootstrap.records.team_deliveries {
+            if included_message_ids.contains(&delivery.message_id) {
                 state.upsert_delivery(delivery);
             }
         }
 
-        let processes = client.list_processes(None, Some(true)).await?;
-        for process in processes {
-            let process_id = process.process_id.clone();
-            state.upsert_process_summary(process);
+        for process in bootstrap.records.processes {
+            let process_id = process.id.clone();
+            state.upsert_process_summary(runtime_core::ProcessSummary {
+                process_id: process.id,
+                session_id: process.session_id,
+                pid: process.pid,
+                status: process.status,
+                command: process.command,
+                cwd: process.cwd,
+                started_at: process.started_at,
+                ended_at: process.ended_at,
+            });
             let logs = client
                 .get_process_logs(
                     &process_id,
@@ -132,11 +137,23 @@ impl SourceBootstrap {
             state.append_process_logs(&process_id, logs);
         }
 
-        let worktrees = client.list_worktrees().await?;
-        for worktree in worktrees {
+        for worktree in bootstrap.records.managed_worktrees {
             state.upsert_worktree(worktree);
         }
+        for claim in bootstrap.records.managed_worktree_claims {
+            if claim.released_at.is_none() {
+                state
+                    .active_worktree_claims
+                    .entry(claim.worktree_id)
+                    .or_default()
+                    .insert(claim.session_id);
+            }
+        }
         infer_worktree_claims_from_members(&mut state);
+
+        for approval in bootstrap.records.approvals {
+            state.upsert_approval(approval);
+        }
 
         let providers = client.providers().await?;
         let mut auth_status = Vec::new();
@@ -171,16 +188,11 @@ impl SourceBootstrap {
             "recovery": diagnostics.recovery,
         });
 
-        let cursor_rows = client
-            .replay_global_events(None, Some(options.replay_cursor_limit.max(1)))
-            .await?;
-        if let Some(last) = cursor_rows.last() {
-            state.source_health.transition(
-                crate::runtime::events::SourceHealthState::Live,
-                Some(last.row_id),
-                None,
-            );
-        }
+        state.source_health.transition(
+            crate::runtime::events::SourceHealthState::Live,
+            Some(bootstrap.high_watermark),
+            None,
+        );
 
         state.mark_live();
         Ok(Self { state })

@@ -711,3 +711,156 @@ async fn store_initialize_and_healthcheck_use_schema() {
     let hydrated = store.hydrate_runtime_state().expect("hydrate");
     assert!(hydrated.sessions.is_empty());
 }
+
+#[test]
+fn source_bootstrap_empty_store_has_durable_epoch_and_zero_watermark() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("initialize schema");
+
+    let first = repository.source_bootstrap().expect("first bootstrap");
+    let second = repository.source_bootstrap().expect("second bootstrap");
+    assert_eq!(first.high_watermark, 0);
+    assert!(first.records.sessions.is_empty());
+    assert!(first.source_epoch.starts_with("src_"));
+    assert_eq!(second.source_epoch, first.source_epoch);
+}
+
+#[test]
+fn source_epoch_survives_restart_and_rotates_for_copied_store_generation() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("initialize schema");
+    let original_epoch = repository.source_bootstrap().unwrap().source_epoch;
+
+    let restarted = SqliteRuntimeRepository::new(repository.database_path.clone());
+    restarted.initialize_schema().expect("restart initialize");
+    assert_eq!(
+        restarted.source_bootstrap().unwrap().source_epoch,
+        original_epoch
+    );
+
+    let replacement_path = temp_dir.path().join("replacement.sqlite3");
+    std::fs::copy(&repository.database_path, &replacement_path).expect("copy database");
+    std::fs::copy(
+        repository.database_path.with_extension("source-generation"),
+        replacement_path.with_extension("source-generation"),
+    )
+    .expect("copy generation marker with restored database");
+    let replacement = SqliteRuntimeRepository::new(replacement_path);
+    replacement
+        .initialize_schema()
+        .expect("replacement initialize");
+    assert_ne!(
+        replacement.source_bootstrap().unwrap().source_epoch,
+        original_epoch
+    );
+}
+
+#[test]
+fn existing_v1_store_migrates_and_receives_source_identity() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let path = temp_dir.path().join("runtime.sqlite3");
+    let connection = rusqlite::Connection::open(&path).expect("open legacy database");
+    connection
+        .execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL);
+             INSERT INTO schema_migrations VALUES (1, 1);",
+        )
+        .expect("seed v1 marker");
+    drop(connection);
+
+    let repository = SqliteRuntimeRepository::new(path);
+    repository
+        .initialize_schema()
+        .expect("migrate legacy database");
+    let bootstrap = repository
+        .source_bootstrap()
+        .expect("bootstrap migrated database");
+    assert!(bootstrap.source_epoch.starts_with("src_"));
+    assert_eq!(bootstrap.high_watermark, 0);
+}
+
+#[test]
+fn source_bootstrap_uses_one_snapshot_while_writer_commits() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("initialize schema");
+    repository
+        .upsert_session(&sample_session())
+        .expect("seed session");
+    repository
+        .append_runtime_event(&NewRuntimeEvent {
+            event_id: "evt_snapshot_1".to_string(),
+            scope: RuntimeEventScope::Session,
+            scope_id: "session_1".to_string(),
+            session_id: Some("session_1".to_string()),
+            team_id: None,
+            turn_id: None,
+            kind: "session.created".to_string(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload: serde_json::json!({}),
+            provider: None,
+            provider_seq: None,
+            created_at: 1,
+        })
+        .expect("seed event");
+
+    let writer = repository.clone();
+    crate::repository_bootstrap::install_after_watermark_read_hook(Box::new(move || {
+        let mut next = sample_session();
+        next.id = "session_2".to_string();
+        writer.upsert_session(&next).expect("concurrent session");
+        writer
+            .append_runtime_event(&NewRuntimeEvent {
+                event_id: "evt_snapshot_2".to_string(),
+                scope: RuntimeEventScope::Session,
+                scope_id: next.id.clone(),
+                session_id: Some(next.id),
+                team_id: None,
+                turn_id: None,
+                kind: "session.created".to_string(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: serde_json::json!({}),
+                provider: None,
+                provider_seq: None,
+                created_at: 2,
+            })
+            .expect("concurrent event");
+    }));
+
+    let snapshot = repository.source_bootstrap().expect("consistent bootstrap");
+    assert_eq!(snapshot.high_watermark, 1);
+    assert_eq!(snapshot.records.sessions.len(), 1);
+    assert_eq!(snapshot.records.sessions[0].id, "session_1");
+    let current = repository.source_bootstrap().expect("current bootstrap");
+    assert_eq!(current.high_watermark, 2);
+    assert_eq!(current.records.sessions.len(), 2);
+}
+
+#[test]
+fn source_bootstrap_rejects_oversized_tables_without_partial_snapshot() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("initialize schema");
+    let mut connection = crate::db::open_connection(&repository.database_path).unwrap();
+    let transaction = connection.transaction().unwrap();
+    {
+        let mut insert = transaction
+            .prepare(
+                "INSERT INTO sessions (
+                    id, provider, status, metadata_json, created_at, updated_at
+                 ) VALUES (?1, 'codex', 'ready', '{}', 1, 1)",
+            )
+            .unwrap();
+        for index in 0..=crate::repository_bootstrap::MAX_SOURCE_BOOTSTRAP_ROWS_PER_TABLE {
+            insert.execute([format!("session_{index}")]).unwrap();
+        }
+    }
+    transaction.commit().unwrap();
+
+    let error = repository
+        .source_bootstrap()
+        .expect_err("oversized bootstrap must fail instead of truncating");
+    assert!(error.to_string().contains("maximum is 10000"));
+}

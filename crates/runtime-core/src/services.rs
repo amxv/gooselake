@@ -11,6 +11,26 @@ use crate::{
     TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeSourceBootstrap {
+    pub source_epoch: String,
+    pub high_watermark: i64,
+    pub records: RuntimeSourceBootstrapRecords,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RuntimeSourceBootstrapRecords {
+    pub sessions: Vec<SessionRecord>,
+    pub approvals: Vec<ApprovalRecord>,
+    pub teams: Vec<TeamRecord>,
+    pub team_members: Vec<TeamMemberRecord>,
+    pub team_messages: Vec<TeamMessageRecord>,
+    pub team_deliveries: Vec<TeamDeliveryRecord>,
+    pub managed_worktrees: Vec<ManagedWorktreeRecord>,
+    pub managed_worktree_claims: Vec<ManagedWorktreeClaimRecord>,
+    pub processes: Vec<ProcessRecord>,
+}
+
 #[async_trait]
 pub trait RuntimeStore: Send + Sync {
     async fn initialize(&self) -> Result<(), RuntimeError>;
@@ -28,6 +48,12 @@ pub trait RuntimeStore: Send + Sync {
         after_seq: Option<i64>,
         limit: usize,
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError>;
+
+    fn source_bootstrap(&self) -> Result<RuntimeSourceBootstrap, RuntimeError> {
+        Err(RuntimeError::Bootstrap(
+            "source bootstrap is not supported by this runtime store".to_string(),
+        ))
+    }
 
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError>;
 

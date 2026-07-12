@@ -12,6 +12,13 @@ impl SqliteRuntimeRepository {
     pub fn hydrate_runtime_state(&self) -> Result<RuntimeHydratedState, RuntimeError> {
         let connection = open_connection(&self.database_path)?;
 
+        self.hydrate_runtime_state_from_connection(&connection)
+    }
+
+    pub(crate) fn hydrate_runtime_state_from_connection(
+        &self,
+        connection: &rusqlite::Connection,
+    ) -> Result<RuntimeHydratedState, RuntimeError> {
         let sessions = {
             let mut statement = connection
                 .prepare(

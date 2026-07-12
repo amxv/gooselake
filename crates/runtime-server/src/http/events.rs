@@ -6,6 +6,18 @@ pub(super) struct EventReplayQuery {
     pub(super) limit: Option<usize>,
 }
 
+pub(super) async fn source_bootstrap(
+    State(state): State<AppState>,
+) -> Result<Json<runtime_core::RuntimeSourceBootstrap>, ApiError> {
+    let bootstrap = state
+        .app
+        .services
+        .store
+        .source_bootstrap()
+        .map_err(ApiError::from)?;
+    Ok(Json(bootstrap))
+}
+
 pub(super) async fn replay_session_events(
     State(state): State<AppState>,
     Path(session_id): Path<String>,

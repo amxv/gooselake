@@ -326,6 +326,8 @@ impl RuntimeRegistryConfig {
 #[serde(default)]
 pub struct RuntimeSourceConfig {
     pub source_id: String,
+    /// Legacy configuration field retained for config-file compatibility.
+    /// Runtime-issued bootstrap authority always overrides and ignores it.
     pub source_epoch: String,
     pub source_kind: String,
     pub provisioner_kind: RuntimeSourceProvisionerKind,
@@ -366,12 +368,6 @@ impl RuntimeSourceConfig {
     fn validate(&self) -> Result<()> {
         if self.source_id.trim().is_empty() {
             return Err(anyhow!("runtime source source_id cannot be empty"));
-        }
-        if self.source_epoch.trim().is_empty() {
-            return Err(anyhow!(
-                "runtime source {} source_epoch cannot be empty",
-                self.source_id
-            ));
         }
         if self.source_kind != GOOSELAKE_RUNTIME_SOURCE_KIND {
             return Err(anyhow!(

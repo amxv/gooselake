@@ -84,6 +84,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/providers/claude/auth/logout", post(claude_auth_logout))
         .route("/openapi.yaml", get(openapi_yaml))
         .route("/version", get(version))
+        .route("/bootstrap", get(source_bootstrap))
         .route("/events", get(replay_global_events))
         .route("/events/stream", get(stream_global_events))
         .route("/sessions", post(create_session).get(list_sessions))

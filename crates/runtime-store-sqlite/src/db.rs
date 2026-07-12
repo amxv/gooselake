@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use rand::{rngs::OsRng, RngCore};
 use runtime_core::{RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
@@ -59,6 +60,99 @@ pub(crate) fn apply_schema(connection: &mut Connection) -> Result<(), RuntimeErr
         .commit()
         .map_err(|error| db_error("failed committing schema transaction", error))?;
     Ok(())
+}
+
+pub(crate) fn initialize_source_identity(
+    connection: &mut Connection,
+    database_path: &Path,
+) -> Result<(), RuntimeError> {
+    let generation_path = database_path.with_extension("source-generation");
+    let generation_marker = match std::fs::read_to_string(&generation_path) {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_string(),
+        Ok(_) | Err(_) => {
+            let marker = random_identifier("gen");
+            std::fs::write(&generation_path, format!("{marker}\n")).map_err(|error| {
+                RuntimeError::Bootstrap(format!(
+                    "failed writing source generation marker {}: {error}",
+                    generation_path.display()
+                ))
+            })?;
+            marker
+        }
+    };
+    let database_fingerprint = database_fingerprint(database_path)?;
+
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| db_error("failed to start source identity transaction", error))?;
+    let stored: Option<(String, String, String)> = transaction
+        .query_row(
+            "SELECT source_epoch, generation_marker, database_fingerprint FROM source_metadata WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|error| db_error("failed reading source identity", error))?;
+
+    match stored {
+        Some((_epoch, stored_marker, stored_fingerprint))
+            if stored_marker == generation_marker && stored_fingerprint == database_fingerprint => {
+        }
+        Some(_) => {
+            transaction
+                .execute(
+                    "UPDATE source_metadata SET source_epoch = ?1, generation_marker = ?2, database_fingerprint = ?3 WHERE singleton = 1",
+                    params![random_identifier("src"), generation_marker, database_fingerprint],
+                )
+                .map_err(|error| db_error("failed rotating source identity", error))?;
+        }
+        None => {
+            transaction
+                .execute(
+                    "INSERT INTO source_metadata (singleton, source_epoch, generation_marker, database_fingerprint) VALUES (1, ?1, ?2, ?3)",
+                    params![random_identifier("src"), generation_marker, database_fingerprint],
+                )
+                .map_err(|error| db_error("failed initializing source identity", error))?;
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|error| db_error("failed committing source identity", error))
+}
+
+#[cfg(unix)]
+fn database_fingerprint(path: &Path) -> Result<String, RuntimeError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        RuntimeError::Bootstrap(format!(
+            "failed reading database identity {}: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn database_fingerprint(path: &Path) -> Result<String, RuntimeError> {
+    path.canonicalize()
+        .map(|path| format!("path:{}", path.display()))
+        .map_err(|error| {
+            RuntimeError::Bootstrap(format!(
+                "failed canonicalizing database identity {}: {error}",
+                path.display()
+            ))
+        })
+}
+
+fn random_identifier(prefix: &str) -> String {
+    let mut bytes = [0_u8; 16];
+    OsRng.fill_bytes(&mut bytes);
+    let hex = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{prefix}_{hex}")
 }
 
 pub(crate) fn fetch_runtime_event_by_event_id(

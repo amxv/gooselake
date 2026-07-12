@@ -38,6 +38,30 @@ async fn version_route_is_available() {
 }
 
 #[tokio::test]
+async fn source_bootstrap_route_returns_runtime_epoch_and_empty_watermark() {
+    let (router, token, _temp_dir) = build_test_router().await;
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/v1/bootstrap")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("bootstrap response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("bootstrap body");
+    let bootstrap: runtime_core::RuntimeSourceBootstrap =
+        serde_json::from_slice(&body).expect("bootstrap json");
+    assert!(bootstrap.source_epoch.starts_with("src_"));
+    assert_eq!(bootstrap.high_watermark, 0);
+    assert!(bootstrap.records.sessions.is_empty());
+}
+
+#[tokio::test]
 async fn session_stream_replays_from_cursor_before_live_events() {
     let (router, token, _temp_dir) = build_test_router().await;
 

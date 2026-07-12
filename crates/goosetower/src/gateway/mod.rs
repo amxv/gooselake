@@ -51,7 +51,7 @@ pub use self::observers::{MaterializerObserverSnapshot, ServedFrameDebug};
 pub use self::support::GatewayMetricsSnapshot;
 
 fn materialized_state_from_source(source: &RuntimeSourceConfig) -> MaterializedState {
-    let mut state = MaterializedState::new(source.source_id.clone(), source.source_epoch.clone());
+    let mut state = MaterializedState::new(source.source_id.clone(), "unavailable");
     state.apply_source_config(source);
     state
 }
@@ -167,6 +167,17 @@ impl GatewayState {
             .await;
 
             if let Err(error) = result {
+                let mut materialized = self.materialized.write().await;
+                if let Some(state) = materialized.get_mut(&source.source_id) {
+                    state.source_health.transition(
+                        SourceHealthState::Offline,
+                        None,
+                        Some(format!(
+                            "runtime bootstrap unavailable or unsupported: {error}"
+                        )),
+                    );
+                }
+                drop(materialized);
                 self.record_audit(
                     "source.bootstrap_failed",
                     Some(source.source_id.clone()),
@@ -192,6 +203,25 @@ impl GatewayState {
             .iter()
             .filter(|source| source.enabled)
         {
+            let Some(source_epoch) = self
+                .materialized
+                .read()
+                .await
+                .get(&source.source_id)
+                .filter(|state| {
+                    state.source_epoch != "unavailable"
+                        && state.source_health.state == SourceHealthState::Live
+                })
+                .map(|state| state.source_epoch.clone())
+            else {
+                self.record_audit(
+                    "source.stream_not_started",
+                    Some(source.source_id.clone()),
+                    json!({"reason":"runtime bootstrap authority unavailable"}),
+                )
+                .await;
+                continue;
+            };
             let client = match runtime_client_from_source(&self.config, source) {
                 Ok(client) => client,
                 Err(error) => {
@@ -206,6 +236,7 @@ impl GatewayState {
             };
             let fan_in = RuntimeSseFanIn::new(
                 client,
+                source_epoch,
                 RuntimeSseFanInConfig {
                     replay_page_limit: self.config.replay.max_events_per_request,
                     reconnect_delay: Duration::from_millis(250),
@@ -246,9 +277,13 @@ impl GatewayState {
             let state = materialized
                 .entry(event.source_id.clone())
                 .or_insert_with(|| MaterializedState::new(&event.source_id, &event.source_epoch));
-            if let Some(source) = self.config.runtimes.sources.iter().find(|source| {
-                source.source_id == event.source_id && source.source_epoch == event.source_epoch
-            }) {
+            if let Some(source) = self
+                .config
+                .runtimes
+                .sources
+                .iter()
+                .find(|source| source.source_id == event.source_id)
+            {
                 state.apply_source_config(source);
             }
             if state.source_epoch != event.source_epoch {
@@ -301,9 +336,13 @@ impl GatewayState {
             let state = materialized
                 .entry(health.source_id.clone())
                 .or_insert_with(|| MaterializedState::new(&health.source_id, &health.source_epoch));
-            if let Some(source) = self.config.runtimes.sources.iter().find(|source| {
-                source.source_id == health.source_id && source.source_epoch == health.source_epoch
-            }) {
+            if let Some(source) = self
+                .config
+                .runtimes
+                .sources
+                .iter()
+                .find(|source| source.source_id == health.source_id)
+            {
                 state.apply_source_config(source);
             }
             state.source_health = health.clone();

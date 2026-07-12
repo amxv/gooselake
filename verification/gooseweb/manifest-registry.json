@@ -29,6 +29,13 @@
       "revision": 1,
       "sha256": "0f080f9aad9940b18e7b07fb21ff8e81e5b4c72413248f9e85519531c2322dc7",
       "activated_reason": "P04 defines the deterministic real-path replay, gap, restart, stale-command, and disposable-context laboratory while mapping current product failures to P06-P10."
+    },
+    {
+      "phase_id": "P06",
+      "path": "verification/gooseweb/manifests/p06-source-bootstrap-watermark.json",
+      "revision": 1,
+      "sha256": "a66f8acedc21e1b8a415eb28a96d7a28ea456de6ee71e02769e2a7500519f3a2",
+      "activated_reason": "P06 verifies the runtime-issued durable source epoch, coherent SQLite bootstrap watermark, explicit old-runtime compatibility, monotonic rows 4-11 eligibility, and both owned P02/P04 baseline closures."
     }
   ]
 }

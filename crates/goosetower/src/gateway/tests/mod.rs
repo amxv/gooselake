@@ -850,6 +850,26 @@ async fn spawn_resume_runtime(mode: ResumeRuntimeMode) -> SocketAddr {
     let app = Router::new()
         .route("/v1/events", get(replay))
         .route(
+            "/v1/bootstrap",
+            get(|| async {
+                Json(json!({
+                    "source_epoch": "static-0",
+                    "high_watermark": 3,
+                    "records": {
+                        "sessions": [session_record()],
+                        "approvals": [],
+                        "teams": [],
+                        "team_members": [],
+                        "team_messages": [],
+                        "team_deliveries": [],
+                        "managed_worktrees": [],
+                        "managed_worktree_claims": [],
+                        "processes": []
+                    }
+                }))
+            }),
+        )
+        .route(
             "/v1/sessions",
             get(|| async { Json(vec![session_record()]) }),
         )

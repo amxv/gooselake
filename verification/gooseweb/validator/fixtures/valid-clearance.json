@@ -1,13 +1,13 @@
 {
   "schema_revision": "gooseweb-exact-head-clearance/v4",
   "phase_id": "P01",
-  "attempt": 3,
+  "attempt": 7,
   "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
-  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..ce4bf89a63788f8387d0aca6ebca39fb7b5460ce",
-  "candidate_head_sha": "ce4bf89a63788f8387d0aca6ebca39fb7b5460ce",
-  "candidate_tree_sha": "02373eac171e6865877e516912dd05b41f487cf0",
-  "served_head_sha": "ce4bf89a63788f8387d0aca6ebca39fb7b5460ce",
-  "served_tree_sha": "02373eac171e6865877e516912dd05b41f487cf0",
+  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..ff8b25a0b5c6f2e1f47ad82fc26370671ab0cf18",
+  "candidate_head_sha": "ff8b25a0b5c6f2e1f47ad82fc26370671ab0cf18",
+  "candidate_tree_sha": "c594af74f3c8a7cdc03fe40623f297ae1090d3f0",
+  "served_head_sha": "ff8b25a0b5c6f2e1f47ad82fc26370671ab0cf18",
+  "served_tree_sha": "c594af74f3c8a7cdc03fe40623f297ae1090d3f0",
   "clean_tree": true,
   "hot_reload": false,
   "manifest": {
@@ -17,8 +17,8 @@
   },
   "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
   "lease": {
-    "lease_id": "gooseweb-migration-000002",
-    "sequence": 2,
+    "lease_id": "gooseweb-migration-000006",
+    "sequence": 6,
     "phase_id": "P01",
     "owner_role": "supervisor",
     "owner_identity": "p01-supervisor",
@@ -26,7 +26,7 @@
     "released_at": "2026-07-12T10:20:00.000Z",
     "prior_lease_termination_evidence": {
       "status": "terminated_and_cleaned",
-      "reference": "ledger lease gooseweb-migration-000001 termination"
+      "reference": "phase graph seed lease gooseweb-migration-000005 termination and cleanup"
     },
     "managed_process": {
       "identity": "gg-process-example-2",
@@ -51,7 +51,7 @@
     "reviewer_identity": "p01-reviewer",
     "reviewer_role": "read_only",
     "browser_mechanism": "agent-browser",
-    "browser_session": "gooseweb-p01-review-attempt-3-headless",
+    "browser_session": "gooseweb-p01-ff8b25a-attempt-7-headless",
     "concurrent_mutation_build_format_generation": false,
     "findings_route": "reviewer_to_implementer",
     "final_approval_routed_to_implementer": false,
@@ -65,7 +65,7 @@
     "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "chromium_version": "150.0.7871.115",
     "profile_policy": "fresh_ephemeral",
-    "session_name": "gooseweb-p01-review-attempt-3-headless"
+    "session_name": "gooseweb-p01-ff8b25a-attempt-7-headless"
   },
   "baseline_detected": [
     {

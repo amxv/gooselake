@@ -1,0 +1,38 @@
+{
+  "schema_revision": "gooseweb-lifecycle-attestation/v1",
+  "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
+  "attestation_id": "gooseweb-lifecycle-000001",
+  "attestation_sequence": 1,
+  "previous_attestation_sha256": null,
+  "phase_graph_seed": {
+    "path": "verification/gooseweb/ledger/phase-graph-seed.json",
+    "schema_revision": "gooseweb-phase-graph-seed/v8",
+    "candidate_head_sha": "ff8b25a0b5c6f2e1f47ad82fc26370671ab0cf18",
+    "blob_sha256": "166dbbdf3c487d18c91ff447d48f896a7d44c3f09aaa56dbedb80f424103c824",
+    "last_seed_lease_id": "gooseweb-migration-000005",
+    "last_seed_lease_sequence": 5,
+    "last_seed_release_at": "2026-07-12T06:41:05.000Z"
+  },
+  "generated_at": "2026-07-12T10:21:00.000Z",
+  "attempts": [
+    {
+      "status": "cleared",
+      "evidence_root": "tmp/gg/gooseweb-migration/P01/ff8b25a/attempt-7/",
+      "evidence_descriptor_sha256": "cf3dbcacc25507ce37f5d92b35f0283a183aacc89af9da98336486852600b4d1",
+      "outcome": {
+        "record": "exact-head-clearance.json",
+        "sha256": "f98aef33d404a3082ce294fa547fce8d7e52e068169a60f3d5a4a76948f897a9"
+      }
+    }
+  ],
+  "claimed_effective_states": [
+    {
+      "phase_id": "P01",
+      "state": "cleared",
+      "lease_id": "gooseweb-migration-000006"
+    }
+  ],
+  "eligible_phases": [
+    "P02"
+  ]
+}

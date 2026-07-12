@@ -13,6 +13,7 @@ import {
   validateClearanceHistory,
   validateEvidence,
   validateGitRecord,
+  validateLifecycleAttestation,
   validatePhaseGraphSeed,
   validateManifest,
   validateManifestClearancePolicy,
@@ -34,6 +35,7 @@ const ledger = readJson("verification/gooseweb/ledger/phase-graph-seed.json");
 const clearance = readJson("verification/gooseweb/validator/fixtures/valid-clearance.json");
 const evidence = readJson("verification/gooseweb/validator/fixtures/valid-evidence-run.json");
 const validNonClearance = readJson("verification/gooseweb/validator/fixtures/valid-review-outcome.json");
+const lifecycleAttestation = readJson("verification/gooseweb/validator/fixtures/valid-lifecycle-attestation.json");
 const consoleCapture: RecordJson = {
   schema_revision: "gooseweb-console-capture/v3",
   capture_source: "agent-browser console",
@@ -100,6 +102,10 @@ validateBrowserCaptures(change(consoleCapture, "messages", [
 validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "agent-browser exposes no redacted frame capture", baseline_defect_id: "BASE-P01-WEBSOCKET-OBSERVER-UNAVAILABLE" }), manifest);
 validateSchemasAgainstDocuments();
 validateReferencedEvidence();
+const missingCurrentClearance = change(change(change(lifecycleAttestation, "attempts", []), "claimed_effective_states", []), "eligible_phases", ["P01"]);
+const missingState = validateLifecycleAttestation(missingCurrentClearance);
+assert.notEqual(missingState.effectiveStates.P01, "cleared", "missing external clearance advanced P01");
+assert.ok(!missingState.eligiblePhases.includes("P02"), "missing external clearance made P02 eligible");
 
 const negativeCases: [string, () => void][] = [
   ["changed approved plan SHA", () => validateManifest(change(manifest, "approved_plan.sha256", "0".repeat(64)))],
@@ -151,6 +157,13 @@ const negativeCases: [string, () => void][] = [
     stale = change(stale, "served_tree_sha", "592e4389b9be8f980c4deabd397ceb79e718bafb");
     stale = change(stale, "reviewed_range", `${P01_BASE_SHA}..973a5771c54650946ece3b1d9016e0788c522087`);
     validateClearance(stale);
+  }],
+  ["missing current lease and clearance cannot claim P02 eligibility", () => validateLifecycleAttestation(change(missingCurrentClearance, "eligible_phases", ["P01", "P02"]))],
+  ["changed append-only predecessor hash", () => {
+    let next = change(lifecycleAttestation, "attestation_sequence", 2);
+    next = change(next, "attestation_id", "gooseweb-lifecycle-000002");
+    next = change(next, "previous_attestation_sha256", "0".repeat(64));
+    validateLifecycleAttestation(next, { previous: lifecycleAttestation });
   }],
   ["nonexistent Git range head", () => {
     const forged = change(change(change(clearance, "candidate_head_sha", "a".repeat(40)), "served_head_sha", "a".repeat(40)), "reviewed_range", `${P01_BASE_SHA}..${"a".repeat(40)}`);
@@ -231,11 +244,12 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v8 passed (${negativeCases.length} negative cases)`);
+console.log(`Gooseweb acceptance contract v9 passed (${negativeCases.length} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);
   applySchemaFile("verification/gooseweb/schemas/manifest-registry.schema.json", manifestRegistry);
+  applySchemaFile("verification/gooseweb/schemas/lifecycle-attestation.schema.json", lifecycleAttestation);
   applySchemaFile("verification/gooseweb/schemas/phase-graph-seed.schema.json", ledger);
   applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", clearance);
   applySchemaFile("verification/gooseweb/schemas/evidence-run.schema.json", evidence);
@@ -246,6 +260,7 @@ function validateReferencedEvidence(): void {
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(resolve(directory, "screenshots"), { recursive: true });
   const files: Record<string, string | Uint8Array> = {
+    "evidence-run.json": readFileSync(resolve(root, "verification/gooseweb/validator/fixtures/valid-evidence-run.json")),
     "manifest.json": readFileSync(resolve(root, P01_MANIFEST_PATH)),
     "environment.json": JSON.stringify({ phase_id: evidence.phase_id, attempt: evidence.attempt, base_sha: evidence.base_sha, reviewed_range: evidence.reviewed_range, candidate_head_sha: evidence.candidate_head_sha, candidate_tree_sha: evidence.candidate_tree_sha, served_head_sha: evidence.served_head_sha, served_tree_sha: evidence.served_tree_sha, clean_tree: evidence.clean_tree, hot_reload: evidence.hot_reload, lease: evidence.lease, stack: evidence.stack, review: evidence.review, plan_sha256: APPROVED_PLAN_SHA256, manifest_sha256: (evidence.manifest as RecordJson).sha256, browser_session: (evidence.browser as RecordJson).session_name, browser_execution_mode: (evidence.browser as RecordJson).execution_mode, chromium_binary: (evidence.browser as RecordJson).chromium_binary, chromium_version: (evidence.browser as RecordJson).chromium_version, profile_policy: (evidence.browser as RecordJson).profile_policy, redaction: "omitted" }),
     "console.json": JSON.stringify(consoleCapture),
@@ -256,7 +271,7 @@ function validateReferencedEvidence(): void {
     "store-state.redacted.json": JSON.stringify({ messages: 0 }),
     "checks.json": JSON.stringify({ status: "pass" }),
     "report.md": "# Redacted acceptance report\n",
-    "exact-head-clearance.json": JSON.stringify(clearance)
+    "exact-head-clearance.json": readFileSync(resolve(root, "verification/gooseweb/validator/fixtures/valid-clearance.json"))
   };
   for (const [path, content] of Object.entries(files)) writeFileSync(resolve(directory, path), content);
   for (const viewport of ["1440x1000", "820x1000", "520x900"]) {
@@ -265,6 +280,9 @@ function validateReferencedEvidence(): void {
   }
   try {
     validateEvidence(evidence, { checkFiles: true, expected: evidence });
+    const lifecycleState = validateLifecycleAttestation(lifecycleAttestation);
+    assert.equal(lifecycleState.effectiveStates.P01, "cleared", "released exact-head clearance did not clear P01");
+    assert.ok(lifecycleState.eligiblePhases.includes("P02"), "released P01 clearance did not make P02 eligible");
     const rejectedEvidence = change(evidence, "review_outcome", { status: "changes_required", record: "review-outcome.json" });
     const nonClearance = validNonClearance;
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));
@@ -341,34 +359,38 @@ function manifestForPhase(phase: "P06" | "P56", productClearance: "approved" | "
 function laterClearance(overrides: Record<string, unknown>): RecordJson {
   const next = clone(clearance);
   const lease = next.lease as RecordJson;
-  lease.lease_id = "gooseweb-migration-000003";
-  lease.sequence = 3;
+  lease.lease_id = "gooseweb-migration-000007";
+  lease.sequence = 7;
   lease.acquired_at = "2026-07-12T10:30:00.000Z";
   lease.released_at = "2026-07-12T10:50:00.000Z";
+  (lease.prior_lease_termination_evidence as RecordJson).reference = "gooseweb-migration-000006 termination and cleanup";
   const process = lease.managed_process as RecordJson;
   process.started_at = "2026-07-12T10:31:00.000Z";
   process.stopped_at = "2026-07-12T10:48:00.000Z";
   process.cleanup_completed_at = "2026-07-12T10:49:00.000Z";
   const review = next.review as RecordJson;
-  review.browser_session = String(overrides.browser_session ?? "gooseweb-p01-review-attempt-4-headless");
+  const session = String(overrides.browser_session ?? "gooseweb-p01-review-attempt-8-headless");
+  review.browser_session = session;
+  (next.browser as RecordJson).session_name = session;
+  (next.clearance as RecordJson).issued_at = "2026-07-12T10:50:00.000Z";
   return next;
 }
 
 function ledgerWithLease(overrides: Record<string, Json>): RecordJson {
   const next = clone(ledger);
   const lease = clone((next.seed_lease_history as RecordJson[])[0]!);
-  lease.lease_id = "gooseweb-migration-000002";
-  lease.sequence = overrides.sequence ?? 2;
+  lease.lease_id = "gooseweb-migration-000006";
+  lease.sequence = overrides.sequence ?? 6;
   lease.phase_id = overrides.phase_id ?? "P02";
-  lease.acquired_at = overrides.acquired_at ?? "2026-07-12T06:00:00.000Z";
-  lease.released_at = "2026-07-12T06:20:00.000Z";
+  lease.acquired_at = overrides.acquired_at ?? "2026-07-12T07:00:00.000Z";
+  lease.released_at = "2026-07-12T07:20:00.000Z";
   const prior = lease.prior_lease_termination_evidence as RecordJson;
   prior.status = "terminated_and_cleaned";
-  prior.reference = "gooseweb-migration-000001 termination and cleanup";
+  prior.reference = "gooseweb-migration-000005 termination and cleanup";
   const process = lease.managed_process as RecordJson;
-  process.started_at = "2026-07-12T06:01:00.000Z";
-  process.stopped_at = "2026-07-12T06:18:00.000Z";
-  process.cleanup_completed_at = "2026-07-12T06:19:00.000Z";
+  process.started_at = "2026-07-12T07:01:00.000Z";
+  process.stopped_at = "2026-07-12T07:18:00.000Z";
+  process.cleanup_completed_at = "2026-07-12T07:19:00.000Z";
   const reviewer = lease.reviewer as RecordJson;
   reviewer.browser_session = "gooseweb-p02-review-attempt-1-headless";
   (next.seed_lease_history as RecordJson[]).push(lease);

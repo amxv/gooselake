@@ -19,8 +19,8 @@
     {
       "phase_id": "P03",
       "path": "verification/gooseweb/manifests/p03-headless-agent-browser.json",
-      "revision": 1,
-      "sha256": "3cb1064f02ac28da4cd0123e5e970d921fa06705763b534e41f5f11df50b9cc8",
+      "revision": 2,
+      "sha256": "04839e3472f82dbe2273834b5dd98f22a7af7b45927498a5166a695ecea03f16",
       "activated_reason": "P03 defines the sole explicit-headless agent-browser real-local-Chromium procedure and failure-detecting evidence contract without adding a committed browser runner."
     }
   ]

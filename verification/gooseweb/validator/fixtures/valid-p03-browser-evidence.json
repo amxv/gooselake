@@ -40,17 +40,17 @@
       "control": { "role": "textbox", "accessible_name": "Agent thread composer", "visible": true, "enabled": true },
       "submit": { "role": "button", "accessible_name": "Send agent thread message", "visible": true, "enabled": true },
       "command": "sendTurn",
-      "submitted_text": "P03 deterministic acceptance action",
+      "submitted_text": "P02 deterministic turn action",
       "browser_submission_count": 1,
       "command_count": 1,
       "visible_submission_count": 1
     }
   },
   "authority_chain": [
-    { "layer": "Gooselake", "status": "observed", "artifact": "runtime-state.redacted.json", "correlation_id": "p03-action-001", "semantic_identity": "turn:p03-turn-001", "cursor_or_version": "source:1", "content_sha256": "61f6527c8ced9cd27bf193d3efaa55c322d2d170fd8d5c42575ca1522355c4b6", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
-    { "layer": "Goosetower", "status": "observed", "artifact": "tower-state.redacted.json", "correlation_id": "p03-action-001", "semantic_identity": "session-detail:p03-session-001", "cursor_or_version": "entity:1", "content_sha256": "61f6527c8ced9cd27bf193d3efaa55c322d2d170fd8d5c42575ca1522355c4b6", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
-    { "layer": "Gooseweb Worker/store", "status": "observed", "artifact": "store-state.redacted.json", "correlation_id": "p03-action-001", "semantic_identity": "sessionDetails:p03-session-001", "cursor_or_version": "store:1", "content_sha256": "61f6527c8ced9cd27bf193d3efaa55c322d2d170fd8d5c42575ca1522355c4b6", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
-    { "layer": "Gooseweb React", "status": "observed", "artifact": "screenshots/1440x1000.png", "correlation_id": "p03-action-001", "semantic_identity": "visible-thread:p03-session-001", "cursor_or_version": "render:1", "content_sha256": "61f6527c8ced9cd27bf193d3efaa55c322d2d170fd8d5c42575ca1522355c4b6", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null }
+    { "layer": "Gooselake", "status": "observed", "artifact": "runtime-state.redacted.json", "correlation_id": "p03-action-001", "semantic_identity": "turn:p03-turn-001", "cursor_or_version": "source:1", "content_sha256": "8f20e2ea5da62facf42ba5f26bf62c88aa4fc3cced4f3c4632db0c447032edb9", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    { "layer": "Goosetower", "status": "observed", "artifact": "tower-state.redacted.json", "correlation_id": "p03-action-001", "semantic_identity": "session-detail:p03-session-001", "cursor_or_version": "entity:1", "content_sha256": "8f20e2ea5da62facf42ba5f26bf62c88aa4fc3cced4f3c4632db0c447032edb9", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    { "layer": "Gooseweb Worker/store", "status": "observed", "artifact": "store-state.redacted.json", "correlation_id": "p03-action-001", "semantic_identity": "sessionDetails:p03-session-001", "cursor_or_version": "store:1", "content_sha256": "8f20e2ea5da62facf42ba5f26bf62c88aa4fc3cced4f3c4632db0c447032edb9", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    { "layer": "Gooseweb React", "status": "observed", "artifact": "screenshots/1440x1000.png", "correlation_id": "p03-action-001", "semantic_identity": "visible-thread:p03-session-001", "cursor_or_version": "render:1", "content_sha256": "8f20e2ea5da62facf42ba5f26bf62c88aa4fc3cced4f3c4632db0c447032edb9", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null }
   ],
   "first_divergent_layer": null,
   "captures": {

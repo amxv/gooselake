@@ -213,6 +213,8 @@ export function validateP03EvidenceLinkage(
   if (!manifestAction) fail("P03 journey action is absent from the active manifest");
   equal(action.command, manifestAction.command, "P03 journey command linkage");
   equal(action.command_count, manifestAction.expected_command_count, "P03 exact command cardinality linkage");
+  requireText(manifestAction.expected_submitted_text, "P03 manifest expected submitted text");
+  equal(action.submitted_text, manifestAction.expected_submitted_text, "P03 manifest submitted-text linkage");
   for (const key of ["role", "accessible_name"]) {
     equal(object(action.control, "P03 action control")[key], object(manifestAction.control, "P03 manifest control")[key], `P03 control ${key} linkage`);
     equal(object(action.submit, "P03 action submit")[key], object(manifestAction.submit, "P03 manifest submit")[key], `P03 submit ${key} linkage`);

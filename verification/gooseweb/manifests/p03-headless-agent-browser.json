@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P03-HEADLESS-AGENT-BROWSER-001",
-  "manifest_revision": 1,
+  "manifest_revision": 2,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
@@ -40,6 +40,7 @@
         },
         "expected_command_count": 1,
         "command": "sendTurn",
+        "expected_submitted_text": "P02 deterministic turn action",
         "expected_runtime": [
           "one deterministic completed turn record with the exact submitted text",
           "one terminal event with the deterministic source text and no duplicate ID"

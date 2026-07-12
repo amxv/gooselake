@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -54,6 +55,7 @@ const seededFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
   ["semantic journey missing", (value) => omit(value, "journey")],
   ["roster selection unproven", (value) => change(value, "journey.selected_roster_control.selected", false)],
   ["duplicate command cardinality", (value) => change(value, "journey.action.command_count", 2)],
+  ["descriptor submitted text/hash mismatch", (value) => change(value, "journey.action.submitted_text", "forged deterministic action")],
   ["authority chain missing", (value) => omit(value, "authority_chain")],
   ["observed authority missing instance", (value) => change(value, "authority_chain.1.missing_count", 1)],
   ["authority correlation mismatch", (value) => change(value, "authority_chain.2.correlation_id", "other-action")],
@@ -84,12 +86,29 @@ assert.throws(
 );
 assert.deepEqual(manifest.known_defects, [], "P03 verification infrastructure must have no known defects");
 validateStandardEvidenceLinkage();
-console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 17} seeded failures rejected)`);
+console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 20} seeded failures rejected)`);
 
 function validateStandardEvidenceLinkage(): void {
   const descriptor = linkedStandardDescriptor();
   const linked = linkedP03Evidence(descriptor);
   validateP03EvidenceLinkage(descriptor, linked, manifest);
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, linked, omit(manifest, "scenario.actions.0.expected_submitted_text")),
+    undefined,
+    "missing manifest canonical submitted text unexpectedly passed"
+  );
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, linked, change(manifest, "scenario.actions.0.expected_submitted_text", "wrong manifest action")),
+    undefined,
+    "wrong manifest canonical submitted text unexpectedly passed"
+  );
+  const internallyConsistentForgery = withSubmittedText(linked, "forged deterministic action");
+  validateP03BrowserEvidence(internallyConsistentForgery);
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, internallyConsistentForgery, manifest),
+    undefined,
+    "internally consistent non-manifest submitted text unexpectedly passed"
+  );
   assert.throws(
     () => validateP03EvidenceLinkage(descriptor, change(linked, "browser.binary_path", "/Applications/Chromium.app/Contents/MacOS/Chromium"), manifest),
     undefined,
@@ -208,6 +227,13 @@ function unavailableIdentity(source: RecordJson): RecordJson {
   let result = change(source, "browser.user_agent_data.availability", "unavailable");
   result = change(result, "browser.user_agent_data.full_version_list", []);
   return change(result, "browser.user_agent_data.unavailable_reason", "navigator.userAgentData.getHighEntropyValues is unavailable in this agent-browser Chrome context");
+}
+
+function withSubmittedText(source: RecordJson, submittedText: string): RecordJson {
+  let result = change(source, "journey.action.submitted_text", submittedText);
+  const hash = createHash("sha256").update(submittedText).digest("hex");
+  for (const index of [0, 1, 2, 3]) result = change(result, `authority_chain.${index}.content_sha256`, hash);
+  return result;
 }
 
 function cascadingDivergence(source: RecordJson): RecordJson {

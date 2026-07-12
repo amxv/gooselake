@@ -671,20 +671,26 @@ impl GatewayState {
         }
     }
 
-    async fn merge_authoritative_session(
+    pub(crate) async fn merge_authoritative_session(
         &self,
         source_id: &str,
         session: runtime_core::SessionRecord,
     ) {
+        if self.source_repair_active(source_id).await {
+            return;
+        }
         let patches = {
             let mut materialized = self.materialized.write().await;
             let Some(state) = materialized.get_mut(source_id) else {
                 return;
             };
+            if state.source_health.state == SourceHealthState::GapDetected {
+                return;
+            }
             if state
                 .sessions
                 .get(&session.id)
-                .is_some_and(|current| current.updated_at > session.updated_at)
+                .is_some_and(|current| current.updated_at >= session.updated_at)
             {
                 return;
             }
@@ -697,24 +703,28 @@ impl GatewayState {
         }
     }
 
-    async fn merge_authoritative_team(
+    pub(crate) async fn merge_authoritative_team(
         &self,
         source_id: &str,
         snapshot: runtime_core::TeamWithMembers,
     ) {
+        if self.source_repair_active(source_id).await {
+            return;
+        }
         let patches = {
             let mut materialized = self.materialized.write().await;
             let Some(state) = materialized.get_mut(source_id) else {
                 return;
             };
-            if state
-                .teams
-                .get(&snapshot.team.id)
-                .is_some_and(|current| current.updated_at > snapshot.team.updated_at)
-            {
+            if state.source_health.state == SourceHealthState::GapDetected {
                 return;
             }
             let team_id = snapshot.team.id.clone();
+            let current_revision = state.teams.get(&team_id).map(|current| current.updated_at);
+            if current_revision.is_some_and(|revision| revision > snapshot.team.updated_at) {
+                return;
+            }
+            let equal_revision = current_revision == Some(snapshot.team.updated_at);
             let previous_members = state
                 .members_by_team
                 .get(&team_id)
@@ -724,12 +734,22 @@ impl GatewayState {
                         .collect::<std::collections::BTreeSet<String>>()
                 })
                 .unwrap_or_default();
-            state.upsert_team(snapshot.team);
-            state
-                .members_by_team
-                .insert(team_id.clone(), BTreeMap::new());
+            if !equal_revision {
+                state.upsert_team(snapshot.team);
+                state
+                    .members_by_team
+                    .insert(team_id.clone(), BTreeMap::new());
+            }
             for member in snapshot.members {
-                state.upsert_team_member(member);
+                let member_id = member.agent_id.clone();
+                let should_merge = state
+                    .members_by_team
+                    .get(&team_id)
+                    .and_then(|members| members.get(&member_id))
+                    .is_none_or(|current| current == &member);
+                if should_merge || !equal_revision {
+                    state.upsert_team_member(member);
+                }
             }
             let mut patches = state.team_patch(&team_id, state.cursor());
             let current_members = state
@@ -759,23 +779,29 @@ impl GatewayState {
         }
     }
 
-    async fn merge_authoritative_team_message(
+    pub(crate) async fn merge_authoritative_team_message(
         &self,
         source_id: &str,
         ack: runtime_core::TeamMessageAck,
     ) {
+        if self.source_repair_active(source_id).await {
+            return;
+        }
         let patches = {
             let mut materialized = self.materialized.write().await;
             let Some(state) = materialized.get_mut(source_id) else {
                 return;
             };
+            if state.source_health.state == SourceHealthState::GapDetected {
+                return;
+            }
             let team_id = ack.message.team_id.clone();
             let message_id = ack.message.id.clone();
             let stale = state
                 .messages_by_team
                 .get(&team_id)
                 .and_then(|rows| rows.iter().find(|row| row.id == message_id))
-                .is_some_and(|current| current.created_at > ack.message.created_at);
+                .is_some_and(|current| current.created_at >= ack.message.created_at);
             if stale {
                 return;
             }
@@ -785,7 +811,7 @@ impl GatewayState {
                     .deliveries_by_team
                     .get(&team_id)
                     .and_then(|rows| rows.iter().find(|row| row.id == delivery.id))
-                    .is_some_and(|current| current.updated_at > delivery.updated_at);
+                    .is_some_and(|current| current.updated_at >= delivery.updated_at);
                 if !stale {
                     state.upsert_delivery(delivery);
                 }

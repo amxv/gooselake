@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gooseweb://schemas/p03-authority-observation/v1",
+  "title": "P03 parsed authority observation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_revision", "phase_id", "attempt", "layer", "correlation_id",
+    "semantic_identity", "cursor_or_version", "content_sha256", "status",
+    "observed_instances", "missing_count", "duplicate_count", "order_errors",
+    "baseline_defect_id"
+  ],
+  "properties": {
+    "schema_revision": { "const": "gooseweb-p03-authority-observation/v1" },
+    "phase_id": { "const": "P03" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "layer": { "enum": ["Gooselake", "Goosetower", "Gooseweb Worker/store"] },
+    "correlation_id": { "type": "string", "minLength": 1 },
+    "semantic_identity": { "type": "string", "minLength": 1 },
+    "cursor_or_version": { "type": "string", "minLength": 1 },
+    "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "status": { "enum": ["observed", "baseline_divergent"] },
+    "observed_instances": { "type": "integer", "minimum": 0 },
+    "missing_count": { "type": "integer", "minimum": 0 },
+    "duplicate_count": { "type": "integer", "minimum": 0 },
+    "order_errors": { "type": "integer", "minimum": 0 },
+    "baseline_defect_id": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^BASE-[A-Z0-9-]+$" }
+      ]
+    }
+  }
+}

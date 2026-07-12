@@ -126,8 +126,9 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
   if (value.first_divergent_layer === null) {
     equal(divergent.length, 0, "P03 absent first divergence");
   } else {
-    equal(divergent.length, 1, "P03 single first divergence");
-    equal(divergent[0]!.layer, value.first_divergent_layer, "P03 first divergent layer");
+    if (divergent.length === 0) fail("P03 declares a first divergence without measured divergent layers");
+    const earliest = authority.find((entry) => entry.status === "baseline_divergent")!;
+    equal(earliest.layer, value.first_divergent_layer, "P03 earliest divergent layer");
   }
   authority.forEach((entry, index) => {
     equal(entry.artifact, authorityArtifacts[index], `P03 ${layers[index]} artifact`);
@@ -253,6 +254,22 @@ export function validateP03EvidenceArtifact(
   try { p03Evidence = JSON.parse(readFileSync(path, "utf8")) as RecordJson; }
   catch { fail("P03 browser evidence artifact is not valid JSON"); }
   validateP03EvidenceLinkage(descriptor, p03Evidence!, candidateManifest);
+  const authority = array(p03Evidence!.authority_chain, "P03 parsed authority chain").map((entry) => object(entry, "P03 authority claim"));
+  for (const claim of authority.slice(0, 3)) {
+    const relativeArtifact = string(claim.artifact, "P03 authority artifact path");
+    const artifactPath = safeChild(evidenceRoot, relativeArtifact);
+    if (!existsSync(artifactPath) || !statSync(artifactPath).isFile()) fail(`referenced P03 authority artifact missing: ${relativeArtifact}`);
+    let observation: RecordJson;
+    try { observation = JSON.parse(readFileSync(artifactPath, "utf8")) as RecordJson; }
+    catch { fail(`P03 authority artifact is not valid JSON: ${relativeArtifact}`); }
+    applySchemaFile("verification/gooseweb/schemas/p03-authority-observation.schema.json", observation!);
+    equal(observation!.phase_id, descriptor.phase_id, `P03 ${claim.layer} artifact phase`);
+    equal(observation!.attempt, descriptor.attempt, `P03 ${claim.layer} artifact attempt`);
+    for (const key of ["layer", "correlation_id", "semantic_identity", "cursor_or_version", "content_sha256", "status", "observed_instances", "missing_count", "duplicate_count", "order_errors", "baseline_defect_id"]) {
+      equal(observation![key], claim[key], `P03 ${claim.layer} artifact/${key}`);
+    }
+    scanSecrets(observation!, `P03 authority artifact ${relativeArtifact}`, false);
+  }
 }
 
 export function validateManifestRegistry(value: RecordJson): void {

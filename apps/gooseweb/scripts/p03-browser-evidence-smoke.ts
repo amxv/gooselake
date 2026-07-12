@@ -71,12 +71,19 @@ assert.throws(
 );
 assert.deepEqual(manifest.known_defects, [], "P03 verification infrastructure must have no known defects");
 validateStandardEvidenceLinkage();
-console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 7} seeded failures rejected)`);
+console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 15} seeded failures rejected)`);
 
 function validateStandardEvidenceLinkage(): void {
   const descriptor = linkedStandardDescriptor();
   const linked = linkedP03Evidence(descriptor);
   validateP03EvidenceLinkage(descriptor, linked, manifest);
+  const cascade = cascadingDivergence(linked);
+  validateP03EvidenceLinkage(descriptor, cascade, manifest);
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, change(cascade, "first_divergent_layer", "Gooseweb React"), manifest),
+    undefined,
+    "incorrect earliest layer in cascading divergence unexpectedly passed"
+  );
   assert.throws(
     () => validateP03EvidenceLinkage(descriptor, change(linked, "journey.action.control.accessible_name", "Forged composer"), manifest),
     undefined,
@@ -106,7 +113,32 @@ function validateStandardEvidenceLinkage(): void {
       "missing P03 browser evidence artifact unexpectedly passed"
     );
     writeFileSync(resolve(root, "p03-browser-evidence.json"), `${JSON.stringify(linked, null, 2)}\n`);
+    writeAuthorityArtifacts(root, linked);
     validateP03EvidenceArtifact(descriptor, manifest, root);
+    const artifactMismatchSeeds: readonly [string, string, Json][] = [
+      ["correlation", "correlation_id", "forged-correlation"],
+      ["semantic identity", "semantic_identity", "forged:identity"],
+      ["cursor", "cursor_or_version", "forged:cursor"],
+      ["content", "content_sha256", "0".repeat(64)],
+      ["cardinality", "observed_instances", 2],
+      ["discrepancy count", "missing_count", 1]
+    ];
+    for (const [name, key, forgedValue] of artifactMismatchSeeds) {
+      writeAuthorityArtifacts(root, linked, { layerIndex: 1, key, value: forgedValue });
+      assert.throws(
+        () => validateP03EvidenceArtifact(descriptor, manifest, root),
+        undefined,
+        `forged authority artifact ${name} unexpectedly passed`
+      );
+    }
+    writeAuthorityArtifacts(root, linked);
+    rmSync(resolve(root, "tower-state.redacted.json"));
+    assert.throws(
+      () => validateP03EvidenceArtifact(descriptor, manifest, root),
+      undefined,
+      "missing parsed authority artifact unexpectedly passed"
+    );
+    writeAuthorityArtifacts(root, linked);
     writeFileSync(resolve(root, "p03-browser-evidence.json"), `${JSON.stringify(change(linked, "browser.session_name", "gooseweb-p03-1111111-a1-other-1234abcd"), null, 2)}\n`);
     assert.throws(
       () => validateP03EvidenceArtifact(descriptor, manifest, root),
@@ -116,6 +148,45 @@ function validateStandardEvidenceLinkage(): void {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+function writeAuthorityArtifacts(
+  root: string,
+  p03Evidence: RecordJson,
+  mutate?: { readonly layerIndex: number; readonly key: string; readonly value: Json }
+): void {
+  const entries = p03Evidence.authority_chain as RecordJson[];
+  entries.slice(0, 3).forEach((entry, index) => {
+    let observation: RecordJson = {
+      schema_revision: "gooseweb-p03-authority-observation/v1",
+      phase_id: "P03",
+      attempt: p03Evidence.attempt!,
+      layer: entry.layer!,
+      correlation_id: entry.correlation_id!,
+      semantic_identity: entry.semantic_identity!,
+      cursor_or_version: entry.cursor_or_version!,
+      content_sha256: entry.content_sha256!,
+      status: entry.status!,
+      observed_instances: entry.observed_instances!,
+      missing_count: entry.missing_count!,
+      duplicate_count: entry.duplicate_count!,
+      order_errors: entry.order_errors!,
+      baseline_defect_id: entry.baseline_defect_id!
+    };
+    if (mutate?.layerIndex === index) observation = change(observation, mutate.key, mutate.value);
+    writeFileSync(resolve(root, String(entry.artifact)), `${JSON.stringify(observation, null, 2)}\n`);
+  });
+}
+
+function cascadingDivergence(source: RecordJson): RecordJson {
+  let result = structuredClone(source);
+  for (const index of [1, 2, 3]) {
+    result = change(result, `authority_chain.${index}.status`, "baseline_divergent");
+    result = change(result, `authority_chain.${index}.observed_instances`, 0);
+    result = change(result, `authority_chain.${index}.missing_count`, 1);
+    result = change(result, `authority_chain.${index}.baseline_defect_id`, "BASE-P01-TEAM-COMMS-EMPTY");
+  }
+  return change(result, "first_divergent_layer", "Goosetower");
 }
 
 function linkedStandardDescriptor(): RecordJson {

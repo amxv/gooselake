@@ -12,8 +12,8 @@
     {
       "phase_id": "P02",
       "path": "verification/gooseweb/manifests/p02-fake-source-observers.json",
-      "revision": 4,
-      "sha256": "1f2bc3c3a2fc7095a01f9880d5de5aa7d5f3d60c56ebd05d7618cabbdeed8670",
+      "revision": 5,
+      "sha256": "9815d19a3bf05e38baf456a74631e456cb47acba52bc3f3685e2d47490dbb646",
       "activated_reason": "P02 verifies the bounded public-contract fake source and redacted real Tower/frame/Worker/store observer chain without claiming product approval."
     }
   ]

@@ -120,6 +120,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/debug/sources", get(debug_sources))
         .route("/debug/subscriptions", get(debug_subscriptions))
         .route("/debug/materializer", get(debug_materializer))
+        .route("/debug/served-frames", get(debug_served_frames))
         .route("/debug/audit", get(debug_audit))
         .route_layer(middleware::from_fn_with_state(
             state.api_bearer_token.clone(),
@@ -255,6 +256,13 @@ async fn debug_materializer(
 ) -> Result<Json<Vec<crate::gateway::MaterializerDebugSummary>>, StatusCode> {
     ensure_debug_enabled(&state)?;
     Ok(Json(state.gateway.debug_materializer_summary().await))
+}
+
+async fn debug_served_frames(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::gateway::ServedFrameDebug>>, StatusCode> {
+    ensure_debug_enabled(&state)?;
+    Ok(Json(state.gateway.debug_served_frames().await))
 }
 
 async fn debug_audit(

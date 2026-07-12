@@ -254,8 +254,50 @@ impl GatewayState {
                 worktrees: state.worktrees.len(),
                 ledger_events: state.ledger.len(),
                 discontinuities: state.discontinuities.len(),
+                recent_ledger: state
+                    .ledger
+                    .iter()
+                    .rev()
+                    .take(64)
+                    .rev()
+                    .filter_map(|event| serde_json::to_value(event).ok())
+                    .map(|value| observers::redact_debug_value(&value))
+                    .collect(),
+                session_details: state
+                    .sessions
+                    .keys()
+                    .take(32)
+                    .filter_map(|session_id| {
+                        state.snapshot_session(&SelectedSessionSubscription {
+                            session_id: session_id.clone(),
+                            include_text: true,
+                        })
+                    })
+                    .filter_map(|detail| serde_json::to_value(detail).ok())
+                    .map(|value| observers::redact_debug_value(&value))
+                    .collect(),
             })
             .collect()
+    }
+
+    pub async fn debug_served_frames(&self) -> Vec<ServedFrameDebug> {
+        self.served_frames.lock().await.iter().cloned().collect()
+    }
+
+    pub(super) async fn record_served_envelope(
+        &self,
+        connection_id: &str,
+        envelope: &RealtimeEnvelope,
+    ) {
+        if self.config.debug.endpoints_enabled {
+            let capture_index = self.next_frame_capture.fetch_add(1, Ordering::Relaxed);
+            let frame = ServedFrameDebug::from_envelope(capture_index, connection_id, envelope);
+            let mut frames = self.served_frames.lock().await;
+            if frames.len() == 128 {
+                frames.pop_front();
+            }
+            frames.push_back(frame);
+        }
     }
 
     pub async fn recent_gateway_audit(&self) -> Vec<GatewayAuditRecord> {
@@ -264,11 +306,6 @@ impl GatewayState {
 
     pub fn metrics_snapshot(&self) -> GatewayMetricsSnapshot {
         self.metrics.snapshot()
-    }
-
-    pub(super) fn encode_next(&self, conn: &mut ConnectionState) -> Option<Vec<u8>> {
-        conn.next_outbound()
-            .map(|envelope| envelope.encode_to_vec())
     }
 
     #[cfg(test)]

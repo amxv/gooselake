@@ -2,10 +2,12 @@ import { goosewebConfig } from "./config";
 import type { CommandIntent, WorkerInbound, WorkerOutbound } from "./types";
 import { RealtimeWorkerCore } from "./worker/realtime-command-core";
 import {
+  getGoosewebSnapshot,
   setPendingCommand,
   setSubscription,
   updateGoosewebStore
 } from "../stores/gooseweb-store";
+import { installGoosewebVerificationObserver } from "./verification-observer";
 
 type RealtimeTransport = {
   readonly postMessage: (message: WorkerInbound) => void;
@@ -14,6 +16,9 @@ type RealtimeTransport = {
 let worker: Worker | undefined;
 let inlineCore: RealtimeWorkerCore | undefined;
 let inlineTransport: RealtimeTransport | undefined;
+const verificationObserver = goosewebConfig.flags.debugFrames
+  ? installGoosewebVerificationObserver(getGoosewebSnapshot)
+  : undefined;
 
 export function ensureRealtimeWorker(): Worker | undefined {
   ensureRealtimeTransport();
@@ -48,7 +53,10 @@ function ensureInlineRealtimeTransport(): RealtimeTransport {
     return inlineTransport;
   }
 
-  inlineCore = new RealtimeWorkerCore(applyRealtimeWorkerOutput);
+  inlineCore = new RealtimeWorkerCore(
+    applyRealtimeWorkerOutput,
+    (envelope) => verificationObserver?.recordFrame(envelope)
+  );
   inlineTransport = {
     postMessage(message) {
       inlineCore?.handleMessage(message).catch((error: unknown) => {
@@ -81,6 +89,7 @@ export function applyRealtimeWorkerOutput(message: WorkerOutbound): void {
       });
       break;
   }
+  verificationObserver?.recordWorkerOutput(message, getGoosewebSnapshot());
 }
 
 export function connectRealtime(ticket: string): void {

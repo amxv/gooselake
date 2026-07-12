@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
-  "manifest_revision": 4,
+  "manifest_revision": 5,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
@@ -24,6 +24,7 @@
       "A clean committed candidate is served under the sole migration lease.",
       "Default URL contains no fixture query parameter.",
       "The versioned p02-fake-gooselake/v1 source is configured through public runtime contracts.",
+      "The supervisor explicitly enables Goosetower debug endpoints and VITE_GOOSEWEB_DEBUG_FRAMES=true for bounded served-stack observer capture.",
       "Epoch reconstruction uses two supervisor-owned immutable attempts: stop and release epoch 001, then start a fresh source and Tower both configured for epoch 002."
     ],
     "actions": [
@@ -45,11 +46,13 @@
         ],
         "expected_goosetower": [
           "p02-session-001 materializes ready at source sequence 4",
-          "one real session_detail terminal-text patch is encoded by the gateway"
+          "one real session_detail terminal-text patch is encoded by the gateway",
+          "authenticated debug/materializer contains turn.completed and terminal session detail while debug/served-frames contains the matching actually sent frame"
         ],
         "expected_worker_store": [
           "production RealtimeWorkerCore consumes the gateway frame",
-          "sessionDetails[p02-session-001] contains the exact terminal text once"
+          "sessionDetails[p02-session-001] contains the exact terminal text once",
+          "window.__GOOSEWEB_VERIFICATION_OBSERVER__.capture() reports the bounded redacted real frame/output/store sequence"
         ],
         "expected_visible": [
           "P02 deterministic terminal is visible once",
@@ -100,14 +103,16 @@
         "layer": "Goosetower",
         "required": [
           "real runtime client, SSE fan-in, materializer, and gateway path consume the public source",
-          "materialized state and decoded frames carry stable identity and explicit source/gateway cursors"
+          "materialized state and decoded frames carry stable identity and explicit source/gateway cursors",
+          "authenticated debug/materializer and debug/served-frames expose bounded capture-time-redacted observations from the actual served stack"
         ]
       },
       {
         "layer": "Gooseweb Worker/store",
         "required": [
           "production decoder and Worker/store path consume deterministic captured frames",
-          "read-only observer reports exact normalized state without inferring unavailable evidence"
+          "read-only observer reports exact normalized state without inferring unavailable evidence",
+          "the explicit development debug-frames build exposes a bounded capture-time-redacted window observer that is absent from production/default builds"
         ]
       },
       {

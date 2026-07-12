@@ -1,5 +1,4 @@
 use base64::Engine;
-use prost::Message;
 use std::collections::HashSet;
 use std::process::Command;
 use tokio::net::TcpListener;
@@ -36,6 +35,20 @@ fn client(base: String) -> GooselakeRuntimeClient {
         Some(RUNTIME_BEARER.into()),
     ))
     .unwrap()
+}
+
+fn gateway(base: String) -> GatewayState {
+    let mut config = GoosetowerConfig::default();
+    config.debug.endpoints_enabled = true;
+    config.runtimes.sources = vec![RuntimeSourceConfig {
+        source_id: SOURCE_ID.into(),
+        source_epoch: INITIAL_EPOCH.into(),
+        base_url: base,
+        bearer_token: Some(RUNTIME_BEARER.into()),
+        display_name: "P02 deterministic source".into(),
+        ..Default::default()
+    }];
+    GatewayState::new(Arc::new(config)).unwrap()
 }
 
 async fn apply_control(base: &str, control: FaultControl) -> reqwest::Response {
@@ -279,16 +292,7 @@ async fn fake_source_bootstraps_real_gateway_materialized_observer() {
 #[tokio::test]
 async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
     let (source, base) = spawn().await;
-    let mut config = GoosetowerConfig::default();
-    config.runtimes.sources = vec![RuntimeSourceConfig {
-        source_id: SOURCE_ID.into(),
-        source_epoch: INITIAL_EPOCH.into(),
-        base_url: base.clone(),
-        bearer_token: Some(RUNTIME_BEARER.into()),
-        display_name: "P02 deterministic source".into(),
-        ..Default::default()
-    }];
-    let gateway = GatewayState::new(Arc::new(config)).unwrap();
+    let gateway = gateway(base.clone());
     gateway.bootstrap_enabled_sources().await;
     let mut patch_rx = gateway.verification_patch_receiver();
     let runtime_client = client(base);
@@ -332,8 +336,53 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
     }
     let patch = terminal_patch.expect("real materializer must publish terminal session detail");
     assert_eq!(patch.entity.as_ref().unwrap().entity_id, "p02-session-001");
+    let materialized = gateway.debug_materializer_summary().await;
+    assert_eq!(materialized[0].source_health.last_source_seq, Some(4));
+    assert_eq!(
+        materialized[0].recent_ledger.last().unwrap()["kind"],
+        "turn.completed"
+    );
+    assert_eq!(
+        materialized[0].session_details[0]["appended_text"],
+        "P02 deterministic terminal"
+    );
     let frame = gateway.verification_frame_for_patch(patch);
-    let encoded = base64::engine::general_purpose::STANDARD.encode(frame.encode_to_vec());
+    let secret_frame = frame.clone();
+    let served = gateway
+        .verification_serve_frame("p02-verification-connection", frame)
+        .await;
+    let frames = gateway.debug_served_frames().await;
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].payload_kind, "patch");
+    assert_eq!(frames[0].view_kind.as_deref(), Some("session_detail"));
+    assert_eq!(
+        frames[0].body.as_ref().and_then(|body| body.get("text")),
+        Some(&json!("P02 deterministic terminal"))
+    );
+    for _ in 0..130 {
+        let mut frame = secret_frame.clone();
+        if let Some(
+            crate::protocol::generated::goosetower::v1::realtime_envelope::Payload::Patch(patch),
+        ) = frame.payload.as_mut()
+        {
+            patch.body = serde_json::to_vec(&json!({
+                "authorization": "Bearer must-not-leak",
+                "text": "bounded"
+            }))
+            .unwrap()
+            .into();
+        }
+        gateway
+            .verification_serve_frame("p02-verification-connection", frame)
+            .await;
+    }
+    let bounded_frames = gateway.debug_served_frames().await;
+    assert_eq!(bounded_frames.len(), 128);
+    assert_eq!(
+        bounded_frames.last().unwrap().body.as_ref().unwrap()["authorization"],
+        "[redacted]"
+    );
+    let encoded = base64::engine::general_purpose::STANDARD.encode(served);
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let output = Command::new("bun")
         .current_dir(repo)
@@ -355,6 +404,68 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
     assert_eq!(observed["source_id"], SOURCE_ID);
     assert_eq!(observed["session_id"], "p02-session-001");
     assert_eq!(observed["visible_text"], "P02 deterministic terminal");
+}
+
+#[tokio::test]
+async fn retained_event_survives_health_cursor_racing_ahead_of_gateway_ingest() {
+    let (_source, base) = spawn().await;
+    let gateway = gateway(base.clone());
+    gateway.bootstrap_enabled_sources().await;
+    let mut patch_rx = gateway.verification_patch_receiver();
+    let runtime = client(base.clone());
+    runtime
+        .send_turn(
+            "p02-session-001",
+            &runtime_core::SendTurnInput {
+                input: vec![json!({"type":"text","text":"P02 deterministic turn action"})],
+                expected_turn_id: Some("p02-turn-001".into()),
+                permission_mode: None,
+            },
+        )
+        .await
+        .unwrap();
+    let retained = runtime
+        .replay_global_events(Some(1), Some(10))
+        .await
+        .unwrap();
+    let terminal_row_id = retained
+        .iter()
+        .find(|event| event.kind == "turn.completed")
+        .expect("runtime must retain the terminal event");
+
+    let mut raced_health = crate::runtime::events::SourceHealth::new(SOURCE_ID, INITIAL_EPOCH);
+    raced_health.transition(
+        crate::runtime::events::SourceHealthState::Live,
+        Some(terminal_row_id.row_id),
+        None,
+    );
+    gateway
+        .verification_update_source_health(raced_health)
+        .await;
+    for event in retained {
+        gateway
+            .ingest_source_event(crate::runtime::events::SourceEvent::from_runtime_event(
+                SOURCE_ID,
+                INITIAL_EPOCH,
+                event,
+            ))
+            .await;
+    }
+
+    let mut terminal_patch = None;
+    while let Ok(patch) = patch_rx.try_recv() {
+        if patch.view_kind == "session_detail"
+            && patch.body.get("text").and_then(Value::as_str) == Some("P02 deterministic terminal")
+        {
+            terminal_patch = Some(patch);
+        }
+    }
+    assert!(
+        terminal_patch.is_some(),
+        "a retained event must not be dropped when observational health wins the task race"
+    );
+    let summary = gateway.debug_materializer_summary().await;
+    assert_eq!(summary[0].source_health.last_source_seq, Some(4));
 }
 
 #[tokio::test]

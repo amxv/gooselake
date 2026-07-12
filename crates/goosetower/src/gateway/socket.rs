@@ -56,23 +56,20 @@ impl GatewayState {
             self.audit_event("connection.open", Scope::System, ""),
             None,
         );
-        if sender
-            .send(Message::Binary(
-                self.encode_next(&mut conn).unwrap_or_default().into(),
-            ))
-            .await
-            .is_err()
-        {
+        let first = conn.next_outbound().unwrap_or_default();
+        let encoded = first.encode_to_vec();
+        if sender.send(Message::Binary(encoded.into())).await.is_err() {
             return;
         }
+        self.record_served_envelope(&conn.connection_id, &first)
+            .await;
         while let Some(envelope) = conn.next_outbound() {
-            if sender
-                .send(Message::Binary(envelope.encode_to_vec().into()))
-                .await
-                .is_err()
-            {
+            let encoded = envelope.encode_to_vec();
+            if sender.send(Message::Binary(encoded.into())).await.is_err() {
                 return;
             }
+            self.record_served_envelope(&conn.connection_id, &envelope)
+                .await;
         }
 
         let mut patch_rx = self.patches.subscribe();
@@ -136,13 +133,12 @@ impl GatewayState {
             }
 
             while let Some(envelope) = conn.next_outbound() {
-                if sender
-                    .send(Message::Binary(envelope.encode_to_vec().into()))
-                    .await
-                    .is_err()
-                {
+                let encoded = envelope.encode_to_vec();
+                if sender.send(Message::Binary(encoded.into())).await.is_err() {
                     return;
                 }
+                self.record_served_envelope(&conn.connection_id, &envelope)
+                    .await;
             }
             self.refresh_connection_debug(&conn).await;
         }

@@ -50,7 +50,10 @@ export class RealtimeWorkerCore {
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private startupFramesSent = false;
 
-  constructor(private readonly post: (message: WorkerOutbound) => void) {}
+  constructor(
+    private readonly post: (message: WorkerOutbound) => void,
+    private readonly observeFrame?: (envelope: RealtimeEnvelope) => void
+  ) {}
 
   async handleMessage(message: WorkerInbound): Promise<void> {
     switch (message.type) {
@@ -228,6 +231,7 @@ export class RealtimeWorkerCore {
     }
 
     const envelope = fromBinary(RealtimeEnvelopeSchema, new Uint8Array(data));
+    this.observeFrame?.(envelope);
 
     switch (envelope.messageKind) {
       case MessageKind.HELLO:

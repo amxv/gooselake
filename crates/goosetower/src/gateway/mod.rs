@@ -23,7 +23,9 @@ use crate::materializer::{
     ApprovalInboxSubscription, BoardSubscription, BootstrapOptions, LedgerSubscription,
     SourceBootstrap,
 };
-use crate::materializer::{MaterializedPatch, MaterializedPatchKind, MaterializedState};
+use crate::materializer::{
+    MaterializedPatch, MaterializedPatchKind, MaterializedState, MAX_SOURCE_REPLACEMENT_ENTITIES,
+};
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
 use crate::protocol::generated::goosetower::v1::{
     AuthExpiring, AuthRefresh, AuthRefreshed, Command, CommandAccepted, ConnectionDegraded,
@@ -92,6 +94,8 @@ pub struct GatewayState {
     next_connection_id: AtomicU64,
     next_message_id: AtomicU64,
     next_gateway_seq: AtomicU64,
+    gateway_epoch: String,
+    gateway_started_at_unix_ns: u64,
     patches: broadcast::Sender<MaterializedPatch>,
     recoveries: broadcast::Sender<SourceRecoverySignal>,
 }
@@ -113,6 +117,11 @@ impl GatewayState {
             );
         }
         let replay_buffer_capacity = config.materializer.event_buffer_size;
+        let gateway_started_at_unix_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .min(u64::MAX as u128) as u64;
         Ok(Self {
             ticket_validator: TicketValidator::from_config(&config)?,
             config,
@@ -130,6 +139,11 @@ impl GatewayState {
             next_connection_id: AtomicU64::new(1),
             next_message_id: AtomicU64::new(1),
             next_gateway_seq: AtomicU64::new(1),
+            gateway_epoch: format!(
+                "{gateway_started_at_unix_ns:020}-{:032x}",
+                rand::random::<u128>()
+            ),
+            gateway_started_at_unix_ns,
             patches,
             recoveries,
         })
@@ -486,6 +500,8 @@ fn cursor_vector_from_states(
     states: &BTreeMap<String, MaterializedState>,
     source_id: Option<&str>,
     gateway_seq: u64,
+    gateway_epoch: &str,
+    gateway_started_at_unix_ns: u64,
 ) -> Option<CursorVector> {
     let sources = states
         .values()
@@ -501,6 +517,8 @@ fn cursor_vector_from_states(
     (!sources.is_empty()).then_some(CursorVector {
         gateway_seq,
         sources,
+        gateway_epoch: gateway_epoch.to_string(),
+        gateway_started_at_unix_ns,
     })
 }
 

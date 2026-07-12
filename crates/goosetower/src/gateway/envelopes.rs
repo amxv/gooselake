@@ -12,6 +12,8 @@ impl GatewayState {
                 max_message_bytes: self.config.websocket.max_message_bytes as u32,
                 protocol_version: PROTOCOL_VERSION,
                 resume_supported: true,
+                gateway_epoch: self.gateway_epoch.clone(),
+                gateway_started_at_unix_ns: self.gateway_started_at_unix_ns,
             }),
         )
     }
@@ -72,6 +74,8 @@ impl GatewayState {
                         source_epoch: cursor.source_epoch,
                         source_seq: cursor.source_seq.max(0) as u64,
                     }],
+                    gateway_epoch: self.gateway_epoch.clone(),
+                    gateway_started_at_unix_ns: self.gateway_started_at_unix_ns,
                 }),
                 body: serde_json::to_vec(&patch.body).unwrap_or_default().into(),
                 schema_version: DETAIL_SCHEMA_VERSION,
@@ -183,8 +187,21 @@ impl GatewayState {
         let source_cursor = state
             .cursor()
             .ok_or_else(|| anyhow!("source snapshot resync lacks a source cursor"))?;
-        let body = serde_json::to_vec(&state.snapshot_source_replacement())?;
-        Ok(envelope_with_payload(
+        let entity_count = state.sessions.len().saturating_mul(2)
+            + state.teams.len().saturating_mul(2)
+            + state.approvals.len()
+            + state.processes.len()
+            + state.worktrees.len()
+            + 1;
+        if entity_count > MAX_SOURCE_REPLACEMENT_ENTITIES {
+            return Err(anyhow!(
+                "source snapshot resync exceeds entity budget ({entity_count} > {MAX_SOURCE_REPLACEMENT_ENTITIES})"
+            ));
+        }
+        let mut writer = BoundedJsonWriter::new(self.config.websocket.max_message_bytes);
+        serde_json::to_writer(&mut writer, &state.snapshot_source_replacement())
+            .map_err(|error| anyhow!("source snapshot resync exceeds byte budget: {error}"))?;
+        let mut envelope = envelope_with_payload(
             MessageKind::SourceSnapshotResync,
             Lane::Critical,
             Payload::SourceSnapshotResync(SourceSnapshotResync {
@@ -197,12 +214,34 @@ impl GatewayState {
                         source_epoch: source_cursor.source_epoch,
                         source_seq: source_cursor.source_seq.max(0) as u64,
                     }],
+                    gateway_epoch: self.gateway_epoch.clone(),
+                    gateway_started_at_unix_ns: self.gateway_started_at_unix_ns,
                 }),
-                body: body.into(),
+                body: writer.into_bytes().into(),
                 schema_version: DETAIL_SCHEMA_VERSION,
                 coverage: Some(source_replacement_coverage()),
             }),
-        ))
+        );
+        envelope.gateway_seq = u64::MAX;
+        if let Some(Payload::SourceSnapshotResync(resync)) = envelope.payload.as_mut() {
+            if let Some(cursor) = resync.cursor.as_mut() {
+                cursor.gateway_seq = u64::MAX;
+            }
+        }
+        let encoded_len = envelope.encode_to_vec().len();
+        if encoded_len > self.config.websocket.max_message_bytes {
+            return Err(anyhow!(
+                "source snapshot resync frame exceeds websocket limit ({encoded_len} > {})",
+                self.config.websocket.max_message_bytes
+            ));
+        }
+        envelope.gateway_seq = 0;
+        if let Some(Payload::SourceSnapshotResync(resync)) = envelope.payload.as_mut() {
+            if let Some(cursor) = resync.cursor.as_mut() {
+                cursor.gateway_seq = 0;
+            }
+        }
+        Ok(envelope)
     }
 
     pub(super) fn audit_event(&self, kind: &str, scope: Scope, scope_id: &str) -> RealtimeEnvelope {
@@ -400,6 +439,38 @@ impl GatewayState {
     #[cfg(test)]
     pub fn publish_patch(&self, patch: MaterializedPatch) {
         let _ = self.patches.send(patch);
+    }
+}
+
+struct BoundedJsonWriter {
+    bytes: Vec<u8>,
+    limit: usize,
+}
+
+impl BoundedJsonWriter {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::with_capacity(limit.min(64 * 1024)),
+            limit,
+        }
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+impl std::io::Write for BoundedJsonWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if buf.len() > self.limit.saturating_sub(self.bytes.len()) {
+            return Err(std::io::Error::other("bounded source replacement overflow"));
+        }
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

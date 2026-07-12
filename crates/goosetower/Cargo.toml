@@ -27,6 +27,7 @@ futures-util = "0.3"
 hmac = "0.12"
 http.workspace = true
 prost = "0.14"
+rand.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 runtime-core = { path = "../runtime-core" }
 serde.workspace = true

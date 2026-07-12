@@ -30,6 +30,8 @@ mod tests {
                 max_message_bytes: 1_048_576,
                 protocol_version: PROTOCOL_VERSION,
                 resume_supported: true,
+                gateway_epoch: "test-gateway".to_string(),
+                gateway_started_at_unix_ns: 1,
             })),
             ..RealtimeEnvelope::default()
         };

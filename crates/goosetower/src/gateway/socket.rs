@@ -391,6 +391,48 @@ impl GatewayState {
                 .insert(subscribe.subscription_id.clone(), subscription);
         }
 
+        if cursor.gateway_epoch != self.gateway_epoch {
+            let envelopes = {
+                let materialized = self.materialized.read().await;
+                cursor
+                    .sources
+                    .iter()
+                    .map(|source| {
+                        let state = materialized.get(&source.source_id).ok_or_else(|| {
+                            anyhow!(
+                                "source {} unavailable for gateway generation reset",
+                                source.source_id
+                            )
+                        })?;
+                        self.source_snapshot_resync(state, "gateway generation changed")
+                    })
+                    .collect::<Result<Vec<_>>>()
+            };
+            let envelopes = match envelopes {
+                Ok(envelopes) => envelopes,
+                Err(error) => {
+                    conn.status = ConnectionStatus::Degraded;
+                    self.enqueue_connection(
+                        conn,
+                        self.connection_degraded(format!(
+                            "gateway generation reset failed safely: {error}"
+                        )),
+                        Some("connection_status".to_string()),
+                    );
+                    self.metrics.resume_rejected.fetch_add(1, Ordering::Relaxed);
+                    return Ok(());
+                }
+            };
+            conn.status = ConnectionStatus::Replaying;
+            for envelope in envelopes {
+                let entry = self.record_replayable(envelope).await;
+                self.enqueue_connection(conn, entry.envelope, None);
+            }
+            self.metrics.resume_partial.fetch_add(1, Ordering::Relaxed);
+            conn.status = ConnectionStatus::Connected;
+            return Ok(());
+        }
+
         conn.status = ConnectionStatus::Replaying;
         self.enqueue_connection(
             conn,
@@ -718,6 +760,8 @@ impl GatewayState {
             &materialized,
             source_id.as_deref(),
             self.next_gateway_seq.load(Ordering::Relaxed),
+            &self.gateway_epoch,
+            self.gateway_started_at_unix_ns,
         );
         let mut envelope = envelope_with_payload(
             MessageKind::Snapshot,

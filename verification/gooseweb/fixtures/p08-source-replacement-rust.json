@@ -1,0 +1,12 @@
+{
+  "source_id": "local",
+  "fleet_rows": [{"source_id":"local","row_id":"local:session_1","session_id":"session_1","team_id":null,"title":null,"provider":"codex","model":"gpt-5","status":"ready","cwd":"/repo","worktree_id":null,"worktree_path":null,"active_turn_id":null,"pending_approval_count":0,"active_process_count":0,"delivery_status_counts":{},"latest_activity_unix_ms":1,"source_health":"live","version":1}],
+  "sessions": [{"source_id":"local","session":{"id":"session_1","provider":"codex","model":"gpt-5","status":"ready","cwd":"/repo","worktree_path":null,"active_turn_id":null}}],
+  "session_details": [],
+  "teams": [],
+  "team_workspaces": [],
+  "approvals": [],
+  "processes": [],
+  "worktrees": [],
+  "source_health": {"source_id":"local","source_epoch":"epoch-restarted","display_name":"local","source_kind":"gooselake-runtime","provisioner_kind":"static","state":"live","last_source_seq":1,"last_error":null,"observed_at_unix_ms":0,"active_session_count":1,"active_process_count":0,"provider_kinds":["codex","claude","acp"],"models":[],"model_capabilities":[],"process_capacity":1,"supports_worktrees":true,"supports_teams":true,"replay_window_events":null,"replay_window_ms":null,"region":null,"cost_hint":null,"provider_status":null,"diagnostics_summary":null,"version":0}
+}

@@ -425,6 +425,7 @@ dependencies = [
  "prost",
  "prost-build",
  "protoc-bin-vendored",
+ "rand 0.8.6",
  "reqwest",
  "runtime-core",
  "serde",

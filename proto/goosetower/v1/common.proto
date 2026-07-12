@@ -62,6 +62,8 @@ message SourceCursor {
 message CursorVector {
   uint64 gateway_seq = 1;
   repeated SourceCursor sources = 2;
+  string gateway_epoch = 3;
+  uint64 gateway_started_at_unix_ns = 4;
   reserved 20 to 39;
 }
 

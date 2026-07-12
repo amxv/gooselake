@@ -86,10 +86,94 @@ async fn source_resync_records_complete_source_replacement_authority() {
             "sources",
         ]
     );
-    let replacement: crate::materializer::SourceReplacementView =
+    let mut replacement: Value =
         serde_json::from_slice(&resync.body).expect("typed source replacement body");
-    assert_eq!(replacement.source_id, "local");
-    assert_eq!(replacement.session_details.len(), 1);
+    replacement["source_health"]["observed_at_unix_ms"] = json!(0);
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../verification/gooseweb/fixtures/p08-source-replacement-rust.json"
+    ))
+    .expect("Rust source replacement fixture");
+    assert_eq!(
+        replacement, fixture,
+        "Rust source replacement fixture drift"
+    );
+    assert_eq!(replacement["source_id"], "local");
+    assert_eq!(replacement["sessions"].as_array().unwrap().len(), 1);
+    assert!(replacement["session_details"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(entry.encoded_len <= gateway.config.websocket.max_message_bytes);
+}
+
+#[tokio::test]
+async fn resume_from_prior_gateway_generation_emits_same_source_epoch_reset() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    let mut state = MaterializedState::new("local", "epoch-runtime");
+    state.upsert_session(session_record());
+    state.reduce_source_event(runtime_source_event(
+        "local",
+        "epoch-runtime",
+        "session_1",
+        1,
+    ));
+    gateway
+        .replace_materialized_state("local".to_string(), state)
+        .await;
+    let mut resume = resume_request(&gateway, 100, 1, "epoch-runtime", vec![ledger_sub()]);
+    let cursor = resume.cursor.as_mut().expect("resume cursor");
+    cursor.gateway_epoch = "prior-gateway-generation".to_string();
+    cursor.gateway_started_at_unix_ns = gateway.gateway_started_at_unix_ns.saturating_sub(1);
+    let mut conn = test_connection(&gateway);
+    gateway
+        .handle_resume(&mut conn, resume)
+        .await
+        .expect("gateway generation reset");
+    let payloads = drain_payloads(&mut conn);
+    let reset = payloads
+        .iter()
+        .find_map(|payload| match payload {
+            Payload::SourceSnapshotResync(reset) => Some(reset),
+            _ => None,
+        })
+        .expect("explicit source reset");
+    let authority = reset.cursor.as_ref().expect("reset cursor");
+    assert_eq!(authority.gateway_epoch, gateway.gateway_epoch);
+    assert_eq!(authority.sources[0].source_epoch, "epoch-runtime");
+    assert_eq!(authority.sources[0].source_seq, 1);
+    assert_eq!(gateway.next_gateway_seq.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn oversized_source_resync_fails_explicitly_before_publication() {
+    let mut config = GoosetowerConfig::default();
+    config.websocket.max_message_bytes = 512;
+    let gateway = test_gateway(config);
+    let mut state = MaterializedState::new("local", "epoch-1");
+    state.upsert_session(session_record());
+    state.reduce_source_event(runtime_source_event("local", "epoch-1", "session_1", 1));
+    let error = gateway
+        .source_snapshot_resync(&state, "bounded source replacement")
+        .expect_err("oversized replacement must fail before replay publication");
+    assert!(error.to_string().contains("byte budget") || error.to_string().contains("websocket"));
+    assert_eq!(gateway.next_gateway_seq.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn over_entity_budget_source_resync_fails_before_snapshot_allocation() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    let mut state = MaterializedState::new("local", "epoch-1");
+    for index in 0..1_025 {
+        let mut session = session_record();
+        session.id = format!("session-{index}");
+        state.sessions.insert(session.id.clone(), session);
+    }
+    state.reduce_source_event(runtime_source_event("local", "epoch-1", "session_1", 1));
+    let error = gateway
+        .source_snapshot_resync(&state, "bounded source replacement")
+        .expect_err("entity budget overflow must fail before snapshot construction");
+    assert!(error.to_string().contains("entity budget"));
+    assert_eq!(gateway.next_gateway_seq.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -173,6 +257,8 @@ fn rust_decodes_shared_typescript_detail_frame_corpus() {
     };
     let cursor = |source_seq| CursorVector {
         gateway_seq: source_seq,
+        gateway_epoch: "fixture-gateway".to_string(),
+        gateway_started_at_unix_ns: 1,
         sources: vec![SourceCursor {
             source_id: "source-1".to_string(),
             source_epoch: "epoch-1".to_string(),
@@ -288,7 +374,7 @@ async fn resume_clean_reconnect_uses_gateway_replay_without_duplicates() {
     gateway
         .handle_resume(
             &mut conn,
-            resume_request(0, 1, "static-0", vec![ledger_sub()]),
+            resume_request(&gateway, 0, 1, "static-0", vec![ledger_sub()]),
         )
         .await
         .expect("resume");
@@ -311,7 +397,7 @@ async fn resume_source_replay_fills_missing_events_and_dedupes_overlap() {
     gateway
         .handle_resume(
             &mut conn,
-            resume_request(10, 1, "static-0", vec![ledger_sub()]),
+            resume_request(&gateway, 10, 1, "static-0", vec![ledger_sub()]),
         )
         .await
         .expect("resume fallback");
@@ -335,7 +421,7 @@ async fn resume_gap_detection_triggers_snapshot_resync() {
     gateway
         .handle_resume(
             &mut conn,
-            resume_request(10, 1, "static-0", vec![ledger_sub()]),
+            resume_request(&gateway, 10, 1, "static-0", vec![ledger_sub()]),
         )
         .await
         .expect("snapshot resync");
@@ -377,7 +463,7 @@ async fn resume_epoch_change_is_gap_detected_and_resynced() {
     gateway
         .handle_resume(
             &mut conn,
-            resume_request(10, 1, "old-epoch", vec![ledger_sub()]),
+            resume_request(&gateway, 10, 1, "old-epoch", vec![ledger_sub()]),
         )
         .await
         .expect("epoch gap resync");

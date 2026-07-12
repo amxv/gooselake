@@ -10,7 +10,7 @@ pub use snapshots::{
     snapshot_cross_source_health, snapshot_cross_source_ledger, snapshot_cross_source_worktrees,
     ApprovalInboxSubscription, BoardSubscription, LedgerSubscription, ProcessTailSubscription,
     SelectedSessionSubscription, SelectedTeamSubscription, SourceReplacementView,
-    MAX_TEAM_DELIVERY_LIMIT, MAX_TEAM_MESSAGE_LIMIT,
+    MAX_SOURCE_REPLACEMENT_ENTITIES, MAX_TEAM_DELIVERY_LIMIT, MAX_TEAM_MESSAGE_LIMIT,
 };
 pub use state::{
     AgentRowView, ApprovalInboxView, EntityKey, EntityVersion, FleetBoardView, LedgerEventView,

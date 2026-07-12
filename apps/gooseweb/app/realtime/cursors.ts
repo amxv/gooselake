@@ -14,6 +14,8 @@ const CURSOR_STORAGE_KEY = "cursor.v1";
 
 type PersistedCursorState = {
   readonly gatewaySeq: string;
+  readonly gatewayEpoch?: string;
+  readonly gatewayStartedAtUnixNs?: string;
   readonly sourceCursors: Readonly<Record<string, PersistedSourceCursor>>;
 };
 
@@ -25,6 +27,8 @@ type PersistedSourceCursor = {
 
 export const emptyCursorState: CursorState = {
   gatewaySeq: 0n,
+  gatewayEpoch: "",
+  gatewayStartedAtUnixNs: 0n,
   sourceCursors: {}
 };
 
@@ -47,6 +51,8 @@ export async function loadCursorState(): Promise<CursorState> {
 
     return {
       gatewaySeq: BigInt(parsed.gatewaySeq),
+      gatewayEpoch: parsed.gatewayEpoch ?? "",
+      gatewayStartedAtUnixNs: BigInt(parsed.gatewayStartedAtUnixNs ?? "0"),
       sourceCursors
     };
   } catch {
@@ -57,6 +63,8 @@ export async function loadCursorState(): Promise<CursorState> {
 export async function persistCursorState(cursor: CursorState): Promise<void> {
   const persisted: PersistedCursorState = {
     gatewaySeq: cursor.gatewaySeq.toString(),
+    gatewayEpoch: cursor.gatewayEpoch,
+    gatewayStartedAtUnixNs: cursor.gatewayStartedAtUnixNs.toString(),
     sourceCursors: Object.fromEntries(
       Object.entries(cursor.sourceCursors).map(([sourceId, sourceCursor]) => [
         sourceId,
@@ -75,6 +83,8 @@ export async function persistCursorState(cursor: CursorState): Promise<void> {
 export function cursorStateToProto(cursor: CursorState): CursorVector {
   return create(CursorVectorSchema, {
     gatewaySeq: cursor.gatewaySeq,
+    gatewayEpoch: cursor.gatewayEpoch,
+    gatewayStartedAtUnixNs: cursor.gatewayStartedAtUnixNs,
     sources: Object.values(cursor.sourceCursors).map((sourceCursor) =>
       create(SourceCursorSchema, {
         sourceId: sourceCursor.sourceId,
@@ -97,6 +107,8 @@ export function cursorProtoToState(cursor: CursorVector | undefined): CursorStat
 
   return {
     gatewaySeq: cursor.gatewaySeq,
+    gatewayEpoch: cursor.gatewayEpoch,
+    gatewayStartedAtUnixNs: cursor.gatewayStartedAtUnixNs,
     sourceCursors
   };
 }
@@ -206,6 +218,8 @@ export function mergeCursor(
   return {
     gatewaySeq:
       nextGatewaySeq > current.gatewaySeq ? nextGatewaySeq : current.gatewaySeq,
+    gatewayEpoch: current.gatewayEpoch,
+    gatewayStartedAtUnixNs: current.gatewayStartedAtUnixNs,
     sourceCursors: nextSource
       ? {
           ...current.sourceCursors,
@@ -219,7 +233,11 @@ export function mergeCursorVector(
   current: CursorState,
   nextGatewaySeq: bigint,
   nextSources: readonly SourceCursorState[],
-  options: { readonly replaceGateway?: boolean } = {}
+  options: {
+    readonly replaceGateway?: boolean;
+    readonly gatewayEpoch?: string;
+    readonly gatewayStartedAtUnixNs?: bigint;
+  } = {}
 ): CursorState {
   const sourceCursors = { ...current.sourceCursors };
   for (const source of nextSources) {
@@ -229,6 +247,9 @@ export function mergeCursorVector(
     gatewaySeq: options.replaceGateway
       ? nextGatewaySeq
       : nextGatewaySeq > current.gatewaySeq ? nextGatewaySeq : current.gatewaySeq,
+    gatewayEpoch: options.gatewayEpoch ?? current.gatewayEpoch,
+    gatewayStartedAtUnixNs:
+      options.gatewayStartedAtUnixNs ?? current.gatewayStartedAtUnixNs,
     sourceCursors
   };
 }

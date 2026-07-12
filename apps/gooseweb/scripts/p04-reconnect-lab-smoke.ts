@@ -50,6 +50,8 @@ for (const entry of fixture.cases) {
   const currentSource = sourceCursor(entry.current);
   const current: CursorState = {
     gatewaySeq: BigInt(entry.current.gateway_seq),
+    gatewayEpoch: "legacy-p04",
+    gatewayStartedAtUnixNs: 1n,
     sourceCursors: { local: currentSource }
   };
   const nextSource = sourceCursor(entry.next);

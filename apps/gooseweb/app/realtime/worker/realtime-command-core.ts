@@ -320,8 +320,21 @@ export class RealtimeWorkerCore {
         }
         try {
           const patch = decodeSourceSnapshotResync(envelope.payload.value);
+          const resetGatewayGeneration = Boolean(
+            envelope.payload.value.cursor?.gatewayEpoch !== this.cursor.gatewayEpoch &&
+            (this.cursor.gatewayEpoch || this.cursor.gatewaySeq > 0n)
+          );
           if (!this.applySourceResyncCursor(envelope)) return;
+          if (resetGatewayGeneration) {
+            this.handleEntityPatch({
+              entityOperations: patch.entityOperations.map(({ sourceId: _, ...operation }) => ({
+                ...operation,
+                payload: {}
+              }))
+            });
+          }
           this.handleEntityPatch(patch);
+          this.resendActiveSubscriptions();
           this.emitState({ connection: "connected" });
         } catch (error) {
           this.failProtocolFrame(error instanceof Error ? error.message : "invalid source resync");
@@ -468,12 +481,25 @@ export class RealtimeWorkerCore {
       this.failProtocolFrame("versioned view frame lacks canonical cursor authority");
       return false;
     }
-    const { gatewaySeq, sources } = authority;
+    const { gatewayEpoch, gatewayStartedAtUnixNs, gatewaySeq, sources } = authority;
     if (
       !isValidCursorVector(sources) ||
-      (isViewFrame && (gatewaySeq === 0n || sources.length === 0))
+      (isViewFrame && (
+        !gatewayEpoch || gatewayStartedAtUnixNs === 0n ||
+        gatewaySeq === 0n || sources.length === 0
+      ))
     ) {
       this.failProtocolFrame("cursor vector contains invalid or duplicate source authority");
+      return false;
+    }
+    if (
+      (!this.cursor.gatewayEpoch && this.cursor.gatewaySeq > 0n) ||
+      (this.cursor.gatewayEpoch && this.cursor.gatewayEpoch !== gatewayEpoch)
+    ) {
+      this.emitState({
+        connection: "stale",
+        lastError: "gateway_epoch_mismatch: explicit source resync required"
+      });
       return false;
     }
     if (hasCursorEpochMismatch(this.cursor, sources)) {
@@ -496,7 +522,11 @@ export class RealtimeWorkerCore {
       return false;
     }
 
-    this.cursor = mergeCursorVector(this.cursor, gatewaySeq, sources);
+    this.cursor = mergeCursorVector(this.cursor, gatewaySeq, sources, {
+      gatewayEpoch: gatewayEpoch || this.cursor.gatewayEpoch,
+      gatewayStartedAtUnixNs:
+        gatewayStartedAtUnixNs || this.cursor.gatewayStartedAtUnixNs
+    });
     const cursorToPersist = this.cursor;
     this.cursorPersistQueue = this.cursorPersistQueue
       .then(() => persistCursorState(cursorToPersist))
@@ -517,7 +547,8 @@ export class RealtimeWorkerCore {
     if (envelope.payload.case !== "sourceSnapshotResync") return false;
     if (envelope.messageId && this.appliedViewMessageIds.has(envelope.messageId)) return false;
     const authority = cursorAuthorityFromEnvelope(envelope);
-    if (!authority || authority.gatewaySeq === 0n || authority.sources.length !== 1) {
+    if (!authority || !authority.gatewayEpoch || authority.gatewayStartedAtUnixNs === 0n ||
+        authority.gatewaySeq === 0n || authority.sources.length !== 1) {
       this.failProtocolFrame("source resync lacks canonical cursor authority");
       return false;
     }
@@ -527,18 +558,34 @@ export class RealtimeWorkerCore {
       this.failProtocolFrame("source resync cursor disagrees with source identity");
       return false;
     }
-    const existing = this.cursor.sourceCursors[source.sourceId];
-    const epochChanged = Boolean(existing && existing.sourceEpoch !== source.sourceEpoch);
+    const generationChanged = Boolean(
+      (!this.cursor.gatewayEpoch && this.cursor.gatewaySeq > 0n) ||
+      (this.cursor.gatewayEpoch && this.cursor.gatewayEpoch !== authority.gatewayEpoch)
+    );
+    if (
+      generationChanged &&
+      authority.gatewayStartedAtUnixNs <= this.cursor.gatewayStartedAtUnixNs
+    ) {
+      this.emitState({
+        connection: "stale",
+        lastError: "stale_gateway_generation: source resync rejected"
+      });
+      return false;
+    }
     if (!shouldApplyCursorVector(this.cursor, authority.gatewaySeq, authority.sources, {
       allowEqualSourceSeq: true,
       allowEpochChange: true,
-      allowGatewayRegression: epochChanged
+      allowGatewayRegression: generationChanged
     })) return false;
     this.cursor = mergeCursorVector(
       this.cursor,
       authority.gatewaySeq,
       authority.sources,
-      { replaceGateway: epochChanged }
+      {
+        replaceGateway: generationChanged,
+        gatewayEpoch: authority.gatewayEpoch,
+        gatewayStartedAtUnixNs: authority.gatewayStartedAtUnixNs
+      }
     );
     this.persistAndEmitCursor();
     if (envelope.messageId) this.rememberViewMessage(envelope.messageId);
@@ -622,11 +669,18 @@ type PendingCommandInput = Parameters<typeof makeCommand>[0];
 
 function cursorAuthorityFromEnvelope(
   envelope: RealtimeEnvelope
-): { gatewaySeq: bigint; sources: SourceCursorState[] } | undefined {
+): {
+  gatewayEpoch: string;
+  gatewayStartedAtUnixNs: bigint;
+  gatewaySeq: bigint;
+  sources: SourceCursorState[];
+} | undefined {
   if (envelope.payload.case === "snapshot" || envelope.payload.case === "patch") {
     const view = envelope.payload.value;
     if (view.cursor) {
       return {
+        gatewayEpoch: view.cursor.gatewayEpoch,
+        gatewayStartedAtUnixNs: view.cursor.gatewayStartedAtUnixNs,
         gatewaySeq: view.cursor.gatewaySeq,
         sources: view.cursor.sources.map((source) => ({
           sourceId: source.sourceId,
@@ -641,6 +695,8 @@ function cursorAuthorityFromEnvelope(
     const resync = envelope.payload.value;
     if (!resync.cursor || resync.schemaVersion !== 1) return undefined;
     return {
+      gatewayEpoch: resync.cursor.gatewayEpoch,
+      gatewayStartedAtUnixNs: resync.cursor.gatewayStartedAtUnixNs,
       gatewaySeq: resync.cursor.gatewaySeq,
       sources: resync.cursor.sources.map((source) => ({
         sourceId: source.sourceId,
@@ -650,6 +706,8 @@ function cursorAuthorityFromEnvelope(
     };
   }
   return {
+    gatewayEpoch: "",
+    gatewayStartedAtUnixNs: 0n,
     gatewaySeq: envelope.gatewaySeq,
     sources: envelope.sourceId && envelope.sourceSeq > 0n ? [{
         sourceId: envelope.sourceId,

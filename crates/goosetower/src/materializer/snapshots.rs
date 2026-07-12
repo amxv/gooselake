@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use runtime_core::{ApprovalRecord, TeamDeliveryRecord, TeamMemberRecord};
+use runtime_core::{
+    ApprovalRecord, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamRecord,
+};
 use serde::{Deserialize, Serialize};
 
 use super::state::{
@@ -12,17 +14,50 @@ use super::MaterializedState;
 
 pub const MAX_TEAM_MESSAGE_LIMIT: usize = 100;
 pub const MAX_TEAM_DELIVERY_LIMIT: usize = 1_000;
+pub const MAX_SOURCE_REPLACEMENT_ENTITIES: usize = 2_048;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceReplacementView {
     pub source_id: String,
     pub fleet_rows: Vec<AgentRowView>,
+    pub sessions: Vec<SourceSessionSummaryView>,
     pub session_details: Vec<SessionDetailView>,
+    pub teams: Vec<SourceTeamSummaryView>,
     pub team_workspaces: Vec<TeamWorkspaceView>,
     pub approvals: Vec<ApprovalRowView>,
     pub processes: Vec<ProcessView>,
     pub worktrees: Vec<WorktreeView>,
     pub source_health: SourceHealthView,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceSessionSummaryView {
+    pub source_id: String,
+    pub session: SourceSessionRecordView,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceSessionRecordView {
+    pub id: String,
+    pub provider: String,
+    pub model: Option<String>,
+    pub status: String,
+    pub cwd: Option<String>,
+    pub worktree_path: Option<String>,
+    pub active_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceTeamSummaryView {
+    pub source_id: String,
+    pub team: TeamRecord,
+    pub members: Vec<SourceTeamMemberSummaryView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SourceTeamMemberSummaryView {
+    pub member: TeamMemberRecord,
+    pub session: Option<SourceSessionRecordView>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -371,31 +406,42 @@ impl MaterializedState {
             source_id: self.source_id.clone(),
             fleet_rows: self
                 .snapshot_board(&BoardSubscription {
-                    limit: usize::MAX,
+                    limit: MAX_SOURCE_REPLACEMENT_ENTITIES,
                     source_id: Some(self.source_id.clone()),
                     ..BoardSubscription::default()
                 })
                 .rows,
-            session_details: self
+            sessions: self
                 .sessions
-                .keys()
-                .filter_map(|session_id| {
-                    self.snapshot_session(&SelectedSessionSubscription {
-                        session_id: session_id.clone(),
-                        include_text: true,
-                    })
+                .values()
+                .map(|session| SourceSessionSummaryView {
+                    source_id: self.source_id.clone(),
+                    session: self.source_session_record(session),
                 })
                 .collect(),
-            team_workspaces: self
+            session_details: Vec::new(),
+            teams: self
                 .teams
-                .keys()
-                .filter_map(|team_id| {
-                    self.snapshot_team(&SelectedTeamSubscription {
-                        team_id: team_id.clone(),
-                        message_limit: MAX_TEAM_MESSAGE_LIMIT,
-                    })
+                .values()
+                .map(|team| SourceTeamSummaryView {
+                    source_id: self.source_id.clone(),
+                    team: team.clone(),
+                    members: self
+                        .members_by_team
+                        .get(&team.id)
+                        .into_iter()
+                        .flat_map(|members| members.values())
+                        .map(|member| SourceTeamMemberSummaryView {
+                            member: member.clone(),
+                            session: self
+                                .sessions
+                                .get(&member.agent_id)
+                                .map(|session| self.source_session_record(session)),
+                        })
+                        .collect(),
                 })
                 .collect(),
+            team_workspaces: Vec::new(),
             approvals: self
                 .snapshot_approval_inbox(&ApprovalInboxSubscription {
                     include_resolved: true,
@@ -406,6 +452,22 @@ impl MaterializedState {
             processes: self.processes.values().cloned().collect(),
             worktrees: self.snapshot_worktrees(),
             source_health: self.snapshot_source_health(),
+        }
+    }
+
+    fn source_session_record(&self, session: &SessionRecord) -> SourceSessionRecordView {
+        SourceSessionRecordView {
+            id: session.id.clone(),
+            provider: session.provider.clone(),
+            model: session.model.clone(),
+            status: session.status.clone(),
+            cwd: session.cwd.clone(),
+            worktree_path: session
+                .worktree_id
+                .as_deref()
+                .and_then(|worktree_id| self.worktree_view(worktree_id))
+                .map(|worktree| worktree.worktree_root),
+            active_turn_id: session.active_turn_id.clone(),
         }
     }
 

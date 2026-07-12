@@ -38,7 +38,7 @@ const coverage = (domain: string, entityId: string) => create(ViewCoverageSchema
 const cursorA = { sourceId: "A", sourceEpoch: "epoch-A", sourceSeq: 17n };
 const cursorB = { sourceId: "B", sourceEpoch: "epoch-B", sourceSeq: 9n };
 const vectorState = mergeCursorVector(
-  { gatewaySeq: 0n, sourceCursors: {} },
+  { gatewaySeq: 0n, gatewayEpoch: "", gatewayStartedAtUnixNs: 0n, sourceCursors: {} },
   41n,
   [cursorA, cursorB]
 );
@@ -98,7 +98,7 @@ const typescriptCorpusFrames = [
       viewKind: "session_detail",
       schemaVersion: 1,
       operation: ViewOperation.REPLACE,
-      cursor: { gatewaySeq: 41n, sources: [
+      cursor: { gatewaySeq: 41n, gatewayEpoch: "fixture-gateway", gatewayStartedAtUnixNs: 1n, sources: [
         { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 17n },
         { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n }
       ] },
@@ -116,7 +116,7 @@ const typescriptCorpusFrames = [
       schemaVersion: 1,
       operation: ViewOperation.REMOVE,
       entity: create(EntityRefSchema, { entityId: "session-1" }),
-      cursor: { gatewaySeq: 19n, sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }] },
+      cursor: { gatewaySeq: 19n, gatewayEpoch: "fixture-gateway", gatewayStartedAtUnixNs: 1n, sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }] },
       coverage: coverage("session_details", "session-1"),
       body: encoder.encode("null")
     }) }
@@ -130,7 +130,7 @@ const typescriptCorpusFrames = [
       viewKind: "session_detail",
       schemaVersion: 2,
       operation: ViewOperation.REPLACE,
-      cursor: { gatewaySeq: 41n, sources: [] },
+      cursor: { gatewaySeq: 41n, gatewayEpoch: "fixture-gateway", gatewayStartedAtUnixNs: 1n, sources: [] },
       coverage: coverage("session_details", "session-1"),
       body: sessionBody("session-1", ["reloaded answer"])
     }) }

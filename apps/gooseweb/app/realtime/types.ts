@@ -167,6 +167,8 @@ export type SubscriptionState = {
 
 export type CursorState = {
   readonly gatewaySeq: bigint;
+  readonly gatewayEpoch: string;
+  readonly gatewayStartedAtUnixNs: bigint;
   readonly sourceCursors: Readonly<Record<string, SourceCursorState>>;
 };
 

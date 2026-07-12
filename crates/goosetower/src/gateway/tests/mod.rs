@@ -375,6 +375,7 @@ fn test_connection(gateway: &GatewayState) -> ConnectionState {
 }
 
 fn resume_request(
+    gateway: &GatewayState,
     gateway_seq: u64,
     source_seq: u64,
     source_epoch: &str,
@@ -384,6 +385,8 @@ fn resume_request(
         previous_connection_id: "conn_previous".to_string(),
         cursor: Some(CursorVector {
             gateway_seq,
+            gateway_epoch: gateway.gateway_epoch.clone(),
+            gateway_started_at_unix_ns: gateway.gateway_started_at_unix_ns,
             sources: vec![SourceCursor {
                 source_id: "local".to_string(),
                 source_epoch: source_epoch.to_string(),

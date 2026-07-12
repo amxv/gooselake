@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
 import {
@@ -72,6 +74,8 @@ function snapshotEnvelope(input: {
   sources: Array<{ sourceId: string; sourceEpoch: string; sourceSeq: bigint }>;
   body: Uint8Array;
   gatewaySeq?: bigint;
+  gatewayEpoch?: string;
+  gatewayStartedAtUnixNs?: bigint;
 }) {
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: 1,
@@ -85,7 +89,12 @@ function snapshotEnvelope(input: {
         viewKind: input.viewKind,
         schemaVersion: 1,
         operation: ViewOperation.REPLACE,
-        cursor: { gatewaySeq: input.gatewaySeq ?? 1n, sources: input.sources },
+        cursor: {
+          gatewaySeq: input.gatewaySeq ?? 1n,
+          gatewayEpoch: input.gatewayEpoch ?? "gateway-1",
+          gatewayStartedAtUnixNs: input.gatewayStartedAtUnixNs ?? 1n,
+          sources: input.sources
+        },
         coverage: create(ViewCoverageSchema, {
           domains: [input.domain],
           entityIds: input.entityIds ?? [],
@@ -107,6 +116,8 @@ function patchEnvelope(input: {
   entityId: string;
   operation: ViewOperation;
   body: Uint8Array;
+  gatewayEpoch?: string;
+  gatewayStartedAtUnixNs?: bigint;
 }) {
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: 1,
@@ -123,6 +134,8 @@ function patchEnvelope(input: {
         entity: create(EntityRefSchema, { entityId: input.entityId }),
         cursor: {
           gatewaySeq: input.gatewaySeq,
+          gatewayEpoch: input.gatewayEpoch ?? "gateway-1",
+          gatewayStartedAtUnixNs: input.gatewayStartedAtUnixNs ?? 1n,
           sources: [{
             sourceId: "source-1",
             sourceEpoch: input.sourceEpoch ?? "epoch-1",
@@ -146,6 +159,8 @@ function sourceResyncEnvelope(input: {
   sourceEpoch: string;
   sourceSeq: bigint;
   body: Uint8Array;
+  gatewayEpoch: string;
+  gatewayStartedAtUnixNs: bigint;
 }) {
   const domains = [
     "fleet_rows", "sessions", "session_details", "teams", "team_workspaces",
@@ -165,6 +180,8 @@ function sourceResyncEnvelope(input: {
         schemaVersion: 1,
         cursor: {
           gatewaySeq: input.gatewaySeq,
+          gatewayEpoch: input.gatewayEpoch,
+          gatewayStartedAtUnixNs: input.gatewayStartedAtUnixNs,
           sources: [{
             sourceId: "source-1",
             sourceEpoch: input.sourceEpoch,
@@ -575,34 +592,31 @@ assert.equal(posted.flatMap((message) =>
 "a scoped snapshot must not establish a new global source epoch");
 assert.equal(getGoosewebSnapshot().cursor.sourceCursors["source-1"]?.sourceEpoch, "epoch-1");
 
-const sourceReplacementBody = new TextEncoder().encode(JSON.stringify({
-  source_id: "source-1",
-  fleet_rows: [{
-    source_id: "source-1", row_id: "session-1", session_id: "session-1",
-    team_id: null, title: null, provider: "codex", model: null, status: "ready",
-    cwd: null, worktree_id: null, worktree_path: null, active_turn_id: null,
-    pending_approval_count: 0, active_process_count: 0, delivery_status_counts: {},
-    latest_activity_unix_ms: 200, source_health: "live", version: 1
-  }],
-  session_details: [JSON.parse(new TextDecoder().decode(selectedBody))],
-  team_workspaces: [],
-  approvals: [],
-  processes: [],
-  worktrees: [],
-  source_health: {
-    source_id: "source-1", source_epoch: "epoch-new", last_source_seq: 1,
-    state: "live", observed_at_unix_ms: 200
-  }
-}));
+const sourceReplacementRecord: any = JSON.parse(readFileSync(resolve(
+  import.meta.dir,
+  "../../../verification/gooseweb/fixtures/p08-source-replacement-rust.json"
+), "utf8"));
+sourceReplacementRecord.source_id = "source-1";
+sourceReplacementRecord.fleet_rows[0].source_id = "source-1";
+sourceReplacementRecord.fleet_rows[0].row_id = "session-1";
+sourceReplacementRecord.fleet_rows[0].session_id = "session-1";
+sourceReplacementRecord.sessions[0].source_id = "source-1";
+sourceReplacementRecord.sessions[0].session.id = "session-1";
+sourceReplacementRecord.source_health.source_id = "source-1";
+sourceReplacementRecord.source_health.source_epoch = "epoch-1";
+sourceReplacementRecord.source_health.last_source_seq = 21;
+const sourceReplacementBody = new TextEncoder().encode(JSON.stringify(sourceReplacementRecord));
 const epochResync = sourceResyncEnvelope({
   messageId: "epoch-source-resync", gatewaySeq: 1n,
-  sourceEpoch: "epoch-new", sourceSeq: 1n, body: sourceReplacementBody
+  gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
+  sourceEpoch: "epoch-1", sourceSeq: 21n, body: sourceReplacementBody
 });
 sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, epochResync));
 await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 1n,
   "an explicit epoch reset must rebase the restarted Tower gateway watermark");
-assert.equal(getGoosewebSnapshot().cursor.sourceCursors["source-1"]?.sourceEpoch, "epoch-new");
+assert.equal(getGoosewebSnapshot().cursor.gatewayEpoch, "gateway-2");
+assert.equal(getGoosewebSnapshot().cursor.sourceCursors["source-1"]?.sourceEpoch, "epoch-1");
 assert.equal(Object.keys(getGoosewebSnapshot().entities.teams).length, 0,
   "full-source resync must remove stale old-epoch team summaries");
 assert.equal(Object.keys(getGoosewebSnapshot().entities.teamWorkspaces).length, 0,
@@ -610,29 +624,85 @@ assert.equal(Object.keys(getGoosewebSnapshot().entities.teamWorkspaces).length, 
 assert.deepEqual(Object.keys(getGoosewebSnapshot().entities.sessions), ["session-1"]);
 
 const newEpochPatch = patchEnvelope({
-  messageId: "new-epoch-patch", gatewaySeq: 2n, sourceSeq: 2n,
-  sourceEpoch: "epoch-new", viewKind: "session_detail", domain: "session_details",
+  messageId: "new-epoch-patch", gatewaySeq: 2n, sourceSeq: 22n,
+  gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
+  sourceEpoch: "epoch-1", viewKind: "session_detail", domain: "session_details",
   entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
 });
 sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, newEpochPatch));
 await waitForPatchFlush();
 assert.equal(posted.some((message) =>
-  message.type === "state" &&
-  message.patch.cursor?.sourceCursors["source-1"]?.sourceEpoch === "epoch-new" &&
-  message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 2n
+    message.type === "state" &&
+  message.patch.cursor?.gatewayEpoch === "gateway-2" &&
+  message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 22n
 ), true, "snapshot resync must establish the new epoch for later patches");
 const sameEpochLowSnapshot = snapshotEnvelope({
   messageId: "same-epoch-low-snapshot", gatewaySeq: 1n,
   viewKind: "session_detail", domain: "session_details", entityIds: ["session-1"],
-  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-new", sourceSeq: 2n }],
+  gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 22n }],
   body: selectedBody
 });
 sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, sameEpochLowSnapshot));
 await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 2n,
   "an ordinary same-epoch snapshot must not regress gateway authority");
+
+const validTeamSummary = {
+  source_id: "source-1",
+  team: { id: "team-x", name: "Team X", lead_agent_id: "session-1" },
+  members: []
+};
+const validApproval = {
+  source_id: "source-1", approval_id: "approval-x", session_id: "session-1",
+  turn_id: "turn-x", risk: "low", status: "pending", summary: "Approve"
+};
+const validProcess = {
+  source_id: "source-1", process_id: "process-x", status: "running",
+  command: { argv: ["true"] }, exit_code: null
+};
+const validWorktree = {
+  source_id: "source-1", worktree_id: "worktree-x", worktree_root: "/tmp/wt",
+  branch_name: "main", status: "available"
+};
+const invalidResyncRecords = Array.from({ length: 11 }, () => structuredClone(sourceReplacementRecord));
+invalidResyncRecords[0]!.source_health.source_epoch = "body-epoch-mismatch";
+invalidResyncRecords[1]!.source_health.last_source_seq = 999;
+invalidResyncRecords[2]!.fleet_rows.push(structuredClone(invalidResyncRecords[2]!.fleet_rows[0]));
+invalidResyncRecords[3]!.sessions.push(structuredClone(invalidResyncRecords[3]!.sessions[0]));
+invalidResyncRecords[4]!.teams = [structuredClone(validTeamSummary), structuredClone(validTeamSummary)];
+invalidResyncRecords[5]!.approvals = [structuredClone(validApproval), structuredClone(validApproval)];
+invalidResyncRecords[6]!.processes = [structuredClone(validProcess), structuredClone(validProcess)];
+invalidResyncRecords[7]!.worktrees = [structuredClone(validWorktree), structuredClone(validWorktree)];
+delete invalidResyncRecords[8]!.fleet_rows[0].provider;
+invalidResyncRecords[9]!.approvals = [{ ...validApproval, status: 42 }];
+delete invalidResyncRecords[10]!.source_health.display_name;
+const operationsBeforeInvalidResync = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+for (const [index, invalidRecord] of invalidResyncRecords.entries()) {
+  const invalidFrame = sourceResyncEnvelope({
+    messageId: `invalid-source-resync-${index}`,
+    gatewaySeq: 1n,
+    gatewayEpoch: `gateway-invalid-${index}`,
+    gatewayStartedAtUnixNs: BigInt(3 + index),
+    sourceEpoch: "epoch-1",
+    sourceSeq: 21n,
+    body: new TextEncoder().encode(JSON.stringify(invalidRecord))
+  });
+  sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, invalidFrame));
+}
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewayEpoch, "gateway-2",
+  "malformed source replacements must not advance gateway authority");
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeInvalidResync,
+"malformed or duplicate source replacement entities must not mutate the store");
+
 const delayedOldEpochPatch = patchEnvelope({
-  messageId: "delayed-old-epoch", gatewaySeq: 3n, sourceSeq: 999n,
+  messageId: "delayed-old-generation", gatewaySeq: 101n, sourceSeq: 999n,
+  gatewayEpoch: "gateway-1", gatewayStartedAtUnixNs: 1n,
   sourceEpoch: "epoch-1", viewKind: "session_detail", domain: "session_details",
   entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
 });
@@ -644,6 +714,18 @@ await waitForPatchFlush();
 assert.equal(posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length, operationsBeforeOldEpoch, "delayed old-epoch patch must not flip authority");
+const delayedOldResync = sourceResyncEnvelope({
+  messageId: "delayed-old-generation-resync", gatewaySeq: 1n,
+  gatewayEpoch: "gateway-1", gatewayStartedAtUnixNs: 1n,
+  sourceEpoch: "epoch-1", sourceSeq: 21n, body: sourceReplacementBody
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, delayedOldResync));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewayEpoch, "gateway-2",
+  "a delayed old gateway generation resync must not roll authority back");
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeOldEpoch, "a delayed old resync must not mutate entities");
 sockets[2]?.receive(new Uint8Array([0xff]));
 await waitForPatchFlush();
 assert.equal(posted.some((message) =>

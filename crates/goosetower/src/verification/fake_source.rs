@@ -282,7 +282,7 @@ async fn require_runtime_auth(request: Request, next: Next) -> Response {
     if !authorized {
         return (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error":{"code":"unauthorized","message":"runtime bearer required"}})),
+            Json(json!({"error":"missing or invalid bearer token"})),
         )
             .into_response();
     }
@@ -290,7 +290,7 @@ async fn require_runtime_auth(request: Request, next: Next) -> Response {
 }
 
 async fn health() -> Json<Value> {
-    Json(json!({"status":"ok","providers":0,"public_base_url":null}))
+    Json(json!({"status":"ok","providers":1,"public_base_url":"http://127.0.0.1:18102"}))
 }
 
 async fn version() -> Json<Value> {
@@ -610,11 +610,7 @@ fn stream_cursor(headers: &HeaderMap, query: &ReplayQuery) -> Result<i64, Respon
 }
 
 fn bad_cursor(message: &str) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(json!({"error":{"code":"bad_request","message":message}})),
-    )
-        .into_response()
+    (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response()
 }
 
 fn scope_for_id(id: &str) -> RuntimeEventScope {

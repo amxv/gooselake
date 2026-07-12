@@ -176,6 +176,22 @@ async fn exact_runtime_client_contract_and_scoped_cursors_are_implemented() {
         .await
         .unwrap();
     assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        invalid.json::<Value>().await.unwrap(),
+        json!({"error":"invalid last-event-id header; expected integer"})
+    );
+    let negative = reqwest::Client::new()
+        .get(format!("{base}/v1/events/stream"))
+        .header("authorization", format!("Bearer {RUNTIME_BEARER}"))
+        .header("last-event-id", "-1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(negative.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        negative.json::<Value>().await.unwrap(),
+        json!({"error":"invalid last-event-id header; expected non-negative integer"})
+    );
     let scoped = reqwest::Client::new()
         .get(format!(
             "{base}/v1/teams/p02-team-001/events/stream?after_seq=0"
@@ -595,10 +611,25 @@ async fn controls_are_not_reachable_without_verification_secret() {
         .await
         .unwrap();
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        unauthorized.json::<Value>().await.unwrap(),
+        json!({"error":"missing or invalid bearer token"})
+    );
     let public_health = reqwest::Client::new()
         .get(format!("{base}/health"))
         .send()
         .await
         .unwrap();
     assert_eq!(public_health.status(), StatusCode::OK);
+    assert_eq!(
+        public_health.json::<Value>().await.unwrap(),
+        json!({"status":"ok","providers":1,"public_base_url":"http://127.0.0.1:18102"})
+    );
+    let protected_health = client(base).protected_health().await.unwrap();
+    assert_eq!(protected_health.status, "ok");
+    assert_eq!(protected_health.providers, Some(1));
+    assert_eq!(
+        protected_health.public_base_url.as_deref(),
+        Some("http://127.0.0.1:18102")
+    );
 }

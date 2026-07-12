@@ -95,11 +95,24 @@ validateReviewOutcome(validNonClearance);
 validateBrowserCaptures(consoleCapture, networkCapture, manifest);
 validateBrowserCaptures(change(consoleCapture, "messages", []), networkCapture, manifest);
 validateBrowserCaptures(change(consoleCapture, "messages", [
+  { level: "debug", message: "[vite] connecting..." }
+]), networkCapture, manifest);
+validateBrowserCaptures(change(consoleCapture, "messages", [
+  { level: "debug", message: "[vite] connected." }
+]), networkCapture, manifest);
+validateBrowserCaptures(change(consoleCapture, "messages", [
+  { level: "info", message: "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold" }
+]), networkCapture, manifest);
+validateBrowserCaptures(change(consoleCapture, "messages", [
   { level: "debug", message: "[vite] connecting..." },
   { level: "info", message: "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold" }
 ]), networkCapture, manifest);
 validateBrowserCaptures(change(consoleCapture, "messages", [
   { level: "debug", message: "[vite] connecting..." },
+  { level: "debug", message: "[vite] connected." },
+  { level: "info", message: "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold" }
+]), networkCapture, manifest);
+validateBrowserCaptures(change(consoleCapture, "messages", [
   { level: "debug", message: "[vite] connected." },
   { level: "info", message: "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold" }
 ]), networkCapture, manifest);
@@ -210,6 +223,7 @@ const negativeCases: [string, () => void][] = [
   ["missing evidence candidate tree", () => validateEvidence(omit(evidence, "candidate_tree_sha"), { checkFiles: false })],
   ["secret-bearing descriptor", () => validateEvidence(change(evidence, "redaction.bearer_token", "live-secret"), { checkFiles: false })],
   ["unexpected console message", () => validateBrowserCaptures(change(consoleCapture, "messages.2", { level: "error", message: "boom" }), networkCapture, manifest)],
+  ["unknown console singleton", () => validateBrowserCaptures(change(consoleCapture, "messages", [{ level: "info", message: "unknown benign-looking message" }]), networkCapture, manifest)],
   ["warning always fails from empty capture", () => validateBrowserCaptures(change(consoleCapture, "messages", [{ level: "warn", message: "warning" }]), networkCapture, manifest)],
   ["error or exception always fails from empty capture", () => validateBrowserCaptures(change(consoleCapture, "messages", [{ level: "error", message: "uncaught exception" }]), networkCapture, manifest)],
   ["unexpected HTTP failure cannot be filtered", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.6", { method: "GET", path: "/missing", query_keys: [], status: 404, resource_type: "module", same_origin: true, baseline_defect_id: "" }), manifest)],
@@ -238,7 +252,7 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v12 passed (${negativeCases.length + lifecycleNegativeCount} negative cases)`);
+console.log(`Gooseweb acceptance contract v13 passed (${negativeCases.length + lifecycleNegativeCount} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);

@@ -364,7 +364,7 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
   const networkAllowlist = readJson("verification/gooseweb/allowlists/network.json");
   applySchemaInline(consoleCaptureSchema(), consoleCapture, "console capture");
   applySchemaInline(networkCaptureSchema(), networkCapture, "network capture");
-  equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v5", "console allowlist revision");
+  equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v6", "console allowlist revision");
   equal(networkAllowlist.schema_revision, "gooseweb-network-allowlist/v3", "network allowlist revision");
   const consoleBoundary = object(consoleAllowlist.capture_boundary, "console capture boundary");
   equal(consoleBoundary.source, "unfiltered agent-browser console output after document.readyState complete plus one second", "console capture source");
@@ -376,6 +376,14 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
   const variants = array(consoleAllowlist.permitted_exact_variants, "console variants").map((item) => object(item, "console variant"));
   ensureUnique(variants.map((variant) => string(variant.variant_id, "console variant ID")), "console variant IDs");
   for (const variant of variants) if (array(variant.messages, "variant messages").some((item) => ["warn", "error"].includes(string(object(item, "variant message").level, "variant console level")))) fail("console allowlist variant contains warning/error");
+  const benignLiterals: RecordJson[] = [
+    { level: "debug", message: "[vite] connecting..." },
+    { level: "debug", message: "[vite] connected." },
+    { level: "info", message: "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold" }
+  ];
+  const expectedPowerSet = Array.from({ length: 8 }, (_, mask) => benignLiterals.filter((_, index) => (mask & (1 << index)) !== 0)).map(multisetSignature).sort();
+  const actualPowerSet = variants.map((variant) => multisetSignature(array(variant.messages, "variant messages"))).sort();
+  equal(JSON.stringify(actualPowerSet), JSON.stringify(expectedPowerSet), "exact benign console literal power set");
   const matches = variants.filter((variant) => sameMultiset(capturedMessages, array(variant.messages, "variant messages")));
   if (matches.length !== 1) fail("console capture does not match exactly one finite benign variant");
   const boundary = object(networkAllowlist.capture_boundary, "network capture boundary");
@@ -820,9 +828,10 @@ function exactMultiset(actual: Json[], expected: Json[], label: string): void {
 }
 
 function sameMultiset(actual: Json[], expected: Json[]): boolean {
-  const normalize = (items: Json[]) => items.map((item) => JSON.stringify(item)).sort();
-  return JSON.stringify(normalize(actual)) === JSON.stringify(normalize(expected));
+  return multisetSignature(actual) === multisetSignature(expected);
 }
+
+function multisetSignature(items: Json[]): string { return JSON.stringify(items.map((item) => JSON.stringify(item)).sort()); }
 
 function scanSecrets(value: Json, path: string, allowVocabulary: boolean): void {
   if (Array.isArray(value)) { value.forEach((item, index) => scanSecrets(item, `${path}[${index}]`, allowVocabulary)); return; }

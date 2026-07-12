@@ -1,5 +1,5 @@
 {
-  "schema_revision": "gooseweb-console-allowlist/v5",
+  "schema_revision": "gooseweb-console-allowlist/v6",
   "capture_boundary": {
     "source": "unfiltered agent-browser console output after document.readyState complete plus one second",
     "filtering": "none",
@@ -10,6 +10,33 @@
     {
       "variant_id": "fresh-context-empty",
       "messages": []
+    },
+    {
+      "variant_id": "vite-connecting-only",
+      "messages": [
+        {
+          "level": "debug",
+          "message": "[vite] connecting..."
+        }
+      ]
+    },
+    {
+      "variant_id": "vite-connected-only",
+      "messages": [
+        {
+          "level": "debug",
+          "message": "[vite] connected."
+        }
+      ]
+    },
+    {
+      "variant_id": "react-devtools-only",
+      "messages": [
+        {
+          "level": "info",
+          "message": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"
+        }
+      ]
     },
     {
       "variant_id": "vite-connect-complete",
@@ -38,6 +65,19 @@
       ]
     },
     {
+      "variant_id": "vite-connected-react-devtools",
+      "messages": [
+        {
+          "level": "debug",
+          "message": "[vite] connected."
+        },
+        {
+          "level": "info",
+          "message": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"
+        }
+      ]
+    },
+    {
       "variant_id": "vite-connect-complete-react-devtools",
       "messages": [
         {
@@ -55,5 +95,5 @@
       ]
     }
   ],
-  "policy": "The complete unfiltered multiset must equal one finite observed variant. Every variant and capture must contain zero warnings, errors, or exceptions. No regex, substring suppression, open-ended info allowance, filtering, or normalization is permitted."
+  "policy": "The complete unfiltered multiset must equal one of the eight exact subsets of the three individually observed benign literals. Every variant and capture must contain zero warnings, errors, or exceptions. No regex, substring suppression, open-ended info allowance, filtering, or normalization is permitted."
 }

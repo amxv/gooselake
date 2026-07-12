@@ -185,7 +185,7 @@ function isScopedDetailView(viewKind: string): boolean {
 
 function domainForViewKind(viewKind: string): EntityDomain | undefined {
   switch (viewKind) {
-    case "board": case "fleet-row": case "board-row": return "fleetRows";
+    case "board": case "fleet_board": case "fleet-row": case "board-row": return "fleetRows";
     case "session": case "session_summary": return "sessions";
     case "session_detail": return "sessionDetails";
     case "team": case "team_summary": case "teams": return "teams";
@@ -285,6 +285,10 @@ function decodeJsonViewBody(
           )
         }
       };
+    }
+    case "fleet_board": {
+      const row = normalizeFleetRow(value);
+      return { entities: { fleetRows: { [row.rowId]: row } } };
     }
     case "approval_inbox": {
       const approvals = arrayFrom((value as { approvals?: unknown }).approvals);
@@ -388,8 +392,36 @@ function validateTeamWorkspaceBody(value: unknown): void {
   }
   const team = strictRecord(workspace.team, "team_workspace.team");
   const teamId = requireString(team.id, "team_workspace.team.id");
+  requireString(team.name, "team_workspace.team.name");
+  requireString(team.lead_agent_id, "team_workspace.team.lead_agent_id");
   requireString(workspace.source_id, "team_workspace.source_id");
-  requireArray(workspace.members, "team_workspace.members");
+  requireArray(workspace.members, "team_workspace.members", (item, index) => {
+    const memberView = strictRecord(item, `team_workspace.members[${index}]`);
+    const member = strictRecord(memberView.member, `team_workspace.members[${index}].member`);
+    if (requireString(member.team_id, `team_workspace.members[${index}].member.team_id`) !== teamId) {
+      throw new ProtocolDecodeError("team member belongs to a different team");
+    }
+    requireString(member.agent_id, `team_workspace.members[${index}].member.agent_id`);
+    requireNullableString(member.title, `team_workspace.members[${index}].member.title`);
+    requireNumber(member.joined_at, `team_workspace.members[${index}].member.joined_at`);
+    requireString(member.added_by, `team_workspace.members[${index}].member.added_by`);
+    requireNullableString(
+      member.creator_agent_id,
+      `team_workspace.members[${index}].member.creator_agent_id`
+    );
+    requireString(
+      member.creator_compaction_subscription,
+      `team_workspace.members[${index}].member.creator_compaction_subscription`
+    );
+    requireNullableString(member.worktree_id, `team_workspace.members[${index}].member.worktree_id`);
+    if (memberView.session !== null) {
+      const session = strictRecord(memberView.session, `team_workspace.members[${index}].session`);
+      requireString(session.id, `team_workspace.members[${index}].session.id`);
+      requireString(session.provider, `team_workspace.members[${index}].session.provider`);
+      requireNullableString(session.model, `team_workspace.members[${index}].session.model`);
+      requireString(session.status, `team_workspace.members[${index}].session.status`);
+    }
+  });
   const messageIds = new Set<string>();
   requireArray(workspace.messages, "team_workspace.messages", (item, index) => {
     const message = strictRecord(item, `team_workspace.messages[${index}]`);
@@ -401,7 +433,34 @@ function validateTeamWorkspaceBody(value: unknown): void {
     if (requireString(message.team_id, `team_workspace.messages[${index}].team_id`) !== teamId) {
       throw new ProtocolDecodeError("team message belongs to a different team");
     }
-    requireArray(message.input, `team_workspace.messages[${index}].input`);
+    requireString(message.scope, `team_workspace.messages[${index}].scope`);
+    requireString(message.sender_agent_id, `team_workspace.messages[${index}].sender_agent_id`);
+    requireStringArray(
+      message.recipient_agent_ids,
+      `team_workspace.messages[${index}].recipient_agent_ids`
+    );
+    requireArray(message.input, `team_workspace.messages[${index}].input`, (input, inputIndex) => {
+      const part = strictRecord(input, `team_workspace.messages[${index}].input[${inputIndex}]`);
+      const type = requireString(
+        part.type,
+        `team_workspace.messages[${index}].input[${inputIndex}].type`
+      );
+      if (type === "text") {
+        requireString(part.text, `team_workspace.messages[${index}].input[${inputIndex}].text`, true);
+      } else if ("text" in part && typeof part.text !== "string") {
+        throw new ProtocolDecodeError("non-text team input has malformed text evidence");
+      }
+    });
+    requireStringArray(message.image_paths, `team_workspace.messages[${index}].image_paths`);
+    requireString(message.priority, `team_workspace.messages[${index}].priority`);
+    requireString(message.policy, `team_workspace.messages[${index}].policy`);
+    requireNullableString(message.correlation_id, `team_workspace.messages[${index}].correlation_id`);
+    requireNullableString(
+      message.reply_to_message_id,
+      `team_workspace.messages[${index}].reply_to_message_id`
+    );
+    requireNullableString(message.idempotency_key, `team_workspace.messages[${index}].idempotency_key`);
+    requireNumber(message.created_at, `team_workspace.messages[${index}].created_at`);
   });
   const deliveryIds = new Set<string>();
   requireArray(workspace.deliveries, "team_workspace.deliveries", (item, index) => {
@@ -421,6 +480,23 @@ function validateTeamWorkspaceBody(value: unknown): void {
     if (requireString(delivery.team_id, `team_workspace.deliveries[${index}].team_id`) !== teamId) {
       throw new ProtocolDecodeError("team delivery belongs to a different team");
     }
+    requireString(
+      delivery.recipient_agent_id,
+      `team_workspace.deliveries[${index}].recipient_agent_id`
+    );
+    requireString(delivery.provider, `team_workspace.deliveries[${index}].provider`);
+    requireString(delivery.status, `team_workspace.deliveries[${index}].status`);
+    for (const field of [
+      "effective_policy",
+      "injection_strategy",
+      "injected_turn_id",
+      "last_error_code",
+      "last_error_message"
+    ]) {
+      requireNullableString(delivery[field], `team_workspace.deliveries[${index}].${field}`);
+    }
+    requireNumber(delivery.created_at, `team_workspace.deliveries[${index}].created_at`);
+    requireNumber(delivery.updated_at, `team_workspace.deliveries[${index}].updated_at`);
   });
 }
 
@@ -443,6 +519,21 @@ function requireNumber(value: unknown, field: string): number {
     throw new ProtocolDecodeError(`${field} must be a number`);
   }
   return value;
+}
+
+function requireNullableString(value: unknown, field: string): string | null {
+  if (value !== null && typeof value !== "string") {
+    throw new ProtocolDecodeError(`${field} must be a string or null`);
+  }
+  return value;
+}
+
+function requireStringArray(value: unknown, field: string): string[] {
+  const array = requireArray(value, field);
+  if (!array.every((item) => typeof item === "string")) {
+    throw new ProtocolDecodeError(`${field} must contain only strings`);
+  }
+  return array as string[];
 }
 
 function requireArray(

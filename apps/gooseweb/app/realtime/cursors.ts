@@ -138,23 +138,48 @@ export function shouldApplyCursorVector(
   current: CursorState,
   nextGatewaySeq: bigint,
   nextSources: readonly SourceCursorState[],
-  allowEqualSources = false
+  options: {
+    readonly allowEqualSourceSeq?: boolean;
+    readonly allowEpochChange?: boolean;
+    readonly allowGatewayRegression?: boolean;
+  } = {}
 ): boolean {
-  if (nextGatewaySeq > 0n && nextGatewaySeq <= current.gatewaySeq) {
+  if (
+    !options.allowGatewayRegression &&
+    nextGatewaySeq > 0n &&
+    nextGatewaySeq <= current.gatewaySeq
+  ) {
     return false;
   }
   if (!isValidCursorVector(nextSources)) return false;
   for (const source of nextSources) {
     const existing = current.sourceCursors[source.sourceId];
     if (
+      existing &&
+      existing.sourceEpoch !== source.sourceEpoch &&
+      !options.allowEpochChange
+    ) {
+      return false;
+    }
+    if (
       existing?.sourceEpoch === source.sourceEpoch &&
       (source.sourceSeq < existing.sourceSeq ||
-        (!allowEqualSources && source.sourceSeq === existing.sourceSeq))
+        (!options.allowEqualSourceSeq && source.sourceSeq === existing.sourceSeq))
     ) {
       return false;
     }
   }
   return true;
+}
+
+export function hasCursorEpochMismatch(
+  current: CursorState,
+  nextSources: readonly SourceCursorState[]
+): boolean {
+  return nextSources.some((source) => {
+    const existing = current.sourceCursors[source.sourceId];
+    return Boolean(existing && existing.sourceEpoch !== source.sourceEpoch);
+  });
 }
 
 export function isValidCursorVector(nextSources: readonly SourceCursorState[]): boolean {

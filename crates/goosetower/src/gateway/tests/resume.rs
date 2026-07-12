@@ -99,7 +99,7 @@ fn rust_decodes_shared_typescript_detail_frame_corpus() {
         authoritative: true,
     };
     let cursor = |source_seq| CursorVector {
-        gateway_seq: 0,
+        gateway_seq: source_seq,
         sources: vec![SourceCursor {
             source_id: "source-1".to_string(),
             source_epoch: "epoch-1".to_string(),

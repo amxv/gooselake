@@ -3,10 +3,12 @@ import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
 import { RealtimeEnvelopeSchema } from "../src/gen/goosetower/v1/realtime_pb";
 import {
+  PatchSchema,
   SnapshotSchema,
   ViewCoverageSchema,
   ViewOperation
 } from "../src/gen/goosetower/v1/view_pb";
+import { EntityRefSchema } from "../src/gen/goosetower/v1/common_pb";
 import type { WorkerOutbound } from "../app/realtime/types";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core";
 
@@ -67,17 +69,60 @@ function snapshotEnvelope(input: {
     messageId: input.messageId,
     messageKind: MessageKind.SNAPSHOT,
     lane: Lane.STATE,
-    gatewaySeq: input.gatewaySeq ?? 0n,
+    gatewaySeq: 0n,
     payload: {
       case: "snapshot",
       value: create(SnapshotSchema, {
         viewKind: input.viewKind,
         schemaVersion: 1,
         operation: ViewOperation.REPLACE,
-        cursor: { sources: input.sources },
+        cursor: { gatewaySeq: input.gatewaySeq ?? 1n, sources: input.sources },
         coverage: create(ViewCoverageSchema, {
           domains: [input.domain],
           entityIds: input.entityIds ?? [],
+          authoritative: true
+        }),
+        body: input.body
+      })
+    }
+  });
+}
+
+function patchEnvelope(input: {
+  messageId: string;
+  gatewaySeq: bigint;
+  sourceSeq: bigint;
+  sourceEpoch?: string;
+  viewKind: string;
+  domain: string;
+  entityId: string;
+  operation: ViewOperation;
+  body: Uint8Array;
+}) {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1,
+    messageId: input.messageId,
+    messageKind: MessageKind.PATCH,
+    lane: Lane.STATE,
+    gatewaySeq: input.gatewaySeq,
+    payload: {
+      case: "patch",
+      value: create(PatchSchema, {
+        viewKind: input.viewKind,
+        schemaVersion: 1,
+        operation: input.operation,
+        entity: create(EntityRefSchema, { entityId: input.entityId }),
+        cursor: {
+          gatewaySeq: input.gatewaySeq,
+          sources: [{
+            sourceId: "source-1",
+            sourceEpoch: input.sourceEpoch ?? "epoch-1",
+            sourceSeq: input.sourceSeq
+          }]
+        },
+        coverage: create(ViewCoverageSchema, {
+          domains: [input.domain],
+          entityIds: [input.entityId],
           authoritative: true
         }),
         body: input.body
@@ -203,6 +248,7 @@ const selectedBody = new TextEncoder().encode(JSON.stringify({
 }));
 const selectedAtEqualAuthority = snapshotEnvelope({
   messageId: "selected-at-equal-authority",
+  gatewaySeq: 41n,
   viewKind: "session_detail",
   domain: "session_details",
   entityIds: ["session-1"],
@@ -244,6 +290,7 @@ assert.equal(posted.some((message) =>
 
 const reversedVector = snapshotEnvelope({
   messageId: "reversed-vector",
+  gatewaySeq: 41n,
   viewKind: "board",
   domain: "fleet_rows",
   sources: [
@@ -263,6 +310,7 @@ assert.equal(posted.flatMap((message) =>
 
 const malformedAt18 = snapshotEnvelope({
   messageId: "malformed-at-18",
+  gatewaySeq: 42n,
   viewKind: "session_detail",
   domain: "session_details",
   entityIds: ["session-1"],
@@ -273,6 +321,7 @@ sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, malformedAt18));
 await waitForPatchFlush();
 const validAt18 = snapshotEnvelope({
   messageId: "valid-at-18",
+  gatewaySeq: 42n,
   viewKind: "session_detail",
   domain: "session_details",
   entityIds: ["session-1"],
@@ -285,6 +334,204 @@ assert.equal(posted.some((message) =>
   message.type === "state" &&
   message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 18n
 ), true, "malformed detail must not advance the cursor before a valid same-authority frame");
+
+const operationsBeforeMissingAuthority = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+const invalidAuthoritySnapshots = [
+  create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1,
+    messageId: "missing-cursor",
+    messageKind: MessageKind.SNAPSHOT,
+    lane: Lane.STATE,
+    payload: { case: "snapshot", value: create(SnapshotSchema, {
+      viewKind: "session_detail",
+      schemaVersion: 1,
+      operation: ViewOperation.REPLACE,
+      coverage: create(ViewCoverageSchema, {
+        domains: ["session_details"], entityIds: ["session-1"], authoritative: true
+      }),
+      body: selectedBody
+    }) }
+  }),
+  snapshotEnvelope({
+    messageId: "empty-sources",
+    gatewaySeq: 43n,
+    viewKind: "session_detail",
+    domain: "session_details",
+    entityIds: ["session-1"],
+    sources: [],
+    body: selectedBody
+  }),
+  snapshotEnvelope({
+    messageId: "zero-source-seq",
+    gatewaySeq: 43n,
+    viewKind: "session_detail",
+    domain: "session_details",
+    entityIds: ["session-1"],
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 0n }],
+    body: selectedBody
+  }),
+  snapshotEnvelope({
+    messageId: "blank-source-epoch",
+    gatewaySeq: 43n,
+    viewKind: "session_detail",
+    domain: "session_details",
+    entityIds: ["session-1"],
+    sources: [{ sourceId: "source-1", sourceEpoch: "", sourceSeq: 19n }],
+    body: selectedBody
+  }),
+  snapshotEnvelope({
+    messageId: "zero-gateway-seq",
+    gatewaySeq: 0n,
+    viewKind: "session_detail",
+    domain: "session_details",
+    entityIds: ["session-1"],
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }],
+    body: selectedBody
+  })
+];
+for (const invalid of invalidAuthoritySnapshots) {
+  sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, invalid));
+}
+const missingCursorPatch = create(RealtimeEnvelopeSchema, {
+  protocolVersion: 1,
+  messageId: "patch-missing-cursor",
+  messageKind: MessageKind.PATCH,
+  lane: Lane.STATE,
+  gatewaySeq: 43n,
+  payload: { case: "patch", value: create(PatchSchema, {
+    viewKind: "session_detail",
+    schemaVersion: 1,
+    operation: ViewOperation.REPLACE,
+    entity: create(EntityRefSchema, { entityId: "session-1" }),
+    coverage: create(ViewCoverageSchema, {
+      domains: ["session_details"], entityIds: ["session-1"], authoritative: true
+    }),
+    body: selectedBody
+  }) }
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, missingCursorPatch));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeMissingAuthority,
+"versioned frames without complete canonical authority must not mutate entities");
+
+const sessionSiblingFrames = [
+  patchEnvelope({
+    messageId: "session-fleet-19", gatewaySeq: 43n, sourceSeq: 19n,
+    viewKind: "fleet_board", domain: "fleet_rows", entityId: "session-1",
+    operation: ViewOperation.UPSERT,
+    body: new TextEncoder().encode(JSON.stringify({
+      source_id: "source-1", row_id: "session-1", session_id: "session-1",
+      provider: "codex", status: "ready", latest_activity_unix_ms: 201
+    }))
+  }),
+  patchEnvelope({
+    messageId: "session-summary-19", gatewaySeq: 44n, sourceSeq: 19n,
+    viewKind: "session_summary", domain: "sessions", entityId: "session-1",
+    operation: ViewOperation.UPSERT,
+    body: new TextEncoder().encode(JSON.stringify({
+      source_id: "source-1",
+      session: { id: "session-1", provider: "codex", status: "ready" }
+    }))
+  }),
+  patchEnvelope({
+    messageId: "session-detail-19", gatewaySeq: 45n, sourceSeq: 19n,
+    viewKind: "session_detail", domain: "session_details", entityId: "session-1",
+    operation: ViewOperation.REPLACE, body: selectedBody
+  })
+];
+const operationsBeforeSiblings = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+for (const frame of sessionSiblingFrames) sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, frame));
+await waitForPatchFlush();
+const operationsAfterSiblings = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+assert.equal(operationsAfterSiblings, operationsBeforeSiblings + 3,
+  "distinct gateway publications at one source cursor must all apply");
+for (const frame of sessionSiblingFrames) sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, frame));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsAfterSiblings, "exact sibling replays must apply zero operations");
+
+const emptyTeamBody = new TextEncoder().encode(JSON.stringify({
+  source_id: "source-1",
+  team: { id: "team-1", name: "Team", lead_agent_id: "session-1" },
+  members: [], messages: [], deliveries: []
+}));
+const teamSiblingFrames = [
+  patchEnvelope({
+    messageId: "team-summary-20", gatewaySeq: 46n, sourceSeq: 20n,
+    viewKind: "team_summary", domain: "teams", entityId: "team-1",
+    operation: ViewOperation.UPSERT, body: emptyTeamBody
+  }),
+  patchEnvelope({
+    messageId: "team-workspace-20", gatewaySeq: 47n, sourceSeq: 20n,
+    viewKind: "team_workspace", domain: "team_workspaces", entityId: "team-1",
+    operation: ViewOperation.REPLACE, body: emptyTeamBody
+  })
+];
+const operationsBeforeTeamSiblings = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+for (const frame of teamSiblingFrames) sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, frame));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeTeamSiblings + 2,
+"team summary/workspace siblings at equal source authority must both apply");
+
+const epochMismatchPatch = patchEnvelope({
+  messageId: "epoch-mismatch-patch", gatewaySeq: 48n, sourceSeq: 1n,
+  sourceEpoch: "epoch-new", viewKind: "session_detail", domain: "session_details",
+  entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
+});
+const operationsBeforeEpochMismatch = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, epochMismatchPatch));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeEpochMismatch, "patch epoch mismatch must not mutate state");
+const epochResyncSnapshot = snapshotEnvelope({
+  messageId: "epoch-resync-snapshot", gatewaySeq: 48n,
+  viewKind: "session_detail", domain: "session_details", entityIds: ["session-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-new", sourceSeq: 1n }],
+  body: selectedBody
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, epochResyncSnapshot));
+await waitForPatchFlush();
+const newEpochPatch = patchEnvelope({
+  messageId: "new-epoch-patch", gatewaySeq: 49n, sourceSeq: 2n,
+  sourceEpoch: "epoch-new", viewKind: "session_detail", domain: "session_details",
+  entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, newEpochPatch));
+await waitForPatchFlush();
+assert.equal(posted.some((message) =>
+  message.type === "state" &&
+  message.patch.cursor?.sourceCursors["source-1"]?.sourceEpoch === "epoch-new" &&
+  message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 2n
+), true, "snapshot resync must establish the new epoch for later patches");
+const delayedOldEpochPatch = patchEnvelope({
+  messageId: "delayed-old-epoch", gatewaySeq: 50n, sourceSeq: 999n,
+  sourceEpoch: "epoch-1", viewKind: "session_detail", domain: "session_details",
+  entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
+});
+const operationsBeforeOldEpoch = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, delayedOldEpochPatch));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeOldEpoch, "delayed old-epoch patch must not flip authority");
 sockets[2]?.receive(new Uint8Array([0xff]));
 await waitForPatchFlush();
 assert.equal(posted.some((message) =>

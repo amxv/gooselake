@@ -10,6 +10,7 @@ import {
 import { realtimeUrlWithTicket } from "../config";
 import {
   emptyCursorState,
+  hasCursorEpochMismatch,
   isValidCursorVector,
   loadCursorState,
   mergeCursorVector,
@@ -444,21 +445,40 @@ export class RealtimeWorkerCore {
     ) {
       return false;
     }
-    const sources = sourceCursorsFromEnvelope(envelope);
-    if (!isValidCursorVector(sources)) {
+    const authority = cursorAuthorityFromEnvelope(envelope);
+    if (!authority) {
+      this.failProtocolFrame("versioned view frame lacks canonical cursor authority");
+      return false;
+    }
+    const { gatewaySeq, sources } = authority;
+    if (
+      !isValidCursorVector(sources) ||
+      (isViewFrame && (gatewaySeq === 0n || sources.length === 0))
+    ) {
       this.failProtocolFrame("cursor vector contains invalid or duplicate source authority");
+      return false;
+    }
+    if (!isSnapshot && hasCursorEpochMismatch(this.cursor, sources)) {
+      this.emitState({
+        connection: "stale",
+        lastError: "source_epoch_mismatch: snapshot repair required"
+      });
       return false;
     }
     if (!shouldApplyCursorVector(
       this.cursor,
-      isSnapshot ? 0n : envelope.gatewaySeq,
+      gatewaySeq,
       sources,
-      isSnapshot
+      {
+        allowEqualSourceSeq: true,
+        allowEpochChange: isSnapshot,
+        allowGatewayRegression: isSnapshot
+      }
     )) {
       return false;
     }
 
-    this.cursor = mergeCursorVector(this.cursor, envelope.gatewaySeq, sources);
+    this.cursor = mergeCursorVector(this.cursor, gatewaySeq, sources);
     const cursorToPersist = this.cursor;
     this.cursorPersistQueue = this.cursorPersistQueue
       .then(() => persistCursorState(cursorToPersist))
@@ -537,32 +557,31 @@ export class RealtimeWorkerCore {
 
 type PendingCommandInput = Parameters<typeof makeCommand>[0];
 
-function sourceCursorsFromEnvelope(
+function cursorAuthorityFromEnvelope(
   envelope: RealtimeEnvelope
-): SourceCursorState[] {
-  const nested = envelope.payload.case === "snapshot" || envelope.payload.case === "patch"
-    ? envelope.payload.value.cursor?.sources
-    : undefined;
-  if (nested?.length) {
-    return nested.map((source) => ({
-      sourceId: source.sourceId,
-      sourceEpoch: source.sourceEpoch,
-      sourceSeq: source.sourceSeq
-    }));
+): { gatewaySeq: bigint; sources: SourceCursorState[] } | undefined {
+  if (envelope.payload.case === "snapshot" || envelope.payload.case === "patch") {
+    const view = envelope.payload.value;
+    if (view.cursor) {
+      return {
+        gatewaySeq: view.cursor.gatewaySeq,
+        sources: view.cursor.sources.map((source) => ({
+          sourceId: source.sourceId,
+          sourceEpoch: source.sourceEpoch,
+          sourceSeq: source.sourceSeq
+        }))
+      };
+    }
+    if (view.schemaVersion > 0) return undefined;
   }
-  if (
-    (envelope.payload.case === "snapshot" || envelope.payload.case === "patch") &&
-    envelope.payload.value.schemaVersion > 0
-  ) {
-    return [];
-  }
-  return envelope.sourceId && envelope.sourceSeq > 0n
-    ? [{
+  return {
+    gatewaySeq: envelope.gatewaySeq,
+    sources: envelope.sourceId && envelope.sourceSeq > 0n ? [{
         sourceId: envelope.sourceId,
         sourceEpoch: envelope.sourceEpoch,
         sourceSeq: envelope.sourceSeq
-      }]
-    : [];
+      }] : []
+  };
 }
 
 function commandIdFromPayload(envelope: RealtimeEnvelope): string {

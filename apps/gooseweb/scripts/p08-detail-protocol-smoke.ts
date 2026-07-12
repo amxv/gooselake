@@ -47,15 +47,21 @@ assert.deepEqual(
   ["A", "B"],
   "resume cursor retains the complete source vector"
 );
-assert.equal(shouldApplyCursorVector(vectorState, 0n, [cursorB, cursorA], true), true);
+assert.equal(shouldApplyCursorVector(vectorState, 0n, [cursorB, cursorA], {
+  allowEqualSourceSeq: true,
+  allowGatewayRegression: true
+}), true);
 assert.equal(shouldApplyCursorVector(vectorState, 0n, [
   { ...cursorA, sourceSeq: 16n },
   { ...cursorB, sourceSeq: 10n }
-], true), false);
-assert.equal(shouldApplyCursorVector(vectorState, 0n, [cursorA, cursorA], true), false);
+], { allowEqualSourceSeq: true, allowGatewayRegression: true }), false);
+assert.equal(shouldApplyCursorVector(vectorState, 0n, [cursorA, cursorA], {
+  allowEqualSourceSeq: true,
+  allowGatewayRegression: true
+}), false);
 assert.equal(shouldApplyCursorVector(vectorState, 0n, [
   { sourceId: "", sourceEpoch: "epoch", sourceSeq: 1n }
-], true), false);
+], { allowEqualSourceSeq: true, allowGatewayRegression: true }), false);
 
 const sessionBody = (
   sessionId: string,
@@ -78,6 +84,7 @@ const corpusEnvelope = fromBinary(
   Uint8Array.from(Buffer.from(corpus.frames[0]!.base64, "base64"))
 );
 assert.equal(corpusEnvelope.payload.case, "snapshot");
+assert.equal(corpusEnvelope.payload.value.cursor?.gatewaySeq, 41n);
 assert.equal(corpusEnvelope.payload.value.cursor?.sources[0]?.sourceSeq, 17n);
 const corpusPatch = decodeSnapshot(corpusEnvelope.payload.value);
 assert.equal(corpusPatch.entityOperations[0]?.entityIds[0], "session-1");
@@ -91,7 +98,7 @@ const typescriptCorpusFrames = [
       viewKind: "session_detail",
       schemaVersion: 1,
       operation: ViewOperation.REPLACE,
-      cursor: { sources: [
+      cursor: { gatewaySeq: 41n, sources: [
         { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 17n },
         { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n }
       ] },
@@ -109,7 +116,7 @@ const typescriptCorpusFrames = [
       schemaVersion: 1,
       operation: ViewOperation.REMOVE,
       entity: create(EntityRefSchema, { entityId: "session-1" }),
-      cursor: { sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }] },
+      cursor: { gatewaySeq: 19n, sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }] },
       coverage: coverage("session_details", "session-1"),
       body: encoder.encode("null")
     }) }
@@ -123,6 +130,7 @@ const typescriptCorpusFrames = [
       viewKind: "session_detail",
       schemaVersion: 2,
       operation: ViewOperation.REPLACE,
+      cursor: { gatewaySeq: 41n, sources: [] },
       coverage: coverage("session_details", "session-1"),
       body: sessionBody("session-1", ["reloaded answer"])
     }) }
@@ -159,6 +167,12 @@ const teamBody = (messages: readonly string[]) => encoder.encode(JSON.stringify(
     sender_agent_id: "session-1",
     recipient_agent_ids: ["session-2"],
     input: [{ type: "text", text: `message ${index}` }],
+    image_paths: [],
+    priority: "normal",
+    policy: "non_interrupting",
+    correlation_id: null,
+    reply_to_message_id: null,
+    idempotency_key: null,
     created_at: 100 + index
   })),
   deliveries: messages.map((id, index) => ({
@@ -168,6 +182,12 @@ const teamBody = (messages: readonly string[]) => encoder.encode(JSON.stringify(
     recipient_agent_id: "session-2",
     provider: "codex",
     status: "injected",
+    effective_policy: null,
+    injection_strategy: null,
+    injected_turn_id: null,
+    last_error_code: null,
+    last_error_message: null,
+    created_at: 100 + index,
     updated_at: 100 + index
   }))
 }));
@@ -261,6 +281,54 @@ for (const body of malformedBodies) {
     operation: ViewOperation.REPLACE,
     coverage: coverage("team_workspaces", "team-1"),
     body
+  })), ProtocolDecodeError);
+}
+const validPopulatedTeam = JSON.parse(new TextDecoder().decode(teamBody(["message-1"]))) as any;
+validPopulatedTeam.members = [{
+  member: {
+    team_id: "team-1",
+    agent_id: "session-2",
+    title: null,
+    joined_at: 100,
+    added_by: "session-1",
+    creator_agent_id: null,
+    creator_compaction_subscription: "auto",
+    worktree_id: null
+  },
+  session: { id: "session-2", provider: "codex", model: null, status: "ready" },
+  worktree: null,
+  version: 1
+}];
+assert.doesNotThrow(() => decodeSnapshot(create(SnapshotSchema, {
+  viewKind: "team_workspace",
+  schemaVersion: 1,
+  operation: ViewOperation.REPLACE,
+  coverage: coverage("team_workspaces", "team-1"),
+  body: encoder.encode(JSON.stringify(validPopulatedTeam))
+})));
+const malformedTeamMutations: Array<(body: any) => void> = [
+  (body) => { delete body.messages[0].scope; },
+  (body) => { body.messages[0].sender_agent_id = 42; },
+  (body) => { body.messages[0].recipient_agent_ids = "session-2"; },
+  (body) => { body.messages[0].recipient_agent_ids = [42]; },
+  (body) => { body.messages[0].input = [42]; },
+  (body) => { body.messages[0].input = [{}]; },
+  (body) => { body.messages[0].created_at = "bad"; },
+  (body) => { delete body.deliveries[0].recipient_agent_id; },
+  (body) => { body.deliveries[0].provider = 42; },
+  (body) => { delete body.deliveries[0].status; },
+  (body) => { body.deliveries[0].updated_at = "bad"; },
+  (body) => { body.members = [null]; }
+];
+for (const mutate of malformedTeamMutations) {
+  const body = structuredClone(validPopulatedTeam);
+  mutate(body);
+  assert.throws(() => decodeSnapshot(create(SnapshotSchema, {
+    viewKind: "team_workspace",
+    schemaVersion: 1,
+    operation: ViewOperation.REPLACE,
+    coverage: coverage("team_workspaces", "team-1"),
+    body: encoder.encode(JSON.stringify(body))
   })), ProtocolDecodeError);
 }
 assert.throws(() => decodeSnapshot(create(SnapshotSchema, {

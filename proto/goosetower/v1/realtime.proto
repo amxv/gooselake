@@ -140,5 +140,12 @@ message SourceGapFilled {
 message SourceSnapshotResync {
   string source_id = 1;
   string reason = 2;
+  // Complete source-owned replacement authority. Unlike an ordinary scoped
+  // Snapshot, this transaction may establish a new source epoch and reset the
+  // gateway publication watermark after a Tower restart.
+  CursorVector cursor = 3;
+  bytes body = 4;
+  uint32 schema_version = 5;
+  ViewCoverage coverage = 6;
   reserved 20 to 39;
 }

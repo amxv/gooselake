@@ -63,6 +63,9 @@ impl GatewayState {
                     }
                 }),
                 cursor: patch.source_cursor.map(|cursor| CursorVector {
+                    // A verification-only direct frame still needs valid
+                    // authority. Production record_replayable atomically
+                    // overwrites this sample with its reserved publication.
                     gateway_seq: self.next_gateway_seq.load(Ordering::Relaxed),
                     sources: vec![SourceCursor {
                         source_id: cursor.source_id,
@@ -97,10 +100,28 @@ impl GatewayState {
     }
 
     pub(super) async fn record_replayable(&self, mut envelope: RealtimeEnvelope) -> ReplayEntry {
+        let mut replay_buffer = self.replay_buffer.lock().await;
         let gateway_seq = self.next_gateway_seq.fetch_add(1, Ordering::Relaxed);
         envelope.gateway_seq = gateway_seq;
+        match envelope.payload.as_mut() {
+            Some(Payload::Patch(patch)) => {
+                if let Some(cursor) = patch.cursor.as_mut() {
+                    cursor.gateway_seq = gateway_seq;
+                }
+            }
+            Some(Payload::SourceSnapshotResync(resync)) => {
+                if let Some(cursor) = resync.cursor.as_mut() {
+                    cursor.gateway_seq = gateway_seq;
+                }
+            }
+            _ => {}
+        }
         let source_cursor = envelope.payload.as_ref().and_then(|payload| match payload {
             Payload::Patch(patch) => patch
+                .cursor
+                .as_ref()
+                .and_then(|cursor| cursor.sources.first().cloned()),
+            Payload::SourceSnapshotResync(resync) => resync
                 .cursor
                 .as_ref()
                 .and_then(|cursor| cursor.sources.first().cloned()),
@@ -115,7 +136,7 @@ impl GatewayState {
             envelope,
             encoded_len,
         };
-        self.replay_buffer.lock().await.push(entry.clone());
+        replay_buffer.push(entry.clone());
         entry
     }
 
@@ -154,15 +175,34 @@ impl GatewayState {
         )
     }
 
-    pub(super) fn source_snapshot_resync(&self, source_id: &str, reason: &str) -> RealtimeEnvelope {
-        envelope_with_payload(
+    pub(super) fn source_snapshot_resync(
+        &self,
+        state: &MaterializedState,
+        reason: &str,
+    ) -> Result<RealtimeEnvelope> {
+        let source_cursor = state
+            .cursor()
+            .ok_or_else(|| anyhow!("source snapshot resync lacks a source cursor"))?;
+        let body = serde_json::to_vec(&state.snapshot_source_replacement())?;
+        Ok(envelope_with_payload(
             MessageKind::SourceSnapshotResync,
             Lane::Critical,
             Payload::SourceSnapshotResync(SourceSnapshotResync {
-                source_id: source_id.to_string(),
+                source_id: state.source_id.clone(),
                 reason: reason.to_string(),
+                cursor: Some(CursorVector {
+                    gateway_seq: 0,
+                    sources: vec![SourceCursor {
+                        source_id: source_cursor.source_id,
+                        source_epoch: source_cursor.source_epoch,
+                        source_seq: source_cursor.source_seq.max(0) as u64,
+                    }],
+                }),
+                body: body.into(),
+                schema_version: DETAIL_SCHEMA_VERSION,
+                coverage: Some(source_replacement_coverage()),
             }),
-        )
+        ))
     }
 
     pub(super) fn audit_event(&self, kind: &str, scope: Scope, scope_id: &str) -> RealtimeEnvelope {
@@ -382,6 +422,27 @@ pub(super) fn view_coverage(view_kind: &str, entity_id: Option<String>) -> ViewC
     ViewCoverage {
         domains,
         entity_ids: entity_id.into_iter().collect(),
+        authoritative: true,
+    }
+}
+
+fn source_replacement_coverage() -> ViewCoverage {
+    ViewCoverage {
+        domains: [
+            "fleet_rows",
+            "sessions",
+            "session_details",
+            "teams",
+            "team_workspaces",
+            "approvals",
+            "processes",
+            "worktrees",
+            "sources",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+        entity_ids: Vec::new(),
         authoritative: true,
     }
 }

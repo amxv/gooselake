@@ -17,7 +17,12 @@ import {
   persistCursorState,
   shouldApplyCursorVector
 } from "../cursors";
-import { decodePatch, decodeSnapshot, type EntityPatch } from "../protocol/entities";
+import {
+  decodePatch,
+  decodeSnapshot,
+  decodeSourceSnapshotResync,
+  type EntityPatch
+} from "../protocol/entities";
 import type {
   CursorState,
   GoosewebStorePatch,
@@ -303,11 +308,24 @@ export class RealtimeWorkerCore {
         });
         break;
       case MessageKind.SOURCE_GAP_DETECTED:
-      case MessageKind.SOURCE_SNAPSHOT_RESYNC:
         if (!this.applyEnvelopeCursor(envelope)) {
           return;
         }
         this.handleStaleSignal(envelope);
+        break;
+      case MessageKind.SOURCE_SNAPSHOT_RESYNC:
+        if (envelope.payload.case !== "sourceSnapshotResync") {
+          this.failProtocolFrame("source resync envelope is missing its payload");
+          return;
+        }
+        try {
+          const patch = decodeSourceSnapshotResync(envelope.payload.value);
+          if (!this.applySourceResyncCursor(envelope)) return;
+          this.handleEntityPatch(patch);
+          this.emitState({ connection: "connected" });
+        } catch (error) {
+          this.failProtocolFrame(error instanceof Error ? error.message : "invalid source resync");
+        }
         break;
       case MessageKind.SOURCE_GAP_FILLED:
         if (!this.applyEnvelopeCursor(envelope)) {
@@ -458,7 +476,7 @@ export class RealtimeWorkerCore {
       this.failProtocolFrame("cursor vector contains invalid or duplicate source authority");
       return false;
     }
-    if (!isSnapshot && hasCursorEpochMismatch(this.cursor, sources)) {
+    if (hasCursorEpochMismatch(this.cursor, sources)) {
       this.emitState({
         connection: "stale",
         lastError: "source_epoch_mismatch: snapshot repair required"
@@ -471,7 +489,7 @@ export class RealtimeWorkerCore {
       sources,
       {
         allowEqualSourceSeq: true,
-        allowEpochChange: isSnapshot,
+        allowEpochChange: false,
         allowGatewayRegression: isSnapshot
       }
     )) {
@@ -493,6 +511,51 @@ export class RealtimeWorkerCore {
       this.rememberViewMessage(envelope.messageId);
     }
     return true;
+  }
+
+  private applySourceResyncCursor(envelope: RealtimeEnvelope): boolean {
+    if (envelope.payload.case !== "sourceSnapshotResync") return false;
+    if (envelope.messageId && this.appliedViewMessageIds.has(envelope.messageId)) return false;
+    const authority = cursorAuthorityFromEnvelope(envelope);
+    if (!authority || authority.gatewaySeq === 0n || authority.sources.length !== 1) {
+      this.failProtocolFrame("source resync lacks canonical cursor authority");
+      return false;
+    }
+    const source = authority.sources[0];
+    if (!source || source.sourceId !== envelope.payload.value.sourceId ||
+        !isValidCursorVector(authority.sources)) {
+      this.failProtocolFrame("source resync cursor disagrees with source identity");
+      return false;
+    }
+    const existing = this.cursor.sourceCursors[source.sourceId];
+    const epochChanged = Boolean(existing && existing.sourceEpoch !== source.sourceEpoch);
+    if (!shouldApplyCursorVector(this.cursor, authority.gatewaySeq, authority.sources, {
+      allowEqualSourceSeq: true,
+      allowEpochChange: true,
+      allowGatewayRegression: epochChanged
+    })) return false;
+    this.cursor = mergeCursorVector(
+      this.cursor,
+      authority.gatewaySeq,
+      authority.sources,
+      { replaceGateway: epochChanged }
+    );
+    this.persistAndEmitCursor();
+    if (envelope.messageId) this.rememberViewMessage(envelope.messageId);
+    return true;
+  }
+
+  private persistAndEmitCursor(): void {
+    const cursorToPersist = this.cursor;
+    this.cursorPersistQueue = this.cursorPersistQueue
+      .then(() => persistCursorState(cursorToPersist))
+      .catch((error) => {
+        this.emitError(
+          error instanceof Error ? error.message : "Failed to persist realtime cursor",
+          true
+        );
+      });
+    this.emitState({ cursor: this.cursor });
   }
 
   private rememberViewMessage(messageId: string): void {
@@ -573,6 +636,18 @@ function cursorAuthorityFromEnvelope(
       };
     }
     if (view.schemaVersion > 0) return undefined;
+  }
+  if (envelope.payload.case === "sourceSnapshotResync") {
+    const resync = envelope.payload.value;
+    if (!resync.cursor || resync.schemaVersion !== 1) return undefined;
+    return {
+      gatewaySeq: resync.cursor.gatewaySeq,
+      sources: resync.cursor.sources.map((source) => ({
+        sourceId: source.sourceId,
+        sourceEpoch: source.sourceEpoch,
+        sourceSeq: source.sourceSeq
+      }))
+    };
   }
   return {
     gatewaySeq: envelope.gatewaySeq,

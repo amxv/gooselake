@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
-import { RealtimeEnvelopeSchema } from "../src/gen/goosetower/v1/realtime_pb";
+import {
+  RealtimeEnvelopeSchema,
+  SourceSnapshotResyncSchema
+} from "../src/gen/goosetower/v1/realtime_pb";
 import {
   PatchSchema,
   SnapshotSchema,
@@ -11,9 +14,15 @@ import {
 import { EntityRefSchema } from "../src/gen/goosetower/v1/common_pb";
 import type { WorkerOutbound } from "../app/realtime/types";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core";
+import {
+  getGoosewebSnapshot,
+  resetGoosewebStoreForTests,
+  updateGoosewebStore
+} from "../app/stores/gooseweb-store";
 
 const sockets: FakeSocket[] = [];
 const posted: WorkerOutbound[] = [];
+resetGoosewebStoreForTests();
 
 class FakeSocket {
   static readonly OPEN = 1;
@@ -131,7 +140,51 @@ function patchEnvelope(input: {
   });
 }
 
-const core = new RealtimeWorkerCore((message) => posted.push(message));
+function sourceResyncEnvelope(input: {
+  messageId: string;
+  gatewaySeq: bigint;
+  sourceEpoch: string;
+  sourceSeq: bigint;
+  body: Uint8Array;
+}) {
+  const domains = [
+    "fleet_rows", "sessions", "session_details", "teams", "team_workspaces",
+    "approvals", "processes", "worktrees", "sources"
+  ];
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1,
+    messageId: input.messageId,
+    messageKind: MessageKind.SOURCE_SNAPSHOT_RESYNC,
+    lane: Lane.CRITICAL,
+    gatewaySeq: input.gatewaySeq,
+    payload: {
+      case: "sourceSnapshotResync",
+      value: create(SourceSnapshotResyncSchema, {
+        sourceId: "source-1",
+        reason: "tower restart",
+        schemaVersion: 1,
+        cursor: {
+          gatewaySeq: input.gatewaySeq,
+          sources: [{
+            sourceId: "source-1",
+            sourceEpoch: input.sourceEpoch,
+            sourceSeq: input.sourceSeq
+          }]
+        },
+        coverage: create(ViewCoverageSchema, {
+          domains,
+          authoritative: true
+        }),
+        body: input.body
+      })
+    }
+  });
+}
+
+const core = new RealtimeWorkerCore((message) => {
+  posted.push(message);
+  if (message.type === "state") updateGoosewebStore(message.patch);
+});
 await core.handleMessage({
   type: "connect",
   goosetowerUrl: "ws://127.0.0.1:18090/v1/realtime",
@@ -486,8 +539,17 @@ assert.equal(posted.flatMap((message) =>
 ).length, operationsBeforeTeamSiblings + 2,
 "team summary/workspace siblings at equal source authority must both apply");
 
+const highGatewayPatch = patchEnvelope({
+  messageId: "pre-restart-high-gateway", gatewaySeq: 100n, sourceSeq: 21n,
+  viewKind: "session_detail", domain: "session_details", entityId: "session-1",
+  operation: ViewOperation.REPLACE, body: selectedBody
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, highGatewayPatch));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 100n);
+
 const epochMismatchPatch = patchEnvelope({
-  messageId: "epoch-mismatch-patch", gatewaySeq: 48n, sourceSeq: 1n,
+  messageId: "epoch-mismatch-patch", gatewaySeq: 101n, sourceSeq: 1n,
   sourceEpoch: "epoch-new", viewKind: "session_detail", domain: "session_details",
   entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
 });
@@ -499,16 +561,56 @@ await waitForPatchFlush();
 assert.equal(posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length, operationsBeforeEpochMismatch, "patch epoch mismatch must not mutate state");
-const epochResyncSnapshot = snapshotEnvelope({
-  messageId: "epoch-resync-snapshot", gatewaySeq: 48n,
+const scopedEpochSnapshot = snapshotEnvelope({
+  messageId: "scoped-epoch-snapshot", gatewaySeq: 1n,
   viewKind: "session_detail", domain: "session_details", entityIds: ["session-1"],
   sources: [{ sourceId: "source-1", sourceEpoch: "epoch-new", sourceSeq: 1n }],
   body: selectedBody
 });
-sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, epochResyncSnapshot));
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, scopedEpochSnapshot));
 await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeEpochMismatch,
+"a scoped snapshot must not establish a new global source epoch");
+assert.equal(getGoosewebSnapshot().cursor.sourceCursors["source-1"]?.sourceEpoch, "epoch-1");
+
+const sourceReplacementBody = new TextEncoder().encode(JSON.stringify({
+  source_id: "source-1",
+  fleet_rows: [{
+    source_id: "source-1", row_id: "session-1", session_id: "session-1",
+    team_id: null, title: null, provider: "codex", model: null, status: "ready",
+    cwd: null, worktree_id: null, worktree_path: null, active_turn_id: null,
+    pending_approval_count: 0, active_process_count: 0, delivery_status_counts: {},
+    latest_activity_unix_ms: 200, source_health: "live", version: 1
+  }],
+  session_details: [JSON.parse(new TextDecoder().decode(selectedBody))],
+  team_workspaces: [],
+  approvals: [],
+  processes: [],
+  worktrees: [],
+  source_health: {
+    source_id: "source-1", source_epoch: "epoch-new", last_source_seq: 1,
+    state: "live", observed_at_unix_ms: 200
+  }
+}));
+const epochResync = sourceResyncEnvelope({
+  messageId: "epoch-source-resync", gatewaySeq: 1n,
+  sourceEpoch: "epoch-new", sourceSeq: 1n, body: sourceReplacementBody
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, epochResync));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 1n,
+  "an explicit epoch reset must rebase the restarted Tower gateway watermark");
+assert.equal(getGoosewebSnapshot().cursor.sourceCursors["source-1"]?.sourceEpoch, "epoch-new");
+assert.equal(Object.keys(getGoosewebSnapshot().entities.teams).length, 0,
+  "full-source resync must remove stale old-epoch team summaries");
+assert.equal(Object.keys(getGoosewebSnapshot().entities.teamWorkspaces).length, 0,
+  "full-source resync must remove stale old-epoch Team Comms detail");
+assert.deepEqual(Object.keys(getGoosewebSnapshot().entities.sessions), ["session-1"]);
+
 const newEpochPatch = patchEnvelope({
-  messageId: "new-epoch-patch", gatewaySeq: 49n, sourceSeq: 2n,
+  messageId: "new-epoch-patch", gatewaySeq: 2n, sourceSeq: 2n,
   sourceEpoch: "epoch-new", viewKind: "session_detail", domain: "session_details",
   entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
 });
@@ -519,8 +621,18 @@ assert.equal(posted.some((message) =>
   message.patch.cursor?.sourceCursors["source-1"]?.sourceEpoch === "epoch-new" &&
   message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 2n
 ), true, "snapshot resync must establish the new epoch for later patches");
+const sameEpochLowSnapshot = snapshotEnvelope({
+  messageId: "same-epoch-low-snapshot", gatewaySeq: 1n,
+  viewKind: "session_detail", domain: "session_details", entityIds: ["session-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-new", sourceSeq: 2n }],
+  body: selectedBody
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, sameEpochLowSnapshot));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 2n,
+  "an ordinary same-epoch snapshot must not regress gateway authority");
 const delayedOldEpochPatch = patchEnvelope({
-  messageId: "delayed-old-epoch", gatewaySeq: 50n, sourceSeq: 999n,
+  messageId: "delayed-old-epoch", gatewaySeq: 3n, sourceSeq: 999n,
   sourceEpoch: "epoch-1", viewKind: "session_detail", domain: "session_details",
   entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
 });

@@ -19,6 +19,79 @@ fn patch_frames_use_versioned_operations_coverage_and_nested_cursor() {
     assert_eq!(coverage.domains, vec!["ledger_events"]);
 }
 
+#[tokio::test]
+async fn replay_publication_reserves_one_matching_nested_gateway_sequence() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    let first = gateway.patch_envelope(ledger_patch(7));
+    let second = gateway.patch_envelope(ledger_patch(8));
+    let (first, second) = tokio::join!(
+        gateway.record_replayable(first),
+        gateway.record_replayable(second)
+    );
+    let mut entries = [first, second];
+    entries.sort_by_key(|entry| entry.gateway_seq);
+    assert_eq!(entries[1].gateway_seq, entries[0].gateway_seq + 1);
+    for entry in entries {
+        assert_eq!(entry.envelope.gateway_seq, entry.gateway_seq);
+        let Some(Payload::Patch(patch)) = entry.envelope.payload else {
+            panic!("expected recorded patch");
+        };
+        assert_eq!(
+            patch.cursor.expect("canonical patch cursor").gateway_seq,
+            entry.gateway_seq
+        );
+    }
+}
+
+#[tokio::test]
+async fn source_resync_records_complete_source_replacement_authority() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    let mut state = MaterializedState::new("local", "epoch-restarted");
+    state.upsert_session(session_record());
+    state.reduce_source_event(runtime_source_event(
+        "local",
+        "epoch-restarted",
+        "session_1",
+        1,
+    ));
+    let envelope = gateway
+        .source_snapshot_resync(&state, "tower restarted")
+        .expect("source replacement envelope");
+    let entry = gateway.record_replayable(envelope).await;
+    assert_eq!(entry.gateway_seq, entry.envelope.gateway_seq);
+    let Some(Payload::SourceSnapshotResync(resync)) = entry.envelope.payload else {
+        panic!("expected source resync payload");
+    };
+    assert_eq!(
+        resync
+            .cursor
+            .expect("source replacement cursor")
+            .gateway_seq,
+        entry.gateway_seq
+    );
+    assert_eq!(
+        resync
+            .coverage
+            .expect("source replacement coverage")
+            .domains,
+        vec![
+            "fleet_rows",
+            "sessions",
+            "session_details",
+            "teams",
+            "team_workspaces",
+            "approvals",
+            "processes",
+            "worktrees",
+            "sources",
+        ]
+    );
+    let replacement: crate::materializer::SourceReplacementView =
+        serde_json::from_slice(&resync.body).expect("typed source replacement body");
+    assert_eq!(replacement.source_id, "local");
+    assert_eq!(replacement.session_details.len(), 1);
+}
+
 #[test]
 fn selected_team_message_limits_are_clamped_for_all_filter_inputs() {
     for (raw, expected) in [

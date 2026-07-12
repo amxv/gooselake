@@ -137,11 +137,23 @@ impl GatewayState {
                             self.enqueue_connection(&mut conn, self.source_gap_filled(cursor), None);
                         }
                         Ok(SourceRecoverySignal::Resync { source_id, reason }) => {
-                            self.enqueue_connection(
-                                &mut conn,
-                                self.source_snapshot_resync(&source_id, &reason),
-                                None,
-                            );
+                            let state = self.materialized.read().await.get(&source_id).cloned();
+                            if let Some(state) = state {
+                                match self.source_snapshot_resync(&state, &reason) {
+                                    Ok(envelope) => {
+                                        let entry = self.record_replayable(envelope).await;
+                                        self.enqueue_connection(&mut conn, entry.envelope, None);
+                                    }
+                                    Err(error) => {
+                                        conn.status = ConnectionStatus::Degraded;
+                                        self.enqueue_connection(
+                                            &mut conn,
+                                            self.connection_degraded(error.to_string()),
+                                            Some("connection_status".to_string()),
+                                        );
+                                    }
+                                }
+                            }
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             conn.status = ConnectionStatus::Degraded;
@@ -585,6 +597,7 @@ impl GatewayState {
         let mut state = bootstrap.state;
         state.mark_discontinuity(reason.clone());
         let patch = state.transition_source_health(SourceHealthState::Live, None);
+        let event = self.source_snapshot_resync(&state, &reason)?;
         let mut materialized = self.materialized.write().await;
         if materialized.get(source_id).is_some_and(|current| {
             current.source_epoch == state.source_epoch
@@ -599,8 +612,8 @@ impl GatewayState {
         self.metrics
             .snapshot_resync_count
             .fetch_add(1, Ordering::Relaxed);
-        let event = self.source_snapshot_resync(source_id, &reason);
-        self.enqueue_connection(conn, event, None);
+        let entry = self.record_replayable(event).await;
+        self.enqueue_connection(conn, entry.envelope, None);
         self.enqueue_patch(conn, patch.clone()).await;
         let _ = self.patches.send(patch);
         Ok(())

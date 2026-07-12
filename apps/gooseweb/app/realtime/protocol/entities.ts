@@ -13,6 +13,7 @@ import {
   type Patch,
   type Snapshot
 } from "../../../src/gen/goosetower/v1/view_pb";
+import type { SourceSnapshotResync } from "../../../src/gen/goosetower/v1/realtime_pb";
 import type {
   EntityDomain,
   EntityMutation,
@@ -64,6 +65,120 @@ export function decodePatch(patch: Patch): EntityPatch {
     patch.coverage?.authoritative ?? patch.schemaVersion === 0,
     patch.entity?.entityId || undefined
   );
+}
+
+const SOURCE_REPLACEMENT_DOMAINS = [
+  "fleet_rows", "sessions", "session_details", "teams", "team_workspaces",
+  "approvals", "processes", "worktrees", "sources"
+] as const;
+
+export function decodeSourceSnapshotResync(resync: SourceSnapshotResync): EntityPatch {
+  if (resync.schemaVersion !== 1) {
+    throw new ProtocolDecodeError(`unsupported source resync schema ${resync.schemaVersion}`);
+  }
+  const sourceId = requireString(resync.sourceId, "source_resync.source_id");
+  const coverage = resync.coverage;
+  if (
+    !coverage?.authoritative ||
+    coverage.entityIds.length !== 0 ||
+    coverage.domains.length !== SOURCE_REPLACEMENT_DOMAINS.length ||
+    SOURCE_REPLACEMENT_DOMAINS.some((domain, index) => coverage.domains[index] !== domain)
+  ) {
+    throw new ProtocolDecodeError("source resync lacks exact authoritative source coverage");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(resync.body));
+  } catch {
+    throw new ProtocolDecodeError("malformed source resync JSON body");
+  }
+  const body = strictRecord(value, "source_resync");
+  if (requireString(body.source_id, "source_resync.source_id") !== sourceId) {
+    throw new ProtocolDecodeError("source resync body disagrees with source identity");
+  }
+  const fleetRows: Record<string, unknown> = {};
+  for (const [index, item] of requireArray(body.fleet_rows, "source_resync.fleet_rows").entries()) {
+    const row = strictRecord(item, `source_resync.fleet_rows[${index}]`);
+    requireOwnedSource(row, sourceId, `source_resync.fleet_rows[${index}]`);
+    const entity = normalizeFleetRow(row);
+    requireString(entity.rowId, `source_resync.fleet_rows[${index}].row_id`);
+    fleetRows[entity.rowId] = entity;
+  }
+  const sessions: Record<string, unknown> = {};
+  const sessionDetails: Record<string, unknown> = {};
+  for (const item of requireArray(body.session_details, "source_resync.session_details")) {
+    validateSessionDetailBody(item);
+    const record = strictRecord(item, "source_resync.session_detail");
+    requireOwnedSource(record, sourceId, "source_resync.session_detail");
+    const summary = normalizeSession(record);
+    const detail = normalizeSessionDetail(record);
+    if (!summary || !detail) throw new ProtocolDecodeError("invalid source resync session");
+    sessions[summary.sessionId] = summary;
+    sessionDetails[detail.sessionId] = detail;
+  }
+  const teams: Record<string, unknown> = {};
+  const teamWorkspaces: Record<string, unknown> = {};
+  for (const item of requireArray(body.team_workspaces, "source_resync.team_workspaces")) {
+    validateTeamWorkspaceBody(item);
+    const record = strictRecord(item, "source_resync.team_workspace");
+    requireOwnedSource(record, sourceId, "source_resync.team_workspace");
+    const summary = normalizeTeam(record);
+    const workspace = normalizeTeamWorkspace(record);
+    if (!summary || !workspace) throw new ProtocolDecodeError("invalid source resync team");
+    teams[summary.teamId] = summary;
+    teamWorkspaces[workspace.teamId] = workspace;
+  }
+  const approvals = normalizeOwnedCollection(
+    body.approvals, sourceId, "approvals", "approval_id", normalizeApproval
+  );
+  const processes = normalizeOwnedCollection(
+    body.processes, sourceId, "processes", "process_id", normalizeProcess
+  );
+  const worktrees = normalizeOwnedCollection(
+    body.worktrees, sourceId, "worktrees", "worktree_id", normalizeWorktree
+  );
+  const sourceRecord = strictRecord(body.source_health, "source_resync.source_health");
+  requireOwnedSource(sourceRecord, sourceId, "source_resync.source_health");
+  const source = normalizeSource(sourceRecord);
+  const payloads = {
+    fleetRows, sessions, sessionDetails, teams, teamWorkspaces,
+    approvals, processes, worktrees, sources: { [sourceId]: source }
+  };
+  return {
+    entityOperations: (Object.keys(payloads) as EntityDomain[]).map((domain) => ({
+      operation: "replace",
+      domain,
+      entityIds: [],
+      authoritative: true,
+      sourceId,
+      payload: payloads[domain]
+    }))
+  };
+}
+
+function requireOwnedSource(
+  record: Record<string, unknown>, sourceId: string, field: string
+): void {
+  if (requireString(record.source_id, `${field}.source_id`) !== sourceId) {
+    throw new ProtocolDecodeError(`${field} belongs to a different source`);
+  }
+}
+
+function normalizeOwnedCollection(
+  value: unknown,
+  sourceId: string,
+  field: string,
+  idField: string,
+  normalize: (value: unknown) => unknown
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [index, item] of requireArray(value, `source_resync.${field}`).entries()) {
+    const record = strictRecord(item, `source_resync.${field}[${index}]`);
+    requireOwnedSource(record, sourceId, `source_resync.${field}[${index}]`);
+    const id = requireString(record[idField], `source_resync.${field}[${index}].${idField}`);
+    result[id] = normalize(record);
+  }
+  return result;
 }
 
 function isExplicitEmptyBody(body: Uint8Array): boolean {
@@ -575,6 +690,34 @@ function normalizeApproval(value: unknown) {
     risk: stringFrom(approval.risk),
     status: stringFrom(approval.status),
     summary: stringFrom(approval.summary)
+  });
+}
+
+function normalizeProcess(value: unknown) {
+  const process = strictRecord(value, "source_resync.process");
+  requireString(process.status, "source_resync.process.status");
+  return create(ProcessViewSchema, {
+    sourceId: stringFrom(process.source_id),
+    processId: stringFrom(process.process_id),
+    status: stringFrom(process.status),
+    command: typeof process.command === "string"
+      ? process.command
+      : JSON.stringify(process.command ?? null),
+    exitCode: numberFrom(process.exit_code)
+  });
+}
+
+function normalizeWorktree(value: unknown) {
+  const worktree = strictRecord(value, "source_resync.worktree");
+  requireString(worktree.worktree_root, "source_resync.worktree.worktree_root");
+  requireString(worktree.branch_name, "source_resync.worktree.branch_name", true);
+  requireString(worktree.status, "source_resync.worktree.status");
+  return create(WorktreeViewSchema, {
+    sourceId: stringFrom(worktree.source_id),
+    worktreeId: stringFrom(worktree.worktree_id),
+    path: stringFrom(worktree.worktree_root || worktree.worktree_cwd),
+    branch: stringFrom(worktree.branch_name),
+    status: stringFrom(worktree.status)
   });
 }
 

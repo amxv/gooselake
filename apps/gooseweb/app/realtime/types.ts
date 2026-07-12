@@ -53,6 +53,9 @@ export type EntityMutation = {
 
 export type EntityOperation = EntityMutation & {
   readonly payload: Readonly<Record<string, unknown>>;
+  // Present only for an explicit full-source resync transaction. The store
+  // replaces entities owned by this source without disturbing sibling sources.
+  readonly sourceId?: string;
 };
 
 export type SessionTranscriptEntry = {

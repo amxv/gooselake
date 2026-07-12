@@ -218,14 +218,17 @@ export function mergeCursor(
 export function mergeCursorVector(
   current: CursorState,
   nextGatewaySeq: bigint,
-  nextSources: readonly SourceCursorState[]
+  nextSources: readonly SourceCursorState[],
+  options: { readonly replaceGateway?: boolean } = {}
 ): CursorState {
   const sourceCursors = { ...current.sourceCursors };
   for (const source of nextSources) {
     sourceCursors[source.sourceId] = source;
   }
   return {
-    gatewaySeq: nextGatewaySeq > current.gatewaySeq ? nextGatewaySeq : current.gatewaySeq,
+    gatewaySeq: options.replaceGateway
+      ? nextGatewaySeq
+      : nextGatewaySeq > current.gatewaySeq ? nextGatewaySeq : current.gatewaySeq,
     sourceCursors
   };
 }

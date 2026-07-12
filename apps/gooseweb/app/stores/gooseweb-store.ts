@@ -84,6 +84,18 @@ function applyEntityOperations(
   for (const operation of operations) {
     const existing = next[operation.domain] as Readonly<Record<string, unknown>>;
     const incoming = operation.payload;
+    if (operation.operation === "replace" && operation.sourceId) {
+      const retained = Object.fromEntries(
+        Object.entries(existing).filter(([, entity]) =>
+          (entity as { sourceId?: string } | undefined)?.sourceId !== operation.sourceId
+        )
+      );
+      next = {
+        ...next,
+        [operation.domain]: { ...retained, ...incoming }
+      } as NormalizedEntities;
+      continue;
+    }
     if (operation.operation === "upsert") {
       next = {
         ...next,

@@ -13,6 +13,18 @@ use super::MaterializedState;
 pub const MAX_TEAM_MESSAGE_LIMIT: usize = 100;
 pub const MAX_TEAM_DELIVERY_LIMIT: usize = 1_000;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SourceReplacementView {
+    pub source_id: String,
+    pub fleet_rows: Vec<AgentRowView>,
+    pub session_details: Vec<SessionDetailView>,
+    pub team_workspaces: Vec<TeamWorkspaceView>,
+    pub approvals: Vec<ApprovalRowView>,
+    pub processes: Vec<ProcessView>,
+    pub worktrees: Vec<WorktreeView>,
+    pub source_health: SourceHealthView,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoardSubscription {
     pub offset: usize,
@@ -352,6 +364,49 @@ impl MaterializedState {
 
     pub fn snapshot_source_health(&self) -> SourceHealthView {
         self.source_health_view()
+    }
+
+    pub fn snapshot_source_replacement(&self) -> SourceReplacementView {
+        SourceReplacementView {
+            source_id: self.source_id.clone(),
+            fleet_rows: self
+                .snapshot_board(&BoardSubscription {
+                    limit: usize::MAX,
+                    source_id: Some(self.source_id.clone()),
+                    ..BoardSubscription::default()
+                })
+                .rows,
+            session_details: self
+                .sessions
+                .keys()
+                .filter_map(|session_id| {
+                    self.snapshot_session(&SelectedSessionSubscription {
+                        session_id: session_id.clone(),
+                        include_text: true,
+                    })
+                })
+                .collect(),
+            team_workspaces: self
+                .teams
+                .keys()
+                .filter_map(|team_id| {
+                    self.snapshot_team(&SelectedTeamSubscription {
+                        team_id: team_id.clone(),
+                        message_limit: MAX_TEAM_MESSAGE_LIMIT,
+                    })
+                })
+                .collect(),
+            approvals: self
+                .snapshot_approval_inbox(&ApprovalInboxSubscription {
+                    include_resolved: true,
+                    source_id: Some(self.source_id.clone()),
+                    ..ApprovalInboxSubscription::default()
+                })
+                .approvals,
+            processes: self.processes.values().cloned().collect(),
+            worktrees: self.snapshot_worktrees(),
+            source_health: self.snapshot_source_health(),
+        }
     }
 
     pub fn snapshot_worktrees(&self) -> Vec<WorktreeView> {

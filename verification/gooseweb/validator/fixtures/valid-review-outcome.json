@@ -2,10 +2,10 @@
   "schema_revision": "gooseweb-review-outcome/v2",
   "phase_id": "P01",
   "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
-  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
+  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..d7da340c94f4cb34692a122696717e72f357fac1",
   "attempt": 3,
-  "candidate_head_sha": "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
-  "candidate_tree_sha": "2c964761367fa4d5fb516bc6130c1af509cfea7d",
+  "candidate_head_sha": "d7da340c94f4cb34692a122696717e72f357fac1",
+  "candidate_tree_sha": "fb4ccf08803c9ba76a944ec870a8dfe1e7a33c3e",
   "manifest": {
     "path": "verification/gooseweb/manifests/p01-team-comms-live.json",
     "revision": 3,
@@ -39,8 +39,8 @@
     "P01-BLOCK-010"
   ],
   "recorded_at": "2026-07-12T10:21:00.000Z",
-  "served_head_sha": "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
-  "served_tree_sha": "2c964761367fa4d5fb516bc6130c1af509cfea7d",
+  "served_head_sha": "d7da340c94f4cb34692a122696717e72f357fac1",
+  "served_tree_sha": "fb4ccf08803c9ba76a944ec870a8dfe1e7a33c3e",
   "clean_tree": true,
   "hot_reload": false,
   "stack": {

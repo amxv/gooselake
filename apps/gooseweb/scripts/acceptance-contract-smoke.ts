@@ -66,7 +66,12 @@ validateReviewOutcome(validNonClearance);
 validateBrowserCaptures(consoleCapture, networkCapture, manifest);
 validateBrowserCaptures(change(consoleCapture, "messages", [
   { level: "debug", message: "[vite] connecting..." },
-  { level: "info", message: "Download the React DevTools for a better development experience: https://react.dev/link/react-devtools" }
+  { level: "info", message: "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold" }
+]), networkCapture, manifest);
+validateBrowserCaptures(change(consoleCapture, "messages", [
+  { level: "debug", message: "[vite] connecting..." },
+  { level: "debug", message: "[vite] connected." },
+  { level: "info", message: "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold" }
 ]), networkCapture, manifest);
 validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "agent-browser exposes no redacted frame capture", baseline_defect_id: "BASE-P01-WEBSOCKET-OBSERVER-UNAVAILABLE" }), manifest);
 validateSchemasAgainstDocuments();
@@ -95,6 +100,14 @@ const negativeCases: [string, () => void][] = [
   ["changed clearance base", () => validateClearance(change(clearance, "base_sha", "a".repeat(40)), { expected: clearance })],
   ["changed reviewed range", () => validateClearance(change(clearance, "reviewed_range", `${APPROVED_BASE_SHA}..${"a".repeat(40)}`), { expected: clearance })],
   ["changed candidate HEAD", () => validateClearance(change(clearance, "candidate_head_sha", "a".repeat(40)), { expected: clearance })],
+  ["cross-head manifest blob", () => {
+    let stale = change(clearance, "candidate_head_sha", "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0");
+    stale = change(stale, "served_head_sha", "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0");
+    stale = change(stale, "candidate_tree_sha", "2c964761367fa4d5fb516bc6130c1af509cfea7d");
+    stale = change(stale, "served_tree_sha", "2c964761367fa4d5fb516bc6130c1af509cfea7d");
+    stale = change(stale, "reviewed_range", `${APPROVED_BASE_SHA}..7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0`);
+    validateClearance(stale);
+  }],
   ["nonexistent Git range head", () => {
     const forged = change(change(change(clearance, "candidate_head_sha", "a".repeat(40)), "served_head_sha", "a".repeat(40)), "reviewed_range", `${APPROVED_BASE_SHA}..${"a".repeat(40)}`);
     validateClearance(forged, { verifyGit: true });
@@ -119,7 +132,15 @@ const negativeCases: [string, () => void][] = [
   ["reviewer implementer overlap", () => validateClearance(change(clearance, "review.reviewer_identity", "p01-implementer"))],
   ["approval routed to implementer", () => validateClearance(change(clearance, "review.final_approval_routed_to_implementer", true))],
   ["wrong clearance recipient", () => validateClearance(change(clearance, "clearance.recipient_role", "supervisor"))],
+  ["substituted lead recipient", () => validateClearance(change(clearance, "clearance.recipient_identity", "someone_else"))],
   ["missing clearance identity", () => validateClearance(omit(clearance, "clearance.recipient_identity"))],
+  ["changed clearance attempt", () => validateClearance(change(clearance, "attempt", 4), { expected: clearance })],
+  ["changed nested clearance tuple", () => validateClearance(change(clearance, "clearance.issued_at", "2026-07-12T10:21:00.000Z"), { expected: clearance })],
+  ["empty clearance baselines", () => validateClearance(change(clearance, "baseline_detected", []))],
+  ["omitted clearance baseline", () => validateClearance(change(clearance, "baseline_detected", (clearance.baseline_detected as Json[]).slice(0, -1)))],
+  ["duplicated clearance baseline", () => validateClearance(change(clearance, "baseline_detected.6", clone((clearance.baseline_detected as Json[])[0])))],
+  ["substituted clearance baseline owner", () => validateClearance(change(clearance, "baseline_detected.0.owning_correction_phase", "P10"))],
+  ["reordered clearance baselines", () => validateClearance(change(clearance, "baseline_detected", [...(clearance.baseline_detected as Json[])].reverse()))],
   ["evidence head/sha7 mismatch", () => validateEvidence(change(evidence, "sha7", "2222222"), { checkFiles: false })],
   ["evidence headed mode", () => validateEvidence(change(evidence, "browser.execution_mode", "headed"), { checkFiles: false })],
   ["incomplete prohibited vocabulary", () => validateEvidence(change(evidence, "redaction.prohibited", ["credentials"]), { checkFiles: false })],
@@ -153,7 +174,7 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v4 passed (${negativeCases.length} negative cases)`);
+console.log(`Gooseweb acceptance contract v5 passed (${negativeCases.length} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);

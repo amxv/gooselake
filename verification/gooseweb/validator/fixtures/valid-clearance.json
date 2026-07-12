@@ -3,11 +3,11 @@
   "phase_id": "P01",
   "attempt": 3,
   "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
-  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
-  "candidate_head_sha": "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
-  "candidate_tree_sha": "2c964761367fa4d5fb516bc6130c1af509cfea7d",
-  "served_head_sha": "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
-  "served_tree_sha": "2c964761367fa4d5fb516bc6130c1af509cfea7d",
+  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..d7da340c94f4cb34692a122696717e72f357fac1",
+  "candidate_head_sha": "d7da340c94f4cb34692a122696717e72f357fac1",
+  "candidate_tree_sha": "fb4ccf08803c9ba76a944ec870a8dfe1e7a33c3e",
+  "served_head_sha": "d7da340c94f4cb34692a122696717e72f357fac1",
+  "served_tree_sha": "fb4ccf08803c9ba76a944ec870a8dfe1e7a33c3e",
   "clean_tree": true,
   "hot_reload": false,
   "manifest": {
@@ -64,8 +64,8 @@
     "fresh_unique_session_required": true,
     "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "chromium_version": "150.0.7871.115",
-    "profile_policy": "fresh_ephemeral"
-    ,"session_name": "gooseweb-p01-review-attempt-3-headless"
+    "profile_policy": "fresh_ephemeral",
+    "session_name": "gooseweb-p01-review-attempt-3-headless"
   },
   "baseline_detected": [
     {
@@ -73,17 +73,137 @@
       "defect_id": "BASE-P01-TEAM-COMMS-EMPTY",
       "first_divergent_layer": "Goosetower",
       "evidence_references": [
-        "report.md#baseline"
+        "tmp/gg/gooseweb-current-state-evidence/gooseweb-team-comms-empty-1440x1000.png"
       ],
       "owning_correction_phase": "P08",
       "affected_downstream_gates": [
         "P10",
         "M1",
         "P45",
-        "P56"
+        "M5",
+        "P56",
+        "M7"
       ],
       "product_scenario_status": "blocked_not_approved",
-      "description": "Source-backed message is not visible."
+      "description": "Runtime message/delivery/event and injection succeed while Team Comms remains empty."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-STALE-TURN",
+      "first_divergent_layer": "Goosetower",
+      "evidence_references": [
+        "tmp/gg/gooseweb-current-state-evidence/gooseweb-live-agent-after-runtime-completion-1440x1000.png"
+      ],
+      "owning_correction_phase": "P07",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P25",
+        "M3",
+        "P45",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Runtime terminal truth succeeds while the materialized/browser session remains turn_running."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-START-LEAD-NO-ADMISSION",
+      "first_divergent_layer": "browser-command to Goosetower admission/routing boundary",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/report.md#honest-headless-browser-baseline"
+      ],
+      "owning_correction_phase": "P07",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P44",
+        "P45",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "The semantic Start lead control produces no runtime/materialized session, pending state, or visible terminal rejection, so the source-backed Team Comms precondition cannot be established."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-RECONNECT-STATE-DISAGREEMENT",
+      "first_divergent_layer": "Gooseweb Worker/store to React connection-state projection",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/tower-state.redacted.json",
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/websocket.json"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P25",
+        "M3",
+        "P45",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Offline/online and fresh-context reconstruction do not expose an honest connection state; the top level reports degraded while source health reports live."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-MOBILE-COMMS-UNREACHABLE",
+      "first_divergent_layer": "Gooseweb React responsive navigation",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/viewport-results.json",
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/screenshots/520x900.png"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "P47",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "After reload at 520x900, Team Comms is absent from exposed semantic controls, so the critical surface is unreachable."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-WEBSOCKET-OBSERVER-UNAVAILABLE",
+      "first_divergent_layer": "verification observer boundary",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/websocket.json"
+      ],
+      "owning_correction_phase": "P06",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "P01 and agent-browser provide no redacted WebSocket frame observer, so frame behavior is recorded as unavailable and never inferred."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-FAVICON-NOT-FOUND",
+      "first_divergent_layer": "Gooseweb static asset routing",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/b40131f/attempt-4/report.md#replacement-attempt-4-blockers"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Every fresh browser attempt requests GET /favicon.ico and receives HTTP 404; the failed request remains blocked until the static asset route is corrected."
     }
   ],
   "known_defects": [],

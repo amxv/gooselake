@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gooseweb://schemas/phase-state-ledger/v4",
-  "title": "Gooseweb phase state and lease ledger v4",
+  "$id": "gooseweb://schemas/phase-state-ledger/v5",
+  "title": "Gooseweb phase state and lease ledger v5",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "schema_revision": {
-      "const": "gooseweb-phase-state-ledger/v4"
+      "const": "gooseweb-phase-state-ledger/v5"
     },
     "approved_plan_sha256": {
       "const": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"

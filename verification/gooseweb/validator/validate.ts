@@ -150,6 +150,7 @@ export function validateClearance(value: RecordJson, options: ClearanceOptions =
     equal(mergeBase, value.base_sha, "exact reviewed merge base");
   }
   validateManifestTuple(object(value.manifest, "clearance manifest"));
+  const candidateManifest = validateManifestAtGitHead(object(value.manifest, "clearance manifest"), string(value.candidate_head_sha, "candidate head"));
   const lease = object(value.lease, "lease");
   validateLease(lease);
   equal(lease.phase_id, value.phase_id, "lease/clearance phase");
@@ -162,11 +163,15 @@ export function validateClearance(value: RecordJson, options: ClearanceOptions =
   const browser = object(value.browser, "clearance browser");
   validateBrowser(browser);
   equal(browser.session_name, review.browser_session, "browser/reviewer session name");
-  array(value.baseline_detected, "baseline").forEach((entry) => validateBaseline(object(entry, "baseline entry")));
+  const clearanceBaselines = array(value.baseline_detected, "baseline").map((entry) => object(entry, "baseline entry"));
+  clearanceBaselines.forEach(validateBaseline);
+  ensureUnique(clearanceBaselines.map((entry) => string(entry.defect_id, "clearance defect ID")), "clearance baseline defect IDs");
+  equal(JSON.stringify(clearanceBaselines), JSON.stringify(candidateManifest.baseline_detected), "clearance/manifest baseline register");
+  equal(object(value.clearance, "clearance").recipient_identity, "parallel_otter", "exact lead recipient identity");
   if (options.expected) {
     const expected = options.expected;
-    for (const key of ["phase_id", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], expected[key], `expected ${key}`);
-    for (const key of ["manifest", "lease", "stack", "review", "browser"]) equal(JSON.stringify(value[key]), JSON.stringify(expected[key]), `expected ${key} tuple`);
+    for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], expected[key], `expected ${key}`);
+    for (const key of ["manifest", "lease", "stack", "review", "browser", "clearance", "baseline_detected"]) equal(JSON.stringify(value[key]), JSON.stringify(expected[key]), `expected ${key} tuple`);
   }
   scanSecrets(value, "clearance", false);
 }
@@ -423,6 +428,19 @@ export function validateReviewOutcome(record: RecordJson): void {
   validateManifestTuple(object(record.manifest, "non-clearance manifest"));
   if (time(record.recorded_at) < time(lease.released_at)) fail("changes-required outcome was recorded before lease release");
   verifyGitRecord(record);
+  validateManifestAtGitHead(object(record.manifest, "non-clearance manifest"), string(record.candidate_head_sha, "candidate head"));
+}
+
+function validateManifestAtGitHead(tuple: RecordJson, head: string): RecordJson {
+  let bytes: Buffer;
+  try { bytes = execFileSync("git", ["show", `${head}:${string(tuple.path, "manifest path")}`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] }); }
+  catch { fail("candidate head does not contain declared manifest path"); }
+  equal(hashBytes(bytes), tuple.sha256, "candidate manifest blob hash");
+  let candidate: RecordJson;
+  try { candidate = JSON.parse(bytes.toString("utf8")) as RecordJson; } catch { fail("candidate manifest blob is not JSON"); }
+  validateManifest(candidate);
+  equal(candidate.manifest_revision, tuple.revision, "candidate manifest blob revision");
+  return candidate;
 }
 
 function verifyGitRecord(record: RecordJson): void {

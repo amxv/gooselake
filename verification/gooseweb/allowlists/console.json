@@ -29,7 +29,24 @@
         },
         {
           "level": "info",
-          "message": "Download the React DevTools for a better development experience: https://react.dev/link/react-devtools"
+          "message": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"
+        }
+      ]
+    },
+    {
+      "variant_id": "vite-connect-complete-react-devtools",
+      "messages": [
+        {
+          "level": "debug",
+          "message": "[vite] connecting..."
+        },
+        {
+          "level": "debug",
+          "message": "[vite] connected."
+        },
+        {
+          "level": "info",
+          "message": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"
         }
       ]
     }

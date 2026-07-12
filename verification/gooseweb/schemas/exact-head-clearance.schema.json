@@ -334,6 +334,8 @@
     },
     "baseline_detected": {
       "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -413,8 +415,7 @@
           "const": "lead"
         },
         "recipient_identity": {
-          "type": "string",
-          "minLength": 1
+          "const": "parallel_otter"
         },
         "product_approved": {
           "const": false

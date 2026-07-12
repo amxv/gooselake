@@ -58,6 +58,12 @@
     "network": { "complete": true, "unexpected_failures": 0, "redacted_at_capture": true },
     "websocket": { "complete": true, "unexpected_failures": 0, "redacted_at_capture": true }
   },
+  "network_reconstruction": {
+    "artifact": "network.json",
+    "capture_schema_revision": "gooseweb-network-capture/v4",
+    "unfiltered_raw_requests_retained": true,
+    "ordered_segments": ["initial_load", "ordinary_reload", "hard_reload", "fresh_context"]
+  },
   "viewports": [
     { "id": "1440x1000", "width": 1440, "height": 1000, "screenshot": true, "screenshot_path": "screenshots/1440x1000.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true },
     { "id": "820x1000", "width": 820, "height": 1000, "screenshot": true, "screenshot_path": "screenshots/820x1000.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true },

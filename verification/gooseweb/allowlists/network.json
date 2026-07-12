@@ -1,5 +1,5 @@
 {
-  "schema_revision": "gooseweb-network-allowlist/v4",
+  "schema_revision": "gooseweb-network-allowlist/v5",
   "capture_boundary": {
     "source": "unfiltered agent-browser network requests including successes",
     "raw_capture_retained": true,
@@ -63,11 +63,69 @@
       ]
     }
   ],
+  "p03_reconstruction_capture": {
+    "schema_revision": "gooseweb-network-capture/v4",
+    "raw_requests_retained": true,
+    "ordered_segments": [
+      {
+        "segment_id": "initial_load",
+        "trigger": "initial_supervisor_url_attachment",
+        "context_generation": 1
+      },
+      {
+        "segment_id": "ordinary_reload",
+        "trigger": "agent_browser_reload",
+        "context_generation": 1
+      },
+      {
+        "segment_id": "hard_reload",
+        "trigger": "agent_browser_press_meta_shift_r",
+        "context_generation": 1
+      },
+      {
+        "segment_id": "fresh_context",
+        "trigger": "second_unique_ephemeral_session_open",
+        "context_generation": 2
+      }
+    ],
+    "required_evaluated_requests_per_segment": [
+      {
+        "method": "GET",
+        "path": "/",
+        "query_keys": [],
+        "status": 200,
+        "resource_type": "document",
+        "same_origin": true,
+        "baseline_defect_id": ""
+      },
+      {
+        "method": "POST",
+        "path": "/api/dev-ticket",
+        "query_keys": [],
+        "status": 200,
+        "resource_type": "api",
+        "same_origin": true,
+        "baseline_defect_id": ""
+      }
+    ],
+    "optional_favicon_request_per_segment": {
+      "maximum_count": 1,
+      "request": {
+        "method": "GET",
+        "path": "/favicon.ico",
+        "query_keys": [],
+        "status": 404,
+        "resource_type": "other",
+        "same_origin": true,
+        "baseline_defect_id": "BASE-P01-FAVICON-NOT-FOUND"
+      }
+    }
+  },
   "exact_websocket_events": [
     {
       "event": "open",
       "code": 0
     }
   ],
-  "policy": "The raw request list is retained. The validator itself ignores only 2xx/3xx same-origin stylesheet, font, script, and module resources by exact resource type; it cannot ignore any 4xx/5xx, cross-origin, API, document, WebSocket, or unclassified request. The resulting evaluated multiset must exactly equal either base document plus dev-ticket traffic, or that base plus the retained favicon 404 with its exact baseline mapping. Favicon absence never fabricates a request."
+  "policy": "The raw request list is retained. P01/P02 v3 captures retain the exact aggregate variants. P03 v4 captures retain every raw request across four ordered reconstruction segments and attribute every request to exactly one segment. The validator derives raw counts, rejects non-monotonic segment attribution, and requires each segment to contain exactly one successful same-origin query-free document request and one successful same-origin query-free dev-ticket request, plus at most one retained favicon 404 with its exact mapped baseline. It ignores only 2xx/3xx same-origin stylesheet, font, script, and module resources by exact resource type; it cannot ignore any 4xx/5xx, cross-origin, API, document, WebSocket, or unclassified request. Favicon absence never fabricates a request."
 }

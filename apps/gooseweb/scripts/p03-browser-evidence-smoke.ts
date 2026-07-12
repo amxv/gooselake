@@ -6,6 +6,7 @@ import {
   applySchemaFile,
   readJson,
   stackConfigurationHash,
+  validateBrowserCaptures,
   validateManifest,
   validateManifestRegistry,
   validateP03EvidenceArtifact,
@@ -66,7 +67,9 @@ const seededFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
   ["reload missing row", (value) => change(value, "reconstruction.ordinary_reload.missing_count", 1)],
   ["initial prior nonce non-null", (value) => change(value, "reconstruction.initial_prior_context_nonce", "stale-context")],
   ["CacheStorage not cleared", (value) => change(value, "reconstruction.cache_storage_cleared", false)],
-  ["service workers not unregistered", (value) => change(value, "reconstruction.service_workers_unregistered", false)]
+  ["service workers not unregistered", (value) => change(value, "reconstruction.service_workers_unregistered", false)],
+  ["network reconstruction linkage missing", (value) => omit(value, "network_reconstruction")],
+  ["network reconstruction segment order", (value) => change(value, "network_reconstruction.ordered_segments", ["initial_load", "hard_reload", "ordinary_reload", "fresh_context"])]
 ];
 
 for (const [name, seed] of seededFailures) {
@@ -85,8 +88,105 @@ assert.throws(
   "duplicate P03 baseline defect unexpectedly passed"
 );
 assert.deepEqual(manifest.known_defects, [], "P03 verification infrastructure must have no known defects");
+validateSegmentedNetworkCapture();
 validateStandardEvidenceLinkage();
-console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 20} seeded failures rejected)`);
+console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 37} seeded failures rejected)`);
+
+function validateSegmentedNetworkCapture(): void {
+  const capture = fullReconstructionNetworkCapture();
+  const consoleCapture: RecordJson = {
+    schema_revision: "gooseweb-console-capture/v3",
+    capture_source: "agent-browser console",
+    unfiltered: true,
+    messages: []
+  };
+  validateBrowserCaptures(consoleCapture, capture, manifest);
+  const segmentFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
+    ["missing reconstruction segment", (value) => omit(value, "segments.2")],
+    ["extra reconstruction segment", (value) => change(value, "segments.4", structuredClone((value.segments as Json[])[3]!))],
+    ["duplicated reconstruction segment", (value) => change(value, "segments.2.segment_id", "ordinary_reload")],
+    ["reordered reconstruction segments", (value) => change(value, "segments", [...(value.segments as Json[])].reverse())],
+    ["filtered reconstruction capture", (value) => change(value, "unfiltered", false)],
+    ["cross-origin reconstruction request", (value) => change(value, "raw_http.0.same_origin", false)],
+    ["unexpected reconstruction status", (value) => change(value, "raw_http.0.status", 201)],
+    ["segment-misattributed reconstruction traffic", (value) => change(value, "raw_http.0.segment_id", "ordinary_reload")],
+    ["missing reconstruction request", (value) => omit(value, "raw_http.2")],
+    ["extra reconstruction endpoint", (value) => change(value, "raw_http.1", request("initial_load", "GET", "/api/unexpected", 200, "api"))],
+    ["query-bearing reconstruction document", (value) => change(value, "raw_http.0.query_keys", ["fixture"])],
+    ["forged reconstruction raw count", (value) => change(value, "segments.0.raw_request_count", 99)],
+    ["duplicated optional favicon", (value) => change(value, "raw_http.1", request("initial_load", "GET", "/favicon.ico", 404, "other", "BASE-P01-FAVICON-NOT-FOUND"))],
+    ["wrong reconstruction trigger", (value) => change(value, "segments.1.trigger", "agent_browser_press_meta_shift_r")],
+    ["wrong reconstruction context generation", (value) => change(value, "segments.3.context_generation", 1)],
+    ["incomplete reconstruction start boundary", (value) => change(value, "segments.2.capture_started_before_trigger", false)],
+    ["incomplete reconstruction end boundary", (value) => change(value, "segments.2.capture_ended_after_observable_state", false)]
+  ];
+  for (const [name, seed] of segmentFailures) {
+    assert.throws(() => validateBrowserCaptures(consoleCapture, seed(capture), manifest), undefined, `seeded ${name} unexpectedly passed`);
+  }
+}
+
+function fullReconstructionNetworkCapture(): RecordJson {
+  const definitions = [
+    ["initial_load", "initial_supervisor_url_attachment", 1],
+    ["ordinary_reload", "agent_browser_reload", 1],
+    ["hard_reload", "agent_browser_press_meta_shift_r", 1],
+    ["fresh_context", "second_unique_ephemeral_session_open", 2]
+  ] as const;
+  const rawHttp: RecordJson[] = [];
+  const segments = definitions.map(([segmentId, trigger, contextGeneration], index) => {
+    const requests = [
+      request(segmentId, "GET", "/", 200, "document"),
+      request(segmentId, "GET", `/assets/app-${index}.js`, 200, "module", "", ["v"]),
+      request(segmentId, "POST", "/api/dev-ticket", 200, "api")
+    ];
+    if (index === 0) requests.push(request(segmentId, "GET", "/favicon.ico", 404, "other", "BASE-P01-FAVICON-NOT-FOUND"));
+    rawHttp.push(...requests);
+    return {
+      segment_id: segmentId,
+      trigger,
+      context_generation: contextGeneration,
+      complete: true,
+      capture_started_before_trigger: true,
+      capture_ended_after_observable_state: true,
+      raw_request_count: requests.length
+    };
+  });
+  return {
+    schema_revision: "gooseweb-network-capture/v4",
+    capture_source: "agent-browser network requests",
+    unfiltered: true,
+    segments,
+    raw_http: rawHttp,
+    websocket: {
+      availability: "available",
+      events: [{ event: "open", code: 0 }],
+      inference_prohibited: false,
+      reason: "",
+      baseline_defect_id: ""
+    }
+  };
+}
+
+function request(
+  segmentId: string,
+  method: string,
+  path: string,
+  status: number,
+  resourceType: string,
+  baselineDefectId = "",
+  queryKeys: readonly string[] = []
+): RecordJson {
+  return {
+    segment_id: segmentId,
+    method,
+    path,
+    query_keys: [...queryKeys],
+    status,
+    resource_type: resourceType,
+    same_origin: true,
+    baseline_defect_id: baselineDefectId
+  };
+}
 
 function validateStandardEvidenceLinkage(): void {
   const descriptor = linkedStandardDescriptor();

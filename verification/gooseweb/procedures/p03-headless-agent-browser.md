@@ -117,7 +117,11 @@ Capture after `document.readyState === "complete"` plus one second, and again af
 - complete unfiltered `agent-browser network requests`, retaining method, redacted path, query-key names only, status, resource type, and same-origin classification;
 - WebSocket open/close/error/frame summaries from the P02 redacted supervisor observer alongside the same named browser session. If direct frame capture is unavailable, record that exact limitation and its mapped baseline; do not infer frames.
 
-The existing exact console/network allowlists remain authoritative. Any warning/error/exception, unexpected request/status, protocol decode issue, abnormal socket close/retry loop, missing capture, filtering, or hidden failure rejects the descriptor. Cookies, authorization headers, CSRF values, ticket/query values, payload secrets, provider auth, raw image bytes, and secret config are redacted before they leave the capture source.
+Retain the complete raw HTTP request sequence across four explicit capture segments in this exact order: `initial_load`, `ordinary_reload`, `hard_reload`, and `fresh_context`. Start each segment before its named browser trigger and end it only after the semantic/observable state used by that reconstruction step is reached. `network.json` uses `gooseweb-network-capture/v4`: its ordered segment descriptors record the exact trigger, context generation, completeness bounds, and derived raw-request count, and every raw HTTP entry carries exactly one `segment_id`. Do not clear, replace, filter, or restart the accumulated capture between segments. The initial, ordinary-reload, and hard-reload segments belong to context generation 1; the second unique ephemeral session is context generation 2.
+
+Within every segment, the retained evaluated traffic must contain exactly one successful same-origin query-free `GET /` document and exactly one successful same-origin query-free `POST /api/dev-ticket`. A segment may contain at most one `GET /favicon.ico` 404 only with `BASE-P01-FAVICON-NOT-FOUND`; its absence is not fabricated. Successful same-origin static stylesheet/font/script/module requests remain in the raw list and are the only entries the validator may omit from the evaluated segment. Missing, extra, duplicated, reordered, filtered, cross-origin, unexpected-status, query-bearing, or segment-misattributed traffic fails.
+
+The existing exact console/network allowlists remain authoritative. P01/P02 keep their aggregate v3 network contract; P03 requires the ordered v4 reconstruction segments above. Any warning/error/exception, unexpected request/status, protocol decode issue, abnormal socket close/retry loop, missing capture, filtering, or hidden failure rejects the descriptor. Cookies, authorization headers, CSRF values, ticket/query values, payload secrets, provider auth, raw image bytes, and secret config are redacted before they leave the capture source.
 
 ## 7. Reconstruction sequence
 
@@ -130,6 +134,8 @@ After the initial visible outcome and each DOM change, re-snapshot before intera
 5. Fresh context: complete the disposal procedure, close only the named session, start the new unique session, repeat identity/stale-context proof and the critical visible workflow.
 
 Each reconstruction step is a typed record, not the string `pass`: it names a referenced standard evidence artifact, status, `missing_count`, `duplicate_count`, `order_errors`, and optional mapped baseline ID. A passing step requires all three counts to be zero and no baseline; a divergent step requires a nonzero measured discrepancy and a baseline present in the active manifest. Product failures may remain only as one of the ten finite mapped baselines; infrastructure, leakage, wrong-head, stale-context, headed, non-real-Chromium, or evidence-completeness failures always stop P03.
+
+If the completed supervisor process reports `invalid source lifecycle transition Stale -> Replaying`, retain the exact redacted log/report evidence and classify it under the existing `BASE-P02-LIVE-GAP-TRANSITION-PANIC` / P06 lifecycle-algebra baseline. P03 must not correct, suppress, or relabel that product behavior.
 
 ## 8. Fixture-leak and production/default checks
 

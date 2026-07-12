@@ -92,6 +92,15 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
     equal(capture.unexpected_failures, 0, `P03 ${name} unexpected failures`);
     equal(capture.redacted_at_capture, true, `P03 ${name} capture redaction`);
   }
+  const networkReconstruction = object(value.network_reconstruction, "P03 network reconstruction");
+  equal(networkReconstruction.artifact, "network.json", "P03 reconstruction network artifact");
+  equal(networkReconstruction.capture_schema_revision, "gooseweb-network-capture/v4", "P03 reconstruction network schema");
+  equal(networkReconstruction.unfiltered_raw_requests_retained, true, "P03 reconstruction raw network retention");
+  equal(
+    JSON.stringify(networkReconstruction.ordered_segments),
+    JSON.stringify(["initial_load", "ordinary_reload", "hard_reload", "fresh_context"]),
+    "P03 ordered reconstruction network segments"
+  );
   const reconstruction = object(value.reconstruction, "P03 reconstruction");
   equal(reconstruction.initial_prior_context_nonce, null, "P03 initial prior-context nonce");
   equal(reconstruction.fresh_context_prior_nonce, null, "P03 fresh prior-context nonce");
@@ -253,6 +262,7 @@ export function validateP03EvidenceLinkage(
 
   const screenshots = array(p03Evidence.viewports, "P03 linked viewports").map((viewport) => object(viewport, "P03 linked viewport").screenshot_path);
   equal(JSON.stringify(screenshots), JSON.stringify(descriptor.screenshots), "P03 viewport screenshot linkage");
+  equal(object(p03Evidence.network_reconstruction, "P03 linked network reconstruction").artifact, descriptor.network, "P03 reconstruction network artifact linkage");
   const completion = object(p03Evidence.completion, "P03 completion");
   equal(completion.baseline_detected_count, array(candidateManifest.baseline_detected, "P03 manifest baselines").length, "P03 baseline count linkage");
   equal(JSON.stringify(completion.known_defects), JSON.stringify(candidateManifest.known_defects), "P03 known-defect linkage");
@@ -610,9 +620,11 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
   const consoleAllowlist = readJson("verification/gooseweb/allowlists/console.json");
   const networkAllowlist = readJson("verification/gooseweb/allowlists/network.json");
   applySchemaInline(consoleCaptureSchema(), consoleCapture, "console capture");
-  applySchemaInline(networkCaptureSchema(), networkCapture, "network capture");
+  const phase = manifest ? object(manifest.scenario, "capture manifest scenario").phase_id : undefined;
+  const p03SegmentedCapture = phase === "P03";
+  applySchemaInline(networkCaptureSchema(p03SegmentedCapture), networkCapture, "network capture");
   equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v6", "console allowlist revision");
-  equal(networkAllowlist.schema_revision, "gooseweb-network-allowlist/v4", "network allowlist revision");
+  equal(networkAllowlist.schema_revision, "gooseweb-network-allowlist/v5", "network allowlist revision");
   const consoleBoundary = object(consoleAllowlist.capture_boundary, "console capture boundary");
   equal(consoleBoundary.source, "unfiltered agent-browser console output after document.readyState complete plus one second", "console capture source");
   equal(consoleBoundary.filtering, "none", "console filtering");
@@ -644,7 +656,8 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
   equal(boundary.ignored_status_max, 399, "ignored success status maximum");
   equal(JSON.stringify(boundary.ignored_same_origin_success_resource_types), JSON.stringify(["stylesheet", "font", "script", "module"]), "exact ignored static resource types");
   const ignoredTypes = new Set(array(boundary.ignored_same_origin_success_resource_types, "ignored resource types").map((item) => string(item, "resource type")));
-  const evaluated = array(networkCapture.raw_http, "raw HTTP capture").filter((item) => {
+  const rawHttp = array(networkCapture.raw_http, "raw HTTP capture");
+  const evaluated = rawHttp.filter((item) => {
     const request = object(item, "HTTP request");
     const ignorableStatus = integer(request.status, "HTTP status") >= Number(boundary.ignored_status_min) && integer(request.status, "HTTP status") <= Number(boundary.ignored_status_max);
     return !(request.same_origin === true && ignorableStatus && ignoredTypes.has(string(request.resource_type, "resource type")));
@@ -652,7 +665,7 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
     const request = object(item, "HTTP request");
     return { method: request.method!, path: request.path!, status: request.status!, resource_type: request.resource_type!, baseline_defect_id: request.baseline_defect_id! } as RecordJson;
   });
-  for (const item of array(networkCapture.raw_http, "raw HTTP capture")) {
+  for (const item of rawHttp) {
     const request = object(item, "HTTP request");
     const failed = integer(request.status, "HTTP status") >= 400;
     const baselineId = string(request.baseline_defect_id, "HTTP baseline ID");
@@ -663,18 +676,22 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
       equal(baseline.scenario_id, object(manifest.scenario, "manifest scenario").stable_scenario_id, "HTTP baseline scenario");
     }
   }
-  const baseHttp: RecordJson[] = [
-    { method: "GET", path: "/", status: 200, resource_type: "document", baseline_defect_id: "" },
-    { method: "POST", path: "/api/dev-ticket", status: 200, resource_type: "api", baseline_defect_id: "" }
-  ];
-  const faviconFailure: RecordJson = { method: "GET", path: "/favicon.ico", status: 404, resource_type: "other", baseline_defect_id: "BASE-P01-FAVICON-NOT-FOUND" };
-  const httpVariants = array(networkAllowlist.permitted_exact_evaluated_http_variants, "HTTP variants").map((item) => object(item, "HTTP variant"));
-  ensureUnique(httpVariants.map((variant) => string(variant.variant_id, "HTTP variant ID")), "HTTP variant IDs");
-  const expectedHttpVariants = [baseHttp, [...baseHttp, faviconFailure]].map(multisetSignature).sort();
-  const actualHttpVariants = httpVariants.map((variant) => multisetSignature(array(variant.requests, "HTTP variant requests"))).sort();
-  equal(JSON.stringify(actualHttpVariants), JSON.stringify(expectedHttpVariants), "exact evaluated HTTP variant set");
-  const httpMatches = httpVariants.filter((variant) => sameMultiset(evaluated, array(variant.requests, "HTTP variant requests")));
-  if (httpMatches.length !== 1) fail("evaluated HTTP activity does not match exactly one finite variant");
+  if (p03SegmentedCapture) {
+    validateP03NetworkSegments(networkCapture, networkAllowlist, boundary, ignoredTypes);
+  } else {
+    const baseHttp: RecordJson[] = [
+      { method: "GET", path: "/", status: 200, resource_type: "document", baseline_defect_id: "" },
+      { method: "POST", path: "/api/dev-ticket", status: 200, resource_type: "api", baseline_defect_id: "" }
+    ];
+    const faviconFailure: RecordJson = { method: "GET", path: "/favicon.ico", status: 404, resource_type: "other", baseline_defect_id: "BASE-P01-FAVICON-NOT-FOUND" };
+    const httpVariants = array(networkAllowlist.permitted_exact_evaluated_http_variants, "HTTP variants").map((item) => object(item, "HTTP variant"));
+    ensureUnique(httpVariants.map((variant) => string(variant.variant_id, "HTTP variant ID")), "HTTP variant IDs");
+    const expectedHttpVariants = [baseHttp, [...baseHttp, faviconFailure]].map(multisetSignature).sort();
+    const actualHttpVariants = httpVariants.map((variant) => multisetSignature(array(variant.requests, "HTTP variant requests"))).sort();
+    equal(JSON.stringify(actualHttpVariants), JSON.stringify(expectedHttpVariants), "exact evaluated HTTP variant set");
+    const httpMatches = httpVariants.filter((variant) => sameMultiset(evaluated, array(variant.requests, "HTTP variant requests")));
+    if (httpMatches.length !== 1) fail("evaluated HTTP activity does not match exactly one finite variant");
+  }
   const websocket = object(networkCapture.websocket, "WebSocket capture");
   if (websocket.availability === "available") exactMultiset(array(websocket.events, "WebSocket events"), array(networkAllowlist.exact_websocket_events, "WebSocket allowlist"), "WebSocket events");
   else {
@@ -688,6 +705,72 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
   }
   scanSecrets(consoleCapture, "console capture", false);
   scanSecrets(networkCapture, "network capture", false);
+}
+
+function validateP03NetworkSegments(
+  networkCapture: RecordJson,
+  networkAllowlist: RecordJson,
+  boundary: RecordJson,
+  ignoredTypes: ReadonlySet<string>
+): void {
+  const contract = object(networkAllowlist.p03_reconstruction_capture, "P03 network allowlist contract");
+  equal(contract.schema_revision, "gooseweb-network-capture/v4", "P03 segmented network capture revision");
+  equal(contract.raw_requests_retained, true, "P03 segmented raw network retention");
+  const expectedSegments = array(contract.ordered_segments, "P03 expected network segments").map((entry) => object(entry, "P03 expected network segment"));
+  const actualSegments = array(networkCapture.segments, "P03 captured network segments").map((entry) => object(entry, "P03 captured network segment"));
+  equal(
+    JSON.stringify(actualSegments.map((entry) => entry.segment_id)),
+    JSON.stringify(expectedSegments.map((entry) => entry.segment_id)),
+    "P03 exact ordered network segment identities"
+  );
+  const segmentIndex = new Map<string, number>();
+  actualSegments.forEach((actual, index) => {
+    const expected = expectedSegments[index]!;
+    equal(actual.trigger, expected.trigger, `P03 network segment ${index} trigger`);
+    equal(actual.context_generation, expected.context_generation, `P03 network segment ${index} context generation`);
+    equal(actual.complete, true, `P03 network segment ${index} completeness`);
+    equal(actual.capture_started_before_trigger, true, `P03 network segment ${index} start boundary`);
+    equal(actual.capture_ended_after_observable_state, true, `P03 network segment ${index} end boundary`);
+    segmentIndex.set(string(actual.segment_id, "P03 segment ID"), index);
+  });
+  const rawHttp = array(networkCapture.raw_http, "P03 raw HTTP capture").map((entry) => object(entry, "P03 raw HTTP request"));
+  let previousSegmentIndex = -1;
+  for (const request of rawHttp) {
+    const id = string(request.segment_id, "P03 request segment ID");
+    const index = segmentIndex.get(id);
+    if (index === undefined) fail("P03 raw request references an unknown reconstruction segment");
+    if (index < previousSegmentIndex) fail("P03 raw request segment attribution is not monotonic");
+    previousSegmentIndex = index;
+  }
+  const required = array(contract.required_evaluated_requests_per_segment, "P03 required requests");
+  const optionalContract = object(contract.optional_favicon_request_per_segment, "P03 optional favicon contract");
+  equal(optionalContract.maximum_count, 1, "P03 optional favicon maximum");
+  const optionalFavicon = object(optionalContract.request, "P03 optional favicon request");
+  for (const segment of actualSegments) {
+    const id = string(segment.segment_id, "P03 captured segment ID");
+    const segmentRaw = rawHttp.filter((request) => request.segment_id === id);
+    equal(segment.raw_request_count, segmentRaw.length, `P03 ${id} derived raw request count`);
+    const segmentEvaluated = segmentRaw.filter((request) => {
+      const status = integer(request.status, `P03 ${id} HTTP status`);
+      const ignorableStatus = status >= Number(boundary.ignored_status_min) && status <= Number(boundary.ignored_status_max);
+      return !(request.same_origin === true && ignorableStatus && ignoredTypes.has(string(request.resource_type, `P03 ${id} resource type`)));
+    }).map(p03EvaluatedRequest);
+    const withoutFavicon = sameMultiset(segmentEvaluated, required);
+    const withFavicon = sameMultiset(segmentEvaluated, [...required, optionalFavicon]);
+    if (!withoutFavicon && !withFavicon) fail(`P03 ${id} evaluated HTTP activity does not match the exact reconstruction contract`);
+  }
+}
+
+function p03EvaluatedRequest(request: RecordJson): RecordJson {
+  return {
+    method: request.method!,
+    path: request.path!,
+    query_keys: request.query_keys!,
+    status: request.status!,
+    resource_type: request.resource_type!,
+    same_origin: request.same_origin!,
+    baseline_defect_id: request.baseline_defect_id!
+  };
 }
 
 export function applySchemaFile(schemaPath: string, value: Json): void {
@@ -1077,10 +1160,22 @@ function consoleCaptureSchema(): Schema {
   return { type: "object", additionalProperties: false, required: ["schema_revision", "capture_source", "unfiltered", "messages"], properties: { schema_revision: { const: "gooseweb-console-capture/v3" }, capture_source: { const: "agent-browser console" }, unfiltered: { const: true }, messages: { type: "array", items: { type: "object", additionalProperties: false, required: ["level", "message"], properties: { level: { enum: ["debug", "info", "warn", "error"] }, message: { type: "string", minLength: 1 } } } } } };
 }
 
-function networkCaptureSchema(): Schema {
-  const httpItem = { type: "object", additionalProperties: false, required: ["method", "path", "query_keys", "status", "resource_type", "same_origin", "baseline_defect_id"], properties: { method: { type: "string", minLength: 1 }, path: { type: "string", pattern: "^/[^?]*$" }, query_keys: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, status: { type: "integer", minimum: 100, maximum: 599 }, resource_type: { enum: ["document", "api", "stylesheet", "font", "script", "module", "websocket", "other"] }, same_origin: { type: "boolean" }, baseline_defect_id: { type: "string" } } };
+function networkCaptureSchema(p03Segmented = false): Schema {
+  const httpProperties: RecordJson = { method: { type: "string", minLength: 1 }, path: { type: "string", pattern: "^/[^?]*$" }, query_keys: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, status: { type: "integer", minimum: 100, maximum: 599 }, resource_type: { enum: ["document", "api", "stylesheet", "font", "script", "module", "websocket", "other"] }, same_origin: { type: "boolean" }, baseline_defect_id: { type: "string" } };
+  const httpRequired: Json[] = ["method", "path", "query_keys", "status", "resource_type", "same_origin", "baseline_defect_id"];
+  if (p03Segmented) {
+    httpProperties.segment_id = { enum: ["initial_load", "ordinary_reload", "hard_reload", "fresh_context"] };
+    httpRequired.push("segment_id");
+  }
+  const httpItem = { type: "object", additionalProperties: false, required: httpRequired, properties: httpProperties };
   const wsEvent = { type: "object", additionalProperties: false, required: ["event", "code"], properties: { event: { enum: ["open", "close"] }, code: { type: "integer", minimum: 0, maximum: 4999 } } };
-  return { type: "object", additionalProperties: false, required: ["schema_revision", "capture_source", "unfiltered", "raw_http", "websocket"], properties: { schema_revision: { const: "gooseweb-network-capture/v3" }, capture_source: { const: "agent-browser network requests" }, unfiltered: { const: true }, raw_http: { type: "array", items: httpItem }, websocket: { type: "object", additionalProperties: false, required: ["availability", "events", "inference_prohibited", "reason", "baseline_defect_id"], properties: { availability: { enum: ["available", "unavailable"] }, events: { type: "array", items: wsEvent }, inference_prohibited: { type: "boolean" }, reason: { type: "string" }, baseline_defect_id: { type: "string" } } } } };
+  const properties: RecordJson = { schema_revision: { const: p03Segmented ? "gooseweb-network-capture/v4" : "gooseweb-network-capture/v3" }, capture_source: { const: "agent-browser network requests" }, unfiltered: { const: true }, raw_http: { type: "array", items: httpItem }, websocket: { type: "object", additionalProperties: false, required: ["availability", "events", "inference_prohibited", "reason", "baseline_defect_id"], properties: { availability: { enum: ["available", "unavailable"] }, events: { type: "array", items: wsEvent }, inference_prohibited: { type: "boolean" }, reason: { type: "string" }, baseline_defect_id: { type: "string" } } } };
+  const required: Json[] = ["schema_revision", "capture_source", "unfiltered", "raw_http", "websocket"];
+  if (p03Segmented) {
+    properties.segments = { type: "array", minItems: 4, maxItems: 4, items: { type: "object", additionalProperties: false, required: ["segment_id", "trigger", "context_generation", "complete", "capture_started_before_trigger", "capture_ended_after_observable_state", "raw_request_count"], properties: { segment_id: { enum: ["initial_load", "ordinary_reload", "hard_reload", "fresh_context"] }, trigger: { type: "string", minLength: 1 }, context_generation: { type: "integer", minimum: 1, maximum: 2 }, complete: { const: true }, capture_started_before_trigger: { const: true }, capture_ended_after_observable_state: { const: true }, raw_request_count: { type: "integer", minimum: 1 } } } };
+    required.push("segments");
+  }
+  return { type: "object", additionalProperties: false, required, properties };
 }
 
 

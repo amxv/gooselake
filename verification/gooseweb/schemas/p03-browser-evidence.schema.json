@@ -7,7 +7,7 @@
   "required": [
     "schema_revision", "phase_id", "attempt", "candidate_head_sha", "served_head_sha",
     "candidate_tree_sha", "served_tree_sha", "browser", "supervisor_attachment",
-    "journey", "authority_chain", "first_divergent_layer", "captures", "viewports", "reconstruction", "fixture_leakage",
+    "journey", "authority_chain", "first_divergent_layer", "captures", "network_reconstruction", "viewports", "reconstruction", "fixture_leakage",
     "redaction", "completion"
   ],
   "properties": {
@@ -124,6 +124,25 @@
         "console": { "$ref": "#/$defs/capture" },
         "network": { "$ref": "#/$defs/capture" },
         "websocket": { "$ref": "#/$defs/capture" }
+      }
+    },
+    "network_reconstruction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact", "capture_schema_revision", "unfiltered_raw_requests_retained", "ordered_segments"],
+      "properties": {
+        "artifact": { "const": "network.json" },
+        "capture_schema_revision": { "const": "gooseweb-network-capture/v4" },
+        "unfiltered_raw_requests_retained": { "const": true },
+        "ordered_segments": {
+          "type": "array", "minItems": 4, "maxItems": 4,
+          "prefixItems": [
+            { "const": "initial_load" },
+            { "const": "ordinary_reload" },
+            { "const": "hard_reload" },
+            { "const": "fresh_context" }
+          ],
+          "items": false
+        }
       }
     },
     "viewports": {

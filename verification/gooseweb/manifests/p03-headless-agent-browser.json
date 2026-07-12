@@ -1,10 +1,10 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P03-HEADLESS-AGENT-BROWSER-001",
-  "manifest_revision": 4,
+  "manifest_revision": 5,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
-    "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
+    "sha256": "270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774"
   },
   "browser_contract": {
     "mechanism": "agent-browser",
@@ -26,8 +26,9 @@
       "Project, user, and environment headed settings are rejected before attachment; no alternate browser framework, persistent prior context, fixture query, or browser-side authority is used.",
       "The reviewer records binary/version identity, browser process arguments, HeadlessChrome user-agent evidence, candidate/served head and tree, lease tuple, and fresh-context nonce before the first action.",
       "The source-controlled procedure and p03 evidence descriptor validate before any browser result can be considered.",
-      "Complete unfiltered network evidence is retained as initial-load, ordinary-reload, agent-browser no-cache-header hard-reload, and second-fresh-context segments in that exact order; every raw request is attributed to one segment.",
-      "The hard reload uses agent-browser set headers with Cache-Control: no-cache and Pragma: no-cache, ordinary agent-browser reload, observed request-header/navigation/reconstruction evidence, and immediate agent-browser set headers {} cleanup."
+      "Complete unfiltered network evidence is retained as initial-load, ordinary agent-browser reload, and second-fresh-empty-context segments in that exact order; every raw request is attributed to one segment.",
+      "The ordinary reload requires command success, a newly observed document and dev-ticket request, and semantic reconstruction; it is never labeled cache-bypassing or hard reload.",
+      "Fresh-context reconstruction uses a second unique fresh-ephemeral session/profile with zero prior browser-cache, IndexedDB, and session-storage entries before the explicitly exercised login flow."
     ],
     "actions": [
       {
@@ -59,7 +60,7 @@
         ],
         "expected_visible": [
           "the deterministic action is submitted once through Agent thread composer and Send agent thread message",
-          "ordinary reload, hard reload, navigation away/back, reconnect, and fresh context preserve or honestly expose the mapped product baseline"
+          "ordinary reload, navigation away/back, reconnect, and fresh empty context preserve or honestly expose the mapped product baseline"
         ]
       },
       {
@@ -176,7 +177,6 @@
   },
   "reconstruction": [
     "ordinary_reload",
-    "hard_reload",
     "fresh_chromium_context_profile",
     "websocket_loss_reconnect",
     "navigation_away_and_back"

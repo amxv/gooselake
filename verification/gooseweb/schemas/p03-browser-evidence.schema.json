@@ -7,7 +7,7 @@
   "required": [
     "schema_revision", "phase_id", "attempt", "candidate_head_sha", "served_head_sha",
     "candidate_tree_sha", "served_tree_sha", "browser", "supervisor_attachment",
-    "journey", "authority_chain", "first_divergent_layer", "captures", "network_reconstruction", "hard_reload_capability", "viewports", "reconstruction", "fixture_leakage",
+    "journey", "authority_chain", "first_divergent_layer", "captures", "network_reconstruction", "ordinary_reload_capability", "fresh_context_isolation", "viewports", "reconstruction", "fixture_leakage",
     "redaction", "completion"
   ],
   "properties": {
@@ -134,54 +134,52 @@
         "capture_schema_revision": { "const": "gooseweb-network-capture/v4" },
         "unfiltered_raw_requests_retained": { "const": true },
         "ordered_segments": {
-          "type": "array", "minItems": 4, "maxItems": 4,
+          "type": "array", "minItems": 3, "maxItems": 3,
           "prefixItems": [
             { "const": "initial_load" },
             { "const": "ordinary_reload" },
-            { "const": "hard_reload" },
             { "const": "fresh_context" }
           ],
           "items": false
         }
       }
     },
-    "hard_reload_capability": {
+    "ordinary_reload_capability": {
       "type": "object", "additionalProperties": false,
       "required": [
-        "mechanism", "header_scope", "set_headers", "reload", "clear_headers",
-        "header_application_command_succeeded", "reload_command_succeeded",
-        "navigation_observed", "document_request_count", "dev_ticket_request_count",
-        "headers_observed_on_document", "headers_observed_on_dev_ticket",
-        "observable_reconstruction", "cache_bypass_revalidation_evidenced",
-        "header_cleanup_command_succeeded", "temporary_headers_active_after_cleanup",
-        "blocker_reason"
+        "mechanism", "command", "command_succeeded", "navigation_observed",
+        "document_request_count", "dev_ticket_request_count", "observable_reconstruction"
       ],
       "properties": {
-        "mechanism": { "const": "agent_browser_no_cache_headers_reload" },
-        "header_scope": { "const": "supervisor_origin_only" },
-        "set_headers": {
-          "type": "object", "additionalProperties": false,
-          "required": ["command", "cache_control", "pragma"],
-          "properties": {
-            "command": { "const": "set headers" },
-            "cache_control": { "const": "no-cache" },
-            "pragma": { "const": "no-cache" }
-          }
-        },
-        "reload": { "const": "reload" },
-        "clear_headers": { "const": "set headers {}" },
-        "header_application_command_succeeded": { "const": true },
-        "reload_command_succeeded": { "const": true },
+        "mechanism": { "const": "agent_browser_reload" },
+        "command": { "const": "reload" },
+        "command_succeeded": { "const": true },
         "navigation_observed": { "const": true },
         "document_request_count": { "const": 1 },
         "dev_ticket_request_count": { "const": 1 },
-        "headers_observed_on_document": { "const": true },
-        "headers_observed_on_dev_ticket": { "const": true },
-        "observable_reconstruction": { "const": true },
-        "cache_bypass_revalidation_evidenced": { "const": true },
-        "header_cleanup_command_succeeded": { "const": true },
-        "temporary_headers_active_after_cleanup": { "const": false },
-        "blocker_reason": { "const": "" }
+        "observable_reconstruction": { "const": true }
+      }
+    },
+    "fresh_context_isolation": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "session_name", "different_from_initial_session", "profile_policy", "prior_state_source",
+        "pre_login_browser_cache_entries", "pre_login_indexeddb_databases",
+        "pre_login_session_storage_entries", "login_flow_only_state",
+        "document_request_count", "dev_ticket_request_count", "observable_reconstruction"
+      ],
+      "properties": {
+        "session_name": { "type": "string", "pattern": "^gooseweb-p03-[a-f0-9]{7}-a[1-9][0-9]*-[a-z0-9][a-z0-9-]*-[a-f0-9]{8}$" },
+        "different_from_initial_session": { "const": true },
+        "profile_policy": { "const": "fresh_ephemeral" },
+        "prior_state_source": { "const": "none" },
+        "pre_login_browser_cache_entries": { "const": 0 },
+        "pre_login_indexeddb_databases": { "const": 0 },
+        "pre_login_session_storage_entries": { "const": 0 },
+        "login_flow_only_state": { "const": true },
+        "document_request_count": { "const": 1 },
+        "dev_ticket_request_count": { "const": 1 },
+        "observable_reconstruction": { "const": true }
       }
     },
     "viewports": {
@@ -193,9 +191,9 @@
     },
     "reconstruction": {
       "type": "object", "additionalProperties": false,
-      "required": ["ordinary_reload", "hard_reload", "navigation_away_back", "websocket_reconnect", "fresh_context", "old_context_disposed", "indexeddb_cleared", "cookies_cleared", "local_storage_cleared", "session_storage_cleared", "cache_storage_cleared", "service_workers_unregistered", "remaining_cache_names", "remaining_service_workers", "initial_prior_context_nonce", "old_context_nonce", "fresh_context_prior_nonce", "fresh_context_nonce", "stale_context_detected"],
+      "required": ["ordinary_reload", "navigation_away_back", "websocket_reconnect", "fresh_context", "old_context_disposed", "indexeddb_cleared", "cookies_cleared", "local_storage_cleared", "session_storage_cleared", "cache_storage_cleared", "service_workers_unregistered", "remaining_cache_names", "remaining_service_workers", "initial_prior_context_nonce", "old_context_nonce", "fresh_context_prior_nonce", "fresh_context_nonce", "stale_context_detected"],
       "properties": {
-        "ordinary_reload": { "$ref": "#/$defs/reconstructionResult" }, "hard_reload": { "$ref": "#/$defs/reconstructionResult" },
+        "ordinary_reload": { "$ref": "#/$defs/reconstructionResult" },
         "navigation_away_back": { "$ref": "#/$defs/reconstructionResult" }, "websocket_reconnect": { "$ref": "#/$defs/reconstructionResult" },
         "fresh_context": { "$ref": "#/$defs/reconstructionResult" }, "old_context_disposed": { "const": true },
         "indexeddb_cleared": { "const": true }, "cookies_cleared": { "const": true },

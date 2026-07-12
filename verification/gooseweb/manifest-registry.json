@@ -1,6 +1,6 @@
 {
   "schema_revision": "gooseweb-manifest-registry/v1",
-  "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
+  "approved_plan_sha256": "270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774",
   "active_manifests": [
     {
       "phase_id": "P01",
@@ -19,8 +19,8 @@
     {
       "phase_id": "P03",
       "path": "verification/gooseweb/manifests/p03-headless-agent-browser.json",
-      "revision": 4,
-      "sha256": "f776b7d39cb10aac03c6c5380cfb16f1356a49dfc9eed59c5938df96fb35ac9b",
+      "revision": 5,
+      "sha256": "ef6dce87a4ab90f3b316d7a50cadad213a9061260816ccc362647de28a1530fb",
       "activated_reason": "P03 defines the sole explicit-headless agent-browser real-local-Chromium procedure and failure-detecting evidence contract without adding a committed browser runner."
     }
   ]

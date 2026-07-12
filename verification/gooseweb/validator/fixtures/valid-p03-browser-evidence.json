@@ -62,26 +62,29 @@
     "artifact": "network.json",
     "capture_schema_revision": "gooseweb-network-capture/v4",
     "unfiltered_raw_requests_retained": true,
-    "ordered_segments": ["initial_load", "ordinary_reload", "hard_reload", "fresh_context"]
+    "ordered_segments": ["initial_load", "ordinary_reload", "fresh_context"]
   },
-  "hard_reload_capability": {
-    "mechanism": "agent_browser_no_cache_headers_reload",
-    "header_scope": "supervisor_origin_only",
-    "set_headers": { "command": "set headers", "cache_control": "no-cache", "pragma": "no-cache" },
-    "reload": "reload",
-    "clear_headers": "set headers {}",
-    "header_application_command_succeeded": true,
-    "reload_command_succeeded": true,
+  "ordinary_reload_capability": {
+    "mechanism": "agent_browser_reload",
+    "command": "reload",
+    "command_succeeded": true,
     "navigation_observed": true,
     "document_request_count": 1,
     "dev_ticket_request_count": 1,
-    "headers_observed_on_document": true,
-    "headers_observed_on_dev_ticket": true,
-    "observable_reconstruction": true,
-    "cache_bypass_revalidation_evidenced": true,
-    "header_cleanup_command_succeeded": true,
-    "temporary_headers_active_after_cleanup": false,
-    "blocker_reason": ""
+    "observable_reconstruction": true
+  },
+  "fresh_context_isolation": {
+    "session_name": "gooseweb-p03-1111111-a1-retest-87654321",
+    "different_from_initial_session": true,
+    "profile_policy": "fresh_ephemeral",
+    "prior_state_source": "none",
+    "pre_login_browser_cache_entries": 0,
+    "pre_login_indexeddb_databases": 0,
+    "pre_login_session_storage_entries": 0,
+    "login_flow_only_state": true,
+    "document_request_count": 1,
+    "dev_ticket_request_count": 1,
+    "observable_reconstruction": true
   },
   "viewports": [
     { "id": "1440x1000", "width": 1440, "height": 1000, "screenshot": true, "screenshot_path": "screenshots/1440x1000.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true },
@@ -90,7 +93,6 @@
   ],
   "reconstruction": {
     "ordinary_reload": { "status": "pass", "artifact": "screenshots/1440x1000.png", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
-    "hard_reload": { "status": "pass", "artifact": "network.json", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
     "navigation_away_back": { "status": "pass", "artifact": "report.md", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
     "websocket_reconnect": { "status": "pass", "artifact": "websocket.json", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
     "fresh_context": { "status": "pass", "artifact": "screenshots/520x900.png", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },

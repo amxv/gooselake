@@ -369,6 +369,7 @@ function manifestForPhase(phase: "P06" | "P56", productClearance: "approved" | "
   result = change(result, "scenario.stable_scenario_id", id);
   result = change(result, "scenario.phase_id", phase);
   result = change(result, "scenario.product_clearance", productClearance);
+  result = change(result, "approved_plan.sha256", APPROVED_PLAN_SHA256);
   return change(result, "baseline_detected", []);
 }
 

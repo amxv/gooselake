@@ -9,11 +9,6 @@
     "effective_state_rule": "seed_overlaid_by_validated_append_only_external_attestations",
     "post_review_tracked_mutation_prohibited": true
   },
-  "manifest_registry": {
-    "path": "verification/gooseweb/manifest-registry.json",
-    "schema_revision": "gooseweb-manifest-registry/v1",
-    "sha256": "7e4b23453c23c0e34f1a6515f7233f6713610033f63b0122112e78babeaef6d1"
-  },
   "phases": [
     {
       "phase_id": "P00",
@@ -625,7 +620,7 @@
       "released_at": "2026-07-12T05:40:49.000Z",
       "prior_lease_termination_evidence": {
         "status": "no_prior_lease",
-        "reference": "verification/gooseweb/ledger/phase-state.json#lease-history-genesis"
+        "reference": "verification/gooseweb/ledger/phase-graph-seed.json#seed-lease-history-genesis"
       },
       "managed_process": {
         "identity": "proc_36 (pid 34560)",

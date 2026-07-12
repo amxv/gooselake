@@ -63,12 +63,6 @@ export function validatePhaseGraphSeed(value: RecordJson): void {
   equal(authority.tracked_role, "immutable_phase_graph_candidate_intent_and_lifecycle_seed", "tracked authority role");
   equal(authority.effective_state_rule, "seed_overlaid_by_validated_append_only_external_attestations", "effective state authority");
   equal(authority.post_review_tracked_mutation_prohibited, true, "post-review tracked mutation policy");
-  const registryDescriptor = object(value.manifest_registry, "phase graph manifest registry");
-  equal(registryDescriptor.path, "verification/gooseweb/manifest-registry.json", "phase graph manifest registry path");
-  equal(registryDescriptor.sha256, sha256(string(registryDescriptor.path, "manifest registry path")), "phase graph manifest registry hash");
-  const registry = readJson(string(registryDescriptor.path, "manifest registry path"));
-  validateManifestRegistry(registry);
-  equal(registryDescriptor.schema_revision, registry.schema_revision, "ledger manifest registry revision");
   const phases = array(value.phases, "phases").map((entry) => object(entry, "phase"));
   const ids = phases.map((entry) => string(entry.phase_id, "phase_id"));
   const expected = Array.from({ length: 57 }, (_, index) => `P${String(index).padStart(2, "0")}`);
@@ -143,14 +137,28 @@ export function validateLifecycleAttestation(attestation: RecordJson, options: L
   const latestExternal = new Map<string, { status: string; leaseId: string }>();
   const attempts = array(attestation.attempts, "lifecycle attempts").map((item) => object(item, "lifecycle attempt"));
   for (const attempt of attempts) {
-    const record = object(attempt.outcome_record, "embedded outcome record");
-    equal(attempt.embedded_outcome_sha256, jsonHash(record), "embedded outcome hash");
+    const evidenceRoot = safeEvidenceRoot(string(attempt.evidence_root, "attested evidence root"));
+    const descriptorPath = safeChild(evidenceRoot, "evidence-run.json");
+    equal(hashBytes(readFileSync(descriptorPath)), attempt.evidence_descriptor_sha256, "attested evidence descriptor hash");
+    const descriptor = JSON.parse(readFileSync(descriptorPath, "utf8")) as RecordJson;
+    validateEvidence(descriptor, { checkFiles: true });
+    const outcome = object(attempt.outcome, "attested outcome reference");
+    const outcomePath = safeChild(evidenceRoot, string(outcome.record, "attested outcome record"));
+    equal(hashBytes(readFileSync(outcomePath)), outcome.sha256, "attested outcome record hash");
+    const record = JSON.parse(readFileSync(outcomePath, "utf8")) as RecordJson;
     equal(attempt.status, record.schema_revision === "gooseweb-exact-head-clearance/v4" ? "cleared" : "changes_required", "attestation/outcome status");
     if (attempt.status === "cleared") validateClearance(record);
     else validateReviewOutcome(record);
     const phase = string(record.phase_id, "outcome phase");
     const head = string(record.candidate_head_sha, "outcome candidate head");
     equal(attempt.evidence_root, `tmp/gg/gooseweb-migration/${phase}/${head.slice(0, 7)}/attempt-${integer(record.attempt, "outcome attempt")}/`, "attempt evidence root");
+    equal(descriptor.phase_id, record.phase_id, "attested descriptor/outcome phase");
+    equal(descriptor.attempt, record.attempt, "attested descriptor/outcome attempt");
+    equal(descriptor.candidate_head_sha, record.candidate_head_sha, "attested descriptor/outcome head");
+    const descriptorManifest = object(descriptor.manifest, "attested descriptor manifest");
+    const outcomeManifest = object(record.manifest, "attested outcome manifest");
+    equal(descriptorManifest.copy, "manifest.json", "attested manifest copy path");
+    for (const key of ["path", "revision", "sha256"]) equal(descriptorManifest[key], outcomeManifest[key], `attested descriptor/outcome manifest ${key}`);
     let outcomeSeedBytes: Buffer;
     try { outcomeSeedBytes = execFileSync("git", ["show", `${head}:${seedPath}`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] }); }
     catch { fail("outcome candidate does not contain the immutable phase graph seed"); }

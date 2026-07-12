@@ -8,7 +8,6 @@
     "schema_revision",
     "approved_plan_sha256",
     "authority_split",
-    "manifest_registry",
     "phases",
     "seed_lease_history",
     "seed_clearance_history"
@@ -50,27 +49,6 @@
         },
         "post_review_tracked_mutation_prohibited": {
           "const": true
-        }
-      }
-    },
-    "manifest_registry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "path",
-        "schema_revision",
-        "sha256"
-      ],
-      "properties": {
-        "path": {
-          "const": "verification/gooseweb/manifest-registry.json"
-        },
-        "schema_revision": {
-          "const": "gooseweb-manifest-registry/v1"
-        },
-        "sha256": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$"
         }
       }
     },

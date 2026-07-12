@@ -92,8 +92,7 @@
           "status",
           "evidence_root",
           "evidence_descriptor_sha256",
-          "embedded_outcome_sha256",
-          "outcome_record"
+          "outcome"
         ],
         "properties": {
           "status": {
@@ -110,12 +109,25 @@
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"
           },
-          "embedded_outcome_sha256": {
-            "type": "string",
-            "pattern": "^[a-f0-9]{64}$"
-          },
-          "outcome_record": {
-            "type": "object"
+          "outcome": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "record",
+              "sha256"
+            ],
+            "properties": {
+              "record": {
+                "enum": [
+                  "exact-head-clearance.json",
+                  "review-outcome.json"
+                ]
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
           }
         }
       }

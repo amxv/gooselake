@@ -16,6 +16,12 @@ Baseline registers contain zero or more entries and clearance must equal the com
 
 Browser acceptance uses one fresh, uniquely named, headless, real-Chromium `agent-browser` session. The descriptor records the exact Chromium binary/version and fresh-profile policy. Headed evidence is rejected, and a browser mode, binary, version, profile, reviewer, lease, manifest, stack, head, tree, or served-head change invalidates clearance. Only the supervisor may own the migration-wide stack lease and lifecycle. Reviewers are read-only and own only browser interaction and evidence.
 
+## P03 headless browser evidence
+
+P03 makes the installed `agent-browser` CLI plus the user's real local Google Chrome/Chromium the sole browser acceptance and evidence substrate. The reviewer procedure is `procedures/p03-headless-agent-browser.md`; it is intentionally prose and command vocabulary, not a committed runner. Each attempt adds `p03-browser-evidence.json`, validated against `schemas/p03-browser-evidence.schema.json`, alongside the standard evidence-run descriptor. The contract binds explicit `--headed false`, local Chrome identity and `HeadlessChrome` user-agent proof, a globally unique named ephemeral session, supervisor URL/lease attachment, semantic rendered controls, the exact three viewports/screenshots, complete console/network/WebSocket capture, reconstruction/disposal, capture-time redaction, default/production fixture leakage, and wrong-head/stale-context checks.
+
+The P03 smoke self-test seeds and rejects console, network, WebSocket, wrong-head, wrong-viewport, fixture-leak, stale-context, headed-mode, and non-real-Chromium failures. It also verifies the P03 manifest keeps `known_defects: []` and the exact ten finite P01/P02 baseline entries. P03 installs no package, browser binary/cache/config, CI browser job, alternate framework, or browser runner; the supervisor continues to own every stack process and port.
+
 ## P02 deterministic source
 
 P02 adds `p02-fake-gooselake/v1`, a bounded in-memory implementation of the existing public runtime JSON and SSE contracts. It is verification infrastructure in `goosetower::verification`; production runtime and gateway configuration never select it implicitly. The lease-holding supervisor may start it explicitly with `cargo run -p goosetower --example p02_fake_gooselake` and point the real Tower source configuration at `http://127.0.0.1:18102`. Implementers and reviewers do not start it.

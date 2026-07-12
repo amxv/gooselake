@@ -15,6 +15,13 @@
       "revision": 8,
       "sha256": "84078cb5e4f4b5efa20c1650d84a174b9144593b73ff27a7f013e62bedf708f9",
       "activated_reason": "P02 verifies the bounded public-contract fake source and redacted real Tower/frame/Worker/store observer chain without claiming product approval."
+    },
+    {
+      "phase_id": "P03",
+      "path": "verification/gooseweb/manifests/p03-headless-agent-browser.json",
+      "revision": 1,
+      "sha256": "3cb1064f02ac28da4cd0123e5e970d921fa06705763b534e41f5f11df50b9cc8",
+      "activated_reason": "P03 defines the sole explicit-headless agent-browser real-local-Chromium procedure and failure-detecting evidence contract without adding a committed browser runner."
     }
   ]
 }

@@ -49,6 +49,57 @@ export function validateManifest(value: RecordJson): void {
   scanSecrets(value, "manifest", false);
 }
 
+export function validateP03BrowserEvidence(value: RecordJson): void {
+  applySchemaFile("verification/gooseweb/schemas/p03-browser-evidence.schema.json", value);
+  equal(value.candidate_head_sha, value.served_head_sha, "P03 candidate/served head");
+  equal(value.candidate_tree_sha, value.served_tree_sha, "P03 candidate/served tree");
+  const browser = object(value.browser, "P03 browser");
+  equal(browser.mechanism, "agent-browser", "P03 browser mechanism");
+  equal(browser.engine, "chrome", "P03 browser engine");
+  equal(browser.execution_mode, "headless", "P03 browser mode");
+  equal(browser.headed_cli_value, false, "P03 explicit headed CLI value");
+  equal(browser.headed_environment, "absent", "P03 headed environment");
+  equal(browser.headed_config, "absent", "P03 headed config");
+  equal(browser.real_local_chromium, true, "P03 real local Chromium identity");
+  equal(browser.profile_policy, "fresh_ephemeral", "P03 fresh profile policy");
+  equal(browser.persistent_state_loaded, false, "P03 persistent state policy");
+  if (!/HeadlessChrome\/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/.test(string(browser.user_agent, "P03 browser user agent"))) {
+    fail("P03 user agent does not prove headless Chromium");
+  }
+  for (const [name, captureValue] of Object.entries(object(value.captures, "P03 captures"))) {
+    const capture = object(captureValue, `P03 ${name} capture`);
+    equal(capture.complete, true, `P03 ${name} capture completeness`);
+    equal(capture.unexpected_failures, 0, `P03 ${name} unexpected failures`);
+    equal(capture.redacted_at_capture, true, `P03 ${name} capture redaction`);
+  }
+  const reconstruction = object(value.reconstruction, "P03 reconstruction");
+  if (reconstruction.old_context_nonce === reconstruction.fresh_context_nonce) {
+    fail("P03 stale browser context nonce was reused");
+  }
+  const viewportRecords = array(value.viewports, "P03 viewports").map((viewport) => object(viewport, "P03 viewport"));
+  const viewports = viewportRecords.map((viewport) => viewport.id);
+  equal(JSON.stringify(viewports), JSON.stringify(["1440x1000", "820x1000", "520x900"]), "P03 ordered viewport matrix");
+  const dimensions = [[1440, 1000], [820, 1000], [520, 900]];
+  viewportRecords.forEach((viewport, index) => {
+    equal(viewport.width, dimensions[index]![0], `P03 viewport ${index} width`);
+    equal(viewport.height, dimensions[index]![1], `P03 viewport ${index} height`);
+    equal(viewport.screenshot, true, `P03 viewport ${index} screenshot`);
+    equal(viewport.horizontal_overflow, false, `P03 viewport ${index} overflow`);
+    equal(viewport.primary_action_inside_viewport, true, `P03 viewport ${index} primary action`);
+    equal(viewport.critical_actions_reachable, true, `P03 viewport ${index} critical actions`);
+  });
+  const leakage = object(value.fixture_leakage, "P03 fixture leakage");
+  equal(leakage.default_development, "pass", "P03 default fixture leakage");
+  equal(leakage.production_build, "pass", "P03 production fixture leakage");
+  equal(leakage.query_flags_present, false, "P03 fixture query flags");
+  equal(leakage.fixture_markers_found, 0, "P03 fixture markers");
+  const controls = array(value.semantic_controls, "P03 semantic controls");
+  if (!controls.includes("roster_button_accessible_name") || !controls.includes("Agent thread composer") || !controls.includes("Send agent thread message")) {
+    fail("P03 semantic agent workflow controls are incomplete");
+  }
+  scanSecrets(value, "P03 browser evidence", false);
+}
+
 export function validateManifestRegistry(value: RecordJson): void {
   applySchemaFile("verification/gooseweb/schemas/manifest-registry.schema.json", value);
   const entries = array(value.active_manifests, "active manifests").map((entry) => object(entry, "active manifest"));

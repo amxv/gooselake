@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gooseweb://schemas/p03-browser-evidence/v1",
+  "title": "P03 headless real-Chromium evidence descriptor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_revision", "phase_id", "attempt", "candidate_head_sha", "served_head_sha",
+    "candidate_tree_sha", "served_tree_sha", "browser", "supervisor_attachment",
+    "semantic_controls", "captures", "viewports", "reconstruction", "fixture_leakage",
+    "redaction", "completion"
+  ],
+  "properties": {
+    "schema_revision": { "const": "gooseweb-p03-browser-evidence/v1" },
+    "phase_id": { "const": "P03" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "candidate_head_sha": { "$ref": "#/$defs/sha" },
+    "served_head_sha": { "$ref": "#/$defs/sha" },
+    "candidate_tree_sha": { "$ref": "#/$defs/sha" },
+    "served_tree_sha": { "$ref": "#/$defs/sha" },
+    "browser": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mechanism", "session_name", "globally_unique", "engine", "execution_mode", "headed_cli_value", "headed_environment", "headed_config", "binary_path", "version", "user_agent", "real_local_chromium", "profile_policy", "persistent_state_loaded"],
+      "properties": {
+        "mechanism": { "const": "agent-browser" },
+        "session_name": { "type": "string", "pattern": "^gooseweb-p03-[a-f0-9]{7}-a[1-9][0-9]*-[a-z0-9][a-z0-9-]*-[a-f0-9]{8}$" },
+        "globally_unique": { "const": true },
+        "engine": { "const": "chrome" },
+        "execution_mode": { "const": "headless" },
+        "headed_cli_value": { "const": false },
+        "headed_environment": { "const": "absent" },
+        "headed_config": { "const": "absent" },
+        "binary_path": { "type": "string", "pattern": "(?:Google Chrome|Chromium)(?:\\.app)?/" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "user_agent": { "type": "string", "pattern": "HeadlessChrome/[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" },
+        "real_local_chromium": { "const": true },
+        "profile_policy": { "const": "fresh_ephemeral" },
+        "persistent_state_loaded": { "const": false }
+      }
+    },
+    "supervisor_attachment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["url_source", "stack_started_by", "reviewer_started_stack", "lease_exclusive", "clean_tree", "hot_reload"],
+      "properties": {
+        "url_source": { "const": "supervisor_provided" },
+        "stack_started_by": { "const": "supervisor" },
+        "reviewer_started_stack": { "const": false },
+        "lease_exclusive": { "const": true },
+        "clean_tree": { "const": true },
+        "hot_reload": { "const": false }
+      }
+    },
+    "semantic_controls": {
+      "type": "array", "minItems": 3, "uniqueItems": true,
+      "items": { "enum": ["roster_button_accessible_name", "Agent thread composer", "Send agent thread message", "Team comms composer", "Send team comms message"] }
+    },
+    "captures": {
+      "type": "object", "additionalProperties": false,
+      "required": ["console", "network", "websocket"],
+      "properties": {
+        "console": { "$ref": "#/$defs/capture" },
+        "network": { "$ref": "#/$defs/capture" },
+        "websocket": { "$ref": "#/$defs/capture" }
+      }
+    },
+    "viewports": {
+      "type": "array", "minItems": 3, "maxItems": 3,
+      "prefixItems": [
+        { "$ref": "#/$defs/desktop" }, { "$ref": "#/$defs/tablet" }, { "$ref": "#/$defs/phone" }
+      ],
+      "items": false
+    },
+    "reconstruction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinary_reload", "hard_reload", "navigation_away_back", "websocket_reconnect", "fresh_context", "old_context_disposed", "indexeddb_cleared", "cookies_cleared", "local_storage_cleared", "session_storage_cleared", "old_context_nonce", "fresh_context_nonce", "stale_context_detected"],
+      "properties": {
+        "ordinary_reload": { "const": "pass" }, "hard_reload": { "const": "pass" },
+        "navigation_away_back": { "const": "pass" }, "websocket_reconnect": { "const": "pass" },
+        "fresh_context": { "const": "pass" }, "old_context_disposed": { "const": true },
+        "indexeddb_cleared": { "const": true }, "cookies_cleared": { "const": true },
+        "local_storage_cleared": { "const": true }, "session_storage_cleared": { "const": true },
+        "old_context_nonce": { "type": "string", "minLength": 8 },
+        "fresh_context_nonce": { "type": "string", "minLength": 8 },
+        "stale_context_detected": { "const": false }
+      }
+    },
+    "fixture_leakage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["default_development", "production_build", "query_flags_present", "fixture_markers_found"],
+      "properties": {
+        "default_development": { "const": "pass" }, "production_build": { "const": "pass" },
+        "query_flags_present": { "const": false }, "fixture_markers_found": { "const": 0 }
+      }
+    },
+    "redaction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["at_capture", "query_values_retained", "credentials_retained", "cookies_retained", "csrf_retained", "tickets_retained", "raw_image_bytes_retained", "secret_config_retained"],
+      "properties": {
+        "at_capture": { "const": true }, "query_values_retained": { "const": false },
+        "credentials_retained": { "const": false }, "cookies_retained": { "const": false },
+        "csrf_retained": { "const": false }, "tickets_retained": { "const": false },
+        "raw_image_bytes_retained": { "const": false }, "secret_config_retained": { "const": false }
+      }
+    },
+    "completion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["product_approved", "known_defects", "baseline_detected_count", "procedure_overhead_recorded", "alternate_browser_framework_used", "browser_runner_committed"],
+      "properties": {
+        "product_approved": { "const": false }, "known_defects": { "type": "array", "maxItems": 0 },
+        "baseline_detected_count": { "const": 10 }, "procedure_overhead_recorded": { "const": true },
+        "alternate_browser_framework_used": { "const": false }, "browser_runner_committed": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "capture": {
+      "type": "object", "additionalProperties": false,
+      "required": ["complete", "unexpected_failures", "redacted_at_capture"],
+      "properties": { "complete": { "const": true }, "unexpected_failures": { "const": 0 }, "redacted_at_capture": { "const": true } }
+    },
+    "viewportBase": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "width", "height", "screenshot", "horizontal_overflow", "primary_action_inside_viewport", "critical_actions_reachable"],
+      "properties": {
+        "id": { "type": "string" }, "width": { "type": "integer" }, "height": { "type": "integer" },
+        "screenshot": { "const": true }, "horizontal_overflow": { "const": false },
+        "primary_action_inside_viewport": { "const": true }, "critical_actions_reachable": { "const": true }
+      }
+    },
+    "desktop": { "allOf": [{ "$ref": "#/$defs/viewportBase" }, { "properties": { "id": { "const": "1440x1000" }, "width": { "const": 1440 }, "height": { "const": 1000 } } }] },
+    "tablet": { "allOf": [{ "$ref": "#/$defs/viewportBase" }, { "properties": { "id": { "const": "820x1000" }, "width": { "const": 820 }, "height": { "const": 1000 } } }] },
+    "phone": { "allOf": [{ "$ref": "#/$defs/viewportBase" }, { "properties": { "id": { "const": "520x900" }, "width": { "const": 520 }, "height": { "const": 900 } } }] }
+  }
+}

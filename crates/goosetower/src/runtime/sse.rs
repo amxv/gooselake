@@ -246,6 +246,7 @@ impl RuntimeSseFanIn {
                 }
             };
             let chunk = next.map_err(RuntimeClientError::Transport)?;
+            self.refresh_transport_activity(source_epoch);
             for frame in parser.push(&chunk) {
                 if frame.data.trim().is_empty() {
                     continue;
@@ -275,6 +276,15 @@ impl RuntimeSseFanIn {
             }
         }
         Ok(last_seq)
+    }
+
+    fn refresh_transport_activity(&self, source_epoch: &str) {
+        let mut health = self.health_tx.borrow().clone();
+        if health.state != SourceHealthState::Live || health.source_epoch != source_epoch {
+            return;
+        }
+        health.refresh_activity();
+        self.health_tx.send_replace(health);
     }
 
     fn transition(

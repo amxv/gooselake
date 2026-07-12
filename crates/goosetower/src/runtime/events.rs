@@ -112,6 +112,10 @@ impl SourceHealth {
         self.last_error = last_error;
         self.updated_at = now_ms();
     }
+
+    pub fn refresh_activity(&mut self) {
+        self.updated_at = now_ms();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

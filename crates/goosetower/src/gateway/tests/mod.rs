@@ -20,6 +20,7 @@ use crate::protocol::generated::goosetower::v1::{
 };
 
 mod bootstrap_races;
+mod healthy_idle;
 mod resume;
 mod team_commands;
 

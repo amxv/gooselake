@@ -64,11 +64,28 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
   equal(browser.profile_policy, "fresh_ephemeral", "P03 fresh profile policy");
   equal(browser.persistent_state_loaded, false, "P03 persistent state policy");
   equal(browser.navigator_webdriver, true, "P03 navigator.webdriver automation proof");
-  if (!/HeadlessChrome\/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/.test(string(browser.user_agent, "P03 browser user agent"))) {
-    fail("P03 user agent does not prove headless Chromium");
+  const binaryPath = string(browser.binary_path, "P03 browser binary path");
+  if (!binaryPath.startsWith("/") || !/(?:Google Chrome|Chromium)(?:\.app)?\//.test(binaryPath)) fail("P03 browser binary path is not a local Chrome/Chromium executable");
+  const binaryVersion = string(browser.version, "P03 browser binary version");
+  const binaryMajor = binaryVersion.split(".")[0];
+  const reducedMatch = /HeadlessChrome\/([0-9]+\.0\.0\.0)(?:\s|;)/.exec(string(browser.user_agent, "P03 browser user agent"));
+  if (!reducedMatch) fail("P03 user agent does not prove reduced headless Chromium");
+  const reduction = object(browser.user_agent_reduction, "P03 user-agent reduction");
+  equal(reduction.mode, "reduced_major_only", "P03 user-agent reduction mode");
+  equal(reduction.token_version, reducedMatch[1], "P03 reduced user-agent token");
+  equal(reducedMatch[1]!.split(".")[0], binaryMajor, "P03 Chrome binary/reduced-UA major version");
+  const userAgentData = object(browser.user_agent_data, "P03 user-agent data");
+  const fullVersionList = array(userAgentData.full_version_list, "P03 fullVersionList").map((entry) => object(entry, "P03 fullVersionList entry"));
+  if (userAgentData.availability === "available") {
+    equal(userAgentData.unavailable_reason, "", "P03 available user-agent-data reason");
+    const chromeBrands = fullVersionList.filter((entry) => /^(?:Chromium|Google Chrome)$/.test(string(entry.brand, "P03 browser brand")));
+    if (chromeBrands.length === 0) fail("P03 high-entropy identity has no Chrome/Chromium brand");
+    for (const entry of chromeBrands) equal(entry.version, binaryVersion, `P03 high-entropy ${entry.brand} full version`);
+    if (binaryPath.includes("Google Chrome") && !chromeBrands.some((entry) => entry.brand === "Google Chrome")) fail("P03 Google Chrome binary lacks Google Chrome high-entropy brand");
+  } else {
+    equal(fullVersionList.length, 0, "P03 unavailable fullVersionList");
+    requireText(userAgentData.unavailable_reason, "P03 unavailable user-agent-data reason");
   }
-  const userAgentVersion = /HeadlessChrome\/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/.exec(string(browser.user_agent, "P03 browser user agent"))?.[1];
-  equal(userAgentVersion, browser.version, "P03 Chrome binary/User-Agent full version");
   for (const [name, captureValue] of Object.entries(object(value.captures, "P03 captures"))) {
     const capture = object(captureValue, `P03 ${name} capture`);
     equal(capture.complete, true, `P03 ${name} capture completeness`);

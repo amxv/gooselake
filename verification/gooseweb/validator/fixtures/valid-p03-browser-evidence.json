@@ -17,7 +17,16 @@
     "headed_config": "absent",
     "binary_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "version": "150.0.7871.115",
-    "user_agent": "Mozilla/5.0 HeadlessChrome/150.0.7871.115 Safari/537.36",
+    "user_agent": "Mozilla/5.0 HeadlessChrome/150.0.0.0 Safari/537.36",
+    "user_agent_reduction": { "mode": "reduced_major_only", "token_version": "150.0.0.0" },
+    "user_agent_data": {
+      "availability": "available",
+      "full_version_list": [
+        { "brand": "Chromium", "version": "150.0.7871.115" },
+        { "brand": "Google Chrome", "version": "150.0.7871.115" }
+      ],
+      "unavailable_reason": ""
+    },
     "navigator_webdriver": true,
     "real_local_chromium": true,
     "profile_policy": "fresh_ephemeral",

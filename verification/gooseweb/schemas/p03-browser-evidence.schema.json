@@ -20,7 +20,7 @@
     "served_tree_sha": { "$ref": "#/$defs/sha" },
     "browser": {
       "type": "object", "additionalProperties": false,
-      "required": ["mechanism", "session_name", "globally_unique", "engine", "execution_mode", "headed_cli_value", "headed_environment", "headed_config", "binary_path", "version", "user_agent", "navigator_webdriver", "real_local_chromium", "profile_policy", "persistent_state_loaded"],
+      "required": ["mechanism", "session_name", "globally_unique", "engine", "execution_mode", "headed_cli_value", "headed_environment", "headed_config", "binary_path", "version", "user_agent", "user_agent_reduction", "user_agent_data", "navigator_webdriver", "real_local_chromium", "profile_policy", "persistent_state_loaded"],
       "properties": {
         "mechanism": { "const": "agent-browser" },
         "session_name": { "type": "string", "pattern": "^gooseweb-p03-[a-f0-9]{7}-a[1-9][0-9]*-[a-z0-9][a-z0-9-]*-[a-f0-9]{8}$" },
@@ -32,7 +32,34 @@
         "headed_config": { "const": "absent" },
         "binary_path": { "type": "string", "pattern": "(?:Google Chrome|Chromium)(?:\\.app)?/" },
         "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$" },
-        "user_agent": { "type": "string", "pattern": "HeadlessChrome/[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" },
+        "user_agent": { "type": "string", "pattern": "HeadlessChrome/[0-9]+\\.0\\.0\\.0" },
+        "user_agent_reduction": {
+          "type": "object", "additionalProperties": false,
+          "required": ["mode", "token_version"],
+          "properties": {
+            "mode": { "const": "reduced_major_only" },
+            "token_version": { "type": "string", "pattern": "^[0-9]+\\.0\\.0\\.0$" }
+          }
+        },
+        "user_agent_data": {
+          "type": "object", "additionalProperties": false,
+          "required": ["availability", "full_version_list", "unavailable_reason"],
+          "properties": {
+            "availability": { "enum": ["available", "unavailable"] },
+            "full_version_list": {
+              "type": "array",
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["brand", "version"],
+                "properties": {
+                  "brand": { "type": "string", "minLength": 1 },
+                  "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$" }
+                }
+              }
+            },
+            "unavailable_reason": { "type": "string" }
+          }
+        },
         "navigator_webdriver": { "const": true },
         "real_local_chromium": { "const": true },
         "profile_policy": { "const": "fresh_ephemeral" },

@@ -23,6 +23,7 @@ validateP03BrowserEvidence(evidence);
 validateManifest(manifest);
 validateManifestRegistry(registry);
 applySchemaFile("verification/gooseweb/schemas/p03-browser-evidence.schema.json", evidence);
+validateP03BrowserEvidence(unavailableIdentity(evidence));
 
 const seededFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
   ["console", (value) => change(value, "captures.console.unexpected_failures", 1)],
@@ -36,6 +37,18 @@ const seededFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
   ["headed mode", (value) => change(value, "browser.execution_mode", "headed")],
   ["non-real Chromium", (value) => change(value, "browser.real_local_chromium", false)],
   ["Chrome/User-Agent version mismatch", (value) => change(value, "browser.user_agent", "Mozilla/5.0 HeadlessChrome/149.0.0.0 Safari/537.36")],
+  ["malformed non-reduced headless UA", (value) => change(value, "browser.user_agent", "Mozilla/5.0 HeadlessChrome/150.0.7871.115 Safari/537.36")],
+  ["non-headless Chrome UA", (value) => change(value, "browser.user_agent", "Mozilla/5.0 Chrome/150.0.0.0 Safari/537.36")],
+  ["reduced UA token mismatch", (value) => change(value, "browser.user_agent_reduction.token_version", "149.0.0.0")],
+  ["reduced UA mode mismatch", (value) => change(value, "browser.user_agent_reduction.mode", "full_version")],
+  ["forged binary path", (value) => change(value, "browser.binary_path", "/Applications/Firefox.app/Contents/MacOS/firefox")],
+  ["forged binary full version", (value) => change(value, "browser.version", "150.0.9999.1")],
+  ["high-entropy full version mismatch", (value) => change(value, "browser.user_agent_data.full_version_list.1.version", "150.0.9999.1")],
+  ["high-entropy Chrome brand missing", (value) => change(value, "browser.user_agent_data.full_version_list", [{ brand: "Not A Browser", version: "99.0.0.0" }])],
+  ["available high-entropy list empty", (value) => change(value, "browser.user_agent_data.full_version_list", [])],
+  ["unavailable API retained version list", (value) => change(unavailableIdentity(value), "browser.user_agent_data.full_version_list", [{ brand: "Google Chrome", version: "150.0.7871.115" }])],
+  ["unavailable API omitted reason", (value) => change(unavailableIdentity(value), "browser.user_agent_data.unavailable_reason", "")],
+  ["unavailable fallback wrong major", (value) => change(unavailableIdentity(value), "browser.user_agent", "Mozilla/5.0 HeadlessChrome/149.0.0.0 Safari/537.36")],
   ["navigator.webdriver missing", (value) => omit(value, "browser.navigator_webdriver")],
   ["navigator.webdriver false", (value) => change(value, "browser.navigator_webdriver", false)],
   ["semantic journey missing", (value) => omit(value, "journey")],
@@ -71,12 +84,25 @@ assert.throws(
 );
 assert.deepEqual(manifest.known_defects, [], "P03 verification infrastructure must have no known defects");
 validateStandardEvidenceLinkage();
-console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 15} seeded failures rejected)`);
+console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 17} seeded failures rejected)`);
 
 function validateStandardEvidenceLinkage(): void {
   const descriptor = linkedStandardDescriptor();
   const linked = linkedP03Evidence(descriptor);
   validateP03EvidenceLinkage(descriptor, linked, manifest);
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, change(linked, "browser.binary_path", "/Applications/Chromium.app/Contents/MacOS/Chromium"), manifest),
+    undefined,
+    "manifest/standard-forged Chromium binary path unexpectedly passed"
+  );
+  let forgedFullVersion = change(linked, "browser.version", "150.0.9999.1");
+  forgedFullVersion = change(forgedFullVersion, "browser.user_agent_data.full_version_list.0.version", "150.0.9999.1");
+  forgedFullVersion = change(forgedFullVersion, "browser.user_agent_data.full_version_list.1.version", "150.0.9999.1");
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, forgedFullVersion, manifest),
+    undefined,
+    "manifest/standard-forged Chrome full version unexpectedly passed"
+  );
   const cascade = cascadingDivergence(linked);
   validateP03EvidenceLinkage(descriptor, cascade, manifest);
   assert.throws(
@@ -176,6 +202,12 @@ function writeAuthorityArtifacts(
     if (mutate?.layerIndex === index) observation = change(observation, mutate.key, mutate.value);
     writeFileSync(resolve(root, String(entry.artifact)), `${JSON.stringify(observation, null, 2)}\n`);
   });
+}
+
+function unavailableIdentity(source: RecordJson): RecordJson {
+  let result = change(source, "browser.user_agent_data.availability", "unavailable");
+  result = change(result, "browser.user_agent_data.full_version_list", []);
+  return change(result, "browser.user_agent_data.unavailable_reason", "navigator.userAgentData.getHighEntropyValues is unavailable in this agent-browser Chrome context");
 }
 
 function cascadingDivergence(source: RecordJson): RecordJson {

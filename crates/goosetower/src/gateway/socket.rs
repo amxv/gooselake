@@ -56,13 +56,37 @@ impl GatewayState {
             self.audit_event("connection.open", Scope::System, ""),
             None,
         );
-        let first = conn.next_outbound().unwrap_or_default();
-        let encoded = first.encode_to_vec();
-        if sender.send(Message::Binary(encoded.into())).await.is_err() {
+        #[cfg(not(feature = "p02-verification"))]
+        if sender
+            .send(Message::Binary(
+                self.encode_next(&mut conn).unwrap_or_default().into(),
+            ))
+            .await
+            .is_err()
+        {
             return;
         }
-        self.record_served_envelope(&conn.connection_id, &first)
-            .await;
+        #[cfg(feature = "p02-verification")]
+        {
+            let first = conn.next_outbound().unwrap_or_default();
+            let encoded = first.encode_to_vec();
+            if sender.send(Message::Binary(encoded.into())).await.is_err() {
+                return;
+            }
+            self.record_served_envelope(&conn.connection_id, &first)
+                .await;
+        }
+        #[cfg(not(feature = "p02-verification"))]
+        while let Some(envelope) = conn.next_outbound() {
+            if sender
+                .send(Message::Binary(envelope.encode_to_vec().into()))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+        #[cfg(feature = "p02-verification")]
         while let Some(envelope) = conn.next_outbound() {
             let encoded = envelope.encode_to_vec();
             if sender.send(Message::Binary(encoded.into())).await.is_err() {
@@ -132,6 +156,17 @@ impl GatewayState {
                 }
             }
 
+            #[cfg(not(feature = "p02-verification"))]
+            while let Some(envelope) = conn.next_outbound() {
+                if sender
+                    .send(Message::Binary(envelope.encode_to_vec().into()))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            #[cfg(feature = "p02-verification")]
             while let Some(envelope) = conn.next_outbound() {
                 let encoded = envelope.encode_to_vec();
                 if sender.send(Message::Binary(encoded.into())).await.is_err() {

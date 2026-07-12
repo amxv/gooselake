@@ -15,11 +15,13 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::auth::{now_ms, AuthContext, TicketValidator};
 use crate::config::{GoosetowerConfig, RuntimeSourceConfig};
+#[cfg(any(test, feature = "p02-verification"))]
+use crate::materializer::SelectedSessionSubscription;
 use crate::materializer::{
     snapshot_cross_source_approval_inbox, snapshot_cross_source_board,
     snapshot_cross_source_health, snapshot_cross_source_ledger, snapshot_cross_source_worktrees,
     ApprovalInboxSubscription, BoardSubscription, BootstrapOptions, LedgerSubscription,
-    SelectedSessionSubscription, SelectedTeamSubscription, SourceBootstrap,
+    SelectedTeamSubscription, SourceBootstrap,
 };
 use crate::materializer::{MaterializedPatch, MaterializedPatchKind, MaterializedState};
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
@@ -38,12 +40,14 @@ use crate::runtime::{
 };
 mod commands;
 mod envelopes;
+#[cfg(any(test, feature = "p02-verification"))]
 mod observers;
 mod socket;
 mod support;
 #[cfg(test)]
 mod tests;
-pub use self::observers::ServedFrameDebug;
+#[cfg(any(test, feature = "p02-verification"))]
+pub use self::observers::{MaterializerObserverSnapshot, ServedFrameDebug};
 pub use self::support::GatewayMetricsSnapshot;
 
 fn materialized_state_from_source(source: &RuntimeSourceConfig) -> MaterializedState {
@@ -70,7 +74,9 @@ pub struct GatewayState {
     metrics: GatewayMetrics,
     active_connections: Mutex<BTreeMap<String, ActiveConnectionDebug>>,
     audit: Mutex<VecDeque<GatewayAuditRecord>>,
-    served_frames: Mutex<VecDeque<ServedFrameDebug>>,
+    #[cfg(any(test, feature = "p02-verification"))]
+    served_frames: Mutex<VecDeque<observers::ServedFrameDebug>>,
+    #[cfg(any(test, feature = "p02-verification"))]
     next_frame_capture: AtomicU64,
     next_connection_id: AtomicU64,
     next_gateway_seq: AtomicU64,
@@ -102,7 +108,9 @@ impl GatewayState {
             metrics: GatewayMetrics::default(),
             active_connections: Mutex::new(BTreeMap::new()),
             audit: Mutex::new(VecDeque::new()),
+            #[cfg(any(test, feature = "p02-verification"))]
             served_frames: Mutex::new(VecDeque::new()),
+            #[cfg(any(test, feature = "p02-verification"))]
             next_frame_capture: AtomicU64::new(1),
             next_connection_id: AtomicU64::new(1),
             next_gateway_seq: AtomicU64::new(1),
@@ -298,16 +306,7 @@ impl GatewayState {
             }) {
                 state.apply_source_config(source);
             }
-            // RuntimeSseFanIn health is observational and is delivered on a
-            // separate task from source events. It must never advance the
-            // materializer's authoritative reduced-event cursor, otherwise a
-            // health update can race ahead of the matching event and make the
-            // reducer discard that retained event as a duplicate.
-            let materialized_cursor = state.source_health.last_source_seq;
-            state.source_health = SourceHealth {
-                last_source_seq: materialized_cursor,
-                ..health.clone()
-            };
+            state.source_health = health.clone();
             state.transition_source_health(health.state, health.last_error.clone())
         };
         if matches!(health.state, SourceHealthState::GapDetected) {
@@ -392,8 +391,6 @@ pub struct MaterializerDebugSummary {
     pub worktrees: usize,
     pub ledger_events: usize,
     pub discontinuities: usize,
-    pub recent_ledger: Vec<Value>,
-    pub session_details: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

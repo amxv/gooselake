@@ -254,6 +254,20 @@ impl GatewayState {
                 worktrees: state.worktrees.len(),
                 ledger_events: state.ledger.len(),
                 discontinuities: state.discontinuities.len(),
+            })
+            .collect()
+    }
+
+    #[cfg(any(test, feature = "p02-verification"))]
+    pub async fn verification_materializer_observer(&self) -> Vec<MaterializerObserverSnapshot> {
+        self.materialized
+            .read()
+            .await
+            .values()
+            .map(|state| MaterializerObserverSnapshot {
+                source_id: state.source_id.clone(),
+                source_epoch: state.source_epoch.clone(),
+                source_health: state.source_health.clone(),
                 recent_ledger: state
                     .ledger
                     .iter()
@@ -280,24 +294,24 @@ impl GatewayState {
             .collect()
     }
 
+    #[cfg(any(test, feature = "p02-verification"))]
     pub async fn debug_served_frames(&self) -> Vec<ServedFrameDebug> {
         self.served_frames.lock().await.iter().cloned().collect()
     }
 
+    #[cfg(any(test, feature = "p02-verification"))]
     pub(super) async fn record_served_envelope(
         &self,
         connection_id: &str,
         envelope: &RealtimeEnvelope,
     ) {
-        if self.config.debug.endpoints_enabled {
-            let capture_index = self.next_frame_capture.fetch_add(1, Ordering::Relaxed);
-            let frame = ServedFrameDebug::from_envelope(capture_index, connection_id, envelope);
-            let mut frames = self.served_frames.lock().await;
-            if frames.len() == 128 {
-                frames.pop_front();
-            }
-            frames.push_back(frame);
+        let capture_index = self.next_frame_capture.fetch_add(1, Ordering::Relaxed);
+        let frame = ServedFrameDebug::from_envelope(capture_index, connection_id, envelope);
+        let mut frames = self.served_frames.lock().await;
+        if frames.len() == 128 {
+            frames.pop_front();
         }
+        frames.push_back(frame);
     }
 
     pub async fn recent_gateway_audit(&self) -> Vec<GatewayAuditRecord> {
@@ -306,6 +320,12 @@ impl GatewayState {
 
     pub fn metrics_snapshot(&self) -> GatewayMetricsSnapshot {
         self.metrics.snapshot()
+    }
+
+    #[cfg(not(feature = "p02-verification"))]
+    pub(super) fn encode_next(&self, conn: &mut ConnectionState) -> Option<Vec<u8>> {
+        conn.next_outbound()
+            .map(|envelope| envelope.encode_to_vec())
     }
 
     #[cfg(test)]

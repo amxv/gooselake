@@ -3,9 +3,19 @@ use serde_json::{json, Map, Value};
 
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
 use crate::protocol::generated::goosetower::v1::{CursorVector, RealtimeEnvelope};
+use crate::runtime::events::SourceHealth;
 
 const MAX_OBSERVER_COLLECTION: usize = 128;
 const MAX_OBSERVER_STRING: usize = 2_048;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterializerObserverSnapshot {
+    pub source_id: String,
+    pub source_epoch: String,
+    pub source_health: SourceHealth,
+    pub recent_ledger: Vec<Value>,
+    pub session_details: Vec<Value>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServedFrameDebug {

@@ -336,7 +336,7 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
     }
     let patch = terminal_patch.expect("real materializer must publish terminal session detail");
     assert_eq!(patch.entity.as_ref().unwrap().entity_id, "p02-session-001");
-    let materialized = gateway.debug_materializer_summary().await;
+    let materialized = gateway.verification_materializer_observer().await;
     assert_eq!(materialized[0].source_health.last_source_seq, Some(4));
     assert_eq!(
         materialized[0].recent_ledger.last().unwrap()["kind"],
@@ -407,7 +407,7 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
 }
 
 #[tokio::test]
-async fn retained_event_survives_health_cursor_racing_ahead_of_gateway_ingest() {
+async fn health_cursor_observer_does_not_change_production_reduction() {
     let (_source, base) = spawn().await;
     let gateway = gateway(base.clone());
     gateway.bootstrap_enabled_sources().await;
@@ -424,24 +424,13 @@ async fn retained_event_survives_health_cursor_racing_ahead_of_gateway_ingest() 
         )
         .await
         .unwrap();
-    let retained = runtime
+    let mut retained = runtime
         .replay_global_events(Some(1), Some(10))
         .await
         .unwrap();
-    let terminal_row_id = retained
-        .iter()
-        .find(|event| event.kind == "turn.completed")
-        .expect("runtime must retain the terminal event");
+    let terminal = retained.pop().expect("runtime must retain terminal event");
+    assert_eq!(terminal.kind, "turn.completed");
 
-    let mut raced_health = crate::runtime::events::SourceHealth::new(SOURCE_ID, INITIAL_EPOCH);
-    raced_health.transition(
-        crate::runtime::events::SourceHealthState::Live,
-        Some(terminal_row_id.row_id),
-        None,
-    );
-    gateway
-        .verification_update_source_health(raced_health)
-        .await;
     for event in retained {
         gateway
             .ingest_source_event(crate::runtime::events::SourceEvent::from_runtime_event(
@@ -451,6 +440,23 @@ async fn retained_event_survives_health_cursor_racing_ahead_of_gateway_ingest() 
             ))
             .await;
     }
+
+    let mut raced_health = crate::runtime::events::SourceHealth::new(SOURCE_ID, INITIAL_EPOCH);
+    raced_health.transition(
+        crate::runtime::events::SourceHealthState::Live,
+        Some(terminal.row_id),
+        None,
+    );
+    gateway
+        .verification_update_source_health(raced_health)
+        .await;
+    gateway
+        .ingest_source_event(crate::runtime::events::SourceEvent::from_runtime_event(
+            SOURCE_ID,
+            INITIAL_EPOCH,
+            terminal,
+        ))
+        .await;
 
     let mut terminal_patch = None;
     while let Ok(patch) = patch_rx.try_recv() {
@@ -462,10 +468,11 @@ async fn retained_event_survives_health_cursor_racing_ahead_of_gateway_ingest() 
     }
     assert!(
         terminal_patch.is_some(),
-        "a retained event must not be dropped when observational health wins the task race"
+        "real materializer still reduces event 4"
     );
     let summary = gateway.debug_materializer_summary().await;
     assert_eq!(summary[0].source_health.last_source_seq, Some(4));
+    assert_eq!(summary[0].ledger_events, 3);
 }
 
 #[tokio::test]

@@ -5,9 +5,18 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+p02-verification = []
+
 [[bin]]
 name = "gg-goosetower"
 path = "src/main.rs"
+
+[[example]]
+name = "p02_observed_goosetower"
+path = "examples/p02_observed_goosetower.rs"
+required-features = ["p02-verification"]
 
 [dependencies]
 anyhow.workspace = true

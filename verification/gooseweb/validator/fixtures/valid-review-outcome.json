@@ -1,5 +1,5 @@
 {
-  "schema_revision": "gooseweb-review-outcome/v2",
+  "schema_revision": "gooseweb-review-outcome/v3",
   "phase_id": "P01",
   "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
   "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..d7da340c94f4cb34692a122696717e72f357fac1",

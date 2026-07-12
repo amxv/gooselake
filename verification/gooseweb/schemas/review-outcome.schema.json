@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gooseweb://schemas/review-outcome/v2",
-  "title": "Gooseweb changes-required review outcome v2",
+  "$id": "gooseweb://schemas/review-outcome/v3",
+  "title": "Gooseweb changes-required review outcome v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -30,7 +30,7 @@
   ],
   "properties": {
     "schema_revision": {
-      "const": "gooseweb-review-outcome/v2"
+      "const": "gooseweb-review-outcome/v3"
     },
     "phase_id": {
       "type": "string",
@@ -65,10 +65,12 @@
       ],
       "properties": {
         "path": {
-          "const": "verification/gooseweb/manifests/p01-team-comms-live.json"
+          "type": "string",
+          "pattern": "^verification/gooseweb/manifests/[a-z0-9][a-z0-9._/-]*\\.json$"
         },
         "revision": {
-          "const": 3
+          "type": "integer",
+          "minimum": 1
         },
         "sha256": {
           "type": "string",

@@ -5,7 +5,6 @@ import { deflateSync } from "node:zlib";
 import {
   APPROVED_PLAN_SHA256,
   APPROVED_BASE_SHA,
-  MANIFEST_PATH,
   applySchemaFile,
   readJson,
   sha256,
@@ -13,6 +12,7 @@ import {
   validateBrowserCaptures,
   validateClearance,
   validateClearanceHistory,
+  validateClearancePhasePolicy,
   validateEvidence,
   validateLedger,
   validateManifest,
@@ -22,7 +22,8 @@ import {
 } from "../../../verification/gooseweb/validator/validate";
 
 const root = resolve(import.meta.dir, "../../..");
-const manifest = readJson(MANIFEST_PATH);
+const P01_MANIFEST_PATH = "verification/gooseweb/manifests/p01-team-comms-live.json";
+const manifest = readJson(P01_MANIFEST_PATH);
 const ledger = readJson("verification/gooseweb/ledger/phase-state.json");
 const clearance = readJson("verification/gooseweb/validator/fixtures/valid-clearance.json");
 const evidence = readJson("verification/gooseweb/validator/fixtures/valid-evidence-run.json");
@@ -59,8 +60,14 @@ const networkCapture: RecordJson = {
 
 assert.equal(sha256("tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md"), APPROVED_PLAN_SHA256, "immutable amended plan changed");
 validateManifest(manifest);
+const reusableP02Manifest = change(change(change(change(manifest, "manifest_id", "GW-P02-GENERIC-001"), "scenario.stable_scenario_id", "GW-P02-GENERIC-001"), "scenario.phase_id", "P02"), "baseline_detected", []);
+validateManifest(change(reusableP02Manifest, "scenario.product_clearance", "pending"));
+validateClearancePhasePolicy("P02", (manifest.baseline_detected as RecordJson[]), { scope: "verification_infrastructure_only", product_approved: false });
+validateClearancePhasePolicy("P06", [], { scope: "product_phase", product_approved: true });
+validateClearancePhasePolicy("P56", [], { scope: "integration_release", product_approved: true });
 validateLedger(ledger);
 validateClearance(clearance, { expected: clearance, verifyGit: true });
+applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", change(clearance, "baseline_detected", []));
 validateEvidence(evidence, { checkFiles: false, expected: evidence });
 validateReviewOutcome(validNonClearance);
 validateBrowserCaptures(consoleCapture, networkCapture, manifest);
@@ -96,6 +103,7 @@ const negativeCases: [string, () => void][] = [
   ["baseline missing downstream gates", () => validateManifest(change(manifest, "baseline_detected.0.affected_downstream_gates", []))],
   ["baseline labeled product approval", () => validateManifest(change(manifest, "baseline_detected.0.product_scenario_status", "approved"))],
   ["known defects nonempty", () => validateManifest(change(manifest, "known_defects", [{ id: "defect" }]))],
+  ["manifest phase P00", () => validateManifest(change(manifest, "scenario.phase_id", "P00"))],
   ["not applicable without reason", () => validateManifest(omit(manifest, "non_applicable.rollback.reason"))],
   ["changed clearance base", () => validateClearance(change(clearance, "base_sha", "a".repeat(40)), { expected: clearance })],
   ["changed reviewed range", () => validateClearance(change(clearance, "reviewed_range", `${APPROVED_BASE_SHA}..${"a".repeat(40)}`), { expected: clearance })],
@@ -116,6 +124,8 @@ const negativeCases: [string, () => void][] = [
   ["changed served head", () => validateClearance(change(clearance, "served_head_sha", "c".repeat(40)), { expected: clearance })],
   ["changed served tree", () => validateClearance(change(clearance, "served_tree_sha", "c".repeat(40)), { expected: clearance })],
   ["changed manifest path", () => validateClearance(change(clearance, "manifest.path", "wrong.json"))],
+  ["manifest path traversal", () => validateClearance(change(clearance, "manifest.path", "verification/gooseweb/manifests/../secret.json"))],
+  ["manifest phase mismatch", () => validateClearance(change(clearance, "phase_id", "P02"))],
   ["changed manifest hash", () => validateClearance(change(clearance, "manifest.sha256", "f".repeat(64)))],
   ["changed manifest revision", () => validateClearance(change(clearance, "manifest.revision", 1))],
   ["changed lease", () => validateClearance(change(clearance, "lease.sequence", 3), { expected: clearance })],
@@ -141,6 +151,8 @@ const negativeCases: [string, () => void][] = [
   ["duplicated clearance baseline", () => validateClearance(change(clearance, "baseline_detected.6", clone((clearance.baseline_detected as Json[])[0])))],
   ["substituted clearance baseline owner", () => validateClearance(change(clearance, "baseline_detected.0.owning_correction_phase", "P10"))],
   ["reordered clearance baselines", () => validateClearance(change(clearance, "baseline_detected", [...(clearance.baseline_detected as Json[])].reverse()))],
+  ["P06 nonempty baseline policy", () => validateClearancePhasePolicy("P06", (manifest.baseline_detected as RecordJson[]), { scope: "product_phase", product_approved: true })],
+  ["P56 nonempty baseline policy", () => validateClearancePhasePolicy("P56", (manifest.baseline_detected as RecordJson[]), { scope: "integration_release", product_approved: true })],
   ["evidence head/sha7 mismatch", () => validateEvidence(change(evidence, "sha7", "2222222"), { checkFiles: false })],
   ["evidence headed mode", () => validateEvidence(change(evidence, "browser.execution_mode", "headed"), { checkFiles: false })],
   ["incomplete prohibited vocabulary", () => validateEvidence(change(evidence, "redaction.prohibited", ["credentials"]), { checkFiles: false })],
@@ -174,7 +186,7 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v5 passed (${negativeCases.length} negative cases)`);
+console.log(`Gooseweb acceptance contract v6 passed (${negativeCases.length} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);
@@ -188,7 +200,7 @@ function validateReferencedEvidence(): void {
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(resolve(directory, "screenshots"), { recursive: true });
   const files: Record<string, string | Uint8Array> = {
-    "manifest.json": readFileSync(resolve(root, MANIFEST_PATH)),
+    "manifest.json": readFileSync(resolve(root, P01_MANIFEST_PATH)),
     "environment.json": JSON.stringify({ phase_id: evidence.phase_id, attempt: evidence.attempt, base_sha: evidence.base_sha, reviewed_range: evidence.reviewed_range, candidate_head_sha: evidence.candidate_head_sha, candidate_tree_sha: evidence.candidate_tree_sha, served_head_sha: evidence.served_head_sha, served_tree_sha: evidence.served_tree_sha, clean_tree: evidence.clean_tree, hot_reload: evidence.hot_reload, lease: evidence.lease, stack: evidence.stack, review: evidence.review, plan_sha256: APPROVED_PLAN_SHA256, manifest_sha256: (evidence.manifest as RecordJson).sha256, browser_session: (evidence.browser as RecordJson).session_name, browser_execution_mode: (evidence.browser as RecordJson).execution_mode, chromium_binary: (evidence.browser as RecordJson).chromium_binary, chromium_version: (evidence.browser as RecordJson).chromium_version, profile_policy: (evidence.browser as RecordJson).profile_policy, redaction: "omitted" }),
     "console.json": JSON.stringify(consoleCapture),
     "network.json": JSON.stringify(networkCapture),

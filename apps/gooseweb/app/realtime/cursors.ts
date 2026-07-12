@@ -134,6 +134,45 @@ export function shouldApplyCursor(
   return nextSource.sourceSeq > currentSource.sourceSeq;
 }
 
+export function shouldApplyCursorVector(
+  current: CursorState,
+  nextGatewaySeq: bigint,
+  nextSources: readonly SourceCursorState[],
+  allowEqualSources = false
+): boolean {
+  if (nextGatewaySeq > 0n && nextGatewaySeq <= current.gatewaySeq) {
+    return false;
+  }
+  if (!isValidCursorVector(nextSources)) return false;
+  for (const source of nextSources) {
+    const existing = current.sourceCursors[source.sourceId];
+    if (
+      existing?.sourceEpoch === source.sourceEpoch &&
+      (source.sourceSeq < existing.sourceSeq ||
+        (!allowEqualSources && source.sourceSeq === existing.sourceSeq))
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function isValidCursorVector(nextSources: readonly SourceCursorState[]): boolean {
+  const sourceIds = new Set<string>();
+  for (const source of nextSources) {
+    if (
+      !source.sourceId ||
+      !source.sourceEpoch ||
+      source.sourceSeq === 0n ||
+      sourceIds.has(source.sourceId)
+    ) {
+      return false;
+    }
+    sourceIds.add(source.sourceId);
+  }
+  return true;
+}
+
 export function mergeCursor(
   current: CursorState,
   nextGatewaySeq: bigint,
@@ -148,6 +187,21 @@ export function mergeCursor(
           [nextSource.sourceId]: nextSource
         }
       : current.sourceCursors
+  };
+}
+
+export function mergeCursorVector(
+  current: CursorState,
+  nextGatewaySeq: bigint,
+  nextSources: readonly SourceCursorState[]
+): CursorState {
+  const sourceCursors = { ...current.sourceCursors };
+  for (const source of nextSources) {
+    sourceCursors[source.sourceId] = source;
+  }
+  return {
+    gatewaySeq: nextGatewaySeq > current.gatewaySeq ? nextGatewaySeq : current.gatewaySeq,
+    sourceCursors
   };
 }
 

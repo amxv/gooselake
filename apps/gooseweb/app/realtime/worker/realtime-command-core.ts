@@ -10,10 +10,11 @@ import {
 import { realtimeUrlWithTicket } from "../config";
 import {
   emptyCursorState,
+  isValidCursorVector,
   loadCursorState,
-  mergeCursor,
+  mergeCursorVector,
   persistCursorState,
-  shouldApplyCursor
+  shouldApplyCursorVector
 } from "../cursors";
 import { decodePatch, decodeSnapshot, type EntityPatch } from "../protocol/entities";
 import type {
@@ -43,6 +44,9 @@ export class RealtimeWorkerCore {
   private cursor: CursorState = emptyCursorState;
   private connectionId: string | undefined;
   private heartbeatIntervalMs = HEARTBEAT_FALLBACK_MS;
+  private readonly appliedViewMessageIds = new Set<string>();
+  private readonly appliedViewMessageOrder: string[] = [];
+  private cursorPersistQueue = Promise.resolve();
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private subscriptions: Record<string, SubscriptionState> = {};
   private pendingCommands: Record<string, PendingCommandState> = {};
@@ -359,8 +363,7 @@ export class RealtimeWorkerCore {
 
   private handleEntityPatch(patch: EntityPatch): void {
     this.emitState({
-      entities: patch.entities,
-      entityMutations: patch.entityMutations
+      entityOperations: patch.entityOperations
     });
   }
 
@@ -432,22 +435,53 @@ export class RealtimeWorkerCore {
   }
 
   private applyEnvelopeCursor(envelope: RealtimeEnvelope): boolean {
-    const source = sourceCursorFromEnvelope(envelope);
-    if (!shouldApplyCursor(this.cursor, envelope.gatewaySeq, source)) {
-      if (
-        !source &&
-        (envelope.messageKind === MessageKind.PATCH ||
-          envelope.messageKind === MessageKind.SNAPSHOT)
-      ) {
-        return true;
-      }
+    const isSnapshot = envelope.messageKind === MessageKind.SNAPSHOT;
+    const isViewFrame = isSnapshot || envelope.messageKind === MessageKind.PATCH;
+    if (
+      isViewFrame &&
+      envelope.messageId &&
+      this.appliedViewMessageIds.has(envelope.messageId)
+    ) {
+      return false;
+    }
+    const sources = sourceCursorsFromEnvelope(envelope);
+    if (!isValidCursorVector(sources)) {
+      this.failProtocolFrame("cursor vector contains invalid or duplicate source authority");
+      return false;
+    }
+    if (!shouldApplyCursorVector(
+      this.cursor,
+      isSnapshot ? 0n : envelope.gatewaySeq,
+      sources,
+      isSnapshot
+    )) {
       return false;
     }
 
-    this.cursor = mergeCursor(this.cursor, envelope.gatewaySeq, source);
-    void persistCursorState(this.cursor);
+    this.cursor = mergeCursorVector(this.cursor, envelope.gatewaySeq, sources);
+    const cursorToPersist = this.cursor;
+    this.cursorPersistQueue = this.cursorPersistQueue
+      .then(() => persistCursorState(cursorToPersist))
+      .catch((error) => {
+        this.emitError(
+          error instanceof Error ? error.message : "Failed to persist realtime cursor",
+          true
+        );
+      });
     this.emitState({ cursor: this.cursor });
+    if (isViewFrame && envelope.messageId) {
+      this.rememberViewMessage(envelope.messageId);
+    }
     return true;
+  }
+
+  private rememberViewMessage(messageId: string): void {
+    this.appliedViewMessageIds.add(messageId);
+    this.appliedViewMessageOrder.push(messageId);
+    if (this.appliedViewMessageOrder.length > 2_048) {
+      const expired = this.appliedViewMessageOrder.shift();
+      if (expired) this.appliedViewMessageIds.delete(expired);
+    }
   }
 
   private startHeartbeat(): void {
@@ -503,24 +537,32 @@ export class RealtimeWorkerCore {
 
 type PendingCommandInput = Parameters<typeof makeCommand>[0];
 
-function sourceCursorFromEnvelope(
+function sourceCursorsFromEnvelope(
   envelope: RealtimeEnvelope
-): SourceCursorState | undefined {
+): SourceCursorState[] {
   const nested = envelope.payload.case === "snapshot" || envelope.payload.case === "patch"
-    ? envelope.payload.value.cursor?.sources[0]
+    ? envelope.payload.value.cursor?.sources
     : undefined;
-  const sourceId = nested?.sourceId || envelope.sourceId;
-  const sourceSeq = nested?.sourceSeq || envelope.sourceSeq;
-  const sourceEpoch = nested?.sourceEpoch || envelope.sourceEpoch;
-  if (!sourceId || sourceSeq === 0n) {
-    return undefined;
+  if (nested?.length) {
+    return nested.map((source) => ({
+      sourceId: source.sourceId,
+      sourceEpoch: source.sourceEpoch,
+      sourceSeq: source.sourceSeq
+    }));
   }
-
-  return {
-    sourceId,
-    sourceEpoch,
-    sourceSeq
-  };
+  if (
+    (envelope.payload.case === "snapshot" || envelope.payload.case === "patch") &&
+    envelope.payload.value.schemaVersion > 0
+  ) {
+    return [];
+  }
+  return envelope.sourceId && envelope.sourceSeq > 0n
+    ? [{
+        sourceId: envelope.sourceId,
+        sourceEpoch: envelope.sourceEpoch,
+        sourceSeq: envelope.sourceSeq
+      }]
+    : [];
 }
 
 function commandIdFromPayload(envelope: RealtimeEnvelope): string {
@@ -591,8 +633,8 @@ function mergeSnapshotPatch(
     staleSources: next.staleSources
       ? { ...current.staleSources, ...next.staleSources }
       : current.staleSources,
-    entityMutations: next.entityMutations
-      ? [...(current.entityMutations ?? []), ...next.entityMutations]
-      : current.entityMutations
+    entityOperations: next.entityOperations
+      ? [...(current.entityOperations ?? []), ...next.entityOperations]
+      : current.entityOperations
   };
 }

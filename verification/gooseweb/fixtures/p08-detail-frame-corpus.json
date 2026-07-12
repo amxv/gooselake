@@ -1,13 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "provenance": "Frames named ts-* are re-encoded and byte-compared by the TypeScript test; frames named rust-* are re-encoded and byte-compared by the Rust test.",
   "frames": [
-    {
-      "name": "session_detail_snapshot_replace",
-      "base64": "CAESG3AwOC1zZXNzaW9uLWRldGFpbC1zbmFwc2hvdBgIIAIoKaoC6AEKDnNlc3Npb25fZGV0YWlsEhkIKRIVCghzb3VyY2UtMRIHZXBvY2gtMRgRGpYBeyJzb3VyY2VfaWQiOiJzb3VyY2UtMSIsInNlc3Npb24iOnsiaWQiOiJzZXNzaW9uLTEiLCJwcm92aWRlciI6ImNvZGV4Iiwic3RhdHVzIjoicmVhZHkifSwidHJhbnNjcmlwdCI6W3sicm9sZSI6ImFzc2lzdGFudCIsInRleHQiOiJyZWxvYWRlZCBhbnN3ZXIifV19IAEoATIeCg9zZXNzaW9uX2RldGFpbHMSCXNlc3Npb24tMRgB",
-      "view_kind": "session_detail",
-      "source_id": "source-1",
-      "source_seq": 17,
-      "entity_id": "session-1"
-    }
+    { "name": "session_replace_multi_source", "producer": "typescript", "base64": "CAESEnRzLXNlc3Npb24tcmVwbGFjZRgIIAKqAq4CCg5zZXNzaW9uX2RldGFpbBIuEhUKCHNvdXJjZS0xEgdlcG9jaC0xGBESFQoIc291cmNlLTISB2Vwb2NoLTIYCRrHAXsic291cmNlX2lkIjoic291cmNlLTEiLCJzZXNzaW9uIjp7ImlkIjoic2Vzc2lvbi0xIiwicHJvdmlkZXIiOiJjb2RleCIsInN0YXR1cyI6InJlYWR5In0sInRyYW5zY3JpcHQiOlt7InJvbGUiOiJhc3Npc3RhbnQiLCJ0ZXh0IjoicmVsb2FkZWQgYW5zd2VyIn1dLCJhcHBlbmRlZF90ZXh0IjoiIiwibGF0ZXN0X2FjdGl2aXR5X3VuaXhfbXMiOjIwMH0gASgBMh4KD3Nlc3Npb25fZGV0YWlscxIJc2Vzc2lvbi0xGAE=" },
+    { "name": "team_replace", "producer": "rust", "base64": "CAESEXJ1c3QtdGVhbS1yZXBsYWNlGAkgArIC2wEKDnRlYW1fd29ya3NwYWNlEggaBnRlYW0tMRoXEhUKCHNvdXJjZS0xEgdlcG9jaC0xGBIihAF7InNvdXJjZV9pZCI6InNvdXJjZS0xIiwidGVhbSI6eyJpZCI6InRlYW0tMSIsIm5hbWUiOiJUZWFtIiwibGVhZF9hZ2VudF9pZCI6InNlc3Npb24tMSJ9LCJtZW1iZXJzIjpbXSwibWVzc2FnZXMiOltdLCJkZWxpdmVyaWVzIjpbXX0oATABOhsKD3RlYW1fd29ya3NwYWNlcxIGdGVhbS0xGAE=" },
+    { "name": "session_remove", "producer": "typescript", "base64": "CAESEXRzLXNlc3Npb24tcmVtb3ZlGAkgArICYAoOc2Vzc2lvbl9kZXRhaWwSCxoJc2Vzc2lvbi0xGhcSFQoIc291cmNlLTESB2Vwb2NoLTEYEyIEbnVsbCgBMAM6HgoPc2Vzc2lvbl9kZXRhaWxzEglzZXNzaW9uLTEYAQ==" },
+    { "name": "session_upsert", "producer": "rust", "base64": "CAESE3J1c3Qtc2Vzc2lvbi11cHNlcnQYCSACsgKkAgoOc2Vzc2lvbl9kZXRhaWwSCxoJc2Vzc2lvbi0xGhcSFQoIc291cmNlLTESB2Vwb2NoLTEYFCLHAXsic291cmNlX2lkIjoic291cmNlLTEiLCJzZXNzaW9uIjp7ImlkIjoic2Vzc2lvbi0xIiwicHJvdmlkZXIiOiJjb2RleCIsInN0YXR1cyI6InJlYWR5In0sInRyYW5zY3JpcHQiOlt7InJvbGUiOiJhc3Npc3RhbnQiLCJ0ZXh0IjoicmVsb2FkZWQgYW5zd2VyIn1dLCJhcHBlbmRlZF90ZXh0IjoiIiwibGF0ZXN0X2FjdGl2aXR5X3VuaXhfbXMiOjIwMH0oATACOh4KD3Nlc3Npb25fZGV0YWlscxIJc2Vzc2lvbi0xGAE=" },
+    { "name": "version_skew", "producer": "typescript", "base64": "CAESD3RzLXZlcnNpb24tc2tldxgIIAKqAv4BCg5zZXNzaW9uX2RldGFpbBrHAXsic291cmNlX2lkIjoic291cmNlLTEiLCJzZXNzaW9uIjp7ImlkIjoic2Vzc2lvbi0xIiwicHJvdmlkZXIiOiJjb2RleCIsInN0YXR1cyI6InJlYWR5In0sInRyYW5zY3JpcHQiOlt7InJvbGUiOiJhc3Npc3RhbnQiLCJ0ZXh0IjoicmVsb2FkZWQgYW5zd2VyIn1dLCJhcHBlbmRlZF90ZXh0IjoiIiwibGF0ZXN0X2FjdGl2aXR5X3VuaXhfbXMiOjIwMH0gAigBMh4KD3Nlc3Npb25fZGV0YWlscxIJc2Vzc2lvbi0xGAE=" }
   ]
 }

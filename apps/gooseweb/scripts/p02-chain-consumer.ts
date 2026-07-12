@@ -49,7 +49,10 @@ const snapshot = getGoosewebSnapshot();
 const detail = snapshot.entities.sessionDetails["p02-session-001"];
 assert.ok(detail, "actual Worker/store path must materialize the source session detail");
 assert.equal(detail.appendedText, "P02 deterministic terminal");
-assert.equal(posted.some((message) => message.type === "state" && Boolean(message.patch.entities?.sessionDetails)), true);
+assert.equal(posted.some((message) =>
+  message.type === "state" &&
+  message.patch.entityOperations?.some((operation) => operation.domain === "sessionDetails")
+), true);
 const output = {
   source_id: envelope.sourceId || "p02-source",
   session_id: detail.sessionId,

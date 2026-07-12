@@ -10,6 +10,9 @@ use super::state::{
 };
 use super::MaterializedState;
 
+pub const MAX_TEAM_MESSAGE_LIMIT: usize = 100;
+pub const MAX_TEAM_DELIVERY_LIMIT: usize = 1_000;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoardSubscription {
     pub offset: usize,
@@ -195,13 +198,35 @@ impl MaterializedState {
             .cloned()
             .unwrap_or_default();
         messages.sort_by(|left, right| right.created_at.cmp(&left.created_at));
-        messages.truncate(subscription.message_limit.max(1));
+        messages.truncate(subscription.message_limit.clamp(1, MAX_TEAM_MESSAGE_LIMIT));
         messages.reverse();
-        let deliveries = self
+        let all_deliveries = self
             .deliveries_by_team
             .get(&subscription.team_id)
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default();
+        while messages
+            .iter()
+            .map(|message| {
+                all_deliveries
+                    .iter()
+                    .filter(|delivery| delivery.message_id == message.id)
+                    .count()
+            })
+            .sum::<usize>()
+            > MAX_TEAM_DELIVERY_LIMIT
+        {
+            messages.remove(0);
+        }
+        let message_ids = messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let deliveries = all_deliveries
+            .iter()
+            .filter(|delivery| message_ids.contains(delivery.message_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
         Some(TeamWorkspaceView {
             source_id: self.source_id.clone(),
             team: team.clone(),

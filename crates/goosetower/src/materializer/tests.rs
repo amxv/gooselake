@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use runtime_core::{
     ApprovalRecord, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, SessionRecord,
-    TeamMemberRecord, TeamRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamRecord,
 };
 use serde_json::json;
 
@@ -12,6 +12,7 @@ use crate::materializer::{
     snapshot_cross_source_board, ApprovalInboxSubscription, BoardSubscription,
     CoalescingPatchBuffer, LedgerSubscription, MaterializedPatchKind, MaterializedState,
     SelectedSessionSubscription, SelectedTeamSubscription, SessionDetailView, TeamWorkspaceView,
+    MAX_TEAM_DELIVERY_LIMIT, MAX_TEAM_MESSAGE_LIMIT,
 };
 use crate::runtime::{events::SourceEvent, SourceHealthState};
 
@@ -542,6 +543,70 @@ fn snapshot_and_patch_detail_bodies_have_identical_typed_shapes() {
     let decoded_team_patch: TeamWorkspaceView =
         serde_json::from_value(team_patch.body).expect("typed team patch");
     assert_eq!(decoded_team_patch, team_snapshot);
+}
+
+#[test]
+fn team_workspace_clamps_messages_and_filters_deliveries_to_the_window() {
+    let mut state = MaterializedState::new("local", "epoch-1");
+    state.upsert_team(team_record("team_1"));
+    for index in 0..150 {
+        let message_id = format!("message_{index:03}");
+        state.upsert_message(TeamMessageRecord {
+            id: message_id.clone(),
+            team_id: "team_1".to_string(),
+            scope: "broadcast".to_string(),
+            sender_agent_id: "sess_1".to_string(),
+            recipient_agent_ids: json!([]),
+            input: json!([]),
+            image_paths: json!([]),
+            priority: "normal".to_string(),
+            policy: "non_interrupting".to_string(),
+            correlation_id: None,
+            reply_to_message_id: None,
+            idempotency_key: None,
+            created_at: index,
+        });
+        state.upsert_delivery(TeamDeliveryRecord {
+            id: format!("delivery_{index:03}"),
+            message_id,
+            team_id: "team_1".to_string(),
+            recipient_agent_id: "sess_2".to_string(),
+            provider: "codex".to_string(),
+            status: "injected".to_string(),
+            effective_policy: None,
+            injection_strategy: None,
+            injected_turn_id: None,
+            last_error_code: None,
+            last_error_message: None,
+            created_at: index,
+            updated_at: index,
+        });
+    }
+
+    for requested in [0, usize::MAX] {
+        let workspace = state
+            .snapshot_team(&SelectedTeamSubscription {
+                team_id: "team_1".to_string(),
+                message_limit: requested,
+            })
+            .expect("bounded team workspace");
+        assert!(!workspace.messages.is_empty());
+        assert!(workspace.messages.len() <= MAX_TEAM_MESSAGE_LIMIT);
+        assert!(workspace.deliveries.len() <= MAX_TEAM_DELIVERY_LIMIT);
+        let message_ids = workspace
+            .messages
+            .iter()
+            .map(|message| message.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(workspace
+            .deliveries
+            .iter()
+            .all(|delivery| message_ids.contains(delivery.message_id.as_str())));
+        assert!(workspace.messages.iter().all(|message| workspace
+            .deliveries
+            .iter()
+            .any(|delivery| delivery.message_id == message.id)));
+    }
 }
 
 fn session_record(id: &str) -> SessionRecord {

@@ -51,6 +51,10 @@ export type EntityMutation = {
   readonly authoritative: boolean;
 };
 
+export type EntityOperation = EntityMutation & {
+  readonly payload: Readonly<Record<string, unknown>>;
+};
+
 export type SessionTranscriptEntry = {
   readonly id: string;
   readonly sessionId: string;
@@ -216,5 +220,5 @@ export type WorkerOutbound =
 
 export type GoosewebStorePatch = Partial<Omit<GoosewebSnapshot, "entities">> & {
   readonly entities?: NormalizedEntityPatch;
-  readonly entityMutations?: readonly EntityMutation[];
+  readonly entityOperations?: readonly EntityOperation[];
 };

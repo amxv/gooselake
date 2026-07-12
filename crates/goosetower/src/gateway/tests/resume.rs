@@ -20,6 +20,53 @@ fn patch_frames_use_versioned_operations_coverage_and_nested_cursor() {
 }
 
 #[test]
+fn selected_team_message_limits_are_clamped_for_all_filter_inputs() {
+    for (raw, expected) in [
+        ("0", 1usize),
+        ("not-a-number", 100usize),
+        (
+            "18446744073709551615",
+            crate::materializer::MAX_TEAM_MESSAGE_LIMIT,
+        ),
+    ] {
+        let subscription = Subscription::from_proto(&Subscribe {
+            subscription_id: format!("team-{raw}"),
+            view_kind: "team_workspace".to_string(),
+            filters: HashMap::from([
+                ("team_id".to_string(), "team_1".to_string()),
+                ("message_limit".to_string(), raw.to_string()),
+            ]),
+        })
+        .expect("bounded team subscription");
+        let Subscription::Team(team) = subscription else {
+            panic!("expected team subscription");
+        };
+        assert_eq!(team.message_limit, expected);
+    }
+}
+
+#[test]
+fn full_detail_patch_frames_are_scoped_replacements() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    let mut state = MaterializedState::new("local", "epoch-1");
+    state.upsert_session(session_record());
+    let patch = state
+        .session_patches("session_1", None)
+        .into_iter()
+        .find(|patch| patch.view_kind == "session_detail")
+        .expect("session detail patch");
+    let envelope = gateway.patch_envelope(patch);
+    let Some(Payload::Patch(patch)) = envelope.payload else {
+        panic!("expected patch frame");
+    };
+    assert_eq!(patch.operation, ViewOperation::Replace as i32);
+    assert_eq!(
+        patch.coverage.expect("coverage").entity_ids,
+        vec!["session_1"]
+    );
+}
+
+#[test]
 fn rust_decodes_shared_typescript_detail_frame_corpus() {
     let corpus: Value = serde_json::from_str(include_str!(
         "../../../../../verification/gooseweb/fixtures/p08-detail-frame-corpus.json"
@@ -45,6 +92,79 @@ fn rust_decodes_shared_typescript_detail_frame_corpus() {
         snapshot.coverage.expect("coverage").entity_ids,
         vec!["session-1"]
     );
+
+    let coverage = |domain: &str, entity_id: &str| ViewCoverage {
+        domains: vec![domain.to_string()],
+        entity_ids: vec![entity_id.to_string()],
+        authoritative: true,
+    };
+    let cursor = |source_seq| CursorVector {
+        gateway_seq: 0,
+        sources: vec![SourceCursor {
+            source_id: "source-1".to_string(),
+            source_epoch: "epoch-1".to_string(),
+            source_seq,
+        }],
+    };
+    let rust_frames = [
+        RealtimeEnvelope {
+            protocol_version: 1,
+            message_id: "rust-team-replace".to_string(),
+            message_kind: MessageKind::Patch as i32,
+            lane: Lane::State as i32,
+            payload: Some(Payload::Patch(Patch {
+                view_kind: "team_workspace".to_string(),
+                entity: Some(EntityRef {
+                    entity_id: "team-1".to_string(),
+                    ..EntityRef::default()
+                }),
+                cursor: Some(cursor(18)),
+                body: br#"{"source_id":"source-1","team":{"id":"team-1","name":"Team","lead_agent_id":"session-1"},"members":[],"messages":[],"deliveries":[]}"#.to_vec().into(),
+                schema_version: 1,
+                operation: ViewOperation::Replace as i32,
+                coverage: Some(coverage("team_workspaces", "team-1")),
+            })),
+            ..RealtimeEnvelope::default()
+        },
+        RealtimeEnvelope {
+            protocol_version: 1,
+            message_id: "rust-session-upsert".to_string(),
+            message_kind: MessageKind::Patch as i32,
+            lane: Lane::State as i32,
+            payload: Some(Payload::Patch(Patch {
+                view_kind: "session_detail".to_string(),
+                entity: Some(EntityRef {
+                    entity_id: "session-1".to_string(),
+                    ..EntityRef::default()
+                }),
+                cursor: Some(cursor(20)),
+                body: br#"{"source_id":"source-1","session":{"id":"session-1","provider":"codex","status":"ready"},"transcript":[{"role":"assistant","text":"reloaded answer"}],"appended_text":"","latest_activity_unix_ms":200}"#.to_vec().into(),
+                schema_version: 1,
+                operation: ViewOperation::Upsert as i32,
+                coverage: Some(coverage("session_details", "session-1")),
+            })),
+            ..RealtimeEnvelope::default()
+        },
+    ];
+    for frame in rust_frames {
+        let name = if frame.message_id == "rust-team-replace" {
+            "team_replace"
+        } else {
+            "session_upsert"
+        };
+        let fixture = corpus["frames"]
+            .as_array()
+            .expect("corpus frames")
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .expect("Rust-produced fixture");
+        assert_eq!(fixture["producer"], "rust");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.encode(frame.encode_to_vec()),
+            fixture["base64"].as_str().expect("fixture base64"),
+            "Rust encoder drift for {name}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -57,16 +177,17 @@ async fn legacy_detail_subscriptions_publish_canonical_replacement_snapshots() {
         .replace_materialized_state("local".to_string(), state)
         .await;
 
-    let envelope = gateway
-        .snapshot_for_subscription(Subscribe {
-            subscription_id: "selected-session".to_string(),
-            view_kind: "session".to_string(),
-            filters: HashMap::from([
-                ("source_id".to_string(), "local".to_string()),
-                ("session_id".to_string(), "session_1".to_string()),
-            ]),
-        })
-        .await;
+    let subscribe = || Subscribe {
+        subscription_id: "selected-session".to_string(),
+        view_kind: "session".to_string(),
+        filters: HashMap::from([
+            ("source_id".to_string(), "local".to_string()),
+            ("session_id".to_string(), "session_1".to_string()),
+        ]),
+    };
+    let envelope = gateway.snapshot_for_subscription(subscribe()).await;
+    let second = gateway.snapshot_for_subscription(subscribe()).await;
+    assert_ne!(envelope.message_id, second.message_id);
     let Some(Payload::Snapshot(snapshot)) = envelope.payload else {
         panic!("expected snapshot payload");
     };

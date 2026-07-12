@@ -39,10 +39,17 @@ impl GatewayState {
             MaterializedPatchKind::EntityRemove | MaterializedPatchKind::ListRemove => {
                 ViewOperation::Remove
             }
+            _ if matches!(
+                patch.view_kind.as_str(),
+                "session_detail" | "team_workspace"
+            ) =>
+            {
+                ViewOperation::Replace
+            }
             _ => ViewOperation::Upsert,
         };
         let coverage = view_coverage(&patch.view_kind, entity_id);
-        envelope_with_payload(
+        let mut envelope = envelope_with_payload(
             MessageKind::Patch,
             lane,
             Payload::Patch(Patch {
@@ -68,7 +75,13 @@ impl GatewayState {
                 operation: operation as i32,
                 coverage: Some(coverage),
             }),
-        )
+        );
+        envelope.message_id = format!(
+            "view_{}_{}",
+            now_ms(),
+            self.next_message_id.fetch_add(1, Ordering::Relaxed)
+        );
+        envelope
     }
 
     pub(super) async fn enqueue_patch(&self, conn: &mut ConnectionState, patch: MaterializedPatch) {

@@ -53,6 +53,39 @@ class FakeSocket {
 
 globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
 
+function snapshotEnvelope(input: {
+  messageId: string;
+  viewKind: string;
+  domain: string;
+  entityIds?: string[];
+  sources: Array<{ sourceId: string; sourceEpoch: string; sourceSeq: bigint }>;
+  body: Uint8Array;
+  gatewaySeq?: bigint;
+}) {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1,
+    messageId: input.messageId,
+    messageKind: MessageKind.SNAPSHOT,
+    lane: Lane.STATE,
+    gatewaySeq: input.gatewaySeq ?? 0n,
+    payload: {
+      case: "snapshot",
+      value: create(SnapshotSchema, {
+        viewKind: input.viewKind,
+        schemaVersion: 1,
+        operation: ViewOperation.REPLACE,
+        cursor: { sources: input.sources },
+        coverage: create(ViewCoverageSchema, {
+          domains: [input.domain],
+          entityIds: input.entityIds ?? [],
+          authoritative: true
+        }),
+        body: input.body
+      })
+    }
+  });
+}
+
 const core = new RealtimeWorkerCore((message) => posted.push(message));
 await core.handleMessage({
   type: "connect",
@@ -139,34 +172,16 @@ assert.equal(
   true
 );
 
-const nestedCursorSnapshot = create(RealtimeEnvelopeSchema, {
-  protocolVersion: 1,
+const nestedCursorSnapshot = snapshotEnvelope({
   messageId: "nested-cursor-snapshot",
-  messageKind: MessageKind.SNAPSHOT,
-  lane: Lane.STATE,
   gatewaySeq: 41n,
-  payload: {
-    case: "snapshot",
-    value: create(SnapshotSchema, {
-      viewKind: "session_detail",
-      schemaVersion: 1,
-      operation: ViewOperation.REPLACE,
-      cursor: {
-        gatewaySeq: 41n,
-        sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 17n }]
-      },
-      coverage: create(ViewCoverageSchema, {
-        domains: ["session_details"],
-        entityIds: ["session-1"],
-        authoritative: true
-      }),
-      body: new TextEncoder().encode(JSON.stringify({
-        source_id: "source-1",
-        session: { id: "session-1", provider: "codex", status: "ready" },
-        transcript: [{ role: "assistant", text: "reloaded answer" }]
-      }))
-    })
-  }
+  viewKind: "board",
+  domain: "fleet_rows",
+  sources: [
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 17n },
+    { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n }
+  ],
+  body: new TextEncoder().encode(JSON.stringify({ rows: [] }))
 });
 sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, nestedCursorSnapshot));
 await waitForPatchFlush();
@@ -174,6 +189,102 @@ assert.equal(posted.some((message) =>
   message.type === "state" &&
   message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 17n
 ), true, "Worker must consume the canonical nested production cursor");
+assert.equal(posted.some((message) =>
+  message.type === "state" &&
+  message.patch.cursor?.sourceCursors["source-2"]?.sourceSeq === 9n
+), true, "Worker must atomically retain every source cursor");
+
+const selectedBody = new TextEncoder().encode(JSON.stringify({
+  source_id: "source-1",
+  session: { id: "session-1", provider: "codex", status: "ready" },
+  transcript: [{ role: "assistant", text: "reloaded answer" }],
+  appended_text: "",
+  latest_activity_unix_ms: 200
+}));
+const selectedAtEqualAuthority = snapshotEnvelope({
+  messageId: "selected-at-equal-authority",
+  viewKind: "session_detail",
+  domain: "session_details",
+  entityIds: ["session-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 17n }],
+  body: selectedBody
+});
+const detailOperationsBefore = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, selectedAtEqualAuthority));
+await waitForPatchFlush();
+const detailOperationsAfter = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+assert.equal(detailOperationsAfter, detailOperationsBefore + 1,
+  "equal source authority must not suppress a new scoped snapshot");
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, selectedAtEqualAuthority));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, detailOperationsAfter, "duplicate publication identity must be idempotent");
+
+const staleAndFresh = snapshotEnvelope({
+  messageId: "stale-and-fresh-vector",
+  viewKind: "board",
+  domain: "fleet_rows",
+  sources: [
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 16n },
+    { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 10n }
+  ],
+  body: new TextEncoder().encode(JSON.stringify({ rows: [] }))
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, staleAndFresh));
+await waitForPatchFlush();
+assert.equal(posted.some((message) =>
+  message.type === "state" &&
+  message.patch.cursor?.sourceCursors["source-2"]?.sourceSeq === 10n
+), false, "a mixed stale/fresh vector must not advance partially");
+
+const reversedVector = snapshotEnvelope({
+  messageId: "reversed-vector",
+  viewKind: "board",
+  domain: "fleet_rows",
+  sources: [
+    { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n },
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 17n }
+  ],
+  body: new TextEncoder().encode(JSON.stringify({ rows: [] }))
+});
+const operationsBeforeReverse = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, reversedVector));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeReverse + 1, "cursor vector order must not affect applicability");
+
+const malformedAt18 = snapshotEnvelope({
+  messageId: "malformed-at-18",
+  viewKind: "session_detail",
+  domain: "session_details",
+  entityIds: ["session-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 18n }],
+  body: new TextEncoder().encode("{}")
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, malformedAt18));
+await waitForPatchFlush();
+const validAt18 = snapshotEnvelope({
+  messageId: "valid-at-18",
+  viewKind: "session_detail",
+  domain: "session_details",
+  entityIds: ["session-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 18n }],
+  body: selectedBody
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, validAt18));
+await waitForPatchFlush();
+assert.equal(posted.some((message) =>
+  message.type === "state" &&
+  message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 18n
+), true, "malformed detail must not advance the cursor before a valid same-authority frame");
 sockets[2]?.receive(new Uint8Array([0xff]));
 await waitForPatchFlush();
 assert.equal(posted.some((message) =>

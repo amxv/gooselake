@@ -480,7 +480,8 @@ impl Subscription {
             "teams" => Self::Teams,
             "team" | "team_workspace" | "team_stream" => Self::Team(SelectedTeamSubscription {
                 team_id: required_filter(filters, "team_id")?,
-                message_limit: parse_usize(filters.get("message_limit"), 100),
+                message_limit: parse_usize(filters.get("message_limit"), 100)
+                    .clamp(1, crate::materializer::MAX_TEAM_MESSAGE_LIMIT),
             }),
             "process_tail" => Self::ProcessTail(ProcessTailSubscription {
                 process_id: required_filter(filters, "process_id")?,
@@ -716,12 +717,13 @@ pub(super) fn snapshot_body(
                 })
                 .collect::<Vec<_>>()
         }),
-        "team" | "team_workspace" | "team_stream" => {
-            serde_json::to_value(state.snapshot_team(&SelectedTeamSubscription {
+        "team" | "team_workspace" | "team_stream" => serde_json::to_value(
+            state.snapshot_team(&SelectedTeamSubscription {
                 team_id: required_filter(filters, "team_id")?,
-                message_limit: parse_usize(filters.get("message_limit"), 100),
-            }))?
-        }
+                message_limit: parse_usize(filters.get("message_limit"), 100)
+                    .clamp(1, crate::materializer::MAX_TEAM_MESSAGE_LIMIT),
+            }),
+        )?,
         "process_tail" => {
             serde_json::to_value(state.snapshot_process_tail(&ProcessTailSubscription {
                 process_id: required_filter(filters, "process_id")?,

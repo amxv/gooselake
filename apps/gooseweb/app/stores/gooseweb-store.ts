@@ -3,7 +3,7 @@ import type {
   ConnectionState,
   GoosewebStorePatch,
   GoosewebSnapshot,
-  EntityMutation,
+  EntityOperation,
   NormalizedEntities,
   SessionDetailState,
   TeamWorkspaceState,
@@ -56,10 +56,9 @@ export function updateGoosewebStore(patch: GoosewebStorePatch): void {
   snapshot = {
     ...snapshot,
     ...patch,
-    entities: applyEntityMutations(
-      snapshot.entities,
-      patch.entities,
-      patch.entityMutations ?? []
+    entities: applyEntityOperations(
+      patch.entities ? mergeEntities(snapshot.entities, patch.entities) : snapshot.entities,
+      patch.entityOperations ?? []
     ),
     subscriptions: patch.subscriptions
       ? { ...snapshot.subscriptions, ...patch.subscriptions }
@@ -77,28 +76,31 @@ export function updateGoosewebStore(patch: GoosewebStorePatch): void {
   }
 }
 
-function applyEntityMutations(
+function applyEntityOperations(
   current: NormalizedEntities,
-  patch: GoosewebStorePatch["entities"],
-  mutations: readonly EntityMutation[]
+  operations: readonly EntityOperation[]
 ): NormalizedEntities {
-  let next = patch ? mergeEntities(current, patch) : current;
-  for (const mutation of mutations) {
-    if (mutation.operation === "upsert") {
+  let next = current;
+  for (const operation of operations) {
+    const existing = next[operation.domain] as Readonly<Record<string, unknown>>;
+    const incoming = operation.payload;
+    if (operation.operation === "upsert") {
+      next = {
+        ...next,
+        [operation.domain]: { ...existing, ...incoming }
+      } as NormalizedEntities;
       continue;
     }
-    const existing = next[mutation.domain] as Readonly<Record<string, unknown>>;
-    const incoming = (patch?.[mutation.domain] ?? {}) as Readonly<Record<string, unknown>>;
-    const domain = mutation.entityIds.length === 0
-      ? mutation.operation === "replace" ? { ...incoming } : {}
+    const domain = operation.entityIds.length === 0
+      ? operation.operation === "replace" ? { ...incoming } : {}
       : { ...existing };
-    for (const entityId of mutation.entityIds) {
+    for (const entityId of operation.entityIds) {
       delete domain[entityId];
-      if (mutation.operation === "replace" && entityId in incoming) {
+      if (operation.operation === "replace" && entityId in incoming) {
         domain[entityId] = incoming[entityId];
       }
     }
-    next = { ...next, [mutation.domain]: domain } as NormalizedEntities;
+    next = { ...next, [operation.domain]: domain } as NormalizedEntities;
   }
   return next;
 }

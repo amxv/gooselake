@@ -13,11 +13,15 @@ import {
   type Patch,
   type Snapshot
 } from "../../../src/gen/goosetower/v1/view_pb";
-import type { EntityDomain, EntityMutation, NormalizedEntityPatch } from "../types";
+import type {
+  EntityDomain,
+  EntityMutation,
+  EntityOperation,
+  NormalizedEntityPatch
+} from "../types";
 
 export type EntityPatch = {
-  readonly entities: NormalizedEntityPatch;
-  readonly entityMutations: readonly EntityMutation[];
+  readonly entityOperations: readonly EntityOperation[];
 };
 
 type DecodedEntities = { readonly entities: NormalizedEntityPatch };
@@ -28,13 +32,14 @@ export function decodeSnapshot(snapshot: Snapshot): EntityPatch {
     throw new ProtocolDecodeError(`snapshot operation must be replace, received ${operation}`);
   }
   requireDeclaredCoverage(snapshot.schemaVersion, snapshot.coverage);
-  return withMutation(
+  return withOperation(
     decodeViewBody(snapshot.viewKind, snapshot.body),
     snapshot.viewKind,
     operation,
     snapshot.coverage?.domains,
     snapshot.coverage?.entityIds,
-    snapshot.coverage?.authoritative ?? snapshot.schemaVersion === 0
+    snapshot.coverage?.authoritative ?? snapshot.schemaVersion === 0,
+    undefined
   );
 }
 
@@ -44,17 +49,26 @@ export function decodePatch(patch: Patch): EntityPatch {
   const entityIds = patch.coverage?.entityIds.length
     ? patch.coverage.entityIds
     : patch.entity?.entityId ? [patch.entity.entityId] : [];
+  if (operation === "remove" && !isExplicitEmptyBody(patch.body)) {
+    throw new ProtocolDecodeError("remove frame must have an empty body");
+  }
   const decoded = operation === "remove"
     ? { entities: {} }
     : decodeViewBody(patch.viewKind, patch.body);
-  return withMutation(
+  return withOperation(
     decoded,
     patch.viewKind,
     operation,
     patch.coverage?.domains,
     entityIds,
-    patch.coverage?.authoritative ?? patch.schemaVersion === 0
+    patch.coverage?.authoritative ?? patch.schemaVersion === 0,
+    patch.entity?.entityId || undefined
   );
+}
+
+function isExplicitEmptyBody(body: Uint8Array): boolean {
+  const text = new TextDecoder().decode(body).trim();
+  return text === "" || text === "null";
 }
 
 function requireDeclaredCoverage(
@@ -95,36 +109,78 @@ function operationFromFrame(
   }
 }
 
-function withMutation(
+function withOperation(
   decoded: DecodedEntities,
   viewKind: string,
   operation: EntityMutation["operation"],
   declaredDomains: readonly string[] | undefined,
   entityIds: readonly string[] | undefined,
-  authoritative: boolean
+  authoritative: boolean,
+  entityRefId: string | undefined
 ): EntityPatch {
   // Ledger remains a presentation-only bounded compatibility view until its
   // normalized browser domain lands. It is deliberately named here so future
   // unknown kinds still fail closed instead of becoming empty state.
   if (viewKind === "ledger") {
-    return { entities: decoded.entities, entityMutations: [] };
+    return { entityOperations: [] };
   }
   const domain = domainForViewKind(viewKind);
   if (!domain) {
     throw new ProtocolDecodeError(`unknown view kind ${viewKind}`);
   }
-  if (declaredDomains?.length && !declaredDomains.includes(domainToWire(domain))) {
-    throw new ProtocolDecodeError(`coverage does not declare ${domainToWire(domain)}`);
+  const expectedWireDomain = domainToWire(domain);
+  const domains = declaredDomains ?? [];
+  if (
+    domains.length > 0 &&
+    (domains.length !== 1 || domains[0] !== expectedWireDomain)
+  ) {
+    throw new ProtocolDecodeError(`coverage must declare only ${expectedWireDomain}`);
+  }
+  const decodedDomains = Object.entries(decoded.entities)
+    .filter(([, entities]) => entities && Object.keys(entities).length > 0)
+    .map(([key]) => key);
+  if (decodedDomains.some((decodedDomain) => decodedDomain !== domain)) {
+    throw new ProtocolDecodeError(`body contains undeclared domain for ${viewKind}`);
+  }
+  const payload = (decoded.entities[domain] ?? {}) as Readonly<Record<string, unknown>>;
+  const payloadIds = Object.keys(payload);
+  const coveredIds = entityIds ?? [];
+  if (new Set(coveredIds).size !== coveredIds.length) {
+    throw new ProtocolDecodeError("coverage contains duplicate entity IDs");
+  }
+  const operationIds = coveredIds.length > 0
+    ? coveredIds
+    : domains.length === 0 ? payloadIds : [];
+  if (entityRefId && (operationIds.length !== 1 || operationIds[0] !== entityRefId)) {
+    throw new ProtocolDecodeError("patch entity reference disagrees with coverage");
+  }
+  if (operation === "remove") {
+    if (operationIds.length !== 1 || payloadIds.length !== 0) {
+      throw new ProtocolDecodeError("remove must cover exactly one entity and contain no body");
+    }
+  } else if (operationIds.length > 0) {
+    if (
+      operationIds.length !== payloadIds.length ||
+      operationIds.some((entityId) => !payloadIds.includes(entityId))
+    ) {
+      throw new ProtocolDecodeError("body entity IDs disagree with coverage");
+    }
+  } else if (isScopedDetailView(viewKind)) {
+    throw new ProtocolDecodeError("scoped detail frame lacks an entity ID");
   }
   return {
-    entities: decoded.entities,
-    entityMutations: [{
+    entityOperations: [{
       operation,
       domain,
-      entityIds: entityIds?.length ? entityIds : Object.keys(decoded.entities[domain] ?? {}),
-      authoritative
+      entityIds: operationIds,
+      authoritative,
+      payload
     }]
   };
+}
+
+function isScopedDetailView(viewKind: string): boolean {
+  return viewKind === "session_detail" || viewKind === "team_workspace" || viewKind === "team_stream";
 }
 
 function domainForViewKind(viewKind: string): EntityDomain | undefined {
@@ -275,19 +331,19 @@ function decodeJsonViewBody(
         : { entities: {} };
     }
     case "session_detail": {
+      validateSessionDetailBody(value);
       const detail = normalizeSessionDetail(value);
-      return detail
-        ? { entities: { sessionDetails: { [detail.sessionId]: detail } } }
-        : { entities: {} };
+      if (!detail) throw new ProtocolDecodeError("session_detail normalization failed");
+      return { entities: { sessionDetails: { [detail.sessionId]: detail } } };
     }
     case "team_workspace":
     case "team_stream": {
+      validateTeamWorkspaceBody(value);
       const workspace = normalizeTeamWorkspace(value);
-      const team = normalizeTeam(value);
+      if (!workspace) throw new ProtocolDecodeError("team_workspace normalization failed");
       return {
         entities: {
-          ...(team ? { teams: { [team.teamId]: team } } : {}),
-          ...(workspace ? { teamWorkspaces: { [workspace.teamId]: workspace } } : {})
+          teamWorkspaces: { [workspace.teamId]: workspace }
         }
       };
     }
@@ -306,6 +362,99 @@ function decodeJsonViewBody(
     default:
       throw new ProtocolDecodeError(`unknown JSON view kind ${viewKind}`);
   }
+}
+
+function validateSessionDetailBody(value: unknown): void {
+  const detail = strictRecord(value, "session_detail");
+  if ("error" in detail) {
+    throw new ProtocolDecodeError("session_detail body is an error object");
+  }
+  const session = strictRecord(detail.session, "session_detail.session");
+  requireString(session.id, "session_detail.session.id");
+  requireString(detail.source_id, "session_detail.source_id");
+  requireArray(detail.transcript, "session_detail.transcript", (item, index) => {
+    const row = strictRecord(item, `session_detail.transcript[${index}]`);
+    requireString(row.role, `session_detail.transcript[${index}].role`);
+    requireString(row.text, `session_detail.transcript[${index}].text`);
+  });
+  requireString(detail.appended_text, "session_detail.appended_text", true);
+  requireNumber(detail.latest_activity_unix_ms, "session_detail.latest_activity_unix_ms");
+}
+
+function validateTeamWorkspaceBody(value: unknown): void {
+  const workspace = strictRecord(value, "team_workspace");
+  if ("error" in workspace) {
+    throw new ProtocolDecodeError("team_workspace body is an error object");
+  }
+  const team = strictRecord(workspace.team, "team_workspace.team");
+  const teamId = requireString(team.id, "team_workspace.team.id");
+  requireString(workspace.source_id, "team_workspace.source_id");
+  requireArray(workspace.members, "team_workspace.members");
+  const messageIds = new Set<string>();
+  requireArray(workspace.messages, "team_workspace.messages", (item, index) => {
+    const message = strictRecord(item, `team_workspace.messages[${index}]`);
+    const messageId = requireString(message.id, `team_workspace.messages[${index}].id`);
+    if (messageIds.has(messageId)) {
+      throw new ProtocolDecodeError("team workspace contains duplicate message IDs");
+    }
+    messageIds.add(messageId);
+    if (requireString(message.team_id, `team_workspace.messages[${index}].team_id`) !== teamId) {
+      throw new ProtocolDecodeError("team message belongs to a different team");
+    }
+    requireArray(message.input, `team_workspace.messages[${index}].input`);
+  });
+  const deliveryIds = new Set<string>();
+  requireArray(workspace.deliveries, "team_workspace.deliveries", (item, index) => {
+    const delivery = strictRecord(item, `team_workspace.deliveries[${index}]`);
+    const deliveryId = requireString(delivery.id, `team_workspace.deliveries[${index}].id`);
+    if (deliveryIds.has(deliveryId)) {
+      throw new ProtocolDecodeError("team workspace contains duplicate delivery IDs");
+    }
+    deliveryIds.add(deliveryId);
+    const messageId = requireString(
+      delivery.message_id,
+      `team_workspace.deliveries[${index}].message_id`
+    );
+    if (!messageIds.has(messageId)) {
+      throw new ProtocolDecodeError("team delivery references a message outside coverage");
+    }
+    if (requireString(delivery.team_id, `team_workspace.deliveries[${index}].team_id`) !== teamId) {
+      throw new ProtocolDecodeError("team delivery belongs to a different team");
+    }
+  });
+}
+
+function strictRecord(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ProtocolDecodeError(`${field} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireString(value: unknown, field: string, allowEmpty = false): string {
+  if (typeof value !== "string" || (!allowEmpty && value.length === 0)) {
+    throw new ProtocolDecodeError(`${field} must be a string`);
+  }
+  return value;
+}
+
+function requireNumber(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new ProtocolDecodeError(`${field} must be a number`);
+  }
+  return value;
+}
+
+function requireArray(
+  value: unknown,
+  field: string,
+  validate?: (item: unknown, index: number) => void
+): unknown[] {
+  if (!Array.isArray(value)) {
+    throw new ProtocolDecodeError(`${field} must be an array`);
+  }
+  value.forEach((item, index) => validate?.(item, index));
+  return value;
 }
 
 function normalizeFleetRow(value: unknown) {

@@ -706,7 +706,7 @@ impl GatewayState {
             source_id.as_deref(),
             self.next_gateway_seq.load(Ordering::Relaxed),
         );
-        envelope_with_payload(
+        let mut envelope = envelope_with_payload(
             MessageKind::Snapshot,
             Lane::State,
             Payload::Snapshot(Snapshot {
@@ -720,7 +720,13 @@ impl GatewayState {
                     subscription_entity_id(canonical_view_kind, &subscribe.filters),
                 )),
             }),
-        )
+        );
+        envelope.message_id = format!(
+            "view_{}_{}",
+            now_ms(),
+            self.next_message_id.fetch_add(1, Ordering::Relaxed)
+        );
+        envelope
     }
 }
 

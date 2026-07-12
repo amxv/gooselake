@@ -90,6 +90,7 @@ pub struct GatewayState {
     #[cfg(any(test, feature = "p02-verification"))]
     next_frame_capture: AtomicU64,
     next_connection_id: AtomicU64,
+    next_message_id: AtomicU64,
     next_gateway_seq: AtomicU64,
     patches: broadcast::Sender<MaterializedPatch>,
     recoveries: broadcast::Sender<SourceRecoverySignal>,
@@ -127,6 +128,7 @@ impl GatewayState {
             #[cfg(any(test, feature = "p02-verification"))]
             next_frame_capture: AtomicU64::new(1),
             next_connection_id: AtomicU64::new(1),
+            next_message_id: AtomicU64::new(1),
             next_gateway_seq: AtomicU64::new(1),
             patches,
             recoveries,

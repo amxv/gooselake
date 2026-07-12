@@ -16,6 +16,7 @@ import {
   validateGitRecord,
   validateLedger,
   validateManifest,
+  validateManifestRegistry,
   validateReviewOutcome,
   type Json,
   type RecordJson
@@ -23,8 +24,12 @@ import {
 
 const root = resolve(import.meta.dir, "../../..");
 const P01_MANIFEST_PATH = "verification/gooseweb/manifests/p01-team-comms-live.json";
+const VALIDATOR_MANIFEST_PATH = "verification/gooseweb/validator/fixtures/manifests/validator-p01-empty.json";
+const ALTERNATE_MANIFEST_PATH = "verification/gooseweb/manifests/validator-alternate.json";
 const P01_BASE_SHA = "ca88bfe56719f69fe59151372e0d5aa76b2c92ab";
 const manifest = readJson(P01_MANIFEST_PATH);
+const validatorManifest = readJson(VALIDATOR_MANIFEST_PATH);
+const manifestRegistry = readJson("verification/gooseweb/manifest-registry.json");
 const ledger = readJson("verification/gooseweb/ledger/phase-state.json");
 const clearance = readJson("verification/gooseweb/validator/fixtures/valid-clearance.json");
 const evidence = readJson("verification/gooseweb/validator/fixtures/valid-evidence-run.json");
@@ -61,11 +66,13 @@ const networkCapture: RecordJson = {
 
 assert.equal(sha256("tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md"), APPROVED_PLAN_SHA256, "immutable amended plan changed");
 validateManifest(manifest);
+validateManifest(validatorManifest);
+validateManifestRegistry(manifestRegistry);
 const reusableP02Manifest = change(change(change(change(manifest, "manifest_id", "GW-P02-GENERIC-001"), "scenario.stable_scenario_id", "GW-P02-GENERIC-001"), "scenario.phase_id", "P02"), "baseline_detected", []);
 validateManifest(change(reusableP02Manifest, "scenario.product_clearance", "pending"));
-validateClearancePhasePolicy("P02", (manifest.baseline_detected as RecordJson[]), { scope: "verification_infrastructure_only", product_approved: false });
-validateClearancePhasePolicy("P06", [], { scope: "product_phase", product_approved: true });
-validateClearancePhasePolicy("P56", [], { scope: "integration_release", product_approved: true });
+validateClearancePhasePolicy("P02", (manifest.baseline_detected as RecordJson[]), { scope: "verification_infrastructure_only", product_approved: false }, "pending");
+validateClearancePhasePolicy("P06", [], { scope: "product_phase", product_approved: true }, "approved");
+validateClearancePhasePolicy("P56", [], { scope: "integration_release", product_approved: true }, "approved");
 const laterPhaseBase = "d7da340c94f4cb34692a122696717e72f357fac1";
 let laterPhaseEvidence = change(evidence, "phase_id", "P02");
 laterPhaseEvidence = change(laterPhaseEvidence, "lease.phase_id", "P02");
@@ -114,6 +121,15 @@ const negativeCases: [string, () => void][] = [
   ["manifest phase P00", () => validateManifest(change(manifest, "scenario.phase_id", "P00"))],
   ["stale manifest schema revision", () => validateManifest(change(manifest, "schema_revision", "gooseweb-acceptance-manifest/v3"))],
   ["future manifest schema revision", () => validateManifest(change(manifest, "schema_revision", "gooseweb-acceptance-manifest/v999"))],
+  ["duplicate active manifest phase", () => validateManifestRegistry(change(manifestRegistry, "active_manifests.1", clone((manifestRegistry.active_manifests as Json[])[0])))],
+  ["validator fixture is not an evidence manifest path", () => applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", change(clearance, "manifest.path", VALIDATOR_MANIFEST_PATH))],
+  ["same-phase manifest cannot replace active manifest", () => withAlternateManifest((path, hash) => {
+    let substituted = change(clearance, "manifest.path", path);
+    substituted = change(substituted, "manifest.revision", 1);
+    substituted = change(substituted, "manifest.sha256", hash);
+    substituted = change(substituted, "baseline_detected", []);
+    validateClearance(substituted, { verifyGit: false });
+  })],
   ["not applicable without reason", () => validateManifest(omit(manifest, "non_applicable.rollback.reason"))],
   ["changed clearance base", () => validateClearance(change(clearance, "base_sha", "a".repeat(40)), { expected: clearance })],
   ["changed reviewed range", () => validateClearance(change(clearance, "reviewed_range", `${P01_BASE_SHA}..${"a".repeat(40)}`), { expected: clearance })],
@@ -165,8 +181,13 @@ const negativeCases: [string, () => void][] = [
   ["duplicated clearance baseline", () => validateClearance(change(clearance, "baseline_detected.6", clone((clearance.baseline_detected as Json[])[0])))],
   ["substituted clearance baseline owner", () => validateClearance(change(clearance, "baseline_detected.0.owning_correction_phase", "P10"))],
   ["reordered clearance baselines", () => validateClearance(change(clearance, "baseline_detected", [...(clearance.baseline_detected as Json[])].reverse()))],
-  ["P06 nonempty baseline policy", () => validateClearancePhasePolicy("P06", (manifest.baseline_detected as RecordJson[]), { scope: "product_phase", product_approved: true })],
-  ["P56 nonempty baseline policy", () => validateClearancePhasePolicy("P56", (manifest.baseline_detected as RecordJson[]), { scope: "integration_release", product_approved: true })],
+  ["P01 approved manifest under infrastructure clearance", () => validateClearancePhasePolicy("P01", (manifest.baseline_detected as RecordJson[]), { scope: "verification_infrastructure_only", product_approved: false }, "approved")],
+  ["P06 nonempty baseline policy", () => validateClearancePhasePolicy("P06", (manifest.baseline_detected as RecordJson[]), { scope: "product_phase", product_approved: true }, "approved")],
+  ["P06 pending manifest product approval", () => validateClearancePhasePolicy("P06", [], { scope: "product_phase", product_approved: true }, "pending")],
+  ["P06 blocked manifest product approval", () => validateClearancePhasePolicy("P06", [], { scope: "product_phase", product_approved: true }, "blocked_expected_honest_failure")],
+  ["P56 nonempty baseline policy", () => validateClearancePhasePolicy("P56", (manifest.baseline_detected as RecordJson[]), { scope: "integration_release", product_approved: true }, "approved")],
+  ["P56 pending manifest product approval", () => validateClearancePhasePolicy("P56", [], { scope: "integration_release", product_approved: true }, "pending")],
+  ["P56 blocked manifest product approval", () => validateClearancePhasePolicy("P56", [], { scope: "integration_release", product_approved: true }, "blocked_expected_honest_failure")],
   ["evidence head/sha7 mismatch", () => validateEvidence(change(evidence, "sha7", "2222222"), { checkFiles: false })],
   ["evidence headed mode", () => validateEvidence(change(evidence, "browser.execution_mode", "headed"), { checkFiles: false })],
   ["incomplete prohibited vocabulary", () => validateEvidence(change(evidence, "redaction.prohibited", ["credentials"]), { checkFiles: false })],
@@ -200,10 +221,11 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v7 passed (${negativeCases.length} negative cases)`);
+console.log(`Gooseweb acceptance contract v8 passed (${negativeCases.length} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);
+  applySchemaFile("verification/gooseweb/schemas/manifest-registry.schema.json", manifestRegistry);
   applySchemaFile("verification/gooseweb/schemas/phase-state-ledger.schema.json", ledger);
   applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", clearance);
   applySchemaFile("verification/gooseweb/schemas/evidence-run.schema.json", evidence);
@@ -237,11 +259,13 @@ function validateReferencedEvidence(): void {
     const nonClearance = validNonClearance;
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));
     validateEvidence(rejectedEvidence, { checkFiles: true, expected: rejectedEvidence });
-    let alternateManifestOutcome = change(nonClearance, "manifest.path", "verification/gooseweb/manifests/validator-p01-empty.json");
-    alternateManifestOutcome = change(alternateManifestOutcome, "manifest.revision", 1);
-    alternateManifestOutcome = change(alternateManifestOutcome, "manifest.sha256", "664870364d17e536d225a2b5d987d384f63c00f5e5d9b4041c3782bb49ce18a1");
-    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(alternateManifestOutcome));
-    assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "changes-required evidence accepted a different valid same-phase manifest");
+    withAlternateManifest((path, hash) => {
+      let alternateManifestOutcome = change(nonClearance, "manifest.path", path);
+      alternateManifestOutcome = change(alternateManifestOutcome, "manifest.revision", 1);
+      alternateManifestOutcome = change(alternateManifestOutcome, "manifest.sha256", hash);
+      writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(alternateManifestOutcome));
+      assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "changes-required evidence accepted a non-active same-phase manifest");
+    });
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify({ ...nonClearance, attempt: 4 }));
     assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "cross-attempt outcome unexpectedly passed");
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(change(nonClearance, "review.reviewer_identity", "other-reviewer")));
@@ -282,6 +306,16 @@ function validateReferencedEvidence(): void {
     assert.throws(() => validateEvidence(evidence, { checkFiles: true }), undefined, "missing referenced evidence unexpectedly passed");
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function withAlternateManifest(run: (path: string, hash: string) => void): void {
+  const absolute = resolve(root, ALTERNATE_MANIFEST_PATH);
+  writeFileSync(absolute, readFileSync(resolve(root, VALIDATOR_MANIFEST_PATH)));
+  try {
+    run(ALTERNATE_MANIFEST_PATH, sha256(ALTERNATE_MANIFEST_PATH));
+  } finally {
+    rmSync(absolute, { force: true });
   }
 }
 

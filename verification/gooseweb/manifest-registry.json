@@ -1,0 +1,13 @@
+{
+  "schema_revision": "gooseweb-manifest-registry/v1",
+  "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
+  "active_manifests": [
+    {
+      "phase_id": "P01",
+      "path": "verification/gooseweb/manifests/p01-team-comms-live.json",
+      "revision": 4,
+      "sha256": "fadae455215a04013c2a3f18fcf37d886d8ffa1c8c97035a5320779576595b26",
+      "activated_reason": "P01 Team Comms is the sole source-backed acceptance scenario authorized for exact-head review; validator fixtures are not production manifests."
+    }
+  ]
+}

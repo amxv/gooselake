@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gooseweb://schemas/manifest-registry/v1",
+  "title": "Gooseweb authoritative active manifest registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_revision",
+    "approved_plan_sha256",
+    "active_manifests"
+  ],
+  "properties": {
+    "schema_revision": {
+      "const": "gooseweb-manifest-registry/v1"
+    },
+    "approved_plan_sha256": {
+      "const": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
+    },
+    "active_manifests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "phase_id",
+          "path",
+          "revision",
+          "sha256",
+          "activated_reason"
+        ],
+        "properties": {
+          "phase_id": {
+            "type": "string",
+            "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^verification/gooseweb/manifests/[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*\\.json$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "activated_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

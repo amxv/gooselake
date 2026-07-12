@@ -45,8 +45,26 @@ export function validateManifest(value: RecordJson): void {
   scanSecrets(value, "manifest", false);
 }
 
+export function validateManifestRegistry(value: RecordJson): void {
+  applySchemaFile("verification/gooseweb/schemas/manifest-registry.schema.json", value);
+  const entries = array(value.active_manifests, "active manifests").map((entry) => object(entry, "active manifest"));
+  ensureUnique(entries.map((entry) => string(entry.phase_id, "active manifest phase")), "active manifest phases");
+  ensureUnique(entries.map((entry) => string(entry.path, "active manifest path")), "active manifest paths");
+  for (const entry of entries) {
+    const manifest = validateManifestFileTuple(entry);
+    equal(object(manifest.scenario, "registered manifest scenario").phase_id, entry.phase_id, "registered manifest phase");
+  }
+  scanSecrets(value, "manifest registry", false);
+}
+
 export function validateLedger(value: RecordJson): void {
   applySchemaFile("verification/gooseweb/schemas/phase-state-ledger.schema.json", value);
+  const registryDescriptor = object(value.manifest_registry, "ledger manifest registry");
+  equal(registryDescriptor.path, "verification/gooseweb/manifest-registry.json", "ledger manifest registry path");
+  equal(registryDescriptor.sha256, sha256(string(registryDescriptor.path, "manifest registry path")), "ledger manifest registry hash");
+  const registry = readJson(string(registryDescriptor.path, "manifest registry path"));
+  validateManifestRegistry(registry);
+  equal(registryDescriptor.schema_revision, registry.schema_revision, "ledger manifest registry revision");
   const phases = array(value.phases, "phases").map((entry) => object(entry, "phase"));
   const ids = phases.map((entry) => string(entry.phase_id, "phase_id"));
   const expected = Array.from({ length: 57 }, (_, index) => `P${String(index).padStart(2, "0")}`);
@@ -166,7 +184,12 @@ export function validateClearance(value: RecordJson, options: ClearanceOptions =
   ensureUnique(clearanceBaselines.map((entry) => string(entry.defect_id, "clearance defect ID")), "clearance baseline defect IDs");
   equal(JSON.stringify(clearanceBaselines), JSON.stringify(candidateManifest.baseline_detected), "clearance/manifest baseline register");
   equal(object(value.clearance, "clearance").recipient_identity, "parallel_otter", "exact lead recipient identity");
-  validateClearancePhasePolicy(string(value.phase_id, "clearance phase"), clearanceBaselines, object(value.clearance, "clearance"));
+  validateClearancePhasePolicy(
+    string(value.phase_id, "clearance phase"),
+    clearanceBaselines,
+    object(value.clearance, "clearance"),
+    string(object(candidateManifest.scenario, "candidate manifest scenario").product_clearance, "manifest product clearance")
+  );
   if (options.expected) {
     const expected = options.expected;
     for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], expected[key], `expected ${key}`);
@@ -496,6 +519,16 @@ function crc32(bytes: Uint8Array): number {
 }
 
 function validateManifestTuple(tuple: RecordJson, expectedPhase?: string): RecordJson {
+  const manifest = validateManifestFileTuple(tuple);
+  if (expectedPhase) {
+    equal(object(manifest.scenario, "manifest scenario").phase_id, expectedPhase, "manifest/record phase");
+    const active = activeManifestForPhase(expectedPhase);
+    for (const key of ["path", "revision", "sha256"]) equal(tuple[key], active[key], `active ${expectedPhase} manifest ${key}`);
+  }
+  return manifest;
+}
+
+function validateManifestFileTuple(tuple: RecordJson): RecordJson {
   const path = string(tuple.path, "manifest path");
   const manifestsRoot = resolve(root, "verification/gooseweb/manifests");
   if (!/^verification\/gooseweb\/manifests\/[a-z0-9][a-z0-9._/-]*\.json$/.test(path) || path.includes("..") || path.includes("//")) fail("manifest path is outside safe source-controlled manifest root");
@@ -506,23 +539,35 @@ function validateManifestTuple(tuple: RecordJson, expectedPhase?: string): Recor
   const manifest = JSON.parse(readFileSync(absolute, "utf8")) as RecordJson;
   validateManifest(manifest);
   equal(manifest.manifest_revision, tuple.revision, "manifest revision");
-  if (expectedPhase) equal(object(manifest.scenario, "manifest scenario").phase_id, expectedPhase, "manifest/record phase");
   return manifest;
 }
 
-export function validateClearancePhasePolicy(phase: string, baselines: RecordJson[], clearance: RecordJson): void {
+function activeManifestForPhase(phase: string): RecordJson {
+  const registry = readJson("verification/gooseweb/manifest-registry.json");
+  validateManifestRegistry(registry);
+  const matches = array(registry.active_manifests, "active manifests")
+    .map((entry) => object(entry, "active manifest"))
+    .filter((entry) => entry.phase_id === phase);
+  if (matches.length !== 1) fail(`${phase} must have exactly one authoritative active manifest`);
+  return matches[0]!;
+}
+
+export function validateClearancePhasePolicy(phase: string, baselines: RecordJson[], clearance: RecordJson, productClearance: string): void {
   const number = phaseNumber(phase);
   if (number <= 5) {
     equal(clearance.scope, "verification_infrastructure_only", "P01-P05 clearance scope");
     equal(clearance.product_approved, false, "P01-P05 product approval");
+    if (productClearance === "approved") fail("P01-P05 infrastructure clearance cannot carry an approved product manifest");
   } else if (number === 56) {
     if (baselines.length !== 0) fail("P56 clearance requires empty baseline register");
     equal(clearance.scope, "integration_release", "P56 clearance scope");
     equal(clearance.product_approved, true, "P56 product approval");
+    equal(productClearance, "approved", "P56 manifest product clearance");
   } else {
     if (baselines.length !== 0) fail("P06-P55 product clearance requires empty baseline register");
     equal(clearance.scope, "product_phase", "product phase clearance scope");
     equal(clearance.product_approved, true, "product phase approval");
+    equal(productClearance, "approved", "product phase manifest clearance");
   }
 }
 

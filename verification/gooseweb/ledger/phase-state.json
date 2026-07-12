@@ -1,6 +1,11 @@
 {
   "schema_revision": "gooseweb-phase-state-ledger/v6",
   "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
+  "manifest_registry": {
+    "path": "verification/gooseweb/manifest-registry.json",
+    "schema_revision": "gooseweb-manifest-registry/v1",
+    "sha256": "7e4b23453c23c0e34f1a6515f7233f6713610033f63b0122112e78babeaef6d1"
+  },
   "phases": [
     {
       "phase_id": "P00",

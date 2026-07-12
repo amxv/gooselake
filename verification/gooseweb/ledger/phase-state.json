@@ -1,5 +1,5 @@
 {
-  "schema_revision": "gooseweb-phase-state-ledger/v6",
+  "schema_revision": "gooseweb-phase-state-ledger/v7",
   "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
   "manifest_registry": {
     "path": "verification/gooseweb/manifest-registry.json",

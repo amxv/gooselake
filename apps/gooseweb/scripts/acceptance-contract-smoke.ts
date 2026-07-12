@@ -11,11 +11,11 @@ import {
   validateBrowserCaptures,
   validateClearance,
   validateClearanceHistory,
-  validateClearancePhasePolicy,
   validateEvidence,
   validateGitRecord,
   validateLedger,
   validateManifest,
+  validateManifestClearancePolicy,
   validateManifestRegistry,
   validateReviewOutcome,
   type Json,
@@ -70,9 +70,11 @@ validateManifest(validatorManifest);
 validateManifestRegistry(manifestRegistry);
 const reusableP02Manifest = change(change(change(change(manifest, "manifest_id", "GW-P02-GENERIC-001"), "scenario.stable_scenario_id", "GW-P02-GENERIC-001"), "scenario.phase_id", "P02"), "baseline_detected", []);
 validateManifest(change(reusableP02Manifest, "scenario.product_clearance", "pending"));
-validateClearancePhasePolicy("P02", (manifest.baseline_detected as RecordJson[]), { scope: "verification_infrastructure_only", product_approved: false }, "pending");
-validateClearancePhasePolicy("P06", [], { scope: "product_phase", product_approved: true }, "approved");
-validateClearancePhasePolicy("P56", [], { scope: "integration_release", product_approved: true }, "approved");
+const approvedP06Manifest = manifestForPhase("P06", "approved");
+const approvedP56Manifest = manifestForPhase("P56", "approved");
+validateManifestClearancePolicy(change(reusableP02Manifest, "scenario.product_clearance", "pending"), { scope: "verification_infrastructure_only", product_approved: false });
+validateManifestClearancePolicy(approvedP06Manifest, { scope: "product_phase", product_approved: true });
+validateManifestClearancePolicy(approvedP56Manifest, { scope: "integration_release", product_approved: true });
 const laterPhaseBase = "d7da340c94f4cb34692a122696717e72f357fac1";
 let laterPhaseEvidence = change(evidence, "phase_id", "P02");
 laterPhaseEvidence = change(laterPhaseEvidence, "lease.phase_id", "P02");
@@ -142,6 +144,14 @@ const negativeCases: [string, () => void][] = [
     stale = change(stale, "reviewed_range", `${P01_BASE_SHA}..7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0`);
     validateClearance(stale);
   }],
+  ["candidate head missing authoritative registry", () => {
+    let stale = change(clearance, "candidate_head_sha", "973a5771c54650946ece3b1d9016e0788c522087");
+    stale = change(stale, "served_head_sha", "973a5771c54650946ece3b1d9016e0788c522087");
+    stale = change(stale, "candidate_tree_sha", "592e4389b9be8f980c4deabd397ceb79e718bafb");
+    stale = change(stale, "served_tree_sha", "592e4389b9be8f980c4deabd397ceb79e718bafb");
+    stale = change(stale, "reviewed_range", `${P01_BASE_SHA}..973a5771c54650946ece3b1d9016e0788c522087`);
+    validateClearance(stale);
+  }],
   ["nonexistent Git range head", () => {
     const forged = change(change(change(clearance, "candidate_head_sha", "a".repeat(40)), "served_head_sha", "a".repeat(40)), "reviewed_range", `${P01_BASE_SHA}..${"a".repeat(40)}`);
     validateClearance(forged, { verifyGit: true });
@@ -181,13 +191,13 @@ const negativeCases: [string, () => void][] = [
   ["duplicated clearance baseline", () => validateClearance(change(clearance, "baseline_detected.6", clone((clearance.baseline_detected as Json[])[0])))],
   ["substituted clearance baseline owner", () => validateClearance(change(clearance, "baseline_detected.0.owning_correction_phase", "P10"))],
   ["reordered clearance baselines", () => validateClearance(change(clearance, "baseline_detected", [...(clearance.baseline_detected as Json[])].reverse()))],
-  ["P01 approved manifest under infrastructure clearance", () => validateClearancePhasePolicy("P01", (manifest.baseline_detected as RecordJson[]), { scope: "verification_infrastructure_only", product_approved: false }, "approved")],
-  ["P06 nonempty baseline policy", () => validateClearancePhasePolicy("P06", (manifest.baseline_detected as RecordJson[]), { scope: "product_phase", product_approved: true }, "approved")],
-  ["P06 pending manifest product approval", () => validateClearancePhasePolicy("P06", [], { scope: "product_phase", product_approved: true }, "pending")],
-  ["P06 blocked manifest product approval", () => validateClearancePhasePolicy("P06", [], { scope: "product_phase", product_approved: true }, "blocked_expected_honest_failure")],
-  ["P56 nonempty baseline policy", () => validateClearancePhasePolicy("P56", (manifest.baseline_detected as RecordJson[]), { scope: "integration_release", product_approved: true }, "approved")],
-  ["P56 pending manifest product approval", () => validateClearancePhasePolicy("P56", [], { scope: "integration_release", product_approved: true }, "pending")],
-  ["P56 blocked manifest product approval", () => validateClearancePhasePolicy("P56", [], { scope: "integration_release", product_approved: true }, "blocked_expected_honest_failure")],
+  ["P01 approved manifest under infrastructure clearance", () => validateManifestClearancePolicy(change(manifest, "scenario.product_clearance", "approved"), { scope: "verification_infrastructure_only", product_approved: false })],
+  ["P06 nonempty baseline policy", () => validateManifestClearancePolicy(change(approvedP06Manifest, "baseline_detected", manifest.baseline_detected), { scope: "product_phase", product_approved: true })],
+  ["P06 pending manifest product approval", () => validateManifestClearancePolicy(change(approvedP06Manifest, "scenario.product_clearance", "pending"), { scope: "product_phase", product_approved: true })],
+  ["P06 blocked manifest product approval", () => validateManifestClearancePolicy(change(approvedP06Manifest, "scenario.product_clearance", "blocked_expected_honest_failure"), { scope: "product_phase", product_approved: true })],
+  ["P56 nonempty baseline policy", () => validateManifestClearancePolicy(change(approvedP56Manifest, "baseline_detected", manifest.baseline_detected), { scope: "integration_release", product_approved: true })],
+  ["P56 pending manifest product approval", () => validateManifestClearancePolicy(change(approvedP56Manifest, "scenario.product_clearance", "pending"), { scope: "integration_release", product_approved: true })],
+  ["P56 blocked manifest product approval", () => validateManifestClearancePolicy(change(approvedP56Manifest, "scenario.product_clearance", "blocked_expected_honest_failure"), { scope: "integration_release", product_approved: true })],
   ["evidence head/sha7 mismatch", () => validateEvidence(change(evidence, "sha7", "2222222"), { checkFiles: false })],
   ["evidence headed mode", () => validateEvidence(change(evidence, "browser.execution_mode", "headed"), { checkFiles: false })],
   ["incomplete prohibited vocabulary", () => validateEvidence(change(evidence, "redaction.prohibited", ["credentials"]), { checkFiles: false })],
@@ -317,6 +327,15 @@ function withAlternateManifest(run: (path: string, hash: string) => void): void 
   } finally {
     rmSync(absolute, { force: true });
   }
+}
+
+function manifestForPhase(phase: "P06" | "P56", productClearance: "approved" | "pending" | "blocked_expected_honest_failure"): RecordJson {
+  const id = `GW-${phase}-VALIDATOR-001`;
+  let result = change(manifest, "manifest_id", id);
+  result = change(result, "scenario.stable_scenario_id", id);
+  result = change(result, "scenario.phase_id", phase);
+  result = change(result, "scenario.product_clearance", productClearance);
+  return change(result, "baseline_detected", []);
 }
 
 function laterClearance(overrides: Record<string, unknown>): RecordJson {

@@ -120,6 +120,8 @@ export function validateEvidence(value: RecordJson, options: EvidenceOptions = {
   if (!head.startsWith(sha7)) fail("evidence sha7 does not match candidate head");
   equal(value.root, `tmp/gg/gooseweb-migration/${phase}/${sha7}/attempt-${attempt}/`, "evidence root convention");
   validateManifestTuple(object(value.manifest, "evidence manifest"), phase);
+  const candidateManifest = validateManifestAtGitHead(object(value.manifest, "evidence manifest"), head);
+  equal(object(candidateManifest.scenario, "candidate evidence manifest scenario").phase_id, phase, "candidate manifest/evidence phase");
   validateBrowser(object(value.browser, "evidence browser"));
   if (options.expected) {
     for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], options.expected[key], `expected evidence ${key}`);
@@ -184,12 +186,7 @@ export function validateClearance(value: RecordJson, options: ClearanceOptions =
   ensureUnique(clearanceBaselines.map((entry) => string(entry.defect_id, "clearance defect ID")), "clearance baseline defect IDs");
   equal(JSON.stringify(clearanceBaselines), JSON.stringify(candidateManifest.baseline_detected), "clearance/manifest baseline register");
   equal(object(value.clearance, "clearance").recipient_identity, "parallel_otter", "exact lead recipient identity");
-  validateClearancePhasePolicy(
-    string(value.phase_id, "clearance phase"),
-    clearanceBaselines,
-    object(value.clearance, "clearance"),
-    string(object(candidateManifest.scenario, "candidate manifest scenario").product_clearance, "manifest product clearance")
-  );
+  validateManifestClearancePolicy(candidateManifest, object(value.clearance, "clearance"));
   if (options.expected) {
     const expected = options.expected;
     for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], expected[key], `expected ${key}`);
@@ -462,7 +459,22 @@ function validateManifestAtGitHead(tuple: RecordJson, head: string): RecordJson 
   try { candidate = JSON.parse(bytes.toString("utf8")) as RecordJson; } catch { fail("candidate manifest blob is not JSON"); }
   validateManifest(candidate);
   equal(candidate.manifest_revision, tuple.revision, "candidate manifest blob revision");
+  validateActiveManifestAtGitHead(tuple, string(object(candidate.scenario, "candidate manifest scenario").phase_id, "candidate manifest phase"), head);
   return candidate;
+}
+
+function validateActiveManifestAtGitHead(tuple: RecordJson, phase: string, head: string): void {
+  let bytes: Buffer;
+  try { bytes = execFileSync("git", ["show", `${head}:verification/gooseweb/manifest-registry.json`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] }); }
+  catch { fail("candidate head does not contain the authoritative manifest registry"); }
+  let registry: RecordJson;
+  try { registry = JSON.parse(bytes.toString("utf8")) as RecordJson; } catch { fail("candidate manifest registry is not JSON"); }
+  applySchemaFile("verification/gooseweb/schemas/manifest-registry.schema.json", registry);
+  const entries = array(registry.active_manifests, "candidate active manifests").map((entry) => object(entry, "candidate active manifest"));
+  ensureUnique(entries.map((entry) => string(entry.phase_id, "candidate active manifest phase")), "candidate active manifest phases");
+  const matches = entries.filter((entry) => entry.phase_id === phase);
+  if (matches.length !== 1) fail(`candidate ${phase} must have exactly one authoritative active manifest`);
+  for (const key of ["path", "revision", "sha256"]) equal(tuple[key], matches[0]![key], `candidate active ${phase} manifest ${key}`);
 }
 
 export function validateGitRecord(record: RecordJson): void {
@@ -569,6 +581,18 @@ export function validateClearancePhasePolicy(phase: string, baselines: RecordJso
     equal(clearance.product_approved, true, "product phase approval");
     equal(productClearance, "approved", "product phase manifest clearance");
   }
+}
+
+export function validateManifestClearancePolicy(candidateManifest: RecordJson, clearance: RecordJson): void {
+  validateManifest(candidateManifest);
+  const scenario = object(candidateManifest.scenario, "candidate manifest scenario");
+  const baselines = array(candidateManifest.baseline_detected, "candidate manifest baselines").map((entry) => object(entry, "candidate manifest baseline"));
+  validateClearancePhasePolicy(
+    string(scenario.phase_id, "candidate manifest phase"),
+    baselines,
+    clearance,
+    string(scenario.product_clearance, "manifest product clearance")
+  );
 }
 
 function validateBrowser(browser: RecordJson): void {

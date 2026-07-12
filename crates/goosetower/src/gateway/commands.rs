@@ -190,7 +190,7 @@ impl GatewayState {
                 if let Some(title) = optional_string(&input.title) {
                     metadata.insert("title".to_string(), json!(title));
                 }
-                client
+                let session = client
                     .create_session(&runtime_core::CreateSessionInput {
                         provider,
                         model: optional_string(&input.model),
@@ -199,10 +199,11 @@ impl GatewayState {
                         metadata: (!metadata.is_empty()).then_some(Value::Object(metadata)),
                     })
                     .await?;
-                self.refresh_source_after_command(command).await;
+                self.merge_authoritative_session(client.source_id(), session)
+                    .await;
             }
             crate::protocol::generated::goosetower::v1::command::Payload::CreateTeam(input) => {
-                client
+                let team = client
                     .create_team(&TeamCreateInput {
                         name: non_empty(&input.name, "name")?.to_string(),
                         lead_agent_id: non_empty(&input.lead_agent_id, "lead_agent_id")?
@@ -218,12 +219,13 @@ impl GatewayState {
                             .or_else(|| Some(conn.auth.subject.clone())),
                     })
                     .await?;
-                self.refresh_source_after_command(command).await;
+                self.merge_authoritative_team(client.source_id(), team)
+                    .await;
             }
             crate::protocol::generated::goosetower::v1::command::Payload::JoinTeamMember(input) => {
                 let team_id = non_empty(&input.team_id, "team_id")?;
                 let agent_id = non_empty(&input.agent_id, "agent_id")?;
-                client
+                let team = client
                     .join_team(
                         team_id,
                         &TeamJoinInput {
@@ -237,7 +239,8 @@ impl GatewayState {
                         },
                     )
                     .await?;
-                self.refresh_source_after_command(command).await;
+                self.merge_authoritative_team(client.source_id(), team)
+                    .await;
             }
             crate::protocol::generated::goosetower::v1::command::Payload::SendTurn(input) => {
                 let session_id = non_empty(&input.session_id, "session_id")?;
@@ -293,7 +296,7 @@ impl GatewayState {
             ) => {
                 let team_id = non_empty(&input.team_id, "team_id")?;
                 let sender_agent_id = self.team_sender_agent_id(team_id, &conn.auth.subject).await;
-                client
+                let ack = client
                     .send_team_direct(
                         team_id,
                         &TeamDirectInput {
@@ -313,14 +316,15 @@ impl GatewayState {
                         },
                     )
                     .await?;
-                self.refresh_source_after_command(command).await;
+                self.merge_authoritative_team_message(client.source_id(), ack)
+                    .await;
             }
             crate::protocol::generated::goosetower::v1::command::Payload::BroadcastTeamMessage(
                 input,
             ) => {
                 let team_id = non_empty(&input.team_id, "team_id")?;
                 let sender_agent_id = self.team_sender_agent_id(team_id, &conn.auth.subject).await;
-                client
+                let ack = client
                     .send_team_broadcast(
                         team_id,
                         &TeamBroadcastInput {
@@ -335,7 +339,8 @@ impl GatewayState {
                         },
                     )
                     .await?;
-                self.refresh_source_after_command(command).await;
+                self.merge_authoritative_team_message(client.source_id(), ack)
+                    .await;
             }
             crate::protocol::generated::goosetower::v1::command::Payload::SpawnTeamMember(
                 input,
@@ -666,158 +671,127 @@ impl GatewayState {
         }
     }
 
-    pub(super) async fn refresh_source_after_command(&self, command: &Command) {
-        let Some(payload) = command.payload.as_ref() else {
-            tracing::warn!(
-                command_id = %command.command_id,
-                "skipping post-command source refresh because payload is missing"
-            );
-            return;
-        };
-        let source_id = match self
-            .resolve_command_owner_source(command, payload, command_explicit_source_id(command))
-            .await
-        {
-            Ok(source_id) => source_id,
-            Err(error) => {
-                tracing::warn!(
-                    command_id = %command.command_id,
-                    error_code = %error.code,
-                    error = %error.message,
-                    "skipping post-command source refresh because command source could not be resolved"
-                );
-                return;
-            }
-        };
-        let Some(source) = self
-            .config
-            .runtimes
-            .sources
-            .iter()
-            .find(|candidate| candidate.enabled && candidate.source_id == source_id.as_str())
-        else {
-            tracing::warn!(
-                command_id = %command.command_id,
-                source_id = %source_id,
-                "skipping post-command source refresh because source is unavailable"
-            );
-            return;
-        };
-        let client = match runtime_client_from_source(&self.config, source) {
-            Ok(client) => client,
-            Err(error) => {
-                tracing::warn!(
-                    command_id = %command.command_id,
-                    source_id = %source_id,
-                    error = %error,
-                    "skipping post-command source refresh because runtime client could not be created"
-                );
-                return;
-            }
-        };
-        let mut next = match SourceBootstrap::from_runtime_client(
-            &client,
-            BootstrapOptions::default(),
-        )
-        .await
-        {
-            Ok(bootstrap) => bootstrap.state,
-            Err(error) => {
-                tracing::warn!(
-                    command_id = %command.command_id,
-                    source_id = %source_id,
-                    error = %error,
-                    "skipping post-command source refresh because runtime bootstrap failed"
-                );
-                return;
-            }
-        };
-        next.apply_source_config(source);
-
+    async fn merge_authoritative_session(
+        &self,
+        source_id: &str,
+        session: runtime_core::SessionRecord,
+    ) {
         let patches = {
             let mut materialized = self.materialized.write().await;
-            let previous = materialized.get(&source_id);
-            if previous.is_some_and(|current| {
-                current.source_epoch == next.source_epoch
-                    && current.source_health.last_source_seq.unwrap_or(0)
-                        > next.source_health.last_source_seq.unwrap_or(0)
-            }) {
-                tracing::info!(
-                    command_id = %command.command_id,
-                    source_id = %source_id,
-                    current_cursor = previous.and_then(|state| state.source_health.last_source_seq).unwrap_or(0),
-                    bootstrap_cursor = next.source_health.last_source_seq.unwrap_or(0),
-                    "discarding stale post-command bootstrap"
-                );
+            let Some(state) = materialized.get_mut(source_id) else {
+                return;
+            };
+            if state
+                .sessions
+                .get(&session.id)
+                .is_some_and(|current| current.updated_at > session.updated_at)
+            {
                 return;
             }
-            let mut patches = Vec::new();
+            let session_id = session.id.clone();
+            state.upsert_session(session);
+            state.session_patches(&session_id, state.cursor())
+        };
+        for patch in patches {
+            self.publish_materialized_patch(patch).await;
+        }
+    }
 
-            for session_id in next.sessions.keys() {
-                if previous.is_none_or(|state| !state.sessions.contains_key(session_id)) {
-                    if let Some(row) = next.agent_row(session_id) {
-                        patches.push(MaterializedPatch {
-                            kind: MaterializedPatchKind::ListInsert,
-                            view_kind: "board".to_string(),
-                            entity: Some(crate::materializer::EntityKey::new(
-                                source_id.clone(),
-                                "session",
-                                session_id.clone(),
-                            )),
-                            version: Some(next.version("session", session_id)),
-                            source_cursor: None,
-                            body: json!({ "rows": [row] }),
-                        });
-                    }
-                }
+    async fn merge_authoritative_team(
+        &self,
+        source_id: &str,
+        snapshot: runtime_core::TeamWithMembers,
+    ) {
+        let patches = {
+            let mut materialized = self.materialized.write().await;
+            let Some(state) = materialized.get_mut(source_id) else {
+                return;
+            };
+            if state
+                .teams
+                .get(&snapshot.team.id)
+                .is_some_and(|current| current.updated_at > snapshot.team.updated_at)
+            {
+                return;
             }
-
-            for team_id in next.teams.keys() {
-                let team_changed = previous.is_none_or(|state| {
-                    state.version("team", team_id) != next.version("team", team_id)
-                });
-                let messages_changed = previous.is_none_or(|state| {
-                    state.messages_by_team.get(team_id) != next.messages_by_team.get(team_id)
-                });
-                let deliveries_changed = previous.is_none_or(|state| {
-                    state.deliveries_by_team.get(team_id) != next.deliveries_by_team.get(team_id)
-                });
-                if team_changed || messages_changed || deliveries_changed {
-                    patches.push(MaterializedPatch {
-                        kind: MaterializedPatchKind::EntityUpsert,
-                        view_kind: "team".to_string(),
-                        entity: Some(crate::materializer::EntityKey::new(
-                            source_id.clone(),
-                            "team",
-                            team_id.clone(),
-                        )),
-                        version: Some(next.version("team", team_id)),
-                        body: json!(next.snapshot_team(&SelectedTeamSubscription {
-                            team_id: team_id.clone(),
-                            message_limit: 100,
-                        })),
-                        source_cursor: None,
-                    });
-                }
+            let team_id = snapshot.team.id.clone();
+            let previous_members = state
+                .members_by_team
+                .get(&team_id)
+                .map(|rows| {
+                    rows.keys()
+                        .cloned()
+                        .collect::<std::collections::BTreeSet<String>>()
+                })
+                .unwrap_or_default();
+            state.upsert_team(snapshot.team);
+            state
+                .members_by_team
+                .insert(team_id.clone(), BTreeMap::new());
+            for member in snapshot.members {
+                state.upsert_team_member(member);
             }
-
-            patches.push(MaterializedPatch {
-                kind: MaterializedPatchKind::EntityUpsert,
-                view_kind: "source_health".to_string(),
-                entity: Some(crate::materializer::EntityKey::new(
-                    source_id.clone(),
-                    "source",
-                    source_id.clone(),
-                )),
-                version: None,
-                source_cursor: None,
-                body: json!(next.snapshot_source_health()),
-            });
-
-            materialized.insert(source_id.clone(), next);
+            let mut patches = state.team_patch(&team_id, state.cursor());
+            let current_members = state
+                .members_by_team
+                .get(&team_id)
+                .map(|members| {
+                    members
+                        .keys()
+                        .cloned()
+                        .collect::<std::collections::BTreeSet<_>>()
+                })
+                .unwrap_or_default();
+            for agent_id in &current_members {
+                patches.extend(state.session_patches(agent_id, state.cursor()));
+            }
+            let removed_members = previous_members
+                .difference(&current_members)
+                .cloned()
+                .collect::<Vec<_>>();
+            for agent_id in &removed_members {
+                patches.extend(state.session_patches(agent_id, state.cursor()));
+            }
             patches
         };
+        for patch in patches {
+            self.publish_materialized_patch(patch).await;
+        }
+    }
 
+    async fn merge_authoritative_team_message(
+        &self,
+        source_id: &str,
+        ack: runtime_core::TeamMessageAck,
+    ) {
+        let patches = {
+            let mut materialized = self.materialized.write().await;
+            let Some(state) = materialized.get_mut(source_id) else {
+                return;
+            };
+            let team_id = ack.message.team_id.clone();
+            let message_id = ack.message.id.clone();
+            let stale = state
+                .messages_by_team
+                .get(&team_id)
+                .and_then(|rows| rows.iter().find(|row| row.id == message_id))
+                .is_some_and(|current| current.created_at > ack.message.created_at);
+            if stale {
+                return;
+            }
+            state.upsert_message(ack.message);
+            for delivery in ack.deliveries {
+                let stale = state
+                    .deliveries_by_team
+                    .get(&team_id)
+                    .and_then(|rows| rows.iter().find(|row| row.id == delivery.id))
+                    .is_some_and(|current| current.updated_at > delivery.updated_at);
+                if !stale {
+                    state.upsert_delivery(delivery);
+                }
+            }
+            state.team_patch(&team_id, state.cursor())
+        };
         for patch in patches {
             self.publish_materialized_patch(patch).await;
         }

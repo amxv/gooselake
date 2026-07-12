@@ -21,7 +21,7 @@ use crate::materializer::{
     snapshot_cross_source_approval_inbox, snapshot_cross_source_board,
     snapshot_cross_source_health, snapshot_cross_source_ledger, snapshot_cross_source_worktrees,
     ApprovalInboxSubscription, BoardSubscription, BootstrapOptions, LedgerSubscription,
-    SelectedTeamSubscription, SourceBootstrap,
+    SourceBootstrap,
 };
 use crate::materializer::{MaterializedPatch, MaterializedPatchKind, MaterializedState};
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
@@ -40,6 +40,7 @@ use crate::runtime::{
 };
 mod commands;
 mod envelopes;
+mod gap_repair;
 #[cfg(any(test, feature = "p02-verification"))]
 mod observers;
 mod socket;
@@ -56,6 +57,7 @@ fn materialized_state_from_source(source: &RuntimeSourceConfig) -> MaterializedS
     state
 }
 
+use self::gap_repair::GapRepairQueue;
 use self::support::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,11 +66,18 @@ pub enum GatewayStatus {
     AcceptingConnections,
 }
 
+#[derive(Debug, Clone)]
+enum SourceRecoverySignal {
+    Filled(SourceCursor),
+    Resync { source_id: String, reason: String },
+}
+
 #[derive(Debug)]
 pub struct GatewayState {
     config: Arc<GoosetowerConfig>,
     ticket_validator: TicketValidator,
     materialized: RwLock<BTreeMap<String, MaterializedState>>,
+    gap_repairs: Mutex<BTreeMap<String, GapRepairQueue>>,
     command_store: Mutex<CommandIdStore>,
     replay_buffer: Mutex<GatewayReplayBuffer>,
     metrics: GatewayMetrics,
@@ -81,11 +90,13 @@ pub struct GatewayState {
     next_connection_id: AtomicU64,
     next_gateway_seq: AtomicU64,
     patches: broadcast::Sender<MaterializedPatch>,
+    recoveries: broadcast::Sender<SourceRecoverySignal>,
 }
 
 impl GatewayState {
     pub fn new(config: Arc<GoosetowerConfig>) -> Result<Self> {
         let (patches, _) = broadcast::channel(1024);
+        let (recoveries, _) = broadcast::channel(64);
         let mut materialized = BTreeMap::new();
         for source in config
             .runtimes
@@ -103,6 +114,7 @@ impl GatewayState {
             ticket_validator: TicketValidator::from_config(&config)?,
             config,
             materialized: RwLock::new(materialized),
+            gap_repairs: Mutex::new(BTreeMap::new()),
             command_store: Mutex::new(CommandIdStore::default()),
             replay_buffer: Mutex::new(GatewayReplayBuffer::new(replay_buffer_capacity)),
             metrics: GatewayMetrics::default(),
@@ -115,6 +127,7 @@ impl GatewayState {
             next_connection_id: AtomicU64::new(1),
             next_gateway_seq: AtomicU64::new(1),
             patches,
+            recoveries,
         })
     }
 
@@ -325,65 +338,6 @@ impl GatewayState {
         handles
     }
 
-    pub async fn ingest_source_event(&self, event: SourceEvent) {
-        let patches = {
-            let mut materialized = self.materialized.write().await;
-            let state = materialized
-                .entry(event.source_id.clone())
-                .or_insert_with(|| MaterializedState::new(&event.source_id, &event.source_epoch));
-            if let Some(source) = self
-                .config
-                .runtimes
-                .sources
-                .iter()
-                .find(|source| source.source_id == event.source_id)
-            {
-                state.apply_source_config(source);
-            }
-            if state.source_epoch != event.source_epoch {
-                state.mark_discontinuity("source epoch changed");
-                vec![state.transition_source_health(
-                    SourceHealthState::GapDetected,
-                    Some("source epoch changed".to_string()),
-                )]
-            } else if state
-                .source_health
-                .last_source_seq
-                .is_some_and(|last| event.source_seq > last + 1)
-            {
-                state.mark_discontinuity("source sequence gap detected");
-                vec![state.transition_source_health(
-                    SourceHealthState::GapDetected,
-                    Some(format!(
-                        "expected source seq {}, received {}",
-                        state.source_health.last_source_seq.unwrap_or_default() + 1,
-                        event.source_seq
-                    )),
-                )]
-            } else {
-                let ingest_lag = now_ms().saturating_sub(event.created_at);
-                self.metrics
-                    .event_ingest_lag_ms
-                    .store(ingest_lag as u64, Ordering::Relaxed);
-                let reduce_started = Instant::now();
-                let effect = state.reduce_source_event(event);
-                self.metrics.materializer_reduce_time_ms.store(
-                    reduce_started.elapsed().as_millis() as u64,
-                    Ordering::Relaxed,
-                );
-                if effect.duplicate {
-                    Vec::new()
-                } else {
-                    effect.patches
-                }
-            }
-        };
-
-        for patch in patches {
-            self.publish_materialized_patch(patch).await;
-        }
-    }
-
     async fn update_source_health(&self, health: SourceHealth) {
         let patch = {
             let mut materialized = self.materialized.write().await;
@@ -399,8 +353,23 @@ impl GatewayState {
             {
                 state.apply_source_config(source);
             }
-            state.source_health = health.clone();
-            state.transition_source_health(health.state, health.last_error.clone())
+            let cursor = state.source_health.last_source_seq;
+            let state_is_repairing = state.source_health.state == SourceHealthState::GapDetected;
+            let next_health = if state_is_repairing {
+                SourceHealthState::GapDetected
+            } else {
+                health.state
+            };
+            state.source_health.source_epoch = health.source_epoch.clone();
+            state.source_health.last_source_seq = cursor;
+            state.transition_source_health(
+                next_health,
+                if state_is_repairing {
+                    state.source_health.last_error.clone()
+                } else {
+                    health.last_error.clone()
+                },
+            )
         };
         if matches!(health.state, SourceHealthState::GapDetected) {
             self.metrics.gap_count.fetch_add(1, Ordering::Relaxed);

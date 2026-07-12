@@ -32,12 +32,14 @@ async fn team_scoped_join_member_routes_to_team_source() {
         hits.lock().unwrap().as_slice(),
         ["local:join_team_member:team_1:session_2"]
     );
+    let materialized = gateway.materialized.read().await;
+    assert!(materialized["local"].members_by_team["team_1"].contains_key("session_2"));
 }
 
 #[tokio::test]
-async fn team_broadcast_refreshes_existing_team_messages() {
+async fn team_broadcast_merges_ack_without_full_source_refresh() {
     let sent = Arc::new(AtomicBool::new(false));
-    let runtime_addr = spawn_team_broadcast_refresh_runtime(sent.clone()).await;
+    let (runtime_addr, bootstrap_called) = spawn_team_broadcast_refresh_runtime(sent.clone()).await;
     let mut config = GoosetowerConfig::default();
     config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
     let gateway = live_gateway_with_session_version(config, 1).await;
@@ -66,6 +68,10 @@ async fn team_broadcast_refreshes_existing_team_messages() {
         sent.load(Ordering::SeqCst),
         "runtime broadcast endpoint hit"
     );
+    assert!(
+        !bootstrap_called.load(Ordering::SeqCst),
+        "a command must not trigger whole-source bootstrap"
+    );
     let materialized = gateway.materialized.read().await;
     let messages = materialized
         .get("local")
@@ -81,11 +87,15 @@ async fn team_broadcast_refreshes_existing_team_messages() {
     );
 }
 
-async fn spawn_team_broadcast_refresh_runtime(sent: Arc<AtomicBool>) -> SocketAddr {
+async fn spawn_team_broadcast_refresh_runtime(
+    sent: Arc<AtomicBool>,
+) -> (SocketAddr, Arc<AtomicBool>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind broadcast refresh runtime");
     let addr = listener.local_addr().expect("runtime addr");
+    let bootstrap_called = Arc::new(AtomicBool::new(false));
+    let returned_bootstrap_called = bootstrap_called.clone();
     tokio::spawn(async move {
         let post_sent = sent.clone();
         let post_broadcast = move |axum::extract::Path(team_id): axum::extract::Path<String>,
@@ -95,7 +105,7 @@ async fn spawn_team_broadcast_refresh_runtime(sent: Arc<AtomicBool>) -> SocketAd
                 sent.store(true, Ordering::SeqCst);
                 Json(team_message_ack(
                     &team_id,
-                    input["text"].as_str().unwrap_or_default(),
+                    input["input"][0]["text"].as_str().unwrap_or_default(),
                 ))
             }
         };
@@ -118,9 +128,12 @@ async fn spawn_team_broadcast_refresh_runtime(sent: Arc<AtomicBool>) -> SocketAd
             }
         };
         let bootstrap_sent = sent.clone();
+        let bootstrap_called_for_route = bootstrap_called.clone();
         let source_bootstrap = move || {
             let sent = bootstrap_sent.clone();
+            let bootstrap_called = bootstrap_called_for_route.clone();
             async move {
+                bootstrap_called.store(true, Ordering::SeqCst);
                 let messages = if sent.load(Ordering::SeqCst) {
                     vec![team_message_json("team_1", "Visible team message")]
                 } else {
@@ -181,7 +194,7 @@ async fn spawn_team_broadcast_refresh_runtime(sent: Arc<AtomicBool>) -> SocketAd
             .await
             .expect("serve broadcast refresh runtime");
     });
-    addr
+    (addr, returned_bootstrap_called)
 }
 
 fn team_with_members_json(team_id: &str) -> Value {

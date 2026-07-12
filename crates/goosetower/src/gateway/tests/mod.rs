@@ -20,6 +20,7 @@ use crate::protocol::generated::goosetower::v1::{
 };
 
 mod bootstrap_races;
+mod gap_repair;
 mod healthy_idle;
 mod resume;
 mod team_commands;
@@ -349,9 +350,8 @@ async fn live_gateway_with_session_version(
     let gateway = test_gateway(config);
     let mut state = MaterializedState::new("local", "static-0");
     state.mark_live();
-    for _ in 0..session_version {
-        state.upsert_session(session_record());
-    }
+    state.upsert_session(session_record());
+    state.set_authoritative_version("session", "session_1", session_version as i64);
     gateway
         .replace_materialized_state("local".to_string(), state)
         .await;
@@ -782,7 +782,16 @@ async fn spawn_accepting_create_runtime(
                         "updated_at": 2,
                         "deleted_at": null
                     },
-                    "members": []
+                    "members": [{
+                        "team_id": team_id,
+                        "agent_id": input["agent_id"],
+                        "title": input["title"],
+                        "joined_at": 2,
+                        "added_by": input["added_by"],
+                        "creator_agent_id": input["creator_agent_id"],
+                        "creator_compaction_subscription": "auto",
+                        "worktree_id": input["worktree_id"]
+                    }]
                 }))
             }
         };

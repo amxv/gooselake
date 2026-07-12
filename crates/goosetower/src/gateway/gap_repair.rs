@@ -1,0 +1,349 @@
+use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
+use std::time::Instant;
+
+use serde_json::json;
+
+use super::*;
+
+#[derive(Debug, Default)]
+pub(super) struct GapRepairQueue {
+    repairing: bool,
+    pending: BTreeMap<i64, SourceEvent>,
+}
+
+impl GatewayState {
+    pub async fn ingest_source_event(&self, event: SourceEvent) {
+        if self.queue_if_repairing(&event).await {
+            return;
+        }
+
+        let gap_patch = {
+            let mut materialized = self.materialized.write().await;
+            let state = materialized
+                .entry(event.source_id.clone())
+                .or_insert_with(|| MaterializedState::new(&event.source_id, &event.source_epoch));
+            if let Some(source) = self
+                .config
+                .runtimes
+                .sources
+                .iter()
+                .find(|source| source.source_id == event.source_id)
+            {
+                state.apply_source_config(source);
+            }
+            let reason = if state.source_epoch != event.source_epoch {
+                Some("source epoch changed".to_string())
+            } else if state
+                .source_health
+                .last_source_seq
+                .is_some_and(|last| event.source_seq > last + 1)
+            {
+                Some(format!(
+                    "expected source seq {}, received {}",
+                    state.source_health.last_source_seq.unwrap_or_default() + 1,
+                    event.source_seq
+                ))
+            } else {
+                None
+            };
+            reason.map(|reason| {
+                state.mark_discontinuity(&reason);
+                state.transition_source_health(SourceHealthState::GapDetected, Some(reason))
+            })
+        };
+
+        if let Some(patch) = gap_patch {
+            self.metrics.gap_count.fetch_add(1, Ordering::Relaxed);
+            self.publish_materialized_patch(patch).await;
+            let source_id = event.source_id.clone();
+            if self.begin_gap_repair(event).await {
+                self.repair_source_gap(&source_id).await;
+            }
+            return;
+        }
+
+        self.reduce_contiguous_event(event).await;
+    }
+
+    async fn queue_if_repairing(&self, event: &SourceEvent) -> bool {
+        let mut repairs = self.gap_repairs.lock().await;
+        let Some(queue) = repairs.get_mut(&event.source_id) else {
+            return false;
+        };
+        if !queue.repairing {
+            return false;
+        }
+        queue
+            .pending
+            .entry(event.source_seq)
+            .or_insert_with(|| event.clone());
+        true
+    }
+
+    async fn begin_gap_repair(&self, event: SourceEvent) -> bool {
+        let mut repairs = self.gap_repairs.lock().await;
+        let queue = repairs.entry(event.source_id.clone()).or_default();
+        queue.pending.entry(event.source_seq).or_insert(event);
+        if queue.repairing {
+            false
+        } else {
+            queue.repairing = true;
+            true
+        }
+    }
+
+    async fn repair_source_gap(&self, source_id: &str) {
+        let Some(source) = self
+            .config
+            .runtimes
+            .sources
+            .iter()
+            .find(|source| source.enabled && source.source_id == source_id)
+            .cloned()
+        else {
+            self.finish_gap_repair(source_id, false, "runtime source unavailable")
+                .await;
+            return;
+        };
+        let client = match runtime_client_from_source(&self.config, &source) {
+            Ok(client) => client,
+            Err(error) => {
+                self.finish_gap_repair(source_id, false, &error.to_string())
+                    .await;
+                return;
+            }
+        };
+        let page_limit = self.config.replay.max_events_per_request.max(1);
+        let repair_started = Instant::now();
+        let mut replayed = 0usize;
+
+        for _ in 0..32 {
+            if self.drain_pending_contiguous(source_id).await {
+                self.metrics
+                    .record_replay(replayed, 0, repair_started.elapsed());
+                self.finish_gap_repair(source_id, true, "source gap filled by replay")
+                    .await;
+                return;
+            }
+            let (cursor, epoch) = self.source_cursor_and_epoch(source_id).await;
+            let rows = match client.replay_global_events(cursor, Some(page_limit)).await {
+                Ok(rows) => rows,
+                Err(error) => {
+                    tracing::warn!(source_id, error = %error, "source gap replay failed");
+                    break;
+                }
+            };
+            if rows.is_empty() {
+                break;
+            }
+            let row_count = rows.len();
+            for row in rows {
+                let event =
+                    SourceEvent::from_runtime_event(source_id.to_string(), epoch.clone(), row);
+                if !self.reduce_contiguous_event(event).await {
+                    break;
+                }
+                replayed += 1;
+            }
+            if row_count < page_limit && !self.drain_pending_contiguous(source_id).await {
+                break;
+            }
+        }
+
+        match SourceBootstrap::from_runtime_client(&client, BootstrapOptions::default()).await {
+            Ok(mut bootstrap) => {
+                bootstrap.state.apply_source_config(&source);
+                let installed = self.install_gap_fallback(source_id, bootstrap.state).await;
+                if installed && self.drain_pending_contiguous(source_id).await {
+                    self.metrics
+                        .snapshot_resync_count
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.finish_gap_repair(
+                        source_id,
+                        true,
+                        "source gap repaired by snapshot resync",
+                    )
+                    .await;
+                    return;
+                }
+                self.finish_gap_repair(source_id, false, "snapshot did not restore continuity")
+                    .await;
+            }
+            Err(error) => {
+                self.finish_gap_repair(
+                    source_id,
+                    false,
+                    &format!("snapshot resync failed: {error}"),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn reduce_contiguous_event(&self, event: SourceEvent) -> bool {
+        let patches = {
+            let mut materialized = self.materialized.write().await;
+            let state = materialized
+                .entry(event.source_id.clone())
+                .or_insert_with(|| MaterializedState::new(&event.source_id, &event.source_epoch));
+            if state.source_epoch != event.source_epoch
+                || state
+                    .source_health
+                    .last_source_seq
+                    .is_some_and(|last| event.source_seq > last + 1)
+            {
+                return false;
+            }
+            let ingest_lag = now_ms().saturating_sub(event.created_at);
+            self.metrics
+                .event_ingest_lag_ms
+                .store(ingest_lag as u64, Ordering::Relaxed);
+            let started = Instant::now();
+            let effect = state.reduce_source_event(event);
+            self.metrics
+                .materializer_reduce_time_ms
+                .store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
+            if effect.duplicate {
+                Vec::new()
+            } else {
+                effect.patches
+            }
+        };
+        for patch in patches {
+            self.publish_materialized_patch(patch).await;
+        }
+        true
+    }
+
+    async fn drain_pending_contiguous(&self, source_id: &str) -> bool {
+        loop {
+            let cursor = self.source_cursor_and_epoch(source_id).await.0.unwrap_or(0);
+            let event = {
+                let mut repairs = self.gap_repairs.lock().await;
+                let Some(queue) = repairs.get_mut(source_id) else {
+                    return true;
+                };
+                queue.pending.retain(|seq, _| *seq > cursor);
+                queue.pending.remove(&(cursor + 1))
+            };
+            match event {
+                Some(event) => {
+                    if self.reduce_contiguous_event(event.clone()).await {
+                        continue;
+                    }
+                    self.gap_repairs
+                        .lock()
+                        .await
+                        .entry(source_id.to_string())
+                        .or_default()
+                        .pending
+                        .insert(event.source_seq, event);
+                    return false;
+                }
+                None => {
+                    return self
+                        .gap_repairs
+                        .lock()
+                        .await
+                        .get(source_id)
+                        .is_none_or(|queue| queue.pending.is_empty());
+                }
+            }
+        }
+    }
+
+    async fn source_cursor_and_epoch(&self, source_id: &str) -> (Option<i64>, String) {
+        self.materialized
+            .read()
+            .await
+            .get(source_id)
+            .map(|state| {
+                (
+                    state.source_health.last_source_seq,
+                    state.source_epoch.clone(),
+                )
+            })
+            .unwrap_or((None, "unavailable".to_string()))
+    }
+
+    async fn install_gap_fallback(&self, source_id: &str, next: MaterializedState) -> bool {
+        let mut materialized = self.materialized.write().await;
+        let current_cursor = materialized
+            .get(source_id)
+            .and_then(|state| state.source_health.last_source_seq)
+            .unwrap_or(0);
+        let next_cursor = next.source_health.last_source_seq.unwrap_or(0);
+        if next.source_epoch
+            == materialized
+                .get(source_id)
+                .map(|state| state.source_epoch.as_str())
+                .unwrap_or(next.source_epoch.as_str())
+            && next_cursor < current_cursor
+        {
+            return false;
+        }
+        materialized.insert(source_id.to_string(), next);
+        true
+    }
+
+    async fn finish_gap_repair(&self, source_id: &str, restored: bool, reason: &str) {
+        let patch = {
+            let mut repairs = self.gap_repairs.lock().await;
+            if restored {
+                repairs.remove(source_id);
+            } else if let Some(queue) = repairs.get_mut(source_id) {
+                queue.repairing = false;
+            }
+            let mut materialized = self.materialized.write().await;
+            materialized.get_mut(source_id).map(|state| {
+                state.transition_source_health(
+                    if restored {
+                        SourceHealthState::Live
+                    } else {
+                        SourceHealthState::GapDetected
+                    },
+                    (!restored).then(|| reason.to_string()),
+                )
+            })
+        };
+        if let Some(patch) = patch {
+            self.publish_materialized_patch(patch).await;
+        }
+        if restored {
+            let signal = if reason.contains("snapshot resync") {
+                SourceRecoverySignal::Resync {
+                    source_id: source_id.to_string(),
+                    reason: reason.to_string(),
+                }
+            } else if let Some(cursor) =
+                self.materialized
+                    .read()
+                    .await
+                    .get(source_id)
+                    .and_then(|state| {
+                        state.cursor().map(|cursor| SourceCursor {
+                            source_id: cursor.source_id,
+                            source_epoch: cursor.source_epoch,
+                            source_seq: cursor.source_seq.max(0) as u64,
+                        })
+                    })
+            {
+                SourceRecoverySignal::Filled(cursor)
+            } else {
+                return;
+            };
+            let _ = self.recoveries.send(signal);
+        }
+        self.record_audit(
+            if restored {
+                "source.gap_repaired"
+            } else {
+                "source.gap_repair_failed"
+            },
+            Some(source_id.to_string()),
+            json!({ "reason": reason }),
+        )
+        .await;
+    }
+}

@@ -794,7 +794,7 @@ async fn sse_stream_has_no_total_deadline_and_retains_reconnect_cursor() {
 }
 
 #[tokio::test]
-async fn live_to_gap_transition_is_legal_and_retains_contiguous_cursor() {
+async fn fan_in_forwards_a_live_gap_to_the_gateway_cursor_owner() {
     let (_source, base) = spawn().await;
     apply_control(&base, FaultControl::GapNext).await;
     apply_control(&base, FaultControl::EmitNext).await;
@@ -806,13 +806,14 @@ async fn live_to_gap_transition_is_legal_and_retains_contiguous_cursor() {
             ..Default::default()
         },
     );
-    let (tx, _rx) = mpsc::channel(16);
+    let (tx, mut rx) = mpsc::channel(16);
     let health = fan_in.clone();
     let task = tokio::spawn(async move { fan_in.consume_once(Some(3), &tx).await });
     let result = task.await.expect("gap handling must not panic").unwrap();
-    assert_eq!(result, Some(3));
-    assert_eq!(health.health().state, SourceHealthState::GapDetected);
-    assert_eq!(health.health().last_source_seq, Some(3));
+    assert_eq!(result, Some(6));
+    assert_eq!(rx.recv().await.expect("forwarded gap event").source_seq, 6);
+    assert_eq!(health.health().state, SourceHealthState::Stale);
+    assert_eq!(health.health().last_source_seq, Some(6));
 }
 
 #[tokio::test]

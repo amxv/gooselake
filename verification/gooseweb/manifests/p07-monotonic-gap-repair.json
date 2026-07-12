@@ -1,0 +1,446 @@
+{
+  "schema_revision": "gooseweb-acceptance-manifest/v4",
+  "manifest_id": "GW-P07-MONOTONIC-GAP-REPAIR-001",
+  "manifest_revision": 1,
+  "approved_plan": {
+    "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
+    "sha256": "3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d"
+  },
+  "browser_contract": {
+    "mechanism": "agent-browser",
+    "execution_mode": "headless",
+    "headed_mode_prohibited": true,
+    "fresh_unique_session_required": true,
+    "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "chromium_version": "150.0.7871.115",
+    "profile_policy": "fresh_ephemeral"
+  },
+  "scenario": {
+    "phase_id": "P07",
+    "title": "Monotonic targeted materialization and automatic source-gap repair",
+    "product_clearance": "pending",
+    "stable_scenario_id": "GW-P07-MONOTONIC-GAP-REPAIR-001",
+    "preconditions": [
+      "P06 provides a runtime-issued source epoch and coherent bootstrap high watermark.",
+      "The fake runtime can block command responses, omit replay rows, fail replay reads, and return an atomic fallback bootstrap.",
+      "Goosetower starts from an exact last contiguous source cursor."
+    ],
+    "actions": [
+      {
+        "id": "targeted-command-sse-race",
+        "control": {
+          "role": "button",
+          "accessible_name": "Send team comms message"
+        },
+        "submit": {
+          "role": "button",
+          "accessible_name": "Send team comms message"
+        },
+        "expected_command_count": 1,
+        "command": "broadcastTeamMessage",
+        "expected_runtime": [
+          "command response carries the affected authoritative message/deliveries while the ledger independently emits newer truth"
+        ],
+        "expected_goosetower": [
+          "newer ledger truth wins; stale targeted response is rejected; no whole-source bootstrap is requested"
+        ],
+        "expected_worker_store": [
+          "not_applicable: P09 owns browser merge algebra"
+        ],
+        "expected_visible": [
+          "terminal/session and command admission truth are no longer held stale by a post-command cursor reset"
+        ]
+      },
+      {
+        "id": "gap-freeze-replay-fallback",
+        "control": {
+          "role": "button",
+          "accessible_name": "Reconnect"
+        },
+        "submit": {
+          "role": "button",
+          "accessible_name": "Reconnect"
+        },
+        "expected_command_count": 1,
+        "command": "not_applicable_read_only_fault_control",
+        "expected_runtime": [
+          "replay supplies missing rows or fails and supplies one coherent bootstrap at high watermark"
+        ],
+        "expected_goosetower": [
+          "all later reduction freezes, replay fills contiguously, and atomic snapshot fallback is installed only when replay cannot repair"
+        ],
+        "expected_worker_store": [
+          "source stays stale until continuity is restored; P09 owns explicit stale-set removal"
+        ],
+        "expected_visible": [
+          "risky commands remain disabled during the gap and can re-enable only after repaired Tower truth"
+        ]
+      },
+      {
+        "id": "restart-revision-dedupe",
+        "control": {
+          "role": "button",
+          "accessible_name": "Reconnect"
+        },
+        "submit": {
+          "role": "button",
+          "accessible_name": "Reconnect"
+        },
+        "expected_command_count": 1,
+        "command": "not_applicable_read_only_restart",
+        "expected_runtime": [
+          "records retain authoritative timestamp revisions and the source supplies the coherent restart watermark"
+        ],
+        "expected_goosetower": [
+          "stale records cannot overwrite newer records; revisions survive rebuild; cursor dedupe and ledger retention remain bounded"
+        ],
+        "expected_worker_store": [
+          "not_applicable: P09 owns browser revision enforcement"
+        ],
+        "expected_visible": [
+          "reconstruction exposes the same authoritative session/team status"
+        ]
+      }
+    ],
+    "authority_chain": [
+      {
+        "layer": "Gooselake",
+        "required": [
+          "runtime records and ledger events govern effects",
+          "bootstrap snapshot and high watermark are the fallback authority",
+          "CommandAccepted remains admission only"
+        ]
+      },
+      {
+        "layer": "Goosetower",
+        "required": [
+          "one contiguous cursor owner",
+          "targeted response-scoped monotonic merges",
+          "freeze then replay then atomic fallback",
+          "bounded cursor dedupe"
+        ]
+      },
+      {
+        "layer": "Gooseweb Worker/store",
+        "required": [
+          "observed only; P09 owns browser operation algebra",
+          "must not clear stale state before Tower continuity"
+        ]
+      },
+      {
+        "layer": "Gooseweb React",
+        "required": [
+          "observed only; no P07 UI redesign",
+          "must never infer terminal truth"
+        ]
+      }
+    ],
+    "cardinality": {
+      "browser_actions": 3,
+      "commands": 3,
+      "runtime_messages": 1,
+      "visible_message_instances": 1,
+      "duplicates": 0
+    },
+    "chronology": "oldest_first_by_authoritative_order_not_client_timestamp",
+    "golden_goose_acceptance_lessons": [
+      "persist/ledger before projection",
+      "authoritative records repair incomplete effects",
+      "monotonic stale rejection",
+      "freeze beyond gaps",
+      "bounded dedupe",
+      "CommandAccepted is admission only",
+      "repair publication follows restored continuity",
+      "rebuilds install at one atomic high watermark",
+      "target changes refresh filter membership"
+    ]
+  },
+  "ownership": {
+    "gooselake": {
+      "impact": "no_change",
+      "reason": "P07 consumes the P06 runtime record, replay, epoch, and bootstrap contracts without changing runtime HTTP behavior."
+    },
+    "goosetower": {
+      "impact": "changed",
+      "reason": "Gateway command refresh, SSE handoff, materializer revisions, dedupe, and automatic gap replay/fallback now have monotonic single-owner semantics."
+    },
+    "gooseweb": {
+      "impact": "no_change",
+      "reason": "P08-P10 own detail protocol, Worker/store algebra, subscription lifecycle, and remaining visible defects."
+    },
+    "auth_account_state": {
+      "impact": "no_change",
+      "reason": "No ticket, account, workspace, or authorization behavior changes."
+    },
+    "protocol_generated_code": {
+      "impact": "no_change",
+      "reason": "No Protobuf schema or generated file changes."
+    },
+    "api_narrative_docs": {
+      "impact": "no_change",
+      "reason": "No runtime HTTP route, OpenAPI behavior, or public API contract changes in P07."
+    }
+  },
+  "reconstruction": [
+    "ordinary_reload",
+    "fresh_chromium_context_profile",
+    "websocket_loss_reconnect",
+    "navigation_away_and_back"
+  ],
+  "responsive": {
+    "viewports": [
+      "1440x1000",
+      "820x1000",
+      "520x900"
+    ],
+    "assertions": [
+      "reviewer observes honest source health at each required viewport",
+      "document width does not overflow",
+      "composer bottom remains inside the viewport",
+      "critical actions remain reachable while source health is stale or unavailable"
+    ]
+  },
+  "states": {
+    "empty": {
+      "applicability": "required",
+      "expectation": "Runtime epoch is nonempty and high_watermark is zero."
+    },
+    "loading": {
+      "applicability": "required",
+      "expectation": "Bootstrap reports replaying until the coherent snapshot is installed."
+    },
+    "stale_gap_replaying": {
+      "applicability": "required",
+      "expectation": "A gap retains the last contiguous cursor and never panics."
+    },
+    "rejection_conflict": {
+      "applicability": "not_applicable",
+      "reason": "P06 adds a read-only bootstrap route."
+    },
+    "permission_denied": {
+      "applicability": "required",
+      "expectation": "The bootstrap route requires the existing runtime bearer token."
+    },
+    "unsupported_provider": {
+      "applicability": "not_applicable",
+      "reason": "Source authority is provider-neutral."
+    },
+    "terminal_error": {
+      "applicability": "required",
+      "expectation": "404 old runtime and unavailable runtime remain offline with source_epoch unavailable."
+    }
+  },
+  "fixtures": {
+    "allowed_use": "source_fixture_through_real_tower_only",
+    "product_correctness_use": false,
+    "default_fixture_leak_assertions": [
+      "No fake data enters production bootstrap.",
+      "P02 controls remain verification-only.",
+      "Default and production URLs contain no fixture query parameter."
+    ],
+    "gating": "P02 fake source only under test or p02-verification feature."
+  },
+  "allowlists": {
+    "console": "verification/gooseweb/allowlists/console.json",
+    "network": "verification/gooseweb/allowlists/network.json",
+    "unexpected_console_network_protocol_websocket_failure": "fail"
+  },
+  "baseline_detected": [
+    {
+      "scenario_id": "GW-P07-MONOTONIC-GAP-REPAIR-001",
+      "defect_id": "BASE-P01-TEAM-COMMS-EMPTY",
+      "first_divergent_layer": "Goosetower",
+      "evidence_references": [
+        "tmp/gg/gooseweb-current-state-evidence/gooseweb-team-comms-empty-1440x1000.png"
+      ],
+      "owning_correction_phase": "P08",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Runtime message/delivery/event and injection succeed while Team Comms remains empty."
+    },
+    {
+      "scenario_id": "GW-P07-MONOTONIC-GAP-REPAIR-001",
+      "defect_id": "BASE-P01-RECONNECT-STATE-DISAGREEMENT",
+      "first_divergent_layer": "Gooseweb Worker/store to React connection-state projection",
+      "evidence_references": [
+        "verification/gooseweb/manifests/p01-team-comms-live.json"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P25",
+        "M3",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Browser and source-health projections disagree after reconnect and fresh-context reconstruction."
+    },
+    {
+      "scenario_id": "GW-P07-MONOTONIC-GAP-REPAIR-001",
+      "defect_id": "BASE-P01-MOBILE-COMMS-UNREACHABLE",
+      "first_divergent_layer": "Gooseweb React responsive navigation",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/viewport-results.json",
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/screenshots/520x900.png"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "P47",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "After reload at 520x900, Team Comms is absent from exposed semantic controls, so the critical surface is unreachable."
+    },
+    {
+      "scenario_id": "GW-P07-MONOTONIC-GAP-REPAIR-001",
+      "defect_id": "BASE-P01-FAVICON-NOT-FOUND",
+      "first_divergent_layer": "Gooseweb static asset routing",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/b40131f/attempt-4/report.md#replacement-attempt-4-blockers"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Every fresh browser attempt requests GET /favicon.ico and receives HTTP 404; the failed request remains blocked until the static asset route is corrected."
+    },
+    {
+      "scenario_id": "GW-P07-MONOTONIC-GAP-REPAIR-001",
+      "defect_id": "BASE-P02-SESSION-TERMINAL-DETAIL-RELOAD-LOSS",
+      "first_divergent_layer": "Goosetower session-detail snapshot kind to Gooseweb decoder/store",
+      "evidence_references": [
+        "verification/gooseweb/manifests/p02-fake-source-observers.json"
+      ],
+      "owning_correction_phase": "P08",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P23",
+        "P25",
+        "M3",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Reload reconstruction loses terminal session detail even after live delivery succeeds."
+    },
+    {
+      "scenario_id": "GW-P07-MONOTONIC-GAP-REPAIR-001",
+      "defect_id": "BASE-P04-GATEWAY-RESTART-CURSOR-FLOOR",
+      "first_divergent_layer": "Gooseweb persisted cursor to restarted gateway",
+      "evidence_references": [
+        "apps/gooseweb/scripts/p04-reconnect-lab-smoke.ts#tower-restart-gateway-sequence-reset"
+      ],
+      "owning_correction_phase": "P09",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P23",
+        "P25",
+        "M3",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "The cursor has no gateway epoch, so a restarted Tower sequence below the persisted floor suppresses a new source epoch."
+    },
+    {
+      "scenario_id": "GW-P07-MONOTONIC-GAP-REPAIR-001",
+      "defect_id": "BASE-P04-WORKER-SOURCE-GAP-ACCEPTED",
+      "first_divergent_layer": "Gooseweb Worker cursor transition predicate",
+      "evidence_references": [
+        "apps/gooseweb/scripts/p04-reconnect-lab-smoke.ts#missing-source-cursor"
+      ],
+      "owning_correction_phase": "P09",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P23",
+        "P25",
+        "M3",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "A higher gateway sequence with a same-epoch source jump from 4 to 6 is currently accepted instead of requesting repair."
+    }
+  ],
+  "known_defects": [],
+  "non_applicable": {
+    "schema_migration": {
+      "status": "not_applicable",
+      "reason": "No persistent runtime or Tower schema changes."
+    },
+    "backfill": {
+      "status": "not_applicable",
+      "reason": "Tower remains rebuildable from runtime records and ledger replay."
+    },
+    "compatibility": {
+      "status": "required",
+      "reason": "P06 bootstrap/epoch/healthy-idle/reconnect contracts remain green; old runtimes remain explicitly unavailable."
+    },
+    "rollback": {
+      "status": "required",
+      "reason": "Rollback restores command refresh behavior but does not alter durable runtime truth."
+    },
+    "performance": {
+      "status": "required",
+      "reason": "Targeted merges are bounded per affected entity; gap replay is paged and fallback is one bounded bootstrap."
+    },
+    "security": {
+      "status": "observed_only",
+      "reason": "Existing runtime bearer and gateway authorization boundaries are unchanged."
+    },
+    "data_retention_gc": {
+      "status": "not_applicable",
+      "reason": "Dedupe uses the contiguous cursor and existing bounded ledger; no new retained product data."
+    },
+    "deployment": {
+      "status": "observed_only",
+      "reason": "No configuration or deployment topology changes."
+    },
+    "provenance_reuse": {
+      "status": "reference_only",
+      "reason": "Golden Goose persist/repair ordering informed the design; no source was copied."
+    }
+  },
+  "provenance": {
+    "source_repository": "/Users/ashray/code/amxv/gg-desktop",
+    "source_commit": "af539ec0bf63ffad27ee47b480e817bb8393e02d",
+    "references": [
+      "src-tauri/src/agent_runtime/manager/runtime_ops/events.rs",
+      "src-tauri/src/agent_runtime/manager/runtime_ops/timeline_store_sync.rs"
+    ],
+    "reuse_status": "reference_only",
+    "destination_symbols": [
+      "GatewayState::ingest_source_event",
+      "GatewayState::repair_source_gap",
+      "GatewayState::merge_authoritative_session",
+      "GatewayState::merge_authoritative_team",
+      "GatewayState::merge_authoritative_team_message",
+      "MaterializedState::set_authoritative_version"
+    ],
+    "native_tauri_assumptions_removed": {
+      "status": "not_applicable",
+      "reason": "Only ordering and repair invariants were referenced."
+    }
+  }
+}

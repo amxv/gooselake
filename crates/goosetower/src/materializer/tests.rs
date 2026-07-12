@@ -258,6 +258,49 @@ fn materializer_dedupes_by_source_cursor() {
 }
 
 #[test]
+fn authoritative_session_revision_rejects_stale_overwrite_and_survives_rebuild() {
+    let mut state = MaterializedState::new("local", "epoch");
+    let mut current = session_record("sess_revision");
+    current.status = "ready".into();
+    current.updated_at = 20;
+    let version = state.upsert_session(current.clone());
+
+    let mut stale = current.clone();
+    stale.status = "turn_running".into();
+    stale.updated_at = 19;
+    assert_eq!(state.upsert_session(stale), version);
+    assert_eq!(state.sessions["sess_revision"].status, "ready");
+
+    let mut rebuilt = MaterializedState::new("local", "epoch");
+    assert_eq!(rebuilt.upsert_session(current), version);
+}
+
+#[test]
+fn source_cursor_dedupe_and_ledger_storage_remain_bounded() {
+    let mut state = MaterializedState::new("local", "epoch").with_limits(32, 8, 8);
+    for seq in 1..=2_500 {
+        let effect = state.reduce_source_event(source_event(
+            seq,
+            "runtime.progress",
+            RuntimeEventScope::System,
+            "runtime",
+            json!({}),
+        ));
+        assert!(!effect.duplicate);
+    }
+    assert_eq!(state.ledger.len(), 32);
+    let old = state.reduce_source_event(source_event(
+        1,
+        "runtime.progress",
+        RuntimeEventScope::System,
+        "runtime",
+        json!({}),
+    ));
+    assert!(old.duplicate);
+    assert_eq!(state.ledger.len(), 32);
+}
+
+#[test]
 fn materializer_coalesces_repeated_state_patches_without_dropping_terminal_events() {
     let mut state = seeded_state();
     let mut buffer = CoalescingPatchBuffer::default();

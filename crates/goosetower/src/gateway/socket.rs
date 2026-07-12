@@ -97,6 +97,7 @@ impl GatewayState {
         }
 
         let mut patch_rx = self.patches.subscribe();
+        let mut recovery_rx = self.recoveries.subscribe();
         let heartbeat_timeout = Duration::from_millis(
             self.config
                 .websocket
@@ -126,6 +127,29 @@ impl GatewayState {
                                 Some(conn.connection_id.clone()),
                                 json!({ "reason": "gateway replay buffer lagged" }),
                             ).await;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+                recovery = recovery_rx.recv() => {
+                    match recovery {
+                        Ok(SourceRecoverySignal::Filled(cursor)) => {
+                            self.enqueue_connection(&mut conn, self.source_gap_filled(cursor), None);
+                        }
+                        Ok(SourceRecoverySignal::Resync { source_id, reason }) => {
+                            self.enqueue_connection(
+                                &mut conn,
+                                self.source_snapshot_resync(&source_id, &reason),
+                                None,
+                            );
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            conn.status = ConnectionStatus::Degraded;
+                            self.enqueue_connection(
+                                &mut conn,
+                                self.connection_degraded("source recovery signal lagged"),
+                                Some("connection_status".to_string()),
+                            );
                         }
                         Err(broadcast::error::RecvError::Closed) => break,
                     }

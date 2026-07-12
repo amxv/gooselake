@@ -102,7 +102,10 @@ impl MaterializedState {
             _ => {}
         }
 
-        if self.source_health.state != SourceHealthState::Live {
+        if !matches!(
+            self.source_health.state,
+            SourceHealthState::Live | SourceHealthState::GapDetected
+        ) {
             patches.push(self.transition_source_health(SourceHealthState::Live, None));
         }
 
@@ -564,7 +567,7 @@ impl MaterializedState {
         )]
     }
 
-    fn session_patches(
+    pub(crate) fn session_patches(
         &mut self,
         session_id: &str,
         cursor: Option<SourceCursorView>,
@@ -596,7 +599,7 @@ impl MaterializedState {
         patches
     }
 
-    fn team_patch(
+    pub(crate) fn team_patch(
         &mut self,
         team_id: &str,
         cursor: Option<SourceCursorView>,

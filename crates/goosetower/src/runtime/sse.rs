@@ -254,12 +254,6 @@ impl RuntimeSseFanIn {
                 let runtime_event = serde_json::from_str::<RuntimeEventRecord>(&frame.data)
                     .map_err(RuntimeClientError::Json)?;
                 let source_seq = runtime_event.row_id;
-                if let Some(previous) = last_seq {
-                    if source_seq > previous + 1 {
-                        self.transition(SourceHealthState::GapDetected, Some(previous), None);
-                        return Ok(last_seq);
-                    }
-                }
                 if last_seq.is_some_and(|previous| source_seq <= previous) {
                     continue;
                 }
@@ -544,27 +538,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reconnect_loop_gap_replays_from_last_contiguous_cursor() {
-        let addr = spawn_reconnect_sequence_mock(vec![vec![1, 3], vec![2, 3]]).await;
+    async fn fan_in_forwards_gap_for_the_gateway_cursor_owner_to_repair() {
+        let addr = spawn_reconnect_sequence_mock(vec![vec![1, 3]]).await;
         let fan_in = reconnecting_fan_in(addr, Duration::from_secs(1));
         let (tx, mut rx) = mpsc::channel(8);
-        let task = fan_in.clone().spawn(Some(0), tx);
-        let rows = tokio::time::timeout(Duration::from_secs(1), async {
-            let mut rows = Vec::new();
-            while rows.len() < 3 {
-                rows.push(rx.recv().await.expect("gap replay row").source_seq);
-            }
-            rows
-        })
-        .await
-        .expect("gap filled");
-        task.abort();
-        assert_eq!(rows, vec![1, 2, 3]);
-        assert_eq!(fan_in.health().last_source_seq, Some(3));
-        let history = fan_in.health_history();
-        assert!(history.windows(2).any(
-            |states| states == [SourceHealthState::GapDetected, SourceHealthState::Replaying,]
-        ));
+        let cursor = fan_in
+            .consume_once(Some(0), &tx)
+            .await
+            .expect("consume gap");
+        drop(tx);
+        let mut rows = Vec::new();
+        while let Some(event) = rx.recv().await {
+            rows.push(event.source_seq);
+        }
+        assert_eq!(rows, vec![1, 3]);
+        assert_eq!(cursor, Some(3));
+        assert_eq!(fan_in.health().state, SourceHealthState::Live);
+        assert!(!fan_in
+            .health_history()
+            .contains(&SourceHealthState::GapDetected));
     }
 
     #[tokio::test]

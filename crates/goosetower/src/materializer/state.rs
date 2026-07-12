@@ -233,8 +233,16 @@ impl MaterializedState {
         {
             return false;
         }
-        self.source_health
-            .transition(SourceHealthState::Live, Some(event.source_seq), None);
+        if self.source_health.state == SourceHealthState::GapDetected {
+            self.source_health.transition(
+                SourceHealthState::GapDetected,
+                Some(event.source_seq),
+                self.source_health.last_error.clone(),
+            );
+        } else {
+            self.source_health
+                .transition(SourceHealthState::Live, Some(event.source_seq), None);
+        }
         self.reduced_through_source_seq = Some(event.source_seq);
         true
     }
@@ -255,6 +263,20 @@ impl MaterializedState {
             .map(|version| version.0.saturating_add(1))
             .unwrap_or(1);
         let version = EntityVersion(next);
+        self.versions.insert(key, version);
+        version
+    }
+
+    pub fn set_authoritative_version(
+        &mut self,
+        entity_kind: impl Into<String>,
+        entity_id: impl Into<String>,
+        revision: i64,
+    ) -> EntityVersion {
+        let key = EntityKey::new(&self.source_id, entity_kind, entity_id);
+        let revision = EntityVersion(revision.max(1) as u64);
+        let current = self.versions.get(&key).copied().unwrap_or_default();
+        let version = current.max(revision);
         self.versions.insert(key, version);
         version
     }
@@ -280,9 +302,17 @@ impl MaterializedState {
     pub fn upsert_session(&mut self, mut session: SessionRecord) -> EntityVersion {
         session.updated_at = session.updated_at.max(session.created_at);
         let id = session.id.clone();
+        if self
+            .sessions
+            .get(&id)
+            .is_some_and(|current| current.updated_at > session.updated_at)
+        {
+            return self.version("session", id);
+        }
+        let revision = session.updated_at;
         self.ownership.sessions.insert(id.clone());
         self.sessions.insert(id.clone(), session);
-        self.bump_version("session", id)
+        self.set_authoritative_version("session", id, revision)
     }
 
     pub fn update_session_context_usage(
@@ -318,19 +348,28 @@ impl MaterializedState {
 
     pub fn upsert_team(&mut self, team: TeamRecord) -> EntityVersion {
         let id = team.id.clone();
+        if self
+            .teams
+            .get(&id)
+            .is_some_and(|current| current.updated_at > team.updated_at)
+        {
+            return self.version("team", id);
+        }
+        let revision = team.updated_at.max(team.created_at);
         self.ownership.teams.insert(id.clone());
         self.teams.insert(id.clone(), team);
-        self.bump_version("team", id)
+        self.set_authoritative_version("team", id, revision)
     }
 
     pub fn upsert_team_member(&mut self, member: TeamMemberRecord) -> EntityVersion {
         let team_id = member.team_id.clone();
         let agent_id = member.agent_id.clone();
+        let revision = member.joined_at;
         self.members_by_team
             .entry(team_id.clone())
             .or_default()
             .insert(agent_id.clone(), member);
-        self.bump_version("team_member", format!("{team_id}:{agent_id}"))
+        self.set_authoritative_version("team_member", format!("{team_id}:{agent_id}"), revision)
     }
 
     pub fn remove_team_member(&mut self, team_id: &str, agent_id: &str) -> Option<EntityVersion> {
@@ -343,6 +382,7 @@ impl MaterializedState {
     pub fn upsert_message(&mut self, message: TeamMessageRecord) -> EntityVersion {
         let id = message.id.clone();
         let team_id = message.team_id.clone();
+        let revision = message.created_at;
         let messages = self.messages_by_team.entry(team_id).or_default();
         if let Some(existing) = messages.iter_mut().find(|row| row.id == id) {
             *existing = message;
@@ -354,12 +394,13 @@ impl MaterializedState {
                     .then_with(|| left.id.cmp(&right.id))
             });
         }
-        self.bump_version("team_message", id)
+        self.set_authoritative_version("team_message", id, revision)
     }
 
     pub fn upsert_delivery(&mut self, delivery: TeamDeliveryRecord) -> EntityVersion {
         let id = delivery.id.clone();
         let team_id = delivery.team_id.clone();
+        let revision = delivery.updated_at;
         self.ownership.deliveries.insert(id.clone());
         let deliveries = self.deliveries_by_team.entry(team_id).or_default();
         if let Some(existing) = deliveries.iter_mut().find(|row| row.id == id) {
@@ -372,14 +413,15 @@ impl MaterializedState {
                     .then_with(|| left.id.cmp(&right.id))
             });
         }
-        self.bump_version("team_delivery", id)
+        self.set_authoritative_version("team_delivery", id, revision)
     }
 
     pub fn upsert_worktree(&mut self, worktree: ManagedWorktreeRecord) -> EntityVersion {
         let id = worktree.id.clone();
+        let revision = worktree.updated_at.max(worktree.created_at);
         self.ownership.worktrees.insert(id.clone());
         self.worktrees.insert(id.clone(), worktree);
-        self.bump_version("worktree", id)
+        self.set_authoritative_version("worktree", id, revision)
     }
 
     pub fn upsert_process_summary(&mut self, process: ProcessSummary) -> EntityVersion {

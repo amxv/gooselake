@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -13,7 +14,7 @@ import {
   validateClearanceHistory,
   validateEvidence,
   validateGitRecord,
-  validateLifecycleAttestation,
+  validateLifecycleStore,
   validatePhaseGraphSeed,
   validateManifest,
   validateManifestClearancePolicy,
@@ -27,6 +28,7 @@ const root = resolve(import.meta.dir, "../../..");
 const P01_MANIFEST_PATH = "verification/gooseweb/manifests/p01-team-comms-live.json";
 const VALIDATOR_MANIFEST_PATH = "verification/gooseweb/validator/fixtures/manifests/validator-p01-empty.json";
 const ALTERNATE_MANIFEST_PATH = "verification/gooseweb/manifests/validator-alternate.json";
+const LIFECYCLE_STORE_PATH = "tmp/gg/gooseweb-migration/lifecycle";
 const P01_BASE_SHA = "ca88bfe56719f69fe59151372e0d5aa76b2c92ab";
 const manifest = readJson(P01_MANIFEST_PATH);
 const validatorManifest = readJson(VALIDATOR_MANIFEST_PATH);
@@ -36,6 +38,7 @@ const clearance = readJson("verification/gooseweb/validator/fixtures/valid-clear
 const evidence = readJson("verification/gooseweb/validator/fixtures/valid-evidence-run.json");
 const validNonClearance = readJson("verification/gooseweb/validator/fixtures/valid-review-outcome.json");
 const lifecycleAttestation = readJson("verification/gooseweb/validator/fixtures/valid-lifecycle-attestation.json");
+let lifecycleNegativeCount = 0;
 const consoleCapture: RecordJson = {
   schema_revision: "gooseweb-console-capture/v3",
   capture_source: "agent-browser console",
@@ -102,10 +105,6 @@ validateBrowserCaptures(change(consoleCapture, "messages", [
 validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "agent-browser exposes no redacted frame capture", baseline_defect_id: "BASE-P01-WEBSOCKET-OBSERVER-UNAVAILABLE" }), manifest);
 validateSchemasAgainstDocuments();
 validateReferencedEvidence();
-const missingCurrentClearance = change(change(change(lifecycleAttestation, "attempts", []), "claimed_effective_states", []), "eligible_phases", ["P01"]);
-const missingState = validateLifecycleAttestation(missingCurrentClearance);
-assert.notEqual(missingState.effectiveStates.P01, "cleared", "missing external clearance advanced P01");
-assert.ok(!missingState.eligiblePhases.includes("P02"), "missing external clearance made P02 eligible");
 
 const negativeCases: [string, () => void][] = [
   ["changed approved plan SHA", () => validateManifest(change(manifest, "approved_plan.sha256", "0".repeat(64)))],
@@ -157,13 +156,6 @@ const negativeCases: [string, () => void][] = [
     stale = change(stale, "served_tree_sha", "592e4389b9be8f980c4deabd397ceb79e718bafb");
     stale = change(stale, "reviewed_range", `${P01_BASE_SHA}..973a5771c54650946ece3b1d9016e0788c522087`);
     validateClearance(stale);
-  }],
-  ["missing current lease and clearance cannot claim P02 eligibility", () => validateLifecycleAttestation(change(missingCurrentClearance, "eligible_phases", ["P01", "P02"]))],
-  ["changed append-only predecessor hash", () => {
-    let next = change(lifecycleAttestation, "attestation_sequence", 2);
-    next = change(next, "attestation_id", "gooseweb-lifecycle-000002");
-    next = change(next, "previous_attestation_sha256", "0".repeat(64));
-    validateLifecycleAttestation(next, { previous: lifecycleAttestation });
   }],
   ["nonexistent Git range head", () => {
     const forged = change(change(change(clearance, "candidate_head_sha", "a".repeat(40)), "served_head_sha", "a".repeat(40)), "reviewed_range", `${P01_BASE_SHA}..${"a".repeat(40)}`);
@@ -244,12 +236,13 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v9 passed (${negativeCases.length} negative cases)`);
+console.log(`Gooseweb acceptance contract v10 passed (${negativeCases.length + lifecycleNegativeCount} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);
   applySchemaFile("verification/gooseweb/schemas/manifest-registry.schema.json", manifestRegistry);
   applySchemaFile("verification/gooseweb/schemas/lifecycle-attestation.schema.json", lifecycleAttestation);
+  applySchemaFile("verification/gooseweb/schemas/lifecycle-current.schema.json", lifecycleCurrent(storedAttestation(lifecycleAttestation)));
   applySchemaFile("verification/gooseweb/schemas/phase-graph-seed.schema.json", ledger);
   applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", clearance);
   applySchemaFile("verification/gooseweb/schemas/evidence-run.schema.json", evidence);
@@ -280,9 +273,12 @@ function validateReferencedEvidence(): void {
   }
   try {
     validateEvidence(evidence, { checkFiles: true, expected: evidence });
-    const lifecycleState = validateLifecycleAttestation(lifecycleAttestation);
+    const genesis = storedAttestation(lifecycleAttestation);
+    writeLifecycleStore([genesis], genesis);
+    const lifecycleState = validateLifecycleStore();
     assert.equal(lifecycleState.effectiveStates.P01, "cleared", "released exact-head clearance did not clear P01");
     assert.ok(lifecycleState.eligiblePhases.includes("P02"), "released P01 clearance did not make P02 eligible");
+    validateLifecycleStoreAdversarialCases(genesis);
     const rejectedEvidence = change(evidence, "review_outcome", { status: "changes_required", record: "review-outcome.json" });
     const nonClearance = validNonClearance;
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));
@@ -334,6 +330,7 @@ function validateReferencedEvidence(): void {
     assert.throws(() => validateEvidence(evidence, { checkFiles: true }), undefined, "missing referenced evidence unexpectedly passed");
   } finally {
     rmSync(directory, { recursive: true, force: true });
+    rmSync(resolve(root, LIFECYCLE_STORE_PATH), { recursive: true, force: true });
   }
 }
 
@@ -354,6 +351,122 @@ function manifestForPhase(phase: "P06" | "P56", productClearance: "approved" | "
   result = change(result, "scenario.phase_id", phase);
   result = change(result, "scenario.product_clearance", productClearance);
   return change(result, "baseline_detected", []);
+}
+
+interface StoredTestAttestation {
+  readonly document: RecordJson;
+  readonly raw: Buffer;
+  readonly sha256: string;
+  readonly path: string;
+}
+
+function storedAttestation(document: RecordJson): StoredTestAttestation {
+  const raw = Buffer.from(`${JSON.stringify(document, null, 2)}\n`);
+  const hash = createHash("sha256").update(raw).digest("hex");
+  return {
+    document,
+    raw,
+    sha256: hash,
+    path: `attestations/${document.attestation_id}-${hash}.json`
+  };
+}
+
+function lifecycleCurrent(current: StoredTestAttestation): RecordJson {
+  return {
+    schema_revision: "gooseweb-lifecycle-current/v1",
+    current: {
+      attestation_id: current.document.attestation_id!,
+      attestation_sequence: current.document.attestation_sequence!,
+      path: current.path,
+      sha256: current.sha256
+    }
+  };
+}
+
+function writeLifecycleStore(entries: StoredTestAttestation[], current: StoredTestAttestation): void {
+  const directory = resolve(root, LIFECYCLE_STORE_PATH);
+  rmSync(directory, { recursive: true, force: true });
+  mkdirSync(resolve(directory, "attestations"), { recursive: true });
+  for (const entry of entries) writeFileSync(resolve(directory, entry.path), entry.raw);
+  writeFileSync(resolve(directory, "current.json"), `${JSON.stringify(lifecycleCurrent(current), null, 2)}\n`);
+}
+
+function successorAttestation(parent: StoredTestAttestation, mutate?: (document: RecordJson) => RecordJson): StoredTestAttestation {
+  let document = change(parent.document, "attestation_sequence", Number(parent.document.attestation_sequence) + 1);
+  document = change(document, "attestation_id", `gooseweb-lifecycle-${String(document.attestation_sequence).padStart(6, "0")}`);
+  document = change(document, "predecessor", { path: parent.path, sha256: parent.sha256 });
+  document = change(document, "generated_at", "2026-07-12T10:22:00.000Z");
+  return storedAttestation(mutate ? mutate(document) : document);
+}
+
+function expectLifecycleFailure(name: string, setup: () => void): void {
+  setup();
+  assert.throws(() => validateLifecycleStore(), undefined, name);
+  lifecycleNegativeCount += 1;
+}
+
+function validateLifecycleStoreAdversarialCases(genesis: StoredTestAttestation): void {
+  const missingDocument = change(change(change(genesis.document, "attempts", []), "claimed_effective_states", []), "eligible_phases", ["P01"]);
+  const missingGenesis = storedAttestation(missingDocument);
+  writeLifecycleStore([missingGenesis], missingGenesis);
+  const missingState = validateLifecycleStore();
+  assert.notEqual(missingState.effectiveStates.P01, "cleared", "missing external clearance advanced P01");
+  assert.ok(!missingState.eligiblePhases.includes("P02"), "missing external clearance made P02 eligible");
+
+  expectLifecycleFailure("missing current lease and clearance claimed P02 eligibility", () => {
+    const forged = storedAttestation(change(missingDocument, "eligible_phases", ["P01", "P02"]));
+    writeLifecycleStore([forged], forged);
+  });
+  expectLifecycleFailure("replacement genesis was accepted", () => {
+    const replacement = storedAttestation(change(genesis.document, "generated_at", "2026-07-12T10:22:00.000Z"));
+    writeLifecycleStore([genesis, replacement], genesis);
+  });
+  expectLifecycleFailure("missing predecessor file was accepted", () => {
+    let successor = change(genesis.document, "attestation_sequence", 2);
+    successor = change(successor, "attestation_id", "gooseweb-lifecycle-000002");
+    successor = change(successor, "predecessor", { path: `attestations/gooseweb-lifecycle-000001-${"0".repeat(64)}.json`, sha256: "0".repeat(64) });
+    const stored = storedAttestation(successor);
+    writeLifecycleStore([stored], stored);
+  });
+  expectLifecycleFailure("malformed persisted predecessor was accepted", () => {
+    const malformedRaw = Buffer.from("{}\n");
+    const malformedHash = createHash("sha256").update(malformedRaw).digest("hex");
+    const malformed: StoredTestAttestation = { document: {}, raw: malformedRaw, sha256: malformedHash, path: `attestations/gooseweb-lifecycle-000001-${malformedHash}.json` };
+    let successor = change(genesis.document, "attestation_sequence", 2);
+    successor = change(successor, "attestation_id", "gooseweb-lifecycle-000002");
+    successor = change(successor, "predecessor", { path: malformed.path, sha256: malformed.sha256 });
+    const stored = storedAttestation(successor);
+    writeLifecycleStore([malformed, stored], stored);
+  });
+  expectLifecycleFailure("predecessor raw-byte hash mismatch was accepted", () => {
+    const successor = successorAttestation(genesis, (document) => change(document, "predecessor.sha256", "0".repeat(64)));
+    writeLifecycleStore([genesis, successor], successor);
+  });
+  expectLifecycleFailure("successor removed the append-only attempt prefix", () => {
+    const successor = successorAttestation(genesis, (document) => change(document, "attempts", []));
+    writeLifecycleStore([genesis, successor], successor);
+  });
+  expectLifecycleFailure("successor reordered the append-only attempt prefix", () => {
+    const secondAttempt = change((genesis.document.attempts as RecordJson[])[0]!, "evidence_descriptor_sha256", "1".repeat(64));
+    const twoAttemptGenesis = storedAttestation(change(genesis.document, "attempts", [(genesis.document.attempts as Json[])[0]!, secondAttempt]));
+    const successor = successorAttestation(twoAttemptGenesis, (document) => change(document, "attempts", [...(document.attempts as Json[])].reverse()));
+    writeLifecycleStore([twoAttemptGenesis, successor], successor);
+  });
+  expectLifecycleFailure("lifecycle fork was accepted", () => {
+    const first = successorAttestation(genesis);
+    const second = successorAttestation(genesis, (document) => change(document, "generated_at", "2026-07-12T10:23:00.000Z"));
+    writeLifecycleStore([genesis, first, second], first);
+  });
+  expectLifecycleFailure("current pointer to a non-tip was accepted", () => {
+    const successor = successorAttestation(genesis);
+    writeLifecycleStore([genesis, successor], genesis);
+  });
+  expectLifecycleFailure("current pointer raw-byte hash mismatch was accepted", () => {
+    writeLifecycleStore([genesis], genesis);
+    const pointer = lifecycleCurrent(genesis);
+    (pointer.current as RecordJson).sha256 = "0".repeat(64);
+    writeFileSync(resolve(root, LIFECYCLE_STORE_PATH, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`);
+  });
 }
 
 function laterClearance(overrides: Record<string, unknown>): RecordJson {

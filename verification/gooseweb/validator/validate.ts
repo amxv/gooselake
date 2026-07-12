@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
@@ -98,23 +98,78 @@ export interface LifecycleState {
   readonly eligiblePhases: readonly string[];
 }
 
-export interface LifecycleOptions {
-  readonly previous?: RecordJson;
+interface StoredAttestation {
+  readonly path: string;
+  readonly sha256: string;
+  readonly document: RecordJson;
 }
 
-export function validateLifecycleAttestation(attestation: RecordJson, options: LifecycleOptions = {}): LifecycleState {
-  applySchemaFile("verification/gooseweb/schemas/lifecycle-attestation.schema.json", attestation);
-  const sequence = integer(attestation.attestation_sequence, "attestation sequence");
-  equal(attestation.attestation_id, `gooseweb-lifecycle-${String(sequence).padStart(6, "0")}`, "attestation ID/sequence");
-  if (sequence === 1) equal(attestation.previous_attestation_sha256, null, "genesis external attestation predecessor");
-  else {
-    if (!options.previous) fail("non-genesis lifecycle attestation requires its predecessor document");
-    equal(sequence, integer(options.previous.attestation_sequence, "previous attestation sequence") + 1, "attestation sequence continuity");
-    equal(attestation.previous_attestation_sha256, jsonHash(options.previous), "previous attestation hash");
-    const priorAttempts = array(options.previous.attempts, "previous attempts");
-    equal(JSON.stringify(array(attestation.attempts, "attempts").slice(0, priorAttempts.length)), JSON.stringify(priorAttempts), "append-only attempt prefix");
+export function validateLifecycleStore(): LifecycleState {
+  const storeRoot = safeLifecycleStoreRoot();
+  const currentBytes = readFileSync(safeChild(storeRoot, "current.json"));
+  const currentDocument = JSON.parse(currentBytes.toString("utf8")) as RecordJson;
+  applySchemaFile("verification/gooseweb/schemas/lifecycle-current.schema.json", currentDocument);
+  const current = object(currentDocument.current, "canonical lifecycle tip");
+  const attestationsRoot = safeChild(storeRoot, "attestations");
+  if (!existsSync(attestationsRoot) || !statSync(attestationsRoot).isDirectory()) fail("authoritative lifecycle attestations directory is missing");
+  const files = readdirSync(attestationsRoot).filter((name) => name.endsWith(".json")).sort();
+  if (files.length === 0) fail("authoritative lifecycle store has no attestation history");
+  const nodes = new Map<string, StoredAttestation>();
+  for (const file of files) {
+    const path = `attestations/${file}`;
+    if (!/^attestations\/gooseweb-lifecycle-[0-9]{6}-[a-f0-9]{64}\.json$/.test(path)) fail("lifecycle attestation filename is not sequence/hash addressed");
+    const bytes = readFileSync(safeChild(storeRoot, path));
+    const hash = hashBytes(bytes);
+    let document: RecordJson;
+    try { document = JSON.parse(bytes.toString("utf8")) as RecordJson; } catch { fail("stored lifecycle attestation is not JSON"); }
+    applySchemaFile("verification/gooseweb/schemas/lifecycle-attestation.schema.json", document);
+    const sequence = integer(document.attestation_sequence, "stored attestation sequence");
+    const id = string(document.attestation_id, "stored attestation ID");
+    equal(id, `gooseweb-lifecycle-${String(sequence).padStart(6, "0")}`, "stored attestation ID/sequence");
+    equal(path, `attestations/${id}-${hash}.json`, "stored attestation filename/raw-byte hash");
+    nodes.set(path, { path, sha256: hash, document });
   }
 
+  const genesis: StoredAttestation[] = [];
+  const children = new Map<string, StoredAttestation[]>();
+  for (const node of nodes.values()) {
+    if (node.document.predecessor === null) {
+      equal(node.document.attestation_sequence, 1, "genesis attestation sequence");
+      genesis.push(node);
+      continue;
+    }
+    const predecessor = object(node.document.predecessor, "stored predecessor");
+    const predecessorPath = string(predecessor.path, "stored predecessor path");
+    const parent = nodes.get(predecessorPath);
+    if (!parent) fail("stored lifecycle predecessor file is missing");
+    equal(predecessor.sha256, parent.sha256, "stored predecessor raw-byte hash");
+    equal(node.document.attestation_sequence, integer(parent.document.attestation_sequence, "predecessor sequence") + 1, "stored attestation sequence continuity");
+    const priorAttempts = array(parent.document.attempts, "predecessor attempts");
+    equal(JSON.stringify(array(node.document.attempts, "successor attempts").slice(0, priorAttempts.length)), JSON.stringify(priorAttempts), "append-only attempt prefix");
+    const siblings = children.get(predecessorPath) ?? [];
+    siblings.push(node);
+    children.set(predecessorPath, siblings);
+  }
+  if (genesis.length !== 1) fail("authoritative lifecycle store must contain exactly one genesis");
+  for (const successors of children.values()) if (successors.length > 1) fail("authoritative lifecycle chain fork detected");
+  const visited = new Set<string>();
+  let tip = genesis[0]!;
+  while (true) {
+    if (visited.has(tip.path)) fail("authoritative lifecycle chain cycle detected");
+    visited.add(tip.path);
+    const successor = children.get(tip.path)?.[0];
+    if (!successor) break;
+    tip = successor;
+  }
+  if (visited.size !== nodes.size) fail("authoritative lifecycle store contains disconnected history");
+  equal(current.path, tip.path, "canonical current pointer/tip path");
+  equal(current.sha256, tip.sha256, "canonical current pointer raw-byte hash");
+  equal(current.attestation_id, tip.document.attestation_id, "canonical current pointer attestation ID");
+  equal(current.attestation_sequence, tip.document.attestation_sequence, "canonical current pointer sequence");
+  return validateLifecycleTip(tip.document);
+}
+
+function validateLifecycleTip(attestation: RecordJson): LifecycleState {
   const seedReference = object(attestation.phase_graph_seed, "phase graph seed reference");
   const seedPath = string(seedReference.path, "phase graph seed path");
   const seedHead = string(seedReference.candidate_head_sha, "phase graph seed candidate head");
@@ -782,6 +837,12 @@ function safeEvidenceRoot(relative: string): string {
   return realpathSync(path);
 }
 
+function safeLifecycleStoreRoot(): string {
+  const path = resolve(root, "tmp/gg/gooseweb-migration/lifecycle");
+  if (!existsSync(path) || !statSync(path).isDirectory()) fail("authoritative lifecycle store is missing");
+  return realpathSync(path);
+}
+
 function safeChild(parent: string, relative: string): string {
   if (relative.startsWith("/") || relative.includes("..")) fail(`unsafe evidence path ${relative}`);
   const path = resolve(parent, relative);
@@ -809,7 +870,6 @@ function matchesType(value: Json, type: string): boolean {
 
 function deepEqual(a: Json, b: Json): boolean { return JSON.stringify(a) === JSON.stringify(b); }
 function hashBytes(value: Uint8Array): string { return createHash("sha256").update(value).digest("hex"); }
-function jsonHash(value: RecordJson): string { return hashBytes(Buffer.from(JSON.stringify(value))); }
 function cloneRecord(value: RecordJson): RecordJson { return structuredClone(value); }
 function ensureUnique(values: string[], label: string): void { if (new Set(values).size !== values.length) fail(`${label} must be unique`); }
 function object(value: Json | undefined, label: string): RecordJson { if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be an object`); return value as RecordJson; }

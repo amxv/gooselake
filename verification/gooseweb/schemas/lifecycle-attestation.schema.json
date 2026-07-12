@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gooseweb://schemas/lifecycle-attestation/v1",
-  "title": "Gooseweb external append-only lifecycle attestation v1",
+  "$id": "gooseweb://schemas/lifecycle-attestation/v2",
+  "title": "Gooseweb hash-addressed lifecycle attestation v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,7 +9,7 @@
     "approved_plan_sha256",
     "attestation_id",
     "attestation_sequence",
-    "previous_attestation_sha256",
+    "predecessor",
     "phase_graph_seed",
     "generated_at",
     "attempts",
@@ -18,7 +18,7 @@
   ],
   "properties": {
     "schema_revision": {
-      "const": "gooseweb-lifecycle-attestation/v1"
+      "const": "gooseweb-lifecycle-attestation/v2"
     },
     "approved_plan_sha256": {
       "const": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
@@ -31,12 +31,26 @@
       "type": "integer",
       "minimum": 1
     },
-    "previous_attestation_sha256": {
+    "predecessor": {
       "type": [
-        "string",
+        "object",
         "null"
       ],
-      "pattern": "^[a-f0-9]{64}$"
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^attestations/gooseweb-lifecycle-[0-9]{6}-[a-f0-9]{64}\\.json$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
     },
     "phase_graph_seed": {
       "type": "object",

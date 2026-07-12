@@ -364,7 +364,7 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
   const networkAllowlist = readJson("verification/gooseweb/allowlists/network.json");
   applySchemaInline(consoleCaptureSchema(), consoleCapture, "console capture");
   applySchemaInline(networkCaptureSchema(), networkCapture, "network capture");
-  equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v4", "console allowlist revision");
+  equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v5", "console allowlist revision");
   equal(networkAllowlist.schema_revision, "gooseweb-network-allowlist/v3", "network allowlist revision");
   const consoleBoundary = object(consoleAllowlist.capture_boundary, "console capture boundary");
   equal(consoleBoundary.source, "unfiltered agent-browser console output after document.readyState complete plus one second", "console capture source");

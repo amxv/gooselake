@@ -1,5 +1,5 @@
 {
-  "schema_revision": "gooseweb-console-allowlist/v4",
+  "schema_revision": "gooseweb-console-allowlist/v5",
   "capture_boundary": {
     "source": "unfiltered agent-browser console output after document.readyState complete plus one second",
     "filtering": "none",
@@ -7,6 +7,10 @@
     "warnings_errors_exceptions_always_fail": true
   },
   "permitted_exact_variants": [
+    {
+      "variant_id": "fresh-context-empty",
+      "messages": []
+    },
     {
       "variant_id": "vite-connect-complete",
       "messages": [

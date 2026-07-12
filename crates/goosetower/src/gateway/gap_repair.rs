@@ -11,10 +11,15 @@ pub(super) struct GapRepairQueue {
     repairing: bool,
     pending: BTreeMap<i64, SourceEvent>,
     overflowed: bool,
+    highest_observed_seq: Option<i64>,
 }
 
 impl GapRepairQueue {
     fn insert(&mut self, event: SourceEvent, limit: usize) {
+        self.highest_observed_seq = Some(
+            self.highest_observed_seq
+                .map_or(event.source_seq, |current| current.max(event.source_seq)),
+        );
         self.pending.entry(event.source_seq).or_insert(event);
         while self.pending.len() > limit.max(1) {
             self.pending.pop_last();
@@ -26,6 +31,19 @@ impl GapRepairQueue {
         self.pending
             .values()
             .any(|event| event.source_epoch != current_epoch)
+    }
+
+    fn cover_through(&mut self, high_watermark: i64) {
+        self.pending.retain(|seq, _| *seq > high_watermark);
+        if self
+            .highest_observed_seq
+            .is_some_and(|highest| high_watermark >= highest)
+        {
+            self.overflowed = false;
+        }
+        if self.pending.is_empty() && !self.overflowed {
+            self.highest_observed_seq = None;
+        }
     }
 }
 
@@ -159,6 +177,9 @@ impl GatewayState {
 
         if !requires_epoch_rebase {
             for _ in 0..32 {
+                if self.source_gap_overflowed(source_id).await {
+                    break;
+                }
                 if self.drain_pending_contiguous(source_id).await {
                     self.metrics
                         .record_replay(replayed, 0, repair_started.elapsed());
@@ -186,6 +207,9 @@ impl GatewayState {
                     }
                     replayed += 1;
                 }
+                if self.source_gap_overflowed(source_id).await {
+                    break;
+                }
                 if row_count < page_limit && !self.drain_pending_contiguous(source_id).await {
                     break;
                 }
@@ -196,12 +220,18 @@ impl GatewayState {
             Ok(mut bootstrap) => {
                 bootstrap.state.apply_source_config(&source);
                 let next_epoch = bootstrap.state.source_epoch.clone();
+                let next_cursor = bootstrap.state.source_health.last_source_seq.unwrap_or(0);
                 let old_epoch = self.source_cursor_and_epoch(source_id).await.1;
                 let installed = self.install_gap_fallback(source_id, bootstrap.state).await;
-                if installed && old_epoch != next_epoch {
+                if installed {
                     if let Some(queue) = self.gap_repairs.lock().await.get_mut(source_id) {
-                        queue.pending.clear();
-                        queue.overflowed = false;
+                        if old_epoch != next_epoch {
+                            queue.pending.clear();
+                            queue.overflowed = false;
+                            queue.highest_observed_seq = None;
+                        } else {
+                            queue.cover_through(next_cursor);
+                        }
                     }
                 }
                 if installed && self.drain_pending_contiguous(source_id).await {
@@ -267,6 +297,9 @@ impl GatewayState {
 
     async fn drain_pending_contiguous(&self, source_id: &str) -> bool {
         loop {
+            if self.source_gap_overflowed(source_id).await {
+                return false;
+            }
             let cursor = self.source_cursor_and_epoch(source_id).await.0.unwrap_or(0);
             let event = {
                 let mut repairs = self.gap_repairs.lock().await;
@@ -295,7 +328,7 @@ impl GatewayState {
                         .lock()
                         .await
                         .get(source_id)
-                        .is_none_or(|queue| queue.pending.is_empty());
+                        .is_none_or(|queue| queue.pending.is_empty() && !queue.overflowed);
                 }
             }
         }
@@ -317,6 +350,14 @@ impl GatewayState {
 
     fn pending_gap_event_limit(&self) -> usize {
         self.config.materializer.event_buffer_size.max(1)
+    }
+
+    async fn source_gap_overflowed(&self, source_id: &str) -> bool {
+        self.gap_repairs
+            .lock()
+            .await
+            .get(source_id)
+            .is_some_and(|queue| queue.overflowed)
     }
 
     async fn install_gap_fallback(&self, source_id: &str, next: MaterializedState) -> bool {

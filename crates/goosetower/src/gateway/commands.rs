@@ -725,6 +725,9 @@ impl GatewayState {
                 return;
             }
             let equal_revision = current_revision == Some(snapshot.team.updated_at);
+            if equal_revision {
+                return;
+            }
             let previous_members = state
                 .members_by_team
                 .get(&team_id)
@@ -734,22 +737,12 @@ impl GatewayState {
                         .collect::<std::collections::BTreeSet<String>>()
                 })
                 .unwrap_or_default();
-            if !equal_revision {
-                state.upsert_team(snapshot.team);
-                state
-                    .members_by_team
-                    .insert(team_id.clone(), BTreeMap::new());
-            }
+            state.upsert_team(snapshot.team);
+            state
+                .members_by_team
+                .insert(team_id.clone(), BTreeMap::new());
             for member in snapshot.members {
-                let member_id = member.agent_id.clone();
-                let should_merge = state
-                    .members_by_team
-                    .get(&team_id)
-                    .and_then(|members| members.get(&member_id))
-                    .is_none_or(|current| current == &member);
-                if should_merge || !equal_revision {
-                    state.upsert_team_member(member);
-                }
+                state.upsert_team_member(member);
             }
             let mut patches = state.team_patch(&team_id, state.cursor());
             let current_members = state

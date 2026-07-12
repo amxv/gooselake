@@ -117,6 +117,51 @@ async fn failed_repairs_keep_pending_events_bounded_without_false_recovery() {
 }
 
 #[tokio::test]
+async fn overflow_forces_snapshot_resync_covering_every_observed_row() {
+    let replay_started = Arc::new(Notify::new());
+    let release_replay = Arc::new(Notify::new());
+    let runtime_addr =
+        spawn_overflow_repair_runtime(replay_started.clone(), release_replay.clone()).await;
+    let mut config = GoosetowerConfig::default();
+    config.runtimes.sources[0].base_url = format!("http://{runtime_addr}");
+    config.materializer.event_buffer_size = 4;
+    let gateway = Arc::new(live_gateway_with_session_version(config, 1).await);
+    {
+        let mut states = gateway.materialized.write().await;
+        states.get_mut("local").unwrap().source_health.transition(
+            SourceHealthState::Live,
+            Some(3),
+            None,
+        );
+    }
+    let mut recoveries = gateway.recoveries.subscribe();
+    let repair_gateway = gateway.clone();
+    let repair = tokio::spawn(async move {
+        repair_gateway.ingest_source_event(runtime_event(11)).await;
+    });
+    replay_started.notified().await;
+    for seq in 12..=15 {
+        gateway.ingest_source_event(runtime_event(seq)).await;
+    }
+    assert_eq!(
+        gateway.verification_gap_queue("local").await,
+        (4, true, true)
+    );
+    release_replay.notify_one();
+    repair.await.expect("overflow repair");
+
+    let states = gateway.materialized.read().await;
+    assert_eq!(states["local"].source_health.last_source_seq, Some(15));
+    assert!(states["local"].sessions.contains_key("session_2"));
+    assert!(matches!(
+        recoveries.try_recv(),
+        Ok(SourceRecoverySignal::Resync { source_id, .. }) if source_id == "local"
+    ));
+    assert!(recoveries.try_recv().is_err());
+    assert_eq!(gateway.verification_gap_queue("local").await.0, 0);
+}
+
+#[tokio::test]
 async fn epoch_mismatch_skips_replay_and_atomically_rebases_before_resync() {
     let replay_called = Arc::new(AtomicBool::new(false));
     let runtime_addr = spawn_epoch_rebase_runtime(replay_called.clone()).await;
@@ -261,6 +306,70 @@ async fn spawn_epoch_rebase_runtime(replay_called: Arc<AtomicBool>) -> SocketAdd
                             "worktree_id": null, "created_at": 1, "updated_at": 11,
                             "closed_at": null, "failure_code": null, "failure_message": null
                         }],
+                        "approvals": [], "teams": [], "team_members": [],
+                        "team_messages": [], "team_deliveries": [], "managed_worktrees": [],
+                        "managed_worktree_claims": [], "processes": []
+                    }
+                }))
+            }),
+        )
+        .route(
+            "/v1/providers",
+            get(|| async { Json(json!({ "providers": [] })) }),
+        )
+        .route(
+            "/v1/diagnostics",
+            get(|| async {
+                Json(json!({
+                    "providers": {}, "comms": {}, "processes": {},
+                    "worktrees": {}, "recovery": {}
+                }))
+            }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    addr
+}
+
+async fn spawn_overflow_repair_runtime(
+    replay_started: Arc<Notify>,
+    release_replay: Arc<Notify>,
+) -> SocketAddr {
+    let replay = move || {
+        let (started, release) = (replay_started.clone(), release_replay.clone());
+        async move {
+            started.notify_one();
+            release.notified().await;
+            Json((4..=10).map(runtime_record).collect::<Vec<_>>())
+        }
+    };
+    let app = Router::new()
+        .route("/v1/events", get(replay))
+        .route(
+            "/v1/bootstrap",
+            get(|| async {
+                Json(json!({
+                    "source_epoch": "static-0", "high_watermark": 15,
+                    "records": {
+                        "sessions": [
+                            {
+                                "id": "session_1", "provider": "codex", "status": "ready",
+                                "cwd": null, "model": null, "permission_mode": null,
+                                "system_prompt": null, "metadata": {}, "provider_session_ref": null,
+                                "canonical_provider_session_ref": null, "active_turn_id": null,
+                                "worktree_id": null, "created_at": 1, "updated_at": 15,
+                                "closed_at": null, "failure_code": null, "failure_message": null
+                            },
+                            {
+                                "id": "session_2", "provider": "codex", "status": "ready",
+                                "cwd": null, "model": null, "permission_mode": null,
+                                "system_prompt": null, "metadata": {}, "provider_session_ref": null,
+                                "canonical_provider_session_ref": null, "active_turn_id": null,
+                                "worktree_id": null, "created_at": 15, "updated_at": 15,
+                                "closed_at": null, "failure_code": null, "failure_message": null
+                            }
+                        ],
                         "approvals": [], "teams": [], "team_members": [],
                         "team_messages": [], "team_deliveries": [], "managed_worktrees": [],
                         "managed_worktree_claims": [], "processes": []

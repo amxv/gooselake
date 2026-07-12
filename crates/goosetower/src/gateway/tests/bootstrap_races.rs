@@ -11,6 +11,15 @@ async fn equal_revision_targeted_snapshots_cannot_regress_newer_truth() {
     team.updated_at = 10;
     let member_a = team_member_record("team_equal", "session_2", 10);
     let member_b = team_member_record("team_equal", "session_3", 10);
+    {
+        let mut states = gateway.materialized.write().await;
+        let state = states.get_mut("local").unwrap();
+        for session_id in ["session_2", "session_3"] {
+            let mut session = session_record();
+            session.id = session_id.into();
+            state.upsert_session(session);
+        }
+    }
     gateway
         .merge_authoritative_team(
             "local",
@@ -24,7 +33,7 @@ async fn equal_revision_targeted_snapshots_cannot_regress_newer_truth() {
         .merge_authoritative_team(
             "local",
             runtime_core::TeamWithMembers {
-                team,
+                team: team.clone(),
                 members: vec![member_a],
             },
         )
@@ -73,6 +82,32 @@ async fn equal_revision_targeted_snapshots_cannot_regress_newer_truth() {
         state.version("team_delivery", "del_equal"),
         EntityVersion(20)
     );
+    drop(states);
+
+    {
+        let mut states = gateway.materialized.write().await;
+        states
+            .get_mut("local")
+            .unwrap()
+            .remove_team_member("team_equal", "session_3");
+    }
+    let mut patches = gateway.verification_patch_receiver();
+    gateway
+        .merge_authoritative_team(
+            "local",
+            runtime_core::TeamWithMembers {
+                team,
+                members: vec![team_member_record("team_equal", "session_2", 10), member_b],
+            },
+        )
+        .await;
+    let states = gateway.materialized.read().await;
+    assert!(!states["local"].members_by_team["team_equal"].contains_key("session_3"));
+    assert_eq!(
+        states["local"].agent_row("session_3").unwrap().team_id,
+        None
+    );
+    assert!(patches.try_recv().is_err());
 }
 
 #[tokio::test]

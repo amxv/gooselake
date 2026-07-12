@@ -116,6 +116,7 @@ validateBrowserCaptures(change(consoleCapture, "messages", [
   { level: "debug", message: "[vite] connected." },
   { level: "info", message: "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold" }
 ]), networkCapture, manifest);
+validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http", (networkCapture.raw_http as Json[]).filter((item) => (item as RecordJson).path !== "/favicon.ico")), manifest);
 validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "agent-browser exposes no redacted frame capture", baseline_defect_id: "BASE-P01-WEBSOCKET-OBSERVER-UNAVAILABLE" }), manifest);
 validateSchemasAgainstDocuments();
 validateReferencedEvidence();
@@ -227,7 +228,9 @@ const negativeCases: [string, () => void][] = [
   ["warning always fails from empty capture", () => validateBrowserCaptures(change(consoleCapture, "messages", [{ level: "warn", message: "warning" }]), networkCapture, manifest)],
   ["error or exception always fails from empty capture", () => validateBrowserCaptures(change(consoleCapture, "messages", [{ level: "error", message: "uncaught exception" }]), networkCapture, manifest)],
   ["unexpected HTTP failure cannot be filtered", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.6", { method: "GET", path: "/missing", query_keys: [], status: 404, resource_type: "module", same_origin: true, baseline_defect_id: "" }), manifest)],
+  ["favicon failure missing baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.5.baseline_defect_id", ""), manifest)],
   ["failed HTTP with nonexistent baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.5.baseline_defect_id", "BASE-DOES-NOT-EXIST"), manifest)],
+  ["extra unexpected API request", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.6", { method: "GET", path: "/api/unexpected", query_keys: [], status: 200, resource_type: "api", same_origin: true, baseline_defect_id: "" }), manifest)],
   ["successful HTTP with failure baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.0.baseline_defect_id", "BASE-P01-FAVICON-NOT-FOUND"), manifest)],
   ["cross-origin static success cannot be filtered", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.1.same_origin", false), manifest)],
   ["query-bearing HTTP path", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.0.path", "/?ticket=secret"), manifest)],
@@ -252,7 +255,7 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v13 passed (${negativeCases.length + lifecycleNegativeCount} negative cases)`);
+console.log(`Gooseweb acceptance contract v14 passed (${negativeCases.length + lifecycleNegativeCount} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);

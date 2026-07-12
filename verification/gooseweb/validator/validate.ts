@@ -365,7 +365,7 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
   applySchemaInline(consoleCaptureSchema(), consoleCapture, "console capture");
   applySchemaInline(networkCaptureSchema(), networkCapture, "network capture");
   equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v6", "console allowlist revision");
-  equal(networkAllowlist.schema_revision, "gooseweb-network-allowlist/v3", "network allowlist revision");
+  equal(networkAllowlist.schema_revision, "gooseweb-network-allowlist/v4", "network allowlist revision");
   const consoleBoundary = object(consoleAllowlist.capture_boundary, "console capture boundary");
   equal(consoleBoundary.source, "unfiltered agent-browser console output after document.readyState complete plus one second", "console capture source");
   equal(consoleBoundary.filtering, "none", "console filtering");
@@ -416,7 +416,18 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
       equal(baseline.scenario_id, object(manifest.scenario, "manifest scenario").stable_scenario_id, "HTTP baseline scenario");
     }
   }
-  exactMultiset(evaluated, array(networkAllowlist.exact_evaluated_http, "HTTP allowlist"), "evaluated HTTP activity");
+  const baseHttp: RecordJson[] = [
+    { method: "GET", path: "/", status: 200, resource_type: "document", baseline_defect_id: "" },
+    { method: "POST", path: "/api/dev-ticket", status: 200, resource_type: "api", baseline_defect_id: "" }
+  ];
+  const faviconFailure: RecordJson = { method: "GET", path: "/favicon.ico", status: 404, resource_type: "other", baseline_defect_id: "BASE-P01-FAVICON-NOT-FOUND" };
+  const httpVariants = array(networkAllowlist.permitted_exact_evaluated_http_variants, "HTTP variants").map((item) => object(item, "HTTP variant"));
+  ensureUnique(httpVariants.map((variant) => string(variant.variant_id, "HTTP variant ID")), "HTTP variant IDs");
+  const expectedHttpVariants = [baseHttp, [...baseHttp, faviconFailure]].map(multisetSignature).sort();
+  const actualHttpVariants = httpVariants.map((variant) => multisetSignature(array(variant.requests, "HTTP variant requests"))).sort();
+  equal(JSON.stringify(actualHttpVariants), JSON.stringify(expectedHttpVariants), "exact evaluated HTTP variant set");
+  const httpMatches = httpVariants.filter((variant) => sameMultiset(evaluated, array(variant.requests, "HTTP variant requests")));
+  if (httpMatches.length !== 1) fail("evaluated HTTP activity does not match exactly one finite variant");
   const websocket = object(networkCapture.websocket, "WebSocket capture");
   if (websocket.availability === "available") exactMultiset(array(websocket.events, "WebSocket events"), array(networkAllowlist.exact_websocket_events, "WebSocket allowlist"), "WebSocket events");
   else {

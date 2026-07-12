@@ -145,6 +145,7 @@ export function validateLifecycleStore(): LifecycleState {
     equal(predecessor.sha256, parent.sha256, "stored predecessor raw-byte hash");
     equal(node.document.attestation_sequence, integer(parent.document.attestation_sequence, "predecessor sequence") + 1, "stored attestation sequence continuity");
     equal(JSON.stringify(node.document.phase_graph_seed), JSON.stringify(parent.document.phase_graph_seed), "immutable phase graph seed across lifecycle chain");
+    if (time(node.document.generated_at) < time(parent.document.generated_at)) fail("lifecycle successor generated_at moves backward");
     const priorAttempts = array(parent.document.attempts, "predecessor attempts");
     equal(JSON.stringify(array(node.document.attempts, "successor attempts").slice(0, priorAttempts.length)), JSON.stringify(priorAttempts), "append-only attempt prefix");
     const siblings = children.get(predecessorPath) ?? [];
@@ -154,10 +155,12 @@ export function validateLifecycleStore(): LifecycleState {
   if (genesis.length !== 1) fail("authoritative lifecycle store must contain exactly one genesis");
   for (const successors of children.values()) if (successors.length > 1) fail("authoritative lifecycle chain fork detected");
   const visited = new Set<string>();
+  const chain: StoredAttestation[] = [];
   let tip = genesis[0]!;
   while (true) {
     if (visited.has(tip.path)) fail("authoritative lifecycle chain cycle detected");
     visited.add(tip.path);
+    chain.push(tip);
     const successor = children.get(tip.path)?.[0];
     if (!successor) break;
     tip = successor;
@@ -167,7 +170,9 @@ export function validateLifecycleStore(): LifecycleState {
   equal(current.sha256, tip.sha256, "canonical current pointer raw-byte hash");
   equal(current.attestation_id, tip.document.attestation_id, "canonical current pointer attestation ID");
   equal(current.attestation_sequence, tip.document.attestation_sequence, "canonical current pointer sequence");
-  return validateLifecycleTip(tip.document);
+  let effective: LifecycleState | undefined;
+  for (const node of chain) effective = validateLifecycleTip(node.document);
+  return effective!;
 }
 
 function validateLifecycleTip(attestation: RecordJson): LifecycleState {

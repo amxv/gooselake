@@ -236,7 +236,7 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v10 passed (${negativeCases.length + lifecycleNegativeCount} negative cases)`);
+console.log(`Gooseweb acceptance contract v11 passed (${negativeCases.length + lifecycleNegativeCount} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);
@@ -466,6 +466,28 @@ function validateLifecycleStoreAdversarialCases(genesis: StoredTestAttestation):
     const pointer = lifecycleCurrent(genesis);
     (pointer.current as RecordJson).sha256 = "0".repeat(64);
     writeFileSync(resolve(root, LIFECYCLE_STORE_PATH, "current.json"), `${JSON.stringify(pointer, null, 2)}\n`);
+  });
+  expectLifecycleFailure("false semantic claims in a middle attestation were hidden by a corrected tip", () => {
+    const middle = successorAttestation(genesis, (document) => {
+      let forged = change(document, "claimed_effective_states", []);
+      return change(forged, "eligible_phases", ["P01"]);
+    });
+    const corrected = successorAttestation(middle, (document) => {
+      let restored = change(document, "claimed_effective_states", lifecycleAttestation.claimed_effective_states);
+      restored = change(restored, "eligible_phases", lifecycleAttestation.eligible_phases);
+      return change(restored, "generated_at", "2026-07-12T10:23:00.000Z");
+    });
+    writeLifecycleStore([genesis, middle, corrected], corrected);
+  });
+  expectLifecycleFailure("backward middle attestation generation time was hidden by a corrected tip", () => {
+    const middle = successorAttestation(genesis, (document) => change(document, "generated_at", "2026-07-12T10:20:30.000Z"));
+    const corrected = successorAttestation(middle, (document) => change(document, "generated_at", "2026-07-12T10:23:00.000Z"));
+    writeLifecycleStore([genesis, middle, corrected], corrected);
+  });
+  expectLifecycleFailure("backward successor generation time was accepted", () => {
+    const middle = successorAttestation(genesis);
+    const backward = successorAttestation(middle, (document) => change(document, "generated_at", "2026-07-12T10:21:00.000Z"));
+    writeLifecycleStore([genesis, middle, backward], backward);
   });
 }
 

@@ -15,7 +15,10 @@ use crate::runtime::{
 };
 
 async fn spawn() -> (FakeGooselakeSource, String) {
-    let source = FakeGooselakeSource::default();
+    spawn_source(FakeGooselakeSource::default()).await
+}
+
+async fn spawn_source(source: FakeGooselakeSource) -> (FakeGooselakeSource, String) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let router = source.router();
@@ -140,7 +143,7 @@ async fn exact_runtime_client_contract_and_scoped_cursors_are_implemented() {
     assert!(team_events
         .iter()
         .all(|event| event.scope == RuntimeEventScope::Team));
-    let header_precedence = reqwest::Client::new()
+    let json_replay_ignores_header = reqwest::Client::new()
         .get(format!("{base}/v1/events?after_seq=0"))
         .header("authorization", format!("Bearer {RUNTIME_BEARER}"))
         .header("last-event-id", "3")
@@ -150,13 +153,29 @@ async fn exact_runtime_client_contract_and_scoped_cursors_are_implemented() {
         .json::<Vec<RuntimeEventRecord>>()
         .await
         .unwrap();
-    assert_eq!(
-        header_precedence
-            .iter()
-            .map(|event| event.row_id)
-            .collect::<Vec<_>>(),
-        vec![4, 5]
-    );
+    assert_eq!(json_replay_ignores_header.len(), 5);
+    let precedence = reqwest::Client::new()
+        .get(format!("{base}/v1/events/stream?after_seq=4&limit=10000"))
+        .header("authorization", format!("Bearer {RUNTIME_BEARER}"))
+        .header("last-event-id", "3")
+        .send()
+        .await
+        .unwrap();
+    let mut precedence_body = precedence.bytes_stream();
+    let first = tokio::time::timeout(Duration::from_millis(100), precedence_body.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&first).contains("id: 5"));
+    let invalid = reqwest::Client::new()
+        .get(format!("{base}/v1/events/stream?after_seq=4"))
+        .header("authorization", format!("Bearer {RUNTIME_BEARER}"))
+        .header("last-event-id", "not-an-integer")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
     let scoped = reqwest::Client::new()
         .get(format!(
             "{base}/v1/teams/p02-team-001/events/stream?after_seq=0"
@@ -173,7 +192,7 @@ async fn exact_runtime_client_contract_and_scoped_cursors_are_implemented() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert!(String::from_utf8_lossy(&first).contains("id: 3"));
+    assert!(String::from_utf8_lossy(&first).contains("id: 1"));
     assert_eq!(
         runtime
             .get_process("p02-process-001", None)
@@ -320,6 +339,61 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
     assert_eq!(observed["source_id"], SOURCE_ID);
     assert_eq!(observed["session_id"], "p02-session-001");
     assert_eq!(observed["visible_text"], "P02 deterministic terminal");
+}
+
+#[tokio::test]
+async fn supervisor_epoch_restart_pairs_fresh_source_and_tower_configuration() {
+    let (_source, base) = spawn_source(FakeGooselakeSource::with_epoch_number(2)).await;
+    let mut config = GoosetowerConfig::default();
+    config.runtimes.sources = vec![RuntimeSourceConfig {
+        source_id: SOURCE_ID.into(),
+        source_epoch: "p02-epoch-002".into(),
+        base_url: base.clone(),
+        bearer_token: Some(RUNTIME_BEARER.into()),
+        display_name: "P02 epoch two source".into(),
+        ..Default::default()
+    }];
+    let gateway = GatewayState::new(Arc::new(config)).unwrap();
+    gateway.bootstrap_enabled_sources().await;
+    let runtime = GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
+        SOURCE_ID,
+        "p02-epoch-002",
+        base,
+        Some(RUNTIME_BEARER.into()),
+    ))
+    .unwrap();
+    runtime
+        .send_turn(
+            "p02-session-001",
+            &runtime_core::SendTurnInput {
+                input: vec![json!({"type":"text","text":"epoch two"})],
+                expected_turn_id: None,
+                permission_mode: None,
+            },
+        )
+        .await
+        .unwrap();
+    let fan_in = RuntimeSseFanIn::new(
+        runtime,
+        RuntimeSseFanInConfig {
+            stale_after: Duration::from_millis(25),
+            ..Default::default()
+        },
+    );
+    let (tx, mut rx) = mpsc::channel(4);
+    let mut seen = HashSet::new();
+    assert_eq!(
+        fan_in.consume_once(Some(0), &tx, &mut seen).await.unwrap(),
+        Some(1)
+    );
+    drop(tx);
+    while let Some(event) = rx.recv().await {
+        assert_eq!(event.source_epoch, "p02-epoch-002");
+        gateway.ingest_source_event(event).await;
+    }
+    let observer = gateway.debug_materializer_summary().await;
+    assert_eq!(observer[0].source_epoch, "p02-epoch-002");
+    assert_eq!(observer[0].source_health.last_source_seq, Some(1));
 }
 
 #[tokio::test]
@@ -478,31 +552,6 @@ async fn faults_epoch_offline_rejection_delay_and_redaction_are_bounded() {
     ));
     apply_control(&base, FaultControl::ChangeEpoch).await;
     assert_eq!(source.observer().await.source_epoch, "p02-epoch-002");
-    apply_control(&base, FaultControl::EmitNext).await;
-    let epoch_client = GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
-        SOURCE_ID,
-        "p02-epoch-002",
-        base.clone(),
-        Some(RUNTIME_BEARER.into()),
-    ))
-    .unwrap();
-    let epoch_fan_in = RuntimeSseFanIn::new(
-        epoch_client,
-        RuntimeSseFanInConfig {
-            stale_after: Duration::from_millis(25),
-            ..Default::default()
-        },
-    );
-    let (epoch_tx, mut epoch_rx) = mpsc::channel(4);
-    let mut epoch_seen = HashSet::new();
-    assert_eq!(
-        epoch_fan_in
-            .consume_once(Some(0), &epoch_tx, &mut epoch_seen)
-            .await
-            .unwrap(),
-        Some(1)
-    );
-    assert_eq!(epoch_rx.recv().await.unwrap().source_epoch, "p02-epoch-002");
     apply_control(&base, FaultControl::Offline(true)).await;
     let response = reqwest::Client::new()
         .get(format!("{base}/v1/events/stream"))

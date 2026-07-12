@@ -184,6 +184,18 @@ pub struct FakeGooselakeSource {
 }
 
 impl FakeGooselakeSource {
+    pub fn with_epoch_number(epoch_number: u32) -> Self {
+        let mut state = FakeState::default();
+        state.epoch_number = epoch_number.max(1);
+        if state.epoch_number > 1 {
+            state.next_seq = 1;
+            state.events.clear();
+        }
+        Self {
+            state: Arc::new(Mutex::new(state)),
+        }
+    }
+
     pub fn router(&self) -> Router {
         let public_contract = Router::new()
             .route("/v1/health", get(health))
@@ -526,29 +538,27 @@ struct ReplayQuery {
 }
 
 async fn replay_global(
-    headers: HeaderMap,
     Query(query): Query<ReplayQuery>,
     State(state): State<Shared>,
 ) -> Json<Value> {
     Json(replay(
         &state.lock().await.events,
-        cursor_after(&headers, &query),
-        query.limit,
+        query.after_seq.unwrap_or(0),
+        query.limit.unwrap_or(500).min(10_000),
         None,
     ))
 }
 
 async fn replay_scoped(
     Path(id): Path<String>,
-    headers: HeaderMap,
     Query(query): Query<ReplayQuery>,
     State(state): State<Shared>,
 ) -> Json<Value> {
     let scope = scope_for_id(&id);
     Json(replay(
         &state.lock().await.events,
-        cursor_after(&headers, &query),
-        query.limit,
+        query.after_seq.unwrap_or(0),
+        query.limit.unwrap_or(500).min(10_000),
         Some((scope, id)),
     ))
 }
@@ -556,10 +566,9 @@ async fn replay_scoped(
 fn replay(
     events: &VecDeque<RuntimeEventRecord>,
     after: i64,
-    limit: Option<usize>,
+    limit: usize,
     scope: Option<(RuntimeEventScope, String)>,
 ) -> Value {
-    let limit = limit.unwrap_or(2000).clamp(1, 2000);
     json!(events
         .iter()
         .filter(|event| scope
@@ -574,13 +583,38 @@ fn replay(
         .collect::<Vec<_>>())
 }
 
-fn cursor_after(headers: &HeaderMap, query: &ReplayQuery) -> i64 {
-    headers
-        .get("last-event-id")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse().ok())
-        .or(query.after_seq)
-        .unwrap_or(0)
+fn stream_cursor(headers: &HeaderMap, query: &ReplayQuery) -> Result<i64, Response> {
+    let last_event_id = match headers.get("last-event-id") {
+        None => None,
+        Some(value) => {
+            let raw = value
+                .to_str()
+                .map_err(|_| bad_cursor("invalid last-event-id header encoding"))?;
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                let parsed = trimmed
+                    .parse::<i64>()
+                    .map_err(|_| bad_cursor("invalid last-event-id header; expected integer"))?;
+                if parsed < 0 {
+                    return Err(bad_cursor(
+                        "invalid last-event-id header; expected non-negative integer",
+                    ));
+                }
+                Some(parsed)
+            }
+        }
+    };
+    Ok(query.after_seq.or(last_event_id).unwrap_or(0))
+}
+
+fn bad_cursor(message: &str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error":{"code":"bad_request","message":message}})),
+    )
+        .into_response()
 }
 
 fn scope_for_id(id: &str) -> RuntimeEventScope {
@@ -657,7 +691,10 @@ async fn stream_events(
         ))
         .into_response();
     }
-    let after = cursor_after(&headers, &query);
+    let after = match stream_cursor(&headers, &query) {
+        Ok(after) => after,
+        Err(response) => return response,
+    };
     let live_rx = state.event_tx.subscribe();
     let mut replay = state
         .events
@@ -685,7 +722,7 @@ async fn stream_events(
             )
         })
         .collect::<Vec<_>>();
-    let limit = query.limit.unwrap_or(2000).clamp(1, 2000);
+    let limit = query.limit.unwrap_or(2_000).clamp(1, 10_000);
     replay.truncate(limit);
     let high_watermark = replay
         .last()

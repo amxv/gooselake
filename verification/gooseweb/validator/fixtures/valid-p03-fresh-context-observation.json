@@ -4,7 +4,7 @@
   "attempt": 1,
   "candidate_head_sha": "1111111111111111111111111111111111111111",
   "candidate_tree_sha": "2222222222222222222222222222222222222222",
-  "approved_plan_sha256": "270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774",
+  "approved_plan_sha256": "3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d",
   "initial_session_name": "gooseweb-p03-1111111-a1-reviewer-1234abcd",
   "fresh_session_name": "gooseweb-p03-1111111-a1-retest-87654321",
   "browser": {

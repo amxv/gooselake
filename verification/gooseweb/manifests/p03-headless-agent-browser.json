@@ -1,10 +1,10 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P03-HEADLESS-AGENT-BROWSER-001",
-  "manifest_revision": 6,
+  "manifest_revision": 7,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
-    "sha256": "270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774"
+    "sha256": "3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d"
   },
   "browser_contract": {
     "mechanism": "agent-browser",
@@ -56,7 +56,7 @@
           "the first divergent layer is named when any product baseline prevents terminal convergence"
         ],
         "expected_worker_store": [
-          "the active production Worker entry is app/realtime/worker/realtime-command-worker.ts and consumes only served gateway frames",
+          "the active production Worker entry is app/realtime/worker/realtime-command-worker.ts, its core is app/realtime/worker/realtime-command-core.ts, and it consumes only served gateway frames",
           "the redacted P02 observer captures bounded Worker/store state without inferring unavailable data",
           "a stale or reused context nonce fails before visible-state evidence is accepted"
         ],

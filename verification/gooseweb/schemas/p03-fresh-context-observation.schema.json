@@ -15,7 +15,7 @@
     "attempt": { "type": "integer", "minimum": 1 },
     "candidate_head_sha": { "$ref": "#/$defs/sha" },
     "candidate_tree_sha": { "$ref": "#/$defs/sha" },
-    "approved_plan_sha256": { "const": "270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774" },
+    "approved_plan_sha256": { "const": "3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d" },
     "initial_session_name": { "$ref": "#/$defs/session" },
     "fresh_session_name": { "$ref": "#/$defs/session" },
     "browser": {

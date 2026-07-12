@@ -6,6 +6,8 @@ import { inflateSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 export const APPROVED_PLAN_SHA256 =
+  "3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d";
+const PRIOR_P03_PLAN_SHA256 =
   "270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774";
 const SUPERSEDED_PLAN_SHA256 =
   "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c";
@@ -709,7 +711,7 @@ export function validateClearancePlanBinding(phase: string, clearancePlan: Json 
 }
 
 export function validateLifecyclePlanTransition(parentPlan: Json | undefined, currentPlan: Json | undefined, containsP03Attempt: boolean): void {
-  if (parentPlan === APPROVED_PLAN_SHA256 && currentPlan === SUPERSEDED_PLAN_SHA256) fail("lifecycle plan hash regressed from amended to superseded");
+  if (parentPlan === APPROVED_PLAN_SHA256 && [PRIOR_P03_PLAN_SHA256, SUPERSEDED_PLAN_SHA256].includes(string(currentPlan, "lifecycle current plan"))) fail("lifecycle plan hash regressed from current to superseded");
   if (containsP03Attempt) equal(currentPlan, APPROVED_PLAN_SHA256, "P03 lifecycle attestation plan hash");
 }
 

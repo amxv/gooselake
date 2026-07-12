@@ -2,7 +2,7 @@
 
 This is a reviewer-operated procedure, not a browser runner. It defines how the installed `agent-browser` CLI and the user's real local Google Chrome/Chromium produce one repeatable P03 acceptance/evidence attempt. Do not convert it into a shell script, browser config, package dependency, CI job, downloaded browser, persistent browser profile, or alternate automation framework.
 
-The binding amended plan hash is `270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774`. P03 is verification-infrastructure-only: `product_approved` remains `false`, `known_defects` remains empty, and the ten finite P01/P02 `baseline_detected` entries remain mapped to P06-P10.
+The binding fast-track plan hash is `3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d`. P03 is verification-infrastructure-only: `product_approved` remains `false`, `known_defects` remains empty, and the ten finite P01/P02 `baseline_detected` entries remain mapped to P06-P10.
 
 ## 1. Authority and attachment preflight
 
@@ -79,6 +79,8 @@ true;
 Then run `agent-browser --session <name> cookies clear` and `agent-browser --session <name> close`. Create a second, globally unique session with the same explicit headless/engine/executable arguments. Its nonce probe must again return typed `prior: null`, and the new nonce must differ from the old nonce. Record `old_context_disposed`, IndexedDB/cookie/local/session/CacheStorage clearing, service-worker unregistration, `remaining_cache_names: 0`, `remaining_service_workers: 0`, and `stale_context_detected: false`. Any blocked deletion/unregistration or nonzero remainder fails. Never reuse a name to claim a fresh context.
 
 ## 4. Semantic UI workflow
+
+The production Worker path is the entry `apps/gooseweb/app/realtime/worker/realtime-command-worker.ts` and its core `apps/gooseweb/app/realtime/worker/realtime-command-core.ts`; active evidence uses these exact paths.
 
 Use an interactive accessibility snapshot, visible roles/names/labels, and fresh refs after every DOM/navigation change. CSS selectors, coordinates, direct store mutation, runtime-only calls, fixture-only controls, or JavaScript-dispatched clicks cannot satisfy the browser action.
 

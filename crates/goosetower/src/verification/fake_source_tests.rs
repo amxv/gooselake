@@ -309,6 +309,14 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
         .unwrap();
     let runtime = source.observer().await;
     assert_eq!(runtime.events.last().unwrap().event_id, "p02-event-0004");
+    assert_eq!(
+        runtime
+            .events
+            .iter()
+            .filter(|event| event.event_id == "p02-event-0004")
+            .count(),
+        1
+    );
     let fan_in = RuntimeSseFanIn::new(
         runtime_client,
         RuntimeSseFanInConfig {
@@ -327,13 +335,16 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
         gateway.ingest_source_event(event).await;
     }
     let mut terminal_patch = None;
+    let mut terminal_patch_count = 0;
     while let Ok(patch) = patch_rx.try_recv() {
         if patch.view_kind == "session_detail"
             && patch.body.get("text").and_then(Value::as_str) == Some("P02 deterministic terminal")
         {
+            terminal_patch_count += 1;
             terminal_patch = Some(patch);
         }
     }
+    assert_eq!(terminal_patch_count, 1);
     let patch = terminal_patch.expect("real materializer must publish terminal session detail");
     assert_eq!(patch.entity.as_ref().unwrap().entity_id, "p02-session-001");
     let materialized = gateway.verification_materializer_observer().await;
@@ -341,6 +352,14 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
     assert_eq!(
         materialized[0].recent_ledger.last().unwrap()["kind"],
         "turn.completed"
+    );
+    assert_eq!(
+        materialized[0]
+            .recent_ledger
+            .iter()
+            .filter(|event| event["source_seq"] == 4 && event["kind"] == "turn.completed")
+            .count(),
+        1
     );
     assert_eq!(
         materialized[0].session_details[0]["appended_text"],
@@ -574,6 +593,79 @@ async fn replay_paginates_and_sse_handoff_dedupes_overlap() {
     }
     assert_eq!(ids, vec![4, 5]);
     assert_eq!(fan_in.health().state, SourceHealthState::Stale);
+}
+
+#[tokio::test]
+async fn keepalive_covers_global_and_scoped_idle_streams_without_offline_churn() {
+    let (_source, base) = spawn().await;
+    let fan_in = RuntimeSseFanIn::new(
+        client(base.clone()),
+        RuntimeSseFanInConfig {
+            stale_after: Duration::from_millis(10_500),
+            reconnect_delay: Duration::from_millis(25),
+            ..Default::default()
+        },
+    );
+    let observed_health = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let mut health_rx = fan_in.subscribe_health();
+    let observed_health_task = observed_health.clone();
+    let health_task = tokio::spawn(async move {
+        while health_rx.changed().await.is_ok() {
+            observed_health_task
+                .lock()
+                .await
+                .push(health_rx.borrow().state);
+        }
+    });
+    let (tx, mut output) = mpsc::channel(8);
+    let fan_in_task = fan_in.clone().spawn(Some(3), tx);
+
+    async fn next_keepalive(base: &str, path: &str) -> String {
+        let response = reqwest::Client::new()
+            .get(format!("{base}{path}"))
+            .bearer_auth(RUNTIME_BEARER)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.bytes_stream();
+        let chunk = tokio::time::timeout(Duration::from_secs(11), body.next())
+            .await
+            .expect("production-equivalent keepalive must arrive before stale timeout")
+            .expect("idle stream must remain open")
+            .expect("idle stream body must decode");
+        String::from_utf8_lossy(&chunk).into_owned()
+    }
+
+    let (session, team, process) = tokio::join!(
+        next_keepalive(
+            &base,
+            "/v1/sessions/p02-session-001/events/stream?after_seq=100"
+        ),
+        next_keepalive(&base, "/v1/teams/p02-team-001/events/stream?after_seq=100"),
+        next_keepalive(
+            &base,
+            "/v1/processes/p02-process-001/events/stream?after_seq=100"
+        )
+    );
+    for keepalive in [session, team, process] {
+        assert!(keepalive.starts_with(':'));
+        assert!(!keepalive.contains("data:"));
+    }
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(fan_in.health().state, SourceHealthState::Live);
+    assert!(
+        output.try_recv().is_err(),
+        "keepalive must not invent an event"
+    );
+    let states = observed_health.lock().await.clone();
+    assert!(states.contains(&SourceHealthState::Live));
+    assert!(!states.iter().any(|state| matches!(
+        state,
+        SourceHealthState::Offline | SourceHealthState::Stale | SourceHealthState::GapDetected
+    )));
+    fan_in_task.abort();
+    health_task.abort();
 }
 
 #[tokio::test]

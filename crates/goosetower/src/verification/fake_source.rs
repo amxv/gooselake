@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{extract::Request, Json, Router};
@@ -764,7 +764,9 @@ async fn stream_events(
             }
         },
     );
-    Sse::new(replay_stream.chain(live_stream)).into_response()
+    Sse::new(replay_stream.chain(live_stream))
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(10)))
+        .into_response()
 }
 
 async fn event_frame(

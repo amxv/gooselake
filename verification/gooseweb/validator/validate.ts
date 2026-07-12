@@ -63,6 +63,7 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
   equal(browser.real_local_chromium, true, "P03 real local Chromium identity");
   equal(browser.profile_policy, "fresh_ephemeral", "P03 fresh profile policy");
   equal(browser.persistent_state_loaded, false, "P03 persistent state policy");
+  equal(browser.navigator_webdriver, true, "P03 navigator.webdriver automation proof");
   if (!/HeadlessChrome\/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/.test(string(browser.user_agent, "P03 browser user agent"))) {
     fail("P03 user agent does not prove headless Chromium");
   }
@@ -75,8 +76,18 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
     equal(capture.redacted_at_capture, true, `P03 ${name} capture redaction`);
   }
   const reconstruction = object(value.reconstruction, "P03 reconstruction");
+  equal(reconstruction.initial_prior_context_nonce, null, "P03 initial prior-context nonce");
+  equal(reconstruction.fresh_context_prior_nonce, null, "P03 fresh prior-context nonce");
+  for (const key of ["old_context_disposed", "indexeddb_cleared", "cookies_cleared", "local_storage_cleared", "session_storage_cleared", "cache_storage_cleared", "service_workers_unregistered"]) {
+    equal(reconstruction[key], true, `P03 reconstruction ${key}`);
+  }
+  equal(reconstruction.remaining_cache_names, 0, "P03 remaining CacheStorage names");
+  equal(reconstruction.remaining_service_workers, 0, "P03 remaining service workers");
   if (reconstruction.old_context_nonce === reconstruction.fresh_context_nonce) {
     fail("P03 stale browser context nonce was reused");
+  }
+  for (const key of ["ordinary_reload", "hard_reload", "navigation_away_back", "websocket_reconnect", "fresh_context"]) {
+    validateP03IntegrityResult(object(reconstruction[key], `P03 reconstruction ${key}`), `P03 reconstruction ${key}`);
   }
   const viewportRecords = array(value.viewports, "P03 viewports").map((viewport) => object(viewport, "P03 viewport"));
   const viewports = viewportRecords.map((viewport) => viewport.id);
@@ -96,11 +107,62 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
   equal(leakage.production_build, "pass", "P03 production fixture leakage");
   equal(leakage.query_flags_present, false, "P03 fixture query flags");
   equal(leakage.fixture_markers_found, 0, "P03 fixture markers");
-  const controls = array(value.semantic_controls, "P03 semantic controls");
-  if (!controls.includes("roster_button_accessible_name") || !controls.includes("Agent thread composer") || !controls.includes("Send agent thread message")) {
-    fail("P03 semantic agent workflow controls are incomplete");
+  const journey = object(value.journey, "P03 semantic journey");
+  const roster = object(journey.selected_roster_control, "P03 selected roster control");
+  equal(roster.role, "button", "P03 roster role");
+  requireText(roster.accessible_name, "P03 selected roster accessible name");
+  for (const key of ["visible", "enabled", "selected"]) equal(roster[key], true, `P03 roster ${key}`);
+  const action = object(journey.action, "P03 semantic action");
+  requireText(action.submitted_text, "P03 submitted deterministic action text");
+  for (const key of ["browser_submission_count", "command_count", "visible_submission_count"]) equal(action[key], 1, `P03 exact-once ${key}`);
+  const authority = array(value.authority_chain, "P03 authority chain").map((entry) => object(entry, "P03 authority entry"));
+  const layers = ["Gooselake", "Goosetower", "Gooseweb Worker/store", "Gooseweb React"];
+  const authorityArtifacts = ["runtime-state.redacted.json", "tower-state.redacted.json", "store-state.redacted.json", "screenshots/1440x1000.png"];
+  equal(JSON.stringify(authority.map((entry) => entry.layer)), JSON.stringify(layers), "P03 ordered authority chain");
+  const divergent = authority.filter((entry) => entry.status === "baseline_divergent");
+  const correlationId = string(authority[0]!.correlation_id, "P03 authority correlation ID");
+  authority.forEach((entry) => equal(entry.correlation_id, correlationId, "P03 cross-layer correlation ID"));
+  const submittedTextHash = hashBytes(Buffer.from(string(action.submitted_text, "P03 submitted deterministic action text")));
+  if (value.first_divergent_layer === null) {
+    equal(divergent.length, 0, "P03 absent first divergence");
+  } else {
+    equal(divergent.length, 1, "P03 single first divergence");
+    equal(divergent[0]!.layer, value.first_divergent_layer, "P03 first divergent layer");
   }
+  authority.forEach((entry, index) => {
+    equal(entry.artifact, authorityArtifacts[index], `P03 ${layers[index]} artifact`);
+    requireText(entry.semantic_identity, `P03 ${layers[index]} semantic identity`);
+    requireText(entry.cursor_or_version, `P03 ${layers[index]} cursor/version`);
+    equal(entry.content_sha256, submittedTextHash, `P03 ${layers[index]} submitted-content hash`);
+    if (entry.status === "observed") {
+      equal(entry.observed_instances, 1, `P03 ${layers[index]} observed cardinality`);
+      equal(entry.missing_count, 0, `P03 ${layers[index]} missing count`);
+      equal(entry.duplicate_count, 0, `P03 ${layers[index]} duplicate count`);
+      equal(entry.order_errors, 0, `P03 ${layers[index]} order errors`);
+      equal(entry.baseline_defect_id, null, `P03 ${layers[index]} baseline absence`);
+    } else {
+      requireText(entry.baseline_defect_id, `P03 ${layers[index]} divergent baseline`);
+      const discrepancy = integer(entry.missing_count, "P03 divergent missing count") + integer(entry.duplicate_count, "P03 divergent duplicate count") + integer(entry.order_errors, "P03 divergent order errors");
+      if (discrepancy === 0) fail(`P03 ${layers[index]} divergence has no measured discrepancy`);
+    }
+  });
   scanSecrets(value, "P03 browser evidence", false);
+}
+
+function validateP03IntegrityResult(result: RecordJson, label: string): void {
+  requireText(result.artifact, `${label} artifact`);
+  const missing = integer(result.missing_count, `${label} missing count`);
+  const duplicates = integer(result.duplicate_count, `${label} duplicate count`);
+  const orderErrors = integer(result.order_errors, `${label} order errors`);
+  if (result.status === "pass") {
+    equal(missing, 0, `${label} missing count`);
+    equal(duplicates, 0, `${label} duplicate count`);
+    equal(orderErrors, 0, `${label} order errors`);
+    equal(result.baseline_defect_id, null, `${label} baseline absence`);
+  } else {
+    requireText(result.baseline_defect_id, `${label} divergent baseline`);
+    if (missing + duplicates + orderErrors === 0) fail(`${label} divergence has no measured discrepancy`);
+  }
 }
 
 export function validateP03EvidenceLinkage(
@@ -126,6 +188,18 @@ export function validateP03EvidenceLinkage(
   equal(browser.version, manifestBrowser.chromium_version, "P03 manifest browser version");
   equal(browser.profile_policy, manifestBrowser.profile_policy, "P03 manifest browser profile");
 
+  const journey = object(p03Evidence.journey, "P03 linked journey");
+  const action = object(journey.action, "P03 linked action");
+  const manifestActions = array(object(candidateManifest.scenario, "P03 manifest scenario").actions, "P03 manifest actions").map((entry) => object(entry, "P03 manifest action"));
+  const manifestAction = manifestActions.find((entry) => entry.id === action.manifest_action_id);
+  if (!manifestAction) fail("P03 journey action is absent from the active manifest");
+  equal(action.command, manifestAction.command, "P03 journey command linkage");
+  equal(action.command_count, manifestAction.expected_command_count, "P03 exact command cardinality linkage");
+  for (const key of ["role", "accessible_name"]) {
+    equal(object(action.control, "P03 action control")[key], object(manifestAction.control, "P03 manifest control")[key], `P03 control ${key} linkage`);
+    equal(object(action.submit, "P03 action submit")[key], object(manifestAction.submit, "P03 manifest submit")[key], `P03 submit ${key} linkage`);
+  }
+
   const attachment = object(p03Evidence.supervisor_attachment, "P03 supervisor attachment");
   const lease = object(descriptor.lease, "P03 linked lease");
   const stack = object(descriptor.stack, "P03 linked stack");
@@ -135,6 +209,27 @@ export function validateP03EvidenceLinkage(
   equal(attachment.stack_configuration_sha256, stack.configuration_sha256, "P03 stack configuration linkage");
   equal(attachment.clean_tree, descriptor.clean_tree, "P03 clean-tree linkage");
   equal(attachment.hot_reload, descriptor.hot_reload, "P03 hot-reload linkage");
+
+  const standardArtifacts = new Set<string>([
+    string(descriptor.runtime_state_redacted, "P03 standard runtime artifact"),
+    string(descriptor.tower_state_redacted, "P03 standard Tower artifact"),
+    string(descriptor.store_state_redacted, "P03 standard store artifact"),
+    string(descriptor.network, "P03 standard network artifact"),
+    string(descriptor.websocket, "P03 standard WebSocket artifact"),
+    string(descriptor.report, "P03 standard report artifact"),
+    ...array(descriptor.screenshots, "P03 standard screenshots").map((item) => string(item, "P03 standard screenshot"))
+  ]);
+  for (const entryValue of array(p03Evidence.authority_chain, "P03 linked authority chain")) {
+    const entry = object(entryValue, "P03 linked authority entry");
+    if (!standardArtifacts.has(string(entry.artifact, "P03 authority artifact"))) fail("P03 authority artifact is absent from the standard evidence run");
+    if (entry.baseline_defect_id !== null) resolveManifestBaseline(candidateManifest, string(entry.baseline_defect_id, "P03 authority baseline"), "P03 authority");
+  }
+  const reconstruction = object(p03Evidence.reconstruction, "P03 linked reconstruction");
+  for (const key of ["ordinary_reload", "hard_reload", "navigation_away_back", "websocket_reconnect", "fresh_context"]) {
+    const result = object(reconstruction[key], `P03 linked reconstruction ${key}`);
+    if (!standardArtifacts.has(string(result.artifact, "P03 reconstruction artifact"))) fail(`P03 ${key} artifact is absent from the standard evidence run`);
+    if (result.baseline_defect_id !== null) resolveManifestBaseline(candidateManifest, string(result.baseline_defect_id, "P03 reconstruction baseline"), `P03 reconstruction ${key}`);
+  }
 
   const screenshots = array(p03Evidence.viewports, "P03 linked viewports").map((viewport) => object(viewport, "P03 linked viewport").screenshot_path);
   equal(JSON.stringify(screenshots), JSON.stringify(descriptor.screenshots), "P03 viewport screenshot linkage");

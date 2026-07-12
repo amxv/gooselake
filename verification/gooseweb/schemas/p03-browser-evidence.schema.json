@@ -7,7 +7,7 @@
   "required": [
     "schema_revision", "phase_id", "attempt", "candidate_head_sha", "served_head_sha",
     "candidate_tree_sha", "served_tree_sha", "browser", "supervisor_attachment",
-    "semantic_controls", "captures", "viewports", "reconstruction", "fixture_leakage",
+    "journey", "authority_chain", "first_divergent_layer", "captures", "viewports", "reconstruction", "fixture_leakage",
     "redaction", "completion"
   ],
   "properties": {
@@ -20,7 +20,7 @@
     "served_tree_sha": { "$ref": "#/$defs/sha" },
     "browser": {
       "type": "object", "additionalProperties": false,
-      "required": ["mechanism", "session_name", "globally_unique", "engine", "execution_mode", "headed_cli_value", "headed_environment", "headed_config", "binary_path", "version", "user_agent", "real_local_chromium", "profile_policy", "persistent_state_loaded"],
+      "required": ["mechanism", "session_name", "globally_unique", "engine", "execution_mode", "headed_cli_value", "headed_environment", "headed_config", "binary_path", "version", "user_agent", "navigator_webdriver", "real_local_chromium", "profile_policy", "persistent_state_loaded"],
       "properties": {
         "mechanism": { "const": "agent-browser" },
         "session_name": { "type": "string", "pattern": "^gooseweb-p03-[a-f0-9]{7}-a[1-9][0-9]*-[a-z0-9][a-z0-9-]*-[a-f0-9]{8}$" },
@@ -33,6 +33,7 @@
         "binary_path": { "type": "string", "pattern": "(?:Google Chrome|Chromium)(?:\\.app)?/" },
         "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$" },
         "user_agent": { "type": "string", "pattern": "HeadlessChrome/[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+" },
+        "navigator_webdriver": { "const": true },
         "real_local_chromium": { "const": true },
         "profile_policy": { "const": "fresh_ephemeral" },
         "persistent_state_loaded": { "const": false }
@@ -54,9 +55,40 @@
         "hot_reload": { "const": false }
       }
     },
-    "semantic_controls": {
-      "type": "array", "minItems": 3, "uniqueItems": true,
-      "items": { "enum": ["roster_button_accessible_name", "Agent thread composer", "Send agent thread message", "Team comms composer", "Send team comms message"] }
+    "journey": {
+      "type": "object", "additionalProperties": false,
+      "required": ["selected_roster_control", "action"],
+      "properties": {
+        "selected_roster_control": {
+          "type": "object", "additionalProperties": false,
+          "required": ["role", "accessible_name", "visible", "enabled", "selected"],
+          "properties": {
+            "role": { "const": "button" }, "accessible_name": { "type": "string", "minLength": 1 },
+            "visible": { "const": true }, "enabled": { "const": true }, "selected": { "const": true }
+          }
+        },
+        "action": {
+          "type": "object", "additionalProperties": false,
+          "required": ["manifest_action_id", "control", "submit", "command", "submitted_text", "browser_submission_count", "command_count", "visible_submission_count"],
+          "properties": {
+            "manifest_action_id": { "type": "string", "minLength": 1 },
+            "control": { "$ref": "#/$defs/semanticControl" }, "submit": { "$ref": "#/$defs/semanticControl" },
+            "command": { "type": "string", "minLength": 1 }, "submitted_text": { "type": "string", "minLength": 1 },
+            "browser_submission_count": { "const": 1 }, "command_count": { "const": 1 }, "visible_submission_count": { "const": 1 }
+          }
+        }
+      }
+    },
+    "authority_chain": {
+      "type": "array", "minItems": 4, "maxItems": 4,
+      "prefixItems": [
+        { "$ref": "#/$defs/runtimeAuthority" }, { "$ref": "#/$defs/towerAuthority" },
+        { "$ref": "#/$defs/storeAuthority" }, { "$ref": "#/$defs/reactAuthority" }
+      ],
+      "items": false
+    },
+    "first_divergent_layer": {
+      "oneOf": [{ "type": "null" }, { "enum": ["Gooselake", "Goosetower", "Gooseweb Worker/store", "Gooseweb React"] }]
     },
     "captures": {
       "type": "object", "additionalProperties": false,
@@ -76,14 +108,18 @@
     },
     "reconstruction": {
       "type": "object", "additionalProperties": false,
-      "required": ["ordinary_reload", "hard_reload", "navigation_away_back", "websocket_reconnect", "fresh_context", "old_context_disposed", "indexeddb_cleared", "cookies_cleared", "local_storage_cleared", "session_storage_cleared", "old_context_nonce", "fresh_context_nonce", "stale_context_detected"],
+      "required": ["ordinary_reload", "hard_reload", "navigation_away_back", "websocket_reconnect", "fresh_context", "old_context_disposed", "indexeddb_cleared", "cookies_cleared", "local_storage_cleared", "session_storage_cleared", "cache_storage_cleared", "service_workers_unregistered", "remaining_cache_names", "remaining_service_workers", "initial_prior_context_nonce", "old_context_nonce", "fresh_context_prior_nonce", "fresh_context_nonce", "stale_context_detected"],
       "properties": {
-        "ordinary_reload": { "const": "pass" }, "hard_reload": { "const": "pass" },
-        "navigation_away_back": { "const": "pass" }, "websocket_reconnect": { "const": "pass" },
-        "fresh_context": { "const": "pass" }, "old_context_disposed": { "const": true },
+        "ordinary_reload": { "$ref": "#/$defs/reconstructionResult" }, "hard_reload": { "$ref": "#/$defs/reconstructionResult" },
+        "navigation_away_back": { "$ref": "#/$defs/reconstructionResult" }, "websocket_reconnect": { "$ref": "#/$defs/reconstructionResult" },
+        "fresh_context": { "$ref": "#/$defs/reconstructionResult" }, "old_context_disposed": { "const": true },
         "indexeddb_cleared": { "const": true }, "cookies_cleared": { "const": true },
         "local_storage_cleared": { "const": true }, "session_storage_cleared": { "const": true },
+        "cache_storage_cleared": { "const": true }, "service_workers_unregistered": { "const": true },
+        "remaining_cache_names": { "const": 0 }, "remaining_service_workers": { "const": 0 },
+        "initial_prior_context_nonce": { "type": "null" },
         "old_context_nonce": { "type": "string", "minLength": 8 },
+        "fresh_context_prior_nonce": { "type": "null" },
         "fresh_context_nonce": { "type": "string", "minLength": 8 },
         "stale_context_detected": { "const": false }
       }
@@ -122,6 +158,42 @@
       "type": "object", "additionalProperties": false,
       "required": ["complete", "unexpected_failures", "redacted_at_capture"],
       "properties": { "complete": { "const": true }, "unexpected_failures": { "const": 0 }, "redacted_at_capture": { "const": true } }
+    },
+    "semanticControl": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "accessible_name", "visible", "enabled"],
+      "properties": {
+        "role": { "type": "string", "minLength": 1 }, "accessible_name": { "type": "string", "minLength": 1 },
+        "visible": { "const": true }, "enabled": { "const": true }
+      }
+    },
+    "authorityBase": {
+      "type": "object", "additionalProperties": false,
+      "required": ["layer", "status", "artifact", "correlation_id", "semantic_identity", "cursor_or_version", "content_sha256", "observed_instances", "missing_count", "duplicate_count", "order_errors", "baseline_defect_id"],
+      "properties": {
+        "layer": { "type": "string" }, "status": { "enum": ["observed", "baseline_divergent"] },
+        "artifact": { "type": "string", "minLength": 1 },
+        "correlation_id": { "type": "string", "minLength": 1 }, "semantic_identity": { "type": "string", "minLength": 1 },
+        "cursor_or_version": { "type": "string", "minLength": 1 }, "content_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "observed_instances": { "type": "integer", "minimum": 0 },
+        "missing_count": { "type": "integer", "minimum": 0 }, "duplicate_count": { "type": "integer", "minimum": 0 },
+        "order_errors": { "type": "integer", "minimum": 0 },
+        "baseline_defect_id": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^BASE-[A-Z0-9-]+$" }] }
+      }
+    },
+    "runtimeAuthority": { "allOf": [{ "$ref": "#/$defs/authorityBase" }, { "properties": { "layer": { "const": "Gooselake" }, "artifact": { "const": "runtime-state.redacted.json" } } }] },
+    "towerAuthority": { "allOf": [{ "$ref": "#/$defs/authorityBase" }, { "properties": { "layer": { "const": "Goosetower" }, "artifact": { "const": "tower-state.redacted.json" } } }] },
+    "storeAuthority": { "allOf": [{ "$ref": "#/$defs/authorityBase" }, { "properties": { "layer": { "const": "Gooseweb Worker/store" }, "artifact": { "const": "store-state.redacted.json" } } }] },
+    "reactAuthority": { "allOf": [{ "$ref": "#/$defs/authorityBase" }, { "properties": { "layer": { "const": "Gooseweb React" }, "artifact": { "enum": ["screenshots/1440x1000.png", "screenshots/820x1000.png", "screenshots/520x900.png"] } } }] },
+    "reconstructionResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "artifact", "missing_count", "duplicate_count", "order_errors", "baseline_defect_id"],
+      "properties": {
+        "status": { "enum": ["pass", "baseline_divergent"] }, "artifact": { "type": "string", "minLength": 1 },
+        "missing_count": { "type": "integer", "minimum": 0 }, "duplicate_count": { "type": "integer", "minimum": 0 },
+        "order_errors": { "type": "integer", "minimum": 0 },
+        "baseline_defect_id": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^BASE-[A-Z0-9-]+$" }] }
+      }
     },
     "viewportBase": {
       "type": "object", "additionalProperties": false,

@@ -18,12 +18,32 @@
     "binary_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "version": "150.0.7871.115",
     "user_agent": "Mozilla/5.0 HeadlessChrome/150.0.7871.115 Safari/537.36",
+    "navigator_webdriver": true,
     "real_local_chromium": true,
     "profile_policy": "fresh_ephemeral",
     "persistent_state_loaded": false
   },
   "supervisor_attachment": { "url_source": "supervisor_provided", "stack_started_by": "supervisor", "reviewer_started_stack": false, "lease_exclusive": true, "lease_id": "gooseweb-migration-000006", "lease_sequence": 6, "supervisor_identity": "p03-supervisor", "stack_configuration_sha256": "3333333333333333333333333333333333333333333333333333333333333333", "clean_tree": true, "hot_reload": false },
-  "semantic_controls": ["roster_button_accessible_name", "Agent thread composer", "Send agent thread message"],
+  "journey": {
+    "selected_roster_control": { "role": "button", "accessible_name": "Primary agent", "visible": true, "enabled": true, "selected": true },
+    "action": {
+      "manifest_action_id": "action-send-deterministic-turn",
+      "control": { "role": "textbox", "accessible_name": "Agent thread composer", "visible": true, "enabled": true },
+      "submit": { "role": "button", "accessible_name": "Send agent thread message", "visible": true, "enabled": true },
+      "command": "sendTurn",
+      "submitted_text": "P03 deterministic acceptance action",
+      "browser_submission_count": 1,
+      "command_count": 1,
+      "visible_submission_count": 1
+    }
+  },
+  "authority_chain": [
+    { "layer": "Gooselake", "status": "observed", "artifact": "runtime-state.redacted.json", "correlation_id": "p03-action-001", "semantic_identity": "turn:p03-turn-001", "cursor_or_version": "source:1", "content_sha256": "61f6527c8ced9cd27bf193d3efaa55c322d2d170fd8d5c42575ca1522355c4b6", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    { "layer": "Goosetower", "status": "observed", "artifact": "tower-state.redacted.json", "correlation_id": "p03-action-001", "semantic_identity": "session-detail:p03-session-001", "cursor_or_version": "entity:1", "content_sha256": "61f6527c8ced9cd27bf193d3efaa55c322d2d170fd8d5c42575ca1522355c4b6", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    { "layer": "Gooseweb Worker/store", "status": "observed", "artifact": "store-state.redacted.json", "correlation_id": "p03-action-001", "semantic_identity": "sessionDetails:p03-session-001", "cursor_or_version": "store:1", "content_sha256": "61f6527c8ced9cd27bf193d3efaa55c322d2d170fd8d5c42575ca1522355c4b6", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    { "layer": "Gooseweb React", "status": "observed", "artifact": "screenshots/1440x1000.png", "correlation_id": "p03-action-001", "semantic_identity": "visible-thread:p03-session-001", "cursor_or_version": "render:1", "content_sha256": "61f6527c8ced9cd27bf193d3efaa55c322d2d170fd8d5c42575ca1522355c4b6", "observed_instances": 1, "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null }
+  ],
+  "first_divergent_layer": null,
   "captures": {
     "console": { "complete": true, "unexpected_failures": 0, "redacted_at_capture": true },
     "network": { "complete": true, "unexpected_failures": 0, "redacted_at_capture": true },
@@ -35,9 +55,15 @@
     { "id": "520x900", "width": 520, "height": 900, "screenshot": true, "screenshot_path": "screenshots/520x900.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true }
   ],
   "reconstruction": {
-    "ordinary_reload": "pass", "hard_reload": "pass", "navigation_away_back": "pass", "websocket_reconnect": "pass", "fresh_context": "pass",
+    "ordinary_reload": { "status": "pass", "artifact": "screenshots/1440x1000.png", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    "hard_reload": { "status": "pass", "artifact": "network.json", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    "navigation_away_back": { "status": "pass", "artifact": "report.md", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    "websocket_reconnect": { "status": "pass", "artifact": "websocket.json", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
+    "fresh_context": { "status": "pass", "artifact": "screenshots/520x900.png", "missing_count": 0, "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null },
     "old_context_disposed": true, "indexeddb_cleared": true, "cookies_cleared": true, "local_storage_cleared": true, "session_storage_cleared": true,
-    "old_context_nonce": "old-12345678", "fresh_context_nonce": "fresh-87654321", "stale_context_detected": false
+    "cache_storage_cleared": true, "service_workers_unregistered": true, "remaining_cache_names": 0, "remaining_service_workers": 0,
+    "initial_prior_context_nonce": null, "old_context_nonce": "old-12345678", "fresh_context_prior_nonce": null,
+    "fresh_context_nonce": "fresh-87654321", "stale_context_detected": false
   },
   "fixture_leakage": { "default_development": "pass", "production_build": "pass", "query_flags_present": false, "fixture_markers_found": 0 },
   "redaction": { "at_capture": true, "query_values_retained": false, "credentials_retained": false, "cookies_retained": false, "csrf_retained": false, "tickets_retained": false, "raw_image_bytes_retained": false, "secret_config_retained": false },

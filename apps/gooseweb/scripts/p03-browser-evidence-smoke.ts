@@ -35,7 +35,23 @@ const seededFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
   ["stale context", (value) => change(value, "reconstruction.fresh_context_nonce", valueAt(value, "reconstruction.old_context_nonce"))],
   ["headed mode", (value) => change(value, "browser.execution_mode", "headed")],
   ["non-real Chromium", (value) => change(value, "browser.real_local_chromium", false)],
-  ["Chrome/User-Agent version mismatch", (value) => change(value, "browser.user_agent", "Mozilla/5.0 HeadlessChrome/149.0.0.0 Safari/537.36")]
+  ["Chrome/User-Agent version mismatch", (value) => change(value, "browser.user_agent", "Mozilla/5.0 HeadlessChrome/149.0.0.0 Safari/537.36")],
+  ["navigator.webdriver missing", (value) => omit(value, "browser.navigator_webdriver")],
+  ["navigator.webdriver false", (value) => change(value, "browser.navigator_webdriver", false)],
+  ["semantic journey missing", (value) => omit(value, "journey")],
+  ["roster selection unproven", (value) => change(value, "journey.selected_roster_control.selected", false)],
+  ["duplicate command cardinality", (value) => change(value, "journey.action.command_count", 2)],
+  ["authority chain missing", (value) => omit(value, "authority_chain")],
+  ["observed authority missing instance", (value) => change(value, "authority_chain.1.missing_count", 1)],
+  ["authority correlation mismatch", (value) => change(value, "authority_chain.2.correlation_id", "other-action")],
+  ["authority semantic identity missing", (value) => change(value, "authority_chain.0.semantic_identity", "")],
+  ["authority cursor missing", (value) => change(value, "authority_chain.1.cursor_or_version", "")],
+  ["authority content mismatch", (value) => change(value, "authority_chain.3.content_sha256", "0".repeat(64))],
+  ["first divergence mismatch", (value) => change(value, "first_divergent_layer", "Goosetower")],
+  ["reload missing row", (value) => change(value, "reconstruction.ordinary_reload.missing_count", 1)],
+  ["initial prior nonce non-null", (value) => change(value, "reconstruction.initial_prior_context_nonce", "stale-context")],
+  ["CacheStorage not cleared", (value) => change(value, "reconstruction.cache_storage_cleared", false)],
+  ["service workers not unregistered", (value) => change(value, "reconstruction.service_workers_unregistered", false)]
 ];
 
 for (const [name, seed] of seededFailures) {
@@ -55,12 +71,31 @@ assert.throws(
 );
 assert.deepEqual(manifest.known_defects, [], "P03 verification infrastructure must have no known defects");
 validateStandardEvidenceLinkage();
-console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 4} seeded failures rejected)`);
+console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 7} seeded failures rejected)`);
 
 function validateStandardEvidenceLinkage(): void {
   const descriptor = linkedStandardDescriptor();
   const linked = linkedP03Evidence(descriptor);
   validateP03EvidenceLinkage(descriptor, linked, manifest);
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, change(linked, "journey.action.control.accessible_name", "Forged composer"), manifest),
+    undefined,
+    "manifest-mismatched semantic control unexpectedly passed"
+  );
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, change(linked, "authority_chain.0.artifact", "report.md"), manifest),
+    undefined,
+    "wrong authority artifact unexpectedly passed"
+  );
+  let forgedDivergence = change(linked, "authority_chain.1.status", "baseline_divergent");
+  forgedDivergence = change(forgedDivergence, "authority_chain.1.missing_count", 1);
+  forgedDivergence = change(forgedDivergence, "authority_chain.1.baseline_defect_id", "BASE-NOT-REGISTERED");
+  forgedDivergence = change(forgedDivergence, "first_divergent_layer", "Goosetower");
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, forgedDivergence, manifest),
+    undefined,
+    "unmapped first-divergence baseline unexpectedly passed"
+  );
   const root = resolve(import.meta.dir, "../../../tmp/gg/p03-browser-evidence-smoke");
   rmSync(root, { recursive: true, force: true });
   mkdirSync(root, { recursive: true });
@@ -153,6 +188,19 @@ function change(source: RecordJson, path: string, value: Json): RecordJson {
   const key = parts.at(-1)!;
   if (Array.isArray(cursor)) cursor[Number(key)] = value;
   else cursor[key] = value;
+  return copy;
+}
+
+function omit(source: RecordJson, path: string): RecordJson {
+  const copy = structuredClone(source);
+  const parts = path.split(".");
+  let cursor: RecordJson | Json[] = copy;
+  for (const part of parts.slice(0, -1)) {
+    cursor = Array.isArray(cursor) ? cursor[Number(part)] as RecordJson : cursor[part] as RecordJson;
+  }
+  const key = parts.at(-1)!;
+  if (Array.isArray(cursor)) cursor.splice(Number(key), 1);
+  else delete cursor[key];
   return copy;
 }
 

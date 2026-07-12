@@ -44,7 +44,7 @@ Open the supervisor URL with all launch choices explicit:
 agent-browser --session <unique-name> --engine chrome --headed false --executable-path <recorded-local-chrome> open <supervisor-url>
 ```
 
-Immediately record the `agent-browser --version`, executable path/version, session name, CLI `--headed false`, engine, `navigator.userAgent`, `navigator.webdriver`, `window.devicePixelRatio`, and initial URL with query values removed. The user agent must contain a full four-part `HeadlessChrome/<version>` identity matching the recorded Chrome major version. The P03 descriptor records `execution_mode: headless`, `headed_cli_value: false`, `headed_environment: absent`, `headed_config: absent`, `real_local_chromium: true`, and `persistent_state_loaded: false`. Any mismatch is a seeded non-real-Chromium or headed-mode failure and ends the attempt.
+Immediately record the `agent-browser --version`, executable path/version, session name, CLI `--headed false`, engine, `navigator.userAgent`, `navigator.webdriver`, `window.devicePixelRatio`, and initial URL with query values removed. The user agent must contain a full four-part `HeadlessChrome/<version>` identity exactly matching the recorded Chrome version, and `navigator.webdriver` must be the typed boolean `true`; a string or omitted value is not proof. The P03 descriptor records `execution_mode: headless`, `headed_cli_value: false`, `headed_environment: absent`, `headed_config: absent`, `real_local_chromium: true`, and `persistent_state_loaded: false`. Any mismatch is a seeded non-real-Chromium or headed-mode failure and ends the attempt.
 
 ## 3. Fresh-context and stale-context proof
 
@@ -56,7 +56,7 @@ sessionStorage.setItem("gooseweb-p03-context-nonce", "<attempt-nonce>");
 ({ prior, current: sessionStorage.getItem("gooseweb-p03-context-nonce") });
 ```
 
-`prior` must be `null`. Any prior value is stale-context evidence and fails. Inspect `agent-browser storage local` and cookies only to establish emptiness; never retain values. If the login/dev-ticket flow creates state, record names/counts only after capture-time redaction.
+`prior` must be the typed JSON value `null` and is stored as `initial_prior_context_nonce`; omission, an empty string, or any prior value is stale-context evidence and fails. Inspect `agent-browser storage local` and cookies only to establish emptiness; never retain values. If the login/dev-ticket flow creates state, record names/counts only after capture-time redaction.
 
 For disposal, use only the named session. First evaluate origin cleanup, then clear supported storage and close the session:
 
@@ -74,7 +74,7 @@ await Promise.all((await navigator.serviceWorker?.getRegistrations?.() ?? []).ma
 true;
 ```
 
-Then run `agent-browser --session <name> cookies clear` and `agent-browser --session <name> close`. Create a second, globally unique session with the same explicit headless/engine/executable arguments. Its nonce probe must again return `prior: null`, and the new nonce must differ from the old nonce. Record `old_context_disposed`, IndexedDB/cookie/local/session clearing, and `stale_context_detected: false`. Never reuse a name to claim a fresh context.
+Then run `agent-browser --session <name> cookies clear` and `agent-browser --session <name> close`. Create a second, globally unique session with the same explicit headless/engine/executable arguments. Its nonce probe must again return typed `prior: null`, and the new nonce must differ from the old nonce. Record `old_context_disposed`, IndexedDB/cookie/local/session/CacheStorage clearing, service-worker unregistration, `remaining_cache_names: 0`, `remaining_service_workers: 0`, and `stale_context_detected: false`. Any blocked deletion/unregistration or nonzero remainder fails. Never reuse a name to claim a fresh context.
 
 ## 4. Semantic UI workflow
 
@@ -87,7 +87,9 @@ The required current Gooseweb controls are:
 - `button` named `Send agent thread message`;
 - when Team Comms is exercised, `textbox` named `Team comms composer` and `button` named `Send team comms message`.
 
-The reviewer types the deterministic P02 source action into the visible composer and submits it exactly once. Capture command cardinality and the complete redacted authority chain: Gooselake record/event/cursor, Goosetower materialized entity/version and served frame or explicit unavailable evidence, active `realtime-command-worker.ts` Worker/store state, and rendered text/control state. The first disagreement is labeled `Gooselake`, `Goosetower`, `Gooseweb Worker/store`, or `Gooseweb React`; a later-layer success never repairs an earlier contradiction.
+The reviewer records the selected roster button's exact accessible name and typed `visible`, `enabled`, and `selected` results. The reviewer types the deterministic P02 source action into the visible composer and submits it exactly once. The P03 descriptor records the active manifest action ID, exact control/submit role and accessible names, submitted text, `browser_submission_count: 1`, `command_count: 1`, and `visible_submission_count: 1`; these are cross-checked against the active manifest rather than accepted as a free-form control list.
+
+Capture the complete redacted authority chain as four ordered typed entries: Gooselake record/event/cursor in `runtime-state.redacted.json`; Goosetower materialized entity/version and served frame or explicit unavailable evidence in `tower-state.redacted.json`; active `realtime-command-worker.ts` Worker/store state in `store-state.redacted.json`; and rendered text/control state in `screenshots/1440x1000.png`. Every layer records the same action correlation ID, its own stable semantic entity identity and cursor/version, and the same SHA-256 of the exact submitted text; this prevents four unrelated layer claims from being presented as one journey. Each entry also records `observed_instances`, `missing_count`, `duplicate_count`, `order_errors`, status, and an optional mapped baseline ID. A fully observed entry requires exactly one instance and zero discrepancies. A baseline divergence requires a measured nonzero discrepancy and a baseline ID present in the active manifest. `first_divergent_layer` is null only when every layer is observed; otherwise it must identify the single typed divergent entry. A later-layer success never repairs an earlier contradiction.
 
 ## 5. Viewport and screenshot protocol
 
@@ -125,7 +127,7 @@ After the initial visible outcome and each DOM change, re-snapshot before intera
 4. Reconnect: use the supervisor-provided one-layer fault control/observer. The reviewer does not restart the stack. Verify honest offline/stale/replaying state and eventual exact-once convergence.
 5. Fresh context: complete the disposal procedure, close only the named session, start the new unique session, repeat identity/stale-context proof and the critical visible workflow.
 
-Each step records missing/duplicate/order counts, terminal state, context nonce, and complete console/network/WebSocket results. Product failures may remain only as one of the ten finite mapped baselines; infrastructure, leakage, wrong-head, stale-context, headed, non-real-Chromium, or evidence-completeness failures always stop P03.
+Each reconstruction step is a typed record, not the string `pass`: it names a referenced standard evidence artifact, status, `missing_count`, `duplicate_count`, `order_errors`, and optional mapped baseline ID. A passing step requires all three counts to be zero and no baseline; a divergent step requires a nonzero measured discrepancy and a baseline present in the active manifest. Product failures may remain only as one of the ten finite mapped baselines; infrastructure, leakage, wrong-head, stale-context, headed, non-real-Chromium, or evidence-completeness failures always stop P03.
 
 ## 8. Fixture-leak and production/default checks
 
@@ -137,4 +139,4 @@ Record `query_flags_present: false`, zero fixture markers, and separate `default
 
 Retain the following under `tmp/gg/gooseweb-migration/P03/<sha7>/attempt-<n>/`: manifest copy/hash, standard evidence-run descriptor, `p03-browser-evidence.json`, redacted environment/lease/stack tuple, three screenshots, complete console/network/WebSocket captures, redacted runtime/Tower/store state, checks, procedure-overhead measurement, report, and typed outcome. Validate `p03-browser-evidence.json` against `verification/gooseweb/schemas/p03-browser-evidence.schema.json` and the semantic validator.
 
-P03 infrastructure is complete only when the validator rejects all nine seeded classes: console, network, WebSocket, wrong head, wrong viewport, fixture leak, stale context, headed mode, and non-real Chromium. The reviewer closes only the named browser session. The supervisor later stops/cleans/releases the stack and the final outcome follows the existing P01 lifecycle/clearance governance. No product approval is issued by P03.
+P03 infrastructure is complete only when the validator rejects the nine foundational seeded classes—console, network, WebSocket, wrong head, wrong viewport, fixture leak, stale context, headed mode, and non-real Chromium—plus every missing/false/mismatched journey, exact-once cardinality, authority, first-divergence, reconstruction-integrity, automation, initial-nonce, CacheStorage, service-worker, and standard-linkage proof in the P03 smoke suite. The reviewer closes only the named browser session. The supervisor later stops/cleans/releases the stack and the final outcome follows the existing P01 lifecycle/clearance governance. No product approval is issued by P03.

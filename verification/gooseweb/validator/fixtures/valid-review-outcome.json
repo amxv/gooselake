@@ -1,0 +1,27 @@
+{
+  "schema_revision": "gooseweb-review-outcome/v1",
+  "phase_id": "P01",
+  "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
+  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
+  "attempt": 3,
+  "candidate_head_sha": "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
+  "candidate_tree_sha": "2c964761367fa4d5fb516bc6130c1af509cfea7d",
+  "manifest": {
+    "path": "verification/gooseweb/manifests/p01-team-comms-live.json",
+    "revision": 2,
+    "sha256": "906d4ba1b7faf72203e475d7c1ccbcc1d3bef26b2ea09dc946525f35924e47a7"
+  },
+  "lease": {
+    "lease_id": "gooseweb-migration-000002",
+    "sequence": 2,
+    "released_at": "2026-07-12T10:20:00.000Z"
+  },
+  "status": "changes_required",
+  "clearance_issued": false,
+  "product_approved": false,
+  "recipient_role": "none",
+  "findings": [
+    "P01-BLOCK-005"
+  ],
+  "recorded_at": "2026-07-12T10:21:00.000Z"
+}

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { deflateSync } from "node:zlib";
 import {
   APPROVED_PLAN_SHA256,
+  APPROVED_BASE_SHA,
   MANIFEST_PATH,
   applySchemaFile,
   readJson,
@@ -23,18 +25,27 @@ const manifest = readJson(MANIFEST_PATH);
 const ledger = readJson("verification/gooseweb/ledger/phase-state.json");
 const clearance = readJson("verification/gooseweb/validator/fixtures/valid-clearance.json");
 const evidence = readJson("verification/gooseweb/validator/fixtures/valid-evidence-run.json");
+const validNonClearance = readJson("verification/gooseweb/validator/fixtures/valid-review-outcome.json");
 const consoleCapture: RecordJson = {
-  schema_revision: "gooseweb-console-capture/v2",
+  schema_revision: "gooseweb-console-capture/v3",
+  capture_source: "agent-browser console",
+  unfiltered: true,
   messages: [
     { level: "debug", message: "[vite] connecting..." },
-    { level: "info", message: "React DevTools development informational message" }
+    { level: "debug", message: "[vite] connected." }
   ]
 };
 const networkCapture: RecordJson = {
-  schema_revision: "gooseweb-network-capture/v2",
-  http: [
-    { method: "GET", path: "/", status: 200 },
-    { method: "POST", path: "/api/dev-ticket", status: 200 }
+  schema_revision: "gooseweb-network-capture/v3",
+  capture_source: "agent-browser network requests",
+  unfiltered: true,
+  raw_http: [
+    { method: "GET", path: "/", query_keys: [], status: 200, resource_type: "document", same_origin: true },
+    { method: "GET", path: "/src/styles.css", query_keys: ["v"], status: 200, resource_type: "stylesheet", same_origin: true },
+    { method: "GET", path: "/node_modules/react.js", query_keys: ["v"], status: 200, resource_type: "module", same_origin: true },
+    { method: "GET", path: "/fonts/geist.woff2", query_keys: [], status: 200, resource_type: "font", same_origin: true },
+    { method: "POST", path: "/api/dev-ticket", query_keys: [], status: 200, resource_type: "api", same_origin: true },
+    { method: "GET", path: "/favicon.ico", query_keys: [], status: 404, resource_type: "other", same_origin: true }
   ],
   websocket: {
     availability: "available",
@@ -49,8 +60,9 @@ assert.equal(sha256("tmp/gg/golden-goose-gooseweb-migration-implementation-plan.
 validateManifest(manifest);
 validateLedger(ledger);
 validateClearance(clearance, { expected: clearance, verifyGit: true });
-validateEvidence(evidence, { expected: evidence });
+validateEvidence(evidence, { checkFiles: false, expected: evidence });
 validateBrowserCaptures(consoleCapture, networkCapture);
+validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "agent-browser exposes no redacted frame capture", baseline_defect_id: "BASE-P01-WEBSOCKET-OBSERVER-UNAVAILABLE" }), manifest);
 validateSchemasAgainstDocuments();
 validateReferencedEvidence();
 
@@ -74,7 +86,13 @@ const negativeCases: [string, () => void][] = [
   ["baseline labeled product approval", () => validateManifest(change(manifest, "baseline_detected.0.product_scenario_status", "approved"))],
   ["known defects nonempty", () => validateManifest(change(manifest, "known_defects", [{ id: "defect" }]))],
   ["not applicable without reason", () => validateManifest(omit(manifest, "non_applicable.rollback.reason"))],
+  ["changed clearance base", () => validateClearance(change(clearance, "base_sha", "a".repeat(40)), { expected: clearance })],
+  ["changed reviewed range", () => validateClearance(change(clearance, "reviewed_range", `${APPROVED_BASE_SHA}..${"a".repeat(40)}`), { expected: clearance })],
   ["changed candidate HEAD", () => validateClearance(change(clearance, "candidate_head_sha", "a".repeat(40)), { expected: clearance })],
+  ["nonexistent Git range head", () => {
+    const forged = change(change(change(clearance, "candidate_head_sha", "a".repeat(40)), "served_head_sha", "a".repeat(40)), "reviewed_range", `${APPROVED_BASE_SHA}..${"a".repeat(40)}`);
+    validateClearance(forged, { verifyGit: true });
+  }],
   ["changed candidate tree", () => validateClearance(change(clearance, "candidate_tree_sha", "b".repeat(40)), { expected: clearance })],
   ["changed served head", () => validateClearance(change(clearance, "served_head_sha", "c".repeat(40)), { expected: clearance })],
   ["changed served tree", () => validateClearance(change(clearance, "served_tree_sha", "c".repeat(40)), { expected: clearance })],
@@ -91,21 +109,24 @@ const negativeCases: [string, () => void][] = [
   ["dirty tree", () => validateClearance(change(clearance, "clean_tree", false))],
   ["hot reload evidence", () => validateClearance(change(clearance, "hot_reload", true))],
   ["release before stop/cleanup", () => validateClearance(change(clearance, "lease.released_at", "2026-07-12T10:10:00.000Z"))],
+  ["clearance issued before release", () => validateClearance(change(clearance, "clearance.issued_at", "2026-07-12T10:19:59.000Z"))],
   ["reviewer implementer overlap", () => validateClearance(change(clearance, "review.reviewer_identity", "p01-implementer"))],
   ["approval routed to implementer", () => validateClearance(change(clearance, "review.final_approval_routed_to_implementer", true))],
   ["wrong clearance recipient", () => validateClearance(change(clearance, "clearance.recipient_role", "supervisor"))],
   ["missing clearance identity", () => validateClearance(omit(clearance, "clearance.recipient_identity"))],
-  ["evidence head/sha7 mismatch", () => validateEvidence(change(evidence, "sha7", "2222222"))],
-  ["evidence headed mode", () => validateEvidence(change(evidence, "browser.execution_mode", "headed"))],
-  ["incomplete prohibited vocabulary", () => validateEvidence(change(evidence, "redaction.prohibited", ["credentials"]))],
-  ["missing evidence candidate tree", () => validateEvidence(omit(evidence, "candidate_tree_sha"))],
-  ["secret-bearing descriptor", () => validateEvidence(change(evidence, "redaction.bearer_token", "live-secret"))],
+  ["evidence head/sha7 mismatch", () => validateEvidence(change(evidence, "sha7", "2222222"), { checkFiles: false })],
+  ["evidence headed mode", () => validateEvidence(change(evidence, "browser.execution_mode", "headed"), { checkFiles: false })],
+  ["incomplete prohibited vocabulary", () => validateEvidence(change(evidence, "redaction.prohibited", ["credentials"]), { checkFiles: false })],
+  ["missing evidence candidate tree", () => validateEvidence(omit(evidence, "candidate_tree_sha"), { checkFiles: false })],
+  ["secret-bearing descriptor", () => validateEvidence(change(evidence, "redaction.bearer_token", "live-secret"), { checkFiles: false })],
   ["unexpected console message", () => validateBrowserCaptures(change(consoleCapture, "messages.2", { level: "error", message: "boom" }), networkCapture)],
   ["missing expected console message", () => validateBrowserCaptures(change(consoleCapture, "messages", []), networkCapture)],
-  ["unexpected HTTP", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "http.2", { method: "GET", path: "/missing", status: 404 }))],
-  ["query-bearing HTTP path", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "http.0.path", "/?ticket=secret"))],
+  ["unexpected HTTP failure cannot be filtered", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.6", { method: "GET", path: "/missing", query_keys: [], status: 404, resource_type: "module", same_origin: true }))],
+  ["cross-origin static success cannot be filtered", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.1.same_origin", false))],
+  ["query-bearing HTTP path", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.0.path", "/?ticket=secret"))],
   ["unexpected WebSocket close", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket.events.1", { event: "close", code: 1006 }))],
-  ["unavailable WebSocket without baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "not exposed", baseline_defect_id: "" }))],
+  ["unavailable WebSocket without baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "not exposed", baseline_defect_id: "" }), manifest)],
+  ["unavailable WebSocket with nonexistent baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "not exposed", baseline_defect_id: "BASE-DOES-NOT-EXIST" }), manifest)],
   ["dependency shorthand", () => validateLedger(change(ledger, "phases.3.prerequisites.0", "P01-P02"))],
   ["same/later dependency", () => validateLedger(change(ledger, "phases.7.prerequisites.0", "P07"))],
   ["P21 missing P05", () => validateLedger(change(ledger, "phases.21.prerequisites", ["P18", "P20"]))],
@@ -123,7 +144,7 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v2 passed (${negativeCases.length} negative cases)`);
+console.log(`Gooseweb acceptance contract v3 passed (${negativeCases.length} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);
@@ -138,7 +159,7 @@ function validateReferencedEvidence(): void {
   mkdirSync(resolve(directory, "screenshots"), { recursive: true });
   const files: Record<string, string | Uint8Array> = {
     "manifest.json": readFileSync(resolve(root, MANIFEST_PATH)),
-    "environment.json": JSON.stringify({ phase_id: evidence.phase_id, candidate_head_sha: evidence.candidate_head_sha, candidate_tree_sha: evidence.candidate_tree_sha, plan_sha256: APPROVED_PLAN_SHA256, manifest_sha256: (evidence.manifest as RecordJson).sha256, browser_session: (evidence.browser as RecordJson).session_name, browser_execution_mode: (evidence.browser as RecordJson).execution_mode, chromium_binary: (evidence.browser as RecordJson).chromium_binary, chromium_version: (evidence.browser as RecordJson).chromium_version, profile_policy: (evidence.browser as RecordJson).profile_policy, redaction: "omitted" }),
+    "environment.json": JSON.stringify({ phase_id: evidence.phase_id, base_sha: evidence.base_sha, reviewed_range: evidence.reviewed_range, candidate_head_sha: evidence.candidate_head_sha, candidate_tree_sha: evidence.candidate_tree_sha, plan_sha256: APPROVED_PLAN_SHA256, manifest_sha256: (evidence.manifest as RecordJson).sha256, browser_session: (evidence.browser as RecordJson).session_name, browser_execution_mode: (evidence.browser as RecordJson).execution_mode, chromium_binary: (evidence.browser as RecordJson).chromium_binary, chromium_version: (evidence.browser as RecordJson).chromium_version, profile_policy: (evidence.browser as RecordJson).profile_policy, redaction: "omitted" }),
     "console.json": JSON.stringify(consoleCapture),
     "network.json": JSON.stringify(networkCapture),
     "websocket.json": JSON.stringify((networkCapture.websocket as RecordJson)),
@@ -152,15 +173,28 @@ function validateReferencedEvidence(): void {
   for (const [path, content] of Object.entries(files)) writeFileSync(resolve(directory, path), content);
   for (const viewport of ["1440x1000", "820x1000", "520x900"]) {
     const [width, height] = viewport.split("x").map(Number);
-    const png = Buffer.alloc(24);
-    Buffer.from("89504e470d0a1a0a", "hex").copy(png, 0);
-    png.write("IHDR", 12, "ascii");
-    png.writeUInt32BE(width!, 16);
-    png.writeUInt32BE(height!, 20);
-    writeFileSync(resolve(directory, `screenshots/${viewport}.png`), png);
+    writeFileSync(resolve(directory, `screenshots/${viewport}.png`), createPng(width!, height!));
   }
   try {
     validateEvidence(evidence, { checkFiles: true, expected: evidence });
+    const rejectedEvidence = change(evidence, "review_outcome", { status: "changes_required", record: "review-outcome.json" });
+    const nonClearance = validNonClearance;
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));
+    validateEvidence(rejectedEvidence, { checkFiles: true, expected: rejectedEvidence });
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify({ ...nonClearance, recorded_at: "2026-07-12T10:19:59.000Z" }));
+    assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "pre-release changes-required outcome unexpectedly passed");
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));
+    const rejectedPointingAtClearance = change(rejectedEvidence, "review_outcome.record", "exact-head-clearance.json");
+    assert.throws(() => validateEvidence(rejectedPointingAtClearance, { checkFiles: true }), undefined, "changes-required evidence accepted a clearance record");
+    const clearedPointingAtRejection = change(evidence, "review_outcome.record", "review-outcome.json");
+    assert.throws(() => validateEvidence(clearedPointingAtRejection, { checkFiles: true }), undefined, "cleared evidence accepted a non-clearance record");
+    const headerOnly = Buffer.alloc(24);
+    Buffer.from("89504e470d0a1a0a", "hex").copy(headerOnly, 0);
+    headerOnly.write("IHDR", 12, "ascii");
+    headerOnly.writeUInt32BE(1440, 16); headerOnly.writeUInt32BE(1000, 20);
+    writeFileSync(resolve(directory, "screenshots/1440x1000.png"), headerOnly);
+    assert.throws(() => validateEvidence(evidence, { checkFiles: true }), undefined, "header-only PNG unexpectedly passed");
+    writeFileSync(resolve(directory, "screenshots/1440x1000.png"), createPng(1440, 1000));
     writeFileSync(resolve(directory, "runtime-state.redacted.json"), JSON.stringify({ note: "Authorization: Bearer live-secret" }));
     assert.throws(() => validateEvidence(evidence, { checkFiles: true }), undefined, "referenced secret unexpectedly passed");
     rmSync(resolve(directory, "network.json"));
@@ -212,6 +246,15 @@ function ledgerClearance(leaseId: string): RecordJson {
 }
 
 function phaseIds(first: number, last: number): string[] { return Array.from({ length: last - first + 1 }, (_, index) => `P${String(first + index).padStart(2, "0")}`); }
+function createPng(width: number, height: number): Buffer {
+  const signature = Buffer.from("89504e470d0a1a0a", "hex");
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4); ihdr[8] = 8; ihdr[9] = 0;
+  const raw = Buffer.alloc((width + 1) * height);
+  const idat = deflateSync(raw);
+  return Buffer.concat([signature, pngChunk("IHDR", ihdr), pngChunk("IDAT", idat), pngChunk("IEND", Buffer.alloc(0))]);
+}
+function pngChunk(type: string, data: Buffer): Buffer { const name = Buffer.from(type); const chunk = Buffer.alloc(12 + data.length); chunk.writeUInt32BE(data.length, 0); name.copy(chunk, 4); data.copy(chunk, 8); chunk.writeUInt32BE(testCrc32(Buffer.concat([name, data])), 8 + data.length); return chunk; }
+function testCrc32(bytes: Uint8Array): number { let crc = 0xffffffff; for (const byte of bytes) { crc ^= byte; for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0); } return (crc ^ 0xffffffff) >>> 0; }
 function clone<T>(value: T): T { return structuredClone(value); }
 function change(source: RecordJson, path: string, value: unknown): RecordJson { const result = clone(source); const parts = path.split("."); let current: any = result; for (const part of parts.slice(0, -1)) current = current[index(part)]; current[index(parts.at(-1)!)] = value; return result; }
 function omit(source: RecordJson, path: string): RecordJson { const result = clone(source); const parts = path.split("."); let current: any = result; for (const part of parts.slice(0, -1)) current = current[index(part)]; delete current[index(parts.at(-1)!)]; return result; }

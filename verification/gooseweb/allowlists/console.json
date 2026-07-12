@@ -1,14 +1,20 @@
 {
-  "schema_revision": "gooseweb-console-allowlist/v2",
+  "schema_revision": "gooseweb-console-allowlist/v3",
+  "capture_boundary": {
+    "source": "unfiltered agent-browser console output",
+    "filtering": "none",
+    "normalization": "none",
+    "warnings_errors_exceptions_always_fail": true
+  },
   "exact_messages": [
     {
       "level": "debug",
       "message": "[vite] connecting..."
     },
     {
-      "level": "info",
-      "message": "React DevTools development informational message"
+      "level": "debug",
+      "message": "[vite] connected."
     }
   ],
-  "policy": "Captures are compared as exact level/message multisets. Any missing, additional, warning, error, exception, regex, substring, or normalized suppression is a failure."
+  "policy": "The complete unfiltered agent-browser console multiset must match exactly. No message is hidden, normalized, regex-matched, or substring-suppressed."
 }

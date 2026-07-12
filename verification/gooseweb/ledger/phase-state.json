@@ -1,5 +1,5 @@
 {
-  "schema_revision": "gooseweb-phase-state-ledger/v2",
+  "schema_revision": "gooseweb-phase-state-ledger/v3",
   "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
   "phases": [
     {
@@ -15,7 +15,7 @@
         "P00"
       ],
       "state": "candidate_ready_for_review",
-      "state_reason": "P01 fix candidate addresses exact-head review findings and awaits a new exclusive-lease review.",
+      "state_reason": "P01 second fix candidate addresses replacement-review findings and awaits a new exclusive-lease review.",
       "history": [
         {
           "sequence": 1,
@@ -68,6 +68,42 @@
           "to": "candidate_ready_for_review",
           "at": "2026-07-12T06:00:00.000Z",
           "reason": "Fix candidate implemented and queued for a fresh exact-head review.",
+          "lease_id": null,
+          "clearance_ref": null
+        },
+        {
+          "sequence": 7,
+          "from": "candidate_ready_for_review",
+          "to": "under_review",
+          "at": "2026-07-12T05:57:36.000Z",
+          "reason": "Supervisor acquired the sole migration stack lease for replacement attempt 3.",
+          "lease_id": "gooseweb-migration-000002",
+          "clearance_ref": null
+        },
+        {
+          "sequence": 8,
+          "from": "under_review",
+          "to": "changes_required",
+          "at": "2026-07-12T06:01:43.000Z",
+          "reason": "Replacement review issued blocking findings; no clearance was issued.",
+          "lease_id": "gooseweb-migration-000002",
+          "clearance_ref": "tmp/gg/gooseweb-migration/P01/a8eb441/attempt-3/report.md"
+        },
+        {
+          "sequence": 9,
+          "from": "changes_required",
+          "to": "implementing",
+          "at": "2026-07-12T06:01:44.000Z",
+          "reason": "Lease termination, cleanup, and release were confirmed before the second fix round.",
+          "lease_id": null,
+          "clearance_ref": null
+        },
+        {
+          "sequence": 10,
+          "from": "implementing",
+          "to": "candidate_ready_for_review",
+          "at": "2026-07-12T06:20:00.000Z",
+          "reason": "Second fix candidate implemented and queued for a fresh exact-head review.",
           "lease_id": null,
           "clearance_ref": null
         }
@@ -837,6 +873,54 @@
       },
       "outcome": "changes_required",
       "evidence_root": "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/"
+    },
+    {
+      "lease_id": "gooseweb-migration-000002",
+      "sequence": 2,
+      "phase_id": "P01",
+      "owner_role": "supervisor",
+      "owner_identity": "inner_traveler",
+      "acquired_at": "2026-07-12T05:57:36.000Z",
+      "released_at": "2026-07-12T06:01:43.000Z",
+      "prior_lease_termination_evidence": {
+        "status": "terminated_and_cleaned",
+        "reference": "gooseweb-migration-000001 stopped, cleaned, and released at tmp/gg/gooseweb-migration/P01/7adbae8/attempt-1/lease-acquisition.json"
+      },
+      "managed_process": {
+        "identity": "proc_46 (pid 51239)",
+        "started_at": "2026-07-12T05:58:41.920Z",
+        "stopped_at": "2026-07-12T06:01:28.022Z",
+        "cleanup_completed_at": "2026-07-12T06:01:43.000Z",
+        "termination_evidence": "gg_process_kill and completion notification confirmed termination; isolated DEV_DIR cleanup completed before release."
+      },
+      "plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
+      "candidate": {
+        "branch": "gg/p01-acceptance-foundation",
+        "head_sha": "a8eb44172292d32aa1ab016aa9f621f5c129201d",
+        "tree_sha": "ceea65849c0a929ffcc1931361e9ab71b55a0c6b",
+        "clean_tree": true,
+        "hot_reload": false
+      },
+      "manifest": {
+        "path": "verification/gooseweb/manifests/p01-team-comms-live.json",
+        "revision": 2,
+        "sha256": "906d4ba1b7faf72203e475d7c1ccbcc1d3bef26b2ea09dc946525f35924e47a7"
+      },
+      "stack": {
+        "dev_dir": "tmp/gooseweb-migration-stack/P01/a8eb441/attempt-3",
+        "runtime_port": 18111,
+        "tower_port": 18112,
+        "gooseweb_port": 13111,
+        "source_configuration": "isolated-local-gooselake-runtime",
+        "mode": "development-inline-realtime-core"
+      },
+      "reviewer": {
+        "identity": "accidental_camel",
+        "browser_session": "gooseweb-p01-a8eb441-a3-headless-reviewer",
+        "browser_execution_mode": "headless"
+      },
+      "outcome": "changes_required",
+      "evidence_root": "tmp/gg/gooseweb-migration/P01/a8eb441/attempt-3/"
     }
   ],
   "clearance_history": []

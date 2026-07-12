@@ -1,15 +1,39 @@
 {
-  "schema_revision": "gooseweb-network-allowlist/v2",
-  "exact_http": [
+  "schema_revision": "gooseweb-network-allowlist/v3",
+  "capture_boundary": {
+    "source": "unfiltered agent-browser network requests including successes",
+    "raw_capture_retained": true,
+    "query_values_retained": false,
+    "query_keys_retained": true,
+    "ignored_same_origin_success_resource_types": [
+      "stylesheet",
+      "font",
+      "script",
+      "module"
+    ],
+    "ignored_status_min": 200,
+    "ignored_status_max": 399,
+    "failure_filtering_prohibited": true,
+    "unclassified_filtering_prohibited": true
+  },
+  "exact_evaluated_http": [
     {
       "method": "GET",
       "path": "/",
-      "status": 200
+      "status": 200,
+      "resource_type": "document"
     },
     {
       "method": "POST",
       "path": "/api/dev-ticket",
-      "status": 200
+      "status": 200,
+      "resource_type": "api"
+    },
+    {
+      "method": "GET",
+      "path": "/favicon.ico",
+      "status": 404,
+      "resource_type": "other"
     }
   ],
   "exact_websocket_events": [
@@ -18,5 +42,5 @@
       "code": 0
     }
   ],
-  "policy": "Captures are compared as exact method/path/status and event/code multisets with query strings and secrets excluded at capture. Unexpected HTTP, protocol, network, or WebSocket activity fails. Unavailable WebSocket capture requires an explicit blocked baseline mapping and prohibits inference."
+  "policy": "The raw same-origin request list is retained. The validator itself ignores only 2xx/3xx stylesheet, font, script, and module resources by exact resource type; it cannot ignore any 4xx/5xx, cross-origin, API, document, WebSocket, or unclassified request. The resulting evaluated multiset must match exactly."
 }

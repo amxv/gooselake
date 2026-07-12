@@ -1,6 +1,8 @@
 {
-  "schema_revision": "gooseweb-evidence-run/v2",
+  "schema_revision": "gooseweb-evidence-run/v3",
   "phase_id": "P01",
+  "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
+  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
   "candidate_head_sha": "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
   "candidate_tree_sha": "2c964761367fa4d5fb516bc6130c1af509cfea7d",
   "sha7": "7adbae8",
@@ -41,7 +43,10 @@
     "artifacts": []
   },
   "report": "report.md",
-  "clearance": "exact-head-clearance.json",
+  "review_outcome": {
+    "status": "cleared",
+    "record": "exact-head-clearance.json"
+  },
   "redaction": {
     "capture_time": true,
     "prohibited": [

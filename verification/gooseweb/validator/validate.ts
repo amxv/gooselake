@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
+import { inflateSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 export const APPROVED_PLAN_SHA256 =
@@ -9,6 +10,7 @@ export const APPROVED_PLAN_SHA256 =
 export const MANIFEST_PATH =
   "verification/gooseweb/manifests/p01-team-comms-live.json";
 export const MANIFEST_REVISION = 2;
+export const APPROVED_BASE_SHA = "ca88bfe56719f69fe59151372e0d5aa76b2c92ab";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const PHASE = /^P(0[0-9]|[1-4][0-9]|5[0-6])$/;
@@ -89,14 +91,17 @@ export function validateEvidence(value: RecordJson, options: EvidenceOptions = {
   const sha7 = string(value.sha7, "sha7");
   const attempt = integer(value.attempt, "attempt");
   const head = string(value.candidate_head_sha, "candidate head");
+  equal(value.base_sha, APPROVED_BASE_SHA, "evidence approved base");
+  equal(value.reviewed_range, `${value.base_sha}..${head}`, "evidence reviewed range");
   if (!head.startsWith(sha7)) fail("evidence sha7 does not match candidate head");
   equal(value.root, `tmp/gg/gooseweb-migration/${phase}/${sha7}/attempt-${attempt}/`, "evidence root convention");
   validateManifestTuple(object(value.manifest, "evidence manifest"));
   validateBrowser(object(value.browser, "evidence browser"));
   if (options.expected) {
-    for (const key of ["phase_id", "candidate_head_sha", "candidate_tree_sha"]) equal(value[key], options.expected[key], `expected evidence ${key}`);
+    for (const key of ["phase_id", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha"]) equal(value[key], options.expected[key], `expected evidence ${key}`);
     equal(JSON.stringify(value.manifest), JSON.stringify(options.expected.manifest), "expected evidence manifest");
     equal(JSON.stringify(value.browser), JSON.stringify(options.expected.browser), "expected browser tuple");
+    equal(JSON.stringify(value.review_outcome), JSON.stringify(options.expected.review_outcome), "expected review outcome tuple");
   }
   const prohibited = array(object(value.redaction, "redaction").prohibited, "prohibited redaction categories");
   const required = ["credentials", "cookies", "CSRF values", "bearer tokens", "realtime tickets/query secrets", "provider auth", "raw image bytes", "secret config", "private keys"];
@@ -106,7 +111,7 @@ export function validateEvidence(value: RecordJson, options: EvidenceOptions = {
     JSON.stringify(["screenshots/1440x1000.png", "screenshots/820x1000.png", "screenshots/520x900.png"]),
     "exact required viewport screenshots"
   );
-  if (options.checkFiles) validateEvidenceFiles(value);
+  if (options.checkFiles !== false) validateEvidenceFiles(value);
   scanSecrets(value, "evidence descriptor", false);
 }
 
@@ -117,11 +122,22 @@ export interface ClearanceOptions {
 
 export function validateClearance(value: RecordJson, options: ClearanceOptions = {}): void {
   applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", value);
+  equal(value.base_sha, APPROVED_BASE_SHA, "approved clearance base");
   equal(value.candidate_head_sha, value.served_head_sha, "candidate/served head");
   equal(value.candidate_tree_sha, value.served_tree_sha, "candidate/served tree");
-  if (options.verifyGit) {
-    const actualTree = execFileSync("git", ["rev-parse", `${string(value.candidate_head_sha, "candidate head")}^{tree}`], { cwd: root, encoding: "utf8" }).trim();
+  equal(value.reviewed_range, `${value.base_sha}..${value.candidate_head_sha}`, "reviewed base/head range");
+  if (time(object(value.clearance, "clearance").issued_at) < time(object(value.lease, "lease").released_at)) fail("clearance was issued before lease release");
+  if (options.verifyGit !== false) {
+    execFileSync("git", ["cat-file", "-e", `${string(value.base_sha, "base SHA")}^{commit}`], { cwd: root });
+    const actualTree = execFileSync("git", ["rev-parse", `${string(value.candidate_head_sha, "candidate head")}^{tree}`], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     equal(value.candidate_tree_sha, actualTree, "candidate commit/tree relationship");
+    try {
+      execFileSync("git", ["merge-base", "--is-ancestor", string(value.base_sha, "base SHA"), string(value.candidate_head_sha, "candidate head")], { cwd: root, stdio: "ignore" });
+    } catch {
+      fail("declared base is not an ancestor of candidate head");
+    }
+    const mergeBase = execFileSync("git", ["merge-base", string(value.base_sha, "base SHA"), string(value.candidate_head_sha, "candidate head")], { cwd: root, encoding: "utf8" }).trim();
+    equal(mergeBase, value.base_sha, "exact reviewed merge base");
   }
   validateManifestTuple(object(value.manifest, "clearance manifest"));
   const lease = object(value.lease, "lease");
@@ -139,7 +155,7 @@ export function validateClearance(value: RecordJson, options: ClearanceOptions =
   array(value.baseline_detected, "baseline").forEach((entry) => validateBaseline(object(entry, "baseline entry")));
   if (options.expected) {
     const expected = options.expected;
-    for (const key of ["phase_id", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], expected[key], `expected ${key}`);
+    for (const key of ["phase_id", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], expected[key], `expected ${key}`);
     for (const key of ["manifest", "lease", "stack", "review", "browser"]) equal(JSON.stringify(value[key]), JSON.stringify(expected[key]), `expected ${key} tuple`);
   }
   scanSecrets(value, "clearance", false);
@@ -151,21 +167,51 @@ export function validateClearanceHistory(records: RecordJson[]): void {
   ensureUnique(records.map((record) => string(object(record.review, "review").browser_session, "browser session")), "browser session names");
 }
 
-export function validateBrowserCaptures(consoleCapture: RecordJson, networkCapture: RecordJson): void {
+export function validateBrowserCaptures(consoleCapture: RecordJson, networkCapture: RecordJson, manifest?: RecordJson): void {
   const consoleAllowlist = readJson("verification/gooseweb/allowlists/console.json");
   const networkAllowlist = readJson("verification/gooseweb/allowlists/network.json");
   applySchemaInline(consoleCaptureSchema(), consoleCapture, "console capture");
   applySchemaInline(networkCaptureSchema(), networkCapture, "network capture");
-  equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v2", "console allowlist revision");
-  equal(networkAllowlist.schema_revision, "gooseweb-network-allowlist/v2", "network allowlist revision");
+  equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v3", "console allowlist revision");
+  equal(networkAllowlist.schema_revision, "gooseweb-network-allowlist/v3", "network allowlist revision");
+  const consoleBoundary = object(consoleAllowlist.capture_boundary, "console capture boundary");
+  equal(consoleBoundary.source, "unfiltered agent-browser console output", "console capture source");
+  equal(consoleBoundary.filtering, "none", "console filtering");
+  equal(consoleBoundary.normalization, "none", "console normalization");
+  equal(consoleBoundary.warnings_errors_exceptions_always_fail, true, "console failure policy");
   exactMultiset(array(consoleCapture.messages, "console messages"), array(consoleAllowlist.exact_messages, "console allowlist"), "console messages");
-  exactMultiset(array(networkCapture.http, "HTTP capture"), array(networkAllowlist.exact_http, "HTTP allowlist"), "HTTP activity");
+  const boundary = object(networkAllowlist.capture_boundary, "network capture boundary");
+  equal(boundary.source, "unfiltered agent-browser network requests including successes", "network capture source");
+  equal(boundary.raw_capture_retained, true, "raw network retention");
+  equal(boundary.query_values_retained, false, "network query-value redaction");
+  equal(boundary.query_keys_retained, true, "network query-key retention");
+  equal(boundary.failure_filtering_prohibited, true, "network failure filtering policy");
+  equal(boundary.unclassified_filtering_prohibited, true, "unclassified network filtering policy");
+  equal(boundary.ignored_status_min, 200, "ignored success status minimum");
+  equal(boundary.ignored_status_max, 399, "ignored success status maximum");
+  equal(JSON.stringify(boundary.ignored_same_origin_success_resource_types), JSON.stringify(["stylesheet", "font", "script", "module"]), "exact ignored static resource types");
+  const ignoredTypes = new Set(array(boundary.ignored_same_origin_success_resource_types, "ignored resource types").map((item) => string(item, "resource type")));
+  const evaluated = array(networkCapture.raw_http, "raw HTTP capture").filter((item) => {
+    const request = object(item, "HTTP request");
+    const ignorableStatus = integer(request.status, "HTTP status") >= Number(boundary.ignored_status_min) && integer(request.status, "HTTP status") <= Number(boundary.ignored_status_max);
+    return !(request.same_origin === true && ignorableStatus && ignoredTypes.has(string(request.resource_type, "resource type")));
+  }).map((item) => {
+    const request = object(item, "HTTP request");
+    return { method: request.method!, path: request.path!, status: request.status!, resource_type: request.resource_type! } as RecordJson;
+  });
+  exactMultiset(evaluated, array(networkAllowlist.exact_evaluated_http, "HTTP allowlist"), "evaluated HTTP activity");
   const websocket = object(networkCapture.websocket, "WebSocket capture");
   if (websocket.availability === "available") exactMultiset(array(websocket.events, "WebSocket events"), array(networkAllowlist.exact_websocket_events, "WebSocket allowlist"), "WebSocket events");
   else {
     equal(websocket.inference_prohibited, true, "unavailable WebSocket inference policy");
     requireText(websocket.reason, "unavailable WebSocket reason");
-    requireText(websocket.baseline_defect_id, "unavailable WebSocket baseline mapping");
+    const defectId = string(websocket.baseline_defect_id, "unavailable WebSocket baseline mapping");
+    requireText(defectId, "unavailable WebSocket baseline mapping");
+    if (!manifest) fail("unavailable WebSocket capture requires the validated manifest");
+    const matches = array(manifest.baseline_detected, "manifest baselines").map((item) => object(item, "baseline")).filter((entry) => entry.defect_id === defectId);
+    if (matches.length !== 1) fail("unavailable WebSocket baseline does not resolve exactly once in manifest");
+    validateBaseline(matches[0]!);
+    equal(matches[0]!.scenario_id, object(manifest.scenario, "manifest scenario").stable_scenario_id, "WebSocket baseline scenario");
   }
   scanSecrets(consoleCapture, "console capture", false);
   scanSecrets(networkCapture, "network capture", false);
@@ -187,10 +233,12 @@ export function stackConfigurationHash(stack: RecordJson): string {
 
 function validateEvidenceFiles(descriptor: RecordJson): void {
   const evidenceRoot = safeEvidenceRoot(string(descriptor.root, "evidence root"));
-  const textKeys = ["environment", "console", "network", "websocket", "runtime_state_redacted", "tower_state_redacted", "store_state_redacted", "checks", "report", "clearance"];
+  const outcome = object(descriptor.review_outcome, "review outcome descriptor");
+  const textKeys = ["environment", "console", "network", "websocket", "runtime_state_redacted", "tower_state_redacted", "store_state_redacted", "checks", "report"];
   const relativePaths = [
     string(object(descriptor.manifest, "manifest").copy, "manifest copy"),
     ...textKeys.map((key) => string(descriptor[key], key)),
+    string(outcome.record, "review outcome record"),
     ...array(descriptor.screenshots, "screenshots").map((item) => string(item, "screenshot"))
   ];
   ensureUnique(relativePaths, "evidence paths");
@@ -198,10 +246,9 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
     const path = safeChild(evidenceRoot, relative);
     if (!existsSync(path) || !statSync(path).isFile()) fail(`referenced evidence file missing: ${relative}`);
     if (relative.endsWith(".png")) {
-      const bytes = readFileSync(path);
-      if (bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a" || bytes.length < 24) fail(`screenshot is not PNG: ${relative}`);
       const expected = /([0-9]+)x([0-9]+)\.png$/.exec(relative);
-      if (!expected || bytes.readUInt32BE(16) !== Number(expected[1]) || bytes.readUInt32BE(20) !== Number(expected[2])) fail(`screenshot dimensions do not match ${relative}`);
+      const dimensions = decodePngDimensions(readFileSync(path));
+      if (!expected || dimensions.width !== Number(expected[1]) || dimensions.height !== Number(expected[2])) fail(`screenshot dimensions do not match ${relative}`);
       continue;
     }
     const content = readFileSync(path, "utf8");
@@ -217,9 +264,9 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
   );
   const consoleCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.console, "console")), "utf8")) as RecordJson;
   const networkCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.network, "network")), "utf8")) as RecordJson;
-  validateBrowserCaptures(consoleCapture, networkCapture);
+  validateBrowserCaptures(consoleCapture, networkCapture, manifestCopy);
   const environment = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.environment, "environment")), "utf8")) as RecordJson;
-  for (const key of ["phase_id", "candidate_head_sha", "candidate_tree_sha"]) equal(environment[key], descriptor[key], `environment/${key}`);
+  for (const key of ["phase_id", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha"]) equal(environment[key], descriptor[key], `environment/${key}`);
   equal(environment.plan_sha256, APPROVED_PLAN_SHA256, "environment plan hash");
   equal(environment.manifest_sha256, object(descriptor.manifest, "manifest").sha256, "environment manifest hash");
   equal(environment.browser_session, object(descriptor.browser, "browser").session_name, "environment browser session");
@@ -227,12 +274,17 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
   for (const key of ["chromium_binary", "chromium_version", "profile_policy"]) equal(environment[key], object(descriptor.browser, "browser")[key], `environment browser ${key}`);
   const websocketCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.websocket, "websocket")), "utf8")) as RecordJson;
   equal(JSON.stringify(websocketCapture), JSON.stringify(networkCapture.websocket), "network/WebSocket capture linkage");
-  const clearance = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.clearance, "clearance")), "utf8")) as RecordJson;
-  validateClearance(clearance);
-  for (const key of ["phase_id", "candidate_head_sha", "candidate_tree_sha"]) equal(clearance[key], descriptor[key], `evidence/clearance ${key}`);
+  const outcomeRecord = JSON.parse(readFileSync(safeChild(evidenceRoot, string(outcome.record, "review outcome record")), "utf8")) as RecordJson;
+  if (outcome.status === "cleared") validateClearance(outcomeRecord);
+  else if (outcome.status === "changes_required") validateNonClearance(outcomeRecord);
+  else fail("unknown review outcome status");
+  equal(outcomeRecord.status === "changes_required" ? "changes_required" : "cleared", outcome.status, "review outcome record/status");
+  for (const key of ["phase_id", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha"]) equal(outcomeRecord[key], descriptor[key], `evidence/outcome ${key}`);
   const evidenceManifest = object(descriptor.manifest, "evidence manifest");
-  const clearanceManifest = object(clearance.manifest, "clearance manifest");
-  for (const key of ["path", "revision", "sha256"]) equal(clearanceManifest[key], evidenceManifest[key], `evidence/clearance manifest ${key}`);
+  if (outcome.status === "cleared") {
+    const clearanceManifest = object(outcomeRecord.manifest, "clearance manifest");
+    for (const key of ["path", "revision", "sha256"]) equal(clearanceManifest[key], evidenceManifest[key], `evidence/clearance manifest ${key}`);
+  }
 }
 
 function validatePhaseHistory(phase: RecordJson): void {
@@ -324,6 +376,57 @@ function validateLease(lease: RecordJson): void {
   if (!(acquired <= started && started < stopped && stopped <= cleaned && cleaned <= released)) fail("lease release must follow managed-process stop and cleanup");
 }
 
+function validateNonClearance(record: RecordJson): void {
+  applySchemaFile("verification/gooseweb/schemas/review-outcome.schema.json", record);
+  equal(record.reviewed_range, `${record.base_sha}..${record.candidate_head_sha}`, "non-clearance reviewed range");
+  validateManifestTuple(object(record.manifest, "non-clearance manifest"));
+  if (time(record.recorded_at) < time(object(record.lease, "non-clearance lease").released_at)) fail("changes-required outcome was recorded before lease release");
+}
+
+function decodePngDimensions(bytes: Buffer): { width: number; height: number } {
+  if (bytes.length < 45 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") fail("screenshot is not a complete PNG");
+  let offset = 8;
+  let width = 0, height = 0, bitDepth = 0, colorType = -1, interlace = -1;
+  let sawHeader = false, sawEnd = false;
+  const idat: Buffer[] = [];
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const end = offset + 12 + length;
+    if (end > bytes.length) fail("PNG chunk is truncated");
+    const type = bytes.subarray(offset + 4, offset + 8);
+    const data = bytes.subarray(offset + 8, offset + 8 + length);
+    if (crc32(Buffer.concat([type, data])) !== bytes.readUInt32BE(offset + 8 + length)) fail("PNG chunk CRC is invalid");
+    const name = type.toString("ascii");
+    if (!sawHeader) {
+      if (name !== "IHDR" || length !== 13) fail("PNG does not begin with a valid IHDR");
+      width = data.readUInt32BE(0); height = data.readUInt32BE(4); bitDepth = data[8]!; colorType = data[9]!; interlace = data[12]!;
+      if (width < 1 || height < 1 || data[10] !== 0 || data[11] !== 0 || interlace !== 0) fail("PNG IHDR is unsupported or invalid");
+      sawHeader = true;
+    } else if (name === "IHDR") fail("PNG has duplicate IHDR");
+    else if (name === "IDAT") idat.push(Buffer.from(data));
+    else if (name === "IEND") { if (length !== 0) fail("PNG IEND is invalid"); sawEnd = true; offset = end; break; }
+    offset = end;
+  }
+  if (!sawHeader || !sawEnd || idat.length === 0 || offset !== bytes.length) fail("PNG is missing IDAT/IEND or has trailing bytes");
+  let decoded: Buffer;
+  try { decoded = inflateSync(Buffer.concat(idat)); } catch { fail("PNG IDAT is not decodable"); }
+  const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number>)[colorType];
+  if (!channels || ![0, 2, 4, 6].includes(colorType) || bitDepth !== 8) fail("PNG color type/bit depth is invalid");
+  const scanline = width * channels + 1;
+  if (decoded.length !== scanline * height) fail("PNG decoded payload has wrong dimensions");
+  for (let row = 0; row < height; row += 1) if (decoded[row * scanline]! > 4) fail("PNG scanline filter is invalid");
+  return { width, height };
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
 function validateManifestTuple(tuple: RecordJson): void {
   equal(tuple.path, MANIFEST_PATH, "manifest path");
   equal(tuple.revision, MANIFEST_REVISION, "manifest revision");
@@ -371,14 +474,15 @@ function validateSchemaNode(schema: Schema, value: Json, path: string): void {
 }
 
 function consoleCaptureSchema(): Schema {
-  return { type: "object", additionalProperties: false, required: ["schema_revision", "messages"], properties: { schema_revision: { const: "gooseweb-console-capture/v2" }, messages: { type: "array", items: { type: "object", additionalProperties: false, required: ["level", "message"], properties: { level: { enum: ["debug", "info", "warn", "error"] }, message: { type: "string", minLength: 1 } } } } } };
+  return { type: "object", additionalProperties: false, required: ["schema_revision", "capture_source", "unfiltered", "messages"], properties: { schema_revision: { const: "gooseweb-console-capture/v3" }, capture_source: { const: "agent-browser console" }, unfiltered: { const: true }, messages: { type: "array", items: { type: "object", additionalProperties: false, required: ["level", "message"], properties: { level: { enum: ["debug", "info", "warn", "error"] }, message: { type: "string", minLength: 1 } } } } } };
 }
 
 function networkCaptureSchema(): Schema {
-  const httpItem = { type: "object", additionalProperties: false, required: ["method", "path", "status"], properties: { method: { type: "string", minLength: 1 }, path: { type: "string", pattern: "^/[^?]*$" }, status: { type: "integer", minimum: 100, maximum: 599 } } };
+  const httpItem = { type: "object", additionalProperties: false, required: ["method", "path", "query_keys", "status", "resource_type", "same_origin"], properties: { method: { type: "string", minLength: 1 }, path: { type: "string", pattern: "^/[^?]*$" }, query_keys: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, status: { type: "integer", minimum: 100, maximum: 599 }, resource_type: { enum: ["document", "api", "stylesheet", "font", "script", "module", "websocket", "other"] }, same_origin: { type: "boolean" } } };
   const wsEvent = { type: "object", additionalProperties: false, required: ["event", "code"], properties: { event: { enum: ["open", "close"] }, code: { type: "integer", minimum: 0, maximum: 4999 } } };
-  return { type: "object", additionalProperties: false, required: ["schema_revision", "http", "websocket"], properties: { schema_revision: { const: "gooseweb-network-capture/v2" }, http: { type: "array", items: httpItem }, websocket: { type: "object", additionalProperties: false, required: ["availability", "events", "inference_prohibited", "reason", "baseline_defect_id"], properties: { availability: { enum: ["available", "unavailable"] }, events: { type: "array", items: wsEvent }, inference_prohibited: { type: "boolean" }, reason: { type: "string" }, baseline_defect_id: { type: "string" } } } } };
+  return { type: "object", additionalProperties: false, required: ["schema_revision", "capture_source", "unfiltered", "raw_http", "websocket"], properties: { schema_revision: { const: "gooseweb-network-capture/v3" }, capture_source: { const: "agent-browser network requests" }, unfiltered: { const: true }, raw_http: { type: "array", items: httpItem }, websocket: { type: "object", additionalProperties: false, required: ["availability", "events", "inference_prohibited", "reason", "baseline_defect_id"], properties: { availability: { enum: ["available", "unavailable"] }, events: { type: "array", items: wsEvent }, inference_prohibited: { type: "boolean" }, reason: { type: "string" }, baseline_defect_id: { type: "string" } } } } };
 }
+
 
 function exactMultiset(actual: Json[], expected: Json[], label: string): void {
   const normalize = (items: Json[]) => items.map((item) => JSON.stringify(item)).sort();

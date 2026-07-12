@@ -1,12 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gooseweb://schemas/evidence-run/v2",
-  "title": "Gooseweb evidence run descriptor v2",
+  "$id": "gooseweb://schemas/evidence-run/v3",
+  "title": "Gooseweb evidence run descriptor v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_revision",
     "phase_id",
+    "base_sha",
+    "reviewed_range",
     "candidate_head_sha",
     "candidate_tree_sha",
     "sha7",
@@ -25,16 +27,23 @@
     "checks",
     "metrics",
     "report",
-    "clearance",
+    "review_outcome",
     "redaction"
   ],
   "properties": {
     "schema_revision": {
-      "const": "gooseweb-evidence-run/v2"
+      "const": "gooseweb-evidence-run/v3"
     },
     "phase_id": {
       "type": "string",
       "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+    },
+    "base_sha": {
+      "const": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab"
+    },
+    "reviewed_range": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}\\.\\.[a-f0-9]{40}$"
     },
     "candidate_head_sha": {
       "type": "string",
@@ -203,9 +212,25 @@
       "type": "string",
       "minLength": 1
     },
-    "clearance": {
-      "type": "string",
-      "minLength": 1
+    "review_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "record"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "cleared",
+            "changes_required"
+          ]
+        },
+        "record": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     },
     "redaction": {
       "type": "object",

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gooseweb://schemas/lifecycle-attestation/v1",
+  "title": "Gooseweb external append-only lifecycle attestation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_revision",
+    "approved_plan_sha256",
+    "attestation_id",
+    "attestation_sequence",
+    "previous_attestation_sha256",
+    "phase_graph_seed",
+    "generated_at",
+    "attempts",
+    "claimed_effective_states",
+    "eligible_phases"
+  ],
+  "properties": {
+    "schema_revision": {
+      "const": "gooseweb-lifecycle-attestation/v1"
+    },
+    "approved_plan_sha256": {
+      "const": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
+    },
+    "attestation_id": {
+      "type": "string",
+      "pattern": "^gooseweb-lifecycle-[0-9]{6,}$"
+    },
+    "attestation_sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "previous_attestation_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "phase_graph_seed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "schema_revision",
+        "candidate_head_sha",
+        "blob_sha256",
+        "last_seed_lease_id",
+        "last_seed_lease_sequence",
+        "last_seed_release_at"
+      ],
+      "properties": {
+        "path": {
+          "const": "verification/gooseweb/ledger/phase-graph-seed.json"
+        },
+        "schema_revision": {
+          "const": "gooseweb-phase-graph-seed/v8"
+        },
+        "candidate_head_sha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "blob_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "last_seed_lease_id": {
+          "type": "string",
+          "pattern": "^gooseweb-migration-[0-9]{6,}$"
+        },
+        "last_seed_lease_sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "last_seed_release_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "evidence_root",
+          "evidence_descriptor_sha256",
+          "embedded_outcome_sha256",
+          "outcome_record"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "changes_required",
+              "cleared"
+            ]
+          },
+          "evidence_root": {
+            "type": "string",
+            "pattern": "^tmp/gg/gooseweb-migration/P(0[1-9]|[1-4][0-9]|5[0-6])/[a-f0-9]{7}/attempt-[1-9][0-9]*/$"
+          },
+          "evidence_descriptor_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "embedded_outcome_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "outcome_record": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "claimed_effective_states": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "phase_id",
+          "state",
+          "lease_id"
+        ],
+        "properties": {
+          "phase_id": {
+            "type": "string",
+            "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+          },
+          "state": {
+            "const": "cleared"
+          },
+          "lease_id": {
+            "type": "string",
+            "pattern": "^gooseweb-migration-[0-9]{6,}$"
+          }
+        }
+      }
+    },
+    "eligible_phases": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+      }
+    }
+  }
+}

@@ -1,23 +1,57 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gooseweb://schemas/phase-state-ledger/v7",
-  "title": "Gooseweb phase state and lease ledger v7",
+  "$id": "gooseweb://schemas/phase-graph-seed/v8",
+  "title": "Gooseweb immutable phase graph and lifecycle seed v8",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_revision",
     "approved_plan_sha256",
+    "authority_split",
     "manifest_registry",
     "phases",
-    "lease_history",
-    "clearance_history"
+    "seed_lease_history",
+    "seed_clearance_history"
   ],
   "properties": {
     "schema_revision": {
-      "const": "gooseweb-phase-state-ledger/v7"
+      "const": "gooseweb-phase-graph-seed/v8"
     },
     "approved_plan_sha256": {
       "const": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
+    },
+    "authority_split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tracked_role",
+        "snapshot_cutoff",
+        "external_attestation_schema",
+        "external_attestation_location",
+        "effective_state_rule",
+        "post_review_tracked_mutation_prohibited"
+      ],
+      "properties": {
+        "tracked_role": {
+          "const": "immutable_phase_graph_candidate_intent_and_lifecycle_seed"
+        },
+        "snapshot_cutoff": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "external_attestation_schema": {
+          "const": "verification/gooseweb/schemas/lifecycle-attestation.schema.json"
+        },
+        "external_attestation_location": {
+          "const": "tmp/gg/gooseweb-migration/lifecycle-attestation.json"
+        },
+        "effective_state_rule": {
+          "const": "seed_overlaid_by_validated_append_only_external_attestations"
+        },
+        "post_review_tracked_mutation_prohibited": {
+          "const": true
+        }
+      }
     },
     "manifest_registry": {
       "type": "object",
@@ -142,7 +176,7 @@
         }
       }
     },
-    "lease_history": {
+    "seed_lease_history": {
       "type": "array",
       "items": {
         "type": "object",
@@ -379,7 +413,7 @@
         }
       }
     },
-    "clearance_history": {
+    "seed_clearance_history": {
       "type": "array",
       "items": {
         "type": "object",

@@ -57,11 +57,15 @@ export function validateManifestRegistry(value: RecordJson): void {
   scanSecrets(value, "manifest registry", false);
 }
 
-export function validateLedger(value: RecordJson): void {
-  applySchemaFile("verification/gooseweb/schemas/phase-state-ledger.schema.json", value);
-  const registryDescriptor = object(value.manifest_registry, "ledger manifest registry");
-  equal(registryDescriptor.path, "verification/gooseweb/manifest-registry.json", "ledger manifest registry path");
-  equal(registryDescriptor.sha256, sha256(string(registryDescriptor.path, "manifest registry path")), "ledger manifest registry hash");
+export function validatePhaseGraphSeed(value: RecordJson): void {
+  applySchemaFile("verification/gooseweb/schemas/phase-graph-seed.schema.json", value);
+  const authority = object(value.authority_split, "authority split");
+  equal(authority.tracked_role, "immutable_phase_graph_candidate_intent_and_lifecycle_seed", "tracked authority role");
+  equal(authority.effective_state_rule, "seed_overlaid_by_validated_append_only_external_attestations", "effective state authority");
+  equal(authority.post_review_tracked_mutation_prohibited, true, "post-review tracked mutation policy");
+  const registryDescriptor = object(value.manifest_registry, "phase graph manifest registry");
+  equal(registryDescriptor.path, "verification/gooseweb/manifest-registry.json", "phase graph manifest registry path");
+  equal(registryDescriptor.sha256, sha256(string(registryDescriptor.path, "manifest registry path")), "phase graph manifest registry hash");
   const registry = readJson(string(registryDescriptor.path, "manifest registry path"));
   validateManifestRegistry(registry);
   equal(registryDescriptor.schema_revision, registry.schema_revision, "ledger manifest registry revision");
@@ -88,11 +92,95 @@ export function validateLedger(value: RecordJson): void {
   for (const [id, prerequisites] of graph) {
     if (stateById.get(id) !== "blocked" && prerequisites.some((dep) => stateById.get(dep) !== "cleared")) fail(`${id} advanced before prerequisites cleared`);
   }
-  const leases = array(value.lease_history, "lease_history").map((item) => object(item, "lease"));
+  const leases = array(value.seed_lease_history, "seed_lease_history").map((item) => object(item, "seed lease"));
   validateLeaseHistory(leases);
-  const clearances = array(value.clearance_history, "clearance_history").map((item) => object(item, "clearance history entry"));
+  const clearances = array(value.seed_clearance_history, "seed_clearance_history").map((item) => object(item, "seed clearance history entry"));
   validateLedgerCorrespondence(phases, leases, clearances);
-  scanSecrets(value, "ledger", false);
+  scanSecrets(value, "phase graph seed", false);
+}
+
+export interface LifecycleState {
+  readonly effectiveStates: Readonly<Record<string, string>>;
+  readonly eligiblePhases: readonly string[];
+}
+
+export interface LifecycleOptions {
+  readonly previous?: RecordJson;
+}
+
+export function validateLifecycleAttestation(attestation: RecordJson, options: LifecycleOptions = {}): LifecycleState {
+  applySchemaFile("verification/gooseweb/schemas/lifecycle-attestation.schema.json", attestation);
+  const sequence = integer(attestation.attestation_sequence, "attestation sequence");
+  equal(attestation.attestation_id, `gooseweb-lifecycle-${String(sequence).padStart(6, "0")}`, "attestation ID/sequence");
+  if (sequence === 1) equal(attestation.previous_attestation_sha256, null, "genesis external attestation predecessor");
+  else {
+    if (!options.previous) fail("non-genesis lifecycle attestation requires its predecessor document");
+    equal(sequence, integer(options.previous.attestation_sequence, "previous attestation sequence") + 1, "attestation sequence continuity");
+    equal(attestation.previous_attestation_sha256, jsonHash(options.previous), "previous attestation hash");
+    const priorAttempts = array(options.previous.attempts, "previous attempts");
+    equal(JSON.stringify(array(attestation.attempts, "attempts").slice(0, priorAttempts.length)), JSON.stringify(priorAttempts), "append-only attempt prefix");
+  }
+
+  const seedReference = object(attestation.phase_graph_seed, "phase graph seed reference");
+  const seedPath = string(seedReference.path, "phase graph seed path");
+  const seedHead = string(seedReference.candidate_head_sha, "phase graph seed candidate head");
+  let seedBytes: Buffer;
+  try { seedBytes = execFileSync("git", ["show", `${seedHead}:${seedPath}`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] }); }
+  catch { fail("phase graph seed is absent from its declared candidate head"); }
+  equal(hashBytes(seedBytes), seedReference.blob_sha256, "phase graph seed candidate blob hash");
+  let seed: RecordJson;
+  try { seed = JSON.parse(seedBytes.toString("utf8")) as RecordJson; } catch { fail("candidate phase graph seed is not JSON"); }
+  validatePhaseGraphSeed(seed);
+  equal(seed.schema_revision, seedReference.schema_revision, "phase graph seed revision");
+  const seedLeases = array(seed.seed_lease_history, "seed leases").map((item) => object(item, "seed lease"));
+  const lastSeedLease = seedLeases.at(-1);
+  if (!lastSeedLease) fail("phase graph seed must contain the migration lease checkpoint");
+  equal(seedReference.last_seed_lease_id, lastSeedLease.lease_id, "last seed lease ID");
+  equal(seedReference.last_seed_lease_sequence, lastSeedLease.sequence, "last seed lease sequence");
+  equal(seedReference.last_seed_release_at, lastSeedLease.released_at, "last seed lease release");
+
+  const externalLeases: RecordJson[] = [];
+  const latestExternal = new Map<string, { status: string; leaseId: string }>();
+  const attempts = array(attestation.attempts, "lifecycle attempts").map((item) => object(item, "lifecycle attempt"));
+  for (const attempt of attempts) {
+    const record = object(attempt.outcome_record, "embedded outcome record");
+    equal(attempt.embedded_outcome_sha256, jsonHash(record), "embedded outcome hash");
+    equal(attempt.status, record.schema_revision === "gooseweb-exact-head-clearance/v4" ? "cleared" : "changes_required", "attestation/outcome status");
+    if (attempt.status === "cleared") validateClearance(record);
+    else validateReviewOutcome(record);
+    const phase = string(record.phase_id, "outcome phase");
+    const head = string(record.candidate_head_sha, "outcome candidate head");
+    equal(attempt.evidence_root, `tmp/gg/gooseweb-migration/${phase}/${head.slice(0, 7)}/attempt-${integer(record.attempt, "outcome attempt")}/`, "attempt evidence root");
+    let outcomeSeedBytes: Buffer;
+    try { outcomeSeedBytes = execFileSync("git", ["show", `${head}:${seedPath}`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] }); }
+    catch { fail("outcome candidate does not contain the immutable phase graph seed"); }
+    equal(hashBytes(outcomeSeedBytes), seedReference.blob_sha256, "outcome candidate phase graph seed hash");
+    const lease = cloneRecord(object(record.lease, "outcome lease"));
+    lease.reviewer = { browser_session: object(record.browser, "outcome browser").session_name! };
+    lease.stack = record.stack!;
+    externalLeases.push(lease);
+    latestExternal.set(phase, { status: string(attempt.status, "attempt status"), leaseId: string(lease.lease_id, "external lease ID") });
+    const terminalAt = attempt.status === "cleared" ? object(record.clearance, "clearance").issued_at : record.recorded_at;
+    if (time(attestation.generated_at) < time(terminalAt)) fail("lifecycle attestation predates its outcome");
+  }
+  validateLeaseHistory([...seedLeases, ...externalLeases]);
+
+  const phases = array(seed.phases, "seed phases").map((item) => object(item, "seed phase"));
+  const effectiveStates: Record<string, string> = Object.fromEntries(phases.map((phase) => [string(phase.phase_id, "phase ID"), string(phase.state, "seed state")]));
+  const claims: RecordJson[] = [];
+  for (const [phase, latest] of latestExternal) {
+    effectiveStates[phase] = latest.status === "cleared" ? "cleared" : "changes_required";
+    if (latest.status === "cleared") claims.push({ phase_id: phase, state: "cleared", lease_id: latest.leaseId });
+  }
+  claims.sort((a, b) => phaseNumber(string(a.phase_id, "claim phase")) - phaseNumber(string(b.phase_id, "claim phase")));
+  equal(JSON.stringify(attestation.claimed_effective_states), JSON.stringify(claims), "claimed effective phase states");
+  const eligiblePhases = phases
+    .filter((phase) => phase.phase_id !== "P00" && effectiveStates[string(phase.phase_id, "phase ID")] !== "cleared")
+    .filter((phase) => array(phase.prerequisites, "phase prerequisites").every((dep) => effectiveStates[string(dep, "prerequisite")] === "cleared"))
+    .map((phase) => string(phase.phase_id, "eligible phase"));
+  equal(JSON.stringify(attestation.eligible_phases), JSON.stringify(eligiblePhases), "claimed eligible phases");
+  scanSecrets(attestation, "lifecycle attestation", false);
+  return { effectiveStates, eligiblePhases };
 }
 
 export interface EvidenceOptions {
@@ -197,7 +285,8 @@ export function validateClearance(value: RecordJson, options: ClearanceOptions =
 
 export function validateClearanceHistory(records: RecordJson[]): void {
   records.forEach((record) => validateClearance(record));
-  validateLeaseHistory(records.map((record) => object(record.lease, "clearance lease")));
+  const leases = records.map((record) => object(record.lease, "clearance lease"));
+  validateLeaseHistory(leases, leases.length ? integer(leases[0]!.sequence, "first clearance lease sequence") : 1);
   ensureUnique(records.map((record) => string(object(record.review, "review").browser_session, "browser session")), "browser session names");
 }
 
@@ -394,14 +483,16 @@ function validateLedgerCorrespondence(phases: RecordJson[], leases: RecordJson[]
   }
 }
 
-function validateLeaseHistory(leases: RecordJson[]): void {
-  let lastSequence = 0;
+function validateLeaseHistory(leases: RecordJson[], startSequence = 1): void {
+  let lastSequence = startSequence - 1;
   const ids = new Set<string>();
   const browserSessions = new Set<string>();
-  for (const lease of leases) {
+  for (const [index, lease] of leases.entries()) {
     validateLease(lease);
     const id = string(lease.lease_id, "lease ID");
     const sequence = integer(lease.sequence, "lease sequence");
+    equal(sequence, startSequence + index, "globally contiguous lease sequence");
+    equal(id, `gooseweb-migration-${String(sequence).padStart(6, "0")}`, "lease ID/sequence");
     const prior = object(lease.prior_lease_termination_evidence, "prior lease termination");
     if (sequence === 1) equal(prior.status, "no_prior_lease", "genesis lease prior status");
     else equal(prior.status, "terminated_and_cleaned", "non-genesis prior termination status");
@@ -710,6 +801,8 @@ function matchesType(value: Json, type: string): boolean {
 
 function deepEqual(a: Json, b: Json): boolean { return JSON.stringify(a) === JSON.stringify(b); }
 function hashBytes(value: Uint8Array): string { return createHash("sha256").update(value).digest("hex"); }
+function jsonHash(value: RecordJson): string { return hashBytes(Buffer.from(JSON.stringify(value))); }
+function cloneRecord(value: RecordJson): RecordJson { return structuredClone(value); }
 function ensureUnique(values: string[], label: string): void { if (new Set(values).size !== values.length) fail(`${label} must be unique`); }
 function object(value: Json | undefined, label: string): RecordJson { if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be an object`); return value as RecordJson; }
 function array(value: Json | undefined, label: string): Json[] { if (!Array.isArray(value)) fail(`${label} must be an array`); return value; }

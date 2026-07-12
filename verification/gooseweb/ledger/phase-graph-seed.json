@@ -1,6 +1,14 @@
 {
-  "schema_revision": "gooseweb-phase-state-ledger/v7",
+  "schema_revision": "gooseweb-phase-graph-seed/v8",
   "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
+  "authority_split": {
+    "tracked_role": "immutable_phase_graph_candidate_intent_and_lifecycle_seed",
+    "snapshot_cutoff": "2026-07-12T06:55:00.000Z",
+    "external_attestation_schema": "verification/gooseweb/schemas/lifecycle-attestation.schema.json",
+    "external_attestation_location": "tmp/gg/gooseweb-migration/lifecycle-attestation.json",
+    "effective_state_rule": "seed_overlaid_by_validated_append_only_external_attestations",
+    "post_review_tracked_mutation_prohibited": true
+  },
   "manifest_registry": {
     "path": "verification/gooseweb/manifest-registry.json",
     "schema_revision": "gooseweb-manifest-registry/v1",
@@ -606,7 +614,7 @@
       "history": []
     }
   ],
-  "lease_history": [
+  "seed_lease_history": [
     {
       "lease_id": "gooseweb-migration-000001",
       "sequence": 1,
@@ -848,5 +856,5 @@
       "evidence_root": "tmp/gg/gooseweb-migration/P01/9a89b99/attempt-6/"
     }
   ],
-  "clearance_history": []
+  "seed_clearance_history": []
 }

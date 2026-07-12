@@ -13,7 +13,7 @@ import {
   validateClearanceHistory,
   validateEvidence,
   validateGitRecord,
-  validateLedger,
+  validatePhaseGraphSeed,
   validateManifest,
   validateManifestClearancePolicy,
   validateManifestRegistry,
@@ -30,7 +30,7 @@ const P01_BASE_SHA = "ca88bfe56719f69fe59151372e0d5aa76b2c92ab";
 const manifest = readJson(P01_MANIFEST_PATH);
 const validatorManifest = readJson(VALIDATOR_MANIFEST_PATH);
 const manifestRegistry = readJson("verification/gooseweb/manifest-registry.json");
-const ledger = readJson("verification/gooseweb/ledger/phase-state.json");
+const ledger = readJson("verification/gooseweb/ledger/phase-graph-seed.json");
 const clearance = readJson("verification/gooseweb/validator/fixtures/valid-clearance.json");
 const evidence = readJson("verification/gooseweb/validator/fixtures/valid-evidence-run.json");
 const validNonClearance = readJson("verification/gooseweb/validator/fixtures/valid-review-outcome.json");
@@ -82,7 +82,7 @@ laterPhaseEvidence = change(laterPhaseEvidence, "base_sha", laterPhaseBase);
 laterPhaseEvidence = change(laterPhaseEvidence, "reviewed_range", `${laterPhaseBase}..${evidence.candidate_head_sha}`);
 applySchemaFile("verification/gooseweb/schemas/evidence-run.schema.json", laterPhaseEvidence);
 validateGitRecord({ base_sha: laterPhaseBase, candidate_head_sha: evidence.candidate_head_sha!, candidate_tree_sha: evidence.candidate_tree_sha! });
-validateLedger(ledger);
+validatePhaseGraphSeed(ledger);
 validateClearance(clearance, { expected: clearance, verifyGit: true });
 applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", change(clearance, "baseline_detected", []));
 validateEvidence(evidence, { checkFiles: false, expected: evidence });
@@ -213,20 +213,20 @@ const negativeCases: [string, () => void][] = [
   ["unexpected WebSocket close", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket.events.1", { event: "close", code: 1006 }), manifest)],
   ["unavailable WebSocket without baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "not exposed", baseline_defect_id: "" }), manifest)],
   ["unavailable WebSocket with nonexistent baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "not exposed", baseline_defect_id: "BASE-DOES-NOT-EXIST" }), manifest)],
-  ["dependency shorthand", () => validateLedger(change(ledger, "phases.3.prerequisites.0", "P01-P02"))],
-  ["same/later dependency", () => validateLedger(change(ledger, "phases.7.prerequisites.0", "P07"))],
-  ["P21 missing P05", () => validateLedger(change(ledger, "phases.21.prerequisites", ["P18", "P20"]))],
-  ["P56 missing prerequisite", () => validateLedger(change(ledger, "phases.56.prerequisites", phaseIds(1, 54)))],
-  ["phase advanced before prerequisite", () => validateLedger(change(ledger, "phases.2.state", "candidate_ready_for_review"))],
-  ["illegal phase transition", () => validateLedger(change(ledger, "phases.1.history.5.from", "blocked"))],
-  ["phase state/history mismatch", () => validateLedger(change(ledger, "phases.1.state", "cleared"))],
-  ["backward phase transition timestamp", () => validateLedger(change(ledger, "phases.1.history.7.at", "2026-07-12T05:40:00.000Z"))],
-  ["unknown transition lease", () => validateLedger(change(ledger, "phases.1.history.2.lease_id", "gooseweb-migration-999999"))],
-  ["duplicate ledger lease", () => validateLedger(change(ledger, "lease_history.1", clone((ledger.lease_history as Json[])[0])))],
-  ["nonmonotonic ledger lease", () => validateLedger(ledgerWithLease({ sequence: 1 }))],
-  ["overlapping ledger lease", () => validateLedger(ledgerWithLease({ acquired_at: "2026-07-12T05:30:00.000Z" }))],
-  ["P56 integration lease overlap", () => validateLedger(ledgerWithLease({ phase_id: "P56", acquired_at: "2026-07-12T05:30:00.000Z" }))],
-  ["clearance references unknown lease", () => validateLedger(change(ledger, "clearance_history.0", ledgerClearance("gooseweb-migration-999999")))],
+  ["dependency shorthand", () => validatePhaseGraphSeed(change(ledger, "phases.3.prerequisites.0", "P01-P02"))],
+  ["same/later dependency", () => validatePhaseGraphSeed(change(ledger, "phases.7.prerequisites.0", "P07"))],
+  ["P21 missing P05", () => validatePhaseGraphSeed(change(ledger, "phases.21.prerequisites", ["P18", "P20"]))],
+  ["P56 missing prerequisite", () => validatePhaseGraphSeed(change(ledger, "phases.56.prerequisites", phaseIds(1, 54)))],
+  ["phase advanced before prerequisite", () => validatePhaseGraphSeed(change(ledger, "phases.2.state", "candidate_ready_for_review"))],
+  ["illegal seed phase transition", () => validatePhaseGraphSeed(change(ledger, "phases.1.history.5.from", "blocked"))],
+  ["seed phase state/history mismatch", () => validatePhaseGraphSeed(change(ledger, "phases.1.state", "cleared"))],
+  ["backward seed phase transition timestamp", () => validatePhaseGraphSeed(change(ledger, "phases.1.history.7.at", "2026-07-12T05:40:00.000Z"))],
+  ["unknown seed transition lease", () => validatePhaseGraphSeed(change(ledger, "phases.1.history.2.lease_id", "gooseweb-migration-999999"))],
+  ["duplicate seed lease", () => validatePhaseGraphSeed(change(ledger, "seed_lease_history.1", clone((ledger.seed_lease_history as Json[])[0])))],
+  ["nonmonotonic seed lease", () => validatePhaseGraphSeed(ledgerWithLease({ sequence: 1 }))],
+  ["overlapping seed lease", () => validatePhaseGraphSeed(ledgerWithLease({ acquired_at: "2026-07-12T05:30:00.000Z" }))],
+  ["P56 integration seed lease overlap", () => validatePhaseGraphSeed(ledgerWithLease({ phase_id: "P56", acquired_at: "2026-07-12T05:30:00.000Z" }))],
+  ["seed clearance references unknown lease", () => validatePhaseGraphSeed(change(ledger, "seed_clearance_history.0", ledgerClearance("gooseweb-migration-999999")))],
   ["duplicate clearance browser session", () => validateClearanceHistory([clearance, laterClearance({ browser_session: "gooseweb-p01-review-attempt-3-headless" })])]
 ];
 
@@ -236,7 +236,7 @@ console.log(`Gooseweb acceptance contract v8 passed (${negativeCases.length} neg
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);
   applySchemaFile("verification/gooseweb/schemas/manifest-registry.schema.json", manifestRegistry);
-  applySchemaFile("verification/gooseweb/schemas/phase-state-ledger.schema.json", ledger);
+  applySchemaFile("verification/gooseweb/schemas/phase-graph-seed.schema.json", ledger);
   applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", clearance);
   applySchemaFile("verification/gooseweb/schemas/evidence-run.schema.json", evidence);
 }
@@ -356,7 +356,7 @@ function laterClearance(overrides: Record<string, unknown>): RecordJson {
 
 function ledgerWithLease(overrides: Record<string, Json>): RecordJson {
   const next = clone(ledger);
-  const lease = clone((next.lease_history as RecordJson[])[0]!);
+  const lease = clone((next.seed_lease_history as RecordJson[])[0]!);
   lease.lease_id = "gooseweb-migration-000002";
   lease.sequence = overrides.sequence ?? 2;
   lease.phase_id = overrides.phase_id ?? "P02";
@@ -371,7 +371,7 @@ function ledgerWithLease(overrides: Record<string, Json>): RecordJson {
   process.cleanup_completed_at = "2026-07-12T06:19:00.000Z";
   const reviewer = lease.reviewer as RecordJson;
   reviewer.browser_session = "gooseweb-p02-review-attempt-1-headless";
-  (next.lease_history as RecordJson[]).push(lease);
+  (next.seed_lease_history as RecordJson[]).push(lease);
   return next;
 }
 

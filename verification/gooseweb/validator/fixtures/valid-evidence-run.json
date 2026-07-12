@@ -2,16 +2,16 @@
   "schema_revision": "gooseweb-evidence-run/v5",
   "phase_id": "P01",
   "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
-  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..d7da340c94f4cb34692a122696717e72f357fac1",
-  "candidate_head_sha": "d7da340c94f4cb34692a122696717e72f357fac1",
-  "candidate_tree_sha": "fb4ccf08803c9ba76a944ec870a8dfe1e7a33c3e",
-  "sha7": "d7da340",
+  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..973a5771c54650946ece3b1d9016e0788c522087",
+  "candidate_head_sha": "973a5771c54650946ece3b1d9016e0788c522087",
+  "candidate_tree_sha": "592e4389b9be8f980c4deabd397ceb79e718bafb",
+  "sha7": "973a577",
   "attempt": 3,
-  "root": "tmp/gg/gooseweb-migration/P01/d7da340/attempt-3/",
+  "root": "tmp/gg/gooseweb-migration/P01/973a577/attempt-3/",
   "manifest": {
     "copy": "manifest.json",
-    "sha256": "157deb14a7dca547477d470cde40f25f9c9d01cfb8808b4be73553bc7f68c7f5",
-    "revision": 3,
+    "sha256": "fadae455215a04013c2a3f18fcf37d886d8ffa1c8c97035a5320779576595b26",
+    "revision": 4,
     "path": "verification/gooseweb/manifests/p01-team-comms-live.json"
   },
   "browser": {
@@ -61,8 +61,8 @@
       "private keys"
     ]
   },
-  "served_head_sha": "d7da340c94f4cb34692a122696717e72f357fac1",
-  "served_tree_sha": "fb4ccf08803c9ba76a944ec870a8dfe1e7a33c3e",
+  "served_head_sha": "973a5771c54650946ece3b1d9016e0788c522087",
+  "served_tree_sha": "592e4389b9be8f980c4deabd397ceb79e718bafb",
   "clean_tree": true,
   "hot_reload": false,
   "lease": {

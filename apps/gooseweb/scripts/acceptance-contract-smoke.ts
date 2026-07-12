@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 import { deflateSync } from "node:zlib";
 import {
   APPROVED_PLAN_SHA256,
-  APPROVED_BASE_SHA,
   applySchemaFile,
   readJson,
   sha256,
@@ -14,6 +13,7 @@ import {
   validateClearanceHistory,
   validateClearancePhasePolicy,
   validateEvidence,
+  validateGitRecord,
   validateLedger,
   validateManifest,
   validateReviewOutcome,
@@ -23,6 +23,7 @@ import {
 
 const root = resolve(import.meta.dir, "../../..");
 const P01_MANIFEST_PATH = "verification/gooseweb/manifests/p01-team-comms-live.json";
+const P01_BASE_SHA = "ca88bfe56719f69fe59151372e0d5aa76b2c92ab";
 const manifest = readJson(P01_MANIFEST_PATH);
 const ledger = readJson("verification/gooseweb/ledger/phase-state.json");
 const clearance = readJson("verification/gooseweb/validator/fixtures/valid-clearance.json");
@@ -65,6 +66,13 @@ validateManifest(change(reusableP02Manifest, "scenario.product_clearance", "pend
 validateClearancePhasePolicy("P02", (manifest.baseline_detected as RecordJson[]), { scope: "verification_infrastructure_only", product_approved: false });
 validateClearancePhasePolicy("P06", [], { scope: "product_phase", product_approved: true });
 validateClearancePhasePolicy("P56", [], { scope: "integration_release", product_approved: true });
+const laterPhaseBase = "d7da340c94f4cb34692a122696717e72f357fac1";
+let laterPhaseEvidence = change(evidence, "phase_id", "P02");
+laterPhaseEvidence = change(laterPhaseEvidence, "lease.phase_id", "P02");
+laterPhaseEvidence = change(laterPhaseEvidence, "base_sha", laterPhaseBase);
+laterPhaseEvidence = change(laterPhaseEvidence, "reviewed_range", `${laterPhaseBase}..${evidence.candidate_head_sha}`);
+applySchemaFile("verification/gooseweb/schemas/evidence-run.schema.json", laterPhaseEvidence);
+validateGitRecord({ base_sha: laterPhaseBase, candidate_head_sha: evidence.candidate_head_sha!, candidate_tree_sha: evidence.candidate_tree_sha! });
 validateLedger(ledger);
 validateClearance(clearance, { expected: clearance, verifyGit: true });
 applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", change(clearance, "baseline_detected", []));
@@ -104,27 +112,33 @@ const negativeCases: [string, () => void][] = [
   ["baseline labeled product approval", () => validateManifest(change(manifest, "baseline_detected.0.product_scenario_status", "approved"))],
   ["known defects nonempty", () => validateManifest(change(manifest, "known_defects", [{ id: "defect" }]))],
   ["manifest phase P00", () => validateManifest(change(manifest, "scenario.phase_id", "P00"))],
+  ["stale manifest schema revision", () => validateManifest(change(manifest, "schema_revision", "gooseweb-acceptance-manifest/v3"))],
+  ["future manifest schema revision", () => validateManifest(change(manifest, "schema_revision", "gooseweb-acceptance-manifest/v999"))],
   ["not applicable without reason", () => validateManifest(omit(manifest, "non_applicable.rollback.reason"))],
   ["changed clearance base", () => validateClearance(change(clearance, "base_sha", "a".repeat(40)), { expected: clearance })],
-  ["changed reviewed range", () => validateClearance(change(clearance, "reviewed_range", `${APPROVED_BASE_SHA}..${"a".repeat(40)}`), { expected: clearance })],
+  ["changed reviewed range", () => validateClearance(change(clearance, "reviewed_range", `${P01_BASE_SHA}..${"a".repeat(40)}`), { expected: clearance })],
   ["changed candidate HEAD", () => validateClearance(change(clearance, "candidate_head_sha", "a".repeat(40)), { expected: clearance })],
   ["cross-head manifest blob", () => {
     let stale = change(clearance, "candidate_head_sha", "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0");
     stale = change(stale, "served_head_sha", "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0");
     stale = change(stale, "candidate_tree_sha", "2c964761367fa4d5fb516bc6130c1af509cfea7d");
     stale = change(stale, "served_tree_sha", "2c964761367fa4d5fb516bc6130c1af509cfea7d");
-    stale = change(stale, "reviewed_range", `${APPROVED_BASE_SHA}..7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0`);
+    stale = change(stale, "reviewed_range", `${P01_BASE_SHA}..7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0`);
     validateClearance(stale);
   }],
   ["nonexistent Git range head", () => {
-    const forged = change(change(change(clearance, "candidate_head_sha", "a".repeat(40)), "served_head_sha", "a".repeat(40)), "reviewed_range", `${APPROVED_BASE_SHA}..${"a".repeat(40)}`);
+    const forged = change(change(change(clearance, "candidate_head_sha", "a".repeat(40)), "served_head_sha", "a".repeat(40)), "reviewed_range", `${P01_BASE_SHA}..${"a".repeat(40)}`);
     validateClearance(forged, { verifyGit: true });
   }],
+  ["nonexistent phase base", () => validateGitRecord({ base_sha: "a".repeat(40), candidate_head_sha: evidence.candidate_head_sha!, candidate_tree_sha: evidence.candidate_tree_sha! })],
+  ["non-ancestor phase base", () => validateGitRecord({ base_sha: evidence.candidate_head_sha!, candidate_head_sha: "d7da340c94f4cb34692a122696717e72f357fac1", candidate_tree_sha: "fb4ccf08803c9ba76a944ec870a8dfe1e7a33c3e" })],
   ["changed candidate tree", () => validateClearance(change(clearance, "candidate_tree_sha", "b".repeat(40)), { expected: clearance })],
   ["changed served head", () => validateClearance(change(clearance, "served_head_sha", "c".repeat(40)), { expected: clearance })],
   ["changed served tree", () => validateClearance(change(clearance, "served_tree_sha", "c".repeat(40)), { expected: clearance })],
   ["changed manifest path", () => validateClearance(change(clearance, "manifest.path", "wrong.json"))],
   ["manifest path traversal", () => validateClearance(change(clearance, "manifest.path", "verification/gooseweb/manifests/../secret.json"))],
+  ["manifest path double separator schema", () => applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", change(clearance, "manifest.path", "verification/gooseweb/manifests/a//b.json"))],
+  ["manifest path empty segment schema", () => applySchemaFile("verification/gooseweb/schemas/review-outcome.schema.json", change(validNonClearance, "manifest.path", "verification/gooseweb/manifests//empty.json"))],
   ["manifest phase mismatch", () => validateClearance(change(clearance, "phase_id", "P02"))],
   ["changed manifest hash", () => validateClearance(change(clearance, "manifest.sha256", "f".repeat(64)))],
   ["changed manifest revision", () => validateClearance(change(clearance, "manifest.revision", 1))],
@@ -186,7 +200,7 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v6 passed (${negativeCases.length} negative cases)`);
+console.log(`Gooseweb acceptance contract v7 passed (${negativeCases.length} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);
@@ -223,6 +237,11 @@ function validateReferencedEvidence(): void {
     const nonClearance = validNonClearance;
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));
     validateEvidence(rejectedEvidence, { checkFiles: true, expected: rejectedEvidence });
+    let alternateManifestOutcome = change(nonClearance, "manifest.path", "verification/gooseweb/manifests/validator-p01-empty.json");
+    alternateManifestOutcome = change(alternateManifestOutcome, "manifest.revision", 1);
+    alternateManifestOutcome = change(alternateManifestOutcome, "manifest.sha256", "664870364d17e536d225a2b5d987d384f63c00f5e5d9b4041c3782bb49ce18a1");
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(alternateManifestOutcome));
+    assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "changes-required evidence accepted a different valid same-phase manifest");
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify({ ...nonClearance, attempt: 4 }));
     assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "cross-attempt outcome unexpectedly passed");
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(change(nonClearance, "review.reviewer_identity", "other-reviewer")));
@@ -240,7 +259,7 @@ function validateReferencedEvidence(): void {
     const nonexistent = "a".repeat(40);
     let forgedGit = change(nonClearance, "candidate_head_sha", nonexistent);
     forgedGit = change(forgedGit, "served_head_sha", nonexistent);
-    forgedGit = change(forgedGit, "reviewed_range", `${APPROVED_BASE_SHA}..${nonexistent}`);
+    forgedGit = change(forgedGit, "reviewed_range", `${P01_BASE_SHA}..${nonexistent}`);
     assert.throws(() => validateReviewOutcome(forgedGit), undefined, "non-clearance with nonexistent Git head unexpectedly passed");
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify({ ...nonClearance, recorded_at: "2026-07-12T10:19:59.000Z" }));

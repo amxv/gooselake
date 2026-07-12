@@ -269,7 +269,7 @@
             "properties": {
               "path": {
                 "type": "string",
-                "pattern": "^verification/gooseweb/manifests/[a-z0-9][a-z0-9._/-]*\\.json$"
+                "pattern": "^verification/gooseweb/manifests/[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*\\.json$"
               },
               "revision": {
                 "type": "integer",

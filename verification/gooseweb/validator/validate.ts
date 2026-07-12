@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 
 export const APPROVED_PLAN_SHA256 =
   "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c";
-export const APPROVED_BASE_SHA = "ca88bfe56719f69fe59151372e0d5aa76b2c92ab";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const PHASE = /^P(0[0-9]|[1-4][0-9]|5[0-6])$/;
@@ -89,7 +88,7 @@ export function validateEvidence(value: RecordJson, options: EvidenceOptions = {
   const sha7 = string(value.sha7, "sha7");
   const attempt = integer(value.attempt, "attempt");
   const head = string(value.candidate_head_sha, "candidate head");
-  equal(value.base_sha, APPROVED_BASE_SHA, "evidence approved base");
+  if (!/^[a-f0-9]{40}$/.test(string(value.base_sha, "evidence base"))) fail("evidence base must be exact SHA");
   equal(value.reviewed_range, `${value.base_sha}..${head}`, "evidence reviewed range");
   equal(value.candidate_head_sha, value.served_head_sha, "evidence candidate/served head");
   equal(value.candidate_tree_sha, value.served_tree_sha, "evidence candidate/served tree");
@@ -130,7 +129,7 @@ export interface ClearanceOptions {
 
 export function validateClearance(value: RecordJson, options: ClearanceOptions = {}): void {
   applySchemaFile("verification/gooseweb/schemas/exact-head-clearance.schema.json", value);
-  equal(value.base_sha, APPROVED_BASE_SHA, "approved clearance base");
+  if (!/^[a-f0-9]{40}$/.test(string(value.base_sha, "clearance base"))) fail("clearance base must be exact SHA");
   equal(value.candidate_head_sha, value.served_head_sha, "candidate/served head");
   equal(value.candidate_tree_sha, value.served_tree_sha, "candidate/served tree");
   equal(value.reviewed_range, `${value.base_sha}..${value.candidate_head_sha}`, "reviewed base/head range");
@@ -314,10 +313,8 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
   for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(outcomeRecord[key], descriptor[key], `evidence/outcome ${key}`);
   for (const key of ["lease", "stack", "review", "browser"]) equal(JSON.stringify(outcomeRecord[key]), JSON.stringify(descriptor[key]), `evidence/outcome ${key} tuple`);
   const evidenceManifest = object(descriptor.manifest, "evidence manifest");
-  if (outcome.status === "cleared") {
-    const clearanceManifest = object(outcomeRecord.manifest, "clearance manifest");
-    for (const key of ["path", "revision", "sha256"]) equal(clearanceManifest[key], evidenceManifest[key], `evidence/clearance manifest ${key}`);
-  }
+  const outcomeManifest = object(outcomeRecord.manifest, "outcome manifest");
+  for (const key of ["path", "revision", "sha256"]) equal(outcomeManifest[key], evidenceManifest[key], `evidence/outcome manifest ${key}`);
 }
 
 function validatePhaseHistory(phase: RecordJson): void {
@@ -428,7 +425,7 @@ export function validateReviewOutcome(record: RecordJson): void {
   equal(review.browser_session, browser.session_name, "non-clearance reviewer/browser session");
   validateManifestTuple(object(record.manifest, "non-clearance manifest"), string(record.phase_id, "non-clearance phase"));
   if (time(record.recorded_at) < time(lease.released_at)) fail("changes-required outcome was recorded before lease release");
-  verifyGitRecord(record);
+  validateGitRecord(record);
   const candidateManifest = validateManifestAtGitHead(object(record.manifest, "non-clearance manifest"), string(record.candidate_head_sha, "candidate head"));
   equal(object(candidateManifest.scenario, "candidate manifest scenario").phase_id, record.phase_id, "candidate manifest/non-clearance phase");
 }
@@ -445,7 +442,7 @@ function validateManifestAtGitHead(tuple: RecordJson, head: string): RecordJson 
   return candidate;
 }
 
-function verifyGitRecord(record: RecordJson): void {
+export function validateGitRecord(record: RecordJson): void {
   execFileSync("git", ["cat-file", "-e", `${string(record.base_sha, "base SHA")}^{commit}`], { cwd: root, stdio: "ignore" });
   const tree = execFileSync("git", ["rev-parse", `${string(record.candidate_head_sha, "candidate head")}^{tree}`], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   equal(record.candidate_tree_sha, tree, "Git candidate tree");

@@ -39,7 +39,8 @@
       "minimum": 1
     },
     "base_sha": {
-      "const": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab"
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
     },
     "reviewed_range": {
       "type": "string",
@@ -78,7 +79,7 @@
       "properties": {
         "path": {
           "type": "string",
-          "pattern": "^verification/gooseweb/manifests/[a-z0-9][a-z0-9._/-]*\\.json$"
+          "pattern": "^verification/gooseweb/manifests/[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*\\.json$"
         },
         "revision": {
           "type": "integer",

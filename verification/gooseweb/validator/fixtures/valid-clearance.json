@@ -1,0 +1,82 @@
+{
+  "schema_revision": "gooseweb-exact-head-clearance/v1",
+  "phase_id": "P01",
+  "attempt": 1,
+  "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
+  "candidate_head_sha": "1111111111111111111111111111111111111111",
+  "candidate_tree_sha": "2222222222222222222222222222222222222222",
+  "served_head_sha": "1111111111111111111111111111111111111111",
+  "clean_tree": true,
+  "hot_reload": false,
+  "manifest": {
+    "path": "verification/gooseweb/manifests/p01-team-comms-live.json",
+    "revision": 1,
+    "sha256": "e0cf4748b44aa342abcadfc8ace379926dfb429b928683548a800fb8f1c6d9eb"
+  },
+  "approved_plan_sha256": "d3e55db431e8827ffbd7c4f7e41193a7fb77a99fdb446ea5dcf1fdfdc2b232b8",
+  "lease": {
+    "lease_id": "gooseweb-migration-000001",
+    "sequence": 1,
+    "owner_role": "supervisor",
+    "owner_identity": "p01-supervisor",
+    "acquired_at": "2026-07-12T10:00:00.000Z",
+    "released_at": "2026-07-12T10:20:00.000Z",
+    "prior_lease_termination_evidence": {
+      "status": "no_prior_lease",
+      "reference": "ledger genesis"
+    },
+    "managed_process": {
+      "identity": "gg-process-example-1",
+      "started_at": "2026-07-12T10:01:00.000Z",
+      "stopped_at": "2026-07-12T10:18:00.000Z",
+      "cleanup_completed_at": "2026-07-12T10:19:00.000Z",
+      "termination_evidence": "process completion notification and port cleanup record"
+    }
+  },
+  "stack": {
+    "dev_dir": "tmp/gooseweb-p01-review",
+    "runtime_port": 18101,
+    "tower_port": 18102,
+    "gooseweb_port": 13101,
+    "source_configuration": "isolated-local-runtime",
+    "branch": "gg/p01-acceptance-foundation",
+    "mode": "development-real-worker",
+    "configuration_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "review": {
+    "implementer_identity": "p01-implementer",
+    "reviewer_identity": "p01-reviewer",
+    "reviewer_role": "read_only",
+    "browser_mechanism": "agent-browser",
+    "browser_session": "gooseweb-p01-review-attempt-1",
+    "concurrent_mutation_build_format_generation": false,
+    "findings_route": "reviewer_to_implementer",
+    "final_approval_routed_to_implementer": false,
+    "replacement_reviewer_full_rerun_required": true
+  },
+  "baseline_detected": [
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "first_divergent_layer": "Goosetower",
+      "evidence_references": [
+        "report.md#baseline"
+      ],
+      "owning_correction_phase": "P08",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "P56"
+      ],
+      "product_scenario_status": "blocked_not_approved"
+    }
+  ],
+  "known_defects": [],
+  "clearance": {
+    "scope": "verification_infrastructure_only",
+    "recipient_role": "lead",
+    "recipient_identity": "parallel_otter",
+    "product_approved": false,
+    "issued_at": "2026-07-12T10:20:00.000Z"
+  }
+}

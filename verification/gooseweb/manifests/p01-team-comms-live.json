@@ -1,0 +1,274 @@
+{
+  "schema_revision": "gooseweb-acceptance-manifest/v1",
+  "manifest_id": "GW-P01-TEAM-COMMS-LIVE-001",
+  "manifest_revision": 1,
+  "approved_plan": {
+    "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
+    "sha256": "d3e55db431e8827ffbd7c4f7e41193a7fb77a99fdb446ea5dcf1fdfdc2b232b8"
+  },
+  "scenario": {
+    "phase_id": "P01",
+    "title": "Source-backed Team Comms command becomes one visible chronological message",
+    "product_clearance": "blocked_expected_honest_failure",
+    "stable_scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+    "preconditions": [
+      "A clean committed candidate is served under the sole migration lease.",
+      "Default URL contains no fixture query parameter.",
+      "A real team with sender and recipient sessions exists."
+    ],
+    "actions": [
+      {
+        "id": "action-send-broadcast",
+        "control": {
+          "role": "textbox",
+          "accessible_name": "Message team"
+        },
+        "submit": {
+          "role": "button",
+          "accessible_name": "Send message"
+        },
+        "expected_command_count": 1,
+        "command": "sendTeamMessage"
+      }
+    ],
+    "authority_chain": [
+      {
+        "layer": "Gooselake",
+        "required": [
+          "exactly one message record with stable message_id",
+          "delivery records for intended recipients only",
+          "one team_message.created event",
+          "terminal injected or explicit rejected delivery facts"
+        ]
+      },
+      {
+        "layer": "Goosetower",
+        "required": [
+          "team workspace contains the message and delivery truth",
+          "team entity/frame carries stable identity and nonregressing source/gateway cursors"
+        ]
+      },
+      {
+        "layer": "Gooseweb Worker/store",
+        "required": [
+          "one normalized comms item with stable ID",
+          "no sibling-map loss or duplicate after patch/reconstruction"
+        ]
+      },
+      {
+        "layer": "Gooseweb React",
+        "required": [
+          "exact sent text visible once",
+          "oldest-first chronology",
+          "accessible filter/composer/send controls",
+          "honest delivery or rejection status"
+        ]
+      }
+    ],
+    "cardinality": {
+      "browser_actions": 1,
+      "commands": 1,
+      "runtime_messages": 1,
+      "visible_message_instances": 1,
+      "duplicates": 0
+    },
+    "chronology": "oldest_first_by_authoritative_order_not_client_timestamp",
+    "golden_goose_acceptance_lessons": [
+      "authoritative bootstrap and reload truth",
+      "no composer without a selected thread/team",
+      "live projection and window coverage honesty",
+      "stable chronology and no duplicates",
+      "exact command cardinality",
+      "filter and empty-state clarity",
+      "scroll/follow behavior",
+      "bounded large feeds",
+      "team injection visibility"
+    ]
+  },
+  "ownership": {
+    "gooselake": {
+      "impact": "no_change",
+      "reason": "P01 observes durable message, delivery, event, and terminal facts; it changes no runtime behavior."
+    },
+    "goosetower": {
+      "impact": "no_change",
+      "reason": "P01 observes team workspace/entity/frame/cursors; it changes no materializer or gateway behavior."
+    },
+    "gooseweb": {
+      "impact": "observed_only",
+      "reason": "P01 adds verification data and validators only; it changes no Worker, store, route, or React behavior."
+    },
+    "auth_account_state": {
+      "impact": "no_change",
+      "reason": "Review uses existing development authentication with all evidence redacted; no auth/account contract changes."
+    },
+    "protocol_generated_code": {
+      "impact": "no_change",
+      "reason": "No Protobuf schema or generated output is edited."
+    },
+    "api_narrative_docs": {
+      "impact": "no_change",
+      "reason": "No runtime HTTP/API behavior changes, so OpenAPI and narrative API docs are unaffected."
+    }
+  },
+  "reconstruction": [
+    "ordinary_reload",
+    "hard_reload",
+    "fresh_chromium_context_profile",
+    "websocket_loss_reconnect",
+    "navigation_away_and_back"
+  ],
+  "responsive": {
+    "viewports": [
+      "1440x1000",
+      "820x1000",
+      "520x900"
+    ],
+    "assertions": [
+      "document.documentElement.scrollWidth equals document.documentElement.clientWidth",
+      "composer and primary send action are inside viewport",
+      "critical controls are keyboard reachable",
+      "focus, Escape, and return behavior are correct where a sheet is used"
+    ]
+  },
+  "states": {
+    "empty": {
+      "applicability": "required",
+      "expectation": "Clear, non-fixture empty state and no stale rows."
+    },
+    "loading": {
+      "applicability": "required",
+      "expectation": "Honest loading state without fake message text."
+    },
+    "stale_gap_replaying": {
+      "applicability": "required",
+      "expectation": "Visible stale/replay state; no command is presented as converged."
+    },
+    "rejection_conflict": {
+      "applicability": "required",
+      "expectation": "Specific terminal rejection and no phantom visible success."
+    },
+    "permission_denied": {
+      "applicability": "not_applicable",
+      "reason": "P01 runs the existing owner/dev-auth flow; RBAC denial becomes product scope in P15-P17."
+    },
+    "unsupported_provider": {
+      "applicability": "not_applicable",
+      "reason": "Team delivery visibility is provider-independent in this current scenario."
+    },
+    "terminal_error": {
+      "applicability": "required",
+      "expectation": "Specific failure remains visible and cannot be classified as success."
+    }
+  },
+  "fixtures": {
+    "allowed_use": "manifest_plumbing_only",
+    "product_correctness_use": false,
+    "default_fixture_leak_assertions": [
+      "URL has no gooseweb fixture parameter.",
+      "Visible text contains no dev fixture markers or fake entities.",
+      "Fixture-only globals and controls are absent."
+    ],
+    "gating": "Any visual fixture must require both import.meta.env.DEV and an explicit query parameter."
+  },
+  "allowlists": {
+    "console": "verification/gooseweb/allowlists/console.json",
+    "network": "verification/gooseweb/allowlists/network.json",
+    "unexpected_console_network_protocol_websocket_failure": "fail"
+  },
+  "baseline_detected": [
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-TEAM-COMMS-EMPTY",
+      "first_divergent_layer": "Goosetower",
+      "evidence_references": [
+        "tmp/gg/gooseweb-current-state-evidence/gooseweb-team-comms-empty-1440x1000.png"
+      ],
+      "owning_correction_phase": "P08",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Runtime message/delivery/event and injection succeed while Team Comms remains empty."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-STALE-TURN",
+      "first_divergent_layer": "Goosetower",
+      "evidence_references": [
+        "tmp/gg/gooseweb-current-state-evidence/gooseweb-live-agent-after-runtime-completion-1440x1000.png"
+      ],
+      "owning_correction_phase": "P07",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P25",
+        "M3",
+        "P45",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Runtime terminal truth succeeds while the materialized/browser session remains turn_running."
+    }
+  ],
+  "known_defects": [],
+  "non_applicable": {
+    "schema_migration": {
+      "status": "not_applicable",
+      "reason": "P01 adds versioned verification JSON only; no persistent product schema changes."
+    },
+    "backfill": {
+      "status": "not_applicable",
+      "reason": "No product data changes or historical transformation occur."
+    },
+    "compatibility": {
+      "status": "not_applicable",
+      "reason": "No runtime, Tower, browser protocol, or API compatibility surface changes."
+    },
+    "rollback": {
+      "status": "not_applicable",
+      "reason": "Verification artifacts are removed by reverting the P01 commit; product state is untouched."
+    },
+    "performance": {
+      "status": "not_applicable",
+      "reason": "P05 owns product performance calibration; P01 only requires deterministic validators to complete quickly."
+    },
+    "security": {
+      "status": "observed_only",
+      "reason": "P01 enforces evidence redaction and secret rejection but changes no product security behavior."
+    },
+    "data_retention_gc": {
+      "status": "not_applicable",
+      "reason": "P01 defines evidence convention only and creates no durable product objects."
+    },
+    "deployment": {
+      "status": "not_applicable",
+      "reason": "No stack lifecycle or deployment implementation is introduced."
+    },
+    "provenance_reuse": {
+      "status": "reference_only",
+      "reason": "Golden Goose tests were read as acceptance references; no source code was copied or adapted."
+    }
+  },
+  "provenance": {
+    "source_repository": "/Users/ashray/code/amxv/gg-desktop",
+    "source_commit": "ad14effc88102aa30f7fc9dc81f20574358608e6",
+    "references": [
+      "src/components/agent-runtime/AgentRuntimePanel.test.tsx",
+      "src/components/layout/BroadcastChannelPanel.test.tsx"
+    ],
+    "reuse_status": "reference_only",
+    "destination_symbols": [],
+    "native_tauri_assumptions_removed": {
+      "status": "not_applicable",
+      "reason": "No Golden Goose implementation code was reused."
+    }
+  }
+}

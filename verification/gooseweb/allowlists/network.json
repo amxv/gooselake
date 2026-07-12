@@ -1,0 +1,8 @@
+{
+  "schema_revision": "gooseweb-network-allowlist/v1",
+  "exact_expected": [
+    { "method": "GET", "path": "/", "status": 200 },
+    { "method": "GET", "path": "/v1/realtime", "status": 101 }
+  ],
+  "policy": "Unexpected failed HTTP, protocol, network, or WebSocket activity is a failure. Entries match exact method, path, and status; regex and broad suppression are forbidden."
+}

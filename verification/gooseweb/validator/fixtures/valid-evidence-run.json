@@ -1,0 +1,44 @@
+{
+  "schema_revision": "gooseweb-evidence-run/v1",
+  "phase_id": "P01",
+  "sha7": "1111111",
+  "attempt": 1,
+  "root": "tmp/gg/gooseweb-migration/P01/1111111/attempt-1/",
+  "manifest": {
+    "copy": "manifest.json",
+    "sha256": "e0cf4748b44aa342abcadfc8ace379926dfb429b928683548a800fb8f1c6d9eb",
+    "revision": 1
+  },
+  "environment": "environment.json",
+  "screenshots": [
+    "screenshots/1440x1000.png",
+    "screenshots/820x1000.png",
+    "screenshots/520x900.png"
+  ],
+  "console": "console.json",
+  "network": "network.json",
+  "websocket": "websocket.json",
+  "runtime_state_redacted": "runtime-state.redacted.json",
+  "tower_state_redacted": "tower-state.redacted.json",
+  "store_state_redacted": "store-state.redacted.json",
+  "checks": "checks.json",
+  "metrics": {
+    "status": "not_applicable",
+    "reason": "P01 has no product performance gate."
+  },
+  "report": "report.md",
+  "clearance": "exact-head-clearance.json",
+  "redaction": {
+    "capture_time": true,
+    "prohibited": [
+      "credentials",
+      "cookies",
+      "CSRF values",
+      "bearer tokens",
+      "realtime tickets/query secrets",
+      "provider auth",
+      "raw image bytes",
+      "secret config"
+    ]
+  }
+}

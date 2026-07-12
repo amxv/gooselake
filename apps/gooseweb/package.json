@@ -7,7 +7,8 @@
     "dev": "vite dev",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "bun run scripts/proto-smoke.ts && bun run scripts/dev-ticket-smoke.ts && bun run scripts/realtime-worker-smoke.ts",
+    "test": "bun run scripts/proto-smoke.ts && bun run scripts/dev-ticket-smoke.ts && bun run scripts/realtime-worker-smoke.ts && bun run scripts/acceptance-contract-smoke.ts",
+    "test:acceptance-contract": "bun run scripts/acceptance-contract-smoke.ts",
     "proto": "buf generate"
   },
   "dependencies": {

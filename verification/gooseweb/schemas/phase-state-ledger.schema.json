@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gooseweb://schemas/phase-state-ledger/v1",
+  "title": "Gooseweb phase state and lease ledger v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_revision", "approved_plan_sha256", "phases", "lease_history", "clearance_history"],
+  "properties": {
+    "schema_revision": { "const": "gooseweb-phase-state-ledger/v1" }, "approved_plan_sha256": { "pattern": "^[a-f0-9]{64}$" },
+    "phases": { "type": "array", "minItems": 57, "maxItems": 57 }, "lease_history": { "type": "array" }, "clearance_history": { "type": "array" }
+  }
+}

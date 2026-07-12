@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gooseweb://schemas/acceptance-manifest/v1",
+  "title": "Gooseweb acceptance manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_revision", "manifest_id", "manifest_revision", "approved_plan", "scenario", "ownership", "reconstruction", "responsive", "states", "fixtures", "allowlists", "baseline_detected", "known_defects", "non_applicable", "provenance"],
+  "properties": {
+    "schema_revision": { "const": "gooseweb-acceptance-manifest/v1" },
+    "manifest_id": { "type": "string", "pattern": "^GW-[A-Z0-9-]+$" },
+    "manifest_revision": { "type": "integer", "minimum": 1 },
+    "approved_plan": { "type": "object", "required": ["path", "sha256"], "properties": { "path": { "type": "string" }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } } },
+    "scenario": { "type": "object" }, "ownership": { "type": "object" },
+    "reconstruction": { "type": "array" }, "responsive": { "type": "object" },
+    "states": { "type": "object" }, "fixtures": { "type": "object" },
+    "allowlists": { "type": "object" }, "baseline_detected": { "type": "array" },
+    "known_defects": { "type": "array" }, "non_applicable": { "type": "object" },
+    "provenance": { "type": "object" }
+  }
+}

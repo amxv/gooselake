@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gooseweb://schemas/evidence-run/v1",
+  "title": "Gooseweb evidence run descriptor v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_revision", "phase_id", "sha7", "attempt", "root", "manifest", "environment", "screenshots", "console", "network", "websocket", "runtime_state_redacted", "tower_state_redacted", "store_state_redacted", "checks", "metrics", "report", "clearance", "redaction"],
+  "properties": {
+    "schema_revision": { "const": "gooseweb-evidence-run/v1" }, "phase_id": { "type": "string" }, "sha7": { "pattern": "^[a-f0-9]{7}$" },
+    "attempt": { "type": "integer", "minimum": 1 }, "root": { "type": "string" }, "manifest": { "type": "object" },
+    "environment": { "type": "string" }, "screenshots": { "type": "array", "minItems": 3 }, "console": { "type": "string" },
+    "network": { "type": "string" }, "websocket": { "type": "string" }, "runtime_state_redacted": { "type": "string" },
+    "tower_state_redacted": { "type": "string" }, "store_state_redacted": { "type": "string" }, "checks": { "type": "string" },
+    "metrics": { "type": ["string", "object"] }, "report": { "type": "string" }, "clearance": { "type": "string" }, "redaction": { "type": "object" }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "schema_revision": "gooseweb-console-allowlist/v1",
+  "exact_messages": [],
+  "policy": "Any console error, warning, uncaught exception, protocol error, or message not exactly listed is a failure. Regex and substring suppression are forbidden."
+}

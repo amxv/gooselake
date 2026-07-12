@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gooseweb://schemas/exact-head-clearance/v1",
+  "title": "Gooseweb exact-head clearance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_revision", "phase_id", "attempt", "base_sha", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "clean_tree", "hot_reload", "manifest", "approved_plan_sha256", "lease", "stack", "review", "baseline_detected", "known_defects", "clearance"],
+  "properties": {
+    "schema_revision": { "const": "gooseweb-exact-head-clearance/v1" },
+    "phase_id": { "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "base_sha": { "pattern": "^[a-f0-9]{40}$" }, "candidate_head_sha": { "pattern": "^[a-f0-9]{40}$" },
+    "candidate_tree_sha": { "pattern": "^[a-f0-9]{40}$" }, "served_head_sha": { "pattern": "^[a-f0-9]{40}$" },
+    "clean_tree": { "const": true }, "hot_reload": { "const": false },
+    "manifest": { "type": "object" }, "approved_plan_sha256": { "pattern": "^[a-f0-9]{64}$" },
+    "lease": { "type": "object" }, "stack": { "type": "object" }, "review": { "type": "object" },
+    "baseline_detected": { "type": "array" }, "known_defects": { "maxItems": 0 }, "clearance": { "type": "object" }
+  }
+}

@@ -1,0 +1,739 @@
+{
+  "schema_revision": "gooseweb-phase-state-ledger/v1",
+  "approved_plan_sha256": "d3e55db431e8827ffbd7c4f7e41193a7fb77a99fdb446ea5dcf1fdfdc2b232b8",
+  "phases": [
+    {
+      "phase_id": "P00",
+      "prerequisites": [],
+      "state": "cleared",
+      "state_reason": "Independent exact-plan audit cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P01",
+      "prerequisites": [
+        "P00"
+      ],
+      "state": "candidate_ready_for_review",
+      "state_reason": "P01 verification infrastructure is implemented and awaiting exact-head independent review.",
+      "history": []
+    },
+    {
+      "phase_id": "P02",
+      "prerequisites": [
+        "P01"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P03",
+      "prerequisites": [
+        "P01",
+        "P02"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P04",
+      "prerequisites": [
+        "P02",
+        "P03"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P05",
+      "prerequisites": [
+        "P03",
+        "P04"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P06",
+      "prerequisites": [
+        "P02",
+        "P04"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P07",
+      "prerequisites": [
+        "P06"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P08",
+      "prerequisites": [
+        "P06",
+        "P07"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P09",
+      "prerequisites": [
+        "P08"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P10",
+      "prerequisites": [
+        "P07",
+        "P08",
+        "P09"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P11",
+      "prerequisites": [
+        "P10"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P12",
+      "prerequisites": [
+        "P11"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P13",
+      "prerequisites": [
+        "P12"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P14",
+      "prerequisites": [
+        "P13"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P15",
+      "prerequisites": [
+        "P02",
+        "P03",
+        "P14"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P16",
+      "prerequisites": [
+        "P08",
+        "P09",
+        "P10",
+        "P15"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P17",
+      "prerequisites": [
+        "P14",
+        "P15",
+        "P16"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P18",
+      "prerequisites": [
+        "P06",
+        "P14"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P19",
+      "prerequisites": [
+        "P18"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P20",
+      "prerequisites": [
+        "P18",
+        "P19"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P21",
+      "prerequisites": [
+        "P05",
+        "P18",
+        "P20"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P22",
+      "prerequisites": [
+        "P08",
+        "P09",
+        "P21"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P23",
+      "prerequisites": [
+        "P08",
+        "P09",
+        "P10",
+        "P22"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P24",
+      "prerequisites": [
+        "P09",
+        "P10",
+        "P23"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P25",
+      "prerequisites": [
+        "P14",
+        "P17",
+        "P20",
+        "P21",
+        "P22",
+        "P23",
+        "P24"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P26",
+      "prerequisites": [
+        "P18",
+        "P20",
+        "P21",
+        "P22"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P27",
+      "prerequisites": [
+        "P24",
+        "P25",
+        "P26"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P28",
+      "prerequisites": [
+        "P26",
+        "P27"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P29",
+      "prerequisites": [
+        "P26",
+        "P28"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P30",
+      "prerequisites": [
+        "P25",
+        "P26",
+        "P27",
+        "P28",
+        "P29"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P31",
+      "prerequisites": [
+        "P26",
+        "P27",
+        "P28",
+        "P29",
+        "P30"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P32",
+      "prerequisites": [
+        "P30",
+        "P31"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P33",
+      "prerequisites": [
+        "P30",
+        "P31",
+        "P32"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P34",
+      "prerequisites": [
+        "P15",
+        "P16",
+        "P26",
+        "P27",
+        "P28",
+        "P29",
+        "P30",
+        "P31"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P35",
+      "prerequisites": [
+        "P15",
+        "P18",
+        "P20",
+        "P22",
+        "P23",
+        "P25"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P36",
+      "prerequisites": [
+        "P15",
+        "P16",
+        "P35"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P37",
+      "prerequisites": [
+        "P25",
+        "P26",
+        "P27",
+        "P28",
+        "P29",
+        "P35"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P38",
+      "prerequisites": [
+        "P26",
+        "P27",
+        "P28",
+        "P29",
+        "P30",
+        "P37"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P39",
+      "prerequisites": [
+        "P15",
+        "P16",
+        "P18",
+        "P19",
+        "P20",
+        "P21",
+        "P22",
+        "P23",
+        "P37"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P40",
+      "prerequisites": [
+        "P18",
+        "P20",
+        "P21",
+        "P22",
+        "P23",
+        "P37",
+        "P39"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P41",
+      "prerequisites": [
+        "P26",
+        "P27",
+        "P28",
+        "P29",
+        "P40"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P42",
+      "prerequisites": [
+        "P15",
+        "P16",
+        "P17",
+        "P18",
+        "P20",
+        "P21",
+        "P22",
+        "P23",
+        "P35"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P43",
+      "prerequisites": [
+        "P41",
+        "P42"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P44",
+      "prerequisites": [
+        "P14",
+        "P17",
+        "P35",
+        "P42",
+        "P43"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P45",
+      "prerequisites": [
+        "P08",
+        "P09",
+        "P10",
+        "P20",
+        "P22",
+        "P23",
+        "P35",
+        "P36",
+        "P42",
+        "P43",
+        "P44"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P46",
+      "prerequisites": [
+        "P20",
+        "P22",
+        "P23",
+        "P31",
+        "P42",
+        "P43",
+        "P45"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P47",
+      "prerequisites": [
+        "P14",
+        "P25",
+        "P35",
+        "P37",
+        "P44",
+        "P45",
+        "P46"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P48",
+      "prerequisites": [
+        "P36",
+        "P45",
+        "P46",
+        "P47"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P49",
+      "prerequisites": [
+        "P15",
+        "P16",
+        "P17",
+        "P48"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P50",
+      "prerequisites": [
+        "P15",
+        "P16",
+        "P17",
+        "P33",
+        "P35",
+        "P42",
+        "P43",
+        "P47"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P51",
+      "prerequisites": [
+        "P15",
+        "P16",
+        "P17",
+        "P42",
+        "P43",
+        "P50"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P52",
+      "prerequisites": [
+        "P35",
+        "P36",
+        "P43",
+        "P44",
+        "P45",
+        "P46",
+        "P50"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P53",
+      "prerequisites": [
+        "P17",
+        "P26",
+        "P27",
+        "P28",
+        "P29",
+        "P35",
+        "P49",
+        "P52"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P54",
+      "prerequisites": [
+        "P37",
+        "P40",
+        "P41",
+        "P42",
+        "P43",
+        "P53"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P55",
+      "prerequisites": [
+        "P15",
+        "P16",
+        "P17",
+        "P50",
+        "P53"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    },
+    {
+      "phase_id": "P56",
+      "prerequisites": [
+        "P01",
+        "P02",
+        "P03",
+        "P04",
+        "P05",
+        "P06",
+        "P07",
+        "P08",
+        "P09",
+        "P10",
+        "P11",
+        "P12",
+        "P13",
+        "P14",
+        "P15",
+        "P16",
+        "P17",
+        "P18",
+        "P19",
+        "P20",
+        "P21",
+        "P22",
+        "P23",
+        "P24",
+        "P25",
+        "P26",
+        "P27",
+        "P28",
+        "P29",
+        "P30",
+        "P31",
+        "P32",
+        "P33",
+        "P34",
+        "P35",
+        "P36",
+        "P37",
+        "P38",
+        "P39",
+        "P40",
+        "P41",
+        "P42",
+        "P43",
+        "P44",
+        "P45",
+        "P46",
+        "P47",
+        "P48",
+        "P49",
+        "P50",
+        "P51",
+        "P52",
+        "P53",
+        "P54",
+        "P55"
+      ],
+      "state": "blocked",
+      "state_reason": "Exact prerequisites have not all cleared.",
+      "history": []
+    }
+  ],
+  "lease_history": [],
+  "clearance_history": []
+}

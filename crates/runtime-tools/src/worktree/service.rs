@@ -161,7 +161,7 @@ impl WorktreeService for RuntimeWorktreeService {
             request.created_by_session_id,
             request.operation_id,
         )?;
-        self.append_worktree_event(
+        self.append_worktree_event_with_mutations(
             worktree.id.as_str(),
             "worktree.created",
             serde_json::json!({
@@ -170,8 +170,11 @@ impl WorktreeService for RuntimeWorktreeService {
             }),
             Some(source_session.id.clone()),
             request.team_id,
+            &[runtime_core::RuntimeRecordMutation::ManagedWorktree(
+                worktree.clone(),
+            )],
         )
-        .await;
+        .await?;
         Ok(WorktreeCreateResponse {
             worktree,
             created: true,
@@ -206,15 +209,17 @@ impl WorktreeService for RuntimeWorktreeService {
             created_at: now_ms(),
             released_at: None,
         };
-        self.store.upsert_managed_worktree_claim(&claim)?;
-        self.append_worktree_event(
+        self.append_worktree_event_with_mutations(
             worktree.id.as_str(),
             "worktree.claimed",
             serde_json::json!({ "claim": claim }),
             Some(request.session_id),
             None,
+            &[runtime_core::RuntimeRecordMutation::ManagedWorktreeClaim(
+                claim.clone(),
+            )],
         )
-        .await;
+        .await?;
         Ok(WorktreeClaimResponse { worktree, claim })
     }
 
@@ -242,15 +247,17 @@ impl WorktreeService for RuntimeWorktreeService {
             released_at: Some(now_ms()),
             ..existing_claim
         };
-        self.store.upsert_managed_worktree_claim(&released_claim)?;
-        self.append_worktree_event(
+        self.append_worktree_event_with_mutations(
             worktree.id.as_str(),
             "worktree.released",
             serde_json::json!({ "claim": released_claim }),
             Some(request.session_id),
             None,
+            &[runtime_core::RuntimeRecordMutation::ManagedWorktreeClaim(
+                released_claim.clone(),
+            )],
         )
-        .await;
+        .await?;
 
         let hydrated_after = self.store.hydrate_runtime_state()?;
         let active_claim_count = self

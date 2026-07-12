@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 2;
+pub(crate) const SCHEMA_VERSION: i64 = 3;
 
 pub(crate) const SCHEMA_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -220,4 +220,5 @@ CREATE TABLE IF NOT EXISTS diagnostics_journal (
   payload_json TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+
 "#;

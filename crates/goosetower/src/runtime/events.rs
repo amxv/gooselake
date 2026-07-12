@@ -43,7 +43,7 @@ impl SourceHealthState {
             (Live, Draining | Stale | Offline | Failed | GapDetected | Replaying) => true,
             (Replaying, Live | Stale | Offline | GapDetected | Failed) => true,
             (Draining, Offline | Terminated | Failed) => true,
-            (Stale, Live | Offline | GapDetected | Draining | Failed) => true,
+            (Stale, Live | Replaying | Offline | GapDetected | Draining | Failed) => true,
             (Offline, Booting | Replaying | Live | Failed | Terminated) => true,
             (Failed, Booting | Offline | Terminated) => true,
             (GapDetected, Replaying | Stale | Offline | Failed | Live) => true,

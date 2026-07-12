@@ -3,12 +3,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use async_trait::async_trait;
 
 use crate::{
-    RuntimeError, RuntimeEventRecord, RuntimeEventScope, TeamBroadcastRequest,
-    TeamCancelMessageRequest, TeamCommsService, TeamCreateRequest, TeamDeliveryRecord,
-    TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamInterruptAllResponse, TeamJoinRequest,
-    TeamListMessagesRequest, TeamListMessagesResponse, TeamMemberRecord, TeamMessageAck,
-    TeamRecord, TeamRemoveMemberRequest, TeamRetryDeliveryRequest, TeamSendDirectRequest,
-    TeamSetLeadRequest, TeamViewSnapshotRequest, TeamViewSnapshotResponse, TeamWithMembers,
+    RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeRecordMutation,
+    TeamBroadcastRequest, TeamCancelMessageRequest, TeamCommsService, TeamCreateRequest,
+    TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamInterruptAllRequest,
+    TeamInterruptAllResponse, TeamJoinRequest, TeamListMessagesRequest, TeamListMessagesResponse,
+    TeamMemberRecord, TeamMessageAck, TeamRecord, TeamRemoveMemberRequest,
+    TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest,
+    TeamViewSnapshotResponse, TeamWithMembers,
 };
 
 use super::{
@@ -88,7 +89,6 @@ impl TeamCommsService for RuntimeTeamCommsService {
             team
         };
 
-        self.store.upsert_team(&team)?;
         let members = {
             let state = self.state.read().await;
             state
@@ -97,16 +97,20 @@ impl TeamCommsService for RuntimeTeamCommsService {
                 .map(|members| members.values().cloned().collect::<Vec<_>>())
                 .unwrap_or_default()
         };
-        for member in &members {
-            self.store.upsert_team_member(member)?;
-        }
-
         let _ = self
-            .append_team_event(
+            .append_team_event_with_mutations(
                 team.id.as_str(),
                 "team.created",
                 serde_json::json!({ "team": team, "members": members }),
                 Some(team.lead_agent_id.clone()),
+                &std::iter::once(RuntimeRecordMutation::Team(team.clone()))
+                    .chain(
+                        members
+                            .iter()
+                            .cloned()
+                            .map(RuntimeRecordMutation::TeamMember),
+                    )
+                    .collect::<Vec<_>>(),
             )
             .await;
 
@@ -181,15 +185,16 @@ impl TeamCommsService for RuntimeTeamCommsService {
             (team.clone(), member)
         };
 
-        self.store.upsert_team(&updated_team.0)?;
-        self.store.upsert_team_member(&updated_team.1)?;
-
         let _ = self
-            .append_team_event(
+            .append_team_event_with_mutations(
                 team_id.as_str(),
                 "team.member_joined",
                 serde_json::json!({ "team": updated_team.0, "member": updated_team.1 }),
                 Some(agent_id),
+                &[
+                    RuntimeRecordMutation::Team(updated_team.0.clone()),
+                    RuntimeRecordMutation::TeamMember(updated_team.1.clone()),
+                ],
             )
             .await;
 
@@ -255,19 +260,22 @@ impl TeamCommsService for RuntimeTeamCommsService {
             (team.clone(), agent_id)
         };
 
-        self.store.upsert_team(&updated_team)?;
-        self.store
-            .delete_team_member(team_id.as_str(), removed_agent_id.as_str())?;
-
         let _ = self
-            .append_team_event(
+            .append_team_event_with_mutations(
                 team_id.as_str(),
                 "team.member_left",
                 serde_json::json!({
                     "team": updated_team,
                     "agent_id": removed_agent_id,
                 }),
-                Some(removed_agent_id),
+                Some(removed_agent_id.clone()),
+                &[
+                    RuntimeRecordMutation::Team(updated_team.clone()),
+                    RuntimeRecordMutation::TeamMemberDelete {
+                        team_id: team_id.clone(),
+                        agent_id: removed_agent_id.clone(),
+                    },
+                ],
             )
             .await;
 
@@ -306,14 +314,13 @@ impl TeamCommsService for RuntimeTeamCommsService {
             return self.team_with_members(team_id.as_str()).await;
         };
 
-        self.store.upsert_team(&updated_team)?;
-
         let _ = self
-            .append_team_event(
+            .append_team_event_with_mutations(
                 team_id.as_str(),
                 "team.lead_changed",
                 serde_json::json!({ "team": updated_team, "lead_agent_id": lead_agent_id }),
                 Some(lead_agent_id),
+                &[RuntimeRecordMutation::Team(updated_team.clone())],
             )
             .await;
 
@@ -391,25 +398,25 @@ impl TeamCommsService for RuntimeTeamCommsService {
             (team, cancelled_deliveries)
         };
 
-        self.store.upsert_team(&deleted)?;
         for delivery in &cancelled_deliveries {
-            self.store.upsert_team_delivery(delivery)?;
             let _ = self
-                .append_team_event(
+                .append_team_event_with_mutations(
                     team_id.as_str(),
                     "team_delivery.cancelled",
                     serde_json::json!({ "delivery": delivery }),
                     Some(delivery.recipient_agent_id.clone()),
+                    &[RuntimeRecordMutation::TeamDelivery(delivery.clone())],
                 )
                 .await;
         }
 
         let _ = self
-            .append_team_event(
+            .append_team_event_with_mutations(
                 team_id.as_str(),
                 "team.deleted",
                 serde_json::json!({ "team": deleted }),
                 Some(deleted.created_by.clone()),
+                &[RuntimeRecordMutation::Team(deleted.clone())],
             )
             .await;
 
@@ -685,13 +692,13 @@ impl TeamCommsService for RuntimeTeamCommsService {
             delivery.clone()
         };
 
-        self.store.upsert_team_delivery(&updated)?;
         let _ = self
-            .append_team_event(
+            .append_team_event_with_mutations(
                 team_id.as_str(),
                 "team_delivery.pending",
                 serde_json::json!({ "delivery": updated }),
                 Some(updated.recipient_agent_id.clone()),
+                &[RuntimeRecordMutation::TeamDelivery(updated.clone())],
             )
             .await;
 
@@ -753,13 +760,13 @@ impl TeamCommsService for RuntimeTeamCommsService {
         };
 
         for delivery in &cancelled {
-            self.store.upsert_team_delivery(delivery)?;
             let _ = self
-                .append_team_event(
+                .append_team_event_with_mutations(
                     team_id.as_str(),
                     "team_delivery.cancelled",
                     serde_json::json!({ "delivery": delivery }),
                     Some(delivery.recipient_agent_id.clone()),
+                    &[RuntimeRecordMutation::TeamDelivery(delivery.clone())],
                 )
                 .await;
         }

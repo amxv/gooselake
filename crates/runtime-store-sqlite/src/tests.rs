@@ -7,8 +7,13 @@ use runtime_core::{
 };
 use rusqlite::{params, Connection};
 
+mod bootstrap_regressions;
+
 fn repo(temp_dir: &tempfile::TempDir) -> SqliteRuntimeRepository {
-    SqliteRuntimeRepository::new(temp_dir.path().join("runtime.sqlite3"))
+    SqliteRuntimeRepository::new_with_authority_root(
+        temp_dir.path().join("runtime.sqlite3"),
+        temp_dir.path().join("authority"),
+    )
 }
 
 fn sample_session() -> SessionRecord {
@@ -127,7 +132,10 @@ fn initialize_schema_migrates_partially_populated_database_without_reset() {
             .expect("insert session");
     }
 
-    let repository = SqliteRuntimeRepository::new(db_path.clone());
+    let repository = SqliteRuntimeRepository::new_with_authority_root(
+        db_path.clone(),
+        temp_dir.path().join("authority"),
+    );
     repository.initialize_schema().expect("schema migration");
 
     let hydrated = repository.hydrate_runtime_state().expect("hydrate");
@@ -733,7 +741,10 @@ fn source_epoch_survives_restart_and_rotates_for_copied_store_generation() {
     repository.initialize_schema().expect("initialize schema");
     let original_epoch = repository.source_bootstrap().unwrap().source_epoch;
 
-    let restarted = SqliteRuntimeRepository::new(repository.database_path.clone());
+    let restarted = SqliteRuntimeRepository::new_with_authority_root(
+        repository.database_path.clone(),
+        temp_dir.path().join("authority"),
+    );
     restarted.initialize_schema().expect("restart initialize");
     assert_eq!(
         restarted.source_bootstrap().unwrap().source_epoch,
@@ -747,7 +758,10 @@ fn source_epoch_survives_restart_and_rotates_for_copied_store_generation() {
         replacement_path.with_extension("source-generation"),
     )
     .expect("copy generation marker with restored database");
-    let replacement = SqliteRuntimeRepository::new(replacement_path);
+    let replacement = SqliteRuntimeRepository::new_with_authority_root(
+        replacement_path,
+        temp_dir.path().join("authority"),
+    );
     replacement
         .initialize_schema()
         .expect("replacement initialize");
@@ -770,7 +784,8 @@ fn existing_v1_store_migrates_and_receives_source_identity() {
         .expect("seed v1 marker");
     drop(connection);
 
-    let repository = SqliteRuntimeRepository::new(path);
+    let repository =
+        SqliteRuntimeRepository::new_with_authority_root(path, temp_dir.path().join("authority"));
     repository
         .initialize_schema()
         .expect("migrate legacy database");
@@ -807,27 +822,32 @@ fn source_bootstrap_uses_one_snapshot_while_writer_commits() {
         .expect("seed event");
 
     let writer = repository.clone();
-    crate::repository_bootstrap::install_after_watermark_read_hook(Box::new(move || {
-        let mut next = sample_session();
-        next.id = "session_2".to_string();
-        writer.upsert_session(&next).expect("concurrent session");
-        writer
-            .append_runtime_event(&NewRuntimeEvent {
-                event_id: "evt_snapshot_2".to_string(),
-                scope: RuntimeEventScope::Session,
-                scope_id: next.id.clone(),
-                session_id: Some(next.id),
-                team_id: None,
-                turn_id: None,
-                kind: "session.created".to_string(),
-                criticality: RuntimeEventCriticality::Critical,
-                payload: serde_json::json!({}),
-                provider: None,
-                provider_seq: None,
-                created_at: 2,
-            })
-            .expect("concurrent event");
-    }));
+    crate::repository_bootstrap::install_after_watermark_read_hook(
+        repository.database_path.clone(),
+        Box::new(move || {
+            let mut next = sample_session();
+            next.id = "session_2".to_string();
+            writer
+                .append_runtime_event_with_mutations(
+                    &NewRuntimeEvent {
+                        event_id: "evt_snapshot_2".to_string(),
+                        scope: RuntimeEventScope::Session,
+                        scope_id: next.id.clone(),
+                        session_id: Some(next.id.clone()),
+                        team_id: None,
+                        turn_id: None,
+                        kind: "session.created".to_string(),
+                        criticality: RuntimeEventCriticality::Critical,
+                        payload: serde_json::json!({}),
+                        provider: None,
+                        provider_seq: None,
+                        created_at: 2,
+                    },
+                    &[runtime_core::RuntimeRecordMutation::Session(next)],
+                )
+                .expect("concurrent event");
+        }),
+    );
 
     let snapshot = repository.source_bootstrap().expect("consistent bootstrap");
     assert_eq!(snapshot.high_watermark, 1);
@@ -863,4 +883,54 @@ fn source_bootstrap_rejects_oversized_tables_without_partial_snapshot() {
         .source_bootstrap()
         .expect_err("oversized bootstrap must fail instead of truncating");
     assert!(error.to_string().contains("maximum is 10000"));
+}
+
+#[test]
+fn source_bootstrap_observes_record_and_event_from_one_atomic_commit() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("initialize schema");
+
+    repository
+        .append_runtime_event_with_mutations(
+            &NewRuntimeEvent {
+                event_id: "evt_seal_session".to_string(),
+                scope: RuntimeEventScope::Session,
+                scope_id: "session_1".to_string(),
+                session_id: Some("session_1".to_string()),
+                team_id: None,
+                turn_id: None,
+                kind: "session.created".to_string(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: serde_json::json!({}),
+                provider: None,
+                provider_seq: None,
+                created_at: 1,
+            },
+            &[runtime_core::RuntimeRecordMutation::Session(
+                sample_session(),
+            )],
+        )
+        .expect("publish record and event");
+    let bootstrap = repository.source_bootstrap().expect("atomic bootstrap");
+    assert_eq!(bootstrap.high_watermark, 1);
+    assert_eq!(bootstrap.records.sessions, vec![sample_session()]);
+}
+
+#[test]
+fn source_bootstrap_rejects_oversized_text_before_hydration() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("initialize schema");
+    let mut session = sample_session();
+    session.metadata = serde_json::json!({
+        "oversized": "x".repeat(
+            crate::repository_bootstrap::MAX_SOURCE_BOOTSTRAP_TEXT_BYTES as usize + 1
+        )
+    });
+    repository.upsert_session(&session).expect("large session");
+    let error = repository
+        .source_bootstrap()
+        .expect_err("large payload must be rejected before hydration");
+    assert!(error.to_string().contains("text bytes"));
 }

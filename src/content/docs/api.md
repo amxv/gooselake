@@ -256,20 +256,48 @@ Goosetower. It returns:
 
 The runtime reads the epoch, watermark, and all returned records from one
 SQLite read transaction. A concurrent commit after the watermark read is not
-partially visible in `records`. The response intentionally excludes provider
-credentials, turn internals, and diagnostic journals. Bootstrap reads are
-bounded to 10,000 rows per participating SQLite table; an oversized source
-fails explicitly instead of returning a partial snapshot.
+partially visible in `records`. Every publishing store operation applies its
+complete current-record mutation set and appends the corresponding runtime
+event in one immediate SQLite transaction. Mutation, constraint, event-insert,
+or commit failure rolls the whole operation back, so a crash cannot leave a
+record ahead of the event ledger or an orphaned writer marker that blocks
+bootstrap. Concurrent writers, including writers targeting the same record,
+therefore become visible only as complete record-and-event commits. The
+response query path does
+not read provider credentials, turn internals, or diagnostic journals.
+Bootstrap reads are bounded to 10,000 rows per participating table, 50,000
+returned rows in aggregate, 16 MiB of measured text/JSON fields, and a final
+24 MiB serialized-record ceiling. An
+oversized source fails explicitly before hydration/serialization instead of
+returning a partial snapshot. SQLite work for this endpoint runs on the
+server's blocking-work pool rather than the async HTTP executor.
 
-The source epoch persists across ordinary runtime restarts. It rotates when a
-database is copied or replaced: the runtime validates both a generation marker
-and the database file identity, so copying the marker with the database does
-not preserve the old epoch. A reused global row ID therefore cannot be mistaken
-for continuity. Goosetower treats this runtime value as authoritative; legacy
-configured `source_epoch` values do not override it. A runtime that does not
-implement this endpoint, or cannot be reached, is reported as
-offline/unavailable and requires resynchronization rather than receiving a
-fabricated epoch.
+The source epoch persists across ordinary runtime restarts. Alongside a
+restrictively-permissioned, atomically replaced generation marker, the runtime
+keeps a high-watermark authority checkpoint outside the database directory
+(`$HOME/.gg/runtime-source-authority` by default, or
+`GG_RUNTIME_SOURCE_AUTHORITY_DIR`). Before a publishing SQLite transaction
+commits global row `H`, the runtime durably advances this external authority to
+`H`. An authority-write failure therefore rolls the SQLite transaction back;
+if the authority advances but the database commit does not, initialization
+observes the authority ahead of the database and rotates the epoch. Monotonic
+checkpoint writes never lower an ahead authority within the same epoch.
+Copy/replace restores and same-path
+in-place rollbacks that could reuse global IDs rotate the epoch, even when the
+database and adjacent marker are rolled back together. Identity-file read or
+durability errors fail closed rather than silently fabricating continuity. On
+Windows, store initialization currently fails closed because replace-existing
+atomic file semantics are not yet implemented; the runtime does not serve with
+a weaker path-only identity.
+
+Goosetower treats the runtime value as authoritative; legacy configured
+`source_epoch` values do not override it. It revalidates the runtime epoch
+before every SSE reconnect. If the epoch changed, streaming pauses while the
+new bootstrap snapshot is installed and the cursor is rebased to that
+generation's high watermark. Same-epoch bootstrap installs are discarded when
+Tower has already reduced a newer cursor. A runtime that does not implement
+this endpoint, or cannot be reached, is reported as offline/unavailable and
+requires resynchronization rather than receiving a fabricated epoch.
 
 SSE endpoints:
 

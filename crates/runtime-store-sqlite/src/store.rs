@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use runtime_core::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
     ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState,
-    RuntimeSourceBootstrap, RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnRecord,
+    RuntimeRecordMutation, RuntimeSourceBootstrap, RuntimeStore, SessionRecord, TeamDeliveryRecord,
+    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
+    TeamRecord, TurnRecord,
 };
 use serde_json::Value;
 
@@ -65,6 +65,15 @@ impl RuntimeStore for SqliteRuntimeStore {
         event: &NewRuntimeEvent,
     ) -> Result<RuntimeEventRecord, RuntimeError> {
         self.repository.append_runtime_event(event)
+    }
+
+    fn append_runtime_event_with_mutations(
+        &self,
+        event: &NewRuntimeEvent,
+        mutations: &[RuntimeRecordMutation],
+    ) -> Result<RuntimeEventRecord, RuntimeError> {
+        self.repository
+            .append_runtime_event_with_mutations(event, mutations)
     }
 
     fn list_runtime_events(

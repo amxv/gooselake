@@ -1,11 +1,10 @@
-use std::collections::HashSet;
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT};
 use runtime_core::RuntimeEventRecord;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch, Notify};
 
 use super::client::{GooselakeRuntimeClient, RuntimeClientError};
 use super::events::{SourceEvent, SourceHealth, SourceHealthState};
@@ -40,6 +39,29 @@ pub struct RuntimeSseFanIn {
     source_epoch: String,
     config: RuntimeSseFanInConfig,
     health_tx: watch::Sender<SourceHealth>,
+    epoch_change_tx: broadcast::Sender<SourceEpochChange>,
+    #[cfg(test)]
+    health_history: std::sync::Arc<std::sync::Mutex<Vec<SourceHealthState>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceEpochChange {
+    pub source_epoch: String,
+    pub high_watermark: i64,
+    acknowledgement: std::sync::Arc<Notify>,
+    installed: std::sync::Arc<std::sync::Mutex<Option<(String, i64)>>>,
+}
+
+impl SourceEpochChange {
+    pub fn acknowledge(&self, source_epoch: String, high_watermark: i64) {
+        *self.installed.lock().expect("epoch acknowledgement") =
+            Some((source_epoch, high_watermark));
+        self.acknowledgement.notify_one();
+    }
+
+    pub fn reject(&self) {
+        self.acknowledgement.notify_one();
+    }
 }
 
 impl RuntimeSseFanIn {
@@ -51,11 +73,17 @@ impl RuntimeSseFanIn {
         let source_id = client.source_id().to_string();
         let source_epoch = source_epoch.into();
         let (health_tx, _) = watch::channel(SourceHealth::new(source_id, source_epoch.clone()));
+        let (epoch_change_tx, _) = broadcast::channel(4);
         Self {
             client,
             source_epoch,
             config,
             health_tx,
+            epoch_change_tx,
+            #[cfg(test)]
+            health_history: std::sync::Arc::new(std::sync::Mutex::new(vec![
+                SourceHealthState::Configured,
+            ])),
         }
     }
 
@@ -65,6 +93,15 @@ impl RuntimeSseFanIn {
 
     pub fn subscribe_health(&self) -> watch::Receiver<SourceHealth> {
         self.health_tx.subscribe()
+    }
+
+    pub fn subscribe_epoch_changes(&self) -> broadcast::Receiver<SourceEpochChange> {
+        self.epoch_change_tx.subscribe()
+    }
+
+    #[cfg(test)]
+    fn health_history(&self) -> Vec<SourceHealthState> {
+        self.health_history.lock().expect("health history").clone()
     }
 
     pub fn spawn(
@@ -83,14 +120,65 @@ impl RuntimeSseFanIn {
         output: mpsc::Sender<SourceEvent>,
     ) {
         let mut cursor = initial_after_seq;
-        let mut seen = HashSet::<i64>::new();
-
+        let mut source_epoch = self.source_epoch.clone();
         loop {
+            match self.client.source_bootstrap().await {
+                Ok(bootstrap) if bootstrap.source_epoch != source_epoch => {
+                    let acknowledgement = std::sync::Arc::new(Notify::new());
+                    let change = SourceEpochChange {
+                        source_epoch: bootstrap.source_epoch.clone(),
+                        high_watermark: bootstrap.high_watermark,
+                        acknowledgement: acknowledgement.clone(),
+                        installed: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                    };
+                    let installed = change.installed.clone();
+                    let announced_cursor = Some(bootstrap.high_watermark);
+                    self.transition_epoch(
+                        bootstrap.source_epoch,
+                        SourceHealthState::GapDetected,
+                        announced_cursor,
+                        Some("runtime source epoch changed; replacement snapshot required".into()),
+                    );
+                    if self.epoch_change_tx.send(change).is_err() {
+                        self.transition(
+                            SourceHealthState::Offline,
+                            announced_cursor,
+                            Some(
+                                "runtime source epoch changed without a bootstrap consumer".into(),
+                            ),
+                        );
+                        tokio::time::sleep(self.config.reconnect_delay).await;
+                        continue;
+                    }
+                    acknowledgement.notified().await;
+                    let Some((installed_epoch, installed_watermark)) =
+                        installed.lock().expect("epoch acknowledgement").take()
+                    else {
+                        tokio::time::sleep(self.config.reconnect_delay).await;
+                        continue;
+                    };
+                    source_epoch = installed_epoch;
+                    cursor = Some(installed_watermark);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    self.transition(SourceHealthState::Offline, cursor, Some(error.to_string()));
+                    tokio::time::sleep(self.config.reconnect_delay).await;
+                    continue;
+                }
+            }
             self.transition(SourceHealthState::Replaying, cursor, None);
-            match self.consume_once(cursor, &output, &mut seen).await {
+            match self
+                .consume_once_with_epoch(cursor, &output, &source_epoch)
+                .await
+            {
                 Ok(last_seq) => {
                     cursor = last_seq.or(cursor);
-                    self.transition(SourceHealthState::Stale, cursor, None);
+                    // GapDetected and stale-timeout are authoritative outcomes from consume_once.
+                    // Finite EOF is the only successful exit which still reports Live here.
+                    if self.health().state == SourceHealthState::Live {
+                        self.transition(SourceHealthState::Stale, cursor, None);
+                    }
                 }
                 Err(error) => {
                     cursor = self.health().last_source_seq.or(cursor);
@@ -105,7 +193,16 @@ impl RuntimeSseFanIn {
         &self,
         after_seq: Option<i64>,
         output: &mpsc::Sender<SourceEvent>,
-        seen_source_seqs: &mut HashSet<i64>,
+    ) -> Result<Option<i64>, RuntimeClientError> {
+        self.consume_once_with_epoch(after_seq, output, &self.source_epoch)
+            .await
+    }
+
+    async fn consume_once_with_epoch(
+        &self,
+        after_seq: Option<i64>,
+        output: &mpsc::Sender<SourceEvent>,
+        source_epoch: &str,
     ) -> Result<Option<i64>, RuntimeClientError> {
         let mut last_seq = after_seq;
         let url = self.client.endpoint(&format!(
@@ -162,13 +259,13 @@ impl RuntimeSseFanIn {
                         return Ok(last_seq);
                     }
                 }
-                if !seen_source_seqs.insert(source_seq) {
+                if last_seq.is_some_and(|previous| source_seq <= previous) {
                     continue;
                 }
                 last_seq = Some(source_seq);
                 let source_event = SourceEvent::from_runtime_event(
                     self.client.source_id().to_string(),
-                    self.source_epoch.clone(),
+                    source_epoch.to_string(),
                     runtime_event,
                 );
                 self.transition(SourceHealthState::Live, Some(source_seq), None);
@@ -188,6 +285,30 @@ impl RuntimeSseFanIn {
     ) {
         let mut health = self.health_tx.borrow().clone();
         health.transition(state, last_source_seq, error);
+        #[cfg(test)]
+        self.health_history
+            .lock()
+            .expect("health history")
+            .push(state);
+        self.health_tx.send_replace(health);
+    }
+
+    fn transition_epoch(
+        &self,
+        source_epoch: String,
+        state: SourceHealthState,
+        last_source_seq: Option<i64>,
+        error: Option<String>,
+    ) {
+        let mut health = self.health_tx.borrow().clone();
+        health.source_epoch = source_epoch;
+        health.last_source_seq = None;
+        health.transition(state, last_source_seq, error);
+        #[cfg(test)]
+        self.health_history
+            .lock()
+            .expect("health history")
+            .push(state);
         self.health_tx.send_replace(health);
     }
 }
@@ -255,6 +376,7 @@ impl SseParser {
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -264,7 +386,7 @@ mod tests {
     use axum::http::{header, HeaderMap};
     use axum::response::sse::{Event, Sse};
     use axum::routing::get;
-    use axum::Router;
+    use axum::{Json, Router};
     use runtime_core::{RuntimeEventCriticality, RuntimeEventScope};
     use serde::Deserialize;
     use serde_json::json;
@@ -294,14 +416,12 @@ mod tests {
         .expect("client");
         let fan_in = RuntimeSseFanIn::new(client, "epoch-test", RuntimeSseFanInConfig::default());
         let (tx, mut rx) = mpsc::channel(8);
-        let mut seen = HashSet::new();
-
         let first = fan_in
-            .consume_once(Some(1), &tx, &mut seen)
+            .consume_once(Some(1), &tx)
             .await
             .expect("first consume");
         let second = fan_in
-            .consume_once(first, &tx, &mut seen)
+            .consume_once(first, &tx)
             .await
             .expect("second consume");
         drop(tx);
@@ -334,9 +454,7 @@ mod tests {
         .expect("client");
         let fan_in = RuntimeSseFanIn::new(client, "epoch-test", RuntimeSseFanInConfig::default());
         let (tx, mut rx) = mpsc::channel(8);
-        let mut seen = HashSet::new();
-
-        let decode_error = fan_in.consume_once(None, &tx, &mut seen).await;
+        let decode_error = fan_in.consume_once(None, &tx).await;
         assert!(matches!(decode_error, Err(RuntimeClientError::Json(_))));
         fan_in.transition(
             SourceHealthState::Offline,
@@ -346,7 +464,7 @@ mod tests {
         fan_in.transition(SourceHealthState::Replaying, None, None);
 
         let cursor = fan_in
-            .consume_once(None, &tx, &mut seen)
+            .consume_once(None, &tx)
             .await
             .expect("reconnect consume");
         drop(tx);
@@ -359,6 +477,214 @@ mod tests {
         assert_eq!(state.sessions["sess_live"].provider, "codex");
         assert_eq!(fan_in.health().state, SourceHealthState::Live);
         assert_eq!(*calls.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn reconnect_loop_eof_is_stale_then_replaying_without_cursor_loss() {
+        let addr = spawn_reconnect_sequence_mock(vec![vec![1], vec![2]]).await;
+        let fan_in = reconnecting_fan_in(addr, Duration::from_secs(1));
+        let (tx, mut rx) = mpsc::channel(8);
+        let task = fan_in.clone().spawn(Some(0), tx);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while fan_in
+                .health_history()
+                .iter()
+                .filter(|state| **state == SourceHealthState::Replaying)
+                .count()
+                < 2
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("second replay");
+        task.abort();
+        assert_eq!(rx.recv().await.expect("first row").source_seq, 1);
+        let history = fan_in.health_history();
+        assert!(history.windows(3).any(|states| states
+            == [
+                SourceHealthState::Live,
+                SourceHealthState::Stale,
+                SourceHealthState::Replaying,
+            ]));
+        assert_eq!(fan_in.health().last_source_seq, Some(1));
+    }
+
+    #[tokio::test]
+    async fn reconnect_loop_stale_timeout_replays_without_panicking() {
+        let addr = spawn_stale_stream_mock().await;
+        let fan_in = reconnecting_fan_in(addr, Duration::from_millis(15));
+        let (tx, _rx) = mpsc::channel(8);
+        let task = fan_in.clone().spawn(Some(7), tx);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let history = fan_in.health_history();
+                if history.windows(2).any(|states| {
+                    states == [SourceHealthState::Stale, SourceHealthState::Replaying]
+                }) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stale reconnect");
+        task.abort();
+        assert_eq!(fan_in.health().last_source_seq, Some(7));
+    }
+
+    #[tokio::test]
+    async fn reconnect_loop_gap_replays_from_last_contiguous_cursor() {
+        let addr = spawn_reconnect_sequence_mock(vec![vec![1, 3], vec![2, 3]]).await;
+        let fan_in = reconnecting_fan_in(addr, Duration::from_secs(1));
+        let (tx, mut rx) = mpsc::channel(8);
+        let task = fan_in.clone().spawn(Some(0), tx);
+        let rows = tokio::time::timeout(Duration::from_secs(1), async {
+            let mut rows = Vec::new();
+            while rows.len() < 3 {
+                rows.push(rx.recv().await.expect("gap replay row").source_seq);
+            }
+            rows
+        })
+        .await
+        .expect("gap filled");
+        task.abort();
+        assert_eq!(rows, vec![1, 2, 3]);
+        assert_eq!(fan_in.health().last_source_seq, Some(3));
+        let history = fan_in.health_history();
+        assert!(history.windows(2).any(
+            |states| states == [SourceHealthState::GapDetected, SourceHealthState::Replaying,]
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejected_epoch_install_retries_and_resumes_from_latest_acknowledged_watermark() {
+        let bootstrap_calls = Arc::new(AtomicUsize::new(0));
+        let calls = bootstrap_calls.clone();
+        let bootstrap = move || {
+            let calls = calls.clone();
+            async move {
+                let call = calls.fetch_add(1, Ordering::SeqCst);
+                let (epoch, watermark) = if call == 0 {
+                    ("epoch-b", 1)
+                } else {
+                    ("epoch-c", 2)
+                };
+                Json(json!({
+                    "source_epoch": epoch, "high_watermark": watermark,
+                    "records": { "sessions": [], "approvals": [], "teams": [],
+                        "team_members": [], "team_messages": [], "team_deliveries": [],
+                        "managed_worktrees": [], "managed_worktree_claims": [], "processes": [] }
+                }))
+            }
+        };
+        let stream = || async {
+            let payload = serde_json::to_string(&runtime_event(3)).unwrap();
+            Sse::new(tokio_stream::iter(vec![Ok::<_, std::convert::Infallible>(
+                Event::default().id("3").data(payload),
+            )]))
+        };
+        let app = Router::new()
+            .route("/v1/bootstrap", get(bootstrap))
+            .route("/v1/events/stream", get(stream));
+        let addr = serve_reconnect_router(app).await;
+        let fan_in = reconnecting_fan_in(addr, Duration::from_secs(1));
+        let mut changes = fan_in.subscribe_epoch_changes();
+        let acknowledger = tokio::spawn(async move {
+            let first = changes.recv().await.expect("epoch B change");
+            assert_eq!(first.source_epoch, "epoch-b");
+            first.reject();
+            let second = changes.recv().await.expect("epoch C change");
+            assert_eq!(second.source_epoch, "epoch-c");
+            second.acknowledge("epoch-c".into(), 2);
+        });
+        let (tx, mut rx) = mpsc::channel(8);
+        let task = fan_in.clone().spawn(Some(9), tx);
+        let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("latest epoch event")
+            .expect("event");
+        task.abort();
+        acknowledger.await.unwrap();
+        assert_eq!(event.source_epoch, "epoch-c");
+        assert_eq!(event.source_seq, 3);
+        assert_eq!(fan_in.health().last_source_seq, Some(3));
+    }
+
+    fn reconnecting_fan_in(addr: SocketAddr, stale_after: Duration) -> RuntimeSseFanIn {
+        let client = GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
+            "local",
+            format!("http://{addr}"),
+            None,
+        ))
+        .expect("client");
+        RuntimeSseFanIn::new(
+            client,
+            "epoch-test",
+            RuntimeSseFanInConfig {
+                reconnect_delay: Duration::from_millis(15),
+                stale_after,
+                ..RuntimeSseFanInConfig::default()
+            },
+        )
+    }
+
+    async fn spawn_reconnect_sequence_mock(sequences: Vec<Vec<i64>>) -> SocketAddr {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let stream = move || {
+            let calls = calls.clone();
+            let sequences = sequences.clone();
+            async move {
+                let call = calls.fetch_add(1, Ordering::SeqCst);
+                let rows = sequences
+                    .get(call)
+                    .cloned()
+                    .or_else(|| sequences.last().cloned())
+                    .unwrap_or_default();
+                let stream = tokio_stream::iter(rows.into_iter().map(|row_id| {
+                    let payload = serde_json::to_string(&runtime_event(row_id)).unwrap();
+                    Ok::<_, std::convert::Infallible>(
+                        Event::default().id(row_id.to_string()).data(payload),
+                    )
+                }));
+                Sse::new(stream)
+            }
+        };
+        let app = Router::new()
+            .route("/v1/bootstrap", get(reconnect_bootstrap))
+            .route("/v1/events/stream", get(stream));
+        serve_reconnect_router(app).await
+    }
+
+    async fn spawn_stale_stream_mock() -> SocketAddr {
+        let stream = || async {
+            Sse::new(tokio_stream::pending::<
+                Result<Event, std::convert::Infallible>,
+            >())
+        };
+        let app = Router::new()
+            .route("/v1/bootstrap", get(reconnect_bootstrap))
+            .route("/v1/events/stream", get(stream));
+        serve_reconnect_router(app).await
+    }
+
+    async fn reconnect_bootstrap() -> Json<serde_json::Value> {
+        Json(json!({
+            "source_epoch": "epoch-test",
+            "high_watermark": 0,
+            "records": {
+                "sessions": [], "approvals": [], "teams": [], "team_members": [],
+                "team_messages": [], "team_deliveries": [], "managed_worktrees": [],
+                "managed_worktree_claims": [], "processes": []
+            }
+        }))
+    }
+
+    async fn serve_reconnect_router(app: Router) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock");
+        let addr = listener.local_addr().expect("mock addr");
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("mock server") });
+        addr
     }
 
     async fn spawn_decode_then_session_mock(calls: Arc<Mutex<usize>>) -> SocketAddr {

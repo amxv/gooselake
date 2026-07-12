@@ -1,4 +1,4 @@
-use crate::{RuntimeError, SendTurnInput, TeamDeliveryRecord};
+use crate::{RuntimeError, RuntimeRecordMutation, SendTurnInput, TeamDeliveryRecord};
 
 use super::{
     build_injected_input, is_terminal_status, is_valid_transition, normalize_policy, now_ms,
@@ -255,13 +255,13 @@ impl RuntimeTeamCommsService {
         };
 
         if let Some(delivery) = maybe_delivery {
-            self.store.upsert_team_delivery(&delivery)?;
             let _ = self
-                .append_team_event(
+                .append_team_event_with_mutations(
                     delivery.team_id.as_str(),
                     "team_delivery.injected",
                     serde_json::json!({ "delivery": delivery }),
                     Some(delivery.recipient_agent_id.clone()),
+                    &[RuntimeRecordMutation::TeamDelivery(delivery.clone())],
                 )
                 .await;
         }
@@ -314,8 +314,6 @@ impl RuntimeTeamCommsService {
             delivery.clone()
         };
 
-        self.store.upsert_team_delivery(&updated)?;
-
         let kind = match next_status {
             DELIVERY_STATUS_PENDING => "team_delivery.pending",
             DELIVERY_STATUS_DEFERRED => "team_delivery.deferred",
@@ -326,7 +324,7 @@ impl RuntimeTeamCommsService {
             _ => "team_delivery.updated",
         };
         let _ = self
-            .append_team_event(
+            .append_team_event_with_mutations(
                 updated.team_id.as_str(),
                 kind,
                 serde_json::json!({
@@ -334,6 +332,7 @@ impl RuntimeTeamCommsService {
                     "trigger": format!("{:?}", trigger).to_ascii_lowercase(),
                 }),
                 Some(current.recipient_agent_id.clone()),
+                &[RuntimeRecordMutation::TeamDelivery(updated.clone())],
             )
             .await;
 

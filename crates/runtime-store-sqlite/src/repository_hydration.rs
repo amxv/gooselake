@@ -12,12 +12,13 @@ impl SqliteRuntimeRepository {
     pub fn hydrate_runtime_state(&self) -> Result<RuntimeHydratedState, RuntimeError> {
         let connection = open_connection(&self.database_path)?;
 
-        self.hydrate_runtime_state_from_connection(&connection)
+        self.hydrate_runtime_state_from_connection(&connection, true)
     }
 
     pub(crate) fn hydrate_runtime_state_from_connection(
         &self,
         connection: &rusqlite::Connection,
+        include_internal_records: bool,
     ) -> Result<RuntimeHydratedState, RuntimeError> {
         let sessions = {
             let mut statement = connection
@@ -56,7 +57,7 @@ impl SqliteRuntimeRepository {
             collect_rows(rows)?
         };
 
-        let turns = {
+        let turns = if include_internal_records {
             let mut statement = connection
                 .prepare(
                     "SELECT id, session_id, provider_turn_ref, status, input_json, source,
@@ -84,6 +85,8 @@ impl SqliteRuntimeRepository {
                 })
                 .map_err(|error| db_error("failed running turn hydration query", error))?;
             collect_rows(rows)?
+        } else {
+            Vec::new()
         };
 
         let approvals = {
@@ -300,7 +303,7 @@ impl SqliteRuntimeRepository {
             collect_rows(rows)?
         };
 
-        let team_operation_journal = {
+        let team_operation_journal = if include_internal_records {
             let mut statement = connection
                 .prepare(
                     "SELECT operation_id, team_id, kind, stage, payload_json, created_at, updated_at
@@ -329,9 +332,11 @@ impl SqliteRuntimeRepository {
                     )
                 })?;
             collect_rows(rows)?
+        } else {
+            Vec::new()
         };
 
-        let team_operation_diagnostics = {
+        let team_operation_diagnostics = if include_internal_records {
             let mut statement = connection
                 .prepare(
                     "SELECT id, operation_id, team_id, code, message, payload_json, created_at
@@ -363,6 +368,8 @@ impl SqliteRuntimeRepository {
                     )
                 })?;
             collect_rows(rows)?
+        } else {
+            Vec::new()
         };
 
         let processes = {
@@ -397,7 +404,7 @@ impl SqliteRuntimeRepository {
             collect_rows(rows)?
         };
 
-        let credentials = {
+        let credentials = if include_internal_records {
             let mut statement = connection
                 .prepare(
                     "SELECT id, provider, profile, kind, encrypted_secret, metadata_json,
@@ -421,6 +428,8 @@ impl SqliteRuntimeRepository {
                 })
                 .map_err(|error| db_error("failed running credential hydration query", error))?;
             collect_rows(rows)?
+        } else {
+            Vec::new()
         };
 
         Ok(RuntimeHydratedState {

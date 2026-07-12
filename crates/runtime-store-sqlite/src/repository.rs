@@ -1,33 +1,59 @@
 use std::path::PathBuf;
 
-use runtime_core::{NewRuntimeEvent, RuntimeError, RuntimeEventRecord, RuntimeEventScope};
+use runtime_core::{
+    NewRuntimeEvent, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeRecordMutation,
+};
 use rusqlite::{params, TransactionBehavior};
 
 use crate::db::{
-    apply_schema, collect_rows, db_error, fetch_runtime_event_by_event_id,
-    initialize_source_identity, json_to_string, open_connection, runtime_event_from_row,
+    apply_schema, checkpoint_source_identity_at, collect_rows, db_error,
+    fetch_runtime_event_by_event_id, initialize_source_identity, json_to_string, open_connection,
+    runtime_event_from_row,
 };
 
 #[derive(Debug, Clone)]
 pub struct SqliteRuntimeRepository {
     pub(crate) database_path: PathBuf,
+    pub(crate) authority_root: Option<PathBuf>,
 }
 
 impl SqliteRuntimeRepository {
     pub fn new(database_path: PathBuf) -> Self {
-        Self { database_path }
+        Self {
+            database_path,
+            authority_root: None,
+        }
+    }
+
+    pub fn new_with_authority_root(database_path: PathBuf, authority_root: PathBuf) -> Self {
+        Self {
+            database_path,
+            authority_root: Some(authority_root),
+        }
     }
 
     pub fn initialize_schema(&self) -> Result<(), RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         apply_schema(&mut connection)?;
-        initialize_source_identity(&mut connection, &self.database_path)?;
+        initialize_source_identity(
+            &mut connection,
+            &self.database_path,
+            self.authority_root.as_deref(),
+        )?;
         Ok(())
     }
 
     pub fn append_runtime_event(
         &self,
         event: &NewRuntimeEvent,
+    ) -> Result<RuntimeEventRecord, RuntimeError> {
+        self.append_runtime_event_with_mutations(event, &[])
+    }
+
+    pub fn append_runtime_event_with_mutations(
+        &self,
+        event: &NewRuntimeEvent,
+        mutations: &[RuntimeRecordMutation],
     ) -> Result<RuntimeEventRecord, RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         let transaction = connection
@@ -40,11 +66,26 @@ impl SqliteRuntimeRepository {
             })?;
 
         if let Some(existing) = fetch_runtime_event_by_event_id(&transaction, &event.event_id)? {
+            let high_watermark = transaction
+                .query_row(
+                    "SELECT COALESCE(MAX(id), 0) FROM runtime_events",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| db_error("failed reading idempotent event watermark", error))?;
+            checkpoint_source_identity_at(
+                &transaction,
+                &self.database_path,
+                self.authority_root.as_deref(),
+                high_watermark,
+            )?;
             transaction
                 .commit()
                 .map_err(|error| db_error("failed committing idempotent event append", error))?;
             return Ok(existing);
         }
+
+        Self::apply_runtime_mutations_on(&transaction, mutations)?;
 
         let next_seq = transaction
             .query_row(
@@ -78,11 +119,17 @@ impl SqliteRuntimeRepository {
                 ],
             )
             .map_err(|error| db_error("failed inserting runtime event", error))?;
-
         let inserted =
             fetch_runtime_event_by_event_id(&transaction, &event.event_id)?.ok_or_else(|| {
                 RuntimeError::Bootstrap("inserted event missing after insert".to_string())
             })?;
+
+        checkpoint_source_identity_at(
+            &transaction,
+            &self.database_path,
+            self.authority_root.as_deref(),
+            inserted.row_id,
+        )?;
 
         transaction
             .commit()

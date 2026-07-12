@@ -4,7 +4,7 @@ use runtime_core::{
     TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
     TurnRecord,
 };
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
 use crate::db::{
@@ -15,6 +15,13 @@ use crate::SqliteRuntimeRepository;
 impl SqliteRuntimeRepository {
     pub fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        Self::upsert_session_on(&connection, record)
+    }
+
+    pub(crate) fn upsert_session_on(
+        connection: &Connection,
+        record: &SessionRecord,
+    ) -> Result<(), RuntimeError> {
         connection
             .execute(
                 "INSERT INTO sessions (
@@ -64,6 +71,13 @@ impl SqliteRuntimeRepository {
 
     pub fn upsert_turn(&self, record: &TurnRecord) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        Self::upsert_turn_on(&connection, record)
+    }
+
+    pub(crate) fn upsert_turn_on(
+        connection: &Connection,
+        record: &TurnRecord,
+    ) -> Result<(), RuntimeError> {
         connection
             .execute(
                 "INSERT INTO turns (
@@ -99,6 +113,13 @@ impl SqliteRuntimeRepository {
 
     pub fn upsert_approval(&self, record: &ApprovalRecord) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        Self::upsert_approval_on(&connection, record)
+    }
+
+    pub(crate) fn upsert_approval_on(
+        connection: &Connection,
+        record: &ApprovalRecord,
+    ) -> Result<(), RuntimeError> {
         connection
             .execute(
                 "INSERT INTO approvals (
@@ -133,6 +154,13 @@ impl SqliteRuntimeRepository {
 
     pub fn upsert_team(&self, record: &TeamRecord) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        Self::upsert_team_on(&connection, record)
+    }
+
+    pub(crate) fn upsert_team_on(
+        connection: &Connection,
+        record: &TeamRecord,
+    ) -> Result<(), RuntimeError> {
         connection
             .execute(
                 "INSERT INTO teams (id, name, lead_agent_id, created_by, created_at, updated_at, deleted_at)
@@ -159,6 +187,13 @@ impl SqliteRuntimeRepository {
 
     pub fn upsert_team_member(&self, record: &TeamMemberRecord) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        Self::upsert_team_member_on(&connection, record)
+    }
+
+    pub(crate) fn upsert_team_member_on(
+        connection: &Connection,
+        record: &TeamMemberRecord,
+    ) -> Result<(), RuntimeError> {
         connection
             .execute(
                 "INSERT INTO team_members (
@@ -189,6 +224,14 @@ impl SqliteRuntimeRepository {
 
     pub fn delete_team_member(&self, team_id: &str, agent_id: &str) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        Self::delete_team_member_on(&connection, team_id, agent_id)
+    }
+
+    pub(crate) fn delete_team_member_on(
+        connection: &Connection,
+        team_id: &str,
+        agent_id: &str,
+    ) -> Result<(), RuntimeError> {
         connection
             .execute(
                 "DELETE FROM team_members
@@ -204,9 +247,19 @@ impl SqliteRuntimeRepository {
         let transaction = connection
             .transaction()
             .map_err(|error| db_error("failed to start team message upsert transaction", error))?;
+        Self::upsert_team_message_on(&transaction, record)?;
+        transaction
+            .commit()
+            .map_err(|error| db_error("failed committing team message upsert", error))?;
+        Ok(())
+    }
 
+    pub(crate) fn upsert_team_message_on(
+        connection: &Connection,
+        record: &TeamMessageRecord,
+    ) -> Result<(), RuntimeError> {
         if let Some(idempotency_key) = record.idempotency_key.as_deref() {
-            let existing_id: Option<String> = transaction
+            let existing_id: Option<String> = connection
                 .query_row(
                     "SELECT id
                      FROM team_messages
@@ -231,7 +284,7 @@ impl SqliteRuntimeRepository {
                 })?;
 
             if let Some(existing_id) = existing_id {
-                transaction
+                connection
                     .execute(
                         "UPDATE team_messages
                          SET team_id = ?2,
@@ -266,14 +319,11 @@ impl SqliteRuntimeRepository {
                     .map_err(|error| {
                         db_error("failed updating team message by idempotency key", error)
                     })?;
-                transaction.commit().map_err(|error| {
-                    db_error("failed committing team message logical upsert", error)
-                })?;
                 return Ok(());
             }
         }
 
-        transaction
+        connection
             .execute(
                 "INSERT INTO team_messages (
                     id, team_id, scope, sender_agent_id, recipient_agent_ids_json,
@@ -310,14 +360,18 @@ impl SqliteRuntimeRepository {
                 ],
             )
             .map_err(|error| db_error("failed upserting team message", error))?;
-        transaction
-            .commit()
-            .map_err(|error| db_error("failed committing team message upsert", error))?;
         Ok(())
     }
 
     pub fn upsert_team_delivery(&self, record: &TeamDeliveryRecord) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        Self::upsert_team_delivery_on(&connection, record)
+    }
+
+    pub(crate) fn upsert_team_delivery_on(
+        connection: &Connection,
+        record: &TeamDeliveryRecord,
+    ) -> Result<(), RuntimeError> {
         connection
             .execute(
                 "INSERT INTO team_deliveries (
@@ -366,8 +420,18 @@ impl SqliteRuntimeRepository {
         let transaction = connection.transaction().map_err(|error| {
             db_error("failed to start managed worktree upsert transaction", error)
         })?;
+        Self::upsert_managed_worktree_on(&transaction, record)?;
+        transaction
+            .commit()
+            .map_err(|error| db_error("failed committing managed worktree upsert", error))?;
+        Ok(())
+    }
 
-        let existing_id: Option<String> = transaction
+    pub(crate) fn upsert_managed_worktree_on(
+        connection: &Connection,
+        record: &ManagedWorktreeRecord,
+    ) -> Result<(), RuntimeError> {
+        let existing_id: Option<String> = connection
             .query_row(
                 "SELECT id
                  FROM managed_worktrees
@@ -381,7 +445,7 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed querying managed worktree by identity key", error))?;
 
         if let Some(existing_id) = existing_id {
-            transaction
+            connection
                 .execute(
                     "UPDATE managed_worktrees
                      SET repo_root = ?2,
@@ -414,13 +478,10 @@ impl SqliteRuntimeRepository {
                 .map_err(|error| {
                     db_error("failed updating managed worktree by identity key", error)
                 })?;
-            transaction.commit().map_err(|error| {
-                db_error("failed committing managed worktree logical upsert", error)
-            })?;
             return Ok(());
         }
 
-        transaction
+        connection
             .execute(
                 "INSERT INTO managed_worktrees (
                     id, repo_root, worktree_root, worktree_cwd, branch_name, worktree_name,
@@ -455,9 +516,6 @@ impl SqliteRuntimeRepository {
                 ],
             )
             .map_err(|error| db_error("failed upserting managed worktree", error))?;
-        transaction
-            .commit()
-            .map_err(|error| db_error("failed committing managed worktree upsert", error))?;
         Ok(())
     }
 
@@ -466,6 +524,13 @@ impl SqliteRuntimeRepository {
         record: &ManagedWorktreeClaimRecord,
     ) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        Self::upsert_managed_worktree_claim_on(&connection, record)
+    }
+
+    pub(crate) fn upsert_managed_worktree_claim_on(
+        connection: &Connection,
+        record: &ManagedWorktreeClaimRecord,
+    ) -> Result<(), RuntimeError> {
         connection
             .execute(
                 "INSERT INTO managed_worktree_claims (
@@ -489,6 +554,13 @@ impl SqliteRuntimeRepository {
 
     pub fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        Self::upsert_process_on(&connection, record)
+    }
+
+    pub(crate) fn upsert_process_on(
+        connection: &Connection,
+        record: &ProcessRecord,
+    ) -> Result<(), RuntimeError> {
         connection
             .execute(
                 "INSERT INTO processes (

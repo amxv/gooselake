@@ -661,7 +661,19 @@ impl RuntimeWorktreeService {
                 released_at: Some(now_ms()),
                 ..claim.clone()
             };
-            if let Err(error) = self.store.upsert_managed_worktree_claim(&released) {
+            if let Err(error) = self
+                .append_worktree_event_with_mutations(
+                    released.worktree_id.as_str(),
+                    "worktree.released",
+                    serde_json::json!({ "claim": released }),
+                    Some(released.session_id.clone()),
+                    Some(request.team_id.clone()),
+                    &[runtime_core::RuntimeRecordMutation::ManagedWorktreeClaim(
+                        released.clone(),
+                    )],
+                )
+                .await
+            {
                 let diag = self.store.append_team_operation_diagnostic(
                     None,
                     Some(request.team_id.as_str()),

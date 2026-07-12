@@ -9,11 +9,14 @@ pub(super) struct EventReplayQuery {
 pub(super) async fn source_bootstrap(
     State(state): State<AppState>,
 ) -> Result<Json<runtime_core::RuntimeSourceBootstrap>, ApiError> {
-    let bootstrap = state
-        .app
-        .services
-        .store
-        .source_bootstrap()
+    let store = state.app.services.store.clone();
+    let bootstrap = tokio::task::spawn_blocking(move || store.source_bootstrap())
+        .await
+        .map_err(|error| {
+            ApiError::from(runtime_core::RuntimeError::Bootstrap(format!(
+                "source bootstrap worker failed: {error}"
+            )))
+        })?
         .map_err(ApiError::from)?;
     Ok(Json(bootstrap))
 }

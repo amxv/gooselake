@@ -112,13 +112,33 @@ impl RuntimeProcessManager {
         kind: &str,
         criticality: RuntimeEventCriticality,
         payload: Value,
-    ) {
+    ) -> Result<(), RuntimeError> {
+        self.append_process_event_with_mutations(
+            process_id,
+            session_id,
+            kind,
+            criticality,
+            payload,
+            &[],
+        )
+        .await
+    }
+
+    async fn append_process_event_with_mutations(
+        &self,
+        process_id: &str,
+        session_id: Option<String>,
+        kind: &str,
+        criticality: RuntimeEventCriticality,
+        payload: Value,
+        mutations: &[runtime_core::RuntimeRecordMutation],
+    ) -> Result<(), RuntimeError> {
         let event_id = format!(
             "evt_proc_{}_{}",
             process_id,
             self.next_event_id.fetch_add(1, Ordering::Relaxed)
         );
-        if let Ok(record) = self.store.append_runtime_event(&NewRuntimeEvent {
+        let event = NewRuntimeEvent {
             event_id,
             scope: RuntimeEventScope::Process,
             scope_id: process_id.to_string(),
@@ -131,9 +151,12 @@ impl RuntimeProcessManager {
             provider: None,
             provider_seq: None,
             created_at: now_ms(),
-        }) {
-            let _ = self.event_tx.send(record);
-        }
+        };
+        let record = self
+            .store
+            .append_runtime_event_with_mutations(&event, mutations)?;
+        let _ = self.event_tx.send(record);
+        Ok(())
     }
 
     async fn process_from_id(&self, process_id: &str) -> Result<Arc<ManagedProcess>, RuntimeError> {
@@ -388,14 +411,14 @@ impl RuntimeProcessManager {
             Err(error) => ("failed".to_string(), None, error.raw_os_error()),
         };
 
-        {
+        let updated_record = {
             let mut record = process.record.lock().await;
             record.status = status.clone();
             record.exit_code = exit_code.map(i64::from);
             record.signal = signal.map(i64::from);
             record.ended_at = Some(now_ms());
-            let _ = self.store.upsert_process(&record);
-        }
+            record.clone()
+        };
 
         let event_kind = match status.as_str() {
             "completed" => "process.completed",
@@ -404,7 +427,7 @@ impl RuntimeProcessManager {
             _ => "process.failed",
         };
 
-        self.append_process_event(
+        self.append_process_event_with_mutations(
             process_id.as_str(),
             session_id,
             event_kind,
@@ -415,8 +438,10 @@ impl RuntimeProcessManager {
                 "exit_code": exit_code,
                 "signal": signal,
             }),
+            &[runtime_core::RuntimeRecordMutation::Process(updated_record)],
         )
-        .await;
+        .await
+        .ok();
     }
 
     async fn pump_stream<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
@@ -499,14 +524,10 @@ impl RuntimeProcessManager {
                             "truncated": truncated_now,
                         }),
                     )
-                    .await;
+                    .await
+                    .ok();
             }
         }
-    }
-
-    async fn teardown_untracked_child(child: &mut tokio::process::Child) {
-        let _ = child.start_kill();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait()).await;
     }
 }
 
@@ -576,7 +597,7 @@ impl ProcessManager for RuntimeProcessManager {
         proc.stdout(std::process::Stdio::piped());
         proc.stderr(std::process::Stdio::piped());
 
-        let mut child = proc
+        let child = proc
             .spawn()
             .map_err(|error| RuntimeError::Io(format!("failed to spawn process: {error}")))?;
 
@@ -599,29 +620,35 @@ impl ProcessManager for RuntimeProcessManager {
             timeout_ms: Some(request.timeout_ms.unwrap_or(self.config.default_timeout_ms) as i64),
         };
 
-        if let Err(error) = self.store.upsert_process(&record) {
-            Self::teardown_untracked_child(&mut child).await;
-            return Err(error);
-        }
-
-        let managed = Arc::new(ManagedProcess::new(record, Some(child)));
+        let managed = Arc::new(ManagedProcess::new(record.clone(), Some(child)));
         {
             let mut processes = self.processes.write().await;
             processes.insert(process_id.clone(), Arc::clone(&managed));
         }
 
-        self.append_process_event(
-            process_id.as_str(),
-            request.caller_session_id,
-            "process.started",
-            RuntimeEventCriticality::Critical,
-            json!({
-                "process_id": process_id,
-                "pid": pid,
-                "cwd": cwd,
-            }),
-        )
-        .await;
+        if let Err(error) = self
+            .append_process_event_with_mutations(
+                process_id.as_str(),
+                request.caller_session_id,
+                "process.started",
+                RuntimeEventCriticality::Critical,
+                json!({
+                    "process_id": process_id,
+                    "pid": pid,
+                    "cwd": cwd,
+                }),
+                &[runtime_core::RuntimeRecordMutation::Process(record)],
+            )
+            .await
+        {
+            self.processes.write().await.remove(process_id.as_str());
+            let mut child = managed.child.lock().await;
+            if let Some(mut child) = child.take() {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+            }
+            return Err(error);
+        }
 
         let manager = Arc::new(self.clone());
         tokio::spawn(async move {
@@ -782,7 +809,8 @@ impl ProcessManager for RuntimeProcessManager {
                     "process_id": record.id,
                 }),
             )
-            .await;
+            .await
+            .ok();
         }
 
         Ok(Self::detail_from_process(process.as_ref()).await)

@@ -984,5 +984,8 @@ fn redact_json(value: &Value) -> Value {
 }
 
 #[cfg(test)]
+#[path = "fake_source_epoch_tests.rs"]
+mod epoch_tests;
+#[cfg(test)]
 #[path = "fake_source_tests.rs"]
 mod tests;

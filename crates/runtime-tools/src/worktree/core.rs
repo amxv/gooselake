@@ -2,7 +2,7 @@ use std::path::Path;
 
 use runtime_core::{
     ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, RuntimeError,
-    RuntimeEventCriticality, RuntimeEventScope,
+    RuntimeEventCriticality, RuntimeEventScope, RuntimeRecordMutation,
 };
 use serde_json::Value;
 
@@ -60,6 +60,27 @@ impl RuntimeWorktreeService {
         session_id: Option<String>,
         team_id: Option<String>,
     ) {
+        self.append_worktree_event_with_mutations(
+            worktree_id,
+            kind,
+            payload,
+            session_id,
+            team_id,
+            &[],
+        )
+        .await
+        .ok();
+    }
+
+    pub(super) async fn append_worktree_event_with_mutations(
+        &self,
+        worktree_id: &str,
+        kind: &str,
+        payload: Value,
+        session_id: Option<String>,
+        team_id: Option<String>,
+        mutations: &[RuntimeRecordMutation],
+    ) -> Result<(), RuntimeError> {
         let event_id = format!(
             "evt_worktree_{}_{}_{}",
             worktree_id,
@@ -67,7 +88,7 @@ impl RuntimeWorktreeService {
             self.next_event_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
-        let _ = self.store.append_runtime_event(&NewRuntimeEvent {
+        let event = NewRuntimeEvent {
             event_id,
             scope: RuntimeEventScope::Worktree,
             scope_id: worktree_id.to_string(),
@@ -80,7 +101,10 @@ impl RuntimeWorktreeService {
             provider: None,
             provider_seq: None,
             created_at: now_ms(),
-        });
+        };
+        self.store
+            .append_runtime_event_with_mutations(&event, mutations)?;
+        Ok(())
     }
 
     pub(super) fn derive_unified_workspace_path(repo_root: &str) -> String {
@@ -252,15 +276,7 @@ impl RuntimeWorktreeService {
             created_at: now,
             updated_at: now,
         };
-        self.store.upsert_managed_worktree(&record)?;
-        let hydrated = self.store.hydrate_runtime_state()?;
-        self.worktree_by_identity(&hydrated, planned)
-            .ok_or_else(|| {
-                RuntimeError::InvalidState(format!(
-                    "managed worktree logical upsert did not persist identity for {}",
-                    planned.worktree_cwd
-                ))
-            })
+        Ok(record)
     }
 
     pub(super) fn get_worktree_from_hydrated(

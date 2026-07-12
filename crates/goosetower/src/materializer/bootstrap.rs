@@ -193,6 +193,7 @@ impl SourceBootstrap {
             Some(bootstrap.high_watermark),
             None,
         );
+        state.mark_bootstrap_watermark(bootstrap.high_watermark);
 
         state.mark_live();
         Ok(Self { state })

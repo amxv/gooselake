@@ -18,8 +18,8 @@ use state::{DeliveryAttemptTrigger, TeamCommsState};
 
 use crate::{
     NewRuntimeEvent, RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,
-    RuntimeSessionManager, RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMessageAck,
-    TeamMessageRecord, TeamWithMembers,
+    RuntimeRecordMutation, RuntimeSessionManager, RuntimeStore, SessionRecord, TeamDeliveryRecord,
+    TeamMessageAck, TeamMessageRecord, TeamWithMembers,
 };
 
 const DELIVERY_POLICY_NON_INTERRUPTING: &str = "non_interrupting";
@@ -244,7 +244,19 @@ impl RuntimeTeamCommsService {
         payload: Value,
         session_id: Option<String>,
     ) -> Result<RuntimeEventRecord, RuntimeError> {
-        self.store.append_runtime_event(&NewRuntimeEvent {
+        self.append_team_event_with_mutations(team_id, kind, payload, session_id, &[])
+            .await
+    }
+
+    async fn append_team_event_with_mutations(
+        &self,
+        team_id: &str,
+        kind: &str,
+        payload: Value,
+        session_id: Option<String>,
+        mutations: &[RuntimeRecordMutation],
+    ) -> Result<RuntimeEventRecord, RuntimeError> {
+        let event = NewRuntimeEvent {
             event_id: format!(
                 "evt_team_{}_{}_{}",
                 team_id,
@@ -262,7 +274,9 @@ impl RuntimeTeamCommsService {
             provider: None,
             provider_seq: None,
             created_at: now_ms(),
-        })
+        };
+        self.store
+            .append_runtime_event_with_mutations(&event, mutations)
     }
 
     fn allocate_team_id(&self, state: &TeamCommsState) -> String {
@@ -491,17 +505,20 @@ impl RuntimeTeamCommsService {
             (message, deliveries, "created".to_string())
         };
 
-        self.store.upsert_team_message(&message)?;
-        for delivery in &deliveries {
-            self.store.upsert_team_delivery(delivery)?;
-        }
-
         let _ = self
-            .append_team_event(
+            .append_team_event_with_mutations(
                 team_id,
                 "team_message.created",
                 serde_json::json!({ "message": message, "deliveries": deliveries }),
                 Some(normalized_sender),
+                &std::iter::once(RuntimeRecordMutation::TeamMessage(message.clone()))
+                    .chain(
+                        deliveries
+                            .iter()
+                            .cloned()
+                            .map(RuntimeRecordMutation::TeamDelivery),
+                    )
+                    .collect::<Vec<_>>(),
             )
             .await;
 

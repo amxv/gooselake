@@ -6,7 +6,8 @@ use crate::{
     ApprovalDecision, ApprovalRecord, ProviderApprovalResponseRequest,
     ProviderInterruptTurnRequest, ProviderKind, ProviderResumeSessionRequest,
     ProviderSendTurnRequest, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest,
-    RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, TurnRecord,
+    RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,
+    RuntimeRecordMutation, TurnRecord,
 };
 
 use super::helpers::{
@@ -99,18 +100,16 @@ impl RuntimeSessionManager {
                     failed_session.status = "ready".to_string();
                 }
                 failed_session.updated_at = now_ms();
-                self.store.upsert_turn(&failed_turn)?;
-                self.store.upsert_session(&failed_session)?;
                 {
                     let mut turns = self.turns.write().await;
-                    turns.insert(turn_id.clone(), failed_turn);
+                    turns.insert(turn_id.clone(), failed_turn.clone());
                 }
                 {
                     let mut sessions = self.sessions.write().await;
-                    sessions.insert(session_id.to_string(), failed_session);
+                    sessions.insert(session_id.to_string(), failed_session.clone());
                 }
                 let _ = self
-                    .append_event(
+                    .append_event_with_mutations(
                         RuntimeEventScope::Session,
                         session_id,
                         Some(session_id),
@@ -118,6 +117,10 @@ impl RuntimeSessionManager {
                         "turn.failed",
                         RuntimeEventCriticality::Critical,
                         serde_json::json!({ "error": error.to_string() }),
+                        &[
+                            RuntimeRecordMutation::Turn(failed_turn),
+                            RuntimeRecordMutation::Session(failed_session),
+                        ],
                     )
                     .await?;
                 return Err(error);
@@ -149,15 +152,13 @@ impl RuntimeSessionManager {
         updated_session.active_turn_id = Some(turn_id.clone());
         updated_session.updated_at = now;
 
-        self.store.upsert_turn(&turn)?;
-        self.store.upsert_session(&updated_session)?;
         {
             let mut turns = self.turns.write().await;
             turns.insert(turn_id.clone(), turn.clone());
         }
         {
             let mut sessions = self.sessions.write().await;
-            sessions.insert(session_id.to_string(), updated_session);
+            sessions.insert(session_id.to_string(), updated_session.clone());
         }
         if requires_approval {
             let approval_id =
@@ -176,13 +177,12 @@ impl RuntimeSessionManager {
                 created_at: now,
                 resolved_at: None,
             };
-            self.store.upsert_approval(&approval)?;
             {
                 let mut approvals = self.approvals.write().await;
-                approvals.insert(approval_id.clone(), approval);
+                approvals.insert(approval_id.clone(), approval.clone());
             }
             let _ = self
-                .append_event(
+                .append_event_with_mutations(
                     RuntimeEventScope::Session,
                     session_id,
                     Some(session_id),
@@ -192,11 +192,16 @@ impl RuntimeSessionManager {
                     serde_json::json!({
                         "approval_id": approval_id,
                     }),
+                    &[
+                        RuntimeRecordMutation::Turn(turn.clone()),
+                        RuntimeRecordMutation::Session(updated_session.clone()),
+                        RuntimeRecordMutation::Approval(approval.clone()),
+                    ],
                 )
                 .await?;
         } else {
             let _ = self
-                .append_event(
+                .append_event_with_mutations(
                     RuntimeEventScope::Session,
                     session_id,
                     Some(session_id),
@@ -204,6 +209,10 @@ impl RuntimeSessionManager {
                     "turn.started",
                     RuntimeEventCriticality::Critical,
                     serde_json::json!({}),
+                    &[
+                        RuntimeRecordMutation::Turn(turn.clone()),
+                        RuntimeRecordMutation::Session(updated_session.clone()),
+                    ],
                 )
                 .await?;
             self.spawn_wait_for_turn(provider_kind, session_id.to_string(), turn_id.clone());
@@ -305,12 +314,11 @@ impl RuntimeSessionManager {
         resolved.status = normalized_decision.as_str().to_string();
         resolved.response = input.payload.clone();
         resolved.resolved_at = Some(now_ms());
-        self.store.upsert_approval(&resolved)?;
         approvals.insert(approval_id.to_string(), resolved.clone());
         drop(approvals);
 
         let _ = self
-            .append_event(
+            .append_event_with_mutations(
                 RuntimeEventScope::Session,
                 session_id,
                 Some(session_id),
@@ -318,27 +326,29 @@ impl RuntimeSessionManager {
                 "approval.resolved",
                 RuntimeEventCriticality::Critical,
                 serde_json::json!({ "approval_id": approval_id }),
+                &[RuntimeRecordMutation::Approval(resolved.clone())],
             )
             .await?;
 
         if normalized_decision == ApprovalDecision::Accept {
             let mut turns = self.turns.write().await;
             let mut sessions = self.sessions.write().await;
+            let mut mutations = Vec::new();
             if let Some(turn) = turns.get_mut(&resolved.turn_id) {
                 turn.status = "in_progress".to_string();
                 turn.error = None;
-                self.store.upsert_turn(turn)?;
+                mutations.push(RuntimeRecordMutation::Turn(turn.clone()));
             }
             if let Some(session) = sessions.get_mut(session_id) {
                 session.status = "turn_running".to_string();
                 session.updated_at = now_ms();
-                self.store.upsert_session(session)?;
+                mutations.push(RuntimeRecordMutation::Session(session.clone()));
             }
             drop(sessions);
             drop(turns);
 
             let _ = self
-                .append_event(
+                .append_event_with_mutations(
                     RuntimeEventScope::Session,
                     session_id,
                     Some(session_id),
@@ -348,6 +358,7 @@ impl RuntimeSessionManager {
                     serde_json::json!({
                         "source": "approval.accepted",
                     }),
+                    &mutations,
                 )
                 .await?;
             self.spawn_wait_for_turn(
@@ -358,13 +369,14 @@ impl RuntimeSessionManager {
         } else {
             let mut turns = self.turns.write().await;
             let mut sessions = self.sessions.write().await;
+            let mut mutations = Vec::new();
             if let Some(turn) = turns.get_mut(&resolved.turn_id) {
                 turn.status = "interrupted".to_string();
                 turn.completed_at = Some(now_ms());
                 turn.error = Some(serde_json::json!({
                     "message": "approval declined",
                 }));
-                self.store.upsert_turn(turn)?;
+                mutations.push(RuntimeRecordMutation::Turn(turn.clone()));
             }
             if let Some(session) = sessions.get_mut(session_id) {
                 if session.active_turn_id.as_deref() == Some(resolved.turn_id.as_str()) {
@@ -374,12 +386,12 @@ impl RuntimeSessionManager {
                     session.status = "ready".to_string();
                 }
                 session.updated_at = now_ms();
-                self.store.upsert_session(session)?;
+                mutations.push(RuntimeRecordMutation::Session(session.clone()));
             }
             drop(sessions);
             drop(turns);
             let _ = self
-                .append_event(
+                .append_event_with_mutations(
                     RuntimeEventScope::Session,
                     session_id,
                     Some(session_id),
@@ -389,6 +401,7 @@ impl RuntimeSessionManager {
                     serde_json::json!({
                         "source": "approval.declined",
                     }),
+                    &mutations,
                 )
                 .await?;
         }
@@ -514,12 +527,29 @@ impl RuntimeSessionManager {
                 "conflicting terminal state for turn {} (stored={}, incoming={})",
                 result.turn_id, turn.status, incoming_status
             );
-            if let Some(session) = sessions.get_mut(&session_id) {
+            let mutation = if let Some(session) = sessions.get_mut(&session_id) {
                 session.status = "failed".to_string();
                 session.failure_code = Some("terminal_conflict".to_string());
                 session.failure_message = Some(conflict.clone());
                 session.updated_at = now_ms();
-                self.store.upsert_session(session)?;
+                Some(RuntimeRecordMutation::Session(session.clone()))
+            } else {
+                None
+            };
+            drop(sessions);
+            drop(turns);
+            if let Some(mutation) = mutation {
+                self.append_event_with_mutations(
+                    RuntimeEventScope::Session,
+                    session_id.as_str(),
+                    Some(session_id.as_str()),
+                    Some(result.turn_id.as_str()),
+                    "turn.terminal_conflict",
+                    RuntimeEventCriticality::Critical,
+                    serde_json::json!({"error": conflict.clone()}),
+                    &[mutation],
+                )
+                .await?;
             }
             return Err(RuntimeError::ProtocolViolation(conflict));
         }
@@ -528,7 +558,6 @@ impl RuntimeSessionManager {
         turn.completed_at = Some(now_ms());
         turn.usage = result.usage.clone();
         turn.error = result.error.clone();
-        self.store.upsert_turn(turn)?;
 
         let Some(session) = sessions.get_mut(&result.runtime_session_id) else {
             return Err(RuntimeError::NotFound(format!(
@@ -562,7 +591,10 @@ impl RuntimeSessionManager {
             }
         }
         session.updated_at = now_ms();
-        self.store.upsert_session(session)?;
+        let mutations = vec![
+            RuntimeRecordMutation::Turn(turn.clone()),
+            RuntimeRecordMutation::Session(session.clone()),
+        ];
 
         let event_kind = match result.status {
             ProviderTurnStatus::Completed => "turn.completed",
@@ -578,7 +610,7 @@ impl RuntimeSessionManager {
         drop(turns);
 
         let _ = self
-            .append_event(
+            .append_event_with_mutations(
                 RuntimeEventScope::Session,
                 result.runtime_session_id.as_str(),
                 Some(result.runtime_session_id.as_str()),
@@ -591,6 +623,7 @@ impl RuntimeSessionManager {
                     "error": result.error,
                     "assistant_text": assistant_text,
                 }),
+                &mutations,
             )
             .await?;
         Ok(())
@@ -603,12 +636,13 @@ impl RuntimeSessionManager {
         error: RuntimeError,
     ) -> Result<(), RuntimeError> {
         let mut turns = self.turns.write().await;
+        let mut mutations = Vec::new();
         if let Some(turn) = turns.get_mut(turn_id) {
             if !is_terminal_turn_status(turn.status.as_str()) {
                 turn.status = "failed".to_string();
                 turn.completed_at = Some(now_ms());
                 turn.error = Some(serde_json::json!({ "message": error.to_string() }));
-                self.store.upsert_turn(turn)?;
+                mutations.push(RuntimeRecordMutation::Turn(turn.clone()));
             }
         }
         drop(turns);
@@ -622,12 +656,12 @@ impl RuntimeSessionManager {
             session.failure_code = Some("provider_wait_failure".to_string());
             session.failure_message = Some(error.to_string());
             session.updated_at = now_ms();
-            self.store.upsert_session(session)?;
+            mutations.push(RuntimeRecordMutation::Session(session.clone()));
         }
         drop(sessions);
 
         let _ = self
-            .append_event(
+            .append_event_with_mutations(
                 RuntimeEventScope::Session,
                 session_id,
                 Some(session_id),
@@ -635,6 +669,7 @@ impl RuntimeSessionManager {
                 "provider.error",
                 RuntimeEventCriticality::Critical,
                 serde_json::json!({ "error": error.to_string() }),
+                &mutations,
             )
             .await?;
         Ok(())

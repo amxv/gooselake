@@ -3,7 +3,7 @@ use serde_json::Value;
 use crate::{
     ProviderAuthStatus, ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderKind,
     ProviderResumeSessionRequest, RuntimeError, RuntimeEventCriticality, RuntimeEventScope,
-    SessionRecord, TurnRecord,
+    RuntimeRecordMutation, SessionRecord, TurnRecord,
 };
 
 use super::helpers::now_ms;
@@ -58,7 +58,17 @@ impl RuntimeSessionManager {
         session.updated_at = now_ms();
         let updated = session.clone();
         drop(sessions);
-        self.store.upsert_session(&updated)?;
+        self.append_event_with_mutations(
+            RuntimeEventScope::Session,
+            session_id,
+            Some(session_id),
+            None,
+            "session.worktree_changed",
+            RuntimeEventCriticality::Critical,
+            serde_json::json!({ "worktree_id": updated.worktree_id }),
+            &[RuntimeRecordMutation::Session(updated.clone())],
+        )
+        .await?;
         Ok(updated)
     }
 
@@ -166,13 +176,12 @@ impl RuntimeSessionManager {
             failure_message: None,
         };
 
-        self.store.upsert_session(&record)?;
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(session_id.clone(), record.clone());
         }
         let _ = self
-            .append_event(
+            .append_event_with_mutations(
                 RuntimeEventScope::Session,
                 session_id.as_str(),
                 Some(session_id.as_str()),
@@ -180,6 +189,7 @@ impl RuntimeSessionManager {
                 "session.created",
                 RuntimeEventCriticality::Critical,
                 serde_json::json!({ "provider": record.provider }),
+                &[RuntimeRecordMutation::Session(record.clone())],
             )
             .await?;
         Ok(record)
@@ -273,13 +283,12 @@ impl RuntimeSessionManager {
             updated.status = "ready".to_string();
         }
         updated.updated_at = now_ms();
-        self.store.upsert_session(&updated)?;
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(session_id.to_string(), updated.clone());
         }
         let _ = self
-            .append_event(
+            .append_event_with_mutations(
                 RuntimeEventScope::Session,
                 session_id,
                 Some(session_id),
@@ -287,6 +296,7 @@ impl RuntimeSessionManager {
                 "session.resumed",
                 RuntimeEventCriticality::Critical,
                 serde_json::json!({}),
+                &[RuntimeRecordMutation::Session(updated.clone())],
             )
             .await?;
         Ok(updated)
@@ -303,14 +313,13 @@ impl RuntimeSessionManager {
         updated.closed_at = Some(now_ms());
         updated.updated_at = now_ms();
         updated.active_turn_id = None;
-        self.store.upsert_session(&updated)?;
 
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(session_id.to_string(), updated.clone());
         }
         let _ = self
-            .append_event(
+            .append_event_with_mutations(
                 RuntimeEventScope::Session,
                 session_id,
                 Some(session_id),
@@ -318,6 +327,7 @@ impl RuntimeSessionManager {
                 "session.closed",
                 RuntimeEventCriticality::Critical,
                 serde_json::json!({ "reason": reason }),
+                &[RuntimeRecordMutation::Session(updated.clone())],
             )
             .await?;
         Ok(updated)

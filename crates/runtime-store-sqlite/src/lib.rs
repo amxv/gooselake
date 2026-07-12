@@ -6,6 +6,7 @@ mod db;
 mod repository;
 mod repository_bootstrap;
 mod repository_hydration;
+mod repository_mutations;
 mod repository_upserts;
 mod schema;
 mod store;

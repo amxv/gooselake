@@ -561,10 +561,17 @@ impl GatewayState {
         let mut state = bootstrap.state;
         state.mark_discontinuity(reason.clone());
         let patch = state.transition_source_health(SourceHealthState::Live, None);
-        self.materialized
-            .write()
-            .await
-            .insert(source_id.to_string(), state);
+        let mut materialized = self.materialized.write().await;
+        if materialized.get(source_id).is_some_and(|current| {
+            current.source_epoch == state.source_epoch
+                && current.source_health.last_source_seq.unwrap_or(0)
+                    > state.source_health.last_source_seq.unwrap_or(0)
+        }) {
+            tracing::info!(source_id, "discarding stale snapshot resync bootstrap");
+            return Ok(());
+        }
+        materialized.insert(source_id.to_string(), state);
+        drop(materialized);
         self.metrics
             .snapshot_resync_count
             .fetch_add(1, Ordering::Relaxed);

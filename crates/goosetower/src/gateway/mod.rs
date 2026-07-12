@@ -235,7 +235,7 @@ impl GatewayState {
                 }
             };
             let fan_in = RuntimeSseFanIn::new(
-                client,
+                client.clone(),
                 source_epoch,
                 RuntimeSseFanInConfig {
                     replay_page_limit: self.config.replay.max_events_per_request,
@@ -249,6 +249,60 @@ impl GatewayState {
                 .await
                 .get(&source.source_id)
                 .and_then(|state| state.source_health.last_source_seq);
+            let gateway = Arc::clone(self);
+            let source_config = source.clone();
+            let epoch_client = client.clone();
+            let mut epoch_rx = fan_in.subscribe_epoch_changes();
+            handles.push(tokio::spawn(async move {
+                while let Ok(change) = epoch_rx.recv().await {
+                    match SourceBootstrap::from_runtime_client(
+                        &epoch_client,
+                        BootstrapOptions::default(),
+                    )
+                    .await
+                    {
+                        Ok(mut bootstrap)
+                            if bootstrap.state.source_epoch == change.source_epoch =>
+                        {
+                            bootstrap.state.apply_source_config(&source_config);
+                            let installed_cursor =
+                                bootstrap.state.source_health.last_source_seq.unwrap_or(0);
+                            gateway
+                                .materialized
+                                .write()
+                                .await
+                                .insert(source_config.source_id.clone(), bootstrap.state);
+                            gateway
+                                .record_audit(
+                                    "source.epoch_rebased",
+                                    Some(source_config.source_id.clone()),
+                                    json!({
+                                        "source_epoch": change.source_epoch,
+                                        "announced_high_watermark": change.high_watermark,
+                                        "installed_high_watermark": installed_cursor,
+                                    }),
+                                )
+                                .await;
+                            change.acknowledge(change.source_epoch.clone(), installed_cursor);
+                        }
+                        Ok(_) => {
+                            tracing::warn!(
+                                source_id = %source_config.source_id,
+                                "runtime epoch changed again during replacement bootstrap"
+                            );
+                            change.reject();
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                source_id = %source_config.source_id,
+                                error = %error,
+                                "replacement epoch bootstrap failed; stream remains paused"
+                            );
+                            change.reject();
+                        }
+                    }
+                }
+            }));
             handles.push(fan_in.clone().spawn(initial_cursor, tx.clone()));
 
             let gateway = Arc::clone(self);

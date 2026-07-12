@@ -1,4 +1,5 @@
 use super::*;
+use runtime_core::{WorktreeClaimRequest, WorktreeReleaseRequest, WorktreeService};
 
 #[tokio::test]
 async fn startup_repair_normalizes_identity_and_repairs_conflicting_claims() {
@@ -104,4 +105,92 @@ async fn startup_repair_normalizes_identity_and_repairs_conflicting_claims() {
         .filter(|row| !RuntimeWorktreeService::is_record_tombstoned(row))
         .collect::<Vec<_>>();
     assert_eq!(live_records.len(), 1);
+}
+
+#[tokio::test]
+async fn real_worktree_claim_and_release_leave_bootstrap_coherent() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp_dir.path().join("runtime.sqlite3"),
+    }));
+    store.initialize().await.unwrap();
+    store
+        .upsert_session(&SessionRecord {
+            id: "session_claim".into(),
+            provider: "codex".into(),
+            status: "idle".into(),
+            cwd: None,
+            model: None,
+            permission_mode: None,
+            system_prompt: None,
+            metadata: serde_json::json!({}),
+            provider_session_ref: None,
+            canonical_provider_session_ref: None,
+            active_turn_id: None,
+            worktree_id: None,
+            created_at: 1,
+            updated_at: 1,
+            closed_at: None,
+            failure_code: None,
+            failure_message: None,
+        })
+        .unwrap();
+    store
+        .upsert_managed_worktree(&ManagedWorktreeRecord {
+            id: "wt_claim".into(),
+            repo_root: "/tmp/repo".into(),
+            worktree_root: "/tmp/worktrees".into(),
+            worktree_cwd: "/tmp/worktrees/claim".into(),
+            branch_name: "gg/claim".into(),
+            worktree_name: "claim".into(),
+            unified_workspace_path: "tmp__repo".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: None,
+            created_by_operation_id: None,
+            created_at: 1,
+            updated_at: 1,
+        })
+        .unwrap();
+    let (runtime, team_comms) = build_runtime_and_team_comms(store.clone()).await;
+    let service = RuntimeWorktreeService::new(
+        store.clone(),
+        runtime,
+        team_comms,
+        WorktreeServiceConfig {
+            enabled: true,
+            root_dir: temp_dir.path().join("worktrees").display().to_string(),
+            init_script_path: ".agents/gg/worktree-init.sh".into(),
+            deletion_policy_default: "retain_on_last_claim".into(),
+        },
+    )
+    .unwrap();
+    service
+        .claim_worktree(WorktreeClaimRequest {
+            worktree_id: "wt_claim".into(),
+            session_id: "session_claim".into(),
+            claim_role: "owner".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .source_bootstrap()
+            .unwrap()
+            .records
+            .managed_worktree_claims
+            .len(),
+        1
+    );
+    service
+        .release_worktree(WorktreeReleaseRequest {
+            worktree_id: "wt_claim".into(),
+            session_id: "session_claim".into(),
+            cleanup_if_last_claim: Some(false),
+        })
+        .await
+        .unwrap();
+    let bootstrap = store.source_bootstrap().unwrap();
+    assert!(bootstrap.records.managed_worktree_claims[0]
+        .released_at
+        .is_some());
 }

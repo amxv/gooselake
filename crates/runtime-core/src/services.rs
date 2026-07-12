@@ -31,6 +31,21 @@ pub struct RuntimeSourceBootstrapRecords {
     pub processes: Vec<ProcessRecord>,
 }
 
+#[derive(Debug, Clone)]
+pub enum RuntimeRecordMutation {
+    Session(SessionRecord),
+    Turn(TurnRecord),
+    Approval(ApprovalRecord),
+    Team(TeamRecord),
+    TeamMember(TeamMemberRecord),
+    TeamMemberDelete { team_id: String, agent_id: String },
+    TeamMessage(TeamMessageRecord),
+    TeamDelivery(TeamDeliveryRecord),
+    ManagedWorktree(ManagedWorktreeRecord),
+    ManagedWorktreeClaim(ManagedWorktreeClaimRecord),
+    Process(ProcessRecord),
+}
+
 #[async_trait]
 pub trait RuntimeStore: Send + Sync {
     async fn initialize(&self) -> Result<(), RuntimeError>;
@@ -41,6 +56,35 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         event: &NewRuntimeEvent,
     ) -> Result<RuntimeEventRecord, RuntimeError>;
+
+    fn append_runtime_event_with_mutations(
+        &self,
+        event: &NewRuntimeEvent,
+        mutations: &[RuntimeRecordMutation],
+    ) -> Result<RuntimeEventRecord, RuntimeError> {
+        for mutation in mutations {
+            match mutation {
+                RuntimeRecordMutation::Session(record) => self.upsert_session(record)?,
+                RuntimeRecordMutation::Turn(record) => self.upsert_turn(record)?,
+                RuntimeRecordMutation::Approval(record) => self.upsert_approval(record)?,
+                RuntimeRecordMutation::Team(record) => self.upsert_team(record)?,
+                RuntimeRecordMutation::TeamMember(record) => self.upsert_team_member(record)?,
+                RuntimeRecordMutation::TeamMemberDelete { team_id, agent_id } => {
+                    self.delete_team_member(team_id, agent_id)?
+                }
+                RuntimeRecordMutation::TeamMessage(record) => self.upsert_team_message(record)?,
+                RuntimeRecordMutation::TeamDelivery(record) => self.upsert_team_delivery(record)?,
+                RuntimeRecordMutation::ManagedWorktree(record) => {
+                    self.upsert_managed_worktree(record)?
+                }
+                RuntimeRecordMutation::ManagedWorktreeClaim(record) => {
+                    self.upsert_managed_worktree_claim(record)?
+                }
+                RuntimeRecordMutation::Process(record) => self.upsert_process(record)?,
+            }
+        }
+        self.append_runtime_event(event)
+    }
 
     fn list_runtime_events(
         &self,

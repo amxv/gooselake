@@ -19,6 +19,7 @@ use crate::protocol::generated::goosetower::v1::{
     CommandInputItem, CommandJoinTeamMember, CommandSendTurn, EntityRef,
 };
 
+mod bootstrap_races;
 mod resume;
 mod team_commands;
 

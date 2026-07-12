@@ -16,7 +16,7 @@ pub use provisioning::{
     ProvisioningRequest, ProvisioningSourceRecord, RunpodSourceProvisioner,
     RuntimeSourceProvisioner, StaticSourceProvisioner,
 };
-pub use sse::{RuntimeSseFanIn, RuntimeSseFanInConfig, SseFrame};
+pub use sse::{RuntimeSseFanIn, RuntimeSseFanInConfig, SourceEpochChange, SseFrame};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSourceId(pub String);

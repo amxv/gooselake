@@ -58,7 +58,7 @@ pub struct MaterializedState {
     pub source_metadata: SourceMetadataView,
     pub ownership: SourceOwnershipIndexes,
     pub last_gateway_seq: u64,
-    pub seen_source_cursors: BTreeSet<(String, String, i64)>,
+    reduced_through_source_seq: Option<i64>,
     versions: BTreeMap<EntityKey, EntityVersion>,
     pub sessions: BTreeMap<String, SessionRecord>,
     pub approvals: BTreeMap<String, ApprovalRecord>,
@@ -122,7 +122,7 @@ impl MaterializedState {
             source_epoch,
             status: MaterializerStatus::Empty,
             last_gateway_seq: 0,
-            seen_source_cursors: BTreeSet::new(),
+            reduced_through_source_seq: None,
             versions: BTreeMap::new(),
             sessions: BTreeMap::new(),
             approvals: BTreeMap::new(),
@@ -227,17 +227,20 @@ impl MaterializedState {
     }
 
     pub fn remember_source_event(&mut self, event: &SourceEvent) -> bool {
-        let key = (
-            event.source_id.clone(),
-            event.source_epoch.clone(),
-            event.source_seq,
-        );
-        if !self.seen_source_cursors.insert(key) {
+        if self
+            .reduced_through_source_seq
+            .is_some_and(|cursor| event.source_seq <= cursor)
+        {
             return false;
         }
         self.source_health
             .transition(SourceHealthState::Live, Some(event.source_seq), None);
+        self.reduced_through_source_seq = Some(event.source_seq);
         true
+    }
+
+    pub fn mark_bootstrap_watermark(&mut self, high_watermark: i64) {
+        self.reduced_through_source_seq = Some(high_watermark);
     }
 
     pub fn bump_version(

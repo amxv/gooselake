@@ -1,5 +1,4 @@
 use base64::Engine;
-use std::collections::HashSet;
 use std::process::Command;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
@@ -13,7 +12,7 @@ use crate::runtime::{
     SourceHealthState,
 };
 
-async fn spawn() -> (FakeGooselakeSource, String) {
+pub(super) async fn spawn() -> (FakeGooselakeSource, String) {
     spawn_source(FakeGooselakeSource::default()).await
 }
 
@@ -36,7 +35,7 @@ fn client(base: String) -> GooselakeRuntimeClient {
     .unwrap()
 }
 
-fn gateway(base: String) -> GatewayState {
+pub(super) fn gateway(base: String) -> GatewayState {
     let mut config = GoosetowerConfig::default();
     config.debug.endpoints_enabled = true;
     config.runtimes.sources = vec![RuntimeSourceConfig {
@@ -50,7 +49,7 @@ fn gateway(base: String) -> GatewayState {
     GatewayState::new(Arc::new(config)).unwrap()
 }
 
-async fn apply_control(base: &str, control: FaultControl) -> reqwest::Response {
+pub(super) async fn apply_control(base: &str, control: FaultControl) -> reqwest::Response {
     reqwest::Client::new()
         .post(format!("{base}/__verification/v1/control"))
         .header(CONTROL_HEADER, CONTROL_SECRET)
@@ -95,11 +94,7 @@ async fn rows_4_through_11_remain_eligible_after_authoritative_bootstrap() {
         },
     );
     let (tx, mut rx) = mpsc::channel(4);
-    let mut seen = HashSet::new();
-    assert_eq!(
-        fan_in.consume_once(Some(10), &tx, &mut seen).await.unwrap(),
-        Some(11)
-    );
+    assert_eq!(fan_in.consume_once(Some(10), &tx).await.unwrap(), Some(11));
     drop(tx);
     let row_11 = rx.recv().await.expect("row 11 remains replay eligible");
     assert_eq!(row_11.source_seq, 11);
@@ -403,11 +398,7 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
         },
     );
     let (tx, mut rx) = mpsc::channel(16);
-    let mut seen = HashSet::new();
-    assert_eq!(
-        fan_in.consume_once(Some(1), &tx, &mut seen).await.unwrap(),
-        Some(4)
-    );
+    assert_eq!(fan_in.consume_once(Some(1), &tx).await.unwrap(), Some(4));
     drop(tx);
     while let Some(event) = rx.recv().await {
         gateway.ingest_source_event(event).await;
@@ -569,7 +560,10 @@ async fn health_cursor_observer_does_not_change_production_reduction() {
     );
     let summary = gateway.debug_materializer_summary().await;
     assert_eq!(summary[0].source_health.last_source_seq, Some(4));
-    assert_eq!(summary[0].ledger_events, 3);
+    assert_eq!(
+        summary[0].ledger_events, 1,
+        "rows at or below the bootstrap watermark are not reduced twice"
+    );
 }
 
 #[tokio::test]
@@ -612,11 +606,7 @@ async fn supervisor_epoch_restart_pairs_fresh_source_and_tower_configuration() {
         },
     );
     let (tx, mut rx) = mpsc::channel(4);
-    let mut seen = HashSet::new();
-    assert_eq!(
-        fan_in.consume_once(Some(0), &tx, &mut seen).await.unwrap(),
-        Some(1)
-    );
+    assert_eq!(fan_in.consume_once(Some(0), &tx).await.unwrap(), Some(1));
     drop(tx);
     while let Some(event) = rx.recv().await {
         assert_eq!(event.source_epoch, "p02-epoch-002");
@@ -662,8 +652,7 @@ async fn replay_paginates_and_sse_handoff_dedupes_overlap() {
         },
     );
     let (tx, mut rx) = mpsc::channel(16);
-    let mut seen = HashSet::new();
-    let cursor = fan_in.consume_once(Some(3), &tx, &mut seen).await.unwrap();
+    let cursor = fan_in.consume_once(Some(3), &tx).await.unwrap();
     assert_eq!(cursor, Some(5));
     drop(tx);
     let mut ids = Vec::new();
@@ -758,10 +747,8 @@ async fn sse_stream_has_no_total_deadline_and_retains_reconnect_cursor() {
     };
     let direct = RuntimeSseFanIn::new(client(base.clone()), INITIAL_EPOCH, config.clone());
     let (direct_tx, _direct_output) = mpsc::channel(16);
-    let mut direct_task = tokio::spawn(async move {
-        let mut seen = HashSet::new();
-        direct.consume_once(Some(1), &direct_tx, &mut seen).await
-    });
+    let mut direct_task =
+        tokio::spawn(async move { direct.consume_once(Some(1), &direct_tx).await });
     let fan_in = RuntimeSseFanIn::new(client(base.clone()), INITIAL_EPOCH, config);
     let observed_health = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let mut health_rx = fan_in.subscribe_health();
@@ -821,10 +808,7 @@ async fn live_to_gap_transition_is_legal_and_retains_contiguous_cursor() {
     );
     let (tx, _rx) = mpsc::channel(16);
     let health = fan_in.clone();
-    let task = tokio::spawn(async move {
-        let mut seen = HashSet::new();
-        fan_in.consume_once(Some(3), &tx, &mut seen).await
-    });
+    let task = tokio::spawn(async move { fan_in.consume_once(Some(3), &tx).await });
     let result = task.await.expect("gap handling must not panic").unwrap();
     assert_eq!(result, Some(3));
     assert_eq!(health.health().state, SourceHealthState::GapDetected);

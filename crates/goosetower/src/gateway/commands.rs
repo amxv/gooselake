@@ -666,7 +666,7 @@ impl GatewayState {
         }
     }
 
-    async fn refresh_source_after_command(&self, command: &Command) {
+    pub(super) async fn refresh_source_after_command(&self, command: &Command) {
         let Some(payload) = command.payload.as_ref() else {
             tracing::warn!(
                 command_id = %command.command_id,
@@ -737,6 +737,20 @@ impl GatewayState {
         let patches = {
             let mut materialized = self.materialized.write().await;
             let previous = materialized.get(&source_id);
+            if previous.is_some_and(|current| {
+                current.source_epoch == next.source_epoch
+                    && current.source_health.last_source_seq.unwrap_or(0)
+                        > next.source_health.last_source_seq.unwrap_or(0)
+            }) {
+                tracing::info!(
+                    command_id = %command.command_id,
+                    source_id = %source_id,
+                    current_cursor = previous.and_then(|state| state.source_health.last_source_seq).unwrap_or(0),
+                    bootstrap_cursor = next.source_health.last_source_seq.unwrap_or(0),
+                    "discarding stale post-command bootstrap"
+                );
+                return;
+            }
             let mut patches = Vec::new();
 
             for session_id in next.sessions.keys() {

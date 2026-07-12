@@ -144,6 +144,7 @@ export function validateLifecycleStore(): LifecycleState {
     if (!parent) fail("stored lifecycle predecessor file is missing");
     equal(predecessor.sha256, parent.sha256, "stored predecessor raw-byte hash");
     equal(node.document.attestation_sequence, integer(parent.document.attestation_sequence, "predecessor sequence") + 1, "stored attestation sequence continuity");
+    equal(JSON.stringify(node.document.phase_graph_seed), JSON.stringify(parent.document.phase_graph_seed), "immutable phase graph seed across lifecycle chain");
     const priorAttempts = array(parent.document.attempts, "predecessor attempts");
     equal(JSON.stringify(array(node.document.attempts, "successor attempts").slice(0, priorAttempts.length)), JSON.stringify(priorAttempts), "append-only attempt prefix");
     const siblings = children.get(predecessorPath) ?? [];

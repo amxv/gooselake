@@ -7,8 +7,8 @@
   "phase_graph_seed": {
     "path": "verification/gooseweb/ledger/phase-graph-seed.json",
     "schema_revision": "gooseweb-phase-graph-seed/v9",
-    "candidate_head_sha": "ff8b25a0b5c6f2e1f47ad82fc26370671ab0cf18",
-    "blob_sha256": "166dbbdf3c487d18c91ff447d48f896a7d44c3f09aaa56dbedb80f424103c824",
+    "candidate_head_sha": "ff9970dd7b74b639e27d0b549cadab2a9d139960",
+    "blob_sha256": "bb8c1e785bbd6c33ef18537c24c108fd15c730d0048c09c066e490b1ef886ed9",
     "last_seed_lease_id": "gooseweb-migration-000005",
     "last_seed_lease_sequence": 5,
     "last_seed_release_at": "2026-07-12T06:41:05.000Z"
@@ -17,11 +17,11 @@
   "attempts": [
     {
       "status": "cleared",
-      "evidence_root": "tmp/gg/gooseweb-migration/P01/ff8b25a/attempt-7/",
-      "evidence_descriptor_sha256": "cf3dbcacc25507ce37f5d92b35f0283a183aacc89af9da98336486852600b4d1",
+      "evidence_root": "tmp/gg/gooseweb-migration/P01/ff9970d/attempt-7/",
+      "evidence_descriptor_sha256": "63e57e4599193629da4e84f6b043e260c0ad9a8d279e83b00adf3abd52f1b63f",
       "outcome": {
         "record": "exact-head-clearance.json",
-        "sha256": "f98aef33d404a3082ce294fa547fce8d7e52e068169a60f3d5a4a76948f897a9"
+        "sha256": "a2299aed9c87732cfde616f17b978dde6f0f3b95b3df4ac4256aef95b08d4744"
       }
     }
   ],

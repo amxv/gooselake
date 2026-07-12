@@ -3,11 +3,11 @@
   "phase_id": "P01",
   "attempt": 7,
   "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
-  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..ff8b25a0b5c6f2e1f47ad82fc26370671ab0cf18",
-  "candidate_head_sha": "ff8b25a0b5c6f2e1f47ad82fc26370671ab0cf18",
-  "candidate_tree_sha": "c594af74f3c8a7cdc03fe40623f297ae1090d3f0",
-  "served_head_sha": "ff8b25a0b5c6f2e1f47ad82fc26370671ab0cf18",
-  "served_tree_sha": "c594af74f3c8a7cdc03fe40623f297ae1090d3f0",
+  "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..ff9970dd7b74b639e27d0b549cadab2a9d139960",
+  "candidate_head_sha": "ff9970dd7b74b639e27d0b549cadab2a9d139960",
+  "candidate_tree_sha": "a8e2d124a2346ed6a5d0b6052ef9d21c07c043b6",
+  "served_head_sha": "ff9970dd7b74b639e27d0b549cadab2a9d139960",
+  "served_tree_sha": "a8e2d124a2346ed6a5d0b6052ef9d21c07c043b6",
   "clean_tree": true,
   "hot_reload": false,
   "manifest": {
@@ -51,7 +51,7 @@
     "reviewer_identity": "p01-reviewer",
     "reviewer_role": "read_only",
     "browser_mechanism": "agent-browser",
-    "browser_session": "gooseweb-p01-ff8b25a-attempt-7-headless",
+    "browser_session": "gooseweb-p01-ff9970d-attempt-7-headless",
     "concurrent_mutation_build_format_generation": false,
     "findings_route": "reviewer_to_implementer",
     "final_approval_routed_to_implementer": false,
@@ -65,7 +65,7 @@
     "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "chromium_version": "150.0.7871.115",
     "profile_policy": "fresh_ephemeral",
-    "session_name": "gooseweb-p01-ff8b25a-attempt-7-headless"
+    "session_name": "gooseweb-p01-ff9970d-attempt-7-headless"
   },
   "baseline_detected": [
     {

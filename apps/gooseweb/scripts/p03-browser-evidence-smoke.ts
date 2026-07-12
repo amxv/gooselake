@@ -11,6 +11,7 @@ import {
   validateManifestRegistry,
   validateP03EvidenceArtifact,
   validateP03EvidenceLinkage,
+  validateP03HardReloadNetworkLinkage,
   validateP03BrowserEvidence,
   type Json,
   type RecordJson
@@ -69,7 +70,20 @@ const seededFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
   ["CacheStorage not cleared", (value) => change(value, "reconstruction.cache_storage_cleared", false)],
   ["service workers not unregistered", (value) => change(value, "reconstruction.service_workers_unregistered", false)],
   ["network reconstruction linkage missing", (value) => omit(value, "network_reconstruction")],
-  ["network reconstruction segment order", (value) => change(value, "network_reconstruction.ordered_segments", ["initial_load", "hard_reload", "ordinary_reload", "fresh_context"])]
+  ["network reconstruction segment order", (value) => change(value, "network_reconstruction.ordered_segments", ["initial_load", "hard_reload", "ordinary_reload", "fresh_context"])],
+  ["hard reload command success without navigation", (value) => change(value, "hard_reload_capability.navigation_observed", false)],
+  ["hard reload header command failed", (value) => change(value, "hard_reload_capability.header_application_command_succeeded", false)],
+  ["hard reload reload command failed", (value) => change(value, "hard_reload_capability.reload_command_succeeded", false)],
+  ["hard reload missing document traffic", (value) => change(value, "hard_reload_capability.document_request_count", 0)],
+  ["hard reload missing dev-ticket traffic", (value) => change(value, "hard_reload_capability.dev_ticket_request_count", 0)],
+  ["hard reload document headers unproven", (value) => change(value, "hard_reload_capability.headers_observed_on_document", false)],
+  ["hard reload dev-ticket headers unproven", (value) => change(value, "hard_reload_capability.headers_observed_on_dev_ticket", false)],
+  ["hard reload reconstruction unobserved", (value) => change(value, "hard_reload_capability.observable_reconstruction", false)],
+  ["hard reload cache revalidation unproven", (value) => change(value, "hard_reload_capability.cache_bypass_revalidation_evidenced", false)],
+  ["hard reload cleanup failed", (value) => change(value, "hard_reload_capability.header_cleanup_command_succeeded", false)],
+  ["hard reload headers remain active", (value) => change(value, "hard_reload_capability.temporary_headers_active_after_cleanup", true)],
+  ["hard reload blocker retained on pass", (value) => change(value, "hard_reload_capability.blocker_reason", "reload gesture produced no navigation")],
+  ["wrong hard reload mechanism", (value) => change(value, "hard_reload_capability.mechanism", "keyboard_gesture")]
 ];
 
 for (const [name, seed] of seededFailures) {
@@ -90,7 +104,7 @@ assert.throws(
 assert.deepEqual(manifest.known_defects, [], "P03 verification infrastructure must have no known defects");
 validateSegmentedNetworkCapture();
 validateStandardEvidenceLinkage();
-console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 37} seeded failures rejected)`);
+console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 43} seeded failures rejected)`);
 
 function validateSegmentedNetworkCapture(): void {
   const capture = fullReconstructionNetworkCapture();
@@ -101,6 +115,7 @@ function validateSegmentedNetworkCapture(): void {
     messages: []
   };
   validateBrowserCaptures(consoleCapture, capture, manifest);
+  validateP03HardReloadNetworkLinkage(evidence, capture);
   const segmentFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
     ["missing reconstruction segment", (value) => omit(value, "segments.2")],
     ["extra reconstruction segment", (value) => change(value, "segments.4", structuredClone((value.segments as Json[])[3]!))],
@@ -118,28 +133,42 @@ function validateSegmentedNetworkCapture(): void {
     ["wrong reconstruction trigger", (value) => change(value, "segments.1.trigger", "agent_browser_press_meta_shift_r")],
     ["wrong reconstruction context generation", (value) => change(value, "segments.3.context_generation", 1)],
     ["incomplete reconstruction start boundary", (value) => change(value, "segments.2.capture_started_before_trigger", false)],
-    ["incomplete reconstruction end boundary", (value) => change(value, "segments.2.capture_ended_after_observable_state", false)]
+    ["incomplete reconstruction end boundary", (value) => change(value, "segments.2.capture_ended_after_observable_state", false)],
+    ["hard reload document header missing", (value) => change(value, "raw_http.7.request_cache_control", "absent")],
+    ["hard reload dev-ticket header missing", (value) => change(value, "raw_http.9.request_pragma", "absent")],
+    ["temporary headers leaked before hard reload", (value) => change(value, "raw_http.0.request_cache_control", "no-cache")],
+    ["temporary headers leaked after cleanup", (value) => change(value, "raw_http.10.request_pragma", "no-cache")]
   ];
   for (const [name, seed] of segmentFailures) {
     assert.throws(() => validateBrowserCaptures(consoleCapture, seed(capture), manifest), undefined, `seeded ${name} unexpectedly passed`);
   }
+  assert.throws(
+    () => validateP03HardReloadNetworkLinkage(change(evidence, "hard_reload_capability.document_request_count", 0), capture),
+    undefined,
+    "hard-reload descriptor/network count mismatch unexpectedly passed"
+  );
+  assert.throws(
+    () => validateP03HardReloadNetworkLinkage(evidence, change(capture, "segments.2.trigger", "agent_browser_reload")),
+    undefined,
+    "hard-reload descriptor/network mechanism mismatch unexpectedly passed"
+  );
 }
 
 function fullReconstructionNetworkCapture(): RecordJson {
   const definitions = [
     ["initial_load", "initial_supervisor_url_attachment", 1],
     ["ordinary_reload", "agent_browser_reload", 1],
-    ["hard_reload", "agent_browser_press_meta_shift_r", 1],
+    ["hard_reload", "agent_browser_no_cache_headers_reload", 1],
     ["fresh_context", "second_unique_ephemeral_session_open", 2]
   ] as const;
   const rawHttp: RecordJson[] = [];
   const segments = definitions.map(([segmentId, trigger, contextGeneration], index) => {
     const requests = [
-      request(segmentId, "GET", "/", 200, "document"),
-      request(segmentId, "GET", `/assets/app-${index}.js`, 200, "module", "", ["v"]),
-      request(segmentId, "POST", "/api/dev-ticket", 200, "api")
+      request(segmentId, "GET", "/", 200, "document", "", [], index === 2 ? "no-cache" : "absent"),
+      request(segmentId, "GET", `/assets/app-${index}.js`, 200, "module", "", ["v"], index === 2 ? "no-cache" : "absent"),
+      request(segmentId, "POST", "/api/dev-ticket", 200, "api", "", [], index === 2 ? "no-cache" : "absent")
     ];
-    if (index === 0) requests.push(request(segmentId, "GET", "/favicon.ico", 404, "other", "BASE-P01-FAVICON-NOT-FOUND"));
+    if (index === 0) requests.push(request(segmentId, "GET", "/favicon.ico", 404, "other", "BASE-P01-FAVICON-NOT-FOUND", [], "absent"));
     rawHttp.push(...requests);
     return {
       segment_id: segmentId,
@@ -174,7 +203,8 @@ function request(
   status: number,
   resourceType: string,
   baselineDefectId = "",
-  queryKeys: readonly string[] = []
+  queryKeys: readonly string[] = [],
+  cacheDirective: "absent" | "no-cache" | "not_inspected" = "not_inspected"
 ): RecordJson {
   return {
     segment_id: segmentId,
@@ -184,6 +214,8 @@ function request(
     status,
     resource_type: resourceType,
     same_origin: true,
+    request_cache_control: cacheDirective,
+    request_pragma: cacheDirective,
     baseline_defect_id: baselineDefectId
   };
 }

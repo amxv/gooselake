@@ -7,7 +7,7 @@
   "required": [
     "schema_revision", "phase_id", "attempt", "candidate_head_sha", "served_head_sha",
     "candidate_tree_sha", "served_tree_sha", "browser", "supervisor_attachment",
-    "journey", "authority_chain", "first_divergent_layer", "captures", "network_reconstruction", "viewports", "reconstruction", "fixture_leakage",
+    "journey", "authority_chain", "first_divergent_layer", "captures", "network_reconstruction", "hard_reload_capability", "viewports", "reconstruction", "fixture_leakage",
     "redaction", "completion"
   ],
   "properties": {
@@ -143,6 +143,45 @@
           ],
           "items": false
         }
+      }
+    },
+    "hard_reload_capability": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "mechanism", "header_scope", "set_headers", "reload", "clear_headers",
+        "header_application_command_succeeded", "reload_command_succeeded",
+        "navigation_observed", "document_request_count", "dev_ticket_request_count",
+        "headers_observed_on_document", "headers_observed_on_dev_ticket",
+        "observable_reconstruction", "cache_bypass_revalidation_evidenced",
+        "header_cleanup_command_succeeded", "temporary_headers_active_after_cleanup",
+        "blocker_reason"
+      ],
+      "properties": {
+        "mechanism": { "const": "agent_browser_no_cache_headers_reload" },
+        "header_scope": { "const": "supervisor_origin_only" },
+        "set_headers": {
+          "type": "object", "additionalProperties": false,
+          "required": ["command", "cache_control", "pragma"],
+          "properties": {
+            "command": { "const": "set headers" },
+            "cache_control": { "const": "no-cache" },
+            "pragma": { "const": "no-cache" }
+          }
+        },
+        "reload": { "const": "reload" },
+        "clear_headers": { "const": "set headers {}" },
+        "header_application_command_succeeded": { "const": true },
+        "reload_command_succeeded": { "const": true },
+        "navigation_observed": { "const": true },
+        "document_request_count": { "const": 1 },
+        "dev_ticket_request_count": { "const": 1 },
+        "headers_observed_on_document": { "const": true },
+        "headers_observed_on_dev_ticket": { "const": true },
+        "observable_reconstruction": { "const": true },
+        "cache_bypass_revalidation_evidenced": { "const": true },
+        "header_cleanup_command_succeeded": { "const": true },
+        "temporary_headers_active_after_cleanup": { "const": false },
+        "blocker_reason": { "const": "" }
       }
     },
     "viewports": {

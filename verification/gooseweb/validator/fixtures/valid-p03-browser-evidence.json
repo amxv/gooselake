@@ -64,6 +64,25 @@
     "unfiltered_raw_requests_retained": true,
     "ordered_segments": ["initial_load", "ordinary_reload", "hard_reload", "fresh_context"]
   },
+  "hard_reload_capability": {
+    "mechanism": "agent_browser_no_cache_headers_reload",
+    "header_scope": "supervisor_origin_only",
+    "set_headers": { "command": "set headers", "cache_control": "no-cache", "pragma": "no-cache" },
+    "reload": "reload",
+    "clear_headers": "set headers {}",
+    "header_application_command_succeeded": true,
+    "reload_command_succeeded": true,
+    "navigation_observed": true,
+    "document_request_count": 1,
+    "dev_ticket_request_count": 1,
+    "headers_observed_on_document": true,
+    "headers_observed_on_dev_ticket": true,
+    "observable_reconstruction": true,
+    "cache_bypass_revalidation_evidenced": true,
+    "header_cleanup_command_succeeded": true,
+    "temporary_headers_active_after_cleanup": false,
+    "blocker_reason": ""
+  },
   "viewports": [
     { "id": "1440x1000", "width": 1440, "height": 1000, "screenshot": true, "screenshot_path": "screenshots/1440x1000.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true },
     { "id": "820x1000", "width": 820, "height": 1000, "screenshot": true, "screenshot_path": "screenshots/820x1000.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true },

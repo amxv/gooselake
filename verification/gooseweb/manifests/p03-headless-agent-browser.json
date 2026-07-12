@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P03-HEADLESS-AGENT-BROWSER-001",
-  "manifest_revision": 3,
+  "manifest_revision": 4,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
@@ -26,7 +26,8 @@
       "Project, user, and environment headed settings are rejected before attachment; no alternate browser framework, persistent prior context, fixture query, or browser-side authority is used.",
       "The reviewer records binary/version identity, browser process arguments, HeadlessChrome user-agent evidence, candidate/served head and tree, lease tuple, and fresh-context nonce before the first action.",
       "The source-controlled procedure and p03 evidence descriptor validate before any browser result can be considered.",
-      "Complete unfiltered network evidence is retained as initial-load, ordinary-reload, Meta+Shift+R hard-reload, and second-fresh-context segments in that exact order; every raw request is attributed to one segment."
+      "Complete unfiltered network evidence is retained as initial-load, ordinary-reload, agent-browser no-cache-header hard-reload, and second-fresh-context segments in that exact order; every raw request is attributed to one segment.",
+      "The hard reload uses agent-browser set headers with Cache-Control: no-cache and Pragma: no-cache, ordinary agent-browser reload, observed request-header/navigation/reconstruction evidence, and immediate agent-browser set headers {} cleanup."
     ],
     "actions": [
       {

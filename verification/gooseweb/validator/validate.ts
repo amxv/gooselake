@@ -101,6 +101,24 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
     JSON.stringify(["initial_load", "ordinary_reload", "hard_reload", "fresh_context"]),
     "P03 ordered reconstruction network segments"
   );
+  const hardReload = object(value.hard_reload_capability, "P03 hard-reload capability");
+  equal(hardReload.mechanism, "agent_browser_no_cache_headers_reload", "P03 hard-reload mechanism");
+  equal(hardReload.header_scope, "supervisor_origin_only", "P03 hard-reload header scope");
+  const setHeaders = object(hardReload.set_headers, "P03 hard-reload header application");
+  equal(setHeaders.command, "set headers", "P03 hard-reload header command");
+  equal(setHeaders.cache_control, "no-cache", "P03 hard-reload Cache-Control directive");
+  equal(setHeaders.pragma, "no-cache", "P03 hard-reload Pragma directive");
+  for (const key of [
+    "header_application_command_succeeded", "reload_command_succeeded", "navigation_observed",
+    "headers_observed_on_document", "headers_observed_on_dev_ticket", "observable_reconstruction",
+    "cache_bypass_revalidation_evidenced", "header_cleanup_command_succeeded"
+  ]) equal(hardReload[key], true, `P03 hard-reload ${key}`);
+  equal(hardReload.reload, "reload", "P03 hard-reload reload command");
+  equal(hardReload.clear_headers, "set headers {}", "P03 hard-reload cleanup command");
+  equal(hardReload.document_request_count, 1, "P03 hard-reload document request count");
+  equal(hardReload.dev_ticket_request_count, 1, "P03 hard-reload dev-ticket request count");
+  equal(hardReload.temporary_headers_active_after_cleanup, false, "P03 hard-reload temporary-header cleanup");
+  equal(hardReload.blocker_reason, "", "P03 hard-reload blocker reason");
   const reconstruction = object(value.reconstruction, "P03 reconstruction");
   equal(reconstruction.initial_prior_context_nonce, null, "P03 initial prior-context nonce");
   equal(reconstruction.fresh_context_prior_nonce, null, "P03 fresh prior-context nonce");
@@ -746,6 +764,10 @@ function validateP03NetworkSegments(
   const optionalContract = object(contract.optional_favicon_request_per_segment, "P03 optional favicon contract");
   equal(optionalContract.maximum_count, 1, "P03 optional favicon maximum");
   const optionalFavicon = object(optionalContract.request, "P03 optional favicon request");
+  const hardHeaders = object(contract.hard_reload_request_headers, "P03 hard-reload request-header contract");
+  equal(hardHeaders.cache_control, "no-cache", "P03 hard-reload Cache-Control contract");
+  equal(hardHeaders.pragma, "no-cache", "P03 hard-reload Pragma contract");
+  equal(JSON.stringify(hardHeaders.required_on), JSON.stringify(["document", "api"]), "P03 hard-reload header resource types");
   for (const segment of actualSegments) {
     const id = string(segment.segment_id, "P03 captured segment ID");
     const segmentRaw = rawHttp.filter((request) => request.segment_id === id);
@@ -755,6 +777,12 @@ function validateP03NetworkSegments(
       const ignorableStatus = status >= Number(boundary.ignored_status_min) && status <= Number(boundary.ignored_status_max);
       return !(request.same_origin === true && ignorableStatus && ignoredTypes.has(string(request.resource_type, `P03 ${id} resource type`)));
     }).map(p03EvaluatedRequest);
+    for (const request of segmentRaw) {
+      if (!["document", "api"].includes(string(request.resource_type, `P03 ${id} resource type`))) continue;
+      const expectedDirective = id === "hard_reload" ? "no-cache" : "absent";
+      equal(request.request_cache_control, expectedDirective, `P03 ${id} Cache-Control request evidence`);
+      equal(request.request_pragma, expectedDirective, `P03 ${id} Pragma request evidence`);
+    }
     const withoutFavicon = sameMultiset(segmentEvaluated, required);
     const withFavicon = sameMultiset(segmentEvaluated, [...required, optionalFavicon]);
     if (!withoutFavicon && !withFavicon) fail(`P03 ${id} evaluated HTTP activity does not match the exact reconstruction contract`);
@@ -826,6 +854,10 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
   const consoleCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.console, "console")), "utf8")) as RecordJson;
   const networkCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.network, "network")), "utf8")) as RecordJson;
   validateBrowserCaptures(consoleCapture, networkCapture, manifestCopy);
+  if (descriptor.phase_id === "P03") {
+    const p03Evidence = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.p03_browser_evidence, "P03 browser evidence")), "utf8")) as RecordJson;
+    validateP03HardReloadNetworkLinkage(p03Evidence, networkCapture);
+  }
   const environment = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.environment, "environment")), "utf8")) as RecordJson;
   for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(environment[key], descriptor[key], `environment/${key}`);
   equal(environment.plan_sha256, APPROVED_PLAN_SHA256, "environment plan hash");
@@ -1165,7 +1197,10 @@ function networkCaptureSchema(p03Segmented = false): Schema {
   const httpRequired: Json[] = ["method", "path", "query_keys", "status", "resource_type", "same_origin", "baseline_defect_id"];
   if (p03Segmented) {
     httpProperties.segment_id = { enum: ["initial_load", "ordinary_reload", "hard_reload", "fresh_context"] };
+    httpProperties.request_cache_control = { enum: ["absent", "no-cache", "not_inspected"] };
+    httpProperties.request_pragma = { enum: ["absent", "no-cache", "not_inspected"] };
     httpRequired.push("segment_id");
+    httpRequired.push("request_cache_control", "request_pragma");
   }
   const httpItem = { type: "object", additionalProperties: false, required: httpRequired, properties: httpProperties };
   const wsEvent = { type: "object", additionalProperties: false, required: ["event", "code"], properties: { event: { enum: ["open", "close"] }, code: { type: "integer", minimum: 0, maximum: 4999 } } };
@@ -1176,6 +1211,27 @@ function networkCaptureSchema(p03Segmented = false): Schema {
     required.push("segments");
   }
   return { type: "object", additionalProperties: false, required, properties };
+}
+
+export function validateP03HardReloadNetworkLinkage(p03Evidence: RecordJson, networkCapture: RecordJson): void {
+  const capability = object(p03Evidence.hard_reload_capability, "P03 linked hard-reload capability");
+  const segments = array(networkCapture.segments, "P03 linked network segments").map((entry) => object(entry, "P03 linked network segment"));
+  const hardSegment = segments.filter((entry) => entry.segment_id === "hard_reload");
+  equal(hardSegment.length, 1, "P03 linked hard-reload segment cardinality");
+  equal(hardSegment[0]!.trigger, capability.mechanism, "P03 hard-reload mechanism/network trigger linkage");
+  const hardRequests = array(networkCapture.raw_http, "P03 linked raw HTTP capture")
+    .map((entry) => object(entry, "P03 linked raw HTTP request"))
+    .filter((entry) => entry.segment_id === "hard_reload");
+  const documents = hardRequests.filter((entry) => entry.resource_type === "document");
+  const devTickets = hardRequests.filter((entry) => entry.resource_type === "api" && entry.method === "POST" && entry.path === "/api/dev-ticket");
+  equal(documents.length, capability.document_request_count, "P03 hard-reload document count/network linkage");
+  equal(devTickets.length, capability.dev_ticket_request_count, "P03 hard-reload dev-ticket count/network linkage");
+  equal(documents.every((entry) => entry.request_cache_control === "no-cache" && entry.request_pragma === "no-cache"), capability.headers_observed_on_document, "P03 hard-reload document-header/network linkage");
+  equal(devTickets.every((entry) => entry.request_cache_control === "no-cache" && entry.request_pragma === "no-cache"), capability.headers_observed_on_dev_ticket, "P03 hard-reload dev-ticket-header/network linkage");
+  const reconstruction = object(object(p03Evidence.reconstruction, "P03 linked reconstruction").hard_reload, "P03 linked hard-reload reconstruction");
+  const reconstructed = reconstruction.status === "pass" && reconstruction.missing_count === 0 && reconstruction.duplicate_count === 0 && reconstruction.order_errors === 0;
+  equal(reconstructed, capability.observable_reconstruction, "P03 hard-reload reconstruction/capability linkage");
+  equal(capability.cache_bypass_revalidation_evidenced, documents.length === 1 && devTickets.length === 1 && documents.concat(devTickets).every((entry) => entry.request_cache_control === "no-cache" && entry.request_pragma === "no-cache"), "P03 hard-reload revalidation evidence linkage");
 }
 
 

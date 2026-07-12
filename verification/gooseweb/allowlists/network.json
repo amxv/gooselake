@@ -79,7 +79,7 @@
       },
       {
         "segment_id": "hard_reload",
-        "trigger": "agent_browser_press_meta_shift_r",
+        "trigger": "agent_browser_no_cache_headers_reload",
         "context_generation": 1
       },
       {
@@ -119,6 +119,14 @@
         "same_origin": true,
         "baseline_defect_id": "BASE-P01-FAVICON-NOT-FOUND"
       }
+    },
+    "hard_reload_request_headers": {
+      "cache_control": "no-cache",
+      "pragma": "no-cache",
+      "required_on": [
+        "document",
+        "api"
+      ]
     }
   },
   "exact_websocket_events": [
@@ -127,5 +135,5 @@
       "code": 0
     }
   ],
-  "policy": "The raw request list is retained. P01/P02 v3 captures retain the exact aggregate variants. P03 v4 captures retain every raw request across four ordered reconstruction segments and attribute every request to exactly one segment. The validator derives raw counts, rejects non-monotonic segment attribution, and requires each segment to contain exactly one successful same-origin query-free document request and one successful same-origin query-free dev-ticket request, plus at most one retained favicon 404 with its exact mapped baseline. It ignores only 2xx/3xx same-origin stylesheet, font, script, and module resources by exact resource type; it cannot ignore any 4xx/5xx, cross-origin, API, document, WebSocket, or unclassified request. Favicon absence never fabricates a request."
+  "policy": "The raw request list is retained. P01/P02 v3 captures retain the exact aggregate variants. P03 v4 captures retain every raw request across four ordered reconstruction segments and attribute every request to exactly one segment. The validator derives raw counts, rejects non-monotonic segment attribution, and requires each segment to contain exactly one successful same-origin query-free document request and one successful same-origin query-free dev-ticket request, plus at most one retained favicon 404 with its exact mapped baseline. The hard_reload segment is produced only by the agent-browser-native no-cache-header reload and must retain observed Cache-Control: no-cache and Pragma: no-cache request directives on its document and dev-ticket traffic; other evaluated segments must record those temporary directives as absent. It ignores only 2xx/3xx same-origin stylesheet, font, script, and module resources by exact resource type; it cannot ignore any 4xx/5xx, cross-origin, API, document, WebSocket, or unclassified request. Favicon absence never fabricates a request."
 }

@@ -669,6 +669,79 @@ async fn keepalive_covers_global_and_scoped_idle_streams_without_offline_churn()
 }
 
 #[tokio::test]
+async fn sse_total_deadline_reconnect_loses_cursor_at_real_stale_window() {
+    let (_source, base) = spawn().await;
+    let config = RuntimeSseFanInConfig {
+        replay_page_limit: 1_000,
+        reconnect_delay: Duration::from_millis(250),
+        stale_after: Duration::from_millis(30_000),
+    };
+    let direct = RuntimeSseFanIn::new(client(base.clone()), config.clone());
+    let (direct_tx, _direct_output) = mpsc::channel(16);
+    let direct_task = tokio::spawn(async move {
+        let mut seen = HashSet::new();
+        direct.consume_once(Some(1), &direct_tx, &mut seen).await
+    });
+    let fan_in = RuntimeSseFanIn::new(client(base.clone()), config);
+    let observed_health = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let mut health_rx = fan_in.subscribe_health();
+    let observed_health_task = observed_health.clone();
+    let health_task = tokio::spawn(async move {
+        while health_rx.changed().await.is_ok() {
+            observed_health_task
+                .lock()
+                .await
+                .push(health_rx.borrow().clone());
+        }
+    });
+    let (tx, mut output) = mpsc::channel(16);
+    let fan_in_task = fan_in.clone().spawn(Some(1), tx);
+    let replay_two = tokio::time::timeout(Duration::from_secs(2), output.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let replay_three = tokio::time::timeout(Duration::from_secs(2), output.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!([replay_two.source_seq, replay_three.source_seq], [2, 3]);
+
+    let direct_error = tokio::time::timeout(Duration::from_secs(32), direct_task)
+        .await
+        .expect("the configured total request deadline must expire")
+        .expect("direct consume task must not panic")
+        .expect_err("infinite SSE currently inherits the finite request deadline");
+    match direct_error {
+        crate::runtime::RuntimeClientError::Transport(error) => {
+            assert!(error.is_timeout());
+            assert_eq!(error.to_string(), "error decoding response body");
+        }
+        other => panic!("expected timeout transport error, received {other:?}"),
+    }
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(fan_in.health().state, SourceHealthState::Live);
+    assert_eq!(fan_in.health().last_source_seq, Some(1));
+    assert!(output.try_recv().is_err());
+    let health = observed_health.lock().await.clone();
+    assert!(health.iter().any(|health| {
+        health.state == SourceHealthState::Offline
+            && health.last_source_seq == Some(1)
+            && health.last_error.as_deref()
+                == Some("runtime transport error: error decoding response body")
+    }));
+    assert!(health.iter().any(|health| {
+        health.state == SourceHealthState::Replaying && health.last_source_seq == Some(1)
+    }));
+    let cursors = health
+        .iter()
+        .filter_map(|health| health.last_source_seq)
+        .collect::<Vec<_>>();
+    assert!(cursors.windows(2).any(|pair| pair == [3, 1]));
+    fan_in_task.abort();
+    health_task.abort();
+}
+
+#[tokio::test]
 async fn gap_fault_localizes_existing_live_to_gap_transition_baseline() {
     let (_source, base) = spawn().await;
     apply_control(&base, FaultControl::GapNext).await;

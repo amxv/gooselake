@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
-  "manifest_revision": 7,
+  "manifest_revision": 8,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
@@ -45,17 +45,17 @@
           "one p02-event-0004 turn.completed event with P02 deterministic terminal text"
         ],
         "expected_goosetower": [
-          "the separate verification listener reports whether p02-session-001 materialized the retained source sequence 4 event",
-          "one real session_detail terminal-text patch is encoded by the gateway",
-          "a missing materialized event or served frame fails the attempt at the first directly observed layer without inferring a cause"
+          "the separate verification listener directly records the 30-second SSE total-deadline reconnect and cursor regression",
+          "BASE-P02-SSE-TOTAL-DEADLINE-RECONNECT-CURSOR-LOSS resolves exactly once to P06",
+          "no terminal materializer/frame success is claimed while the unchanged product deadline defect is active"
         ],
         "expected_worker_store": [
-          "production RealtimeWorkerCore consumes any gateway frame actually served",
-          "window.__GOOSEWEB_VERIFICATION_OBSERVER__.capture() reports the bounded redacted real frame/output/store sequence without inferring a missing upstream frame",
-          "sessionDetails[p02-session-001] contains the exact terminal text once"
+          "production RealtimeWorkerCore consumes only gateway frames actually served",
+          "window.__GOOSEWEB_VERIFICATION_OBSERVER__.capture() reports bounded redacted frame/output/store absence without inferring terminal delivery",
+          "terminal store success remains blocked under the mapped P06 deadline/cursor defect"
         ],
         "expected_visible": [
-          "P02 deterministic terminal is visible once; any absence makes the attempt changes_required until fresh four-layer evidence localizes it",
+          "normal browser terminal success is blocked_not_approved under BASE-P02-SSE-TOTAL-DEADLINE-RECONNECT-CURSOR-LOSS",
           "the submitted composer clears without displaying a phantom terminal success"
         ]
       },
@@ -393,6 +393,28 @@
       ],
       "product_scenario_status": "blocked_not_approved",
       "description": "A deterministic source-sequence gap reaches real RuntimeSseFanIn, whose Live to GapDetected transition is rejected by the current source-health lifecycle algebra in debug builds. P02 detects and localizes the baseline without changing P06 product behavior."
+    },
+    {
+      "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+      "defect_id": "BASE-P02-SSE-TOTAL-DEADLINE-RECONNECT-CURSOR-LOSS",
+      "first_divergent_layer": "Goosetower runtime client total request deadline → RuntimeSseFanIn cursor continuity",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P02/16c9ed5/attempt-8/keepalive-served-regression.redacted.json",
+        "tmp/gg/gooseweb-migration/P02/16c9ed5/attempt-8/report.md#p02-block-016",
+        "crates/goosetower/src/verification/fake_source_tests.rs#sse_total_deadline_reconnect_loses_cursor_at_real_stale_window"
+      ],
+      "owning_correction_phase": "P06",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P25",
+        "M3",
+        "P45",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "The production GooselakeRuntimeClient applies its 30-second total request deadline to the infinite SSE response. Reqwest returns a timeout-driven body decode transport error despite 10-second keepalives; RuntimeSseFanIn reconnects from cursor 1 after already parsing/deduplicating rows 2 and 3. P02 precisely observes this P06 product defect without changing or overriding production timeout/cursor semantics."
     },
     {
       "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",

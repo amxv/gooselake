@@ -1,7 +1,7 @@
 {
-  "schema_revision": "gooseweb-acceptance-manifest/v2",
+  "schema_revision": "gooseweb-acceptance-manifest/v3",
   "manifest_id": "GW-P01-TEAM-COMMS-LIVE-001",
-  "manifest_revision": 2,
+  "manifest_revision": 3,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
@@ -305,6 +305,23 @@
       ],
       "product_scenario_status": "blocked_not_approved",
       "description": "P01 and agent-browser provide no redacted WebSocket frame observer, so frame behavior is recorded as unavailable and never inferred."
+    },
+    {
+      "scenario_id": "GW-P01-TEAM-COMMS-LIVE-001",
+      "defect_id": "BASE-P01-FAVICON-NOT-FOUND",
+      "first_divergent_layer": "Gooseweb static asset routing",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/b40131f/attempt-4/report.md#replacement-attempt-4-blockers"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Every fresh browser attempt requests GET /favicon.ico and receives HTTP 404; the failed request remains blocked until the static asset route is corrected."
     }
   ],
   "known_defects": [],

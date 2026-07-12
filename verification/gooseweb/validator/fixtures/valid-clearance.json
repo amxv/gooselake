@@ -12,8 +12,8 @@
   "hot_reload": false,
   "manifest": {
     "path": "verification/gooseweb/manifests/p01-team-comms-live.json",
-    "revision": 2,
-    "sha256": "906d4ba1b7faf72203e475d7c1ccbcc1d3bef26b2ea09dc946525f35924e47a7"
+    "revision": 3,
+    "sha256": "157deb14a7dca547477d470cde40f25f9c9d01cfb8808b4be73553bc7f68c7f5"
   },
   "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
   "lease": {

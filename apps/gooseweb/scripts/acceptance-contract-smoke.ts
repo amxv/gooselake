@@ -16,6 +16,7 @@ import {
   validateEvidence,
   validateLedger,
   validateManifest,
+  validateReviewOutcome,
   type Json,
   type RecordJson
 } from "../../../verification/gooseweb/validator/validate";
@@ -40,12 +41,12 @@ const networkCapture: RecordJson = {
   capture_source: "agent-browser network requests",
   unfiltered: true,
   raw_http: [
-    { method: "GET", path: "/", query_keys: [], status: 200, resource_type: "document", same_origin: true },
-    { method: "GET", path: "/src/styles.css", query_keys: ["v"], status: 200, resource_type: "stylesheet", same_origin: true },
-    { method: "GET", path: "/node_modules/react.js", query_keys: ["v"], status: 200, resource_type: "module", same_origin: true },
-    { method: "GET", path: "/fonts/geist.woff2", query_keys: [], status: 200, resource_type: "font", same_origin: true },
-    { method: "POST", path: "/api/dev-ticket", query_keys: [], status: 200, resource_type: "api", same_origin: true },
-    { method: "GET", path: "/favicon.ico", query_keys: [], status: 404, resource_type: "other", same_origin: true }
+    { method: "GET", path: "/", query_keys: [], status: 200, resource_type: "document", same_origin: true, baseline_defect_id: "" },
+    { method: "GET", path: "/src/styles.css", query_keys: ["v"], status: 200, resource_type: "stylesheet", same_origin: true, baseline_defect_id: "" },
+    { method: "GET", path: "/node_modules/react.js", query_keys: ["v"], status: 200, resource_type: "module", same_origin: true, baseline_defect_id: "" },
+    { method: "GET", path: "/fonts/geist.woff2", query_keys: [], status: 200, resource_type: "font", same_origin: true, baseline_defect_id: "" },
+    { method: "POST", path: "/api/dev-ticket", query_keys: [], status: 200, resource_type: "api", same_origin: true, baseline_defect_id: "" },
+    { method: "GET", path: "/favicon.ico", query_keys: [], status: 404, resource_type: "other", same_origin: true, baseline_defect_id: "BASE-P01-FAVICON-NOT-FOUND" }
   ],
   websocket: {
     availability: "available",
@@ -61,7 +62,12 @@ validateManifest(manifest);
 validateLedger(ledger);
 validateClearance(clearance, { expected: clearance, verifyGit: true });
 validateEvidence(evidence, { checkFiles: false, expected: evidence });
-validateBrowserCaptures(consoleCapture, networkCapture);
+validateReviewOutcome(validNonClearance);
+validateBrowserCaptures(consoleCapture, networkCapture, manifest);
+validateBrowserCaptures(change(consoleCapture, "messages", [
+  { level: "debug", message: "[vite] connecting..." },
+  { level: "info", message: "Download the React DevTools for a better development experience: https://react.dev/link/react-devtools" }
+]), networkCapture, manifest);
 validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "agent-browser exposes no redacted frame capture", baseline_defect_id: "BASE-P01-WEBSOCKET-OBSERVER-UNAVAILABLE" }), manifest);
 validateSchemasAgainstDocuments();
 validateReferencedEvidence();
@@ -119,12 +125,14 @@ const negativeCases: [string, () => void][] = [
   ["incomplete prohibited vocabulary", () => validateEvidence(change(evidence, "redaction.prohibited", ["credentials"]), { checkFiles: false })],
   ["missing evidence candidate tree", () => validateEvidence(omit(evidence, "candidate_tree_sha"), { checkFiles: false })],
   ["secret-bearing descriptor", () => validateEvidence(change(evidence, "redaction.bearer_token", "live-secret"), { checkFiles: false })],
-  ["unexpected console message", () => validateBrowserCaptures(change(consoleCapture, "messages.2", { level: "error", message: "boom" }), networkCapture)],
-  ["missing expected console message", () => validateBrowserCaptures(change(consoleCapture, "messages", []), networkCapture)],
-  ["unexpected HTTP failure cannot be filtered", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.6", { method: "GET", path: "/missing", query_keys: [], status: 404, resource_type: "module", same_origin: true }))],
-  ["cross-origin static success cannot be filtered", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.1.same_origin", false))],
-  ["query-bearing HTTP path", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.0.path", "/?ticket=secret"))],
-  ["unexpected WebSocket close", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket.events.1", { event: "close", code: 1006 }))],
+  ["unexpected console message", () => validateBrowserCaptures(change(consoleCapture, "messages.2", { level: "error", message: "boom" }), networkCapture, manifest)],
+  ["missing expected console message", () => validateBrowserCaptures(change(consoleCapture, "messages", []), networkCapture, manifest)],
+  ["unexpected HTTP failure cannot be filtered", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.6", { method: "GET", path: "/missing", query_keys: [], status: 404, resource_type: "module", same_origin: true, baseline_defect_id: "" }), manifest)],
+  ["failed HTTP with nonexistent baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.5.baseline_defect_id", "BASE-DOES-NOT-EXIST"), manifest)],
+  ["successful HTTP with failure baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.0.baseline_defect_id", "BASE-P01-FAVICON-NOT-FOUND"), manifest)],
+  ["cross-origin static success cannot be filtered", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.1.same_origin", false), manifest)],
+  ["query-bearing HTTP path", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "raw_http.0.path", "/?ticket=secret"), manifest)],
+  ["unexpected WebSocket close", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket.events.1", { event: "close", code: 1006 }), manifest)],
   ["unavailable WebSocket without baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "not exposed", baseline_defect_id: "" }), manifest)],
   ["unavailable WebSocket with nonexistent baseline", () => validateBrowserCaptures(consoleCapture, change(networkCapture, "websocket", { availability: "unavailable", events: [], inference_prohibited: true, reason: "not exposed", baseline_defect_id: "BASE-DOES-NOT-EXIST" }), manifest)],
   ["dependency shorthand", () => validateLedger(change(ledger, "phases.3.prerequisites.0", "P01-P02"))],
@@ -134,6 +142,7 @@ const negativeCases: [string, () => void][] = [
   ["phase advanced before prerequisite", () => validateLedger(change(ledger, "phases.2.state", "candidate_ready_for_review"))],
   ["illegal phase transition", () => validateLedger(change(ledger, "phases.1.history.5.from", "blocked"))],
   ["phase state/history mismatch", () => validateLedger(change(ledger, "phases.1.state", "cleared"))],
+  ["backward phase transition timestamp", () => validateLedger(change(ledger, "phases.1.history.7.at", "2026-07-12T05:40:00.000Z"))],
   ["unknown transition lease", () => validateLedger(change(ledger, "phases.1.history.2.lease_id", "gooseweb-migration-999999"))],
   ["duplicate ledger lease", () => validateLedger(change(ledger, "lease_history.1", clone((ledger.lease_history as Json[])[0])))],
   ["nonmonotonic ledger lease", () => validateLedger(ledgerWithLease({ sequence: 1 }))],
@@ -144,7 +153,7 @@ const negativeCases: [string, () => void][] = [
 ];
 
 for (const [name, run] of negativeCases) assert.throws(run, undefined, `negative fixture unexpectedly passed: ${name}`);
-console.log(`Gooseweb acceptance contract v3 passed (${negativeCases.length} negative cases)`);
+console.log(`Gooseweb acceptance contract v4 passed (${negativeCases.length} negative cases)`);
 
 function validateSchemasAgainstDocuments(): void {
   applySchemaFile("verification/gooseweb/schemas/acceptance-manifest.schema.json", manifest);
@@ -159,7 +168,7 @@ function validateReferencedEvidence(): void {
   mkdirSync(resolve(directory, "screenshots"), { recursive: true });
   const files: Record<string, string | Uint8Array> = {
     "manifest.json": readFileSync(resolve(root, MANIFEST_PATH)),
-    "environment.json": JSON.stringify({ phase_id: evidence.phase_id, base_sha: evidence.base_sha, reviewed_range: evidence.reviewed_range, candidate_head_sha: evidence.candidate_head_sha, candidate_tree_sha: evidence.candidate_tree_sha, plan_sha256: APPROVED_PLAN_SHA256, manifest_sha256: (evidence.manifest as RecordJson).sha256, browser_session: (evidence.browser as RecordJson).session_name, browser_execution_mode: (evidence.browser as RecordJson).execution_mode, chromium_binary: (evidence.browser as RecordJson).chromium_binary, chromium_version: (evidence.browser as RecordJson).chromium_version, profile_policy: (evidence.browser as RecordJson).profile_policy, redaction: "omitted" }),
+    "environment.json": JSON.stringify({ phase_id: evidence.phase_id, attempt: evidence.attempt, base_sha: evidence.base_sha, reviewed_range: evidence.reviewed_range, candidate_head_sha: evidence.candidate_head_sha, candidate_tree_sha: evidence.candidate_tree_sha, served_head_sha: evidence.served_head_sha, served_tree_sha: evidence.served_tree_sha, clean_tree: evidence.clean_tree, hot_reload: evidence.hot_reload, lease: evidence.lease, stack: evidence.stack, review: evidence.review, plan_sha256: APPROVED_PLAN_SHA256, manifest_sha256: (evidence.manifest as RecordJson).sha256, browser_session: (evidence.browser as RecordJson).session_name, browser_execution_mode: (evidence.browser as RecordJson).execution_mode, chromium_binary: (evidence.browser as RecordJson).chromium_binary, chromium_version: (evidence.browser as RecordJson).chromium_version, profile_policy: (evidence.browser as RecordJson).profile_policy, redaction: "omitted" }),
     "console.json": JSON.stringify(consoleCapture),
     "network.json": JSON.stringify(networkCapture),
     "websocket.json": JSON.stringify((networkCapture.websocket as RecordJson)),
@@ -181,6 +190,26 @@ function validateReferencedEvidence(): void {
     const nonClearance = validNonClearance;
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));
     validateEvidence(rejectedEvidence, { checkFiles: true, expected: rejectedEvidence });
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify({ ...nonClearance, attempt: 4 }));
+    assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "cross-attempt outcome unexpectedly passed");
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(change(nonClearance, "review.reviewer_identity", "other-reviewer")));
+    assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "cross-reviewer outcome unexpectedly passed");
+    let foreignBrowser = change(nonClearance, "review.browser_session", "other-headless-session");
+    foreignBrowser = change(foreignBrowser, "browser.session_name", "other-headless-session");
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(foreignBrowser));
+    assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "cross-browser outcome unexpectedly passed");
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(change(nonClearance, "lease.lease_id", "gooseweb-migration-999999")));
+    assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "cross-lease outcome unexpectedly passed");
+    let foreignStack = change(nonClearance, "stack.runtime_port", 19101);
+    foreignStack = change(foreignStack, "stack.configuration_sha256", stackConfigurationHash(foreignStack.stack as RecordJson));
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(foreignStack));
+    assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "cross-stack outcome unexpectedly passed");
+    const nonexistent = "a".repeat(40);
+    let forgedGit = change(nonClearance, "candidate_head_sha", nonexistent);
+    forgedGit = change(forgedGit, "served_head_sha", nonexistent);
+    forgedGit = change(forgedGit, "reviewed_range", `${APPROVED_BASE_SHA}..${nonexistent}`);
+    assert.throws(() => validateReviewOutcome(forgedGit), undefined, "non-clearance with nonexistent Git head unexpectedly passed");
+    writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify({ ...nonClearance, recorded_at: "2026-07-12T10:19:59.000Z" }));
     assert.throws(() => validateEvidence(rejectedEvidence, { checkFiles: true }), undefined, "pre-release changes-required outcome unexpectedly passed");
     writeFileSync(resolve(directory, "review-outcome.json"), JSON.stringify(nonClearance));

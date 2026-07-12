@@ -21,19 +21,22 @@
       "method": "GET",
       "path": "/",
       "status": 200,
-      "resource_type": "document"
+      "resource_type": "document",
+      "baseline_defect_id": ""
     },
     {
       "method": "POST",
       "path": "/api/dev-ticket",
       "status": 200,
-      "resource_type": "api"
+      "resource_type": "api",
+      "baseline_defect_id": ""
     },
     {
       "method": "GET",
       "path": "/favicon.ico",
       "status": 404,
-      "resource_type": "other"
+      "resource_type": "other",
+      "baseline_defect_id": "BASE-P01-FAVICON-NOT-FOUND"
     }
   ],
   "exact_websocket_events": [

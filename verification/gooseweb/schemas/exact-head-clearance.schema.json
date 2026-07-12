@@ -80,7 +80,7 @@
           "const": "verification/gooseweb/manifests/p01-team-comms-live.json"
         },
         "revision": {
-          "const": 2
+          "const": 3
         },
         "sha256": {
           "type": "string",

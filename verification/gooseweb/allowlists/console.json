@@ -1,20 +1,38 @@
 {
-  "schema_revision": "gooseweb-console-allowlist/v3",
+  "schema_revision": "gooseweb-console-allowlist/v4",
   "capture_boundary": {
-    "source": "unfiltered agent-browser console output",
+    "source": "unfiltered agent-browser console output after document.readyState complete plus one second",
     "filtering": "none",
     "normalization": "none",
     "warnings_errors_exceptions_always_fail": true
   },
-  "exact_messages": [
+  "permitted_exact_variants": [
     {
-      "level": "debug",
-      "message": "[vite] connecting..."
+      "variant_id": "vite-connect-complete",
+      "messages": [
+        {
+          "level": "debug",
+          "message": "[vite] connecting..."
+        },
+        {
+          "level": "debug",
+          "message": "[vite] connected."
+        }
+      ]
     },
     {
-      "level": "debug",
-      "message": "[vite] connected."
+      "variant_id": "vite-connect-react-devtools",
+      "messages": [
+        {
+          "level": "debug",
+          "message": "[vite] connecting..."
+        },
+        {
+          "level": "info",
+          "message": "Download the React DevTools for a better development experience: https://react.dev/link/react-devtools"
+        }
+      ]
     }
   ],
-  "policy": "The complete unfiltered agent-browser console multiset must match exactly. No message is hidden, normalized, regex-matched, or substring-suppressed."
+  "policy": "The complete unfiltered multiset must equal one finite observed variant. Every variant and capture must contain zero warnings, errors, or exceptions. No regex, substring suppression, open-ended info allowance, filtering, or normalization is permitted."
 }

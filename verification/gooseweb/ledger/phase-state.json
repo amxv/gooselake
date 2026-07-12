@@ -1,5 +1,5 @@
 {
-  "schema_revision": "gooseweb-phase-state-ledger/v3",
+  "schema_revision": "gooseweb-phase-state-ledger/v4",
   "approved_plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
   "phases": [
     {
@@ -11,11 +11,9 @@
     },
     {
       "phase_id": "P01",
-      "prerequisites": [
-        "P00"
-      ],
+      "prerequisites": ["P00"],
       "state": "candidate_ready_for_review",
-      "state_reason": "P01 second fix candidate addresses replacement-review findings and awaits a new exclusive-lease review.",
+      "state_reason": "P01 third fix candidate addresses attempt-4 findings and awaits a new exclusive-lease review.",
       "history": [
         {
           "sequence": 1,
@@ -66,7 +64,7 @@
           "sequence": 6,
           "from": "implementing",
           "to": "candidate_ready_for_review",
-          "at": "2026-07-12T06:00:00.000Z",
+          "at": "2026-07-12T05:50:00.000Z",
           "reason": "Fix candidate implemented and queued for a fresh exact-head review.",
           "lease_id": null,
           "clearance_ref": null
@@ -102,8 +100,44 @@
           "sequence": 10,
           "from": "implementing",
           "to": "candidate_ready_for_review",
-          "at": "2026-07-12T06:20:00.000Z",
+          "at": "2026-07-12T06:10:00.000Z",
           "reason": "Second fix candidate implemented and queued for a fresh exact-head review.",
+          "lease_id": null,
+          "clearance_ref": null
+        },
+        {
+          "sequence": 11,
+          "from": "candidate_ready_for_review",
+          "to": "under_review",
+          "at": "2026-07-12T06:15:26.000Z",
+          "reason": "Supervisor acquired the sole migration stack lease for replacement attempt 4.",
+          "lease_id": "gooseweb-migration-000003",
+          "clearance_ref": null
+        },
+        {
+          "sequence": 12,
+          "from": "under_review",
+          "to": "changes_required",
+          "at": "2026-07-12T06:19:24.000Z",
+          "reason": "Replacement attempt 4 issued blocking findings; no clearance was issued.",
+          "lease_id": "gooseweb-migration-000003",
+          "clearance_ref": "tmp/gg/gooseweb-migration/P01/b40131f/attempt-4/report.md"
+        },
+        {
+          "sequence": 13,
+          "from": "changes_required",
+          "to": "implementing",
+          "at": "2026-07-12T06:19:25.000Z",
+          "reason": "Lease termination, cleanup, and release were confirmed before mutation resumed.",
+          "lease_id": null,
+          "clearance_ref": null
+        },
+        {
+          "sequence": 14,
+          "from": "implementing",
+          "to": "candidate_ready_for_review",
+          "at": "2026-07-12T06:35:00.000Z",
+          "reason": "Third fix candidate implemented and queued for a fresh exact-head review.",
           "lease_id": null,
           "clearance_ref": null
         }
@@ -111,9 +145,7 @@
     },
     {
       "phase_id": "P02",
-      "prerequisites": [
-        "P01"
-      ],
+      "prerequisites": ["P01"],
       "state": "blocked",
       "state_reason": "Exact prerequisites have not all cleared.",
       "history": []
@@ -130,39 +162,28 @@
     },
     {
       "phase_id": "P04",
-      "prerequisites": [
-        "P02",
-        "P03"
-      ],
+      "prerequisites": ["P02", "P03"],
       "state": "blocked",
       "state_reason": "Exact prerequisites have not all cleared.",
       "history": []
     },
     {
       "phase_id": "P05",
-      "prerequisites": [
-        "P03",
-        "P04"
-      ],
+      "prerequisites": ["P03", "P04"],
       "state": "blocked",
       "state_reason": "Exact prerequisites have not all cleared.",
       "history": []
     },
     {
       "phase_id": "P06",
-      "prerequisites": [
-        "P02",
-        "P04"
-      ],
+      "prerequisites": ["P02", "P04"],
       "state": "blocked",
       "state_reason": "Exact prerequisites have not all cleared.",
       "history": []
     },
     {
       "phase_id": "P07",
-      "prerequisites": [
-        "P06"
-      ],
+      "prerequisites": ["P06"],
       "state": "blocked",
       "state_reason": "Exact prerequisites have not all cleared.",
       "history": []
@@ -921,6 +942,54 @@
       },
       "outcome": "changes_required",
       "evidence_root": "tmp/gg/gooseweb-migration/P01/a8eb441/attempt-3/"
+    },
+    {
+      "lease_id": "gooseweb-migration-000003",
+      "sequence": 3,
+      "phase_id": "P01",
+      "owner_role": "supervisor",
+      "owner_identity": "inner_traveler",
+      "acquired_at": "2026-07-12T06:15:26.000Z",
+      "released_at": "2026-07-12T06:19:24.000Z",
+      "prior_lease_termination_evidence": {
+        "status": "terminated_and_cleaned",
+        "reference": "gooseweb-migration-000002 stopped, cleaned, and released at tmp/gg/gooseweb-migration/P01/a8eb441/attempt-3/lease-acquisition.json"
+      },
+      "managed_process": {
+        "identity": "proc_55 (pid 72051)",
+        "started_at": "2026-07-12T06:16:16.379Z",
+        "stopped_at": "2026-07-12T06:19:10.037Z",
+        "cleanup_completed_at": "2026-07-12T06:19:24.000Z",
+        "termination_evidence": "gg_process_kill and completion notification confirmed termination; isolated DEV_DIR cleanup completed before release."
+      },
+      "plan_sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c",
+      "candidate": {
+        "branch": "gg/p01-acceptance-foundation",
+        "head_sha": "b40131f3935f336b85923c6526660961c1d30253",
+        "tree_sha": "ef27545fc12851953b7c1a7540d4b3e37b84d744",
+        "clean_tree": true,
+        "hot_reload": false
+      },
+      "manifest": {
+        "path": "verification/gooseweb/manifests/p01-team-comms-live.json",
+        "revision": 2,
+        "sha256": "906d4ba1b7faf72203e475d7c1ccbcc1d3bef26b2ea09dc946525f35924e47a7"
+      },
+      "stack": {
+        "dev_dir": "tmp/gooseweb-migration-stack/P01/b40131f/attempt-4",
+        "runtime_port": 18121,
+        "tower_port": 18122,
+        "gooseweb_port": 13121,
+        "source_configuration": "isolated-local-gooselake-runtime",
+        "mode": "development-inline-realtime-core"
+      },
+      "reviewer": {
+        "identity": "accidental_camel",
+        "browser_session": "gooseweb-p01-b40131f-a4-headless-reviewer",
+        "browser_execution_mode": "headless"
+      },
+      "outcome": "changes_required",
+      "evidence_root": "tmp/gg/gooseweb-migration/P01/b40131f/attempt-4/"
     }
   ],
   "clearance_history": []

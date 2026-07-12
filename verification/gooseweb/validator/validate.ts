@@ -9,7 +9,7 @@ export const APPROVED_PLAN_SHA256 =
   "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c";
 export const MANIFEST_PATH =
   "verification/gooseweb/manifests/p01-team-comms-live.json";
-export const MANIFEST_REVISION = 2;
+export const MANIFEST_REVISION = 3;
 export const APPROVED_BASE_SHA = "ca88bfe56719f69fe59151372e0d5aa76b2c92ab";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -93,14 +93,24 @@ export function validateEvidence(value: RecordJson, options: EvidenceOptions = {
   const head = string(value.candidate_head_sha, "candidate head");
   equal(value.base_sha, APPROVED_BASE_SHA, "evidence approved base");
   equal(value.reviewed_range, `${value.base_sha}..${head}`, "evidence reviewed range");
+  equal(value.candidate_head_sha, value.served_head_sha, "evidence candidate/served head");
+  equal(value.candidate_tree_sha, value.served_tree_sha, "evidence candidate/served tree");
+  validateLease(object(value.lease, "evidence lease"));
+  equal(object(value.lease, "evidence lease").phase_id, value.phase_id, "evidence lease phase");
+  const evidenceStack = object(value.stack, "evidence stack");
+  equal(evidenceStack.configuration_sha256, stackConfigurationHash(evidenceStack), "evidence stack hash");
+  const evidenceReview = object(value.review, "evidence review");
+  const evidenceBrowser = object(value.browser, "evidence browser");
+  equal(evidenceReview.browser_session, evidenceBrowser.session_name, "evidence reviewer/browser session");
   if (!head.startsWith(sha7)) fail("evidence sha7 does not match candidate head");
   equal(value.root, `tmp/gg/gooseweb-migration/${phase}/${sha7}/attempt-${attempt}/`, "evidence root convention");
   validateManifestTuple(object(value.manifest, "evidence manifest"));
   validateBrowser(object(value.browser, "evidence browser"));
   if (options.expected) {
-    for (const key of ["phase_id", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha"]) equal(value[key], options.expected[key], `expected evidence ${key}`);
+    for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], options.expected[key], `expected evidence ${key}`);
     equal(JSON.stringify(value.manifest), JSON.stringify(options.expected.manifest), "expected evidence manifest");
     equal(JSON.stringify(value.browser), JSON.stringify(options.expected.browser), "expected browser tuple");
+    for (const key of ["lease", "stack", "review"]) equal(JSON.stringify(value[key]), JSON.stringify(options.expected[key]), `expected evidence ${key} tuple`);
     equal(JSON.stringify(value.review_outcome), JSON.stringify(options.expected.review_outcome), "expected review outcome tuple");
   }
   const prohibited = array(object(value.redaction, "redaction").prohibited, "prohibited redaction categories");
@@ -172,14 +182,20 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
   const networkAllowlist = readJson("verification/gooseweb/allowlists/network.json");
   applySchemaInline(consoleCaptureSchema(), consoleCapture, "console capture");
   applySchemaInline(networkCaptureSchema(), networkCapture, "network capture");
-  equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v3", "console allowlist revision");
+  equal(consoleAllowlist.schema_revision, "gooseweb-console-allowlist/v4", "console allowlist revision");
   equal(networkAllowlist.schema_revision, "gooseweb-network-allowlist/v3", "network allowlist revision");
   const consoleBoundary = object(consoleAllowlist.capture_boundary, "console capture boundary");
-  equal(consoleBoundary.source, "unfiltered agent-browser console output", "console capture source");
+  equal(consoleBoundary.source, "unfiltered agent-browser console output after document.readyState complete plus one second", "console capture source");
   equal(consoleBoundary.filtering, "none", "console filtering");
   equal(consoleBoundary.normalization, "none", "console normalization");
   equal(consoleBoundary.warnings_errors_exceptions_always_fail, true, "console failure policy");
-  exactMultiset(array(consoleCapture.messages, "console messages"), array(consoleAllowlist.exact_messages, "console allowlist"), "console messages");
+  const capturedMessages = array(consoleCapture.messages, "console messages");
+  if (capturedMessages.some((item) => ["warn", "error"].includes(string(object(item, "console message").level, "console level")))) fail("console capture contains warning/error/exception");
+  const variants = array(consoleAllowlist.permitted_exact_variants, "console variants").map((item) => object(item, "console variant"));
+  ensureUnique(variants.map((variant) => string(variant.variant_id, "console variant ID")), "console variant IDs");
+  for (const variant of variants) if (array(variant.messages, "variant messages").some((item) => ["warn", "error"].includes(string(object(item, "variant message").level, "variant console level")))) fail("console allowlist variant contains warning/error");
+  const matches = variants.filter((variant) => sameMultiset(capturedMessages, array(variant.messages, "variant messages")));
+  if (matches.length !== 1) fail("console capture does not match exactly one finite benign variant");
   const boundary = object(networkAllowlist.capture_boundary, "network capture boundary");
   equal(boundary.source, "unfiltered agent-browser network requests including successes", "network capture source");
   equal(boundary.raw_capture_retained, true, "raw network retention");
@@ -197,8 +213,19 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
     return !(request.same_origin === true && ignorableStatus && ignoredTypes.has(string(request.resource_type, "resource type")));
   }).map((item) => {
     const request = object(item, "HTTP request");
-    return { method: request.method!, path: request.path!, status: request.status!, resource_type: request.resource_type! } as RecordJson;
+    return { method: request.method!, path: request.path!, status: request.status!, resource_type: request.resource_type!, baseline_defect_id: request.baseline_defect_id! } as RecordJson;
   });
+  for (const item of array(networkCapture.raw_http, "raw HTTP capture")) {
+    const request = object(item, "HTTP request");
+    const failed = integer(request.status, "HTTP status") >= 400;
+    const baselineId = string(request.baseline_defect_id, "HTTP baseline ID");
+    if (!failed && baselineId) fail("successful HTTP request cannot carry a failure baseline");
+    if (failed) {
+      if (!manifest) fail("failed HTTP request requires the validated manifest");
+      const baseline = resolveManifestBaseline(manifest, baselineId, "HTTP failure");
+      equal(baseline.scenario_id, object(manifest.scenario, "manifest scenario").stable_scenario_id, "HTTP baseline scenario");
+    }
+  }
   exactMultiset(evaluated, array(networkAllowlist.exact_evaluated_http, "HTTP allowlist"), "evaluated HTTP activity");
   const websocket = object(networkCapture.websocket, "WebSocket capture");
   if (websocket.availability === "available") exactMultiset(array(websocket.events, "WebSocket events"), array(networkAllowlist.exact_websocket_events, "WebSocket allowlist"), "WebSocket events");
@@ -208,10 +235,8 @@ export function validateBrowserCaptures(consoleCapture: RecordJson, networkCaptu
     const defectId = string(websocket.baseline_defect_id, "unavailable WebSocket baseline mapping");
     requireText(defectId, "unavailable WebSocket baseline mapping");
     if (!manifest) fail("unavailable WebSocket capture requires the validated manifest");
-    const matches = array(manifest.baseline_detected, "manifest baselines").map((item) => object(item, "baseline")).filter((entry) => entry.defect_id === defectId);
-    if (matches.length !== 1) fail("unavailable WebSocket baseline does not resolve exactly once in manifest");
-    validateBaseline(matches[0]!);
-    equal(matches[0]!.scenario_id, object(manifest.scenario, "manifest scenario").stable_scenario_id, "WebSocket baseline scenario");
+    const baseline = resolveManifestBaseline(manifest, defectId, "unavailable WebSocket");
+    equal(baseline.scenario_id, object(manifest.scenario, "manifest scenario").stable_scenario_id, "WebSocket baseline scenario");
   }
   scanSecrets(consoleCapture, "console capture", false);
   scanSecrets(networkCapture, "network capture", false);
@@ -266,20 +291,22 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
   const networkCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.network, "network")), "utf8")) as RecordJson;
   validateBrowserCaptures(consoleCapture, networkCapture, manifestCopy);
   const environment = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.environment, "environment")), "utf8")) as RecordJson;
-  for (const key of ["phase_id", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha"]) equal(environment[key], descriptor[key], `environment/${key}`);
+  for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(environment[key], descriptor[key], `environment/${key}`);
   equal(environment.plan_sha256, APPROVED_PLAN_SHA256, "environment plan hash");
   equal(environment.manifest_sha256, object(descriptor.manifest, "manifest").sha256, "environment manifest hash");
   equal(environment.browser_session, object(descriptor.browser, "browser").session_name, "environment browser session");
   equal(environment.browser_execution_mode, object(descriptor.browser, "browser").execution_mode, "environment browser mode");
   for (const key of ["chromium_binary", "chromium_version", "profile_policy"]) equal(environment[key], object(descriptor.browser, "browser")[key], `environment browser ${key}`);
+  for (const key of ["lease", "stack", "review"]) equal(JSON.stringify(environment[key]), JSON.stringify(descriptor[key]), `environment ${key} tuple`);
   const websocketCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.websocket, "websocket")), "utf8")) as RecordJson;
   equal(JSON.stringify(websocketCapture), JSON.stringify(networkCapture.websocket), "network/WebSocket capture linkage");
   const outcomeRecord = JSON.parse(readFileSync(safeChild(evidenceRoot, string(outcome.record, "review outcome record")), "utf8")) as RecordJson;
   if (outcome.status === "cleared") validateClearance(outcomeRecord);
-  else if (outcome.status === "changes_required") validateNonClearance(outcomeRecord);
+  else if (outcome.status === "changes_required") validateReviewOutcome(outcomeRecord);
   else fail("unknown review outcome status");
   equal(outcomeRecord.status === "changes_required" ? "changes_required" : "cleared", outcome.status, "review outcome record/status");
-  for (const key of ["phase_id", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha"]) equal(outcomeRecord[key], descriptor[key], `evidence/outcome ${key}`);
+  for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(outcomeRecord[key], descriptor[key], `evidence/outcome ${key}`);
+  for (const key of ["lease", "stack", "review", "browser"]) equal(JSON.stringify(outcomeRecord[key]), JSON.stringify(descriptor[key]), `evidence/outcome ${key} tuple`);
   const evidenceManifest = object(descriptor.manifest, "evidence manifest");
   if (outcome.status === "cleared") {
     const clearanceManifest = object(outcomeRecord.manifest, "clearance manifest");
@@ -297,10 +324,14 @@ function validatePhaseHistory(phase: RecordJson): void {
   }
   const allowed = new Set(["blocked>implementing", "implementing>candidate_ready_for_review", "candidate_ready_for_review>under_review", "under_review>changes_required", "under_review>cleared", "changes_required>implementing"]);
   let priorTo: Json | undefined;
+  let priorTimestamp = -Infinity;
   history.forEach((entry, index) => {
     equal(entry.sequence, index + 1, `${id} transition sequence`);
     if (!allowed.has(`${entry.from}>${entry.to}`)) fail(`${id} illegal transition ${entry.from}>${entry.to}`);
     if (priorTo !== undefined) equal(entry.from, priorTo, `${id} contiguous transition history`);
+    const timestamp = time(entry.at);
+    if (timestamp < priorTimestamp) fail(`${id} transition timestamps move backward`);
+    priorTimestamp = timestamp;
     priorTo = entry.to;
   });
   equal(priorTo, phase.state, `${id} current state/history`);
@@ -376,11 +407,31 @@ function validateLease(lease: RecordJson): void {
   if (!(acquired <= started && started < stopped && stopped <= cleaned && cleaned <= released)) fail("lease release must follow managed-process stop and cleanup");
 }
 
-function validateNonClearance(record: RecordJson): void {
+export function validateReviewOutcome(record: RecordJson): void {
   applySchemaFile("verification/gooseweb/schemas/review-outcome.schema.json", record);
   equal(record.reviewed_range, `${record.base_sha}..${record.candidate_head_sha}`, "non-clearance reviewed range");
+  equal(record.candidate_head_sha, record.served_head_sha, "non-clearance candidate/served head");
+  equal(record.candidate_tree_sha, record.served_tree_sha, "non-clearance candidate/served tree");
+  const lease = object(record.lease, "non-clearance lease");
+  validateLease(lease);
+  equal(lease.phase_id, record.phase_id, "non-clearance lease phase");
+  const stack = object(record.stack, "non-clearance stack");
+  equal(stack.configuration_sha256, stackConfigurationHash(stack), "non-clearance stack hash");
+  const review = object(record.review, "non-clearance review");
+  const browser = object(record.browser, "non-clearance browser");
+  equal(review.browser_session, browser.session_name, "non-clearance reviewer/browser session");
   validateManifestTuple(object(record.manifest, "non-clearance manifest"));
-  if (time(record.recorded_at) < time(object(record.lease, "non-clearance lease").released_at)) fail("changes-required outcome was recorded before lease release");
+  if (time(record.recorded_at) < time(lease.released_at)) fail("changes-required outcome was recorded before lease release");
+  verifyGitRecord(record);
+}
+
+function verifyGitRecord(record: RecordJson): void {
+  execFileSync("git", ["cat-file", "-e", `${string(record.base_sha, "base SHA")}^{commit}`], { cwd: root, stdio: "ignore" });
+  const tree = execFileSync("git", ["rev-parse", `${string(record.candidate_head_sha, "candidate head")}^{tree}`], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  equal(record.candidate_tree_sha, tree, "Git candidate tree");
+  try { execFileSync("git", ["merge-base", "--is-ancestor", string(record.base_sha, "base SHA"), string(record.candidate_head_sha, "candidate head")], { cwd: root, stdio: "ignore" }); }
+  catch { fail("declared base is not an ancestor of candidate head"); }
+  equal(execFileSync("git", ["merge-base", string(record.base_sha, "base SHA"), string(record.candidate_head_sha, "candidate head")], { cwd: root, encoding: "utf8" }).trim(), record.base_sha, "exact reviewed merge base");
 }
 
 function decodePngDimensions(bytes: Buffer): { width: number; height: number } {
@@ -444,6 +495,14 @@ function validateBaseline(entry: RecordJson): void {
   equal(entry.product_scenario_status, "blocked_not_approved", "baseline product status");
 }
 
+function resolveManifestBaseline(manifest: RecordJson, defectId: string, label: string): RecordJson {
+  requireText(defectId, `${label} baseline ID`);
+  const matches = array(manifest.baseline_detected, "manifest baselines").map((item) => object(item, "baseline")).filter((entry) => entry.defect_id === defectId);
+  if (matches.length !== 1) fail(`${label} baseline does not resolve exactly once in manifest`);
+  validateBaseline(matches[0]!);
+  return matches[0]!;
+}
+
 function validateSchemaNode(schema: Schema, value: Json, path: string): void {
   if (schema.const !== undefined && !deepEqual(value, schema.const)) fail(`${path} violates const`);
   if (schema.enum !== undefined && !array(schema.enum, `${path} enum`).some((item) => deepEqual(item, value))) fail(`${path} is outside enum`);
@@ -478,7 +537,7 @@ function consoleCaptureSchema(): Schema {
 }
 
 function networkCaptureSchema(): Schema {
-  const httpItem = { type: "object", additionalProperties: false, required: ["method", "path", "query_keys", "status", "resource_type", "same_origin"], properties: { method: { type: "string", minLength: 1 }, path: { type: "string", pattern: "^/[^?]*$" }, query_keys: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, status: { type: "integer", minimum: 100, maximum: 599 }, resource_type: { enum: ["document", "api", "stylesheet", "font", "script", "module", "websocket", "other"] }, same_origin: { type: "boolean" } } };
+  const httpItem = { type: "object", additionalProperties: false, required: ["method", "path", "query_keys", "status", "resource_type", "same_origin", "baseline_defect_id"], properties: { method: { type: "string", minLength: 1 }, path: { type: "string", pattern: "^/[^?]*$" }, query_keys: { type: "array", uniqueItems: true, items: { type: "string", minLength: 1 } }, status: { type: "integer", minimum: 100, maximum: 599 }, resource_type: { enum: ["document", "api", "stylesheet", "font", "script", "module", "websocket", "other"] }, same_origin: { type: "boolean" }, baseline_defect_id: { type: "string" } } };
   const wsEvent = { type: "object", additionalProperties: false, required: ["event", "code"], properties: { event: { enum: ["open", "close"] }, code: { type: "integer", minimum: 0, maximum: 4999 } } };
   return { type: "object", additionalProperties: false, required: ["schema_revision", "capture_source", "unfiltered", "raw_http", "websocket"], properties: { schema_revision: { const: "gooseweb-network-capture/v3" }, capture_source: { const: "agent-browser network requests" }, unfiltered: { const: true }, raw_http: { type: "array", items: httpItem }, websocket: { type: "object", additionalProperties: false, required: ["availability", "events", "inference_prohibited", "reason", "baseline_defect_id"], properties: { availability: { enum: ["available", "unavailable"] }, events: { type: "array", items: wsEvent }, inference_prohibited: { type: "boolean" }, reason: { type: "string" }, baseline_defect_id: { type: "string" } } } } };
 }
@@ -487,6 +546,11 @@ function networkCaptureSchema(): Schema {
 function exactMultiset(actual: Json[], expected: Json[], label: string): void {
   const normalize = (items: Json[]) => items.map((item) => JSON.stringify(item)).sort();
   equal(JSON.stringify(normalize(actual)), JSON.stringify(normalize(expected)), `exact ${label} allowlist`);
+}
+
+function sameMultiset(actual: Json[], expected: Json[]): boolean {
+  const normalize = (items: Json[]) => items.map((item) => JSON.stringify(item)).sort();
+  return JSON.stringify(normalize(actual)) === JSON.stringify(normalize(expected));
 }
 
 function scanSecrets(value: Json, path: string, allowVocabulary: boolean): void {

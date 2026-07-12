@@ -1,5 +1,5 @@
 {
-  "schema_revision": "gooseweb-review-outcome/v1",
+  "schema_revision": "gooseweb-review-outcome/v2",
   "phase_id": "P01",
   "base_sha": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab",
   "reviewed_range": "ca88bfe56719f69fe59151372e0d5aa76b2c92ab..7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
@@ -8,20 +8,70 @@
   "candidate_tree_sha": "2c964761367fa4d5fb516bc6130c1af509cfea7d",
   "manifest": {
     "path": "verification/gooseweb/manifests/p01-team-comms-live.json",
-    "revision": 2,
-    "sha256": "906d4ba1b7faf72203e475d7c1ccbcc1d3bef26b2ea09dc946525f35924e47a7"
+    "revision": 3,
+    "sha256": "157deb14a7dca547477d470cde40f25f9c9d01cfb8808b4be73553bc7f68c7f5"
   },
   "lease": {
     "lease_id": "gooseweb-migration-000002",
     "sequence": 2,
-    "released_at": "2026-07-12T10:20:00.000Z"
+    "phase_id": "P01",
+    "owner_role": "supervisor",
+    "owner_identity": "p01-supervisor",
+    "acquired_at": "2026-07-12T10:00:00.000Z",
+    "released_at": "2026-07-12T10:20:00.000Z",
+    "prior_lease_termination_evidence": {
+      "status": "terminated_and_cleaned",
+      "reference": "ledger lease gooseweb-migration-000001 termination"
+    },
+    "managed_process": {
+      "identity": "gg-process-example-2",
+      "started_at": "2026-07-12T10:01:00.000Z",
+      "stopped_at": "2026-07-12T10:18:00.000Z",
+      "cleanup_completed_at": "2026-07-12T10:19:00.000Z",
+      "termination_evidence": "process completion notification and cleanup record"
+    }
   },
   "status": "changes_required",
   "clearance_issued": false,
   "product_approved": false,
   "recipient_role": "none",
   "findings": [
-    "P01-BLOCK-005"
+    "P01-BLOCK-010"
   ],
-  "recorded_at": "2026-07-12T10:21:00.000Z"
+  "recorded_at": "2026-07-12T10:21:00.000Z",
+  "served_head_sha": "7adbae8b4cdf368b7b7122a81ad6a8cf30cdd7d0",
+  "served_tree_sha": "2c964761367fa4d5fb516bc6130c1af509cfea7d",
+  "clean_tree": true,
+  "hot_reload": false,
+  "stack": {
+    "dev_dir": "tmp/gooseweb-p01-review",
+    "runtime_port": 18101,
+    "tower_port": 18102,
+    "gooseweb_port": 13101,
+    "source_configuration": "isolated-local-runtime",
+    "branch": "gg/p01-acceptance-foundation",
+    "mode": "development-real-worker",
+    "configuration_sha256": "670d5416491d76fa18c563b7f9f6280411dbf309efdc64676c4c6fb3d4d1204e"
+  },
+  "review": {
+    "implementer_identity": "p01-implementer",
+    "reviewer_identity": "p01-reviewer",
+    "reviewer_role": "read_only",
+    "browser_mechanism": "agent-browser",
+    "browser_session": "gooseweb-p01-review-attempt-3-headless",
+    "concurrent_mutation_build_format_generation": false,
+    "findings_route": "reviewer_to_implementer",
+    "final_approval_routed_to_implementer": false,
+    "replacement_reviewer_full_rerun_required": true
+  },
+  "browser": {
+    "mechanism": "agent-browser",
+    "execution_mode": "headless",
+    "headed_mode_prohibited": true,
+    "fresh_unique_session_required": true,
+    "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "chromium_version": "150.0.7871.115",
+    "profile_policy": "fresh_ephemeral",
+    "session_name": "gooseweb-p01-review-attempt-3-headless"
+  }
 }

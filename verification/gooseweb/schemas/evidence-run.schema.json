@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "gooseweb://schemas/evidence-run/v3",
-  "title": "Gooseweb evidence run descriptor v3",
+  "$id": "gooseweb://schemas/evidence-run/v4",
+  "title": "Gooseweb evidence run descriptor v4",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -28,11 +28,18 @@
     "metrics",
     "report",
     "review_outcome",
-    "redaction"
+    "redaction",
+    "served_head_sha",
+    "served_tree_sha",
+    "clean_tree",
+    "hot_reload",
+    "lease",
+    "stack",
+    "review"
   ],
   "properties": {
     "schema_revision": {
-      "const": "gooseweb-evidence-run/v3"
+      "const": "gooseweb-evidence-run/v4"
     },
     "phase_id": {
       "type": "string",
@@ -83,7 +90,7 @@
           "minLength": 1
         },
         "revision": {
-          "const": 2
+          "const": 3
         },
         "sha256": {
           "type": "string",
@@ -101,8 +108,8 @@
         "fresh_unique_session_required",
         "chromium_binary",
         "chromium_version",
-        "profile_policy"
-        ,"session_name"
+        "profile_policy",
+        "session_name"
       ],
       "properties": {
         "mechanism": {
@@ -260,6 +267,215 @@
               "private keys"
             ]
           }
+        }
+      }
+    },
+    "served_head_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "served_tree_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "clean_tree": {
+      "const": true
+    },
+    "hot_reload": {
+      "const": false
+    },
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lease_id",
+        "sequence",
+        "phase_id",
+        "owner_role",
+        "owner_identity",
+        "acquired_at",
+        "released_at",
+        "prior_lease_termination_evidence",
+        "managed_process"
+      ],
+      "properties": {
+        "lease_id": {
+          "type": "string",
+          "pattern": "^gooseweb-migration-[0-9]{6,}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "phase_id": {
+          "type": "string",
+          "pattern": "^P(0[1-9]|[1-4][0-9]|5[0-6])$"
+        },
+        "owner_role": {
+          "const": "supervisor"
+        },
+        "owner_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acquired_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "released_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "prior_lease_termination_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reference"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "no_prior_lease",
+                "terminated_and_cleaned"
+              ]
+            },
+            "reference": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "managed_process": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "identity",
+            "started_at",
+            "stopped_at",
+            "cleanup_completed_at",
+            "termination_evidence"
+          ],
+          "properties": {
+            "identity": {
+              "type": "string",
+              "minLength": 1
+            },
+            "started_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "stopped_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "cleanup_completed_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "termination_evidence": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "stack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dev_dir",
+        "runtime_port",
+        "tower_port",
+        "gooseweb_port",
+        "source_configuration",
+        "branch",
+        "mode",
+        "configuration_sha256"
+      ],
+      "properties": {
+        "dev_dir": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "tower_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "gooseweb_port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "source_configuration": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "configuration_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implementer_identity",
+        "reviewer_identity",
+        "reviewer_role",
+        "browser_mechanism",
+        "browser_session",
+        "concurrent_mutation_build_format_generation",
+        "findings_route",
+        "final_approval_routed_to_implementer",
+        "replacement_reviewer_full_rerun_required"
+      ],
+      "properties": {
+        "implementer_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewer_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewer_role": {
+          "const": "read_only"
+        },
+        "browser_mechanism": {
+          "const": "agent-browser"
+        },
+        "browser_session": {
+          "type": "string",
+          "minLength": 1
+        },
+        "concurrent_mutation_build_format_generation": {
+          "const": false
+        },
+        "findings_route": {
+          "const": "reviewer_to_implementer"
+        },
+        "final_approval_routed_to_implementer": {
+          "const": false
+        },
+        "replacement_reviewer_full_rerun_required": {
+          "const": true
         }
       }
     }

@@ -5,3 +5,5 @@ pub mod http;
 pub mod materializer;
 pub mod protocol;
 pub mod runtime;
+#[doc(hidden)]
+pub mod verification;

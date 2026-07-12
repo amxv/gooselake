@@ -618,7 +618,10 @@
       ],
       "properties": {
         "allowed_use": {
-          "const": "manifest_plumbing_only"
+          "enum": [
+            "manifest_plumbing_only",
+            "source_fixture_through_real_tower_only"
+          ]
         },
         "product_correctness_use": {
           "const": false

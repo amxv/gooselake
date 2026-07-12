@@ -8,6 +8,13 @@
       "revision": 4,
       "sha256": "fadae455215a04013c2a3f18fcf37d886d8ffa1c8c97035a5320779576595b26",
       "activated_reason": "P01 Team Comms is the sole source-backed acceptance scenario authorized for exact-head review; validator fixtures are not production manifests."
+    },
+    {
+      "phase_id": "P02",
+      "path": "verification/gooseweb/manifests/p02-fake-source-observers.json",
+      "revision": 1,
+      "sha256": "8b34a3f95dd768ee839841f92de7b7ef882275c25da9b99bbd60ff5baaa3b381",
+      "activated_reason": "P02 verifies the bounded public-contract fake source and redacted real Tower/frame/Worker/store observer chain without claiming product approval."
     }
   ]
 }

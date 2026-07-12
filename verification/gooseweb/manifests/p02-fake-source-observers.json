@@ -1,0 +1,400 @@
+{
+  "schema_revision": "gooseweb-acceptance-manifest/v4",
+  "manifest_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+  "manifest_revision": 1,
+  "approved_plan": {
+    "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
+    "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
+  },
+  "browser_contract": {
+    "mechanism": "agent-browser",
+    "execution_mode": "headless",
+    "headed_mode_prohibited": true,
+    "fresh_unique_session_required": true,
+    "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "chromium_version": "150.0.7871.115",
+    "profile_policy": "fresh_ephemeral"
+  },
+  "scenario": {
+    "phase_id": "P02",
+    "title": "Deterministic fake source drives real Tower and Gooseweb observers",
+    "product_clearance": "blocked_expected_honest_failure",
+    "stable_scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+    "preconditions": [
+      "A clean committed candidate is served under the sole migration lease.",
+      "Default URL contains no fixture query parameter.",
+      "The versioned p02-fake-gooselake/v1 source is configured through public runtime contracts."
+    ],
+    "actions": [
+      {
+        "id": "action-send-deterministic-turn-and-team-message",
+        "control": {
+          "role": "textbox",
+          "accessible_name": "Message agent or team"
+        },
+        "submit": {
+          "role": "button",
+          "accessible_name": "Send deterministic action"
+        },
+        "expected_command_count": 1,
+        "command": "sendTurn followed by sendTeamMessage in the bounded source scenario"
+      }
+    ],
+    "authority_chain": [
+      {
+        "layer": "Gooselake",
+        "required": [
+          "fixed session, turn, message, delivery, process, clock, IDs, epoch, and source sequences",
+          "delivery records for intended recipients only",
+          "bounded replay plus duplicate, gap, epoch, disconnect, delay, rejection, and terminal facts",
+          "unknown public fields retained and every observer value redacted at capture"
+        ]
+      },
+      {
+        "layer": "Goosetower",
+        "required": [
+          "real runtime client, SSE fan-in, materializer, and gateway path consume the public source",
+          "materialized state and decoded frames carry stable identity and explicit source/gateway cursors"
+        ]
+      },
+      {
+        "layer": "Gooseweb Worker/store",
+        "required": [
+          "production decoder and Worker/store path consume deterministic captured frames",
+          "read-only observer reports exact normalized state without inferring unavailable evidence"
+        ]
+      },
+      {
+        "layer": "Gooseweb React",
+        "required": [
+          "exact deterministic turn and team text visible once after supervisor review",
+          "oldest-first chronology",
+          "accessible filter/composer/send controls",
+          "honest delivery or rejection status"
+        ]
+      }
+    ],
+    "cardinality": {
+      "browser_actions": 1,
+      "commands": 1,
+      "runtime_messages": 1,
+      "visible_message_instances": 1,
+      "duplicates": 0
+    },
+    "chronology": "oldest_first_by_authoritative_order_not_client_timestamp",
+    "golden_goose_acceptance_lessons": [
+      "authoritative bootstrap and reload truth",
+      "no composer without a selected thread/team",
+      "live projection and window coverage honesty",
+      "stable chronology and no duplicates",
+      "exact command cardinality",
+      "filter and empty-state clarity",
+      "scroll/follow behavior",
+      "bounded large feeds",
+      "team injection visibility"
+    ]
+  },
+  "ownership": {
+    "gooselake": {
+      "impact": "no_change",
+      "reason": "The fake source simulates public Gooselake authority only on a separate verification listener; production runtime behavior is unchanged."
+    },
+    "goosetower": {
+      "impact": "no_change",
+      "reason": "Real Tower runtime client, SSE, materializer, gateway, and frame paths are exercised; production authority is unchanged."
+    },
+    "gooseweb": {
+      "impact": "observed_only",
+      "reason": "The real protocol decoder, Worker, and external store are observed by verification scripts; no fake data or control is bundled into default or production UI paths."
+    },
+    "auth_account_state": {
+      "impact": "no_change",
+      "reason": "No auth/account state changes; runtime bearer and verification-control values are never exposed by observers and all evidence is capture-time redacted."
+    },
+    "protocol_generated_code": {
+      "impact": "no_change",
+      "reason": "No Protobuf schema or generated output is edited; captured frames use the existing generated decoder."
+    },
+    "api_narrative_docs": {
+      "impact": "no_change",
+      "reason": "No product HTTP behavior or OpenAPI changes; the separate verification source implements existing public contracts only."
+    }
+  },
+  "reconstruction": [
+    "ordinary_reload",
+    "hard_reload",
+    "fresh_chromium_context_profile",
+    "websocket_loss_reconnect",
+    "navigation_away_and_back"
+  ],
+  "responsive": {
+    "viewports": [
+      "1440x1000",
+      "820x1000",
+      "520x900"
+    ],
+    "assertions": [
+      "document.documentElement.scrollWidth equals document.documentElement.clientWidth",
+      "composer and primary send action are inside viewport",
+      "critical controls are keyboard reachable",
+      "focus, Escape, and return behavior are correct where a sheet is used"
+    ]
+  },
+  "states": {
+    "empty": {
+      "applicability": "required",
+      "expectation": "Clear, non-fixture empty state and no stale rows."
+    },
+    "loading": {
+      "applicability": "required",
+      "expectation": "Honest loading state without fake message text."
+    },
+    "stale_gap_replaying": {
+      "applicability": "required",
+      "expectation": "Visible stale/replay state; no command is presented as converged."
+    },
+    "rejection_conflict": {
+      "applicability": "required",
+      "expectation": "Specific terminal rejection and no phantom visible success."
+    },
+    "permission_denied": {
+      "applicability": "not_applicable",
+      "reason": "P01 runs the existing owner/dev-auth flow; RBAC denial becomes product scope in P15-P17."
+    },
+    "unsupported_provider": {
+      "applicability": "not_applicable",
+      "reason": "Team delivery visibility is provider-independent in this current scenario."
+    },
+    "terminal_error": {
+      "applicability": "required",
+      "expectation": "Specific failure remains visible and cannot be classified as success."
+    }
+  },
+  "fixtures": {
+    "allowed_use": "source_fixture_through_real_tower_only",
+    "product_correctness_use": false,
+    "default_fixture_leak_assertions": [
+      "URL has no gooseweb fixture parameter.",
+      "Visible text contains no dev fixture markers or fake entities.",
+      "Fixture-only globals and controls are absent."
+    ],
+    "gating": "Any visual fixture must require both import.meta.env.DEV and an explicit query parameter."
+  },
+  "allowlists": {
+    "console": "verification/gooseweb/allowlists/console.json",
+    "network": "verification/gooseweb/allowlists/network.json",
+    "unexpected_console_network_protocol_websocket_failure": "fail"
+  },
+  "baseline_detected": [
+    {
+      "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+      "defect_id": "BASE-P01-TEAM-COMMS-EMPTY",
+      "first_divergent_layer": "Goosetower",
+      "evidence_references": [
+        "tmp/gg/gooseweb-current-state-evidence/gooseweb-team-comms-empty-1440x1000.png"
+      ],
+      "owning_correction_phase": "P08",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Runtime message/delivery/event and injection succeed while Team Comms remains empty."
+    },
+    {
+      "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+      "defect_id": "BASE-P01-STALE-TURN",
+      "first_divergent_layer": "Goosetower",
+      "evidence_references": [
+        "tmp/gg/gooseweb-current-state-evidence/gooseweb-live-agent-after-runtime-completion-1440x1000.png"
+      ],
+      "owning_correction_phase": "P07",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P25",
+        "M3",
+        "P45",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Runtime terminal truth succeeds while the materialized/browser session remains turn_running."
+    },
+    {
+      "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+      "defect_id": "BASE-P01-START-LEAD-NO-ADMISSION",
+      "first_divergent_layer": "browser-command to Goosetower admission/routing boundary",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/report.md#honest-headless-browser-baseline"
+      ],
+      "owning_correction_phase": "P07",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P44",
+        "P45",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "The semantic Start lead control produces no runtime/materialized session, pending state, or visible terminal rejection, so the source-backed Team Comms precondition cannot be established."
+    },
+    {
+      "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+      "defect_id": "BASE-P01-RECONNECT-STATE-DISAGREEMENT",
+      "first_divergent_layer": "Gooseweb Worker/store to React connection-state projection",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/tower-state.redacted.json",
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/websocket.json"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P25",
+        "M3",
+        "P45",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Offline/online and fresh-context reconstruction do not expose an honest connection state; the top level reports degraded while source health reports live."
+    },
+    {
+      "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+      "defect_id": "BASE-P01-MOBILE-COMMS-UNREACHABLE",
+      "first_divergent_layer": "Gooseweb React responsive navigation",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/viewport-results.json",
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/screenshots/520x900.png"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "P47",
+        "M5",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "After reload at 520x900, Team Comms is absent from exposed semantic controls, so the critical surface is unreachable."
+    },
+    {
+      "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+      "defect_id": "BASE-P01-WEBSOCKET-OBSERVER-UNAVAILABLE",
+      "first_divergent_layer": "verification observer boundary",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/7adbae8/attempt-2/websocket.json"
+      ],
+      "owning_correction_phase": "P06",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P45",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "P01 and agent-browser provide no redacted WebSocket frame observer, so frame behavior is recorded as unavailable and never inferred."
+    },
+    {
+      "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+      "defect_id": "BASE-P01-FAVICON-NOT-FOUND",
+      "first_divergent_layer": "Gooseweb static asset routing",
+      "evidence_references": [
+        "tmp/gg/gooseweb-migration/P01/b40131f/attempt-4/report.md#replacement-attempt-4-blockers"
+      ],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Every fresh browser attempt requests GET /favicon.ico and receives HTTP 404; the failed request remains blocked until the static asset route is corrected."
+    },
+    {
+      "scenario_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
+      "defect_id": "BASE-P02-LIVE-GAP-TRANSITION-PANIC",
+      "first_divergent_layer": "Goosetower runtime SSE source-health transition",
+      "evidence_references": [
+        "crates/goosetower/src/verification/fake_source.rs#gap_fault_localizes_existing_live_to_gap_transition_baseline"
+      ],
+      "owning_correction_phase": "P06",
+      "affected_downstream_gates": [
+        "P10",
+        "M1",
+        "P25",
+        "M3",
+        "P45",
+        "P56",
+        "M7"
+      ],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "A deterministic source-sequence gap reaches real RuntimeSseFanIn, whose Live to GapDetected transition is rejected by the current source-health lifecycle algebra in debug builds. P02 detects and localizes the baseline without changing P06 product behavior."
+    }
+  ],
+  "known_defects": [],
+  "non_applicable": {
+    "schema_migration": {
+      "status": "not_applicable",
+      "reason": "P02 adds versioned verification fixtures only; no persistent product schema changes."
+    },
+    "backfill": {
+      "status": "not_applicable",
+      "reason": "No product data changes or historical transformation occur."
+    },
+    "compatibility": {
+      "status": "not_applicable",
+      "reason": "The fake source targets current public runtime contracts and existing protocol; no compatibility surface changes."
+    },
+    "rollback": {
+      "status": "not_applicable",
+      "reason": "Verification artifacts are removed by reverting the P02 commit; product state is untouched."
+    },
+    "performance": {
+      "status": "not_applicable",
+      "reason": "P05 owns product performance calibration; P02 fixtures cap batches, replay pages, records, and observer output."
+    },
+    "security": {
+      "status": "observed_only",
+      "reason": "P02 observers redact bearer, ticket, credential, cookie, CSRF, secret, and raw-image values at capture and controls require a separate verification secret."
+    },
+    "data_retention_gc": {
+      "status": "not_applicable",
+      "reason": "P02 fixed in-memory source state is bounded and ephemeral; it creates no durable product objects."
+    },
+    "deployment": {
+      "status": "not_applicable",
+      "reason": "No production deployment change; the supervisor may run the separate verification source only under the migration lease."
+    },
+    "provenance_reuse": {
+      "status": "reference_only",
+      "reason": "Golden Goose deterministic timeline and Team Comms tests were read as design references; no source code was copied or adapted."
+    }
+  },
+  "provenance": {
+    "source_repository": "/Users/ashray/code/amxv/gg-desktop",
+    "source_commit": "ad14effc88102aa30f7fc9dc81f20574358608e6",
+    "references": [
+      "src-tauri/src/agent_runtime/manager/tests/timeline_store_sync/fixtures.rs",
+      "src/store/team-comms-store.test.ts"
+    ],
+    "reuse_status": "reference_only",
+    "destination_symbols": [],
+    "native_tauri_assumptions_removed": {
+      "status": "not_applicable",
+      "reason": "No Golden Goose implementation code was reused."
+    }
+  }
+}

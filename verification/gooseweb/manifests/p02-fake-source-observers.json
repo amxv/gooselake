@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
-  "manifest_revision": 6,
+  "manifest_revision": 7,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
@@ -46,16 +46,16 @@
         ],
         "expected_goosetower": [
           "the separate verification listener reports whether p02-session-001 materialized the retained source sequence 4 event",
-          "one real session_detail terminal-text patch is encoded when the selected-session subscription is already active",
-          "if publication precedes subscription admission, the observer resolves the detail recovery loss exactly once to BASE-P02-SESSION-TERMINAL-DETAIL-RELOAD-LOSS"
+          "one real session_detail terminal-text patch is encoded by the gateway",
+          "a missing materialized event or served frame fails the attempt at the first directly observed layer without inferring a cause"
         ],
         "expected_worker_store": [
           "production RealtimeWorkerCore consumes any gateway frame actually served",
           "window.__GOOSEWEB_VERIFICATION_OBSERVER__.capture() reports the bounded redacted real frame/output/store sequence without inferring a missing upstream frame",
-          "sessionDetails[p02-session-001] contains the exact terminal once when the live detail patch is delivered, while a late-subscription summary/detail loss remains blocked under P08"
+          "sessionDetails[p02-session-001] contains the exact terminal text once"
         ],
         "expected_visible": [
-          "P02 deterministic terminal is visible at most once; late-subscription/detail-recovery absence is reported as blocked_not_approved rather than success",
+          "P02 deterministic terminal is visible once; any absence makes the attempt changes_required until fresh four-layer evidence localizes it",
           "the submitted composer clears without displaying a phantom terminal success"
         ]
       },
@@ -400,9 +400,7 @@
       "first_divergent_layer": "Goosetower session-detail snapshot kind to Gooseweb decoder/store",
       "evidence_references": [
         "tmp/gg/gooseweb-migration/P02/92c0d19/attempt-5/screenshots/epoch2-post-reload-terminal-missing.png",
-        "tmp/gg/gooseweb-migration/P02/92c0d19/attempt-5/report.md#p02-block-010",
-        "tmp/gg/gooseweb-migration/P02/54b516b/attempt-6/screenshots/epoch1-live-terminal-missing.png",
-        "tmp/gg/gooseweb-migration/P02/54b516b/attempt-6/report.md#p02-block-012"
+        "tmp/gg/gooseweb-migration/P02/92c0d19/attempt-5/report.md#p02-block-010"
       ],
       "owning_correction_phase": "P08",
       "affected_downstream_gates": [
@@ -416,7 +414,7 @@
         "M7"
       ],
       "product_scenario_status": "blocked_not_approved",
-      "description": "When a selected-session live subscription is active before terminal publication, the detail patch can render. If publication precedes subscription admission, or after ordinary reload, recovery uses the requested session snapshot kind; Gooseweb decodes it as a summary and reconstructs No messages yet despite retained terminal truth. Attempts 5 and 6 cover both timing forms of this single P08 summary/detail defect, which P02 records without correcting or approving."
+      "description": "In a fresh epoch-002 stack, reset row 1 and its terminal assistant text traverse the real live path and render correctly, but ordinary reload reconstructs the same session as No messages yet because the session-detail snapshot kind is decoded/stored without terminal detail. P02 records the exact pre-existing reconstruction defect from attempt 5 without correcting or approving P08 product scope."
     }
   ],
   "known_defects": [],

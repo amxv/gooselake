@@ -147,39 +147,30 @@
     "ordinary_reload_capability": {
       "type": "object", "additionalProperties": false,
       "required": [
-        "mechanism", "command", "command_succeeded", "navigation_observed",
-        "document_request_count", "dev_ticket_request_count", "observable_reconstruction"
+        "mechanism", "command", "command_succeeded", "navigation_observed", "capture_complete",
+        "document_request_count", "dev_ticket_request_count", "semantic_state_observed"
       ],
       "properties": {
         "mechanism": { "const": "agent_browser_reload" },
         "command": { "const": "reload" },
         "command_succeeded": { "const": true },
         "navigation_observed": { "const": true },
+        "capture_complete": { "const": true },
         "document_request_count": { "const": 1 },
         "dev_ticket_request_count": { "const": 1 },
-        "observable_reconstruction": { "const": true }
+        "semantic_state_observed": { "const": true }
       }
     },
     "fresh_context_isolation": {
       "type": "object", "additionalProperties": false,
       "required": [
-        "session_name", "different_from_initial_session", "profile_policy", "prior_state_source",
-        "pre_login_browser_cache_entries", "pre_login_indexeddb_databases",
-        "pre_login_session_storage_entries", "login_flow_only_state",
-        "document_request_count", "dev_ticket_request_count", "observable_reconstruction"
+        "artifact", "navigation_observed", "capture_complete", "semantic_state_observed"
       ],
       "properties": {
-        "session_name": { "type": "string", "pattern": "^gooseweb-p03-[a-f0-9]{7}-a[1-9][0-9]*-[a-z0-9][a-z0-9-]*-[a-f0-9]{8}$" },
-        "different_from_initial_session": { "const": true },
-        "profile_policy": { "const": "fresh_ephemeral" },
-        "prior_state_source": { "const": "none" },
-        "pre_login_browser_cache_entries": { "const": 0 },
-        "pre_login_indexeddb_databases": { "const": 0 },
-        "pre_login_session_storage_entries": { "const": 0 },
-        "login_flow_only_state": { "const": true },
-        "document_request_count": { "const": 1 },
-        "dev_ticket_request_count": { "const": 1 },
-        "observable_reconstruction": { "const": true }
+        "artifact": { "const": "fresh-context-observation.json" },
+        "navigation_observed": { "const": true },
+        "capture_complete": { "const": true },
+        "semantic_state_observed": { "const": true }
       }
     },
     "viewports": {

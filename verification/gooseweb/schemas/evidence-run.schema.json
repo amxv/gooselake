@@ -144,12 +144,28 @@
         "session_name": {
           "type": "string",
           "minLength": 1
+        },
+        "fresh_session_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fresh_profile_id": {
+          "type": "string",
+          "minLength": 8
+        },
+        "fresh_context_id": {
+          "type": "string",
+          "minLength": 8
         }
       }
     },
     "p03_browser_evidence": {
       "type": "string",
       "const": "p03-browser-evidence.json"
+    },
+    "p03_fresh_context_observation": {
+      "type": "string",
+      "const": "fresh-context-observation.json"
     },
     "environment": {
       "type": "string",

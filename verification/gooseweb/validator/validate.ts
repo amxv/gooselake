@@ -109,21 +109,12 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
   const ordinaryReload = object(value.ordinary_reload_capability, "P03 ordinary-reload capability");
   equal(ordinaryReload.mechanism, "agent_browser_reload", "P03 ordinary-reload mechanism");
   equal(ordinaryReload.command, "reload", "P03 ordinary-reload command");
-  for (const key of ["command_succeeded", "navigation_observed", "observable_reconstruction"]) equal(ordinaryReload[key], true, `P03 ordinary-reload ${key}`);
+  for (const key of ["command_succeeded", "navigation_observed", "capture_complete", "semantic_state_observed"]) equal(ordinaryReload[key], true, `P03 ordinary-reload ${key}`);
   equal(ordinaryReload.document_request_count, 1, "P03 ordinary-reload document request count");
   equal(ordinaryReload.dev_ticket_request_count, 1, "P03 ordinary-reload dev-ticket request count");
   const freshIsolation = object(value.fresh_context_isolation, "P03 fresh-context isolation");
-  const expectedSessionPrefix = `gooseweb-p03-${string(value.candidate_head_sha, "P03 candidate head").slice(0, 7)}-a${integer(value.attempt, "P03 attempt")}-`;
-  if (!string(freshIsolation.session_name, "P03 fresh-context session name").startsWith(expectedSessionPrefix)) fail("P03 fresh-context session is not bound to candidate/attempt");
-  if (freshIsolation.session_name === browser.session_name) fail("P03 fresh context reused the initial browser session name");
-  equal(freshIsolation.different_from_initial_session, true, "P03 fresh-context session difference");
-  equal(freshIsolation.profile_policy, "fresh_ephemeral", "P03 fresh-context profile policy");
-  equal(freshIsolation.prior_state_source, "none", "P03 fresh-context prior state source");
-  for (const key of ["pre_login_browser_cache_entries", "pre_login_indexeddb_databases", "pre_login_session_storage_entries"]) equal(freshIsolation[key], 0, `P03 fresh-context ${key}`);
-  equal(freshIsolation.login_flow_only_state, true, "P03 fresh-context login-only state");
-  equal(freshIsolation.document_request_count, 1, "P03 fresh-context document request count");
-  equal(freshIsolation.dev_ticket_request_count, 1, "P03 fresh-context dev-ticket request count");
-  equal(freshIsolation.observable_reconstruction, true, "P03 fresh-context reconstruction");
+  equal(freshIsolation.artifact, "fresh-context-observation.json", "P03 fresh-context observation artifact");
+  for (const key of ["navigation_observed", "capture_complete", "semantic_state_observed"]) equal(freshIsolation[key], true, `P03 fresh-context ${key}`);
   const reconstruction = object(value.reconstruction, "P03 reconstruction");
   equal(reconstruction.initial_prior_context_nonce, null, "P03 initial prior-context nonce");
   equal(reconstruction.fresh_context_prior_nonce, null, "P03 fresh prior-context nonce");
@@ -269,6 +260,7 @@ export function validateP03EvidenceLinkage(
     string(descriptor.network, "P03 standard network artifact"),
     string(descriptor.websocket, "P03 standard WebSocket artifact"),
     string(descriptor.report, "P03 standard report artifact"),
+    string(descriptor.p03_fresh_context_observation, "P03 standard fresh-context observation"),
     ...array(descriptor.screenshots, "P03 standard screenshots").map((item) => string(item, "P03 standard screenshot"))
   ]);
   for (const entryValue of array(p03Evidence.authority_chain, "P03 linked authority chain")) {
@@ -286,6 +278,7 @@ export function validateP03EvidenceLinkage(
   const screenshots = array(p03Evidence.viewports, "P03 linked viewports").map((viewport) => object(viewport, "P03 linked viewport").screenshot_path);
   equal(JSON.stringify(screenshots), JSON.stringify(descriptor.screenshots), "P03 viewport screenshot linkage");
   equal(object(p03Evidence.network_reconstruction, "P03 linked network reconstruction").artifact, descriptor.network, "P03 reconstruction network artifact linkage");
+  equal(object(p03Evidence.fresh_context_isolation, "P03 linked fresh-context isolation").artifact, descriptor.p03_fresh_context_observation, "P03 fresh-context observation artifact linkage");
   const completion = object(p03Evidence.completion, "P03 completion");
   equal(completion.baseline_detected_count, array(candidateManifest.baseline_detected, "P03 manifest baselines").length, "P03 baseline count linkage");
   equal(JSON.stringify(completion.known_defects), JSON.stringify(candidateManifest.known_defects), "P03 known-defect linkage");
@@ -306,6 +299,7 @@ export function validateP03EvidenceArtifact(
   try { p03Evidence = JSON.parse(readFileSync(path, "utf8")) as RecordJson; }
   catch { fail("P03 browser evidence artifact is not valid JSON"); }
   validateP03EvidenceLinkage(descriptor, p03Evidence!, candidateManifest);
+  validateP03FreshContextArtifact(descriptor, p03Evidence!, candidateManifest, evidenceRoot);
   const authority = array(p03Evidence!.authority_chain, "P03 parsed authority chain").map((entry) => object(entry, "P03 authority claim"));
   for (const claim of authority.slice(0, 3)) {
     const relativeArtifact = string(claim.artifact, "P03 authority artifact path");
@@ -322,6 +316,54 @@ export function validateP03EvidenceArtifact(
     }
     scanSecrets(observation!, `P03 authority artifact ${relativeArtifact}`, false);
   }
+}
+
+export function validateP03FreshContextArtifact(
+  descriptor: RecordJson,
+  p03Evidence: RecordJson,
+  candidateManifest: RecordJson,
+  evidenceRoot: string
+): RecordJson {
+  const relative = string(descriptor.p03_fresh_context_observation, "P03 fresh-context observation artifact");
+  equal(relative, "fresh-context-observation.json", "P03 fixed fresh-context observation path");
+  const path = safeChild(evidenceRoot, relative);
+  if (!existsSync(path) || !statSync(path).isFile()) fail("referenced P03 fresh-context observation file missing");
+  let observation: RecordJson;
+  try { observation = JSON.parse(readFileSync(path, "utf8")) as RecordJson; }
+  catch { fail("P03 fresh-context observation artifact is not valid JSON"); }
+  applySchemaFile("verification/gooseweb/schemas/p03-fresh-context-observation.schema.json", observation!);
+  for (const key of ["phase_id", "attempt", "candidate_head_sha", "candidate_tree_sha"]) equal(observation![key], descriptor[key], `P03 fresh-context artifact/${key}`);
+  equal(observation!.approved_plan_sha256, object(candidateManifest.approved_plan, "P03 manifest plan").sha256, "P03 fresh-context artifact/manifest plan");
+  const standardBrowser = object(descriptor.browser, "P03 standard browser");
+  equal(observation!.initial_session_name, standardBrowser.session_name, "P03 fresh-context initial session linkage");
+  const freshSession = string(observation!.fresh_session_name, "P03 fresh session");
+  if (freshSession === standardBrowser.session_name) fail("P03 fresh-context observation reused initial session");
+  const expectedPrefix = `gooseweb-p03-${string(descriptor.candidate_head_sha, "P03 candidate head").slice(0, 7)}-a${integer(descriptor.attempt, "P03 attempt")}-`;
+  if (!freshSession.startsWith(expectedPrefix)) fail("P03 fresh-context observation session is not bound to candidate/attempt");
+  equal(freshSession, standardBrowser.fresh_session_name, "P03 fresh-context standard session linkage");
+  const observedBrowser = object(observation!.browser, "P03 fresh-context browser");
+  equal(observedBrowser.mechanism, standardBrowser.mechanism, "P03 fresh-context browser mechanism");
+  equal(observedBrowser.execution_mode, standardBrowser.execution_mode, "P03 fresh-context browser mode");
+  equal(observedBrowser.binary_path, standardBrowser.chromium_binary, "P03 fresh-context Chrome binary");
+  equal(observedBrowser.version, standardBrowser.chromium_version, "P03 fresh-context Chrome version");
+  equal(observedBrowser.real_local_chromium, true, "P03 fresh-context real Chromium");
+  equal(object(observation!.profile, "P03 fresh profile").policy, standardBrowser.profile_policy, "P03 fresh-context profile policy");
+  const profile = object(observation!.profile, "P03 fresh profile");
+  equal(profile.profile_id, standardBrowser.fresh_profile_id, "P03 fresh-context standard profile linkage");
+  equal(profile.context_id, standardBrowser.fresh_context_id, "P03 fresh-context standard context linkage");
+  const preLogin = object(observation!.pre_login, "P03 fresh pre-login probe");
+  equal(preLogin.prior_context_nonce, null, "P03 fresh pre-login nonce");
+  const transition = object(observation!.transition, "P03 fresh transition");
+  const descriptorIsolation = object(p03Evidence.fresh_context_isolation, "P03 descriptor fresh isolation");
+  for (const key of ["navigation_observed", "capture_complete", "semantic_state_observed"]) equal(transition[key], descriptorIsolation[key], `P03 fresh artifact/descriptor ${key}`);
+  const reconstruction = object(object(p03Evidence.reconstruction, "P03 reconstruction").fresh_context, "P03 fresh reconstruction");
+  equal(JSON.stringify(observation!.reconstruction), JSON.stringify(reconstruction), "P03 fresh artifact/reconstruction linkage");
+  if (reconstruction.baseline_defect_id !== null) resolveManifestBaseline(candidateManifest, string(reconstruction.baseline_defect_id, "P03 fresh baseline"), "P03 fresh-context artifact");
+  equal(observation!.fresh_context_nonce, object(p03Evidence.reconstruction, "P03 reconstruction").fresh_context_nonce, "P03 fresh artifact nonce linkage");
+  equal(observation!.stale_first_context_state_detected, object(p03Evidence.reconstruction, "P03 reconstruction").stale_context_detected, "P03 fresh artifact stale-state linkage");
+  equal(object(observation!.disposal, "P03 fresh disposal").initial_context_disposed, object(p03Evidence.reconstruction, "P03 reconstruction").old_context_disposed, "P03 initial disposal linkage");
+  scanSecrets(observation!, "P03 fresh-context observation", false);
+  return observation!;
 }
 
 export function validateManifestRegistry(value: RecordJson): void {
@@ -424,6 +466,7 @@ export function validateLifecycleStore(): LifecycleState {
     if (!parent) fail("stored lifecycle predecessor file is missing");
     equal(predecessor.sha256, parent.sha256, "stored predecessor raw-byte hash");
     equal(node.document.attestation_sequence, integer(parent.document.attestation_sequence, "predecessor sequence") + 1, "stored attestation sequence continuity");
+    validateLifecyclePlanTransition(parent.document.approved_plan_sha256, node.document.approved_plan_sha256, false);
     equal(JSON.stringify(node.document.phase_graph_seed), JSON.stringify(parent.document.phase_graph_seed), "immutable phase graph seed across lifecycle chain");
     if (time(node.document.generated_at) < time(parent.document.generated_at)) fail("lifecycle successor generated_at moves backward");
     const priorAttempts = array(parent.document.attempts, "predecessor attempts");
@@ -476,6 +519,10 @@ function validateLifecycleTip(attestation: RecordJson): LifecycleState {
 
   const externalLeases: RecordJson[] = [];
   const latestExternal = new Map<string, { status: string; leaseId: string }>();
+  const browserSessions = new Set<string>();
+  const freshProfileIds = new Set<string>();
+  const freshContextIds = new Set<string>();
+  let containsP03Attempt = false;
   const attempts = array(attestation.attempts, "lifecycle attempts").map((item) => object(item, "lifecycle attempt"));
   for (const attempt of attempts) {
     const evidenceRoot = safeEvidenceRoot(string(attempt.evidence_root, "attested evidence root"));
@@ -483,6 +530,16 @@ function validateLifecycleTip(attestation: RecordJson): LifecycleState {
     equal(hashBytes(readFileSync(descriptorPath)), attempt.evidence_descriptor_sha256, "attested evidence descriptor hash");
     const descriptor = JSON.parse(readFileSync(descriptorPath, "utf8")) as RecordJson;
     validateEvidence(descriptor, { checkFiles: true });
+    const initialSession = string(object(descriptor.browser, "attested browser").session_name, "attested browser session");
+    if (browserSessions.has(initialSession)) fail("lifecycle history reused a browser session");
+    browserSessions.add(initialSession);
+    if (descriptor.phase_id === "P03") {
+      containsP03Attempt = true;
+      const observationPath = safeChild(evidenceRoot, string(descriptor.p03_fresh_context_observation, "attested P03 fresh-context observation"));
+      const observation = JSON.parse(readFileSync(observationPath, "utf8")) as RecordJson;
+      applySchemaFile("verification/gooseweb/schemas/p03-fresh-context-observation.schema.json", observation);
+      validateP03LifecycleFreshIdentity(observation, browserSessions, freshProfileIds, freshContextIds);
+    }
     const outcome = object(attempt.outcome, "attested outcome reference");
     const outcomePath = safeChild(evidenceRoot, string(outcome.record, "attested outcome record"));
     equal(hashBytes(readFileSync(outcomePath)), outcome.sha256, "attested outcome record hash");
@@ -513,6 +570,7 @@ function validateLifecycleTip(attestation: RecordJson): LifecycleState {
     if (time(attestation.generated_at) < time(terminalAt)) fail("lifecycle attestation predates its outcome");
   }
   validateLeaseHistory([...seedLeases, ...externalLeases]);
+  validateLifecyclePlanTransition(undefined, attestation.approved_plan_sha256, containsP03Attempt);
 
   const phases = array(seed.phases, "seed phases").map((item) => object(item, "seed phase"));
   const effectiveStates: Record<string, string> = Object.fromEntries(phases.map((phase) => [string(phase.phase_id, "phase ID"), string(phase.state, "seed state")]));
@@ -559,7 +617,12 @@ export function validateEvidence(value: RecordJson, options: EvidenceOptions = {
   validateManifestTuple(object(value.manifest, "evidence manifest"), phase);
   const candidateManifest = validateManifestAtGitHead(object(value.manifest, "evidence manifest"), head);
   equal(object(candidateManifest.scenario, "candidate evidence manifest scenario").phase_id, phase, "candidate manifest/evidence phase");
-  if (phase === "P03") equal(value.p03_browser_evidence, "p03-browser-evidence.json", "P03 fixed evidence artifact path");
+  if (phase === "P03") {
+    equal(value.p03_browser_evidence, "p03-browser-evidence.json", "P03 fixed evidence artifact path");
+    equal(value.p03_fresh_context_observation, "fresh-context-observation.json", "P03 fixed fresh-context observation path");
+    for (const key of ["fresh_session_name", "fresh_profile_id", "fresh_context_id"]) requireText(evidenceBrowser[key], `P03 standard browser ${key}`);
+    if (evidenceBrowser.fresh_session_name === evidenceBrowser.session_name) fail("P03 standard evidence reused the initial session for fresh context");
+  }
   validateBrowser(object(value.browser, "evidence browser"));
   if (options.expected) {
     for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], options.expected[key], `expected evidence ${key}`);
@@ -607,6 +670,12 @@ export function validateClearance(value: RecordJson, options: ClearanceOptions =
   validateManifestTuple(object(value.manifest, "clearance manifest"), string(value.phase_id, "clearance phase"));
   const candidateManifest = validateManifestAtGitHead(object(value.manifest, "clearance manifest"), string(value.candidate_head_sha, "candidate head"));
   equal(object(candidateManifest.scenario, "candidate manifest scenario").phase_id, value.phase_id, "candidate manifest/clearance phase");
+  validateClearancePlanBinding(
+    string(value.phase_id, "clearance phase"),
+    value.approved_plan_sha256,
+    object(candidateManifest.approved_plan, "candidate manifest plan").sha256,
+    candidateRegistryPlanAtGitHead(string(value.candidate_head_sha, "candidate head"))
+  );
   const lease = object(value.lease, "lease");
   validateLease(lease);
   equal(lease.phase_id, value.phase_id, "lease/clearance phase");
@@ -631,6 +700,30 @@ export function validateClearance(value: RecordJson, options: ClearanceOptions =
     for (const key of ["manifest", "lease", "stack", "review", "browser", "clearance", "baseline_detected"]) equal(JSON.stringify(value[key]), JSON.stringify(expected[key]), `expected ${key} tuple`);
   }
   scanSecrets(value, "clearance", false);
+}
+
+export function validateClearancePlanBinding(phase: string, clearancePlan: Json | undefined, manifestPlan: Json | undefined, registryPlan: Json | undefined): void {
+  equal(clearancePlan, manifestPlan, "clearance/candidate manifest plan hash");
+  equal(clearancePlan, registryPlan, "clearance/candidate registry plan hash");
+  if (phase === "P03") equal(clearancePlan, APPROVED_PLAN_SHA256, "active P03 clearance plan hash");
+}
+
+export function validateLifecyclePlanTransition(parentPlan: Json | undefined, currentPlan: Json | undefined, containsP03Attempt: boolean): void {
+  if (parentPlan === APPROVED_PLAN_SHA256 && currentPlan === SUPERSEDED_PLAN_SHA256) fail("lifecycle plan hash regressed from amended to superseded");
+  if (containsP03Attempt) equal(currentPlan, APPROVED_PLAN_SHA256, "P03 lifecycle attestation plan hash");
+}
+
+export function validateP03LifecycleFreshIdentity(observation: RecordJson, browserSessions: Set<string>, profileIds: Set<string>, contextIds: Set<string>): void {
+  const freshSession = string(observation.fresh_session_name, "attested P03 fresh session");
+  if (browserSessions.has(freshSession)) fail("lifecycle history reused a P03 fresh browser session");
+  browserSessions.add(freshSession);
+  const profile = object(observation.profile, "attested P03 fresh profile");
+  const profileId = string(profile.profile_id, "attested P03 profile ID");
+  const contextId = string(profile.context_id, "attested P03 context ID");
+  if (profileIds.has(profileId)) fail("lifecycle history reused a P03 fresh profile");
+  if (contextIds.has(contextId)) fail("lifecycle history reused a P03 fresh context");
+  profileIds.add(profileId);
+  contextIds.add(contextId);
 }
 
 export function validateClearanceHistory(records: RecordJson[]): void {
@@ -821,7 +914,10 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
     string(outcome.record, "review outcome record"),
     ...array(descriptor.screenshots, "screenshots").map((item) => string(item, "screenshot"))
   ];
-  if (descriptor.phase_id === "P03") relativePaths.push(string(descriptor.p03_browser_evidence, "P03 browser evidence"));
+  if (descriptor.phase_id === "P03") {
+    relativePaths.push(string(descriptor.p03_browser_evidence, "P03 browser evidence"));
+    relativePaths.push(string(descriptor.p03_fresh_context_observation, "P03 fresh-context observation"));
+  }
   ensureUnique(relativePaths, "evidence paths");
   for (const relative of relativePaths) {
     const path = safeChild(evidenceRoot, relative);
@@ -852,7 +948,8 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
   validateBrowserCaptures(consoleCapture, networkCapture, manifestCopy);
   if (descriptor.phase_id === "P03") {
     const p03Evidence = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.p03_browser_evidence, "P03 browser evidence")), "utf8")) as RecordJson;
-    validateP03ReconstructionNetworkLinkage(p03Evidence, networkCapture);
+    const freshObservation = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.p03_fresh_context_observation, "P03 fresh-context observation")), "utf8")) as RecordJson;
+    validateP03ReconstructionNetworkLinkage(p03Evidence, networkCapture, freshObservation);
   }
   const environment = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.environment, "environment")), "utf8")) as RecordJson;
   for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(environment[key], descriptor[key], `environment/${key}`);
@@ -861,6 +958,10 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
   equal(environment.browser_session, object(descriptor.browser, "browser").session_name, "environment browser session");
   equal(environment.browser_execution_mode, object(descriptor.browser, "browser").execution_mode, "environment browser mode");
   for (const key of ["chromium_binary", "chromium_version", "profile_policy"]) equal(environment[key], object(descriptor.browser, "browser")[key], `environment browser ${key}`);
+  if (descriptor.phase_id === "P03") {
+    const freshObservation = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.p03_fresh_context_observation, "P03 fresh-context observation")), "utf8")) as RecordJson;
+    validateP03FreshEnvironmentLinkage(environment, descriptor, freshObservation);
+  }
   for (const key of ["lease", "stack", "review"]) equal(JSON.stringify(environment[key]), JSON.stringify(descriptor[key]), `environment ${key} tuple`);
   const websocketCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.websocket, "websocket")), "utf8")) as RecordJson;
   equal(JSON.stringify(websocketCapture), JSON.stringify(networkCapture.websocket), "network/WebSocket capture linkage");
@@ -874,6 +975,22 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
   const evidenceManifest = object(descriptor.manifest, "evidence manifest");
   const outcomeManifest = object(outcomeRecord.manifest, "outcome manifest");
   for (const key of ["path", "revision", "sha256"]) equal(outcomeManifest[key], evidenceManifest[key], `evidence/outcome manifest ${key}`);
+}
+
+export function validateP03FreshEnvironmentLinkage(environment: RecordJson, descriptor: RecordJson, observation: RecordJson): void {
+  const browser = object(descriptor.browser, "P03 standard browser");
+  const observedBrowser = object(observation.browser, "P03 observed fresh browser");
+  const profile = object(observation.profile, "P03 observed fresh profile");
+  equal(environment.fresh_browser_session, browser.fresh_session_name, "environment/P03 fresh browser session");
+  equal(environment.fresh_browser_session, observation.fresh_session_name, "environment/P03 observed fresh session");
+  equal(environment.fresh_profile_id, browser.fresh_profile_id, "environment/P03 fresh profile ID");
+  equal(environment.fresh_profile_id, profile.profile_id, "environment/P03 observed fresh profile ID");
+  equal(environment.fresh_context_id, browser.fresh_context_id, "environment/P03 fresh context ID");
+  equal(environment.fresh_context_id, profile.context_id, "environment/P03 observed fresh context ID");
+  equal(environment.fresh_browser_execution_mode, "headless", "environment/P03 fresh browser mode");
+  equal(environment.fresh_chromium_binary, observedBrowser.binary_path, "environment/P03 fresh Chrome binary");
+  equal(environment.fresh_chromium_version, observedBrowser.version, "environment/P03 fresh Chrome version");
+  equal(environment.fresh_launch_configuration, profile.launch_configuration, "environment/P03 fresh launch configuration");
 }
 
 function validatePhaseHistory(phase: RecordJson): void {
@@ -1001,7 +1118,18 @@ function validateManifestAtGitHead(tuple: RecordJson, head: string): RecordJson 
   validateManifest(candidate);
   equal(candidate.manifest_revision, tuple.revision, "candidate manifest blob revision");
   validateActiveManifestAtGitHead(tuple, string(object(candidate.scenario, "candidate manifest scenario").phase_id, "candidate manifest phase"), head);
+  equal(object(candidate.approved_plan, "candidate manifest plan").sha256, candidateRegistryPlanAtGitHead(head), "candidate manifest/registry plan hash");
   return candidate;
+}
+
+function candidateRegistryPlanAtGitHead(head: string): Json {
+  let bytes: Buffer;
+  try { bytes = execFileSync("git", ["show", `${head}:verification/gooseweb/manifest-registry.json`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] }); }
+  catch { fail("candidate head does not contain the authoritative manifest registry"); }
+  let registry: RecordJson;
+  try { registry = JSON.parse(bytes.toString("utf8")) as RecordJson; } catch { fail("candidate manifest registry is not JSON"); }
+  applySchemaFile("verification/gooseweb/schemas/manifest-registry.schema.json", registry!);
+  return registry!.approved_plan_sha256!;
 }
 
 function validateActiveManifestAtGitHead(tuple: RecordJson, phase: string, head: string): void {
@@ -1206,22 +1334,25 @@ function networkCaptureSchema(p03Segmented = false): Schema {
   return { type: "object", additionalProperties: false, required, properties };
 }
 
-export function validateP03ReconstructionNetworkLinkage(p03Evidence: RecordJson, networkCapture: RecordJson): void {
+export function validateP03ReconstructionNetworkLinkage(p03Evidence: RecordJson, networkCapture: RecordJson, freshObservation?: RecordJson): void {
   const segments = array(networkCapture.segments, "P03 linked network segments").map((entry) => object(entry, "P03 linked network segment"));
   const raw = array(networkCapture.raw_http, "P03 linked raw HTTP capture").map((entry) => object(entry, "P03 linked raw HTTP request"));
-  for (const [segmentId, capabilityKey] of [["ordinary_reload", "ordinary_reload_capability"], ["fresh_context", "fresh_context_isolation"]] as const) {
-    const capability = object(p03Evidence[capabilityKey], `P03 linked ${capabilityKey}`);
+  for (const segmentId of ["ordinary_reload", "fresh_context"] as const) {
+    const capability = segmentId === "ordinary_reload"
+      ? object(p03Evidence.ordinary_reload_capability, "P03 linked ordinary reload")
+      : object(object(freshObservation, "P03 linked fresh-context observation").transition, "P03 linked fresh transition");
     const segment = segments.filter((entry) => entry.segment_id === segmentId);
     equal(segment.length, 1, `P03 linked ${segmentId} segment cardinality`);
     if (segmentId === "ordinary_reload") equal(segment[0]!.trigger, capability.mechanism, "P03 ordinary-reload mechanism/network trigger linkage");
+    else equal(segment[0]!.context_generation, capability.context_generation, "P03 fresh-context generation/network linkage");
     const requests = raw.filter((entry) => entry.segment_id === segmentId);
     const documents = requests.filter((entry) => entry.resource_type === "document");
     const devTickets = requests.filter((entry) => entry.resource_type === "api" && entry.method === "POST" && entry.path === "/api/dev-ticket");
     equal(documents.length, capability.document_request_count, `P03 ${segmentId} document count/network linkage`);
     equal(devTickets.length, capability.dev_ticket_request_count, `P03 ${segmentId} dev-ticket count/network linkage`);
-    const reconstruction = object(object(p03Evidence.reconstruction, "P03 linked reconstruction")[segmentId], `P03 linked ${segmentId} reconstruction`);
-    const reconstructed = reconstruction.status === "pass" && reconstruction.missing_count === 0 && reconstruction.duplicate_count === 0 && reconstruction.order_errors === 0;
-    equal(reconstructed, capability.observable_reconstruction, `P03 ${segmentId} reconstruction/capability linkage`);
+    equal(capability.navigation_observed, true, `P03 ${segmentId} observed navigation`);
+    equal(capability.capture_complete, true, `P03 ${segmentId} complete capture`);
+    equal(capability.semantic_state_observed, true, `P03 ${segmentId} semantic state observation`);
   }
 }
 

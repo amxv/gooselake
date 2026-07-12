@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P03-HEADLESS-AGENT-BROWSER-001",
-  "manifest_revision": 5,
+  "manifest_revision": 6,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774"
@@ -28,7 +28,9 @@
       "The source-controlled procedure and p03 evidence descriptor validate before any browser result can be considered.",
       "Complete unfiltered network evidence is retained as initial-load, ordinary agent-browser reload, and second-fresh-empty-context segments in that exact order; every raw request is attributed to one segment.",
       "The ordinary reload requires command success, a newly observed document and dev-ticket request, and semantic reconstruction; it is never labeled cache-bypassing or hard reload.",
-      "Fresh-context reconstruction uses a second unique fresh-ephemeral session/profile with zero prior browser-cache, IndexedDB, and session-storage entries before the explicitly exercised login flow."
+      "Fresh-context reconstruction uses a second unique fresh-ephemeral session/profile with zero prior browser-cache, IndexedDB, and session-storage entries before the explicitly exercised login flow.",
+      "The standard fresh-context observation artifact is parsed and cross-bound to the amended plan, exact candidate/attempt, both browser sessions, real-Chrome launch/profile/context identity, pre-login probes, network generation, typed reconstruction outcome, disposal, and lifecycle uniqueness.",
+      "Navigation and capture completeness are independent of product outcome: reload/fresh-context reconstruction may pass or may retain a measured manifest-mapped baseline divergence."
     ],
     "actions": [
       {

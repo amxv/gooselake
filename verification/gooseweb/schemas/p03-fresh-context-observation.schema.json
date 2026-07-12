@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gooseweb://schemas/p03-fresh-context-observation/v1",
+  "title": "P03 parsed fresh-context observation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_revision", "phase_id", "attempt", "candidate_head_sha", "candidate_tree_sha", "approved_plan_sha256",
+    "initial_session_name", "fresh_session_name", "browser", "profile", "pre_login", "transition",
+    "reconstruction", "disposal", "fresh_context_nonce", "stale_first_context_state_detected"
+  ],
+  "properties": {
+    "schema_revision": { "const": "gooseweb-p03-fresh-context-observation/v1" },
+    "phase_id": { "const": "P03" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "candidate_head_sha": { "$ref": "#/$defs/sha" },
+    "candidate_tree_sha": { "$ref": "#/$defs/sha" },
+    "approved_plan_sha256": { "const": "270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774" },
+    "initial_session_name": { "$ref": "#/$defs/session" },
+    "fresh_session_name": { "$ref": "#/$defs/session" },
+    "browser": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mechanism", "engine", "execution_mode", "binary_path", "version", "real_local_chromium"],
+      "properties": {
+        "mechanism": { "const": "agent-browser" }, "engine": { "const": "chrome" },
+        "execution_mode": { "const": "headless" },
+        "binary_path": { "type": "string", "pattern": "(?:Google Chrome|Chromium)(?:\\.app)?/" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "real_local_chromium": { "const": true }
+      }
+    },
+    "profile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["policy", "context_id", "profile_id", "launch_configuration", "previously_used"],
+      "properties": {
+        "policy": { "const": "fresh_ephemeral" },
+        "context_id": { "type": "string", "minLength": 8 },
+        "profile_id": { "type": "string", "minLength": 8 },
+        "launch_configuration": { "const": "explicit_headless_real_chrome_fresh_ephemeral" },
+        "previously_used": { "const": false }
+      }
+    },
+    "pre_login": {
+      "type": "object", "additionalProperties": false,
+      "required": ["fresh_profile_created", "browser_cache_prior_state", "indexeddb_databases", "indexeddb_entries", "session_storage_entries", "local_storage_entries", "cookies", "cache_storage_names", "service_workers", "prior_context_nonce"],
+      "properties": {
+        "fresh_profile_created": { "const": true },
+        "browser_cache_prior_state": { "const": "absent_by_new_ephemeral_profile" },
+        "indexeddb_databases": { "const": 0 }, "indexeddb_entries": { "const": 0 },
+        "session_storage_entries": { "const": 0 }, "local_storage_entries": { "const": 0 },
+        "cookies": { "const": 0 }, "cache_storage_names": { "const": 0 }, "service_workers": { "const": 0 },
+        "prior_context_nonce": { "type": "null" }
+      }
+    },
+    "transition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["only_explicit_login_flow", "context_generation", "document_request_count", "dev_ticket_request_count", "navigation_observed", "capture_complete", "semantic_state_observed"],
+      "properties": {
+        "only_explicit_login_flow": { "const": true }, "context_generation": { "const": 2 },
+        "document_request_count": { "const": 1 }, "dev_ticket_request_count": { "const": 1 },
+        "navigation_observed": { "const": true }, "capture_complete": { "const": true }, "semantic_state_observed": { "const": true }
+      }
+    },
+    "reconstruction": { "$ref": "#/$defs/reconstruction" },
+    "disposal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["initial_context_disposed", "fresh_context_disposed", "fresh_session_closed"],
+      "properties": {
+        "initial_context_disposed": { "const": true }, "fresh_context_disposed": { "const": true }, "fresh_session_closed": { "const": true }
+      }
+    },
+    "fresh_context_nonce": { "type": "string", "minLength": 8 },
+    "stale_first_context_state_detected": { "const": false }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "session": { "type": "string", "pattern": "^gooseweb-p03-[a-f0-9]{7}-a[1-9][0-9]*-[a-z0-9][a-z0-9-]*-[a-f0-9]{8}$" },
+    "reconstruction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact", "status", "missing_count", "duplicate_count", "order_errors", "baseline_defect_id"],
+      "properties": {
+        "artifact": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["pass", "baseline_divergent"] },
+        "missing_count": { "type": "integer", "minimum": 0 }, "duplicate_count": { "type": "integer", "minimum": 0 }, "order_errors": { "type": "integer", "minimum": 0 },
+        "baseline_defect_id": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }] }
+      }
+    }
+  }
+}

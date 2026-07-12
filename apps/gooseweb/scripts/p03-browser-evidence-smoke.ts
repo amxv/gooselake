@@ -6,11 +6,16 @@ import {
   applySchemaFile,
   readJson,
   stackConfigurationHash,
+  validateClearancePlanBinding,
   validateBrowserCaptures,
   validateManifest,
   validateManifestRegistry,
+  validateLifecyclePlanTransition,
   validateP03EvidenceArtifact,
   validateP03EvidenceLinkage,
+  validateP03FreshContextArtifact,
+  validateP03FreshEnvironmentLinkage,
+  validateP03LifecycleFreshIdentity,
   validateP03ReconstructionNetworkLinkage,
   validateP03BrowserEvidence,
   type Json,
@@ -18,6 +23,7 @@ import {
 } from "../../../verification/gooseweb/validator/validate";
 
 const evidence = readJson("verification/gooseweb/validator/fixtures/valid-p03-browser-evidence.json");
+const freshObservation = readJson("verification/gooseweb/validator/fixtures/valid-p03-fresh-context-observation.json");
 const manifest = readJson("verification/gooseweb/manifests/p03-headless-agent-browser.json");
 const p02Manifest = readJson("verification/gooseweb/manifests/p02-fake-source-observers.json");
 const registry = readJson("verification/gooseweb/manifest-registry.json");
@@ -36,7 +42,67 @@ assert.throws(
   "active registry bound to the superseded plan unexpectedly passed"
 );
 applySchemaFile("verification/gooseweb/schemas/p03-browser-evidence.schema.json", evidence);
+applySchemaFile("verification/gooseweb/schemas/p03-fresh-context-observation.schema.json", freshObservation);
+const lifecycleSessions = new Set<string>();
+const lifecycleProfiles = new Set<string>();
+const lifecycleContexts = new Set<string>();
+validateP03LifecycleFreshIdentity(freshObservation, lifecycleSessions, lifecycleProfiles, lifecycleContexts);
+assert.throws(
+  () => validateP03LifecycleFreshIdentity(freshObservation, lifecycleSessions, lifecycleProfiles, lifecycleContexts),
+  undefined,
+  "lifecycle reused a P03 fresh session/profile/context"
+);
+const profileReuseSessions = new Set<string>();
+const profileReuseProfiles = new Set<string>();
+const profileReuseContexts = new Set<string>();
+validateP03LifecycleFreshIdentity(freshObservation, profileReuseSessions, profileReuseProfiles, profileReuseContexts);
+assert.throws(
+  () => validateP03LifecycleFreshIdentity(
+    change(change(freshObservation, "fresh_session_name", "gooseweb-p03-1111111-a1-retest-deadbeef"), "profile.context_id", "context-deadbeef"),
+    profileReuseSessions,
+    profileReuseProfiles,
+    profileReuseContexts
+  ),
+  undefined,
+  "lifecycle reused a P03 fresh profile under a new session"
+);
+const contextReuseSessions = new Set<string>();
+const contextReuseProfiles = new Set<string>();
+const contextReuseContexts = new Set<string>();
+validateP03LifecycleFreshIdentity(freshObservation, contextReuseSessions, contextReuseProfiles, contextReuseContexts);
+assert.throws(
+  () => validateP03LifecycleFreshIdentity(
+    change(change(freshObservation, "fresh_session_name", "gooseweb-p03-1111111-a1-retest-cafebabe"), "profile.profile_id", "profile-cafebabe"),
+    contextReuseSessions,
+    contextReuseProfiles,
+    contextReuseContexts
+  ),
+  undefined,
+  "lifecycle reused a P03 fresh context under a new session/profile"
+);
 validateP03BrowserEvidence(unavailableIdentity(evidence));
+validateClearancePlanBinding("P03", manifest.approved_plan && (manifest.approved_plan as RecordJson).sha256, (manifest.approved_plan as RecordJson).sha256, registry.approved_plan_sha256);
+assert.throws(
+  () => validateClearancePlanBinding("P03", "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c", "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c", "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"),
+  undefined,
+  "internally consistent stale P03 clearance plan unexpectedly passed"
+);
+assert.throws(
+  () => validateClearancePlanBinding("P03", registry.approved_plan_sha256, (manifest.approved_plan as RecordJson).sha256, "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"),
+  undefined,
+  "P03 active-registry plan mismatch unexpectedly passed"
+);
+validateLifecyclePlanTransition("521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c", registry.approved_plan_sha256, true);
+assert.throws(
+  () => validateLifecyclePlanTransition(undefined, "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c", true),
+  undefined,
+  "stale new P03 lifecycle attestation unexpectedly passed"
+);
+assert.throws(
+  () => validateLifecyclePlanTransition(registry.approved_plan_sha256, "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c", false),
+  undefined,
+  "post-amendment lifecycle regression unexpectedly passed"
+);
 
 const seededFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
   ["console", (value) => change(value, "captures.console.unexpected_failures", 1)],
@@ -85,15 +151,12 @@ const seededFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
   ["ordinary reload navigation unobserved", (value) => change(value, "ordinary_reload_capability.navigation_observed", false)],
   ["ordinary reload missing document", (value) => change(value, "ordinary_reload_capability.document_request_count", 0)],
   ["ordinary reload missing dev-ticket", (value) => change(value, "ordinary_reload_capability.dev_ticket_request_count", 0)],
-  ["ordinary reload reconstruction unobserved", (value) => change(value, "ordinary_reload_capability.observable_reconstruction", false)],
-  ["fresh context reused initial session", (value) => change(value, "fresh_context_isolation.session_name", valueAt(value, "browser.session_name"))],
-  ["fresh context prior state retained", (value) => change(value, "fresh_context_isolation.prior_state_source", "persistent_profile")],
-  ["fresh context browser cache nonempty", (value) => change(value, "fresh_context_isolation.pre_login_browser_cache_entries", 1)],
-  ["fresh context IndexedDB nonempty", (value) => change(value, "fresh_context_isolation.pre_login_indexeddb_databases", 1)],
-  ["fresh context session storage nonempty", (value) => change(value, "fresh_context_isolation.pre_login_session_storage_entries", 1)],
-  ["fresh context non-login state", (value) => change(value, "fresh_context_isolation.login_flow_only_state", false)],
-  ["fresh context missing document", (value) => change(value, "fresh_context_isolation.document_request_count", 0)],
-  ["fresh context reconstruction unobserved", (value) => change(value, "fresh_context_isolation.observable_reconstruction", false)]
+  ["ordinary reload capture incomplete", (value) => change(value, "ordinary_reload_capability.capture_complete", false)],
+  ["ordinary reload state unobserved", (value) => change(value, "ordinary_reload_capability.semantic_state_observed", false)],
+  ["fresh context artifact linkage missing", (value) => omit(value, "fresh_context_isolation.artifact")],
+  ["fresh context navigation unobserved", (value) => change(value, "fresh_context_isolation.navigation_observed", false)],
+  ["fresh context capture incomplete", (value) => change(value, "fresh_context_isolation.capture_complete", false)],
+  ["fresh context state unobserved", (value) => change(value, "fresh_context_isolation.semantic_state_observed", false)]
 ];
 
 for (const [name, seed] of seededFailures) {
@@ -114,7 +177,7 @@ assert.throws(
 assert.deepEqual(manifest.known_defects, [], "P03 verification infrastructure must have no known defects");
 validateSegmentedNetworkCapture();
 validateStandardEvidenceLinkage();
-console.log(`P03 headless browser evidence contract passed (${seededFailures.length + 41} seeded failures rejected)`);
+console.log(`P03 headless browser evidence contract passed (at least ${seededFailures.length + 41} seeded failures rejected)`);
 
 function validateSegmentedNetworkCapture(): void {
   const capture = fullReconstructionNetworkCapture();
@@ -125,7 +188,9 @@ function validateSegmentedNetworkCapture(): void {
     messages: []
   };
   validateBrowserCaptures(consoleCapture, capture, manifest);
-  validateP03ReconstructionNetworkLinkage(evidence, capture);
+  validateP03ReconstructionNetworkLinkage(evidence, capture, freshObservation);
+  validateP03BrowserEvidence(mappedReconstructionDivergence(evidence, "ordinary_reload"));
+  validateP03ReconstructionNetworkLinkage(mappedReconstructionDivergence(evidence, "ordinary_reload"), capture, freshObservation);
   const segmentFailures: readonly [string, (value: RecordJson) => RecordJson][] = [
     ["missing reconstruction segment", (value) => omit(value, "segments.2")],
     ["extra reconstruction segment", (value) => change(value, "segments.3", structuredClone((value.segments as Json[])[2]!))],
@@ -149,12 +214,12 @@ function validateSegmentedNetworkCapture(): void {
     assert.throws(() => validateBrowserCaptures(consoleCapture, seed(capture), manifest), undefined, `seeded ${name} unexpectedly passed`);
   }
   assert.throws(
-    () => validateP03ReconstructionNetworkLinkage(change(evidence, "ordinary_reload_capability.document_request_count", 0), capture),
+    () => validateP03ReconstructionNetworkLinkage(change(evidence, "ordinary_reload_capability.document_request_count", 0), capture, freshObservation),
     undefined,
     "ordinary-reload descriptor/network count mismatch unexpectedly passed"
   );
   assert.throws(
-    () => validateP03ReconstructionNetworkLinkage(evidence, change(capture, "segments.1.trigger", "keyboard_gesture")),
+    () => validateP03ReconstructionNetworkLinkage(evidence, change(capture, "segments.1.trigger", "keyboard_gesture"), freshObservation),
     undefined,
     "ordinary-reload descriptor/network mechanism mismatch unexpectedly passed"
   );
@@ -258,6 +323,18 @@ function validateStandardEvidenceLinkage(): void {
   );
   const cascade = cascadingDivergence(linked);
   validateP03EvidenceLinkage(descriptor, cascade, manifest);
+  const divergentOrdinary = mappedReconstructionDivergence(linked, "ordinary_reload");
+  validateP03EvidenceLinkage(descriptor, divergentOrdinary, manifest);
+  assert.throws(
+    () => validateP03EvidenceLinkage(descriptor, change(divergentOrdinary, "reconstruction.ordinary_reload.baseline_defect_id", "BASE-NOT-REGISTERED"), manifest),
+    undefined,
+    "unmapped ordinary-reload divergence unexpectedly passed"
+  );
+  assert.throws(
+    () => validateP03BrowserEvidence(change(divergentOrdinary, "reconstruction.ordinary_reload.missing_count", 0)),
+    undefined,
+    "zero-count ordinary-reload divergence unexpectedly passed"
+  );
   assert.throws(
     () => validateP03EvidenceLinkage(descriptor, change(cascade, "first_divergent_layer", "Gooseweb React"), manifest),
     undefined,
@@ -293,7 +370,55 @@ function validateStandardEvidenceLinkage(): void {
     );
     writeFileSync(resolve(root, "p03-browser-evidence.json"), `${JSON.stringify(linked, null, 2)}\n`);
     writeAuthorityArtifacts(root, linked);
+    assert.throws(
+      () => validateP03EvidenceArtifact(descriptor, manifest, root),
+      undefined,
+      "missing fresh-context observation artifact unexpectedly passed"
+    );
+    const linkedFresh = linkedFreshObservation(descriptor, linked);
+    const linkedEnvironment = linkedFreshEnvironment(descriptor, linkedFresh);
+    validateP03FreshEnvironmentLinkage(linkedEnvironment, descriptor, linkedFresh);
+    assert.throws(
+      () => validateP03FreshEnvironmentLinkage(change(linkedEnvironment, "fresh_browser_session", "gooseweb-p03-1111111-a1-retest-deadbeef"), descriptor, linkedFresh),
+      undefined,
+      "plausible but unlaunched fresh session unexpectedly passed environment linkage"
+    );
+    writeFileSync(resolve(root, "fresh-context-observation.json"), `${JSON.stringify(linkedFresh, null, 2)}\n`);
     validateP03EvidenceArtifact(descriptor, manifest, root);
+    const freshArtifactFailures: readonly [string, string, Json][] = [
+      ["plausible but unlaunched session", "fresh_session_name", "gooseweb-p03-1111111-a1-retest-deadbeef"],
+      ["reused initial session", "fresh_session_name", valueAt(linkedFresh, "initial_session_name")],
+      ["reused profile", "profile.previously_used", true],
+      ["wrong head", "candidate_head_sha", "3".repeat(40)],
+      ["wrong tree", "candidate_tree_sha", "4".repeat(40)],
+      ["wrong attempt", "attempt", 2],
+      ["stale plan", "approved_plan_sha256", "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"],
+      ["headed browser", "browser.execution_mode", "headed"],
+      ["non-real Chrome", "browser.real_local_chromium", false],
+      ["nonempty IndexedDB", "pre_login.indexeddb_databases", 1],
+      ["non-null prior nonce", "pre_login.prior_context_nonce", "stale-nonce"],
+      ["non-login transition", "transition.only_explicit_login_flow", false],
+      ["wrong network generation", "transition.context_generation", 1],
+      ["reconstruction mismatch", "reconstruction.missing_count", 1],
+      ["undisposed initial context", "disposal.initial_context_disposed", false],
+      ["undisposed second context", "disposal.fresh_context_disposed", false],
+      ["unclosed second session", "disposal.fresh_session_closed", false],
+      ["stale first-context state", "stale_first_context_state_detected", true],
+      ["descriptor nonce mismatch", "fresh_context_nonce", "different-fresh-nonce"]
+    ];
+    for (const [name, path, forgedValue] of freshArtifactFailures) {
+      writeFileSync(resolve(root, "fresh-context-observation.json"), `${JSON.stringify(change(linkedFresh, path, forgedValue), null, 2)}\n`);
+      assert.throws(() => validateP03EvidenceArtifact(descriptor, manifest, root), undefined, `forged fresh-context ${name} unexpectedly passed`);
+    }
+    writeFileSync(resolve(root, "fresh-context-observation.json"), `${JSON.stringify(linkedFresh, null, 2)}\n`);
+    const divergentFreshEvidence = mappedReconstructionDivergence(linked, "fresh_context");
+    const divergentFreshObservation = change(linkedFresh, "reconstruction", valueAt(divergentFreshEvidence, "reconstruction.fresh_context"));
+    writeFileSync(resolve(root, "p03-browser-evidence.json"), `${JSON.stringify(divergentFreshEvidence, null, 2)}\n`);
+    writeFileSync(resolve(root, "fresh-context-observation.json"), `${JSON.stringify(divergentFreshObservation, null, 2)}\n`);
+    validateP03EvidenceArtifact(descriptor, manifest, root);
+    validateP03FreshContextArtifact(descriptor, divergentFreshEvidence, manifest, root);
+    writeFileSync(resolve(root, "p03-browser-evidence.json"), `${JSON.stringify(linked, null, 2)}\n`);
+    writeFileSync(resolve(root, "fresh-context-observation.json"), `${JSON.stringify(linkedFresh, null, 2)}\n`);
     const artifactMismatchSeeds: readonly [string, string, Json][] = [
       ["correlation", "correlation_id", "forged-correlation"],
       ["semantic identity", "semantic_identity", "forged:identity"],
@@ -381,6 +506,44 @@ function cascadingDivergence(source: RecordJson): RecordJson {
   return change(result, "first_divergent_layer", "Goosetower");
 }
 
+function mappedReconstructionDivergence(source: RecordJson, key: "ordinary_reload" | "fresh_context"): RecordJson {
+  let result = change(source, `reconstruction.${key}.status`, "baseline_divergent");
+  result = change(result, `reconstruction.${key}.missing_count`, 1);
+  result = change(result, `reconstruction.${key}.baseline_defect_id`, "BASE-P02-SESSION-TERMINAL-DETAIL-RELOAD-LOSS");
+  result = change(result, "authority_chain.3.status", "baseline_divergent");
+  result = change(result, "authority_chain.3.observed_instances", 0);
+  result = change(result, "authority_chain.3.missing_count", 1);
+  result = change(result, "authority_chain.3.baseline_defect_id", "BASE-P02-SESSION-TERMINAL-DETAIL-RELOAD-LOSS");
+  return change(result, "first_divergent_layer", "Gooseweb React");
+}
+
+function linkedFreshObservation(descriptor: RecordJson, p03Evidence: RecordJson): RecordJson {
+  let linked = structuredClone(freshObservation);
+  for (const key of ["phase_id", "attempt", "candidate_head_sha", "candidate_tree_sha"]) linked = change(linked, key, descriptor[key]!);
+  linked = change(linked, "initial_session_name", valueAt(descriptor, "browser.session_name"));
+  const prefix = `gooseweb-p03-${String(descriptor.candidate_head_sha).slice(0, 7)}-a${descriptor.attempt}-retest-`;
+  linked = change(linked, "fresh_session_name", `${prefix}87654321`);
+  linked = change(linked, "profile.profile_id", valueAt(descriptor, "browser.fresh_profile_id"));
+  linked = change(linked, "profile.context_id", valueAt(descriptor, "browser.fresh_context_id"));
+  linked = change(linked, "browser.binary_path", valueAt(descriptor, "browser.chromium_binary"));
+  linked = change(linked, "browser.version", valueAt(descriptor, "browser.chromium_version"));
+  linked = change(linked, "reconstruction", valueAt(p03Evidence, "reconstruction.fresh_context"));
+  linked = change(linked, "fresh_context_nonce", valueAt(p03Evidence, "reconstruction.fresh_context_nonce"));
+  return linked;
+}
+
+function linkedFreshEnvironment(descriptor: RecordJson, observation: RecordJson): RecordJson {
+  return {
+    fresh_browser_session: valueAt(descriptor, "browser.fresh_session_name"),
+    fresh_profile_id: valueAt(descriptor, "browser.fresh_profile_id"),
+    fresh_context_id: valueAt(descriptor, "browser.fresh_context_id"),
+    fresh_browser_execution_mode: "headless",
+    fresh_chromium_binary: valueAt(observation, "browser.binary_path"),
+    fresh_chromium_version: valueAt(observation, "browser.version"),
+    fresh_launch_configuration: valueAt(observation, "profile.launch_configuration")
+  };
+}
+
 function linkedStandardDescriptor(): RecordJson {
   const result = readJson("verification/gooseweb/validator/fixtures/valid-evidence-run.json");
   const standardBrowser = {
@@ -391,7 +554,10 @@ function linkedStandardDescriptor(): RecordJson {
     chromium_binary: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     chromium_version: "150.0.7871.115",
     profile_policy: "fresh_ephemeral",
-    session_name: "gooseweb-p03-1111111-a1-reviewer-1234abcd"
+    session_name: "gooseweb-p03-1111111-a1-reviewer-1234abcd",
+    fresh_session_name: "gooseweb-p03-1111111-a1-retest-87654321",
+    fresh_profile_id: "profile-87654321",
+    fresh_context_id: "context-87654321"
   };
   let linked = change(result, "phase_id", "P03");
   linked = change(linked, "attempt", 1);
@@ -405,6 +571,7 @@ function linkedStandardDescriptor(): RecordJson {
   linked = change(linked, "lease.owner_identity", "p03-supervisor");
   linked = change(linked, "metrics", { status: "captured", reason: "P03 procedure overhead recorded separately from product budgets.", artifacts: ["p03-browser-evidence.json"] });
   linked = change(linked, "p03_browser_evidence", "p03-browser-evidence.json");
+  linked = change(linked, "p03_fresh_context_observation", "fresh-context-observation.json");
   const stack = linked.stack as RecordJson;
   stack.configuration_sha256 = stackConfigurationHash(stack);
   return linked;

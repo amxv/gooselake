@@ -69,22 +69,16 @@
     "command": "reload",
     "command_succeeded": true,
     "navigation_observed": true,
+    "capture_complete": true,
     "document_request_count": 1,
     "dev_ticket_request_count": 1,
-    "observable_reconstruction": true
+    "semantic_state_observed": true
   },
   "fresh_context_isolation": {
-    "session_name": "gooseweb-p03-1111111-a1-retest-87654321",
-    "different_from_initial_session": true,
-    "profile_policy": "fresh_ephemeral",
-    "prior_state_source": "none",
-    "pre_login_browser_cache_entries": 0,
-    "pre_login_indexeddb_databases": 0,
-    "pre_login_session_storage_entries": 0,
-    "login_flow_only_state": true,
-    "document_request_count": 1,
-    "dev_ticket_request_count": 1,
-    "observable_reconstruction": true
+    "artifact": "fresh-context-observation.json",
+    "navigation_observed": true,
+    "capture_complete": true,
+    "semantic_state_observed": true
   },
   "viewports": [
     { "id": "1440x1000", "width": 1440, "height": 1000, "screenshot": true, "screenshot_path": "screenshots/1440x1000.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true },

@@ -1,0 +1,37 @@
+{
+  "schema_revision": "gooseweb-p03-fresh-context-observation/v1",
+  "phase_id": "P03",
+  "attempt": 1,
+  "candidate_head_sha": "1111111111111111111111111111111111111111",
+  "candidate_tree_sha": "2222222222222222222222222222222222222222",
+  "approved_plan_sha256": "270efc0046aec781cea61474039033d2d9c6071d9b8f8746d7568479ae770774",
+  "initial_session_name": "gooseweb-p03-1111111-a1-reviewer-1234abcd",
+  "fresh_session_name": "gooseweb-p03-1111111-a1-retest-87654321",
+  "browser": {
+    "mechanism": "agent-browser", "engine": "chrome", "execution_mode": "headless",
+    "binary_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "version": "150.0.7871.115", "real_local_chromium": true
+  },
+  "profile": {
+    "policy": "fresh_ephemeral", "context_id": "context-87654321", "profile_id": "profile-87654321",
+    "launch_configuration": "explicit_headless_real_chrome_fresh_ephemeral", "previously_used": false
+  },
+  "pre_login": {
+    "fresh_profile_created": true, "browser_cache_prior_state": "absent_by_new_ephemeral_profile",
+    "indexeddb_databases": 0, "indexeddb_entries": 0, "session_storage_entries": 0,
+    "local_storage_entries": 0, "cookies": 0, "cache_storage_names": 0, "service_workers": 0,
+    "prior_context_nonce": null
+  },
+  "transition": {
+    "only_explicit_login_flow": true, "context_generation": 2, "document_request_count": 1,
+    "dev_ticket_request_count": 1, "navigation_observed": true, "capture_complete": true,
+    "semantic_state_observed": true
+  },
+  "reconstruction": {
+    "artifact": "screenshots/520x900.png", "status": "pass", "missing_count": 0,
+    "duplicate_count": 0, "order_errors": 0, "baseline_defect_id": null
+  },
+  "disposal": { "initial_context_disposed": true, "fresh_context_disposed": true, "fresh_session_closed": true },
+  "fresh_context_nonce": "fresh-87654321",
+  "stale_first_context_state_detected": false
+}

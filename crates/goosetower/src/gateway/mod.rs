@@ -104,6 +104,19 @@ impl GatewayState {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn verification_patch_receiver(&self) -> broadcast::Receiver<MaterializedPatch> {
+        self.patches.subscribe()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn verification_frame_for_patch(
+        &self,
+        patch: MaterializedPatch,
+    ) -> RealtimeEnvelope {
+        self.patch_envelope(patch)
+    }
+
     pub async fn bootstrap_enabled_sources(&self) {
         for source in self
             .config

@@ -37,7 +37,7 @@ function ensureRealtimeTransport(): RealtimeTransport | undefined {
     type: "module"
   });
   worker.onmessage = (event: MessageEvent<WorkerOutbound>) => {
-    handleWorkerMessage(event.data);
+    applyRealtimeWorkerOutput(event.data);
   };
 
   return worker;
@@ -48,11 +48,11 @@ function ensureInlineRealtimeTransport(): RealtimeTransport {
     return inlineTransport;
   }
 
-  inlineCore = new RealtimeWorkerCore(handleWorkerMessage);
+  inlineCore = new RealtimeWorkerCore(applyRealtimeWorkerOutput);
   inlineTransport = {
     postMessage(message) {
       inlineCore?.handleMessage(message).catch((error: unknown) => {
-        handleWorkerMessage({
+        applyRealtimeWorkerOutput({
           type: "error",
           message: error instanceof Error ? error.message : "Realtime transport failed",
           retryable: true
@@ -63,7 +63,7 @@ function ensureInlineRealtimeTransport(): RealtimeTransport {
   return inlineTransport;
 }
 
-function handleWorkerMessage(message: WorkerOutbound): void {
+export function applyRealtimeWorkerOutput(message: WorkerOutbound): void {
   switch (message.type) {
     case "state":
       updateGoosewebStore(message.patch);

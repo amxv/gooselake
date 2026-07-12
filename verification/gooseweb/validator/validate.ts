@@ -35,6 +35,10 @@ export function validateManifest(value: RecordJson): void {
   if (!PHASE.test(string(scenario.phase_id, "manifest phase")) || scenario.phase_id === "P00") fail("manifest phase must be P01-P56");
   const layers = array(scenario.authority_chain, "authority_chain").map((entry) => object(entry, "authority layer").layer);
   equal(JSON.stringify(layers), JSON.stringify(["Gooselake", "Goosetower", "Gooseweb Worker/store", "Gooseweb React"]), "ordered authority chain");
+  const actionCount = array(scenario.actions, "scenario actions").length;
+  const cardinality = object(scenario.cardinality, "scenario cardinality");
+  equal(cardinality.browser_actions, actionCount, "browser action cardinality matches actions");
+  equal(cardinality.commands, actionCount, "command cardinality matches actions");
   for (const [name, stateValue] of Object.entries(object(value.states, "states"))) {
     const state = object(stateValue, `states.${name}`);
     if (state.applicability === "required") requireText(state.expectation, `states.${name}.expectation`);

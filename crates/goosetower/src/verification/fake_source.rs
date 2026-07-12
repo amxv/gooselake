@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,13 +7,13 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{extract::Request, Json, Router};
-use futures_util::stream;
+use futures_util::{stream, StreamExt};
 use runtime_core::{RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 pub const SEED_VERSION: &str = "p02-fake-gooselake/v1";
 pub const FIXED_CLOCK_MS: i64 = 1_700_100_000_000;
@@ -22,6 +22,7 @@ pub const INITIAL_EPOCH: &str = "p02-epoch-001";
 const CONTROL_HEADER: &str = "x-gooseweb-verification-control";
 const CONTROL_SECRET: &str = "p02-local-control";
 pub const RUNTIME_BEARER: &str = "p02-runtime-token";
+const MAX_RETAINED_EVENTS: usize = 256;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -56,21 +57,26 @@ pub struct FakeSourceObserver {
 struct FakeState {
     epoch_number: u32,
     next_seq: i64,
+    team_command_number: usize,
     records: Vec<Value>,
-    events: Vec<RuntimeEventRecord>,
-    live: VecDeque<RuntimeEventRecord>,
+    events: VecDeque<RuntimeEventRecord>,
+    event_delays_ms: BTreeMap<i64, u64>,
+    event_tx: broadcast::Sender<(RuntimeEventRecord, u64)>,
     faults: VecDeque<FaultControl>,
     offline: bool,
 }
 
 impl Default for FakeState {
     fn default() -> Self {
+        let (event_tx, _) = broadcast::channel(MAX_RETAINED_EVENTS);
         Self {
             epoch_number: 1,
             next_seq: 4,
+            team_command_number: 0,
             records: seed_records(),
-            events: seed_events(),
-            live: VecDeque::new(),
+            events: seed_events().into(),
+            event_delays_ms: BTreeMap::new(),
+            event_tx,
             faults: VecDeque::new(),
             offline: false,
         }
@@ -113,11 +119,47 @@ impl FakeState {
             self.next_seq += 1;
             event = self.create_event("turn.completed", event.payload);
         }
-        self.events.push(event.clone());
-        self.live.push_back(event.clone());
-        if matches!(self.faults.front(), Some(FaultControl::DuplicateNext)) {
+        event.seq = self
+            .events
+            .iter()
+            .filter(|item| item.scope == RuntimeEventScope::Session)
+            .map(|item| item.seq)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let delay = match self.faults.front() {
+            Some(FaultControl::DelayNext { milliseconds })
+            | Some(FaultControl::DelayTerminal { milliseconds }) => {
+                let delay = *milliseconds;
+                self.faults.pop_front();
+                Some(delay.min(5_000))
+            }
+            _ => None,
+        };
+        if let Some(delay) = delay {
+            self.event_delays_ms.insert(event.row_id, delay);
+        }
+        let duplicate = matches!(self.faults.front(), Some(FaultControl::DuplicateNext));
+        if duplicate {
             self.faults.pop_front();
-            self.live.push_back(event);
+        }
+        self.retain_event(event.clone());
+        if duplicate {
+            self.retain_event(event.clone());
+        }
+        let event_delay = delay.unwrap_or_default();
+        let _ = self.event_tx.send((event.clone(), event_delay));
+        if duplicate {
+            let _ = self.event_tx.send((event, event_delay));
+        }
+    }
+
+    fn retain_event(&mut self, event: RuntimeEventRecord) {
+        self.events.push_back(event);
+        while self.events.len() > MAX_RETAINED_EVENTS {
+            if let Some(removed) = self.events.pop_front() {
+                self.event_delays_ms.remove(&removed.row_id);
+            }
         }
     }
 
@@ -147,21 +189,55 @@ impl FakeGooselakeSource {
             .route("/v1/health", get(health))
             .route("/v1/version", get(version))
             .route("/v1/providers", get(providers))
+            .route("/v1/providers/{provider}/models", get(provider_models))
+            .route("/v1/providers/{provider}/auth/status", get(provider_auth))
             .route("/v1/sessions", get(list_sessions).post(create_session))
             .route("/v1/sessions/{id}", get(get_session))
+            .route("/v1/sessions/{id}/resume", post(get_session))
+            .route("/v1/sessions/{id}/close", post(get_session))
             .route("/v1/sessions/{id}/turns", post(send_turn))
             .route("/v1/sessions/{id}/turns/{turn}/interrupt", post(empty_ok))
-            .route("/v1/teams", get(list_teams))
-            .route("/v1/teams/{id}", get(get_team))
+            .route("/v1/sessions/{id}/events/stream", get(stream_session))
+            .route("/v1/teams", get(list_teams).post(team_static))
+            .route("/v1/teams/{id}", get(get_team).delete(empty_ok))
+            .route("/v1/teams/{id}/members", post(team_static))
+            .route("/v1/teams/{id}/members/spawn", post(spawn_team_member))
+            .route("/v1/teams/{id}/members/{agent}", delete(team_static))
+            .route("/v1/teams/{id}/lead", post(team_static))
             .route("/v1/teams/{id}/view", get(team_view))
-            .route("/v1/teams/{id}/broadcast", post(team_action))
-            .route("/v1/teams/{id}/direct", post(team_action))
+            .route(
+                "/v1/teams/{id}/messages",
+                get(team_messages).post(team_direct),
+            )
+            .route("/v1/teams/{id}/broadcasts", post(team_broadcast))
             .route("/v1/teams/{id}/deliveries", get(team_deliveries))
-            .route("/v1/processes", get(list_processes))
+            .route(
+                "/v1/teams/{id}/deliveries/{delivery}/retry",
+                post(retry_delivery),
+            )
+            .route(
+                "/v1/teams/{id}/messages/{message}/cancel",
+                post(cancel_message),
+            )
+            .route("/v1/teams/{id}/interrupt-all", post(interrupt_all))
+            .route("/v1/teams/{id}/events/stream", get(stream_team))
+            .route("/v1/processes", get(list_processes).post(get_process))
             .route("/v1/processes/{id}", get(get_process))
             .route("/v1/processes/{id}/logs", get(process_logs))
-            .route("/v1/worktrees", get(empty_array))
+            .route("/v1/processes/{id}/kill", post(get_process))
+            .route("/v1/processes/{id}/events/stream", get(stream_process))
+            .route("/v1/worktrees", get(empty_array).post(worktree_create))
+            .route("/v1/worktrees/{id}", get(worktree_get))
+            .route("/v1/worktrees/{id}/claims", post(worktree_claim))
+            .route("/v1/worktrees/{id}/release", post(worktree_release))
+            .route("/v1/worktrees/{id}/cleanup", post(worktree_cleanup))
             .route("/v1/diagnostics", get(diagnostics))
+            .route("/v1/diagnostics/providers", get(diagnostic_part))
+            .route("/v1/diagnostics/comms", get(diagnostic_part))
+            .route("/v1/diagnostics/processes", get(diagnostic_part))
+            .route("/v1/diagnostics/worktrees", get(diagnostic_part))
+            .route("/v1/diagnostics/recovery", get(diagnostic_part))
+            .route("/v1/diagnostics/team-operations", get(empty_array))
             .route("/v1/events", get(replay_global))
             .route("/v1/events/stream", get(event_stream))
             .route("/v1/sessions/{id}/events", get(replay_scoped))
@@ -210,7 +286,17 @@ async fn version() -> Json<Value> {
 }
 
 async fn providers() -> Json<Value> {
-    Json(json!({"providers":[]}))
+    Json(json!({"providers":[{"kind":"codex","display_name":"Codex","enabled":true}]}))
+}
+
+async fn provider_models(Path(provider): Path<String>) -> Json<Value> {
+    Json(
+        json!({"provider":provider,"models":[{"id":"gpt-5","display_name":"GPT-5","reasoning_levels":["medium"]}]}),
+    )
+}
+
+async fn provider_auth() -> Json<Value> {
+    Json(json!({"authenticated":true,"mode":"verification","detail":null}))
 }
 
 async fn list_sessions(State(state): State<Shared>) -> Json<Value> {
@@ -226,11 +312,19 @@ async fn create_session(State(state): State<Shared>) -> impl IntoResponse {
 }
 
 async fn send_turn(State(state): State<Shared>) -> impl IntoResponse {
-    command_response(
-        state,
-        json!({"session_id":"p02-session-001","turn_id":"p02-turn-001","status":"accepted","accepted_at":FIXED_CLOCK_MS}),
+    let mut state = state.lock().await;
+    if let Some(error) = take_rejection(&mut state) {
+        return error;
+    }
+    state.records.push(json!({"id":"p02-turn-001","session_id":"p02-session-001","provider_turn_ref":"provider-turn-fixed-001","status":"completed","input":[{"type":"text","text":"P02 deterministic turn action"}],"source":"operator","started_at":FIXED_CLOCK_MS+60,"completed_at":FIXED_CLOCK_MS+80,"usage":{"assistant_text":"P02 deterministic terminal"},"error":null}));
+    state.records.truncate(64);
+    state.emit_one();
+    (
+        StatusCode::ACCEPTED,
+        Json(
+            json!({"session_id":"p02-session-001","turn_id":"p02-turn-001","status":"accepted","accepted_at":FIXED_CLOCK_MS}),
+        ),
     )
-    .await
 }
 
 async fn list_teams(State(state): State<Shared>) -> Json<Value> {
@@ -241,25 +335,127 @@ async fn get_team(Path(_): Path<String>, State(state): State<Shared>) -> Json<Va
     Json(state.lock().await.records[1].clone())
 }
 
+async fn team_static(State(state): State<Shared>) -> Json<Value> {
+    Json(state.lock().await.records[1].clone())
+}
+
 async fn team_view(Path(_): Path<String>, State(state): State<Shared>) -> Json<Value> {
     let records = state.lock().await.records.clone();
+    let messages = message_records(&records);
+    let delivery_map = delivery_records(&records).into_iter().fold(
+        BTreeMap::<String, Vec<Value>>::new(),
+        |mut map, delivery| {
+            if let Some(id) = delivery.get("message_id").and_then(Value::as_str) {
+                map.entry(id.into()).or_default().push(delivery);
+            }
+            map
+        },
+    );
     Json(json!({
-        "team": records[1], "messages": [records[2]],
-        "deliveries_by_message_id": {"p02-message-001":[records[3]]},
+        "team": records[1], "messages": messages,
+        "deliveries_by_message_id": delivery_map,
         "next_message_cursor": null, "snapshot_at": FIXED_CLOCK_MS
     }))
 }
 
-async fn team_action(State(state): State<Shared>) -> impl IntoResponse {
-    command_response(
-        state,
-        json!({"message_id":"p02-message-001","delivery_ids":["p02-delivery-001"]}),
+async fn team_direct(State(state): State<Shared>) -> impl IntoResponse {
+    team_action(state, "direct").await
+}
+
+async fn team_broadcast(State(state): State<Shared>) -> impl IntoResponse {
+    team_action(state, "broadcast").await
+}
+
+async fn team_action(state: Shared, scope: &'static str) -> impl IntoResponse {
+    let mut state = state.lock().await;
+    if let Some(error) = take_rejection(&mut state) {
+        return error;
+    }
+    state.team_command_number += 1;
+    let number = state.team_command_number;
+    let message_id = format!("p02-message-command-{number:03}");
+    let delivery_id = format!("p02-delivery-command-{number:03}");
+    let message = json!({"id":message_id,"team_id":"p02-team-001","scope":scope,"sender_agent_id":"p02-session-001","recipient_agent_ids":["p02-session-001"],"input":[{"type":"text","text":format!("P02 deterministic {scope} action")}],"image_paths":[],"priority":"normal","policy":"non_interrupting","correlation_id":format!("p02-command-correlation-{number:03}"),"reply_to_message_id":null,"idempotency_key":format!("p02-command-key-{number:03}"),"created_at":FIXED_CLOCK_MS+100+number as i64});
+    let delivery = json!({"id":delivery_id,"message_id":message_id,"team_id":"p02-team-001","recipient_agent_id":"p02-session-001","provider":"codex","status":"injected","effective_policy":"non_interrupting","injection_strategy":"turn","injected_turn_id":"p02-turn-001","last_error_code":null,"last_error_message":null,"created_at":FIXED_CLOCK_MS+100+number as i64,"updated_at":FIXED_CLOCK_MS+110+number as i64});
+    state.records.push(message.clone());
+    state.records.push(delivery.clone());
+    while state.records.len() > 64 {
+        state.records.remove(5);
+    }
+    let event = state.create_event(
+        "team_message.created",
+        json!({"message":message,"deliveries":[delivery]}),
+    );
+    let mut event = RuntimeEventRecord {
+        scope: RuntimeEventScope::Team,
+        scope_id: "p02-team-001".into(),
+        team_id: Some("p02-team-001".into()),
+        session_id: None,
+        turn_id: None,
+        seq: state
+            .events
+            .iter()
+            .filter(|event| event.scope == RuntimeEventScope::Team)
+            .map(|event| event.seq)
+            .max()
+            .unwrap_or(0)
+            + 1,
+        ..event
+    };
+    event.event_id = format!("p02-team-event-{:04}", event.row_id);
+    state.retain_event(event.clone());
+    let _ = state.event_tx.send((event, 0));
+    (
+        StatusCode::OK,
+        Json(json!({"message":message,"deliveries":[delivery],"disposition":"created"})),
     )
-    .await
+}
+
+async fn team_messages(State(state): State<Shared>) -> Json<Value> {
+    Json(json!({"messages":message_records(&state.lock().await.records),"next_cursor":null}))
+}
+
+async fn retry_delivery(State(state): State<Shared>) -> Json<Value> {
+    Json(state.lock().await.records[3].clone())
+}
+
+async fn cancel_message(State(state): State<Shared>) -> Json<Value> {
+    Json(json!([state.lock().await.records[3].clone()]))
+}
+
+async fn interrupt_all() -> Json<Value> {
+    Json(
+        json!({"team_id":"p02-team-001","interrupted_session_ids":[],"skipped_session_ids":["p02-session-001"]}),
+    )
+}
+
+async fn spawn_team_member(State(state): State<Shared>) -> Json<Value> {
+    let records = state.lock().await.records.clone();
+    Json(
+        json!({"operation_id":"p02-operation-001","team":records[1],"spawned_session":records[0],"spawned_member":records[1]["members"][0],"worktree":null,"worktree_assignment_mode":"none","worktree_created_by_operation":false,"onboarding":{},"journal_stage":"completed"}),
+    )
 }
 
 async fn team_deliveries(State(state): State<Shared>) -> Json<Value> {
-    Json(json!([state.lock().await.records[3].clone()]))
+    Json(json!(delivery_records(&state.lock().await.records)))
+}
+
+fn message_records(records: &[Value]) -> Vec<Value> {
+    records
+        .iter()
+        .filter(|record| record.get("team_id").is_some() && record.get("scope").is_some())
+        .cloned()
+        .collect()
+}
+
+fn delivery_records(records: &[Value]) -> Vec<Value> {
+    records
+        .iter()
+        .filter(|record| {
+            record.get("recipient_agent_id").is_some() && record.get("message_id").is_some()
+        })
+        .cloned()
+        .collect()
 }
 
 async fn list_processes(State(state): State<Shared>) -> Json<Value> {
@@ -286,6 +482,36 @@ async fn diagnostics(State(state): State<Shared>) -> Json<Value> {
     )
 }
 
+async fn diagnostic_part(State(state): State<Shared>) -> Json<Value> {
+    Json(json!({"seed_version":SEED_VERSION,"source_epoch":state.lock().await.epoch()}))
+}
+
+fn worktree_record() -> Value {
+    json!({"id":"p02-worktree-001","repo_root":"/p02/repo","worktree_root":"/p02/worktrees","worktree_cwd":"/p02/worktrees/p02","branch_name":"verification/p02","worktree_name":"p02","unified_workspace_path":"/p02/worktrees/p02","deletion_policy":"retain","created_by_session_id":"p02-session-001","created_by_operation_id":"p02-operation-001","created_at":FIXED_CLOCK_MS,"updated_at":FIXED_CLOCK_MS})
+}
+
+async fn worktree_get() -> Json<Value> {
+    Json(worktree_record())
+}
+async fn worktree_create() -> Json<Value> {
+    Json(json!({"worktree":worktree_record(),"created":true,"init_script_status":"not_requested"}))
+}
+async fn worktree_claim() -> Json<Value> {
+    Json(
+        json!({"worktree":worktree_record(),"claim":{"worktree_id":"p02-worktree-001","session_id":"p02-session-001","claim_role":"team_member","created_at":FIXED_CLOCK_MS,"released_at":null}}),
+    )
+}
+async fn worktree_release() -> Json<Value> {
+    Json(
+        json!({"worktree":worktree_record(),"released_claim":{"worktree_id":"p02-worktree-001","session_id":"p02-session-001","claim_role":"team_member","created_at":FIXED_CLOCK_MS,"released_at":FIXED_CLOCK_MS+90},"active_claim_count":0,"cleanup":null}),
+    )
+}
+async fn worktree_cleanup() -> Json<Value> {
+    Json(
+        json!({"worktree_id":"p02-worktree-001","status":"retained","deletion_policy":"retain","active_claim_count":0,"worktree_path_deleted":false,"branch_deleted":false,"diagnostics":[]}),
+    )
+}
+
 async fn empty_array() -> Json<Value> {
     Json(json!([]))
 }
@@ -300,33 +526,126 @@ struct ReplayQuery {
 }
 
 async fn replay_global(
+    headers: HeaderMap,
     Query(query): Query<ReplayQuery>,
     State(state): State<Shared>,
 ) -> Json<Value> {
-    Json(replay(&state.lock().await.events, query))
+    Json(replay(
+        &state.lock().await.events,
+        cursor_after(&headers, &query),
+        query.limit,
+        None,
+    ))
 }
 
 async fn replay_scoped(
+    Path(id): Path<String>,
+    headers: HeaderMap,
     Query(query): Query<ReplayQuery>,
     State(state): State<Shared>,
 ) -> Json<Value> {
-    Json(replay(&state.lock().await.events, query))
+    let scope = scope_for_id(&id);
+    Json(replay(
+        &state.lock().await.events,
+        cursor_after(&headers, &query),
+        query.limit,
+        Some((scope, id)),
+    ))
 }
 
-fn replay(events: &[RuntimeEventRecord], query: ReplayQuery) -> Value {
-    let after = query.after_seq.unwrap_or(0);
-    let limit = query.limit.unwrap_or(2000).clamp(1, 2000);
+fn replay(
+    events: &VecDeque<RuntimeEventRecord>,
+    after: i64,
+    limit: Option<usize>,
+    scope: Option<(RuntimeEventScope, String)>,
+) -> Value {
+    let limit = limit.unwrap_or(2000).clamp(1, 2000);
     json!(events
         .iter()
-        .filter(|event| event.row_id > after)
+        .filter(|event| scope
+            .as_ref()
+            .is_none_or(|(kind, id)| event.scope == *kind && event.scope_id == *id))
+        .filter(|event| if scope.is_some() {
+            event.seq > after
+        } else {
+            event.row_id > after
+        })
         .take(limit)
         .collect::<Vec<_>>())
 }
 
+fn cursor_after(headers: &HeaderMap, query: &ReplayQuery) -> i64 {
+    headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok())
+        .or(query.after_seq)
+        .unwrap_or(0)
+}
+
+fn scope_for_id(id: &str) -> RuntimeEventScope {
+    if id.starts_with("p02-team") {
+        RuntimeEventScope::Team
+    } else if id.starts_with("p02-process") {
+        RuntimeEventScope::Process
+    } else {
+        RuntimeEventScope::Session
+    }
+}
+
 async fn event_stream(
+    headers: HeaderMap,
     Query(query): Query<ReplayQuery>,
     State(state): State<Shared>,
-) -> impl IntoResponse {
+) -> Response {
+    stream_events(state, headers, query, None).await
+}
+
+async fn stream_session(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<ReplayQuery>,
+    State(state): State<Shared>,
+) -> Response {
+    stream_events(
+        state,
+        headers,
+        query,
+        Some((RuntimeEventScope::Session, id)),
+    )
+    .await
+}
+
+async fn stream_team(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<ReplayQuery>,
+    State(state): State<Shared>,
+) -> Response {
+    stream_events(state, headers, query, Some((RuntimeEventScope::Team, id))).await
+}
+
+async fn stream_process(
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<ReplayQuery>,
+    State(state): State<Shared>,
+) -> Response {
+    stream_events(
+        state,
+        headers,
+        query,
+        Some((RuntimeEventScope::Process, id)),
+    )
+    .await
+}
+
+async fn stream_events(
+    state: Shared,
+    headers: HeaderMap,
+    query: ReplayQuery,
+    scope: Option<(RuntimeEventScope, String)>,
+) -> Response {
     let mut state = state.lock().await;
     if state.offline {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
@@ -338,40 +657,96 @@ async fn event_stream(
         ))
         .into_response();
     }
-    let delay = match state.faults.front() {
-        Some(FaultControl::DelayNext { milliseconds })
-        | Some(FaultControl::DelayTerminal { milliseconds }) => {
-            let delay = *milliseconds;
-            state.faults.pop_front();
-            delay
-        }
-        _ => 0,
-    };
-    let after = query.after_seq.unwrap_or(0);
-    let mut events = state
+    let after = cursor_after(&headers, &query);
+    let live_rx = state.event_tx.subscribe();
+    let mut replay = state
         .events
         .iter()
-        .filter(|event| event.row_id > after)
-        .cloned()
+        .filter(|event| {
+            scope
+                .as_ref()
+                .is_none_or(|(kind, id)| event.scope == *kind && event.scope_id == *id)
+        })
+        .filter(|event| {
+            if scope.is_some() {
+                event.seq > after
+            } else {
+                event.row_id > after
+            }
+        })
+        .map(|event| {
+            (
+                event.clone(),
+                state
+                    .event_delays_ms
+                    .get(&event.row_id)
+                    .copied()
+                    .unwrap_or_default(),
+            )
+        })
         .collect::<Vec<_>>();
-    events.extend(state.live.drain(..));
-    events.sort_by_key(|event| event.row_id);
     let limit = query.limit.unwrap_or(2000).clamp(1, 2000);
-    events.truncate(limit);
+    replay.truncate(limit);
+    let high_watermark = replay
+        .last()
+        .map(|(event, _)| {
+            if scope.is_some() {
+                event.seq
+            } else {
+                event.row_id
+            }
+        })
+        .unwrap_or(after);
     drop(state);
-    if delay > 0 {
-        tokio::time::sleep(Duration::from_millis(delay.min(5_000))).await;
+    let scoped = scope.is_some();
+    let replay_stream =
+        stream::iter(replay).then(move |(event, delay)| event_frame(event, delay, scoped));
+    let live_stream = stream::unfold(
+        (live_rx, high_watermark, scope),
+        |(mut receiver, watermark, scope)| async move {
+            loop {
+                match receiver.recv().await {
+                    Ok((event, delay))
+                        if scope.as_ref().is_none_or(|(kind, id)| {
+                            event.scope == *kind && event.scope_id == *id
+                        }) && (if scope.is_some() {
+                            event.seq
+                        } else {
+                            event.row_id
+                        }) > watermark =>
+                    {
+                        let next_watermark = if scope.is_some() {
+                            event.seq
+                        } else {
+                            event.row_id
+                        };
+                        return Some((
+                            event_frame(event, delay, scope.is_some()).await,
+                            (receiver, next_watermark, scope),
+                        ));
+                    }
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        },
+    );
+    Sse::new(replay_stream.chain(live_stream)).into_response()
+}
+
+async fn event_frame(
+    event: RuntimeEventRecord,
+    delay_ms: u64,
+    scoped: bool,
+) -> Result<Event, std::convert::Infallible> {
+    if delay_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(delay_ms.min(5_000))).await;
     }
-    let frames = events.into_iter().map(|event| {
-        Ok::<_, std::convert::Infallible>(
-            Event::default()
-                .id(event.row_id.to_string())
-                .event("runtime")
-                .json_data(event)
-                .expect("serializable event"),
-        )
-    });
-    Sse::new(stream::iter(frames)).into_response()
+    Ok(Event::default()
+        .id(if scoped { event.seq } else { event.row_id }.to_string())
+        .event("runtime")
+        .json_data(event)
+        .expect("serializable event"))
 }
 
 async fn control(
@@ -398,11 +773,16 @@ async fn control(
             state.epoch_number += 1;
             state.next_seq = 1;
             state.events.clear();
-            state.live.clear();
+            state.event_delays_ms.clear();
         }
         FaultControl::Offline(value) => state.offline = value,
         FaultControl::Reset => *state = FakeState::default(),
-        fault => state.faults.push_back(fault),
+        fault => {
+            state.faults.push_back(fault);
+            while state.faults.len() > 64 {
+                state.faults.pop_front();
+            }
+        }
     }
     (
         StatusCode::OK,
@@ -423,19 +803,26 @@ async fn observer(headers: HeaderMap, State(state): State<Shared>) -> impl IntoR
 
 async fn command_response(state: Shared, success: Value) -> (StatusCode, Json<Value>) {
     let mut state = state.lock().await;
+    if let Some(error) = take_rejection(&mut state) {
+        return error;
+    }
+    (StatusCode::OK, Json(success))
+}
+
+fn take_rejection(state: &mut FakeState) -> Option<(StatusCode, Json<Value>)> {
     if let Some(index) = state
         .faults
         .iter()
         .position(|fault| matches!(fault, FaultControl::RejectNextCommand { .. }))
     {
         if let Some(FaultControl::RejectNextCommand { code }) = state.faults.remove(index) {
-            return (
+            return Some((
                 StatusCode::CONFLICT,
                 Json(json!({"error":{"code":code,"message":"deterministic rejection"}})),
-            );
+            ));
         }
     }
-    (StatusCode::OK, Json(success))
+    None
 }
 
 fn state_session() -> Value {
@@ -472,7 +859,7 @@ fn seed_events() -> Vec<RuntimeEventRecord> {
         session_id: Some("p02-session-001".into()),
         team_id: (scope == RuntimeEventScope::Team).then(|| "p02-team-001".into()),
         turn_id: None,
-        seq: row_id,
+        seq: 1,
         kind: kind.into(),
         criticality: RuntimeEventCriticality::Critical,
         payload: json!({"seed_version":SEED_VERSION,"unknown_public_extension":{"kept":true}}),
@@ -529,263 +916,5 @@ fn redact_json(value: &Value) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-    use tokio::net::TcpListener;
-    use tokio::sync::mpsc;
-
-    use super::*;
-    use crate::config::{GoosetowerConfig, RuntimeSourceConfig};
-    use crate::gateway::GatewayState;
-    use crate::materializer::{BootstrapOptions, SourceBootstrap};
-    use crate::runtime::{
-        GooselakeRuntimeClient, GooselakeRuntimeClientConfig, RuntimeSseFanIn,
-        RuntimeSseFanInConfig, SourceHealthState,
-    };
-
-    async fn spawn() -> (FakeGooselakeSource, String) {
-        let source = FakeGooselakeSource::default();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let router = source.router();
-        tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
-        (source, format!("http://{address}"))
-    }
-
-    fn client(base: String) -> GooselakeRuntimeClient {
-        GooselakeRuntimeClient::new(GooselakeRuntimeClientConfig::new(
-            SOURCE_ID,
-            INITIAL_EPOCH,
-            base,
-            Some(RUNTIME_BEARER.into()),
-        ))
-        .unwrap()
-    }
-
-    async fn apply_control(base: &str, control: FaultControl) -> reqwest::Response {
-        reqwest::Client::new()
-            .post(format!("{base}/__verification/v1/control"))
-            .header(CONTROL_HEADER, CONTROL_SECRET)
-            .json(&control)
-            .send()
-            .await
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn fake_source_public_contract_bootstraps_real_materializer() {
-        let (_source, base) = spawn().await;
-        let client = client(base);
-        assert_eq!(client.version().await.unwrap().version, SEED_VERSION);
-        let bootstrap = SourceBootstrap::from_runtime_client(
-            &client,
-            BootstrapOptions {
-                replay_cursor_limit: 3,
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(bootstrap.state.sessions.len(), 1);
-        assert_eq!(bootstrap.state.teams.len(), 1);
-        assert_eq!(bootstrap.state.messages_by_team["p02-team-001"].len(), 1);
-        assert_eq!(bootstrap.state.processes.len(), 1);
-        assert_eq!(bootstrap.state.source_health.last_source_seq, Some(3));
-    }
-
-    #[tokio::test]
-    async fn fake_source_bootstraps_real_gateway_materialized_observer() {
-        let (_source, base) = spawn().await;
-        let mut config = GoosetowerConfig::default();
-        config.runtimes.sources = vec![RuntimeSourceConfig {
-            source_id: SOURCE_ID.into(),
-            source_epoch: INITIAL_EPOCH.into(),
-            base_url: base,
-            bearer_token: Some(RUNTIME_BEARER.into()),
-            display_name: "P02 deterministic source".into(),
-            ..Default::default()
-        }];
-        let gateway = GatewayState::new(Arc::new(config)).unwrap();
-        gateway.bootstrap_enabled_sources().await;
-        let observer = gateway.debug_materializer_summary().await;
-        assert_eq!(observer.len(), 1);
-        assert_eq!(observer[0].source_id, SOURCE_ID);
-        assert_eq!(observer[0].source_epoch, INITIAL_EPOCH);
-        assert_eq!(observer[0].sessions, 1);
-        assert_eq!(observer[0].teams, 1);
-        assert_eq!(observer[0].processes, 1);
-        assert_eq!(observer[0].source_health.last_source_seq, Some(1));
-    }
-
-    #[tokio::test]
-    async fn replay_paginates_and_sse_handoff_dedupes_overlap() {
-        let (_source, base) = spawn().await;
-        let client = client(base.clone());
-        assert_eq!(
-            client
-                .replay_global_events(None, Some(2))
-                .await
-                .unwrap()
-                .iter()
-                .map(|event| event.row_id)
-                .collect::<Vec<_>>(),
-            vec![1, 2]
-        );
-        assert_eq!(
-            client.replay_global_events(Some(2), Some(2)).await.unwrap()[0].row_id,
-            3
-        );
-        apply_control(&base, FaultControl::DuplicateNext).await;
-        apply_control(&base, FaultControl::EmitNext).await;
-        let fan_in = RuntimeSseFanIn::new(
-            client,
-            RuntimeSseFanInConfig {
-                stale_after: Duration::from_millis(50),
-                ..Default::default()
-            },
-        );
-        let (tx, mut rx) = mpsc::channel(16);
-        let mut seen = HashSet::new();
-        let cursor = fan_in.consume_once(Some(3), &tx, &mut seen).await.unwrap();
-        assert_eq!(cursor, Some(4));
-        drop(tx);
-        let mut ids = Vec::new();
-        while let Some(event) = rx.recv().await {
-            ids.push(event.source_seq);
-        }
-        assert_eq!(ids, vec![4]);
-        assert_eq!(fan_in.health().state, SourceHealthState::Live);
-    }
-
-    #[tokio::test]
-    async fn gap_fault_localizes_existing_live_to_gap_transition_baseline() {
-        let (_source, base) = spawn().await;
-        apply_control(&base, FaultControl::GapNext).await;
-        apply_control(&base, FaultControl::EmitNext).await;
-        let fan_in = RuntimeSseFanIn::new(
-            client(base),
-            RuntimeSseFanInConfig {
-                stale_after: Duration::from_millis(50),
-                ..Default::default()
-            },
-        );
-        let (tx, _rx) = mpsc::channel(16);
-        let task = tokio::spawn(async move {
-            let mut seen = HashSet::new();
-            fan_in.consume_once(Some(3), &tx, &mut seen).await
-        });
-        let failure = task
-            .await
-            .expect_err("P06 baseline must remain detected in P02");
-        assert!(failure.is_panic());
-        let panic = failure.into_panic();
-        let message = panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic.downcast_ref::<&str>().copied())
-            .unwrap_or_default();
-        assert!(message.contains("invalid source lifecycle transition Live -> GapDetected"));
-    }
-
-    #[tokio::test]
-    async fn faults_epoch_offline_rejection_delay_and_redaction_are_bounded() {
-        let (source, base) = spawn().await;
-        assert_eq!(
-            apply_control(&base, FaultControl::EmitBatch { count: 100 })
-                .await
-                .status(),
-            StatusCode::OK
-        );
-        assert_eq!(source.observer().await.events.len(), 35);
-        apply_control(
-            &base,
-            FaultControl::RejectNextCommand {
-                code: "p02_rejected".into(),
-            },
-        )
-        .await;
-        let error = client(base.clone())
-            .create_session(&runtime_core::CreateSessionInput {
-                provider: runtime_core::ProviderKind::Codex,
-                cwd: None,
-                model: None,
-                permission_mode: None,
-                metadata: None,
-            })
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("409"));
-        apply_control(&base, FaultControl::DelayNext { milliseconds: 2 }).await;
-        let started = std::time::Instant::now();
-        client(base.clone())
-            .http()
-            .get(format!("{base}/v1/events/stream?after_seq=35"))
-            .bearer_auth(RUNTIME_BEARER)
-            .send()
-            .await
-            .unwrap();
-        assert!(started.elapsed() >= Duration::from_millis(2));
-        apply_control(&base, FaultControl::DelayTerminal { milliseconds: 2 }).await;
-        let response = client(base.clone())
-            .http()
-            .get(format!("{base}/v1/events/stream?after_seq=35"))
-            .bearer_auth(RUNTIME_BEARER)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        apply_control(&base, FaultControl::DisconnectNext).await;
-        let disconnected = client(base.clone())
-            .http()
-            .get(format!("{base}/v1/events/stream?after_seq=35"))
-            .bearer_auth(RUNTIME_BEARER)
-            .send()
-            .await
-            .unwrap();
-        assert!(disconnected.bytes().await.unwrap().is_empty());
-        apply_control(&base, FaultControl::ChangeEpoch).await;
-        assert_eq!(source.observer().await.source_epoch, "p02-epoch-002");
-        apply_control(&base, FaultControl::Offline(true)).await;
-        let response = reqwest::Client::new()
-            .get(format!("{base}/v1/events/stream"))
-            .bearer_auth(RUNTIME_BEARER)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        apply_control(&base, FaultControl::Reset).await;
-        assert_eq!(source.observer().await.source_epoch, INITIAL_EPOCH);
-        assert!(!source.observer().await.offline);
-        let secret = json!({"authorization":"Bearer should-not-leak","nested":{"ticket_secret":"bad"},"safe":"kept"});
-        assert_eq!(
-            redact_json(&secret),
-            json!({"authorization":"[redacted]","nested":{"ticket_secret":"[redacted]"},"safe":"kept"})
-        );
-    }
-
-    #[tokio::test]
-    async fn controls_are_not_reachable_without_verification_secret() {
-        let (_source, base) = spawn().await;
-        let response = reqwest::Client::new()
-            .post(format!("{base}/__verification/v1/control"))
-            .json(&FaultControl::EmitNext)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let unauthorized = reqwest::Client::new()
-            .get(format!("{base}/v1/sessions"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
-        let public_health = reqwest::Client::new()
-            .get(format!("{base}/health"))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(public_health.status(), StatusCode::OK);
-    }
-}
+#[path = "fake_source_tests.rs"]
+mod tests;

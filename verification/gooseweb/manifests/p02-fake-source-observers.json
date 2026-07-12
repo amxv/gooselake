@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P02-FAKE-SOURCE-OBSERVERS-001",
-  "manifest_revision": 1,
+  "manifest_revision": 2,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "521073ac7551df15d814b1e84d1be47ec9e80289728d07c3dbab8c5b2b1b3b2c"
@@ -27,17 +27,62 @@
     ],
     "actions": [
       {
-        "id": "action-send-deterministic-turn-and-team-message",
+        "id": "action-send-deterministic-turn",
         "control": {
           "role": "textbox",
-          "accessible_name": "Message agent or team"
+          "accessible_name": "Agent thread composer"
         },
         "submit": {
           "role": "button",
-          "accessible_name": "Send deterministic action"
+          "accessible_name": "Send agent thread message"
         },
         "expected_command_count": 1,
-        "command": "sendTurn followed by sendTeamMessage in the bounded source scenario"
+        "command": "sendTurn",
+        "expected_runtime": [
+          "one p02-turn-001 completed turn record with the exact submitted text",
+          "one p02-event-0004 turn.completed event with P02 deterministic terminal text"
+        ],
+        "expected_goosetower": [
+          "p02-session-001 materializes ready at source sequence 4",
+          "one real session_detail terminal-text patch is encoded by the gateway"
+        ],
+        "expected_worker_store": [
+          "production RealtimeWorkerCore consumes the gateway frame",
+          "sessionDetails[p02-session-001] contains the exact terminal text once"
+        ],
+        "expected_visible": [
+          "P02 deterministic turn action is visible once",
+          "P02 deterministic terminal is visible once"
+        ]
+      },
+      {
+        "id": "action-send-deterministic-team-message",
+        "control": {
+          "role": "textbox",
+          "accessible_name": "Message the whole team..."
+        },
+        "submit": {
+          "role": "button",
+          "accessible_name": "Send team comms message"
+        },
+        "expected_command_count": 1,
+        "command": "sendTeamMessage",
+        "expected_runtime": [
+          "one new p02-message-command-001 record and p02-delivery-command-001 record",
+          "one matching team_message.created event with scoped sequence 2"
+        ],
+        "expected_goosetower": [
+          "the real team materializer contains p02-message-command-001 and its delivery",
+          "one matching team_workspace patch/frame preserves the stable message identity"
+        ],
+        "expected_worker_store": [
+          "teamWorkspaces[p02-team-001] contains p02-message-command-001 exactly once",
+          "the delivery remains linked to the same message ID"
+        ],
+        "expected_visible": [
+          "P02 deterministic broadcast action is visible once in Team Comms",
+          "the injected delivery state is visible without a phantom success"
+        ]
       }
     ],
     "authority_chain": [
@@ -75,10 +120,10 @@
       }
     ],
     "cardinality": {
-      "browser_actions": 1,
-      "commands": 1,
+      "browser_actions": 2,
+      "commands": 2,
       "runtime_messages": 1,
-      "visible_message_instances": 1,
+      "visible_message_instances": 2,
       "duplicates": 0
     },
     "chronology": "oldest_first_by_authoritative_order_not_client_timestamp",

@@ -11,7 +11,7 @@ use crate::materializer::state::ModelCapabilityView;
 use crate::materializer::{
     snapshot_cross_source_board, ApprovalInboxSubscription, BoardSubscription,
     CoalescingPatchBuffer, LedgerSubscription, MaterializedPatchKind, MaterializedState,
-    SelectedSessionSubscription, SelectedTeamSubscription,
+    SelectedSessionSubscription, SelectedTeamSubscription, SessionDetailView, TeamWorkspaceView,
 };
 use crate::runtime::{events::SourceEvent, SourceHealthState};
 
@@ -505,6 +505,43 @@ fn source_event_for_source(
             created_at: row_id,
         },
     )
+}
+
+#[test]
+fn snapshot_and_patch_detail_bodies_have_identical_typed_shapes() {
+    let mut state = MaterializedState::new("local", "epoch-1");
+    state.upsert_session(session_record("sess_1"));
+    state.upsert_team(team_record("team_1"));
+
+    let session_snapshot = state
+        .snapshot_session(&SelectedSessionSubscription {
+            session_id: "sess_1".to_string(),
+            include_text: true,
+        })
+        .expect("session snapshot");
+    let session_patch = state
+        .session_patches("sess_1", None)
+        .into_iter()
+        .find(|patch| patch.view_kind == "session_detail")
+        .expect("session detail patch");
+    let decoded_session_patch: SessionDetailView =
+        serde_json::from_value(session_patch.body).expect("typed session patch");
+    assert_eq!(decoded_session_patch, session_snapshot);
+
+    let team_snapshot = state
+        .snapshot_team(&SelectedTeamSubscription {
+            team_id: "team_1".to_string(),
+            message_limit: 100,
+        })
+        .expect("team snapshot");
+    let team_patch = state
+        .team_patch("team_1", None)
+        .into_iter()
+        .find(|patch| patch.view_kind == "team_workspace")
+        .expect("team workspace patch");
+    let decoded_team_patch: TeamWorkspaceView =
+        serde_json::from_value(team_patch.body).expect("typed team patch");
+    assert_eq!(decoded_team_patch, team_snapshot);
 }
 
 fn session_record(id: &str) -> SessionRecord {

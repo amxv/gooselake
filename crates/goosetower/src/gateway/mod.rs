@@ -29,9 +29,11 @@ use crate::protocol::generated::goosetower::v1::{
     AuthExpiring, AuthRefresh, AuthRefreshed, Command, CommandAccepted, ConnectionDegraded,
     CursorVector, EntityRef, GatewayEvent, Hello, Lane, MessageKind, Patch, Ping, Pong,
     RealtimeEnvelope, Resume, Scope, Snapshot, SourceCursor, SourceGapDetected, SourceGapFilled,
-    SourceSnapshotResync, Subscribe,
+    SourceSnapshotResync, Subscribe, ViewCoverage, ViewOperation,
 };
 use crate::protocol::PROTOCOL_VERSION;
+
+const DETAIL_SCHEMA_VERSION: u32 = 1;
 use crate::runtime::client::{ProcessKillInput, ProcessStartInput};
 use crate::runtime::events::{SourceEvent, SourceHealth, SourceHealthState};
 use crate::runtime::{

@@ -633,10 +633,11 @@ impl GatewayState {
         Ok(self.snapshot_for_subscription(subscribe).await)
     }
 
-    async fn snapshot_for_subscription(&self, subscribe: Subscribe) -> RealtimeEnvelope {
+    pub(super) async fn snapshot_for_subscription(&self, subscribe: Subscribe) -> RealtimeEnvelope {
         let materialized = self.materialized.read().await;
         let source_id = optional_subscribe_filter(&subscribe.filters, "source_id");
-        let body = match subscribe.view_kind.as_str() {
+        let canonical_view_kind = canonical_subscription_view_kind(&subscribe.view_kind);
+        let body = match canonical_view_kind {
             "board" => serde_json::to_value(snapshot_cross_source_board(
                 &materialized,
                 &BoardSubscription {
@@ -694,7 +695,7 @@ impl GatewayState {
                     .as_deref()
                     .and_then(|source_id| materialized.get(source_id))
                 {
-                    Some(state) => snapshot_body(state, &subscribe.view_kind, &subscribe.filters)
+                    Some(state) => snapshot_body(state, canonical_view_kind, &subscribe.filters)
                         .unwrap_or_else(|error| json!({ "error": error.to_string() })),
                     None => Value::Null,
                 }
@@ -709,11 +710,33 @@ impl GatewayState {
             MessageKind::Snapshot,
             Lane::State,
             Payload::Snapshot(Snapshot {
-                view_kind: subscribe.view_kind,
+                view_kind: canonical_view_kind.to_string(),
                 cursor,
                 body: serde_json::to_vec(&body).unwrap_or_default().into(),
+                schema_version: DETAIL_SCHEMA_VERSION,
+                operation: ViewOperation::Replace as i32,
+                coverage: Some(super::envelopes::view_coverage(
+                    canonical_view_kind,
+                    subscription_entity_id(canonical_view_kind, &subscribe.filters),
+                )),
             }),
         )
+    }
+}
+
+fn canonical_subscription_view_kind(view_kind: &str) -> &str {
+    match view_kind {
+        "session" => "session_detail",
+        "team" | "team_stream" => "team_workspace",
+        other => other,
+    }
+}
+
+fn subscription_entity_id(view_kind: &str, filters: &HashMap<String, String>) -> Option<String> {
+    match view_kind {
+        "session_detail" => optional_subscribe_filter(filters, "session_id"),
+        "team_workspace" => optional_subscribe_filter(filters, "team_id"),
+        _ => None,
     }
 }
 

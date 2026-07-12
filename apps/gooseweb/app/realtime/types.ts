@@ -42,6 +42,15 @@ export type NormalizedEntityPatch = {
   readonly sources?: Readonly<Record<string, SourceHealthView>>;
 };
 
+export type EntityDomain = keyof NormalizedEntities;
+
+export type EntityMutation = {
+  readonly operation: "replace" | "upsert" | "remove";
+  readonly domain: EntityDomain;
+  readonly entityIds: readonly string[];
+  readonly authoritative: boolean;
+};
+
 export type SessionTranscriptEntry = {
   readonly id: string;
   readonly sessionId: string;
@@ -207,4 +216,5 @@ export type WorkerOutbound =
 
 export type GoosewebStorePatch = Partial<Omit<GoosewebSnapshot, "entities">> & {
   readonly entities?: NormalizedEntityPatch;
+  readonly entityMutations?: readonly EntityMutation[];
 };

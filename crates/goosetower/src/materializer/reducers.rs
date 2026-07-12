@@ -208,21 +208,20 @@ impl MaterializedState {
             }
         }
 
-        let mut patches = self.session_patches(session_id, cursor.clone());
-        if let Some(text) = assistant_text(event) {
+        let appended_text = if let Some(text) = assistant_text(event) {
             self.append_text(session_id, text.clone());
-            patches.push(MaterializedPatch {
-                kind: MaterializedPatchKind::TextAppend,
-                view_kind: "session_detail".to_string(),
-                entity: Some(EntityKey::new(&self.source_id, "session", session_id)),
-                version: Some(self.version("session", session_id)),
-                source_cursor: cursor,
-                body: json!({
-                    "session_id": session_id,
-                    "turn_id": event.turn_id,
-                    "text": text,
-                }),
-            });
+            true
+        } else {
+            false
+        };
+        let mut patches = self.session_patches(session_id, cursor);
+        if appended_text {
+            if let Some(detail) = patches
+                .iter_mut()
+                .find(|patch| patch.view_kind == "session_detail")
+            {
+                detail.kind = MaterializedPatchKind::TextAppend;
+            }
         }
         patches
     }
@@ -314,7 +313,10 @@ impl MaterializedState {
             self.messages_by_team.remove(&team_id);
             self.deliveries_by_team.remove(&team_id);
             self.remove_version("team", &team_id);
-            return vec![self.entity_remove_patch("team_workspace", "team", team_id, cursor)];
+            return vec![
+                self.entity_remove_patch("team_summary", "team", team_id.clone(), cursor.clone()),
+                self.entity_remove_patch("team_workspace", "team", team_id, cursor),
+            ];
         }
         if let Some(team) = team {
             self.upsert_team(team);
@@ -336,24 +338,11 @@ impl MaterializedState {
                 .and_then(Value::as_str)
             {
                 self.remove_team_member(team_id, agent_id);
-                patches.push(self.list_remove_patch(
-                    "team_workspace",
-                    "team_member",
-                    format!("{team_id}:{agent_id}"),
-                    cursor.clone(),
-                ));
                 patches.extend(self.session_patches(agent_id, cursor.clone()));
             }
         } else if let Some(member) = event_payload_record::<TeamMemberRecord>(event, "member") {
             let session_id = member.agent_id.clone();
             self.upsert_team_member(member.clone());
-            patches.push(self.list_insert_patch(
-                "team_workspace",
-                "team_member",
-                format!("{}:{}", member.team_id, member.agent_id),
-                cursor.clone(),
-                json!(member),
-            ));
             patches.extend(self.session_patches(&session_id, cursor.clone()));
         }
         patches.extend(self.team_patch(team_id, cursor));
@@ -370,17 +359,8 @@ impl MaterializedState {
             return Vec::new();
         };
         let team_id = message.team_id.clone();
-        let message_id = message.id.clone();
         self.upsert_message(message.clone());
-        let mut patches = vec![self.list_insert_patch(
-            "team_workspace",
-            "team_message",
-            message_id,
-            cursor.clone(),
-            json!(message),
-        )];
-        patches.extend(self.team_patch(&team_id, cursor));
-        patches
+        self.team_patch(&team_id, cursor)
     }
 
     fn reduce_team_delivery_event(
@@ -394,17 +374,8 @@ impl MaterializedState {
         };
         let team_id = delivery.team_id.clone();
         let recipient = delivery.recipient_agent_id.clone();
-        let delivery_id = delivery.id.clone();
         self.upsert_delivery(delivery.clone());
-        let mut patches = vec![self.entity_upsert_patch(
-            "team_workspace",
-            "team_delivery",
-            delivery_id,
-            self.version("team_delivery", &delivery.id),
-            cursor.clone(),
-            json!(delivery),
-        )];
-        patches.extend(self.team_patch(&team_id, cursor.clone()));
+        let mut patches = self.team_patch(&team_id, cursor.clone());
         patches.extend(self.session_patches(&recipient, cursor));
         patches
     }
@@ -585,15 +556,30 @@ impl MaterializedState {
         }
         if let Some(session) = self.sessions.get(session_id) {
             patches.push(self.entity_upsert_patch(
+                "session_summary",
+                "session",
+                session_id.to_string(),
+                self.version("session", session_id),
+                cursor.clone(),
+                json!({
+                    "source_id": self.source_id,
+                    "session": session,
+                }),
+            ));
+        }
+        if let Some(detail) =
+            self.snapshot_session(&super::snapshots::SelectedSessionSubscription {
+                session_id: session_id.to_string(),
+                include_text: true,
+            })
+        {
+            patches.push(self.entity_upsert_patch(
                 "session_detail",
                 "session",
                 session_id.to_string(),
                 self.version("session", session_id),
                 cursor,
-                json!({
-                    "session": session,
-                    "row": self.agent_row(session_id),
-                }),
+                json!(detail),
             ));
         }
         patches
@@ -607,19 +593,29 @@ impl MaterializedState {
         let Some(team) = self.teams.get(team_id) else {
             return Vec::new();
         };
-        vec![self.entity_upsert_patch(
-            "team_workspace",
+        let version = self.version("team", team_id);
+        let mut patches = vec![self.entity_upsert_patch(
+            "team_summary",
             "team",
             team_id.to_string(),
-            self.version("team", team_id),
-            cursor,
-            json!({
-                "team": team,
-                "members": self.members_by_team.get(team_id),
-                "messages": self.messages_by_team.get(team_id),
-                "deliveries": self.deliveries_by_team.get(team_id),
-            }),
-        )]
+            version,
+            cursor.clone(),
+            json!({ "source_id": self.source_id, "team": team, "members": self.members_by_team.get(team_id) }),
+        )];
+        if let Some(workspace) = self.snapshot_team(&super::snapshots::SelectedTeamSubscription {
+            team_id: team_id.to_string(),
+            message_limit: 100,
+        }) {
+            patches.push(self.entity_upsert_patch(
+                "team_workspace",
+                "team",
+                team_id.to_string(),
+                version,
+                cursor,
+                json!(workspace),
+            ));
+        }
+        patches
     }
 
     fn approval_row(&self, approval_id: &str) -> Option<super::state::ApprovalRowView> {
@@ -655,41 +651,6 @@ impl MaterializedState {
     ) -> MaterializedPatch {
         MaterializedPatch {
             kind: MaterializedPatchKind::EntityRemove,
-            view_kind: view_kind.to_string(),
-            entity: Some(EntityKey::new(&self.source_id, entity_kind, entity_id)),
-            version: None,
-            source_cursor: cursor,
-            body: Value::Null,
-        }
-    }
-
-    fn list_insert_patch(
-        &self,
-        view_kind: &str,
-        entity_kind: &str,
-        entity_id: String,
-        cursor: Option<SourceCursorView>,
-        body: Value,
-    ) -> MaterializedPatch {
-        MaterializedPatch {
-            kind: MaterializedPatchKind::ListInsert,
-            view_kind: view_kind.to_string(),
-            entity: Some(EntityKey::new(&self.source_id, entity_kind, entity_id)),
-            version: None,
-            source_cursor: cursor,
-            body,
-        }
-    }
-
-    fn list_remove_patch(
-        &self,
-        view_kind: &str,
-        entity_kind: &str,
-        entity_id: String,
-        cursor: Option<SourceCursorView>,
-    ) -> MaterializedPatch {
-        MaterializedPatch {
-            kind: MaterializedPatchKind::ListRemove,
             view_kind: view_kind.to_string(),
             entity: Some(EntityKey::new(&self.source_id, entity_kind, entity_id)),
             version: None,

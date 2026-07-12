@@ -113,10 +113,34 @@ message WorktreeView {
   reserved 30 to 79;
 }
 
+// Declares how a view body changes browser materialized state. Snapshots are
+// authoritative replacements; patches explicitly upsert or remove an entity.
+enum ViewOperation {
+  VIEW_OPERATION_UNSPECIFIED = 0;
+  VIEW_OPERATION_REPLACE = 1;
+  VIEW_OPERATION_UPSERT = 2;
+  VIEW_OPERATION_REMOVE = 3;
+  reserved 20 to 39;
+}
+
+message ViewCoverage {
+  // Stable normalized browser domains covered by this frame, for example
+  // "session_details" or "team_workspaces".
+  repeated string domains = 1;
+  // Empty means the complete domain. Otherwise replacement/removal is scoped
+  // to these entity IDs.
+  repeated string entity_ids = 2;
+  bool authoritative = 3;
+  reserved 20 to 39;
+}
+
 message Snapshot {
   string view_kind = 1;
   CursorVector cursor = 2;
   bytes body = 3;
+  uint32 schema_version = 4;
+  ViewOperation operation = 5;
+  ViewCoverage coverage = 6;
   reserved 20 to 49;
 }
 
@@ -125,5 +149,8 @@ message Patch {
   EntityRef entity = 2;
   CursorVector cursor = 3;
   bytes body = 4;
+  uint32 schema_version = 5;
+  ViewOperation operation = 6;
+  ViewCoverage coverage = 7;
   reserved 20 to 49;
 }

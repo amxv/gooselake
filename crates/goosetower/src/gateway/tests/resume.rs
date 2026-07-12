@@ -1,4 +1,87 @@
 use super::*;
+use base64::Engine as _;
+
+#[test]
+fn patch_frames_use_versioned_operations_coverage_and_nested_cursor() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    let envelope = gateway.patch_envelope(ledger_patch(7));
+    assert!(envelope.source_id.is_empty());
+    assert_eq!(envelope.source_seq, 0);
+    let Some(Payload::Patch(patch)) = envelope.payload else {
+        panic!("expected patch payload");
+    };
+    assert_eq!(patch.schema_version, DETAIL_SCHEMA_VERSION);
+    assert_eq!(patch.operation, ViewOperation::Upsert as i32);
+    let cursor = patch.cursor.expect("canonical nested cursor");
+    assert_eq!(cursor.sources[0].source_seq, 7);
+    let coverage = patch.coverage.expect("declared coverage");
+    assert!(coverage.authoritative);
+    assert_eq!(coverage.domains, vec!["ledger_events"]);
+}
+
+#[test]
+fn rust_decodes_shared_typescript_detail_frame_corpus() {
+    let corpus: Value = serde_json::from_str(include_str!(
+        "../../../../../verification/gooseweb/fixtures/p08-detail-frame-corpus.json"
+    ))
+    .expect("P08 frame corpus JSON");
+    let encoded = corpus["frames"][0]["base64"]
+        .as_str()
+        .expect("base64 frame");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .expect("base64 decode");
+    let envelope = RealtimeEnvelope::decode(bytes.as_slice()).expect("Rust frame decode");
+    let Some(Payload::Snapshot(snapshot)) = envelope.payload else {
+        panic!("expected snapshot corpus frame");
+    };
+    assert_eq!(snapshot.view_kind, "session_detail");
+    assert_eq!(snapshot.operation, ViewOperation::Replace as i32);
+    assert_eq!(
+        snapshot.cursor.expect("nested cursor").sources[0].source_seq,
+        17
+    );
+    assert_eq!(
+        snapshot.coverage.expect("coverage").entity_ids,
+        vec!["session-1"]
+    );
+}
+
+#[tokio::test]
+async fn legacy_detail_subscriptions_publish_canonical_replacement_snapshots() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    let mut state = MaterializedState::new("local", "static-0");
+    state.upsert_session(session_record());
+    state.reduce_source_event(runtime_source_event("local", "static-0", "session_1", 1));
+    gateway
+        .replace_materialized_state("local".to_string(), state)
+        .await;
+
+    let envelope = gateway
+        .snapshot_for_subscription(Subscribe {
+            subscription_id: "selected-session".to_string(),
+            view_kind: "session".to_string(),
+            filters: HashMap::from([
+                ("source_id".to_string(), "local".to_string()),
+                ("session_id".to_string(), "session_1".to_string()),
+            ]),
+        })
+        .await;
+    let Some(Payload::Snapshot(snapshot)) = envelope.payload else {
+        panic!("expected snapshot payload");
+    };
+    assert_eq!(snapshot.view_kind, "session_detail");
+    assert_eq!(snapshot.schema_version, DETAIL_SCHEMA_VERSION);
+    assert_eq!(snapshot.operation, ViewOperation::Replace as i32);
+    assert!(snapshot.cursor.is_some());
+    assert!(envelope.source_id.is_empty());
+    let coverage = snapshot.coverage.expect("declared coverage");
+    assert_eq!(coverage.domains, vec!["session_details"]);
+    assert_eq!(coverage.entity_ids, vec!["session_1"]);
+    let detail: crate::materializer::SessionDetailView =
+        serde_json::from_slice(&snapshot.body).expect("typed session detail body");
+    assert_eq!(detail.session.id, "session_1");
+}
 
 #[tokio::test]
 async fn resume_clean_reconnect_uses_gateway_replay_without_duplicates() {

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "frames": [
+    {
+      "name": "session_detail_snapshot_replace",
+      "base64": "CAESG3AwOC1zZXNzaW9uLWRldGFpbC1zbmFwc2hvdBgIIAIoKaoC6AEKDnNlc3Npb25fZGV0YWlsEhkIKRIVCghzb3VyY2UtMRIHZXBvY2gtMRgRGpYBeyJzb3VyY2VfaWQiOiJzb3VyY2UtMSIsInNlc3Npb24iOnsiaWQiOiJzZXNzaW9uLTEiLCJwcm92aWRlciI6ImNvZGV4Iiwic3RhdHVzIjoicmVhZHkifSwidHJhbnNjcmlwdCI6W3sicm9sZSI6ImFzc2lzdGFudCIsInRleHQiOiJyZWxvYWRlZCBhbnN3ZXIifV19IAEoATIeCg9zZXNzaW9uX2RldGFpbHMSCXNlc3Npb24tMRgB",
+      "view_kind": "session_detail",
+      "source_id": "source-1",
+      "source_seq": 17,
+      "entity_id": "session-1"
+    }
+  ]
+}

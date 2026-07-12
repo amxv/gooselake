@@ -9,24 +9,151 @@ import {
   TeamMemberViewSchema,
   TeamViewSchema,
   WorktreeViewSchema,
+  ViewOperation,
   type Patch,
   type Snapshot
 } from "../../../src/gen/goosetower/v1/view_pb";
-import type { NormalizedEntityPatch } from "../types";
+import type { EntityDomain, EntityMutation, NormalizedEntityPatch } from "../types";
 
 export type EntityPatch = {
   readonly entities: NormalizedEntityPatch;
+  readonly entityMutations: readonly EntityMutation[];
 };
 
+type DecodedEntities = { readonly entities: NormalizedEntityPatch };
+
 export function decodeSnapshot(snapshot: Snapshot): EntityPatch {
-  return decodeViewBody(snapshot.viewKind, snapshot.body);
+  const operation = operationFromFrame(snapshot.schemaVersion, snapshot.operation, "replace");
+  if (operation !== "replace") {
+    throw new ProtocolDecodeError(`snapshot operation must be replace, received ${operation}`);
+  }
+  requireDeclaredCoverage(snapshot.schemaVersion, snapshot.coverage);
+  return withMutation(
+    decodeViewBody(snapshot.viewKind, snapshot.body),
+    snapshot.viewKind,
+    operation,
+    snapshot.coverage?.domains,
+    snapshot.coverage?.entityIds,
+    snapshot.coverage?.authoritative ?? snapshot.schemaVersion === 0
+  );
 }
 
 export function decodePatch(patch: Patch): EntityPatch {
-  return decodeViewBody(patch.viewKind, patch.body);
+  const operation = operationFromFrame(patch.schemaVersion, patch.operation, "upsert");
+  requireDeclaredCoverage(patch.schemaVersion, patch.coverage);
+  const entityIds = patch.coverage?.entityIds.length
+    ? patch.coverage.entityIds
+    : patch.entity?.entityId ? [patch.entity.entityId] : [];
+  const decoded = operation === "remove"
+    ? { entities: {} }
+    : decodeViewBody(patch.viewKind, patch.body);
+  return withMutation(
+    decoded,
+    patch.viewKind,
+    operation,
+    patch.coverage?.domains,
+    entityIds,
+    patch.coverage?.authoritative ?? patch.schemaVersion === 0
+  );
 }
 
-function decodeViewBody(viewKind: string, body: Uint8Array): EntityPatch {
+function requireDeclaredCoverage(
+  schemaVersion: number,
+  coverage: Snapshot["coverage"]
+): void {
+  if (
+    schemaVersion === 1 &&
+    (!coverage?.authoritative || coverage.domains.length === 0)
+  ) {
+    throw new ProtocolDecodeError("versioned view frame lacks authoritative coverage");
+  }
+}
+
+export class ProtocolDecodeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProtocolDecodeError";
+  }
+}
+
+function operationFromFrame(
+  schemaVersion: number,
+  operation: ViewOperation,
+  legacyOperation: EntityMutation["operation"]
+): EntityMutation["operation"] {
+  if (schemaVersion === 0 && operation === ViewOperation.UNSPECIFIED) {
+    return legacyOperation;
+  }
+  if (schemaVersion !== 1) {
+    throw new ProtocolDecodeError(`unsupported view schema version ${schemaVersion}`);
+  }
+  switch (operation) {
+    case ViewOperation.REPLACE: return "replace";
+    case ViewOperation.UPSERT: return "upsert";
+    case ViewOperation.REMOVE: return "remove";
+    default: throw new ProtocolDecodeError("view operation is unspecified or unknown");
+  }
+}
+
+function withMutation(
+  decoded: DecodedEntities,
+  viewKind: string,
+  operation: EntityMutation["operation"],
+  declaredDomains: readonly string[] | undefined,
+  entityIds: readonly string[] | undefined,
+  authoritative: boolean
+): EntityPatch {
+  // Ledger remains a presentation-only bounded compatibility view until its
+  // normalized browser domain lands. It is deliberately named here so future
+  // unknown kinds still fail closed instead of becoming empty state.
+  if (viewKind === "ledger") {
+    return { entities: decoded.entities, entityMutations: [] };
+  }
+  const domain = domainForViewKind(viewKind);
+  if (!domain) {
+    throw new ProtocolDecodeError(`unknown view kind ${viewKind}`);
+  }
+  if (declaredDomains?.length && !declaredDomains.includes(domainToWire(domain))) {
+    throw new ProtocolDecodeError(`coverage does not declare ${domainToWire(domain)}`);
+  }
+  return {
+    entities: decoded.entities,
+    entityMutations: [{
+      operation,
+      domain,
+      entityIds: entityIds?.length ? entityIds : Object.keys(decoded.entities[domain] ?? {}),
+      authoritative
+    }]
+  };
+}
+
+function domainForViewKind(viewKind: string): EntityDomain | undefined {
+  switch (viewKind) {
+    case "board": case "fleet-row": case "board-row": return "fleetRows";
+    case "session": case "session_summary": return "sessions";
+    case "session_detail": return "sessionDetails";
+    case "team": case "team_summary": case "teams": return "teams";
+    case "team_workspace": case "team_stream": return "teamWorkspaces";
+    case "approval": case "approval_inbox": return "approvals";
+    case "process": return "processes";
+    case "worktree": case "worktrees": return "worktrees";
+    case "source-health": case "source_health": case "source": case "fleet": return "sources";
+    default: return undefined;
+  }
+}
+
+function domainToWire(domain: EntityDomain): string {
+  return domain.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+function decodeViewBody(viewKind: string, body: Uint8Array): DecodedEntities {
+  if (viewKind === "ledger") {
+    const value = decodeJsonViewBody(viewKind, body);
+    return value ?? { entities: {} };
+  }
+  if (!domainForViewKind(viewKind)) {
+    throw new ProtocolDecodeError(`unknown view kind ${viewKind}`);
+  }
   const jsonPatch = decodeJsonViewBody(viewKind, body);
   if (jsonPatch) {
     return jsonPatch;
@@ -38,11 +165,13 @@ function decodeViewBody(viewKind: string, body: Uint8Array): EntityPatch {
       const row = fromBinary(FleetRowViewSchema, body);
       return { entities: { fleetRows: { [row.rowId]: row } } };
     }
-    case "session": {
+    case "session":
+    case "session_summary": {
       const session = fromBinary(SessionViewSchema, body);
       return { entities: { sessions: { [session.sessionId]: session } } };
     }
-    case "team": {
+    case "team":
+    case "team_summary": {
       const team = fromBinary(TeamViewSchema, body);
       return { entities: { teams: { [team.teamId]: team } } };
     }
@@ -64,23 +193,27 @@ function decodeViewBody(viewKind: string, body: Uint8Array): EntityPatch {
       return { entities: { sources: { [source.sourceId]: source } } };
     }
     default:
-      return { entities: {} };
+      throw new ProtocolDecodeError(`view kind ${viewKind} has no binary decoder`);
   }
 }
 
 function decodeJsonViewBody(
   viewKind: string,
   body: Uint8Array
-): EntityPatch | undefined {
+): DecodedEntities | undefined {
+  const text = new TextDecoder().decode(body);
   let value: unknown;
   try {
-    value = JSON.parse(new TextDecoder().decode(body));
+    value = JSON.parse(text);
   } catch {
+    if (/^\s*[\[{]/.test(text)) {
+      throw new ProtocolDecodeError(`malformed ${viewKind} JSON body`);
+    }
     return undefined;
   }
 
   if (!value || typeof value !== "object") {
-    return { entities: {} };
+    throw new ProtocolDecodeError(`malformed ${viewKind} JSON body`);
   }
 
   switch (viewKind) {
@@ -129,11 +262,13 @@ function decodeJsonViewBody(
       const source = normalizeSource(value);
       return { entities: { sources: { [source.sourceId]: source } } };
     }
-    case "team": {
+    case "team":
+    case "team_summary": {
       const team = normalizeTeam(value);
       return team ? { entities: { teams: { [team.teamId]: team } } } : { entities: {} };
     }
-    case "session": {
+    case "session":
+    case "session_summary": {
       const session = normalizeSession(value);
       return session
         ? { entities: { sessions: { [session.sessionId]: session } } }
@@ -145,7 +280,8 @@ function decodeJsonViewBody(
         ? { entities: { sessionDetails: { [detail.sessionId]: detail } } }
         : { entities: {} };
     }
-    case "team_workspace": {
+    case "team_workspace":
+    case "team_stream": {
       const workspace = normalizeTeamWorkspace(value);
       const team = normalizeTeam(value);
       return {
@@ -165,8 +301,10 @@ function decodeJsonViewBody(
         }
       };
     }
-    default:
+    case "ledger":
       return { entities: {} };
+    default:
+      throw new ProtocolDecodeError(`unknown JSON view kind ${viewKind}`);
   }
 }
 

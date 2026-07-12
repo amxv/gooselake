@@ -2,8 +2,8 @@
 // @generated from file goosetower/v1/view.proto (package goosetower.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { CursorVector, EntityRef, SourceCursor } from "./common_pb";
 import { file_goosetower_v1_common } from "./common_pb";
 import type { Message } from "@bufbuild/protobuf";
@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file goosetower/v1/view.proto.
  */
 export const file_goosetower_v1_view: GenFile = /*@__PURE__*/
-  fileDesc("Chhnb29zZXRvd2VyL3YxL3ZpZXcucHJvdG8SDWdvb3NldG93ZXIudjEiqgQKEFNvdXJjZUhlYWx0aFZpZXcSEQoJc291cmNlX2lkGAEgASgJEhQKDGRpc3BsYXlfbmFtZRgCIAEoCRITCgtzb3VyY2Vfa2luZBgDIAEoCRIOCgZoZWFsdGgYBCABKAkSKwoGY3Vyc29yGAUgASgLMhsuZ29vc2V0b3dlci52MS5Tb3VyY2VDdXJzb3ISGwoTb2JzZXJ2ZWRfYXRfdW5peF9tcxgGIAEoAxIRCglsaWZlY3ljbGUYByABKAkSGAoQcHJvdmlzaW9uZXJfa2luZBgIIAEoCRIWCg5wcm92aWRlcl9raW5kcxgJIAMoCRIOCgZtb2RlbHMYCiADKAkSHAoUYWN0aXZlX3Nlc3Npb25fY291bnQYCyABKA0SHAoUYWN0aXZlX3Byb2Nlc3NfY291bnQYDCABKA0SGAoQcHJvY2Vzc19jYXBhY2l0eRgNIAEoDRIaChJzdXBwb3J0c193b3JrdHJlZXMYDiABKAgSFgoOc3VwcG9ydHNfdGVhbXMYDyABKAgSHAoUcmVwbGF5X3dpbmRvd19ldmVudHMYECABKAQSGAoQcmVwbGF5X3dpbmRvd19tcxgRIAEoBBIOCgZyZWdpb24YEiABKAkSEQoJY29zdF9oaW50GBMgASgJEj4KEm1vZGVsX2NhcGFiaWxpdGllcxgyIAMoCzIiLmdvb3NldG93ZXIudjEuTW9kZWxDYXBhYmlsaXR5Vmlld0oECBQQMiJmChNNb2RlbENhcGFiaWxpdHlWaWV3EhAKCHByb3ZpZGVyGAEgASgJEg0KBW1vZGVsGAIgASgJEhQKDGRpc3BsYXlfbmFtZRgDIAEoCRIYChByZWFzb25pbmdfbGV2ZWxzGAQgAygJIvQBCgxGbGVldFJvd1ZpZXcSDgoGcm93X2lkGAEgASgJEhEKCXNvdXJjZV9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJEg8KB3RlYW1faWQYBCABKAkSEAoIcHJvdmlkZXIYBSABKAkSDQoFbW9kZWwYBiABKAkSDgoGc3RhdHVzGAcgASgJEg0KBXRpdGxlGAggASgJEhUKDXdvcmt0cmVlX3BhdGgYCSABKAkSHgoWcGVuZGluZ19hcHByb3ZhbF9jb3VudBgKIAEoDRIfChdsYXRlc3RfYWN0aXZpdHlfdW5peF9tcxgLIAEoA0oECB4QUCLlAgoLU2Vzc2lvblZpZXcSEQoJc291cmNlX2lkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEAoIcHJvdmlkZXIYAyABKAkSDQoFbW9kZWwYBCABKAkSDgoGc3RhdHVzGAUgASgJEgsKA2N3ZBgGIAEoCRIVCg13b3JrdHJlZV9wYXRoGAcgASgJEhYKDmFjdGl2ZV90dXJuX2lkGAggASgJEiYKGWNvbnRleHRfcmVtYWluaW5nX3BlcmNlbnQYHiABKA1IAIgBARIiChVjb250ZXh0X3dpbmRvd190b2tlbnMYHyABKARIAYgBARIgChNjb250ZXh0X3VzZWRfdG9rZW5zGCAgASgESAKIAQFCHAoaX2NvbnRleHRfcmVtYWluaW5nX3BlcmNlbnRCGAoWX2NvbnRleHRfd2luZG93X3Rva2Vuc0IWChRfY29udGV4dF91c2VkX3Rva2Vuc0oECCEQUCKKAQoIVGVhbVZpZXcSEQoJc291cmNlX2lkGAEgASgJEg8KB3RlYW1faWQYAiABKAkSDAoEbmFtZRgDIAEoCRIWCg5sZWFkX21lbWJlcl9pZBgEIAEoCRIuCgdtZW1iZXJzGAUgAygLMh0uZ29vc2V0b3dlci52MS5UZWFtTWVtYmVyVmlld0oECB4QUCJ9Cg5UZWFtTWVtYmVyVmlldxIRCgltZW1iZXJfaWQYASABKAkSEgoKc2Vzc2lvbl9pZBgCIAEoCRINCgV0aXRsZRgDIAEoCRIQCghwcm92aWRlchgEIAEoCRINCgVtb2RlbBgFIAEoCRIOCgZzdGF0dXMYBiABKAlKBAgeEFAikAEKDEFwcHJvdmFsVmlldxIRCglzb3VyY2VfaWQYASABKAkSEwoLYXBwcm92YWxfaWQYAiABKAkSEgoKc2Vzc2lvbl9pZBgDIAEoCRIPCgd0dXJuX2lkGAQgASgJEgwKBHJpc2sYBSABKAkSDgoGc3RhdHVzGAYgASgJEg8KB3N1bW1hcnkYByABKAlKBAgeEFAibgoLUHJvY2Vzc1ZpZXcSEQoJc291cmNlX2lkGAEgASgJEhIKCnByb2Nlc3NfaWQYAiABKAkSDgoGc3RhdHVzGAMgASgJEg8KB2NvbW1hbmQYBCABKAkSEQoJZXhpdF9jb2RlGAUgASgFSgQIHhBQImoKDFdvcmt0cmVlVmlldxIRCglzb3VyY2VfaWQYASABKAkSEwoLd29ya3RyZWVfaWQYAiABKAkSDAoEcGF0aBgDIAEoCRIOCgZicmFuY2gYBCABKAkSDgoGc3RhdHVzGAUgASgJSgQIHhBQIl4KCFNuYXBzaG90EhEKCXZpZXdfa2luZBgBIAEoCRIrCgZjdXJzb3IYAiABKAsyGy5nb29zZXRvd2VyLnYxLkN1cnNvclZlY3RvchIMCgRib2R5GAMgASgMSgQIFBAyIoUBCgVQYXRjaBIRCgl2aWV3X2tpbmQYASABKAkSKAoGZW50aXR5GAIgASgLMhguZ29vc2V0b3dlci52MS5FbnRpdHlSZWYSKwoGY3Vyc29yGAMgASgLMhsuZ29vc2V0b3dlci52MS5DdXJzb3JWZWN0b3ISDAoEYm9keRgEIAEoDEoECBQQMmIGcHJvdG8z", [file_goosetower_v1_common]);
+  fileDesc("Chhnb29zZXRvd2VyL3YxL3ZpZXcucHJvdG8SDWdvb3NldG93ZXIudjEiqgQKEFNvdXJjZUhlYWx0aFZpZXcSEQoJc291cmNlX2lkGAEgASgJEhQKDGRpc3BsYXlfbmFtZRgCIAEoCRITCgtzb3VyY2Vfa2luZBgDIAEoCRIOCgZoZWFsdGgYBCABKAkSKwoGY3Vyc29yGAUgASgLMhsuZ29vc2V0b3dlci52MS5Tb3VyY2VDdXJzb3ISGwoTb2JzZXJ2ZWRfYXRfdW5peF9tcxgGIAEoAxIRCglsaWZlY3ljbGUYByABKAkSGAoQcHJvdmlzaW9uZXJfa2luZBgIIAEoCRIWCg5wcm92aWRlcl9raW5kcxgJIAMoCRIOCgZtb2RlbHMYCiADKAkSHAoUYWN0aXZlX3Nlc3Npb25fY291bnQYCyABKA0SHAoUYWN0aXZlX3Byb2Nlc3NfY291bnQYDCABKA0SGAoQcHJvY2Vzc19jYXBhY2l0eRgNIAEoDRIaChJzdXBwb3J0c193b3JrdHJlZXMYDiABKAgSFgoOc3VwcG9ydHNfdGVhbXMYDyABKAgSHAoUcmVwbGF5X3dpbmRvd19ldmVudHMYECABKAQSGAoQcmVwbGF5X3dpbmRvd19tcxgRIAEoBBIOCgZyZWdpb24YEiABKAkSEQoJY29zdF9oaW50GBMgASgJEj4KEm1vZGVsX2NhcGFiaWxpdGllcxgyIAMoCzIiLmdvb3NldG93ZXIudjEuTW9kZWxDYXBhYmlsaXR5Vmlld0oECBQQMiJmChNNb2RlbENhcGFiaWxpdHlWaWV3EhAKCHByb3ZpZGVyGAEgASgJEg0KBW1vZGVsGAIgASgJEhQKDGRpc3BsYXlfbmFtZRgDIAEoCRIYChByZWFzb25pbmdfbGV2ZWxzGAQgAygJIvQBCgxGbGVldFJvd1ZpZXcSDgoGcm93X2lkGAEgASgJEhEKCXNvdXJjZV9pZBgCIAEoCRISCgpzZXNzaW9uX2lkGAMgASgJEg8KB3RlYW1faWQYBCABKAkSEAoIcHJvdmlkZXIYBSABKAkSDQoFbW9kZWwYBiABKAkSDgoGc3RhdHVzGAcgASgJEg0KBXRpdGxlGAggASgJEhUKDXdvcmt0cmVlX3BhdGgYCSABKAkSHgoWcGVuZGluZ19hcHByb3ZhbF9jb3VudBgKIAEoDRIfChdsYXRlc3RfYWN0aXZpdHlfdW5peF9tcxgLIAEoA0oECB4QUCLlAgoLU2Vzc2lvblZpZXcSEQoJc291cmNlX2lkGAEgASgJEhIKCnNlc3Npb25faWQYAiABKAkSEAoIcHJvdmlkZXIYAyABKAkSDQoFbW9kZWwYBCABKAkSDgoGc3RhdHVzGAUgASgJEgsKA2N3ZBgGIAEoCRIVCg13b3JrdHJlZV9wYXRoGAcgASgJEhYKDmFjdGl2ZV90dXJuX2lkGAggASgJEiYKGWNvbnRleHRfcmVtYWluaW5nX3BlcmNlbnQYHiABKA1IAIgBARIiChVjb250ZXh0X3dpbmRvd190b2tlbnMYHyABKARIAYgBARIgChNjb250ZXh0X3VzZWRfdG9rZW5zGCAgASgESAKIAQFCHAoaX2NvbnRleHRfcmVtYWluaW5nX3BlcmNlbnRCGAoWX2NvbnRleHRfd2luZG93X3Rva2Vuc0IWChRfY29udGV4dF91c2VkX3Rva2Vuc0oECCEQUCKKAQoIVGVhbVZpZXcSEQoJc291cmNlX2lkGAEgASgJEg8KB3RlYW1faWQYAiABKAkSDAoEbmFtZRgDIAEoCRIWCg5sZWFkX21lbWJlcl9pZBgEIAEoCRIuCgdtZW1iZXJzGAUgAygLMh0uZ29vc2V0b3dlci52MS5UZWFtTWVtYmVyVmlld0oECB4QUCJ9Cg5UZWFtTWVtYmVyVmlldxIRCgltZW1iZXJfaWQYASABKAkSEgoKc2Vzc2lvbl9pZBgCIAEoCRINCgV0aXRsZRgDIAEoCRIQCghwcm92aWRlchgEIAEoCRINCgVtb2RlbBgFIAEoCRIOCgZzdGF0dXMYBiABKAlKBAgeEFAikAEKDEFwcHJvdmFsVmlldxIRCglzb3VyY2VfaWQYASABKAkSEwoLYXBwcm92YWxfaWQYAiABKAkSEgoKc2Vzc2lvbl9pZBgDIAEoCRIPCgd0dXJuX2lkGAQgASgJEgwKBHJpc2sYBSABKAkSDgoGc3RhdHVzGAYgASgJEg8KB3N1bW1hcnkYByABKAlKBAgeEFAibgoLUHJvY2Vzc1ZpZXcSEQoJc291cmNlX2lkGAEgASgJEhIKCnByb2Nlc3NfaWQYAiABKAkSDgoGc3RhdHVzGAMgASgJEg8KB2NvbW1hbmQYBCABKAkSEQoJZXhpdF9jb2RlGAUgASgFSgQIHhBQImoKDFdvcmt0cmVlVmlldxIRCglzb3VyY2VfaWQYASABKAkSEwoLd29ya3RyZWVfaWQYAiABKAkSDAoEcGF0aBgDIAEoCRIOCgZicmFuY2gYBCABKAkSDgoGc3RhdHVzGAUgASgJSgQIHhBQIlAKDFZpZXdDb3ZlcmFnZRIPCgdkb21haW5zGAEgAygJEhIKCmVudGl0eV9pZHMYAiADKAkSFQoNYXV0aG9yaXRhdGl2ZRgDIAEoCEoECBQQKCLWAQoIU25hcHNob3QSEQoJdmlld19raW5kGAEgASgJEisKBmN1cnNvchgCIAEoCzIbLmdvb3NldG93ZXIudjEuQ3Vyc29yVmVjdG9yEgwKBGJvZHkYAyABKAwSFgoOc2NoZW1hX3ZlcnNpb24YBCABKA0SLwoJb3BlcmF0aW9uGAUgASgOMhwuZ29vc2V0b3dlci52MS5WaWV3T3BlcmF0aW9uEi0KCGNvdmVyYWdlGAYgASgLMhsuZ29vc2V0b3dlci52MS5WaWV3Q292ZXJhZ2VKBAgUEDIi/QEKBVBhdGNoEhEKCXZpZXdfa2luZBgBIAEoCRIoCgZlbnRpdHkYAiABKAsyGC5nb29zZXRvd2VyLnYxLkVudGl0eVJlZhIrCgZjdXJzb3IYAyABKAsyGy5nb29zZXRvd2VyLnYxLkN1cnNvclZlY3RvchIMCgRib2R5GAQgASgMEhYKDnNjaGVtYV92ZXJzaW9uGAUgASgNEi8KCW9wZXJhdGlvbhgGIAEoDjIcLmdvb3NldG93ZXIudjEuVmlld09wZXJhdGlvbhItCghjb3ZlcmFnZRgHIAEoCzIbLmdvb3NldG93ZXIudjEuVmlld0NvdmVyYWdlSgQIFBAyKocBCg1WaWV3T3BlcmF0aW9uEh4KGlZJRVdfT1BFUkFUSU9OX1VOU1BFQ0lGSUVEEAASGgoWVklFV19PUEVSQVRJT05fUkVQTEFDRRABEhkKFVZJRVdfT1BFUkFUSU9OX1VQU0VSVBACEhkKFVZJRVdfT1BFUkFUSU9OX1JFTU9WRRADIgQIFBAnYgZwcm90bzM", [file_goosetower_v1_common]);
 
 /**
  * @generated from message goosetower.v1.SourceHealthView
@@ -493,6 +493,39 @@ export const WorktreeViewSchema: GenMessage<WorktreeView> = /*@__PURE__*/
   messageDesc(file_goosetower_v1_view, 8);
 
 /**
+ * @generated from message goosetower.v1.ViewCoverage
+ */
+export type ViewCoverage = Message<"goosetower.v1.ViewCoverage"> & {
+  /**
+   * Stable normalized browser domains covered by this frame, for example
+   * "session_details" or "team_workspaces".
+   *
+   * @generated from field: repeated string domains = 1;
+   */
+  domains: string[];
+
+  /**
+   * Empty means the complete domain. Otherwise replacement/removal is scoped
+   * to these entity IDs.
+   *
+   * @generated from field: repeated string entity_ids = 2;
+   */
+  entityIds: string[];
+
+  /**
+   * @generated from field: bool authoritative = 3;
+   */
+  authoritative: boolean;
+};
+
+/**
+ * Describes the message goosetower.v1.ViewCoverage.
+ * Use `create(ViewCoverageSchema)` to create a new message.
+ */
+export const ViewCoverageSchema: GenMessage<ViewCoverage> = /*@__PURE__*/
+  messageDesc(file_goosetower_v1_view, 9);
+
+/**
  * @generated from message goosetower.v1.Snapshot
  */
 export type Snapshot = Message<"goosetower.v1.Snapshot"> & {
@@ -510,6 +543,21 @@ export type Snapshot = Message<"goosetower.v1.Snapshot"> & {
    * @generated from field: bytes body = 3;
    */
   body: Uint8Array;
+
+  /**
+   * @generated from field: uint32 schema_version = 4;
+   */
+  schemaVersion: number;
+
+  /**
+   * @generated from field: goosetower.v1.ViewOperation operation = 5;
+   */
+  operation: ViewOperation;
+
+  /**
+   * @generated from field: goosetower.v1.ViewCoverage coverage = 6;
+   */
+  coverage?: ViewCoverage | undefined;
 };
 
 /**
@@ -517,7 +565,7 @@ export type Snapshot = Message<"goosetower.v1.Snapshot"> & {
  * Use `create(SnapshotSchema)` to create a new message.
  */
 export const SnapshotSchema: GenMessage<Snapshot> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 9);
+  messageDesc(file_goosetower_v1_view, 10);
 
 /**
  * @generated from message goosetower.v1.Patch
@@ -542,6 +590,21 @@ export type Patch = Message<"goosetower.v1.Patch"> & {
    * @generated from field: bytes body = 4;
    */
   body: Uint8Array;
+
+  /**
+   * @generated from field: uint32 schema_version = 5;
+   */
+  schemaVersion: number;
+
+  /**
+   * @generated from field: goosetower.v1.ViewOperation operation = 6;
+   */
+  operation: ViewOperation;
+
+  /**
+   * @generated from field: goosetower.v1.ViewCoverage coverage = 7;
+   */
+  coverage?: ViewCoverage | undefined;
 };
 
 /**
@@ -549,5 +612,39 @@ export type Patch = Message<"goosetower.v1.Patch"> & {
  * Use `create(PatchSchema)` to create a new message.
  */
 export const PatchSchema: GenMessage<Patch> = /*@__PURE__*/
-  messageDesc(file_goosetower_v1_view, 10);
+  messageDesc(file_goosetower_v1_view, 11);
+
+/**
+ * Declares how a view body changes browser materialized state. Snapshots are
+ * authoritative replacements; patches explicitly upsert or remove an entity.
+ *
+ * @generated from enum goosetower.v1.ViewOperation
+ */
+export enum ViewOperation {
+  /**
+   * @generated from enum value: VIEW_OPERATION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: VIEW_OPERATION_REPLACE = 1;
+   */
+  REPLACE = 1,
+
+  /**
+   * @generated from enum value: VIEW_OPERATION_UPSERT = 2;
+   */
+  UPSERT = 2,
+
+  /**
+   * @generated from enum value: VIEW_OPERATION_REMOVE = 3;
+   */
+  REMOVE = 3,
+}
+
+/**
+ * Describes the enum goosetower.v1.ViewOperation.
+ */
+export const ViewOperationSchema: GenEnum<ViewOperation> = /*@__PURE__*/
+  enumDesc(file_goosetower_v1_view, 0);
 

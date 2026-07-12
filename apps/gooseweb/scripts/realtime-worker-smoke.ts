@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
-import { fromBinary } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
 import { RealtimeEnvelopeSchema } from "../src/gen/goosetower/v1/realtime_pb";
+import {
+  SnapshotSchema,
+  ViewCoverageSchema,
+  ViewOperation
+} from "../src/gen/goosetower/v1/view_pb";
 import type { WorkerOutbound } from "../app/realtime/types";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core";
 
@@ -38,6 +44,10 @@ class FakeSocket {
   closeFromServer(): void {
     this.readyState = 3;
     this.onclose?.();
+  }
+
+  receive(data: Uint8Array): void {
+    this.onmessage?.({ data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) });
   }
 }
 
@@ -128,6 +138,49 @@ assert.equal(
   ),
   true
 );
+
+const nestedCursorSnapshot = create(RealtimeEnvelopeSchema, {
+  protocolVersion: 1,
+  messageId: "nested-cursor-snapshot",
+  messageKind: MessageKind.SNAPSHOT,
+  lane: Lane.STATE,
+  gatewaySeq: 41n,
+  payload: {
+    case: "snapshot",
+    value: create(SnapshotSchema, {
+      viewKind: "session_detail",
+      schemaVersion: 1,
+      operation: ViewOperation.REPLACE,
+      cursor: {
+        gatewaySeq: 41n,
+        sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 17n }]
+      },
+      coverage: create(ViewCoverageSchema, {
+        domains: ["session_details"],
+        entityIds: ["session-1"],
+        authoritative: true
+      }),
+      body: new TextEncoder().encode(JSON.stringify({
+        source_id: "source-1",
+        session: { id: "session-1", provider: "codex", status: "ready" },
+        transcript: [{ role: "assistant", text: "reloaded answer" }]
+      }))
+    })
+  }
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, nestedCursorSnapshot));
+await waitForPatchFlush();
+assert.equal(posted.some((message) =>
+  message.type === "state" &&
+  message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 17n
+), true, "Worker must consume the canonical nested production cursor");
+sockets[2]?.receive(new Uint8Array([0xff]));
+await waitForPatchFlush();
+assert.equal(posted.some((message) =>
+  message.type === "error" &&
+  message.retryable === false &&
+  message.message.startsWith("Realtime protocol error:")
+), true, "malformed outer frames must fail safely");
 const sentBeforeCommand = sockets[2]?.sent.length ?? 0;
 
 await core.handleMessage({

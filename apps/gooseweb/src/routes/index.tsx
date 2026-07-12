@@ -1143,12 +1143,12 @@ function Index() {
     }
     setSelectedRowId(selectedRow.rowId);
     if (selectedRow.sessionId) {
-      subscribeRealtime(`session:${selectedRow.sessionId}`, "session", {
+      subscribeRealtime(`session:${selectedRow.sessionId}`, "session_detail", {
         session_id: selectedRow.sessionId
       });
     }
     if (selectedRow.teamId) {
-      subscribeRealtime(`team:${selectedRow.teamId}`, "team", {
+      subscribeRealtime(`team:${selectedRow.teamId}`, "team_workspace", {
         team_id: selectedRow.teamId
       });
     }
@@ -1158,7 +1158,7 @@ function Index() {
     if (!selectedSession?.sessionId) {
       return;
     }
-    subscribeRealtime(`session:${selectedSession.sessionId}`, "session", {
+    subscribeRealtime(`session:${selectedSession.sessionId}`, "session_detail", {
       session_id: selectedSession.sessionId
     });
   }, [selectedSession?.sessionId]);
@@ -1167,7 +1167,7 @@ function Index() {
     if (!selectedTeam?.teamId) {
       return;
     }
-    subscribeRealtime(`team:${selectedTeam.teamId}`, "team", {
+    subscribeRealtime(`team:${selectedTeam.teamId}`, "team_workspace", {
       team_id: selectedTeam.teamId
     });
   }, [selectedTeam?.teamId]);
@@ -1187,7 +1187,7 @@ function Index() {
     }
     const nextTeam = teams[0];
     setSelectedTeamId(nextTeam.teamId);
-    subscribeRealtime(`team:${nextTeam.teamId}`, "team", {
+    subscribeRealtime(`team:${nextTeam.teamId}`, "team_workspace", {
       team_id: nextTeam.teamId
     });
     setActiveView("team-comms");

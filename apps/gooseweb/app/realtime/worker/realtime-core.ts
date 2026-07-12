@@ -240,7 +240,7 @@ export class RealtimeWorkerCore {
         this.handleEntityPatch(
           envelope.payload.case === "snapshot"
             ? decodeSnapshot(envelope.payload.value)
-            : { entities: {} }
+            : { entities: {}, entityMutations: [] }
         );
         break;
       case MessageKind.PATCH:
@@ -250,7 +250,7 @@ export class RealtimeWorkerCore {
         this.handleEntityPatch(
           envelope.payload.case === "patch"
             ? decodePatch(envelope.payload.value)
-            : { entities: {} }
+            : { entities: {}, entityMutations: [] }
         );
         break;
       case MessageKind.PONG:

@@ -34,6 +34,14 @@ impl GatewayState {
             MaterializedPatchKind::SourceHealthTransition => Lane::Critical,
             _ => Lane::State,
         };
+        let entity_id = patch.entity.as_ref().map(|entity| entity.entity_id.clone());
+        let operation = match patch.kind {
+            MaterializedPatchKind::EntityRemove | MaterializedPatchKind::ListRemove => {
+                ViewOperation::Remove
+            }
+            _ => ViewOperation::Upsert,
+        };
+        let coverage = view_coverage(&patch.view_kind, entity_id);
         envelope_with_payload(
             MessageKind::Patch,
             lane,
@@ -56,6 +64,9 @@ impl GatewayState {
                     }],
                 }),
                 body: serde_json::to_vec(&patch.body).unwrap_or_default().into(),
+                schema_version: DETAIL_SCHEMA_VERSION,
+                operation: operation as i32,
+                coverage: Some(coverage),
             }),
         )
     }
@@ -336,5 +347,28 @@ impl GatewayState {
     #[cfg(test)]
     pub fn publish_patch(&self, patch: MaterializedPatch) {
         let _ = self.patches.send(patch);
+    }
+}
+
+pub(super) fn view_coverage(view_kind: &str, entity_id: Option<String>) -> ViewCoverage {
+    let domains = match view_kind {
+        "session_summary" | "session" => vec!["sessions".to_string()],
+        "session_detail" => vec!["session_details".to_string()],
+        "team_summary" | "team" | "teams" => vec!["teams".to_string()],
+        "team_workspace" | "team_stream" => vec!["team_workspaces".to_string()],
+        "board" | "fleet_board" => vec!["fleet_rows".to_string()],
+        "approval" | "approval_inbox" => vec!["approvals".to_string()],
+        "ledger" => vec!["ledger_events".to_string()],
+        "process" | "process_tail" => vec!["processes".to_string()],
+        "worktree" | "worktrees" => vec!["worktrees".to_string()],
+        "source" | "source-health" | "source_health" | "fleet" => {
+            vec!["sources".to_string()]
+        }
+        _ => Vec::new(),
+    };
+    ViewCoverage {
+        domains,
+        entity_ids: entity_id.into_iter().collect(),
+        authoritative: true,
     }
 }

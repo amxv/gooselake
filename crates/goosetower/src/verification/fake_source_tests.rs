@@ -407,7 +407,8 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
     let mut terminal_patch_count = 0;
     while let Ok(patch) = patch_rx.try_recv() {
         if patch.view_kind == "session_detail"
-            && patch.body.get("text").and_then(Value::as_str) == Some("P02 deterministic terminal")
+            && patch.body.get("appended_text").and_then(Value::as_str)
+                == Some("P02 deterministic terminal")
         {
             terminal_patch_count += 1;
             terminal_patch = Some(patch);
@@ -444,7 +445,10 @@ async fn real_source_event_reaches_gateway_frame_and_production_worker_store() {
     assert_eq!(frames[0].payload_kind, "patch");
     assert_eq!(frames[0].view_kind.as_deref(), Some("session_detail"));
     assert_eq!(
-        frames[0].body.as_ref().and_then(|body| body.get("text")),
+        frames[0]
+            .body
+            .as_ref()
+            .and_then(|body| body.get("appended_text")),
         Some(&json!("P02 deterministic terminal"))
     );
     for _ in 0..130 {
@@ -549,7 +553,8 @@ async fn health_cursor_observer_does_not_change_production_reduction() {
     let mut terminal_patch = None;
     while let Ok(patch) = patch_rx.try_recv() {
         if patch.view_kind == "session_detail"
-            && patch.body.get("text").and_then(Value::as_str) == Some("P02 deterministic terminal")
+            && patch.body.get("appended_text").and_then(Value::as_str)
+                == Some("P02 deterministic terminal")
         {
             terminal_patch = Some(patch);
         }

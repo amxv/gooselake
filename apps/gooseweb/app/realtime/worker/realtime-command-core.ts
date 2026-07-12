@@ -230,7 +230,15 @@ export class RealtimeWorkerCore {
       return;
     }
 
-    const envelope = fromBinary(RealtimeEnvelopeSchema, new Uint8Array(data));
+    let envelope: RealtimeEnvelope;
+    try {
+      envelope = fromBinary(RealtimeEnvelopeSchema, new Uint8Array(data));
+    } catch (error) {
+      this.failProtocolFrame(
+        error instanceof Error ? error.message : "malformed realtime envelope"
+      );
+      return;
+    }
     this.observeFrame?.(envelope);
 
     switch (envelope.messageKind) {
@@ -238,24 +246,30 @@ export class RealtimeWorkerCore {
         this.handleHello(envelope);
         break;
       case MessageKind.SNAPSHOT:
-        if (!this.applyEnvelopeCursor(envelope)) {
+        if (envelope.payload.case !== "snapshot") {
+          this.failProtocolFrame("snapshot envelope is missing snapshot payload");
           return;
         }
-        this.handleEntityPatch(
-          envelope.payload.case === "snapshot"
-            ? decodeSnapshot(envelope.payload.value)
-            : { entities: {} }
-        );
+        try {
+          const patch = decodeSnapshot(envelope.payload.value);
+          if (!this.applyEnvelopeCursor(envelope)) return;
+          this.handleEntityPatch(patch);
+        } catch (error) {
+          this.failProtocolFrame(error instanceof Error ? error.message : "invalid snapshot");
+        }
         break;
       case MessageKind.PATCH:
-        if (!this.applyEnvelopeCursor(envelope)) {
+        if (envelope.payload.case !== "patch") {
+          this.failProtocolFrame("patch envelope is missing patch payload");
           return;
         }
-        this.handleEntityPatch(
-          envelope.payload.case === "patch"
-            ? decodePatch(envelope.payload.value)
-            : { entities: {} }
-        );
+        try {
+          const patch = decodePatch(envelope.payload.value);
+          if (!this.applyEnvelopeCursor(envelope)) return;
+          this.handleEntityPatch(patch);
+        } catch (error) {
+          this.failProtocolFrame(error instanceof Error ? error.message : "invalid patch");
+        }
         break;
       case MessageKind.PONG:
         if (!this.applyEnvelopeCursor(envelope)) {
@@ -344,7 +358,15 @@ export class RealtimeWorkerCore {
   }
 
   private handleEntityPatch(patch: EntityPatch): void {
-    this.emitState({ entities: patch.entities });
+    this.emitState({
+      entities: patch.entities,
+      entityMutations: patch.entityMutations
+    });
+  }
+
+  private failProtocolFrame(message: string): void {
+    this.emitState({ connection: "degraded", lastError: `protocol_error: ${message}` });
+    this.emitError(`Realtime protocol error: ${message}`, false);
   }
 
   private handleCommandLifecycle(envelope: RealtimeEnvelope): void {
@@ -484,14 +506,20 @@ type PendingCommandInput = Parameters<typeof makeCommand>[0];
 function sourceCursorFromEnvelope(
   envelope: RealtimeEnvelope
 ): SourceCursorState | undefined {
-  if (!envelope.sourceId || envelope.sourceSeq === 0n) {
+  const nested = envelope.payload.case === "snapshot" || envelope.payload.case === "patch"
+    ? envelope.payload.value.cursor?.sources[0]
+    : undefined;
+  const sourceId = nested?.sourceId || envelope.sourceId;
+  const sourceSeq = nested?.sourceSeq || envelope.sourceSeq;
+  const sourceEpoch = nested?.sourceEpoch || envelope.sourceEpoch;
+  if (!sourceId || sourceSeq === 0n) {
     return undefined;
   }
 
   return {
-    sourceId: envelope.sourceId,
-    sourceEpoch: envelope.sourceEpoch,
-    sourceSeq: envelope.sourceSeq
+    sourceId,
+    sourceEpoch,
+    sourceSeq
   };
 }
 
@@ -562,6 +590,9 @@ function mergeSnapshotPatch(
       : current.subscriptions,
     staleSources: next.staleSources
       ? { ...current.staleSources, ...next.staleSources }
-      : current.staleSources
+      : current.staleSources,
+    entityMutations: next.entityMutations
+      ? [...(current.entityMutations ?? []), ...next.entityMutations]
+      : current.entityMutations
   };
 }

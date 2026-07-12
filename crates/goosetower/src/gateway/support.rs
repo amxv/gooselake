@@ -471,14 +471,14 @@ impl Subscription {
                 session_id: optional_filter(filters, "session_id"),
                 source_id: optional_filter(filters, "source_id"),
             }),
-            "session" => Self::Session(SelectedSessionSubscription {
+            "session" | "session_detail" => Self::Session(SelectedSessionSubscription {
                 session_id: required_filter(filters, "session_id")?,
                 include_text: filters
                     .get("include_text")
                     .is_none_or(|value| value == "true"),
             }),
             "teams" => Self::Teams,
-            "team" => Self::Team(SelectedTeamSubscription {
+            "team" | "team_workspace" | "team_stream" => Self::Team(SelectedTeamSubscription {
                 team_id: required_filter(filters, "team_id")?,
                 message_limit: parse_usize(filters.get("message_limit"), 100),
             }),
@@ -508,6 +508,7 @@ impl Subscription {
             Self::Board(subscription) => {
                 (patch.view_kind == "board"
                     || patch.view_kind == "fleet_board"
+                    || patch.view_kind == "session_summary"
                     || patch.view_kind == "session"
                     || patch.view_kind == "session_detail")
                     && subscription.source_id.as_deref().is_none_or(|source_id| {
@@ -525,15 +526,24 @@ impl Subscription {
                 patch.view_kind == "approval_inbox" || patch.view_kind == "approval"
             }
             Self::Session(subscription) => {
-                (patch.view_kind == "session" || patch.view_kind == "session_detail")
+                (patch.view_kind == "session_summary"
+                    || patch.view_kind == "session"
+                    || patch.view_kind == "session_detail")
                     && patch
                         .entity
                         .as_ref()
                         .is_some_and(|entity| entity.entity_id == subscription.session_id)
             }
-            Self::Teams => patch.view_kind == "teams" || patch.view_kind == "team",
+            Self::Teams => {
+                patch.view_kind == "teams"
+                    || patch.view_kind == "team_summary"
+                    || patch.view_kind == "team"
+            }
             Self::Team(subscription) => {
-                (patch.view_kind == "team" || patch.view_kind == "team_workspace")
+                (patch.view_kind == "team_summary"
+                    || patch.view_kind == "team"
+                    || patch.view_kind == "team_workspace"
+                    || patch.view_kind == "team_stream")
                     && patch
                         .entity
                         .as_ref()
@@ -686,7 +696,7 @@ pub(super) fn snapshot_body(
                 source_id: optional_filter(filters, "source_id"),
             }),
         )?,
-        "session" => serde_json::to_value(
+        "session" | "session_detail" => serde_json::to_value(
             state.snapshot_session(&SelectedSessionSubscription {
                 session_id: required_filter(filters, "session_id")?,
                 include_text: filters
@@ -706,10 +716,12 @@ pub(super) fn snapshot_body(
                 })
                 .collect::<Vec<_>>()
         }),
-        "team" => serde_json::to_value(state.snapshot_team(&SelectedTeamSubscription {
-            team_id: required_filter(filters, "team_id")?,
-            message_limit: parse_usize(filters.get("message_limit"), 100),
-        }))?,
+        "team" | "team_workspace" | "team_stream" => {
+            serde_json::to_value(state.snapshot_team(&SelectedTeamSubscription {
+                team_id: required_filter(filters, "team_id")?,
+                message_limit: parse_usize(filters.get("message_limit"), 100),
+            }))?
+        }
         "process_tail" => {
             serde_json::to_value(state.snapshot_process_tail(&ProcessTailSubscription {
                 process_id: required_filter(filters, "process_id")?,

@@ -3,6 +3,7 @@ import type {
   ConnectionState,
   GoosewebStorePatch,
   GoosewebSnapshot,
+  EntityMutation,
   NormalizedEntities,
   SessionDetailState,
   TeamWorkspaceState,
@@ -42,6 +43,10 @@ export function getGoosewebSnapshot(): GoosewebSnapshot {
   return snapshot;
 }
 
+export function resetGoosewebStoreForTests(): void {
+  snapshot = initialSnapshot;
+}
+
 export function subscribeGoosewebStore(listener: Listener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -51,9 +56,11 @@ export function updateGoosewebStore(patch: GoosewebStorePatch): void {
   snapshot = {
     ...snapshot,
     ...patch,
-    entities: patch.entities
-      ? mergeEntities(snapshot.entities, patch.entities)
-      : snapshot.entities,
+    entities: applyEntityMutations(
+      snapshot.entities,
+      patch.entities,
+      patch.entityMutations ?? []
+    ),
     subscriptions: patch.subscriptions
       ? { ...snapshot.subscriptions, ...patch.subscriptions }
       : snapshot.subscriptions,
@@ -68,6 +75,32 @@ export function updateGoosewebStore(patch: GoosewebStorePatch): void {
   for (const listener of listeners) {
     listener();
   }
+}
+
+function applyEntityMutations(
+  current: NormalizedEntities,
+  patch: GoosewebStorePatch["entities"],
+  mutations: readonly EntityMutation[]
+): NormalizedEntities {
+  let next = patch ? mergeEntities(current, patch) : current;
+  for (const mutation of mutations) {
+    if (mutation.operation === "upsert") {
+      continue;
+    }
+    const existing = next[mutation.domain] as Readonly<Record<string, unknown>>;
+    const incoming = (patch?.[mutation.domain] ?? {}) as Readonly<Record<string, unknown>>;
+    const domain = mutation.entityIds.length === 0
+      ? mutation.operation === "replace" ? { ...incoming } : {}
+      : { ...existing };
+    for (const entityId of mutation.entityIds) {
+      delete domain[entityId];
+      if (mutation.operation === "replace" && entityId in incoming) {
+        domain[entityId] = incoming[entityId];
+      }
+    }
+    next = { ...next, [mutation.domain]: domain } as NormalizedEntities;
+  }
+  return next;
 }
 
 function mergeEntities(

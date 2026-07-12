@@ -66,6 +66,8 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
   if (!/HeadlessChrome\/[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/.test(string(browser.user_agent, "P03 browser user agent"))) {
     fail("P03 user agent does not prove headless Chromium");
   }
+  const userAgentVersion = /HeadlessChrome\/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)/.exec(string(browser.user_agent, "P03 browser user agent"))?.[1];
+  equal(userAgentVersion, browser.version, "P03 Chrome binary/User-Agent full version");
   for (const [name, captureValue] of Object.entries(object(value.captures, "P03 captures"))) {
     const capture = object(captureValue, `P03 ${name} capture`);
     equal(capture.complete, true, `P03 ${name} capture completeness`);
@@ -85,6 +87,7 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
     equal(viewport.height, dimensions[index]![1], `P03 viewport ${index} height`);
     equal(viewport.screenshot, true, `P03 viewport ${index} screenshot`);
     equal(viewport.horizontal_overflow, false, `P03 viewport ${index} overflow`);
+    equal(viewport.composer_inside_viewport, true, `P03 viewport ${index} composer geometry`);
     equal(viewport.primary_action_inside_viewport, true, `P03 viewport ${index} primary action`);
     equal(viewport.critical_actions_reachable, true, `P03 viewport ${index} critical actions`);
   });
@@ -98,6 +101,63 @@ export function validateP03BrowserEvidence(value: RecordJson): void {
     fail("P03 semantic agent workflow controls are incomplete");
   }
   scanSecrets(value, "P03 browser evidence", false);
+}
+
+export function validateP03EvidenceLinkage(
+  descriptor: RecordJson,
+  p03Evidence: RecordJson,
+  candidateManifest: RecordJson
+): void {
+  validateP03BrowserEvidence(p03Evidence);
+  for (const key of ["phase_id", "attempt", "candidate_head_sha", "served_head_sha", "candidate_tree_sha", "served_tree_sha"]) {
+    equal(p03Evidence[key], descriptor[key], `P03/standard evidence ${key}`);
+  }
+  const browser = object(p03Evidence.browser, "P03 linked browser");
+  const standardBrowser = object(descriptor.browser, "standard linked browser");
+  const manifestBrowser = object(candidateManifest.browser_contract, "P03 manifest browser contract");
+  equal(browser.mechanism, standardBrowser.mechanism, "P03 browser mechanism linkage");
+  equal(browser.session_name, standardBrowser.session_name, "P03 browser session linkage");
+  equal(browser.execution_mode, standardBrowser.execution_mode, "P03 browser mode linkage");
+  equal(browser.binary_path, standardBrowser.chromium_binary, "P03 browser binary linkage");
+  equal(browser.version, standardBrowser.chromium_version, "P03 browser version linkage");
+  equal(browser.profile_policy, standardBrowser.profile_policy, "P03 browser profile linkage");
+  equal(browser.execution_mode, manifestBrowser.execution_mode, "P03 manifest browser mode");
+  equal(browser.binary_path, manifestBrowser.chromium_binary, "P03 manifest browser binary");
+  equal(browser.version, manifestBrowser.chromium_version, "P03 manifest browser version");
+  equal(browser.profile_policy, manifestBrowser.profile_policy, "P03 manifest browser profile");
+
+  const attachment = object(p03Evidence.supervisor_attachment, "P03 supervisor attachment");
+  const lease = object(descriptor.lease, "P03 linked lease");
+  const stack = object(descriptor.stack, "P03 linked stack");
+  equal(attachment.lease_id, lease.lease_id, "P03 lease ID linkage");
+  equal(attachment.lease_sequence, lease.sequence, "P03 lease sequence linkage");
+  equal(attachment.supervisor_identity, lease.owner_identity, "P03 supervisor identity linkage");
+  equal(attachment.stack_configuration_sha256, stack.configuration_sha256, "P03 stack configuration linkage");
+  equal(attachment.clean_tree, descriptor.clean_tree, "P03 clean-tree linkage");
+  equal(attachment.hot_reload, descriptor.hot_reload, "P03 hot-reload linkage");
+
+  const screenshots = array(p03Evidence.viewports, "P03 linked viewports").map((viewport) => object(viewport, "P03 linked viewport").screenshot_path);
+  equal(JSON.stringify(screenshots), JSON.stringify(descriptor.screenshots), "P03 viewport screenshot linkage");
+  const completion = object(p03Evidence.completion, "P03 completion");
+  equal(completion.baseline_detected_count, array(candidateManifest.baseline_detected, "P03 manifest baselines").length, "P03 baseline count linkage");
+  equal(JSON.stringify(completion.known_defects), JSON.stringify(candidateManifest.known_defects), "P03 known-defect linkage");
+  equal(object(descriptor.metrics, "P03 metrics").status, "captured", "P03 procedure overhead metrics");
+}
+
+export function validateP03EvidenceArtifact(
+  descriptor: RecordJson,
+  candidateManifest: RecordJson,
+  evidenceRoot: string
+): void {
+  equal(descriptor.phase_id, "P03", "P03 artifact phase");
+  const relative = string(descriptor.p03_browser_evidence, "P03 browser evidence artifact");
+  equal(relative, "p03-browser-evidence.json", "P03 fixed evidence artifact path");
+  const path = safeChild(evidenceRoot, relative);
+  if (!existsSync(path) || !statSync(path).isFile()) fail("referenced P03 browser evidence file missing: p03-browser-evidence.json");
+  let p03Evidence: RecordJson;
+  try { p03Evidence = JSON.parse(readFileSync(path, "utf8")) as RecordJson; }
+  catch { fail("P03 browser evidence artifact is not valid JSON"); }
+  validateP03EvidenceLinkage(descriptor, p03Evidence!, candidateManifest);
 }
 
 export function validateManifestRegistry(value: RecordJson): void {
@@ -334,6 +394,7 @@ export function validateEvidence(value: RecordJson, options: EvidenceOptions = {
   validateManifestTuple(object(value.manifest, "evidence manifest"), phase);
   const candidateManifest = validateManifestAtGitHead(object(value.manifest, "evidence manifest"), head);
   equal(object(candidateManifest.scenario, "candidate evidence manifest scenario").phase_id, phase, "candidate manifest/evidence phase");
+  if (phase === "P03") equal(value.p03_browser_evidence, "p03-browser-evidence.json", "P03 fixed evidence artifact path");
   validateBrowser(object(value.browser, "evidence browser"));
   if (options.expected) {
     for (const key of ["phase_id", "attempt", "base_sha", "reviewed_range", "candidate_head_sha", "candidate_tree_sha", "served_head_sha", "served_tree_sha", "clean_tree", "hot_reload"]) equal(value[key], options.expected[key], `expected evidence ${key}`);
@@ -522,6 +583,7 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
     string(outcome.record, "review outcome record"),
     ...array(descriptor.screenshots, "screenshots").map((item) => string(item, "screenshot"))
   ];
+  if (descriptor.phase_id === "P03") relativePaths.push(string(descriptor.p03_browser_evidence, "P03 browser evidence"));
   ensureUnique(relativePaths, "evidence paths");
   for (const relative of relativePaths) {
     const path = safeChild(evidenceRoot, relative);
@@ -544,6 +606,9 @@ function validateEvidenceFiles(descriptor: RecordJson): void {
     object(descriptor.manifest, "manifest").sha256,
     "evidence manifest copy hash"
   );
+  if (descriptor.phase_id === "P03") {
+    validateP03EvidenceArtifact(descriptor, manifestCopy, evidenceRoot);
+  }
   const consoleCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.console, "console")), "utf8")) as RecordJson;
   const networkCapture = JSON.parse(readFileSync(safeChild(evidenceRoot, string(descriptor.network, "network")), "utf8")) as RecordJson;
   validateBrowserCaptures(consoleCapture, networkCapture, manifestCopy);

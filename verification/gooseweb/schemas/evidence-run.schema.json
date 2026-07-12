@@ -147,6 +147,10 @@
         }
       }
     },
+    "p03_browser_evidence": {
+      "type": "string",
+      "const": "p03-browser-evidence.json"
+    },
     "environment": {
       "type": "string",
       "minLength": 1

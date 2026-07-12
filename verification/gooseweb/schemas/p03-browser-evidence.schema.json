@@ -40,12 +40,16 @@
     },
     "supervisor_attachment": {
       "type": "object", "additionalProperties": false,
-      "required": ["url_source", "stack_started_by", "reviewer_started_stack", "lease_exclusive", "clean_tree", "hot_reload"],
+      "required": ["url_source", "stack_started_by", "reviewer_started_stack", "lease_exclusive", "lease_id", "lease_sequence", "supervisor_identity", "stack_configuration_sha256", "clean_tree", "hot_reload"],
       "properties": {
         "url_source": { "const": "supervisor_provided" },
         "stack_started_by": { "const": "supervisor" },
         "reviewer_started_stack": { "const": false },
         "lease_exclusive": { "const": true },
+        "lease_id": { "type": "string", "pattern": "^gooseweb-migration-[0-9]{6,}$" },
+        "lease_sequence": { "type": "integer", "minimum": 1 },
+        "supervisor_identity": { "type": "string", "minLength": 1 },
+        "stack_configuration_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "clean_tree": { "const": true },
         "hot_reload": { "const": false }
       }
@@ -121,10 +125,11 @@
     },
     "viewportBase": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "width", "height", "screenshot", "horizontal_overflow", "primary_action_inside_viewport", "critical_actions_reachable"],
+      "required": ["id", "width", "height", "screenshot", "screenshot_path", "horizontal_overflow", "composer_inside_viewport", "primary_action_inside_viewport", "critical_actions_reachable"],
       "properties": {
         "id": { "type": "string" }, "width": { "type": "integer" }, "height": { "type": "integer" },
-        "screenshot": { "const": true }, "horizontal_overflow": { "const": false },
+        "screenshot": { "const": true }, "screenshot_path": { "type": "string", "minLength": 1 },
+        "horizontal_overflow": { "const": false }, "composer_inside_viewport": { "const": true },
         "primary_action_inside_viewport": { "const": true }, "critical_actions_reachable": { "const": true }
       }
     },

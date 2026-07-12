@@ -22,7 +22,7 @@
     "profile_policy": "fresh_ephemeral",
     "persistent_state_loaded": false
   },
-  "supervisor_attachment": { "url_source": "supervisor_provided", "stack_started_by": "supervisor", "reviewer_started_stack": false, "lease_exclusive": true, "clean_tree": true, "hot_reload": false },
+  "supervisor_attachment": { "url_source": "supervisor_provided", "stack_started_by": "supervisor", "reviewer_started_stack": false, "lease_exclusive": true, "lease_id": "gooseweb-migration-000006", "lease_sequence": 6, "supervisor_identity": "p03-supervisor", "stack_configuration_sha256": "3333333333333333333333333333333333333333333333333333333333333333", "clean_tree": true, "hot_reload": false },
   "semantic_controls": ["roster_button_accessible_name", "Agent thread composer", "Send agent thread message"],
   "captures": {
     "console": { "complete": true, "unexpected_failures": 0, "redacted_at_capture": true },
@@ -30,9 +30,9 @@
     "websocket": { "complete": true, "unexpected_failures": 0, "redacted_at_capture": true }
   },
   "viewports": [
-    { "id": "1440x1000", "width": 1440, "height": 1000, "screenshot": true, "horizontal_overflow": false, "primary_action_inside_viewport": true, "critical_actions_reachable": true },
-    { "id": "820x1000", "width": 820, "height": 1000, "screenshot": true, "horizontal_overflow": false, "primary_action_inside_viewport": true, "critical_actions_reachable": true },
-    { "id": "520x900", "width": 520, "height": 900, "screenshot": true, "horizontal_overflow": false, "primary_action_inside_viewport": true, "critical_actions_reachable": true }
+    { "id": "1440x1000", "width": 1440, "height": 1000, "screenshot": true, "screenshot_path": "screenshots/1440x1000.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true },
+    { "id": "820x1000", "width": 820, "height": 1000, "screenshot": true, "screenshot_path": "screenshots/820x1000.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true },
+    { "id": "520x900", "width": 520, "height": 900, "screenshot": true, "screenshot_path": "screenshots/520x900.png", "horizontal_overflow": false, "composer_inside_viewport": true, "primary_action_inside_viewport": true, "critical_actions_reachable": true }
   ],
   "reconstruction": {
     "ordinary_reload": "pass", "hard_reload": "pass", "navigation_away_back": "pass", "websocket_reconnect": "pass", "fresh_context": "pass",

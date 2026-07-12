@@ -22,6 +22,13 @@
       "revision": 7,
       "sha256": "bcf76a63cc77be88fb430a79f04695816c2e9aa61245da6019c4daba17008327",
       "activated_reason": "P03 defines the sole explicit-headless agent-browser real-local-Chromium procedure and failure-detecting evidence contract without adding a committed browser runner."
+    },
+    {
+      "phase_id": "P04",
+      "path": "verification/gooseweb/manifests/p04-reconnect-lab.json",
+      "revision": 1,
+      "sha256": "0f080f9aad9940b18e7b07fb21ff8e81e5b4c72413248f9e85519531c2322dc7",
+      "activated_reason": "P04 defines the deterministic real-path replay, gap, restart, stale-command, and disposable-context laboratory while mapping current product failures to P06-P10."
     }
   ]
 }

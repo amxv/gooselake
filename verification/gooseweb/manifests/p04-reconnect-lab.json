@@ -1,0 +1,212 @@
+{
+  "schema_revision": "gooseweb-acceptance-manifest/v4",
+  "manifest_id": "GW-P04-RECONNECT-LAB-001",
+  "manifest_revision": 1,
+  "approved_plan": {
+    "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
+    "sha256": "3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d"
+  },
+  "browser_contract": {
+    "mechanism": "agent-browser",
+    "execution_mode": "headless",
+    "headed_mode_prohibited": true,
+    "fresh_unique_session_required": true,
+    "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "chromium_version": "150.0.7871.115",
+    "profile_policy": "fresh_ephemeral"
+  },
+  "scenario": {
+    "phase_id": "P04",
+    "title": "Replay, gap, restart, and disposable-context laboratory",
+    "product_clearance": "blocked_expected_honest_failure",
+    "stable_scenario_id": "GW-P04-RECONNECT-LAB-001",
+    "preconditions": [
+      "Deterministic checks use the real Tower resume/runtime-client/materializer paths and the production Gooseweb Worker cursor functions.",
+      "The P02 public-contract fake source is the only fault source and no product API is bypassed.",
+      "The implementer starts no stack or browser; browser review later follows the P03 procedure under the sole supervisor-owned lease.",
+      "IndexedDB is disposable acceleration and every unsafe observed transition is mapped to one correction phase in P06-P10."
+    ],
+    "actions": [
+      {
+        "id": "disconnect-during-turn",
+        "control": { "role": "textbox", "accessible_name": "Agent thread composer" },
+        "submit": { "role": "button", "accessible_name": "Send agent thread message" },
+        "expected_command_count": 1,
+        "command": "sendTurn",
+        "expected_runtime": ["one authoritative deterministic turn trajectory"],
+        "expected_goosetower": ["bounded replay overlap is deduplicated and a missing source cursor emits gap plus snapshot fallback"],
+        "expected_worker_store": ["socket loss is honest and a stale or unavailable socket rejects commands without phantom success"],
+        "expected_visible": ["exactly one ordered result or a manifest-mapped first divergence"]
+      },
+      {
+        "id": "disconnect-during-team-send",
+        "control": { "role": "textbox", "accessible_name": "Team comms composer" },
+        "submit": { "role": "button", "accessible_name": "Send team comms message" },
+        "expected_command_count": 1,
+        "command": "sendTeamMessage",
+        "expected_runtime": ["one authoritative deterministic team message and delivery"],
+        "expected_goosetower": ["restart and source-epoch change require authoritative reconstruction"],
+        "expected_worker_store": ["a fresh disposable context cannot depend on the prior cursor cache"],
+        "expected_visible": ["one ordered Team Comms result or an explicitly mapped baseline"]
+      }
+    ],
+    "authority_chain": [
+      { "layer": "Gooselake", "required": ["P02 fixed IDs, source sequences, epochs, overlap, gap, disconnect, and terminal facts", "public replay contracts remain the only source authority"] },
+      { "layer": "Goosetower", "required": ["real replay, resume, materializer, snapshot fallback, stale-command admission, and gateway publication paths", "source and gateway generations remain distinct"] },
+      { "layer": "Gooseweb Worker/store", "required": ["production socket ownership and cursor predicates with disposable IndexedDB", "unsafe transitions stay mapped and cannot be normalized by fixtures"] },
+      { "layer": "Gooseweb React", "required": ["honest stale/offline state and one visible ordered identity after recovery", "fresh contexts reconstruct without old browser cache"] }
+    ],
+    "cardinality": {
+      "browser_actions": 2,
+      "commands": 2,
+      "runtime_messages": 1,
+      "visible_message_instances": 2,
+      "duplicates": 0
+    },
+    "chronology": "oldest_first_by_authoritative_order_not_client_timestamp",
+    "golden_goose_acceptance_lessons": [
+      "gap detection freezes unsafe reduction",
+      "overlap is idempotent",
+      "epoch and revision authority are explicit",
+      "queued stale work cannot overwrite newer authority",
+      "fresh contexts reconstruct from server truth",
+      "stable chronology and no duplicates",
+      "exact command cardinality",
+      "honest delivery or rejection status",
+      "bounded background work cannot outrun selected authority"
+    ]
+  },
+  "ownership": {
+    "gooselake": { "impact": "no_change", "reason": "P02 source fixtures simulate only public runtime contracts." },
+    "goosetower": { "impact": "observed_only", "reason": "Existing replay, materializer, snapshot, and command paths are asserted without product fixes." },
+    "gooseweb": { "impact": "observed_only", "reason": "The production Worker socket and cursor code is exercised without changing product semantics." },
+    "auth_account_state": { "impact": "no_change", "reason": "No authentication or account state changes." },
+    "protocol_generated_code": { "impact": "no_change", "reason": "No Protobuf or generated code changes." },
+    "api_narrative_docs": { "impact": "no_change", "reason": "No runtime API behavior changes." }
+  },
+  "reconstruction": [
+    "ordinary_reload",
+    "fresh_chromium_context_profile",
+    "websocket_loss_reconnect",
+    "navigation_away_and_back"
+  ],
+  "responsive": {
+    "viewports": ["1440x1000", "820x1000", "520x900"],
+    "assertions": [
+      "stale or offline state remains visible",
+      "risky controls are disabled while stale",
+      "document width does not overflow",
+      "composer bottom remains inside the viewport"
+    ]
+  },
+  "states": {
+    "empty": { "applicability": "required", "expectation": "Fresh context has no stale cached rows before authoritative reconstruction." },
+    "loading": { "applicability": "required", "expectation": "Reconnect and replay are shown honestly." },
+    "stale_gap_replaying": { "applicability": "required", "expectation": "No later state reduces across a known gap." },
+    "rejection_conflict": { "applicability": "required", "expectation": "Stale commands receive a specific terminal rejection." },
+    "permission_denied": { "applicability": "not_applicable", "reason": "P15-P17 own product authorization." },
+    "unsupported_provider": { "applicability": "not_applicable", "reason": "Cursor continuity is provider independent." },
+    "terminal_error": { "applicability": "required", "expectation": "Reconnect failure remains visible and cannot be classified as convergence." }
+  },
+  "fixtures": {
+    "allowed_use": "source_fixture_through_real_tower_only",
+    "product_correctness_use": false,
+    "default_fixture_leak_assertions": [
+      "Default URLs have no fixture query parameter.",
+      "No fake entity is bundled into the default or production UI.",
+      "The cursor corpus is consumed only by deterministic verification."
+    ],
+    "gating": "Source faults use the P02 verification listener; visual fixtures remain DEV plus explicit-query gated."
+  },
+  "allowlists": {
+    "console": "verification/gooseweb/allowlists/console.json",
+    "network": "verification/gooseweb/allowlists/network.json",
+    "unexpected_console_network_protocol_websocket_failure": "fail"
+  },
+  "baseline_detected": [
+    {
+      "scenario_id": "GW-P04-RECONNECT-LAB-001",
+      "defect_id": "BASE-P02-LIVE-GAP-TRANSITION-PANIC",
+      "first_divergent_layer": "Goosetower runtime SSE source-health transition",
+      "evidence_references": ["crates/goosetower/src/verification/fake_source_tests.rs#gap_fault_localizes_existing_live_to_gap_transition_baseline"],
+      "owning_correction_phase": "P06",
+      "affected_downstream_gates": ["P10", "M1", "P25", "M3", "P56", "M7"],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "The seeded live source gap panics in the current source-health transition before safe repair."
+    },
+    {
+      "scenario_id": "GW-P04-RECONNECT-LAB-001",
+      "defect_id": "BASE-P02-SSE-TOTAL-DEADLINE-RECONNECT-CURSOR-LOSS",
+      "first_divergent_layer": "Goosetower runtime client total request deadline to SSE cursor continuity",
+      "evidence_references": ["crates/goosetower/src/verification/fake_source_tests.rs#sse_total_deadline_reconnect_loses_cursor_at_real_stale_window"],
+      "owning_correction_phase": "P06",
+      "affected_downstream_gates": ["P10", "M1", "P25", "M3", "P56", "M7"],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "The infinite SSE request inherits a total deadline and reconnects from an older committed cursor."
+    },
+    {
+      "scenario_id": "GW-P04-RECONNECT-LAB-001",
+      "defect_id": "BASE-P02-SESSION-TERMINAL-DETAIL-RELOAD-LOSS",
+      "first_divergent_layer": "Goosetower session-detail snapshot kind to Gooseweb decoder/store",
+      "evidence_references": ["verification/gooseweb/manifests/p02-fake-source-observers.json"],
+      "owning_correction_phase": "P08",
+      "affected_downstream_gates": ["P10", "M1", "P23", "P25", "M3", "P56", "M7"],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Reload reconstruction loses terminal session detail even after live delivery succeeds."
+    },
+    {
+      "scenario_id": "GW-P04-RECONNECT-LAB-001",
+      "defect_id": "BASE-P01-RECONNECT-STATE-DISAGREEMENT",
+      "first_divergent_layer": "Gooseweb Worker/store to React connection-state projection",
+      "evidence_references": ["verification/gooseweb/manifests/p01-team-comms-live.json"],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": ["P10", "M1", "P25", "M3", "P56", "M7"],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "Browser and source-health projections disagree after reconnect and fresh-context reconstruction."
+    },
+    {
+      "scenario_id": "GW-P04-RECONNECT-LAB-001",
+      "defect_id": "BASE-P04-WORKER-SOURCE-GAP-ACCEPTED",
+      "first_divergent_layer": "Gooseweb Worker cursor transition predicate",
+      "evidence_references": ["apps/gooseweb/scripts/p04-reconnect-lab-smoke.ts#missing-source-cursor"],
+      "owning_correction_phase": "P09",
+      "affected_downstream_gates": ["P10", "M1", "P23", "P25", "M3", "P56", "M7"],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "A higher gateway sequence with a same-epoch source jump from 4 to 6 is currently accepted instead of requesting repair."
+    },
+    {
+      "scenario_id": "GW-P04-RECONNECT-LAB-001",
+      "defect_id": "BASE-P04-GATEWAY-RESTART-CURSOR-FLOOR",
+      "first_divergent_layer": "Gooseweb persisted cursor to restarted gateway",
+      "evidence_references": ["apps/gooseweb/scripts/p04-reconnect-lab-smoke.ts#tower-restart-gateway-sequence-reset"],
+      "owning_correction_phase": "P09",
+      "affected_downstream_gates": ["P10", "M1", "P23", "P25", "M3", "P56", "M7"],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "The cursor has no gateway epoch, so a restarted Tower sequence below the persisted floor suppresses a new source epoch."
+    }
+  ],
+  "known_defects": [],
+  "non_applicable": {
+    "schema_migration": { "status": "not_applicable", "reason": "Only verification fixtures and assertions are added." },
+    "backfill": { "status": "not_applicable", "reason": "No product data is transformed." },
+    "compatibility": { "status": "observed_only", "reason": "The v1 cursor corpus records current protocol behavior without changing compatibility." },
+    "rollback": { "status": "not_applicable", "reason": "Revert the additive P04 commit; product state is untouched." },
+    "performance": { "status": "observed_only", "reason": "Replay is bounded by existing limits; P05 owns calibrated budgets." },
+    "security": { "status": "observed_only", "reason": "Evidence remains redacted and contains no ticket, cookie, credential, or provider content." },
+    "data_retention_gc": { "status": "not_applicable", "reason": "Fresh ephemeral contexts and tiny source fixtures create no retained product data." },
+    "deployment": { "status": "not_applicable", "reason": "No browser framework, runner, binary, cache, dependency, CI, or deployment configuration is added." },
+    "provenance_reuse": { "status": "reference_only", "reason": "Golden Goose stores and batching tests informed safety assertions; no source was copied." }
+  },
+  "provenance": {
+    "source_repository": "/Users/ashray/code/amxv/gg-desktop",
+    "source_commit": "f6b39b01a57f491bdf52314367c0a04219651989",
+    "references": [
+      "src/store/team-comms-store.ts",
+      "src/store/team-comms-store.test.ts",
+      "src/store/agent-store/runtime-event-batcher.test.ts"
+    ],
+    "reuse_status": "reference_only",
+    "destination_symbols": [],
+    "native_tauri_assumptions_removed": { "status": "not_applicable", "reason": "No Golden Goose code was copied or adapted." }
+  }
+}

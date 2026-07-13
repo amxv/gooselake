@@ -7,7 +7,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "bun run scripts/proto-smoke.ts && bun run scripts/p08-detail-protocol-smoke.ts && bun run scripts/p09-worker-store-authority-smoke.ts && bun run scripts/dev-ticket-smoke.ts && bun run scripts/realtime-worker-smoke.ts && bun run scripts/roster-membership-smoke.ts && bun run scripts/p02-observer-smoke.ts && bun run scripts/p04-reconnect-lab-smoke.ts && bun run scripts/acceptance-contract-smoke.ts && bun run scripts/p03-browser-evidence-smoke.ts",
+    "test": "bun run scripts/proto-smoke.ts && bun run scripts/p08-detail-protocol-smoke.ts && bun run scripts/p09-worker-store-authority-smoke.ts && bun run scripts/p09-production-command-sequence-smoke.ts && bun run scripts/p09-static-asset-smoke.ts && bun run scripts/dev-ticket-smoke.ts && bun run scripts/realtime-worker-smoke.ts && bun run scripts/roster-membership-smoke.ts && bun run scripts/p02-observer-smoke.ts && bun run scripts/p04-reconnect-lab-smoke.ts && bun run scripts/acceptance-contract-smoke.ts && bun run scripts/p03-browser-evidence-smoke.ts",
     "test:acceptance-contract": "bun run scripts/acceptance-contract-smoke.ts && bun run scripts/p03-browser-evidence-smoke.ts",
     "proto": "buf generate"
   },

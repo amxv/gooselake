@@ -666,7 +666,7 @@ for (const frame of [
 await waitForPatchFlush();
 
 const boundedBoardRows = Array.from({ length: 100 }, (_, index) => ({
-  row_id: `fresh-row-${index}`,
+  row_id: `source-1:fresh-session-${index}`,
   source_id: "source-1",
   session_id: `fresh-session-${index}`,
   provider: "codex",

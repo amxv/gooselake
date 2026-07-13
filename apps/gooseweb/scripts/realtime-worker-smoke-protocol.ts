@@ -23,7 +23,7 @@ const livePatchFixtures = [
     viewKind: "fleet_board", domain: "fleet_rows", entityId: "live-row",
     operation: ViewOperation.UPSERT,
     body: new TextEncoder().encode(JSON.stringify({
-      row_id: "live-row", source_id: "source-1", session_id: "live-session",
+      row_id: "source-1:live-row", source_id: "source-1", session_id: "live-row",
       provider: "codex", status: "ready", pending_approval_count: 0,
       latest_activity_unix_ms: 300
     }))

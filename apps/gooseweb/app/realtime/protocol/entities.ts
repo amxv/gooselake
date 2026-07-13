@@ -14,6 +14,7 @@ import {
   type Snapshot
 } from "../../../src/gen/goosetower/v1/view_pb";
 import { ProtocolDecodeError } from "./protocol-error";
+import { fleetEntityKey } from "./fleet-identity";
 export { ProtocolDecodeError } from "./protocol-error";
 export { decodeSourceSnapshotResync } from "./source-resync";
 import type {
@@ -127,7 +128,6 @@ function requireDeclaredCoverage(
     throw new ProtocolDecodeError("versioned view frame lacks authoritative coverage");
   }
 }
-
 
 function operationFromFrame(
   schemaVersion: number,
@@ -267,7 +267,7 @@ function decodeViewBody(viewKind: string, body: Uint8Array): DecodedEntities {
     case "fleet-row":
     case "board-row": {
       const row = fromBinary(FleetRowViewSchema, body);
-      return { entities: { fleetRows: { [sourceEntityKey(row.sourceId, row.rowId)]: row } } };
+      return { entities: { fleetRows: { [fleetEntityKey(row)]: row } } };
     }
     case "session":
     case "session_summary": {
@@ -328,7 +328,7 @@ function decodeJsonViewBody(
           fleetRows: Object.fromEntries(
             rows.map((row) => {
               const entity = normalizeFleetRow(row);
-              return [sourceEntityKey(entity.sourceId, entity.rowId), entity];
+              return [fleetEntityKey(entity), entity];
             })
           )
         }
@@ -336,7 +336,7 @@ function decodeJsonViewBody(
     }
     case "fleet_board": {
       const row = normalizeFleetRow(value);
-      return { entities: { fleetRows: { [sourceEntityKey(row.sourceId, row.rowId)]: row } } };
+      return { entities: { fleetRows: { [fleetEntityKey(row)]: row } } };
     }
     case "approval_inbox": {
       const approvals = arrayFrom((value as { approvals?: unknown }).approvals);

@@ -118,7 +118,7 @@ export class RealtimeWorkerCore {
       if (this.socket !== socket) {
         return;
       }
-      this.emitState({ connection: "connected" });
+      this.emitState({ connection: "connected", lastError: undefined });
       this.startHeartbeat();
     };
     socket.onmessage = (event) => {
@@ -193,8 +193,10 @@ export class RealtimeWorkerCore {
     this.post({ type: "subscription-state", subscription });
     this.sendEnvelope(makeUnsubscribe(subscriptionId));
     if (retiredResetRequirement) {
+      const recovered = this.pendingResetSubscriptions.size === 0;
       this.emitState({
-        connection: this.pendingResetSubscriptions.size === 0 ? "connected" : "stale"
+        connection: recovered ? "connected" : "stale",
+        ...(recovered ? { lastError: undefined } : {})
       });
     }
   }
@@ -290,7 +292,7 @@ export class RealtimeWorkerCore {
               cursorAuthorityFromEnvelope(envelope)?.sources.map((source) => source.sourceId) ?? []
             );
           this.validateSnapshotPatchSource(envelope, envelope.payload.value, patch);
-          if (!this.applyEnvelopeCursor(envelope)) return;
+          if (!this.applyViewEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installSnapshotCoverage(envelope, patch));
         } catch (error) {
           this.failProtocolFrame(error instanceof Error ? error.message : "invalid snapshot");
@@ -310,30 +312,21 @@ export class RealtimeWorkerCore {
             resolvedSourceIds,
             true
           );
-          if (!this.applyEnvelopeCursor(envelope)) return;
+          if (!this.applyViewEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installPatchCoverage(envelope, patch));
         } catch (error) {
           this.failProtocolFrame(error instanceof Error ? error.message : "invalid patch");
         }
         break;
       case MessageKind.PONG:
-        if (!this.applyEnvelopeCursor(envelope)) {
-          return;
-        }
         this.emitState({ connection: "connected" });
         break;
       case MessageKind.COMMAND_ACCEPTED:
       case MessageKind.COMMAND_REJECTED:
       case MessageKind.COMMAND_DUPLICATE:
-        if (!this.applyEnvelopeCursor(envelope)) {
-          return;
-        }
         this.handleCommandLifecycle(envelope);
         break;
       case MessageKind.CONNECTION_DEGRADED:
-        if (!this.applyEnvelopeCursor(envelope)) {
-          return;
-        }
         this.emitState({
           connection: "degraded",
           lastError:
@@ -343,9 +336,6 @@ export class RealtimeWorkerCore {
         });
         break;
       case MessageKind.SOURCE_GAP_DETECTED:
-        if (!this.applyEnvelopeCursor(envelope)) {
-          return;
-        }
         this.handleStaleSignal(envelope);
         break;
       case MessageKind.SOURCE_SNAPSHOT_RESYNC:
@@ -359,8 +349,10 @@ export class RealtimeWorkerCore {
           this.invalidateSourceCoverage(envelope.payload.value.sourceId);
           this.handleEntityPatch(patch);
           this.resendActiveSubscriptions();
+          const recovered = this.pendingResetSubscriptions.size === 0;
           this.emitState({
-            connection: this.pendingResetSubscriptions.size === 0 ? "connected" : "stale",
+            connection: recovered ? "connected" : "stale",
+            ...(recovered ? { lastError: undefined } : {}),
             invalidatedSourceDomains: this.invalidatedSourceDomains,
             loadedCoverage: this.loadedCoverage
           });
@@ -369,15 +361,9 @@ export class RealtimeWorkerCore {
         }
         break;
       case MessageKind.SOURCE_GAP_FILLED:
-        if (!this.applyEnvelopeCursor(envelope)) {
-          return;
-        }
         this.emitState({ connection: "replaying" });
         break;
       case MessageKind.ERROR:
-        if (!this.applyEnvelopeCursor(envelope)) {
-          return;
-        }
         this.emitError(
           envelope.payload.case === "error"
             ? envelope.payload.value.message
@@ -415,7 +401,8 @@ export class RealtimeWorkerCore {
     this.emitState({
       connection: "connected",
       connectionId: hello.connectionId,
-      heartbeatIntervalMs: this.heartbeatIntervalMs
+      heartbeatIntervalMs: this.heartbeatIntervalMs,
+      lastError: undefined
     });
     this.startHeartbeat();
     this.sendStartupFrames();
@@ -543,10 +530,12 @@ export class RealtimeWorkerCore {
       this.subscriptions[subscriptionId] = active;
       this.post({ type: "subscription-state", subscription: active });
     }
+    const recovered = this.pendingResetSubscriptions.size === 0;
     this.emitState({
       loadedCoverage: this.loadedCoverage,
       invalidatedSourceDomains: this.invalidatedSourceDomains,
-      connection: this.pendingResetSubscriptions.size === 0 ? "connected" : "stale"
+      connection: recovered ? "connected" : "stale",
+      ...(recovered ? { lastError: undefined } : {})
     });
     return { entityOperations: transformed };
   }
@@ -741,9 +730,13 @@ export class RealtimeWorkerCore {
     this.emitState({ connection: "stale", staleSources });
   }
 
-  private applyEnvelopeCursor(envelope: RealtimeEnvelope): boolean {
+  private applyViewEnvelopeCursor(envelope: RealtimeEnvelope): boolean {
     const isSnapshot = envelope.messageKind === MessageKind.SNAPSHOT;
     const isViewFrame = isSnapshot || envelope.messageKind === MessageKind.PATCH;
+    if (!isViewFrame) {
+      this.failProtocolFrame("non-view frame cannot mutate canonical view authority");
+      return false;
+    }
     if (
       isViewFrame &&
       envelope.messageId &&

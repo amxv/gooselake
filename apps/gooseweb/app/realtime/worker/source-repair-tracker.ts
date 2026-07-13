@@ -1,6 +1,6 @@
 import type { GoosewebStorePatch, SourceCursorState } from "../types";
 
-type RepairCompletion = "gap_fill" | "source_resync";
+type RepairCompletion = "gap_fill" | "materialized_gap_fill" | "source_resync";
 
 type SourceRepair = {
   readonly completion: RepairCompletion;
@@ -40,6 +40,13 @@ export class SourceRepairTracker {
         throw new Error(`snapshot cursor misses repair authority for ${source.sourceId}`);
       }
     }
+  }
+
+  shouldDeferSnapshot(sources: readonly SourceCursorState[]): boolean {
+    return sources.some((source) => {
+      const repair = this.repairs[source.sourceId];
+      return repair?.completion === "materialized_gap_fill" && !repair.gapFilled;
+    });
   }
 
   retireSnapshot(
@@ -94,7 +101,7 @@ export class SourceRepairTracker {
   markGapFilled(cursor: SourceCursorState): "marked" | "untracked" | "invalid" {
     const repair = this.repairs[cursor.sourceId];
     if (!repair) return "untracked";
-    if (repair.completion !== "gap_fill" ||
+    if ((repair.completion !== "gap_fill" && repair.completion !== "materialized_gap_fill") ||
       (repair.expectedEpoch && cursor.sourceEpoch !== repair.expectedEpoch) ||
       (repair.minimumSourceSeq !== undefined && cursor.sourceSeq < repair.minimumSourceSeq)) {
       return "invalid";
@@ -106,10 +113,23 @@ export class SourceRepairTracker {
     return "marked";
   }
 
+  needsPostFillSnapshot(cursor: SourceCursorState): boolean {
+    const repair = this.repairs[cursor.sourceId];
+    return Boolean((repair?.completion === "gap_fill" ||
+      repair?.completion === "materialized_gap_fill") &&
+      (!repair.expectedEpoch || repair.expectedEpoch === cursor.sourceEpoch) &&
+      repair.minimumSourceSeq !== undefined && cursor.sourceSeq > repair.minimumSourceSeq);
+  }
+
+  isPendingSource(sourceId: string): boolean {
+    return Boolean(this.repairs[sourceId]);
+  }
+
   takeRecovered(authoritativeResetSourceId?: string): string[] {
     const recovered = Object.entries(this.repairs)
       .filter(([sourceId, repair]) => sourceId === authoritativeResetSourceId ||
-        (repair.completion === "gap_fill" && repair.gapFilled &&
+        ((repair.completion === "gap_fill" || repair.completion === "materialized_gap_fill") &&
+          repair.gapFilled &&
           Object.keys(repair.requirements).length === 0))
       .map(([sourceId]) => sourceId);
     if (authoritativeResetSourceId && !recovered.includes(authoritativeResetSourceId)) {

@@ -44,6 +44,7 @@ import {
 } from "./command-messages";
 import { mergeStorePatch } from "./store-patch-batcher";
 import { reduceCommandLifecycle } from "./command-rejection";
+import { sourceHealthGapCursors, validateEntitySourceAgreement } from "./frame-source-authority";
 import { gapDetectedAuthorityFromEnvelope, gapFilledAuthorityFromEnvelope } from "./source-repair-controls";
 import { SourceRepairTracker, sourceRepairRecoveryPatch } from "./source-repair-tracker";
 import {
@@ -279,15 +280,18 @@ export class RealtimeWorkerCore {
           return;
         }
         try {
+          const resolvedSources = cursorAuthorityFromEnvelope(envelope)?.sources ?? [];
           this.validateSnapshotProvenance(envelope.payload.value);
           const patch = envelope.payload.value.notFound
             ? decodeNotFoundSnapshot(envelope.payload.value)
             : decodeSnapshot(
               envelope.payload.value,
-              cursorAuthorityFromEnvelope(envelope)?.sources.map((source) => source.sourceId) ?? []
+              resolvedSources.map((source) => source.sourceId)
             );
           this.validateSnapshotPatchSource(envelope, envelope.payload.value, patch);
-          this.sourceRepairs.assertSnapshotAuthority(cursorAuthorityFromEnvelope(envelope)?.sources ?? []);
+          if (this.armMaterializedSourceGaps(patch, resolvedSources)) return;
+          if (this.sourceRepairs.shouldDeferSnapshot(resolvedSources)) return;
+          this.sourceRepairs.assertSnapshotAuthority(resolvedSources);
           if (!this.applyViewEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installSnapshotCoverage(envelope, patch));
         } catch (error) {
@@ -300,14 +304,11 @@ export class RealtimeWorkerCore {
           return;
         }
         try {
-          const resolvedSourceIds = cursorAuthorityFromEnvelope(envelope)?.sources
-            .map((source) => source.sourceId) ?? [];
+          const resolvedSources = cursorAuthorityFromEnvelope(envelope)?.sources ?? [];
+          const resolvedSourceIds = resolvedSources.map((source) => source.sourceId);
           const patch = decodePatch(envelope.payload.value, resolvedSourceIds);
-          this.validateEntitySourceAgreement(
-            patch,
-            resolvedSourceIds,
-            true
-          );
+          validateEntitySourceAgreement(patch, resolvedSourceIds, true);
+          if (this.armMaterializedSourceGaps(patch, resolvedSources)) return;
           if (!this.applyViewEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installPatchCoverage(envelope, patch));
         } catch (error) {
@@ -591,7 +592,7 @@ export class RealtimeWorkerCore {
   ): void {
     const cursorSourceIds = cursorAuthorityFromEnvelope(envelope)?.sources
       .map((source) => source.sourceId) ?? [];
-    this.validateEntitySourceAgreement(patch, cursorSourceIds, isSelectedViewKind(snapshot.viewKind));
+    validateEntitySourceAgreement(patch, cursorSourceIds, isSelectedViewKind(snapshot.viewKind));
     const subscription = this.subscriptions[snapshot.subscriptionId];
     const requestedSourceId = subscription?.filters.source_id;
     if (!requestedSourceId || !isSelectedViewKind(snapshot.viewKind)) return;
@@ -599,25 +600,6 @@ export class RealtimeWorkerCore {
       for (const entity of Object.values(operation.payload)) {
         if ((entity as { sourceId?: string }).sourceId !== requestedSourceId) {
           throw new Error("selected snapshot body disagrees with requested source");
-        }
-      }
-    }
-  }
-
-  private validateEntitySourceAgreement(
-    patch: EntityPatch,
-    cursorSourceIds: readonly string[],
-    requireSingleSource: boolean
-  ): void {
-    if (requireSingleSource && cursorSourceIds.length !== 1) {
-      throw new Error("entity-scoped frame requires exactly one cursor source");
-    }
-    const allowed = new Set(cursorSourceIds);
-    for (const operation of patch.entityOperations) {
-      for (const entity of Object.values(operation.payload)) {
-        const sourceId = (entity as { sourceId?: string }).sourceId;
-        if (!sourceId || !allowed.has(sourceId)) {
-          throw new Error("frame body source is missing from canonical cursor authority");
         }
       }
     }
@@ -702,6 +684,9 @@ export class RealtimeWorkerCore {
   private handleGapFilled(envelope: RealtimeEnvelope): void {
     try {
       const filled = gapFilledAuthorityFromEnvelope(envelope, this.cursor);
+      if (this.sourceRepairs.needsPostFillSnapshot(filled)) {
+        this.requestTargetedRepair(filled.sourceId, "gap_detected", filled, "gap_fill");
+      }
       const result = this.sourceRepairs.markGapFilled(filled);
       if (result === "invalid") throw new Error("gap-filled cursor misses pending repair authority");
       this.emitState(result === "marked"
@@ -711,11 +696,26 @@ export class RealtimeWorkerCore {
       this.failProtocolFrame(error instanceof Error ? error.message : "invalid gap-filled control");
     }
   }
+  private armMaterializedSourceGaps(
+    patch: EntityPatch,
+    cursors: readonly SourceCursorState[]
+  ): boolean {
+    const gaps = sourceHealthGapCursors(patch, cursors).filter((source) => {
+      const known = this.cursor.sourceCursors[source.sourceId];
+      return !known || (known.sourceEpoch === source.sourceEpoch && source.sourceSeq >= known.sourceSeq);
+    });
+    for (const source of gaps) {
+      if (!this.sourceRepairs.isPendingSource(source.sourceId)) {
+        this.requestTargetedRepair(source.sourceId, "gap_detected", source, "materialized_gap_fill");
+      }
+    }
+    return gaps.length > 0;
+  }
   private requestTargetedRepair(
     sourceId: string,
     reason: string,
     expected?: SourceCursorState,
-    completion: "gap_fill" | "source_resync" = "source_resync"
+    completion: "gap_fill" | "materialized_gap_fill" | "source_resync" = "source_resync"
   ): void {
     this.invalidateSourceCoverage(sourceId);
     this.frozenSources.add(sourceId);

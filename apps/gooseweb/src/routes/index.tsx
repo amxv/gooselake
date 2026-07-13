@@ -72,6 +72,16 @@ import {
 } from "../../app/realtime/client";
 import { goosewebConfig } from "../../app/realtime/config";
 import { sourceEntityKey } from "../../app/realtime/protocol/entities";
+import {
+  buildStopAgentMemberships,
+  fleetRowForSession,
+  rosterSessionKey,
+  rosterTeamGroupId,
+  rosterTeamKey,
+  stopAgentSourceRoute,
+  teamKeyForSession,
+  type StopAgentMembership
+} from "../../app/realtime/roster-membership";
 import type {
   ConnectionState,
   CommandIntent,
@@ -263,12 +273,7 @@ type ModelPresetSpawnFixturePayload = {
   readonly modelPreset: string;
 };
 
-type StopAgentTarget = {
-  readonly sourceId: string;
-  readonly sessionId: string;
-  readonly turnId: string;
-  readonly teamKey: string;
-};
+type StopAgentTarget = StopAgentMembership;
 
 type TeamCommsMessageItem = {
   readonly id: string;
@@ -1238,6 +1243,7 @@ function Index() {
       <MissionChrome
         activeView={activeView}
         approvals={approvals}
+        rows={fleetRows}
         processes={processes}
         selectedSession={selectedSession}
         selectedTeamId={selectedTeamId}
@@ -1367,6 +1373,7 @@ function Index() {
 function MissionChrome({
   activeView,
   approvals,
+  rows,
   processes,
   selectedSession,
   selectedTeamId,
@@ -1380,6 +1387,7 @@ function MissionChrome({
 }: {
   readonly activeView: WorkspaceView;
   readonly approvals: readonly ApprovalView[];
+  readonly rows: readonly FleetRowView[];
   readonly processes: readonly ProcessView[];
   readonly selectedSession?: SessionView;
   readonly selectedTeamId: string;
@@ -1400,10 +1408,11 @@ function MissionChrome({
     readonly armedAt: number;
   }>({ scope: "", armedAt: 0 });
   const stopMenuReopenAfterArmRef = useRef(false);
-  const stopAgentTargets = getStopAgentTargets(sessions, teams);
+  const stopAgentTargets = buildStopAgentMemberships(sessions, rows, teams);
   const currentTeamId = getCurrentStopAgentsTeamId(
     selectedTeamId,
     selectedSession,
+    rows,
     teams
   );
   const teamStopAgentTargets = currentTeamId
@@ -1817,6 +1826,8 @@ function MissionRosterRail({
 
 type AgentRosterItem = {
   readonly id: string;
+  readonly sourceId: string;
+  readonly teamKey: string;
   readonly title: string;
   readonly meta: string;
   readonly worktree?: AgentRosterWorktreeLine;
@@ -7439,49 +7450,10 @@ function makeCommand(
   };
 }
 
-function getStopAgentTargets(
-  sessions: readonly SessionView[],
-  teams: readonly TeamView[]
-): readonly StopAgentTarget[] {
-  return sessions.flatMap((session) => {
-    if (!session.sessionId || !session.activeTurnId) {
-      return [];
-    }
-    return [
-      {
-        sourceId: session.sourceId,
-        sessionId: session.sessionId,
-        turnId: session.activeTurnId,
-        teamKey: getStopAgentTeamKey(session.sourceId, session.sessionId, teams)
-      }
-    ];
-  });
-}
-
-function getStopAgentTeamKey(
-  sourceId: string,
-  sessionId: string,
-  teams: readonly TeamView[]
-): string {
-  const team = teams.find((candidate) =>
-    candidate.sourceId === sourceId &&
-    candidate.members.some((member) => member.sessionId === sessionId)
-  );
-  if (team?.teamId) {
-    return sourceEntityKey(team.sourceId, team.teamId);
-  }
-  if (
-    isStopAgentsVisualFixtureEnabled() &&
-    ["dev-roster-lead", "dev-roster-browser", "dev-roster-composer"].includes(sessionId)
-  ) {
-    return "dev-roster-team";
-  }
-  return "";
-}
-
 function getCurrentStopAgentsTeamId(
   selectedTeamId: string,
   selectedSession: SessionView | undefined,
+  rows: readonly FleetRowView[],
   teams: readonly TeamView[]
 ): string {
   if (selectedTeamId) {
@@ -7492,7 +7464,13 @@ function getCurrentStopAgentsTeamId(
   if (!selectedSessionId || !selectedSourceId) {
     return "";
   }
-  return getStopAgentTeamKey(selectedSourceId, selectedSessionId, teams);
+  const row = fleetRowForSession(rows, selectedSourceId, selectedSessionId);
+  const teamKey = teamKeyForSession(selectedSourceId, selectedSessionId, row, teams);
+  if (teamKey) return teamKey;
+  return isStopAgentsVisualFixtureEnabled() &&
+    ["dev-roster-lead", "dev-roster-browser", "dev-roster-composer"].includes(selectedSessionId)
+    ? "dev-roster-team"
+    : "";
 }
 
 function dispatchStopAgentTargets(
@@ -7506,7 +7484,7 @@ function dispatchStopAgentTargets(
     });
     return {
       ...command,
-      target: { ...command.target, entityId: `source:${target.sourceId}` }
+      target: { ...command.target, entityId: stopAgentSourceRoute(target.sourceId) }
     };
   });
   if (isStopAgentsVisualFixtureEnabled() && typeof window !== "undefined") {
@@ -7574,8 +7552,9 @@ function getAgentRosterGroups(input: {
 }): readonly AgentRosterGroup[] {
   const rowsBySessionId = new Map<string, FleetRowView>();
   for (const row of input.rows) {
-    if (row.sessionId && !rowsBySessionId.has(row.sessionId)) {
-      rowsBySessionId.set(row.sessionId, row);
+    const sessionKey = rosterSessionKey(row.sourceId, row.sessionId);
+    if (row.sessionId && !rowsBySessionId.has(sessionKey)) {
+      rowsBySessionId.set(sessionKey, row);
     }
   }
 
@@ -7584,18 +7563,26 @@ function getAgentRosterGroups(input: {
   for (const team of input.teams) {
     for (const member of team.members) {
       if (member.sessionId) {
-        teamBySessionId.set(member.sessionId, team);
-        teamMemberBySessionId.set(member.sessionId, member);
+        const sessionKey = rosterSessionKey(team.sourceId, member.sessionId);
+        teamBySessionId.set(sessionKey, team);
+        teamMemberBySessionId.set(sessionKey, member);
       }
     }
   }
 
-  const sessionItems = input.sessions.map((session) =>
-    makeSessionRosterItem({
+  const sessionItems = input.sessions.map((session) => {
+    const sessionKey = rosterSessionKey(session.sourceId, session.sessionId);
+    const row = rowsBySessionId.get(sessionKey);
+    const rowTeam = row?.teamId
+      ? input.teams.find((team) =>
+          team.sourceId === row.sourceId && team.teamId === row.teamId
+        )
+      : undefined;
+    return makeSessionRosterItem({
       session,
-      row: rowsBySessionId.get(session.sessionId),
-      team: teamBySessionId.get(session.sessionId),
-      member: teamMemberBySessionId.get(session.sessionId),
+      row,
+      team: rowTeam ?? teamBySessionId.get(sessionKey),
+      member: teamMemberBySessionId.get(sessionKey),
       approvals: input.approvals,
       processes: input.processes,
       worktrees: input.worktrees,
@@ -7607,8 +7594,8 @@ function getAgentRosterGroups(input: {
       onSelectTeam: input.onSelectTeam,
       onSelectApproval: input.onSelectApproval,
       onSelectProcess: input.onSelectProcess
-    })
-  );
+    });
+  });
 
   const rowItems = input.sessions.length
     ? []
@@ -7630,19 +7617,19 @@ function getAgentRosterGroups(input: {
   const items = [...sessionItems, ...rowItems];
   const itemsBySourceId = new Map<string, AgentRosterItem[]>();
   for (const item of items) {
-    const sourceId = item.id.split(":", 1)[0] || "source";
-    const bucket = itemsBySourceId.get(sourceId) ?? [];
+    const bucket = itemsBySourceId.get(item.sourceId) ?? [];
     bucket.push(item);
-    itemsBySourceId.set(sourceId, bucket);
+    itemsBySourceId.set(item.sourceId, bucket);
   }
 
   const teamGroups = input.teams
     .map((team) => {
-      const teamItems = items.filter((item) => item.id.includes(`:team:${team.teamId}:`));
+      const teamKey = rosterTeamKey(team.sourceId, team.teamId);
+      const teamItems = items.filter((item) => item.teamKey === teamKey);
       return {
-        id: `team:${team.teamId}`,
+        id: rosterTeamGroupId(team.sourceId, team.teamId),
         label: team.name || team.teamId,
-        count: team.members.length,
+        count: teamItems.length || team.members.length,
         items: teamItems
       };
     })
@@ -7703,6 +7690,8 @@ function getDevAgentRosterGroups(input: {
   const items: readonly AgentRosterItem[] = [
     {
       id: "dev-roster:team:dev-roster-team:session:dev-roster-lead",
+      sourceId: "dev-roster",
+      teamKey: sourceEntityKey("dev-roster", "dev-roster-team"),
       title: "Lead",
       meta: "Finished Cove",
       worktree: { label: "main", added: 581, removed: 4 },
@@ -7714,6 +7703,8 @@ function getDevAgentRosterGroups(input: {
     },
     {
       id: "dev-roster:team:dev-roster-team:session:dev-roster-browser",
+      sourceId: "dev-roster",
+      teamKey: sourceEntityKey("dev-roster", "dev-roster-team"),
       title: "Gooseweb Browser QA",
       meta: "Platinum Pearl",
       worktree: { label: "main", added: 582, removed: 4 },
@@ -7726,6 +7717,8 @@ function getDevAgentRosterGroups(input: {
     },
     {
       id: "dev-roster:team:dev-roster-team:session:dev-roster-composer",
+      sourceId: "dev-roster",
+      teamKey: sourceEntityKey("dev-roster", "dev-roster-team"),
       title: "Gooseweb Agents Composer",
       meta: "Social Spring",
       worktree: { label: "main", added: 581, removed: 4 },
@@ -7766,6 +7759,7 @@ function makeSessionRosterItem(input: {
   const { session, row, team, member } = input;
   const pendingForSession = input.approvals.filter(
     (approval) =>
+      approval.sourceId === session.sourceId &&
       approval.sessionId === session.sessionId && approval.status === "pending"
   ).length;
   const activeProcess = input.processes.find(
@@ -7781,6 +7775,8 @@ function makeSessionRosterItem(input: {
 
   return {
     id: `${session.sourceId}:team:${team?.teamId ?? ""}:session:${session.sessionId}`,
+    sourceId: session.sourceId,
+    teamKey: team?.teamId ? sourceEntityKey(team.sourceId, team.teamId) : "",
     title,
     meta: durableIdentity,
     worktree,
@@ -7834,6 +7830,8 @@ function makeRowRosterItem(input: {
   );
   return {
     id: `${row.sourceId}:team:${row.teamId}:row:${row.rowId}`,
+    sourceId: row.sourceId,
+    teamKey: row.teamId ? sourceEntityKey(row.sourceId, row.teamId) : "",
     title: row.title || compactSessionId(row.sessionId) || row.rowId,
     meta: row.sessionId || row.rowId,
     worktree: buildRosterWorktreeLine({

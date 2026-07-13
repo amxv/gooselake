@@ -46,6 +46,7 @@ pub struct RuntimeSseFanIn {
 
 #[derive(Debug, Clone)]
 pub struct SourceEpochChange {
+    pub prior_source_epoch: String,
     pub source_epoch: String,
     pub high_watermark: i64,
     acknowledgement: std::sync::Arc<Notify>,
@@ -126,6 +127,7 @@ impl RuntimeSseFanIn {
                 Ok(bootstrap) if bootstrap.source_epoch != source_epoch => {
                     let acknowledgement = std::sync::Arc::new(Notify::new());
                     let change = SourceEpochChange {
+                        prior_source_epoch: source_epoch.clone(),
                         source_epoch: bootstrap.source_epoch.clone(),
                         high_watermark: bootstrap.high_watermark,
                         acknowledgement: acknowledgement.clone(),
@@ -594,9 +596,11 @@ mod tests {
         let mut changes = fan_in.subscribe_epoch_changes();
         let acknowledger = tokio::spawn(async move {
             let first = changes.recv().await.expect("epoch B change");
+            assert_eq!(first.prior_source_epoch, "epoch-test");
             assert_eq!(first.source_epoch, "epoch-b");
             first.reject();
             let second = changes.recv().await.expect("epoch C change");
+            assert_eq!(second.prior_source_epoch, "epoch-test");
             assert_eq!(second.source_epoch, "epoch-c");
             second.acknowledge("epoch-c".into(), 2);
         });

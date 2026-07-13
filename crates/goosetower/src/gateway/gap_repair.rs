@@ -438,6 +438,7 @@ impl GatewayState {
     pub(super) async fn install_epoch_replacement(
         &self,
         source_id: &str,
+        prior_epoch: &str,
         expected_epoch: &str,
         state: MaterializedState,
     ) -> Option<i64> {
@@ -451,6 +452,15 @@ impl GatewayState {
         let installed_cursor = state.source_health.last_source_seq.unwrap_or(0);
         let mut repairs = self.gap_repairs.lock().await;
         let mut materialized = self.materialized.write().await;
+        let current = materialized.get(source_id)?;
+        let current_cursor = current.source_health.last_source_seq.unwrap_or(0);
+        let replaces_expected_prior =
+            current.source_epoch == prior_epoch && current.source_epoch != expected_epoch;
+        let idempotent_nonregressive =
+            current.source_epoch == expected_epoch && installed_cursor >= current_cursor;
+        if !replaces_expected_prior && !idempotent_nonregressive {
+            return None;
+        }
         materialized.insert(source_id.to_string(), state);
         repairs.remove(source_id);
         Some(installed_cursor)

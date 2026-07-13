@@ -300,6 +300,7 @@ impl GatewayState {
                             if let Some(installed_cursor) = gateway
                                 .install_epoch_replacement(
                                     &source_config.source_id,
+                                    &change.prior_source_epoch,
                                     &change.source_epoch,
                                     bootstrap.state,
                                 )

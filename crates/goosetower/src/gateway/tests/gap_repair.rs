@@ -452,15 +452,10 @@ async fn stale_fallback_cannot_overwrite_a_concurrent_epoch_install() {
     );
     assert!(patches.try_recv().is_err());
 
-    let mut epoch_b = MaterializedState::new("local", "epoch-b");
-    epoch_b
-        .source_health
-        .transition(SourceHealthState::Live, Some(2), None);
-    epoch_b.mark_bootstrap_watermark(2);
-    epoch_b.mark_live();
+    let epoch_b = live_epoch_state("epoch-b", 2);
     assert_eq!(
         gateway
-            .install_epoch_replacement("local", "epoch-b", epoch_b)
+            .install_epoch_replacement("local", "static-0", "epoch-b", epoch_b)
             .await,
         Some(2)
     );
@@ -479,6 +474,80 @@ async fn stale_fallback_cannot_overwrite_a_concurrent_epoch_install() {
         patches.try_recv().is_err(),
         "the released stale repair must not publish after epoch-b installation"
     );
+}
+
+#[tokio::test]
+async fn epoch_install_rejects_stale_lineage_and_accepts_nonregressive_idempotence() {
+    let runtime_addr = spawn_failed_repair_runtime().await;
+    let gateway = Arc::new(gateway_at_cursor(runtime_addr, 3).await);
+
+    let repairs = gateway.gap_repairs.lock().await;
+    let installer_gateway = gateway.clone();
+    let installer = tokio::spawn(async move {
+        installer_gateway
+            .install_epoch_replacement(
+                "local",
+                "static-0",
+                "epoch-b",
+                live_epoch_state("epoch-b", 2),
+            )
+            .await
+    });
+    gateway
+        .materialized
+        .write()
+        .await
+        .insert("local".into(), live_epoch_state("epoch-c", 4));
+    drop(repairs);
+
+    assert_eq!(installer.await.expect("stale B installer"), None);
+    let current = gateway.materialized.read().await["local"].clone();
+    assert_eq!(current.source_epoch, "epoch-c");
+    assert_eq!(current.source_health.last_source_seq, Some(4));
+
+    gateway
+        .replace_materialized_state("local".into(), live_epoch_state("static-0", 3))
+        .await;
+    assert_eq!(
+        gateway
+            .install_epoch_replacement(
+                "local",
+                "static-0",
+                "epoch-b",
+                live_epoch_state("epoch-b", 2),
+            )
+            .await,
+        Some(2)
+    );
+    for (cursor, expected) in [(2, Some(2)), (3, Some(3)), (2, None)] {
+        assert_eq!(
+            gateway
+                .install_epoch_replacement(
+                    "local",
+                    "static-0",
+                    "epoch-b",
+                    live_epoch_state("epoch-b", cursor),
+                )
+                .await,
+            expected
+        );
+    }
+    assert_eq!(
+        gateway.materialized.read().await["local"]
+            .source_health
+            .last_source_seq,
+        Some(3)
+    );
+}
+
+fn live_epoch_state(epoch: &str, cursor: i64) -> MaterializedState {
+    let mut state = MaterializedState::new("local", epoch);
+    state
+        .source_health
+        .transition(SourceHealthState::Live, Some(cursor), None);
+    state.mark_bootstrap_watermark(cursor);
+    state.mark_live();
+    state
 }
 
 async fn assert_frozen_at_four(gateway: &GatewayState) {

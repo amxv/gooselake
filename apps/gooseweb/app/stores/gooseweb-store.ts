@@ -141,6 +141,7 @@ function applyEntityOperations(
   let projection = currentProjection;
   let next = current;
   for (const operation of operations) {
+    if (!operation.authoritative) continue;
     const previous = next;
     if (operation.domain === "sessions") {
       projection = reduceSessionContributor(projection, previous, next, operation);

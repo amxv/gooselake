@@ -143,13 +143,27 @@ updateGoosewebStore({ entityOperations: [{
   } }
 }, detailUpsert] });
 assert.equal(getGoosewebSnapshot().entities.sessions[key]?.worktreePath, "/p02/worktree");
-updateGoosewebStore({ entityOperations: [{
-  ...detailUpsert,
-  authoritative: false,
-  payload: { [key]: { ...liveDetail, cwd: "/optimistic/workspace" } }
-}] });
-assert.equal(getGoosewebSnapshot().entities.sessions[key]?.cwd, CWD,
-  "non-authoritative detail overlays cannot mutate the canonical session projection");
+const beforeNonAuthoritative = getGoosewebSnapshot().entities;
+const beforeNonAuthoritativeContent = structuredClone(beforeNonAuthoritative);
+updateGoosewebStore({ entityOperations: [
+  {
+    ...detailUpsert,
+    authoritative: false,
+    payload: { [key]: { ...liveDetail, cwd: "/optimistic/workspace" } }
+  },
+  {
+    operation: "remove", domain: "sessions", entityIds: [key],
+    authoritative: false, payload: {}
+  },
+  {
+    operation: "remove", domain: "worktrees", entityIds: [worktreeKey],
+    authoritative: false, payload: {}
+  }
+] });
+assert.equal(getGoosewebSnapshot().entities, beforeNonAuthoritative,
+  "non-authoritative operations preserve canonical entity identity");
+assert.deepEqual(getGoosewebSnapshot().entities, beforeNonAuthoritativeContent,
+  "non-authoritative operations preserve every canonical entity domain");
 updateGoosewebStore({ entityOperations: [{
   operation: "remove", domain: "worktrees", entityIds: [worktreeKey],
   authoritative: true, payload: {}

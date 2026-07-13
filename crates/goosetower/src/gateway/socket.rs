@@ -759,7 +759,9 @@ impl GatewayState {
         let cursor = cursor_vector_from_states(
             &materialized,
             source_id.as_deref(),
-            self.next_gateway_seq.load(Ordering::Relaxed),
+            self.next_gateway_seq
+                .load(Ordering::Relaxed)
+                .saturating_sub(1),
             &self.gateway_epoch,
             self.gateway_started_at_unix_ns,
         );
@@ -777,6 +779,8 @@ impl GatewayState {
                     subscription_entity_id(canonical_view_kind, &subscribe.filters),
                 )),
                 subscription_id: subscribe.subscription_id.clone(),
+                request_id: subscribe.request_id.clone(),
+                not_found: body.is_null(),
             }),
         );
         envelope.message_id = self.next_view_message_id();

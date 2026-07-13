@@ -7,6 +7,7 @@ import {
   RealtimeEnvelopeSchema,
   type RealtimeEnvelope
 } from "../../../src/gen/goosetower/v1/realtime_pb";
+import type { Snapshot } from "../../../src/gen/goosetower/v1/view_pb";
 import { realtimeUrlWithTicket } from "../config";
 import {
   emptyCursorState,
@@ -19,6 +20,7 @@ import {
 } from "../cursors";
 import {
   decodePatch,
+  decodeNotFoundSnapshot,
   decodeSnapshot,
   decodeSourceSnapshotResync,
   type EntityPatch
@@ -167,26 +169,34 @@ export class RealtimeWorkerCore {
   ): void {
     const subscription: SubscriptionState = {
       subscriptionId,
+      requestId: crypto.randomUUID(),
       viewKind,
       filters,
       status: "subscribing"
     };
     this.subscriptions[subscriptionId] = subscription;
     this.post({ type: "subscription-state", subscription });
-    this.sendEnvelope(makeSubscribe(subscriptionId, viewKind, filters));
+    this.sendEnvelope(makeSubscribe(subscriptionId, viewKind, filters, subscription.requestId));
   }
 
   private unsubscribe(subscriptionId: string): void {
     const existing = this.subscriptions[subscriptionId];
     const subscription: SubscriptionState = {
       subscriptionId,
+      requestId: existing?.requestId ?? crypto.randomUUID(),
       viewKind: existing?.viewKind ?? "",
       filters: existing?.filters ?? {},
       status: "unsubscribed"
     };
     this.subscriptions[subscriptionId] = subscription;
+    const retiredResetRequirement = this.pendingResetSubscriptions.delete(subscriptionId);
     this.post({ type: "subscription-state", subscription });
     this.sendEnvelope(makeUnsubscribe(subscriptionId));
+    if (retiredResetRequirement) {
+      this.emitState({
+        connection: this.pendingResetSubscriptions.size === 0 ? "connected" : "stale"
+      });
+    }
   }
 
   private resendActiveSubscriptions(): void {
@@ -198,7 +208,8 @@ export class RealtimeWorkerCore {
         makeSubscribe(
           subscription.subscriptionId,
           subscription.viewKind,
-          subscription.filters
+          subscription.filters,
+          subscription.requestId
         )
       );
     }
@@ -271,7 +282,10 @@ export class RealtimeWorkerCore {
           return;
         }
         try {
-          const patch = decodeSnapshot(envelope.payload.value);
+          this.validateSnapshotProvenance(envelope.payload.value);
+          const patch = envelope.payload.value.notFound
+            ? decodeNotFoundSnapshot(envelope.payload.value)
+            : decodeSnapshot(envelope.payload.value);
           if (!this.applyEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installSnapshotCoverage(envelope, patch));
         } catch (error) {
@@ -426,7 +440,7 @@ export class RealtimeWorkerCore {
       Object.entries(this.loadedCoverage).filter(([, coverage]) => coverage.sourceId !== sourceId)
     );
     for (const subscription of Object.values(this.subscriptions)) {
-      if (subscription.status !== "unsubscribed") {
+      if (subscription.status === "active") {
         this.pendingResetSubscriptions.add(subscription.subscriptionId);
       }
     }
@@ -439,9 +453,6 @@ export class RealtimeWorkerCore {
     if (envelope.payload.case !== "snapshot") return patch;
     const snapshot = envelope.payload.value;
     const subscriptionId = snapshot.subscriptionId;
-    if (snapshot.schemaVersion === 1 && !subscriptionId) {
-      throw new Error("versioned snapshot lacks subscription provenance");
-    }
     const subscription = this.subscriptions[subscriptionId];
     const filters = subscription?.filters ?? {};
     const sourceIds = snapshot.cursor?.sources.map((source) => source.sourceId) ?? [];
@@ -527,6 +538,39 @@ export class RealtimeWorkerCore {
       connection: this.pendingResetSubscriptions.size === 0 ? "connected" : "stale"
     });
     return { entityOperations: transformed };
+  }
+
+  private validateSnapshotProvenance(snapshot: Snapshot): void {
+    if (snapshot.schemaVersion !== 1) return;
+    if (!snapshot.subscriptionId || !snapshot.requestId) {
+      throw new Error("versioned snapshot lacks subscription provenance");
+    }
+    const subscription = this.subscriptions[snapshot.subscriptionId];
+    if (!subscription || subscription.status === "unsubscribed") {
+      throw new Error("snapshot references an unknown or unsubscribed subscription");
+    }
+    if (subscription.requestId !== snapshot.requestId) {
+      throw new Error("snapshot request generation does not match current subscription");
+    }
+    if (canonicalViewKind(subscription.viewKind) !== canonicalViewKind(snapshot.viewKind)) {
+      throw new Error("snapshot view kind disagrees with subscription");
+    }
+    const selectedFilterKey = snapshot.viewKind === "session_detail"
+      ? "session_id"
+      : snapshot.viewKind === "team_workspace"
+        ? "team_id"
+        : snapshot.viewKind === "process_tail"
+          ? "process_id"
+          : undefined;
+    const selectedFilter = selectedFilterKey
+      ? subscription.filters[selectedFilterKey]
+      : undefined;
+    if (selectedFilterKey && (
+      !selectedFilter || snapshot.coverage?.entityIds.length !== 1 ||
+      snapshot.coverage.entityIds[0] !== selectedFilter
+    )) {
+      throw new Error("snapshot selected entity disagrees with subscription filters");
+    }
   }
 
   private failProtocolFrame(message: string): void {
@@ -616,7 +660,7 @@ export class RealtimeWorkerCore {
       !isValidCursorVector(sources) ||
       (isViewFrame && (
         !gatewayEpoch || gatewayStartedAtUnixNs === 0n ||
-        gatewaySeq === 0n || sources.length === 0
+        (!isSnapshot && gatewaySeq === 0n) || sources.length === 0
       ))
     ) {
       this.failProtocolFrame("cursor vector contains invalid or duplicate source authority");
@@ -816,6 +860,13 @@ function snapshotCoverageKind(
     return "window";
   }
   return "domain";
+}
+
+function canonicalViewKind(viewKind: string): string {
+  if (viewKind === "session") return "session_detail";
+  if (viewKind === "team" || viewKind === "team_stream") return "team_workspace";
+  if (viewKind === "process") return "process_tail";
+  return viewKind;
 }
 
 function cursorAuthorityFromEnvelope(

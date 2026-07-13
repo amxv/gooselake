@@ -46,6 +46,27 @@ export function decodeSnapshot(snapshot: Snapshot): EntityPatch {
   );
 }
 
+export function decodeNotFoundSnapshot(snapshot: Snapshot): EntityPatch {
+  requireDeclaredCoverage(snapshot.schemaVersion, snapshot.coverage);
+  const domain = domainForViewKind(snapshot.viewKind);
+  const ids = snapshot.coverage?.entityIds ?? [];
+  if (!domain || !isScopedDetailView(snapshot.viewKind) || ids.length !== 1) {
+    throw new ProtocolDecodeError("not-found snapshot must cover one selected detail entity");
+  }
+  if (new TextDecoder().decode(snapshot.body).trim() !== "null") {
+    throw new ProtocolDecodeError("not-found snapshot body must be null");
+  }
+  return {
+    entityOperations: [{
+      operation: "remove",
+      domain,
+      entityIds: ids,
+      authoritative: true,
+      payload: {}
+    }]
+  };
+}
+
 export function decodePatch(patch: Patch): EntityPatch {
   const operation = operationFromFrame(patch.schemaVersion, patch.operation, "upsert");
   requireDeclaredCoverage(patch.schemaVersion, patch.coverage);

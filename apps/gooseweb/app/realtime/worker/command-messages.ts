@@ -86,7 +86,8 @@ export function makeResume(
 export function makeSubscribe(
   subscriptionId: string,
   viewKind: string,
-  filters: Readonly<Record<string, string>>
+  filters: Readonly<Record<string, string>>,
+  requestId: string = crypto.randomUUID()
 ): RealtimeEnvelope {
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: PROTOCOL_VERSION,
@@ -99,7 +100,8 @@ export function makeSubscribe(
       value: create(SubscribeSchema, {
         subscriptionId,
         viewKind,
-        filters: { ...filters }
+        filters: { ...filters },
+        requestId
       })
     }
   });
@@ -336,7 +338,8 @@ function subscriptionStateToProto(subscription: SubscriptionState): Subscribe {
   return create(SubscribeSchema, {
     subscriptionId: subscription.subscriptionId,
     viewKind: subscription.viewKind,
-    filters: { ...subscription.filters }
+    filters: { ...subscription.filters },
+    requestId: subscription.requestId ?? ""
   });
 }
 

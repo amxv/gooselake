@@ -145,6 +145,12 @@ message Snapshot {
   // Identifies the active bounded view whose exact coverage this snapshot
   // installs. Empty is reserved for legacy producers.
   string subscription_id = 7;
+  // Echoes Subscribe.request_id to bind this snapshot to one exact request
+  // generation and reject late responses after subscription ID reuse.
+  string request_id = 8;
+  // Explicit authoritative absence for a scoped selected entity. The body
+  // must be null and coverage must name exactly that entity.
+  bool not_found = 9;
   reserved 20 to 49;
 }
 

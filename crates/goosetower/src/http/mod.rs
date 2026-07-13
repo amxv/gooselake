@@ -654,6 +654,7 @@ mod tests {
                 envelope(Payload::Subscribe(Subscribe {
                     subscription_id: "sub_board".to_string(),
                     view_kind: "board".to_string(),
+                    request_id: "request-board".to_string(),
                     filters: [("source_id".to_string(), "local".to_string())]
                         .into_iter()
                         .collect(),

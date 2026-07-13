@@ -1174,7 +1174,7 @@ function Index() {
 
   useEffect(() => {
     if (selectedProcess?.processId) {
-      subscribeRealtime(`process:${selectedProcess.processId}`, "process", {
+      subscribeRealtime(`process:${selectedProcess.processId}`, "process_tail", {
         process_id: selectedProcess.processId,
         tail: "visible"
       });

@@ -19,6 +19,7 @@ import type { WorkerOutbound } from "../app/realtime/types";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core";
 import {
   getGoosewebSnapshot,
+  getVisibleGoosewebSnapshot,
   resetGoosewebStoreForTests,
   updateGoosewebStore
 } from "../app/stores/gooseweb-store";
@@ -78,7 +79,10 @@ function snapshotEnvelope(input: {
   gatewayEpoch?: string;
   gatewayStartedAtUnixNs?: bigint;
   subscriptionId?: string;
+  requestId?: string;
+  notFound?: boolean;
 }) {
+  const subscriptionId = input.subscriptionId ?? `subscription-${input.viewKind}`;
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: 1,
     messageId: input.messageId,
@@ -89,7 +93,9 @@ function snapshotEnvelope(input: {
       case: "snapshot",
       value: create(SnapshotSchema, {
         viewKind: input.viewKind,
-        subscriptionId: input.subscriptionId ?? `subscription-${input.viewKind}`,
+        subscriptionId,
+        requestId: input.requestId ?? currentSubscriptionRequestId(subscriptionId),
+        notFound: input.notFound ?? false,
         schemaVersion: 1,
         operation: ViewOperation.REPLACE,
         cursor: {
@@ -107,6 +113,16 @@ function snapshotEnvelope(input: {
       })
     }
   });
+}
+
+function currentSubscriptionRequestId(subscriptionId: string): string {
+  return [...posted].reverse().find((message) =>
+    message.type === "subscription-state" && message.subscription.subscriptionId === subscriptionId
+  )?.type === "subscription-state"
+    ? ([...posted].reverse().find((message) =>
+        message.type === "subscription-state" && message.subscription.subscriptionId === subscriptionId
+      ) as Extract<WorkerOutbound, { type: "subscription-state" }>).subscription.requestId ?? ""
+    : "";
 }
 
 function patchEnvelope(input: {
@@ -303,6 +319,13 @@ await core.handleMessage({
 assert.equal(sockets.length, 3);
 sockets[2]?.open();
 sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, helloEnvelope("gateway-1", 100n)));
+await core.handleMessage({
+  type: "subscribe", subscriptionId: "subscription-board", viewKind: "board", filters: {}
+});
+await core.handleMessage({
+  type: "subscribe", subscriptionId: "subscription-session_detail",
+  viewKind: "session_detail", filters: { session_id: "session-1" }
+});
 await waitForPatchFlush();
 assert.equal(
   posted.some(
@@ -429,6 +452,63 @@ assert.equal(posted.some((message) =>
   message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 18n
 ), true, "malformed detail must not advance the cursor before a valid same-authority frame");
 
+await core.handleMessage({
+  type: "subscribe", subscriptionId: "retired-session", viewKind: "session_detail",
+  filters: { session_id: "session-1" }
+});
+const retiredRequestId = currentSubscriptionRequestId("retired-session");
+await core.handleMessage({ type: "unsubscribe", subscriptionId: "retired-session" });
+const cursorBeforeInvalidProvenance = getGoosewebSnapshot().cursor.gatewaySeq;
+const invalidProvenanceFrames = [
+  snapshotEnvelope({
+    messageId: "missing-provenance", gatewaySeq: 43n, viewKind: "session_detail",
+    domain: "session_details", entityIds: ["session-1"], subscriptionId: "",
+    requestId: "", sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }],
+    body: selectedBody
+  }),
+  snapshotEnvelope({
+    messageId: "unknown-provenance", gatewaySeq: 43n, viewKind: "session_detail",
+    domain: "session_details", entityIds: ["session-1"], subscriptionId: "unknown-session",
+    requestId: "unknown-request", sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }],
+    body: selectedBody
+  }),
+  snapshotEnvelope({
+    messageId: "retired-provenance", gatewaySeq: 43n, viewKind: "session_detail",
+    domain: "session_details", entityIds: ["session-1"], subscriptionId: "retired-session",
+    requestId: retiredRequestId, sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }],
+    body: selectedBody
+  }),
+  snapshotEnvelope({
+    messageId: "old-request-provenance", gatewaySeq: 43n, viewKind: "session_detail",
+    domain: "session_details", entityIds: ["session-1"],
+    requestId: "superseded-request", sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }],
+    body: selectedBody
+  }),
+  snapshotEnvelope({
+    messageId: "wrong-view-provenance", gatewaySeq: 43n, viewKind: "board",
+    domain: "fleet_rows", subscriptionId: "subscription-session_detail",
+    requestId: currentSubscriptionRequestId("subscription-session_detail"),
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }],
+    body: new TextEncoder().encode(JSON.stringify({ rows: [] }))
+  })
+];
+for (const frame of invalidProvenanceFrames) {
+  sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, frame));
+}
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, cursorBeforeInvalidProvenance,
+  "invalid subscription provenance must not advance or persist cursor authority");
+const correctedAt19 = snapshotEnvelope({
+  messageId: "missing-provenance", gatewaySeq: 43n, viewKind: "session_detail",
+  domain: "session_details", entityIds: ["session-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }],
+  body: selectedBody
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, correctedAt19));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.sourceCursors["source-1"]?.sourceSeq, 19n,
+  "corrected same-ID/same-authority snapshot applies after provenance rejection");
+
 const operationsBeforeMissingAuthority = posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length;
@@ -474,15 +554,6 @@ const invalidAuthoritySnapshots = [
     entityIds: ["session-1"],
     sources: [{ sourceId: "source-1", sourceEpoch: "", sourceSeq: 19n }],
     body: selectedBody
-  }),
-  snapshotEnvelope({
-    messageId: "zero-gateway-seq",
-    gatewaySeq: 0n,
-    viewKind: "session_detail",
-    domain: "session_details",
-    entityIds: ["session-1"],
-    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 19n }],
-    body: selectedBody
   })
 ];
 for (const invalid of invalidAuthoritySnapshots) {
@@ -514,7 +585,7 @@ assert.equal(posted.flatMap((message) =>
 
 const sessionSiblingFrames = [
   patchEnvelope({
-    messageId: "session-fleet-19", gatewaySeq: 43n, sourceSeq: 19n,
+    messageId: "session-fleet-19", gatewaySeq: 44n, sourceSeq: 19n,
     viewKind: "fleet_board", domain: "fleet_rows", entityId: "session-1",
     operation: ViewOperation.UPSERT,
     body: new TextEncoder().encode(JSON.stringify({
@@ -523,7 +594,7 @@ const sessionSiblingFrames = [
     }))
   }),
   patchEnvelope({
-    messageId: "session-summary-19", gatewaySeq: 44n, sourceSeq: 19n,
+    messageId: "session-summary-19", gatewaySeq: 45n, sourceSeq: 19n,
     viewKind: "session_summary", domain: "sessions", entityId: "session-1",
     operation: ViewOperation.UPSERT,
     body: new TextEncoder().encode(JSON.stringify({
@@ -532,7 +603,7 @@ const sessionSiblingFrames = [
     }))
   }),
   patchEnvelope({
-    messageId: "session-detail-19", gatewaySeq: 45n, sourceSeq: 19n,
+    messageId: "session-detail-19", gatewaySeq: 46n, sourceSeq: 19n,
     viewKind: "session_detail", domain: "session_details", entityId: "session-1",
     operation: ViewOperation.REPLACE, body: selectedBody
   })
@@ -560,12 +631,12 @@ const emptyTeamBody = new TextEncoder().encode(JSON.stringify({
 }));
 const teamSiblingFrames = [
   patchEnvelope({
-    messageId: "team-summary-20", gatewaySeq: 46n, sourceSeq: 20n,
+    messageId: "team-summary-20", gatewaySeq: 47n, sourceSeq: 20n,
     viewKind: "team_summary", domain: "teams", entityId: "team-1",
     operation: ViewOperation.UPSERT, body: emptyTeamBody
   }),
   patchEnvelope({
-    messageId: "team-workspace-20", gatewaySeq: 47n, sourceSeq: 20n,
+    messageId: "team-workspace-20", gatewaySeq: 48n, sourceSeq: 20n,
     viewKind: "team_workspace", domain: "team_workspaces", entityId: "team-1",
     operation: ViewOperation.REPLACE, body: emptyTeamBody
   })
@@ -579,6 +650,18 @@ assert.equal(posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length, operationsBeforeTeamSiblings + 2,
 "team summary/workspace siblings at equal source authority must both apply");
+await core.handleMessage({
+  type: "subscribe", subscriptionId: "subscription-team_workspace",
+  viewKind: "team_workspace", filters: { team_id: "team-1" }
+});
+const activateTeamSubscription = snapshotEnvelope({
+  messageId: "activate-team-subscription", gatewaySeq: 48n,
+  viewKind: "team_workspace", domain: "team_workspaces", entityIds: ["team-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 20n }],
+  body: emptyTeamBody
+});
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, activateTeamSubscription));
+await waitForPatchFlush();
 
 const highGatewayPatch = patchEnvelope({
   messageId: "pre-restart-high-gateway", gatewaySeq: 100n, sourceSeq: 21n,
@@ -648,6 +731,27 @@ await core.handleMessage({
   viewKind: "approval_inbox",
   filters: { source_id: "source-1", include_resolved: "false" }
 });
+await core.handleMessage({
+  type: "subscribe", subscriptionId: "failed-process", viewKind: "process",
+  filters: { process_id: "missing-process" }
+});
+for (const activation of [
+  snapshotEnvelope({
+    messageId: "activate-reset-board", subscriptionId: "reset-board-window",
+    gatewaySeq: 100n, viewKind: "board", domain: "fleet_rows",
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 21n }],
+    body: new TextEncoder().encode(JSON.stringify({ rows: [] }))
+  }),
+  snapshotEnvelope({
+    messageId: "activate-reset-approval", subscriptionId: "reset-approval-window",
+    gatewaySeq: 100n, viewKind: "approval_inbox", domain: "approvals",
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 21n }],
+    body: new TextEncoder().encode(JSON.stringify({ approvals: [] }))
+  })
+]) {
+  sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, activation));
+}
+await waitForPatchFlush();
 const preseededFleetRows = Object.fromEntries(Array.from({ length: 101 }, (_, index) => [
   `old-row-${index}`,
   {
@@ -686,6 +790,52 @@ assert.deepEqual(
 );
 assert.equal(getGoosewebSnapshot().connection, "stale",
   "source must remain stale until every required active coverage snapshot arrives");
+await core.handleMessage({ type: "unsubscribe", subscriptionId: "subscription-board" });
+assert.equal(getGoosewebSnapshot().connection, "stale",
+  "unsubscribe during reset retires only that requirement and reevaluates recovery");
+const deletedSelectedSession = snapshotEnvelope({
+  messageId: "deleted-selected-session",
+  subscriptionId: "subscription-session_detail",
+  gatewaySeq: 1n,
+  viewKind: "session_detail",
+  domain: "session_details",
+  entityIds: ["session-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 21n }],
+  body: new TextEncoder().encode("null"),
+  gatewayEpoch: "gateway-2",
+  gatewayStartedAtUnixNs: 2n,
+  notFound: true
+});
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, deletedSelectedSession));
+const deletedSelectedTeam = snapshotEnvelope({
+  messageId: "deleted-selected-team",
+  subscriptionId: "subscription-team_workspace",
+  gatewaySeq: 1n,
+  viewKind: "team_workspace",
+  domain: "team_workspaces",
+  entityIds: ["team-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 21n }],
+  body: new TextEncoder().encode("null"),
+  gatewayEpoch: "gateway-2",
+  gatewayStartedAtUnixNs: 2n,
+  notFound: true
+});
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, deletedSelectedTeam));
+await waitForPatchFlush();
+assert.equal(getVisibleGoosewebSnapshot().entities.sessionDetails["session-1"], undefined,
+  "explicit selected-entity absence retires stale detail without claiming malformed empty body");
+assert.equal(getVisibleGoosewebSnapshot().entities.teamWorkspaces["team-1"], undefined,
+  "explicit selected-team absence retires stale Team Comms and recovery requirement");
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.fleetRows).length, 0,
+  "production read model must hide unloaded fleet rows");
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.sessionDetails).length, 0,
+  "production read model must hide unloaded session detail");
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.teamWorkspaces).length, 0,
+  "production read model must hide unloaded Team Comms");
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.processes).length, 0,
+  "production read model must hide unloaded processes");
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.worktrees).length, 0,
+  "production read model must hide unloaded worktrees");
 
 const sourceTwoReplacementBody = new TextEncoder().encode(JSON.stringify({
   source_id: "source-2"
@@ -718,6 +868,13 @@ assert.equal(posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length, operationsBeforeSecondSource,
 "exact replay of each source reset publication must be suppressed");
+for (const frame of [
+  { ...deletedSelectedSession, messageId: "deleted-selected-session-after-all-resets", gatewaySeq: 2n },
+  { ...deletedSelectedTeam, messageId: "deleted-selected-team-after-all-resets", gatewaySeq: 2n }
+]) {
+  sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, frame));
+}
+await waitForPatchFlush();
 
 const boundedBoardRows = Array.from({ length: 100 }, (_, index) => ({
   row_id: `fresh-row-${index}`,
@@ -735,7 +892,7 @@ const boundedBoardRows = Array.from({ length: 100 }, (_, index) => ({
 const boundedBoardRefill = snapshotEnvelope({
   messageId: "bounded-board-refill",
   subscriptionId: "reset-board-window",
-  gatewaySeq: 2n,
+  gatewaySeq: 1n,
   viewKind: "board",
   domain: "fleet_rows",
   sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 21n }],
@@ -751,6 +908,10 @@ assert.equal(Object.keys(getGoosewebSnapshot().entities.fleetRows).length > 100,
   "a 100-row window must not make a 101-row preseeded source appear to contain only 100 rows");
 assert.ok(getGoosewebSnapshot().entities.fleetRows["old-row-100"],
   "out-of-window presentation data remains available but explicitly unloaded");
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.fleetRows).length, 100,
+  "production read model exposes only the exact loaded board window");
+assert.equal(getVisibleGoosewebSnapshot().entities.fleetRows["old-row-100"], undefined,
+  "out-of-window stale row must not be presented or actionable");
 assert.equal(
   getGoosewebSnapshot().loadedCoverage["source-1:fleetRows:reset-board-window"]?.entityIds.length,
   100,
@@ -764,7 +925,7 @@ assert.equal(
 const emptyApprovalRefill = snapshotEnvelope({
   messageId: "empty-approval-window-refill",
   subscriptionId: "reset-approval-window",
-  gatewaySeq: 2n,
+  gatewaySeq: 1n,
   viewKind: "approval_inbox",
   domain: "approvals",
   sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 21n }],

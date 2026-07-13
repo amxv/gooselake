@@ -171,6 +171,7 @@ export type CommandIntent = {
 
 export type SubscriptionState = {
   readonly subscriptionId: string;
+  readonly requestId?: string;
   readonly viewKind: string;
   readonly filters: Readonly<Record<string, string>>;
   readonly status: "subscribing" | "active" | "stale" | "unsubscribed";

@@ -83,6 +83,7 @@ message Subscribe {
   string subscription_id = 1;
   string view_kind = 2;
   map<string, string> filters = 3;
+  string request_id = 4;
   reserved 20 to 39;
 }
 

@@ -45,6 +45,10 @@ export function getGoosewebSnapshot(): GoosewebSnapshot {
   return snapshot;
 }
 
+export function getVisibleGoosewebSnapshot(): GoosewebSnapshot {
+  return visibleSnapshot(snapshot);
+}
+
 export function resetGoosewebStoreForTests(): void {
   snapshot = initialSnapshot;
 }
@@ -221,35 +225,60 @@ export function useConnectionState(): ConnectionState {
 }
 
 export function useGoosewebState() {
-  return useGoosewebSelector((state) => state);
+  return useGoosewebSelector(visibleSnapshot);
 }
 
 export function useFleetRows() {
-  return useGoosewebSelector((state) => Object.values(state.entities.fleetRows));
+  return useGoosewebSelector((state) => Object.values(visibleSnapshot(state).entities.fleetRows));
 }
 
 export function useSessions() {
-  return useGoosewebSelector((state) => Object.values(state.entities.sessions));
+  return useGoosewebSelector((state) => Object.values(visibleSnapshot(state).entities.sessions));
 }
 
 export function useTeams() {
-  return useGoosewebSelector((state) => Object.values(state.entities.teams));
+  return useGoosewebSelector((state) => Object.values(visibleSnapshot(state).entities.teams));
 }
 
 export function useApprovals() {
-  return useGoosewebSelector((state) => Object.values(state.entities.approvals));
+  return useGoosewebSelector((state) => Object.values(visibleSnapshot(state).entities.approvals));
 }
 
 export function useProcesses() {
-  return useGoosewebSelector((state) => Object.values(state.entities.processes));
+  return useGoosewebSelector((state) => Object.values(visibleSnapshot(state).entities.processes));
 }
 
 export function useWorktrees() {
-  return useGoosewebSelector((state) => Object.values(state.entities.worktrees));
+  return useGoosewebSelector((state) => Object.values(visibleSnapshot(state).entities.worktrees));
 }
 
 export function useSources() {
-  return useGoosewebSelector((state) => Object.values(state.entities.sources));
+  return useGoosewebSelector((state) => Object.values(visibleSnapshot(state).entities.sources));
+}
+
+let visibleSnapshotInput: GoosewebSnapshot | undefined;
+let visibleSnapshotOutput: GoosewebSnapshot | undefined;
+
+function visibleSnapshot(state: GoosewebSnapshot): GoosewebSnapshot {
+  if (state === visibleSnapshotInput && visibleSnapshotOutput) return visibleSnapshotOutput;
+  const entities = Object.fromEntries(
+    Object.entries(state.entities).map(([domain, records]) => [
+      domain,
+      Object.fromEntries(Object.entries(records).filter(([entityId, entity]) => {
+        const sourceId = (entity as { sourceId?: string }).sourceId;
+        if (!sourceId || !state.invalidatedSourceDomains[sourceId]?.includes(domain as keyof NormalizedEntities)) {
+          return true;
+        }
+        return Object.values(state.loadedCoverage).some((coverage) =>
+          coverage.sourceId === sourceId && coverage.domain === domain &&
+          coverage.entityIds.includes(entityId)
+        );
+      }))
+    ])
+  ) as NormalizedEntities;
+  visibleSnapshotInput = state;
+  visibleSnapshotOutput = { ...state, entities };
+  return visibleSnapshotOutput;
 }
 
 export function usePendingCommands() {

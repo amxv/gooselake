@@ -44,6 +44,48 @@ async fn replay_publication_reserves_one_matching_nested_gateway_sequence() {
 }
 
 #[tokio::test]
+async fn snapshots_use_last_reserved_authority_without_stealing_first_patch() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    let mut state = materialized_session_state("local", "static-0", "session_1");
+    state.reduce_source_event(runtime_source_event("local", "static-0", "session_1", 1));
+    gateway
+        .replace_materialized_state("local".to_string(), state)
+        .await;
+    let subscribe = || Subscribe {
+        subscription_id: "board".to_string(),
+        request_id: format!("request-{}", rand::random::<u64>()),
+        view_kind: "board".to_string(),
+        filters: HashMap::new(),
+    };
+    let (first, second) = tokio::join!(
+        gateway.snapshot_for_subscription(subscribe()),
+        gateway.snapshot_for_subscription(subscribe())
+    );
+    for snapshot in [first, second] {
+        let Some(Payload::Snapshot(snapshot)) = snapshot.payload else {
+            panic!("expected snapshot");
+        };
+        assert_eq!(snapshot.cursor.expect("snapshot cursor").gateway_seq, 0);
+    }
+    let patch = gateway
+        .record_replayable(gateway.patch_envelope(ledger_patch(1)))
+        .await;
+    assert_eq!(patch.gateway_seq, 1);
+    let mut conn = test_connection(&gateway);
+    gateway
+        .handle_resume(
+            &mut conn,
+            resume_request(&gateway, 0, 1, "static-0", vec![ledger_sub()]),
+        )
+        .await
+        .expect("resume after non-advancing snapshots");
+    assert_eq!(
+        payload_count(&drain_payloads(&mut conn), MessageKind::Patch),
+        1
+    );
+}
+
+#[tokio::test]
 async fn source_resync_records_bounded_source_ownership_reset() {
     let gateway = test_gateway(GoosetowerConfig::default());
     let mut state = MaterializedState::new("local", "epoch-restarted");
@@ -178,6 +220,7 @@ async fn source_over_prior_byte_budget_resets_and_refills_bounded_page() {
     let refill = gateway
         .snapshot_for_subscription(Subscribe {
             subscription_id: "bounded-board".to_string(),
+            request_id: "request-board".to_string(),
             view_kind: "board".to_string(),
             filters: HashMap::from([
                 ("source_id".to_string(), "local".to_string()),
@@ -213,6 +256,7 @@ async fn source_over_prior_entity_budget_resets_and_refills_exact_selected_detai
     let refill = gateway
         .snapshot_for_subscription(Subscribe {
             subscription_id: "selected-session".to_string(),
+            request_id: "request-session".to_string(),
             view_kind: "session_detail".to_string(),
             filters: HashMap::from([
                 ("source_id".to_string(), "local".to_string()),
@@ -241,6 +285,7 @@ fn selected_team_message_limits_are_clamped_for_all_filter_inputs() {
     ] {
         let subscription = Subscription::from_proto(&Subscribe {
             subscription_id: format!("team-{raw}"),
+            request_id: format!("request-team-{raw}"),
             view_kind: "team_workspace".to_string(),
             filters: HashMap::from([
                 ("team_id".to_string(), "team_1".to_string()),
@@ -391,6 +436,7 @@ async fn legacy_detail_subscriptions_publish_canonical_replacement_snapshots() {
 
     let subscribe = || Subscribe {
         subscription_id: "selected-session".to_string(),
+        request_id: "request-selected-session".to_string(),
         view_kind: "session".to_string(),
         filters: HashMap::from([
             ("source_id".to_string(), "local".to_string()),

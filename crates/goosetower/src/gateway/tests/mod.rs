@@ -400,6 +400,7 @@ fn resume_request(
 fn ledger_sub() -> Subscribe {
     Subscribe {
         subscription_id: "sub_ledger".to_string(),
+        request_id: "request-ledger".to_string(),
         view_kind: "ledger".to_string(),
         filters: Default::default(),
     }

@@ -47,8 +47,8 @@
     {
       "phase_id": "P09",
       "path": "verification/gooseweb/manifests/p09-worker-store-authority.json",
-      "revision": 1,
-      "sha256": "25c4c40944b9c3e9be865845b8fa824025bdefde9d1cc5427452e7fd6a91474a",
+      "revision": 2,
+      "sha256": "ea229a24c5c11837d4291ad50dcda942cdec41ce7d407a058446e7d2b71df40d",
       "activated_reason": "P09 verifies lossless ordered Worker/store reduction, explicit authority coverage and stale algebra, targeted gap repair, generation-safe disposable cursor caching, and both owned P04 baseline closures without claiming P10 lifecycle work."
     }
   ]

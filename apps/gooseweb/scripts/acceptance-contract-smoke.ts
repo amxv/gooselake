@@ -31,6 +31,7 @@ const ALTERNATE_MANIFEST_PATH = "verification/gooseweb/manifests/validator-alter
 const LIFECYCLE_STORE_PATH = "tmp/gg/gooseweb-migration/lifecycle";
 const P01_BASE_SHA = "ca88bfe56719f69fe59151372e0d5aa76b2c92ab";
 const manifest = readJson(P01_MANIFEST_PATH);
+const p09Manifest = readJson("verification/gooseweb/manifests/p09-worker-store-authority.json");
 const validatorManifest = readJson(VALIDATOR_MANIFEST_PATH);
 const manifestRegistry = readJson("verification/gooseweb/manifest-registry.json");
 const ledger = readJson("verification/gooseweb/ledger/phase-graph-seed.json");
@@ -71,6 +72,7 @@ const networkCapture: RecordJson = {
 
 assert.equal(sha256("tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md"), APPROVED_PLAN_SHA256, "immutable amended plan changed");
 validateManifest(manifest);
+validateManifest(p09Manifest);
 validateManifest(validatorManifest);
 validateManifestRegistry(manifestRegistry);
 const reusableP02Manifest = change(change(change(change(manifest, "manifest_id", "GW-P02-GENERIC-001"), "scenario.stable_scenario_id", "GW-P02-GENERIC-001"), "scenario.phase_id", "P02"), "baseline_detected", []);
@@ -127,6 +129,7 @@ const negativeCases: [string, () => void][] = [
   ["headed manifest mode", () => validateManifest(change(manifest, "browser_contract.execution_mode", "headed"))],
   ["missing Chromium version", () => validateManifest(omit(manifest, "browser_contract.chromium_version"))],
   ["empty scenario actions", () => validateManifest(change(manifest, "scenario.actions", []))],
+  ["fault observation missing scope exclusion", () => validateManifest(omit(p09Manifest, "scenario.fault_observations.0.scope_exclusion"))],
   ["missing authority chain", () => validateManifest(omit(manifest, "scenario.authority_chain"))],
   ["changed cardinality", () => validateManifest(change(manifest, "scenario.cardinality.commands", 2))],
   ["missing responsive assertion", () => validateManifest(change(manifest, "responsive.assertions", []))],

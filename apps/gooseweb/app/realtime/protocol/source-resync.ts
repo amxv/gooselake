@@ -14,10 +14,9 @@ export const SOURCE_REPLACEMENT_DOMAINS = [
 ] as const satisfies readonly EntityDomain[];
 
 /**
- * Decode the bounded ownership-reset commit. The commit deliberately carries
- * no source entities: it invalidates every source-owned domain atomically,
- * after which the connection's bounded active subscriptions repopulate the
- * summaries and selected detail windows they own.
+ * Decode the bounded ownership-reset commit. The commit carries no source
+ * entities: it invalidates every source-owned domain atomically, after which
+ * bounded subscriptions expose only their exact authoritative coverage.
  */
 export function decodeSourceSnapshotResync(resync: SourceSnapshotResync): EntityPatch {
   if (resync.schemaVersion !== 1) {

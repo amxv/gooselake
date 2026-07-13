@@ -77,7 +77,6 @@ export class RealtimeWorkerCore {
   private startupFramesSent = false;
   private invalidatedSourceDomains: Record<string, readonly EntityDomain[]> = {};
   private loadedCoverage: Record<string, LoadedCoverage> = {};
-  private readonly pendingResetSubscriptions = new Set<string>();
   private readonly frozenSources = new Set<string>();
   private readonly pendingStaleClearSources = new Set<string>();
 
@@ -196,12 +195,8 @@ export class RealtimeWorkerCore {
       status: "unsubscribed"
     };
     this.subscriptions[subscriptionId] = subscription;
-    const retiredResetRequirement = this.pendingResetSubscriptions.delete(subscriptionId);
     this.post({ type: "subscription-state", subscription });
     this.sendEnvelope(makeUnsubscribe(subscriptionId));
-    if (retiredResetRequirement) {
-      this.emitState(this.recoveryPatch());
-    }
   }
 
   private resendActiveSubscriptions(): void {
@@ -353,7 +348,7 @@ export class RealtimeWorkerCore {
           this.pendingStaleClearSources.add(envelope.payload.value.sourceId);
           this.handleEntityPatch(patch);
           this.resendActiveSubscriptions();
-          const recovery = this.recoveryPatch();
+          const recovery = this.recoveryPatch(envelope.payload.value.sourceId);
           this.emitState({
             ...recovery,
             invalidatedSourceDomains: this.invalidatedSourceDomains,
@@ -440,11 +435,6 @@ export class RealtimeWorkerCore {
     this.loadedCoverage = Object.fromEntries(
       Object.entries(this.loadedCoverage).filter(([, coverage]) => coverage.sourceId !== sourceId)
     );
-    for (const subscription of Object.values(this.subscriptions)) {
-      if (subscription.status === "active") {
-        this.pendingResetSubscriptions.add(subscription.subscriptionId);
-      }
-    }
   }
 
   private installSnapshotCoverage(
@@ -527,7 +517,6 @@ export class RealtimeWorkerCore {
       }
       if (sourceIds.length === 0) transformed.push(operation);
     }
-    this.pendingResetSubscriptions.delete(subscriptionId);
     if (subscription) {
       const active = { ...subscription, status: "active" as const };
       this.subscriptions[subscriptionId] = active;
@@ -709,10 +698,13 @@ export class RealtimeWorkerCore {
   }
 
   private requestTargetedRepair(sourceId: string, reason: string): void {
+    this.invalidateSourceCoverage(sourceId);
     this.frozenSources.add(sourceId);
     this.pendingStaleClearSources.add(sourceId);
     this.emitState({
       connection: "stale",
+      invalidatedSourceDomains: this.invalidatedSourceDomains,
+      loadedCoverage: this.loadedCoverage,
       staleSourceOperations: [{
         operation: "add",
         sourceIds: [sourceId],
@@ -729,7 +721,6 @@ export class RealtimeWorkerCore {
         status: "subscribing" as const
       };
       this.subscriptions[subscription.subscriptionId] = repairing;
-      this.pendingResetSubscriptions.add(subscription.subscriptionId);
       this.post({ type: "subscription-state", subscription: repairing });
       this.sendEnvelope(makeSubscribe(
         repairing.subscriptionId,
@@ -740,16 +731,16 @@ export class RealtimeWorkerCore {
     }
   }
 
-  private recoveryPatch(): GoosewebStorePatch {
-    if (this.pendingResetSubscriptions.size > 0) {
-      return { connection: "stale" };
-    }
-    const recoveredSources = [...this.pendingStaleClearSources];
-    this.pendingStaleClearSources.clear();
+  private recoveryPatch(authoritativeResetSourceId?: string): GoosewebStorePatch {
+    const recoveredSources = [...this.pendingStaleClearSources].filter(
+      (sourceId) => sourceId === authoritativeResetSourceId ||
+        (this.invalidatedSourceDomains[sourceId] ?? SOURCE_REPLACEMENT_DOMAINS).length === 0
+    );
+    recoveredSources.forEach((sourceId) => this.pendingStaleClearSources.delete(sourceId));
     recoveredSources.forEach((sourceId) => this.frozenSources.delete(sourceId));
     return {
-      connection: "connected",
-      lastError: undefined,
+      connection: this.pendingStaleClearSources.size > 0 ? "stale" : "connected",
+      ...(this.pendingStaleClearSources.size === 0 ? { lastError: undefined } : {}),
       ...(recoveredSources.length > 0 ? {
         staleSourceOperations: [{
           operation: "remove" as const,

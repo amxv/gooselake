@@ -207,6 +207,28 @@
             }
           }
         },
+        "fault_observations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "fault",
+              "reconstruction",
+              "expected_visible",
+              "scope_exclusion"
+            ],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "fault": { "type": "string", "minLength": 1 },
+              "reconstruction": { "type": "string", "minLength": 1 },
+              "expected_visible": { "type": "string", "minLength": 1 },
+              "scope_exclusion": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
         "authority_chain": {
           "type": "array",
           "minItems": 4,

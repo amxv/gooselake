@@ -4,6 +4,7 @@ import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
 import {
   HelloSchema,
   RealtimeEnvelopeSchema,
+  SourceSnapshotResyncSchema,
   type RealtimeEnvelope
 } from "../src/gen/goosetower/v1/realtime_pb";
 import {
@@ -23,6 +24,7 @@ import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core
 import { mergeStorePatch } from "../app/realtime/worker/store-patch-batcher";
 import {
   getGoosewebSnapshot,
+  getVisibleGoosewebSnapshot,
   resetGoosewebStoreForTests,
   setSubscription,
   updateGoosewebStore
@@ -184,8 +186,13 @@ await core.handleMessage({
   type: "subscribe", subscriptionId: "session-detail", viewKind: "session_detail",
   filters: { source_id: "source-1", session_id: "session-a" }
 });
-const initialRequestId = latestSubscribeRequestId(socket);
+await core.handleMessage({
+  type: "subscribe", subscriptionId: "ledger", viewKind: "ledger",
+  filters: { source_id: "source-1" }
+});
+const initialRequestId = latestSubscribeRequestId(socket, "session-detail");
 socket.receive(snapshot("initial", initialRequestId, 1n, 4n, "session-a", "initial"));
+socket.receive(ledgerSnapshot("initial-ledger", latestSubscribeRequestId(socket, "ledger"), 1n, 4n));
 await flush();
 assert.equal(getGoosewebSnapshot().subscriptions["session-detail"]?.status, "active",
   "subscription activates only after its valid snapshot");
@@ -200,6 +207,32 @@ assert.equal(detail("session-a")?.appendedText, "updated-a");
 assert.equal(detail("session-b")?.appendedText, "updated-b",
   "ordered same-frame siblings survive one publication");
 
+updateGoosewebStore({ entityOperations: [
+  operation("sessions", "source-1::session-a", {
+    sourceId: "source-1", sessionId: "session-a", provider: "codex", status: "ready"
+  }),
+  operation("sessions", "source-1::session-b", {
+    sourceId: "source-1", sessionId: "session-b", provider: "codex", status: "ready"
+  }),
+  operation("teamWorkspaces", "source-1::team-a", {
+    sourceId: "source-1", teamId: "team-a", messages: [], deliveries: []
+  }),
+  operation("teamWorkspaces", "source-1::team-b", {
+    sourceId: "source-1", teamId: "team-b", messages: [], deliveries: []
+  }),
+  operation("processes", "source-1::process-a", {
+    sourceId: "source-1", processId: "process-a", status: "running"
+  }),
+  operation("processes", "source-1::process-b", {
+    sourceId: "source-1", processId: "process-b", status: "running"
+  }),
+  operation("worktrees", "source-1::worktree-a", {
+    sourceId: "source-1", worktreeId: "worktree-a", path: "/tmp/a"
+  }),
+  operation("worktrees", "source-1::worktree-b", {
+    sourceId: "source-1", worktreeId: "worktree-b", path: "/tmp/b"
+  })
+] });
 const coherentBeforeGap = structuredClone(getGoosewebSnapshot().entities);
 socket.receive(patchFrame("jump", 4n, 7n, "session-a", "must-not-apply"));
 await flush();
@@ -207,7 +240,13 @@ assert.deepEqual(getGoosewebSnapshot().entities, coherentBeforeGap,
   "same-epoch source jump freezes before entity mutation");
 assert.equal(getGoosewebSnapshot().staleSources["source-1"], "source_cursor_gap");
 assert.equal(getGoosewebSnapshot().subscriptions["session-detail"]?.status, "subscribing");
-const repairRequestId = latestSubscribeRequestId(socket);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.sessions).length, 0);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.teamWorkspaces).length, 0);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.processes).length, 0);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.worktrees).length, 0,
+  "same-epoch repair hides every uncovered source-owned domain before refill");
+const repairRequestId = latestSubscribeRequestId(socket, "session-detail");
+const ledgerRepairRequestId = latestSubscribeRequestId(socket, "ledger");
 
 socket.receive(create(RealtimeEnvelopeSchema, {
   protocolVersion: 1, messageId: "gap-filled", messageKind: MessageKind.SOURCE_GAP_FILLED,
@@ -220,19 +259,43 @@ assert.equal(getGoosewebSnapshot().staleSources["source-1"], "source_cursor_gap"
   "gap-filled signal cannot clear safety before authoritative repair");
 
 socket.receive(snapshot("repair", repairRequestId, 4n, 7n, "session-a", "repaired"));
+socket.receive(ledgerSnapshot("repair-ledger", ledgerRepairRequestId, 4n, 7n));
 await flush();
-assert.equal(getGoosewebSnapshot().staleSources["source-1"], undefined);
+assert.equal(getGoosewebSnapshot().staleSources["source-1"], "source_cursor_gap",
+  "selected and coverage-free ledger snapshots cannot clear source-wide staleness");
 assert.equal(getGoosewebSnapshot().subscriptions["session-detail"]?.status, "active");
 assert.equal(detail("session-a")?.appendedText, "repaired");
+assert.equal(getVisibleGoosewebSnapshot().entities.sessionDetails[
+  sourceEntityKey("source-1", "session-b")
+], undefined, "unrepaired sibling detail remains hidden");
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.teamWorkspaces).length, 0);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.processes).length, 0);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.worktrees).length, 0,
+  "uncovered team/process/worktree siblings remain hidden and non-actionable");
+
+socket.receive(sourceReset("repair-reset", 5n, 7n));
+await flush();
+assert.equal(getGoosewebSnapshot().staleSources["source-1"], undefined,
+  "only the authoritative full-source reset clears the remaining stale safety state");
+assert.equal(getGoosewebSnapshot().connection, "connected");
+assert.deepEqual(getGoosewebSnapshot().entities.sessions, coherentBeforeGap.sessions);
+assert.deepEqual(getGoosewebSnapshot().entities.teamWorkspaces, coherentBeforeGap.teamWorkspaces);
+assert.deepEqual(getGoosewebSnapshot().entities.processes, coherentBeforeGap.processes);
+assert.deepEqual(getGoosewebSnapshot().entities.worktrees, coherentBeforeGap.worktrees);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.sessions).length, 0);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.teamWorkspaces).length, 0);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.processes).length, 0);
+assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.worktrees).length, 0,
+  "full-source reset keeps pre-gap presentation data invalidated and non-actionable");
 
 const authorityBeforeMalformed = getGoosewebSnapshot();
-socket.receive(patchFrame("unknown-operation", 5n, 8n, "session-a", "bad", {
+socket.receive(patchFrame("unknown-operation", 6n, 8n, "session-a", "bad", {
   operation: ViewOperation.UNSPECIFIED
 }));
-socket.receive(patchFrame("unknown-version", 5n, 8n, "session-a", "bad", {
+socket.receive(patchFrame("unknown-version", 6n, 8n, "session-a", "bad", {
   schemaVersion: 2
 }));
-socket.receive(patchFrame("malformed", 5n, 8n, "session-a", "bad", {
+socket.receive(patchFrame("malformed", 6n, 8n, "session-a", "bad", {
   body: new TextEncoder().encode("{")
 }));
 await flush();
@@ -325,12 +388,53 @@ function patchFrame(
   });
 }
 
-function latestSubscribeRequestId(socket: FakeSocket): string {
+function latestSubscribeRequestId(socket: FakeSocket, subscriptionId: string): string {
   for (const bytes of [...socket.sent].reverse()) {
     const envelope = fromBinary(RealtimeEnvelopeSchema, bytes);
-    if (envelope.payload.case === "subscribe") return envelope.payload.value.requestId;
+    if (envelope.payload.case === "subscribe" &&
+      envelope.payload.value.subscriptionId === subscriptionId) {
+      return envelope.payload.value.requestId;
+    }
   }
   throw new Error("subscribe frame missing");
+}
+
+function ledgerSnapshot(
+  messageId: string,
+  requestId: string,
+  gatewaySeq: bigint,
+  sourceSeq: bigint
+): RealtimeEnvelope {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1, messageId, messageKind: MessageKind.SNAPSHOT, lane: Lane.STATE,
+    payload: { case: "snapshot", value: create(SnapshotSchema, {
+      viewKind: "ledger", schemaVersion: 1, operation: ViewOperation.REPLACE,
+      subscriptionId: "ledger", requestId, cursor: cursor(gatewaySeq, sourceSeq),
+      coverage: create(ViewCoverageSchema, {
+        domains: ["processes"], entityIds: [], authoritative: true
+      }),
+      body: new TextEncoder().encode(JSON.stringify({ entities: {} }))
+    }) }
+  });
+}
+
+function sourceReset(messageId: string, gatewaySeq: bigint, sourceSeq: bigint): RealtimeEnvelope {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1, messageId, messageKind: MessageKind.SOURCE_SNAPSHOT_RESYNC,
+    lane: Lane.CRITICAL,
+    payload: { case: "sourceSnapshotResync", value: create(SourceSnapshotResyncSchema, {
+      sourceId: "source-1", reason: "gap repair", schemaVersion: 1,
+      cursor: cursor(gatewaySeq, sourceSeq),
+      coverage: create(ViewCoverageSchema, {
+        domains: [
+          "fleet_rows", "sessions", "session_details", "teams", "team_workspaces",
+          "approvals", "processes", "worktrees", "sources"
+        ],
+        authoritative: true
+      }),
+      body: new TextEncoder().encode(JSON.stringify({ source_id: "source-1" }))
+    }) }
+  });
 }
 
 function detail(sessionId: string) {

@@ -29,6 +29,10 @@ export type EntityPatch = {
 
 type DecodedEntities = { readonly entities: NormalizedEntityPatch };
 
+export function sourceEntityKey(sourceId: string, entityId: string): string {
+  return `${encodeURIComponent(sourceId)}::${encodeURIComponent(entityId)}`;
+}
+
 export function decodeSnapshot(snapshot: Snapshot): EntityPatch {
   const operation = operationFromFrame(snapshot.schemaVersion, snapshot.operation, "replace");
   if (operation !== "replace") {
@@ -42,7 +46,8 @@ export function decodeSnapshot(snapshot: Snapshot): EntityPatch {
     snapshot.coverage?.domains,
     snapshot.coverage?.entityIds,
     snapshot.coverage?.authoritative ?? snapshot.schemaVersion === 0,
-    undefined
+    undefined,
+    snapshot.cursor?.sources.map((source) => source.sourceId) ?? []
   );
 }
 
@@ -56,7 +61,8 @@ export function decodeNotFoundSnapshot(snapshot: Snapshot): EntityPatch {
   const domains = snapshot.coverage?.domains ?? [];
   if (
     !domain || !isScopedDetailView(snapshot.viewKind) || !snapshot.coverage?.authoritative ||
-    domains.length !== 1 || domains[0] !== expectedWireDomain || ids.length !== 1 || !ids[0]
+    domains.length !== 1 || domains[0] !== expectedWireDomain || ids.length !== 1 || !ids[0] ||
+    snapshot.cursor?.sources.length !== 1
   ) {
     throw new ProtocolDecodeError("not-found snapshot must cover one selected detail entity");
   }
@@ -67,7 +73,8 @@ export function decodeNotFoundSnapshot(snapshot: Snapshot): EntityPatch {
     entityOperations: [{
       operation: "remove",
       domain,
-      entityIds: ids,
+      entityIds: [sourceEntityKey(snapshot.cursor!.sources[0]!.sourceId, ids[0]!)],
+      sourceId: snapshot.cursor!.sources[0]!.sourceId,
       authoritative: true,
       payload: {}
     }]
@@ -93,7 +100,8 @@ export function decodePatch(patch: Patch): EntityPatch {
     patch.coverage?.domains,
     entityIds,
     patch.coverage?.authoritative ?? patch.schemaVersion === 0,
-    patch.entity?.entityId || undefined
+    patch.entity?.entityId || undefined,
+    patch.cursor?.sources.map((source) => source.sourceId) ?? []
   );
 }
 
@@ -141,7 +149,8 @@ function withOperation(
   declaredDomains: readonly string[] | undefined,
   entityIds: readonly string[] | undefined,
   authoritative: boolean,
-  entityRefId: string | undefined
+  entityRefId: string | undefined,
+  sourceIds: readonly string[]
 ): EntityPatch {
   // Ledger remains a presentation-only bounded compatibility view until its
   // normalized browser domain lands. It is deliberately named here so future
@@ -173,10 +182,17 @@ function withOperation(
   if (new Set(coveredIds).size !== coveredIds.length) {
     throw new ProtocolDecodeError("coverage contains duplicate entity IDs");
   }
+  const payloadSourceIds = [...new Set(Object.values(payload).map((entity) =>
+    (entity as { sourceId?: string }).sourceId
+  ).filter((sourceId): sourceId is string => Boolean(sourceId)))];
+  const effectiveSourceIds = sourceIds.length > 0 ? sourceIds : payloadSourceIds;
+  if (coveredIds.length > 0 && effectiveSourceIds.length !== 1) {
+    throw new ProtocolDecodeError("entity-scoped coverage requires exactly one cursor source");
+  }
   const operationIds = coveredIds.length > 0
-    ? coveredIds
+    ? coveredIds.map((id) => sourceEntityKey(effectiveSourceIds[0]!, id))
     : domains.length === 0 ? payloadIds : [];
-  if (entityRefId && (operationIds.length !== 1 || operationIds[0] !== entityRefId)) {
+  if (entityRefId && (coveredIds.length !== 1 || coveredIds[0] !== entityRefId)) {
     throw new ProtocolDecodeError("patch entity reference disagrees with coverage");
   }
   if (operation === "remove") {
@@ -245,34 +261,34 @@ function decodeViewBody(viewKind: string, body: Uint8Array): DecodedEntities {
     case "fleet-row":
     case "board-row": {
       const row = fromBinary(FleetRowViewSchema, body);
-      return { entities: { fleetRows: { [row.rowId]: row } } };
+      return { entities: { fleetRows: { [sourceEntityKey(row.sourceId, row.rowId)]: row } } };
     }
     case "session":
     case "session_summary": {
       const session = fromBinary(SessionViewSchema, body);
-      return { entities: { sessions: { [session.sessionId]: session } } };
+      return { entities: { sessions: { [sourceEntityKey(session.sourceId, session.sessionId)]: session } } };
     }
     case "team":
     case "team_summary": {
       const team = fromBinary(TeamViewSchema, body);
-      return { entities: { teams: { [team.teamId]: team } } };
+      return { entities: { teams: { [sourceEntityKey(team.sourceId, team.teamId)]: team } } };
     }
     case "approval": {
       const approval = fromBinary(ApprovalViewSchema, body);
-      return { entities: { approvals: { [approval.approvalId]: approval } } };
+      return { entities: { approvals: { [sourceEntityKey(approval.sourceId, approval.approvalId)]: approval } } };
     }
     case "process": {
       const process = fromBinary(ProcessViewSchema, body);
-      return { entities: { processes: { [process.processId]: process } } };
+      return { entities: { processes: { [sourceEntityKey(process.sourceId, process.processId)]: process } } };
     }
     case "worktree": {
       const worktree = fromBinary(WorktreeViewSchema, body);
-      return { entities: { worktrees: { [worktree.worktreeId]: worktree } } };
+      return { entities: { worktrees: { [sourceEntityKey(worktree.sourceId, worktree.worktreeId)]: worktree } } };
     }
     case "source-health":
     case "source": {
       const source = fromBinary(SourceHealthViewSchema, body);
-      return { entities: { sources: { [source.sourceId]: source } } };
+      return { entities: { sources: { [sourceEntityKey(source.sourceId, source.sourceId)]: source } } };
     }
     default:
       throw new ProtocolDecodeError(`view kind ${viewKind} has no binary decoder`);
@@ -306,7 +322,7 @@ function decodeJsonViewBody(
           fleetRows: Object.fromEntries(
             rows.map((row) => {
               const entity = normalizeFleetRow(row);
-              return [entity.rowId, entity];
+              return [sourceEntityKey(entity.sourceId, entity.rowId), entity];
             })
           )
         }
@@ -314,7 +330,7 @@ function decodeJsonViewBody(
     }
     case "fleet_board": {
       const row = normalizeFleetRow(value);
-      return { entities: { fleetRows: { [row.rowId]: row } } };
+      return { entities: { fleetRows: { [sourceEntityKey(row.sourceId, row.rowId)]: row } } };
     }
     case "approval_inbox": {
       const approvals = arrayFrom((value as { approvals?: unknown }).approvals);
@@ -323,7 +339,7 @@ function decodeJsonViewBody(
           approvals: Object.fromEntries(
             approvals.map((approval) => {
               const entity = normalizeApproval(approval);
-              return [entity.approvalId, entity];
+              return [sourceEntityKey(entity.sourceId, entity.approvalId), entity];
             })
           )
         }
@@ -339,41 +355,48 @@ function decodeJsonViewBody(
             sources: Object.fromEntries(
               value.map((item) => {
                 const source = normalizeSource(item);
-                return [source.sourceId, source];
+                return [sourceEntityKey(source.sourceId, source.sourceId), source];
               })
             )
           }
         };
       }
       const source = normalizeSource(value);
-      return { entities: { sources: { [source.sourceId]: source } } };
+      return { entities: { sources: { [sourceEntityKey(source.sourceId, source.sourceId)]: source } } };
     }
     case "team":
     case "team_summary": {
       const team = normalizeTeam(value);
-      return team ? { entities: { teams: { [team.teamId]: team } } } : { entities: {} };
+      return team ? {
+        entities: { teams: { [sourceEntityKey(team.sourceId, team.teamId)]: team } }
+      } : { entities: {} };
     }
     case "session":
     case "session_summary": {
       const session = normalizeSession(value);
       return session
-        ? { entities: { sessions: { [session.sessionId]: session } } }
+        ? { entities: { sessions: { [sourceEntityKey(session.sourceId, session.sessionId)]: session } } }
         : { entities: {} };
     }
     case "session_detail": {
       validateSessionDetailBody(value);
       const detail = normalizeSessionDetail(value);
       if (!detail) throw new ProtocolDecodeError("session_detail normalization failed");
-      return { entities: { sessionDetails: { [detail.sessionId]: detail } } };
+      return {
+        entities: { sessionDetails: { [sourceEntityKey(detail.sourceId, detail.sessionId)]: detail } }
+      };
     }
     case "process_tail": {
+      validateProcessTailBody(value);
       const tail = strictRecord(value, "process_tail");
       const process = normalizeProcess(tail.process);
       if (!process) throw new ProtocolDecodeError("process_tail lacks a valid process");
       if (stringFrom(tail.source_id) !== process.sourceId) {
         throw new ProtocolDecodeError("process_tail source disagrees with process");
       }
-      return { entities: { processes: { [process.processId]: process } } };
+      return {
+        entities: { processes: { [sourceEntityKey(process.sourceId, process.processId)]: process } }
+      };
     }
     case "team_workspace":
     case "team_stream": {
@@ -382,17 +405,20 @@ function decodeJsonViewBody(
       if (!workspace) throw new ProtocolDecodeError("team_workspace normalization failed");
       return {
         entities: {
-          teamWorkspaces: { [workspace.teamId]: workspace }
+          teamWorkspaces: { [sourceEntityKey(workspace.sourceId, workspace.teamId)]: workspace }
         }
       };
     }
     case "teams": {
+      validateTeamSummaryListBody(value);
       const teams = arrayFrom((value as { teams?: unknown }).teams)
         .map((team) => normalizeTeam(team))
         .filter((team): team is NonNullable<ReturnType<typeof normalizeTeam>> => Boolean(team));
       return {
         entities: {
-          teams: Object.fromEntries(teams.map((team) => [team.teamId, team]))
+          teams: Object.fromEntries(teams.map((team) => [
+            sourceEntityKey(team.sourceId, team.teamId), team
+          ]))
         }
       };
     }
@@ -401,6 +427,74 @@ function decodeJsonViewBody(
     default:
       throw new ProtocolDecodeError(`unknown JSON view kind ${viewKind}`);
   }
+}
+
+function validateTeamSummaryListBody(value: unknown): void {
+  const list = strictRecord(value, "teams");
+  if ("error" in list) throw new ProtocolDecodeError("teams body is an error object");
+  const totalRows = requireNumber(list.total_rows, "teams.total_rows");
+  if (!Number.isInteger(totalRows) || totalRows < 0) {
+    throw new ProtocolDecodeError("teams.total_rows must be a nonnegative integer");
+  }
+  const identities = new Set<string>();
+  requireArray(list.teams, "teams.teams", (item, index) => {
+    const team = strictRecord(item, `teams.teams[${index}]`);
+    const sourceId = requireString(team.source_id, `teams.teams[${index}].source_id`);
+    const teamId = requireString(team.team_id, `teams.teams[${index}].team_id`);
+    requireString(team.name, `teams.teams[${index}].name`);
+    requireString(team.lead_member_id, `teams.teams[${index}].lead_member_id`);
+    const identity = sourceEntityKey(sourceId, teamId);
+    if (identities.has(identity)) throw new ProtocolDecodeError("teams contains duplicate identity");
+    identities.add(identity);
+  });
+  requireArray(list.cursors, "teams.cursors", (item, index) => {
+    const cursor = strictRecord(item, `teams.cursors[${index}]`);
+    requireString(cursor.source_id, `teams.cursors[${index}].source_id`);
+    requireString(cursor.source_epoch, `teams.cursors[${index}].source_epoch`);
+    const seq = requireNumber(cursor.source_seq, `teams.cursors[${index}].source_seq`);
+    if (!Number.isSafeInteger(seq) || seq < 0) {
+      throw new ProtocolDecodeError("teams cursor sequence must be a nonnegative safe integer");
+    }
+  });
+}
+
+function validateProcessTailBody(value: unknown): void {
+  const tail = strictRecord(value, "process_tail");
+  if ("error" in tail) throw new ProtocolDecodeError("process_tail body is an error object");
+  requireString(tail.source_id, "process_tail.source_id");
+  const process = strictRecord(tail.process, "process_tail.process");
+  for (const field of ["source_id", "process_id", "status"] as const) {
+    requireString(process[field], `process_tail.process.${field}`);
+  }
+  for (const field of ["session_id", "cwd"] as const) {
+    requireNullableString(process[field], `process_tail.process.${field}`);
+  }
+  for (const field of ["pid", "ended_at", "exit_code", "signal", "stdout_bytes", "stderr_bytes"] as const) {
+    requireNullableNumber(process[field], `process_tail.process.${field}`);
+  }
+  for (const field of ["stdout_truncated", "stderr_truncated"] as const) {
+    requireNullableBoolean(process[field], `process_tail.process.${field}`);
+  }
+  if (!("command" in process)) throw new ProtocolDecodeError("process_tail.process.command is required");
+  requireNumber(process.started_at, "process_tail.process.started_at");
+  requireNumber(process.version, "process_tail.process.version");
+  for (const stream of ["stdout", "stderr"] as const) {
+    requireArray(tail[stream], `process_tail.${stream}`, (item, index) => {
+      const line = strictRecord(item, `process_tail.${stream}[${index}]`);
+      requireString(line.stream, `process_tail.${stream}[${index}].stream`);
+      requireString(line.content, `process_tail.${stream}[${index}].content`, true);
+      requireNumber(line.bytes, `process_tail.${stream}[${index}].bytes`);
+      requireBoolean(line.truncated, `process_tail.${stream}[${index}].truncated`);
+    });
+  }
+  requireArray(tail.samples, "process_tail.samples", (item, index) => {
+    const sample = strictRecord(item, `process_tail.samples[${index}]`);
+    for (const field of ["source_seq", "bytes_seen", "bytes_written", "created_at"] as const) {
+      requireNumber(sample[field], `process_tail.samples[${index}].${field}`);
+    }
+    requireString(sample.stream, `process_tail.samples[${index}].stream`);
+    requireBoolean(sample.truncated, `process_tail.samples[${index}].truncated`);
+  });
 }
 
 function validateSessionDetailBody(value: unknown): void {
@@ -559,6 +653,25 @@ function requireNumber(value: unknown, field: string): number {
 function requireNullableString(value: unknown, field: string): string | null {
   if (value !== null && typeof value !== "string") {
     throw new ProtocolDecodeError(`${field} must be a string or null`);
+  }
+  return value;
+}
+
+function requireNullableNumber(value: unknown, field: string): number | null {
+  if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) {
+    throw new ProtocolDecodeError(`${field} must be a number or null`);
+  }
+  return value;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new ProtocolDecodeError(`${field} must be a boolean`);
+  return value;
+}
+
+function requireNullableBoolean(value: unknown, field: string): boolean | null {
+  if (value !== null && typeof value !== "boolean") {
+    throw new ProtocolDecodeError(`${field} must be a boolean or null`);
   }
   return value;
 }

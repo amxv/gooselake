@@ -15,9 +15,10 @@ import {
   ViewCoverageSchema,
   ViewOperation
 } from "../src/gen/goosetower/v1/view_pb";
-import { EntityRefSchema } from "../src/gen/goosetower/v1/common_pb";
+import { EntityRefSchema, SourceCursorSchema } from "../src/gen/goosetower/v1/common_pb";
 import type { WorkerOutbound } from "../app/realtime/types";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core";
+import { sourceEntityKey } from "../app/realtime/protocol/entities";
 import {
   getGoosewebSnapshot,
   getVisibleGoosewebSnapshot,
@@ -79,6 +80,7 @@ function snapshotEnvelope(input: {
   gatewaySeq?: bigint;
   gatewayEpoch?: string;
   gatewayStartedAtUnixNs?: bigint;
+  sourceId?: string;
   subscriptionId?: string;
   requestId?: string;
   notFound?: boolean;
@@ -160,7 +162,7 @@ function patchEnvelope(input: {
           gatewayEpoch: input.gatewayEpoch ?? "gateway-1",
           gatewayStartedAtUnixNs: input.gatewayStartedAtUnixNs ?? 100n,
           sources: [{
-            sourceId: "source-1",
+            sourceId: input.sourceId ?? "source-1",
             sourceEpoch: input.sourceEpoch ?? "epoch-1",
             sourceSeq: input.sourceSeq
           }]
@@ -757,7 +759,7 @@ for (const activation of [
 }
 await waitForPatchFlush();
 const preseededFleetRows = Object.fromEntries(Array.from({ length: 101 }, (_, index) => [
-  `old-row-${index}`,
+  sourceEntityKey("source-1", `old-row-${index}`),
   {
     rowId: `old-row-${index}`,
     sourceId: "source-1",
@@ -826,9 +828,13 @@ const deletedSelectedTeam = snapshotEnvelope({
 });
 sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, deletedSelectedTeam));
 await waitForPatchFlush();
-assert.equal(getVisibleGoosewebSnapshot().entities.sessionDetails["session-1"], undefined,
+assert.equal(getVisibleGoosewebSnapshot().entities.sessionDetails[
+  sourceEntityKey("source-1", "session-1")
+], undefined,
   "explicit selected-entity absence retires stale detail without claiming malformed empty body");
-assert.equal(getVisibleGoosewebSnapshot().entities.teamWorkspaces["team-1"], undefined,
+assert.equal(getVisibleGoosewebSnapshot().entities.teamWorkspaces[
+  sourceEntityKey("source-1", "team-1")
+], undefined,
   "explicit selected-team absence retires stale Team Comms and recovery requirement");
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.fleetRows).length, 0,
   "production read model must hide unloaded fleet rows");
@@ -910,11 +916,13 @@ assert.equal(getGoosewebSnapshot().connection, "stale",
   "one of multiple required coverage snapshots must not mark reset complete");
 assert.equal(Object.keys(getGoosewebSnapshot().entities.fleetRows).length > 100, true,
   "a 100-row window must not make a 101-row preseeded source appear to contain only 100 rows");
-assert.ok(getGoosewebSnapshot().entities.fleetRows["old-row-100"],
+assert.ok(getGoosewebSnapshot().entities.fleetRows[sourceEntityKey("source-1", "old-row-100")],
   "out-of-window presentation data remains available but explicitly unloaded");
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.fleetRows).length, 100,
   "production read model exposes only the exact loaded board window");
-assert.equal(getVisibleGoosewebSnapshot().entities.fleetRows["old-row-100"], undefined,
+assert.equal(getVisibleGoosewebSnapshot().entities.fleetRows[
+  sourceEntityKey("source-1", "old-row-100")
+], undefined,
   "out-of-window stale row must not be presented or actionable");
 assert.equal(
   getGoosewebSnapshot().loadedCoverage["source-1:fleetRows:reset-board-window"]?.entityIds.length,
@@ -977,7 +985,9 @@ await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 3n,
   "an ordinary same-epoch snapshot must not regress gateway authority");
 
-assert.ok(getVisibleGoosewebSnapshot().entities.sessionDetails["session-1"],
+assert.ok(getVisibleGoosewebSnapshot().entities.sessionDetails[
+  sourceEntityKey("source-1", "session-1")
+],
   "a current patch must make a previously not-found detail visible");
 const livePatchFixtures = [
   patchEnvelope({
@@ -1028,10 +1038,10 @@ for (const frame of livePatchFixtures) {
   sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, frame));
 }
 await waitForPatchFlush();
-assert.ok(getVisibleGoosewebSnapshot().entities.fleetRows["live-row"]);
-assert.ok(getVisibleGoosewebSnapshot().entities.teams["team-live"]);
-assert.ok(getVisibleGoosewebSnapshot().entities.approvals["approval-live"]);
-assert.ok(getVisibleGoosewebSnapshot().entities.teamWorkspaces["team-live"]);
+assert.ok(getVisibleGoosewebSnapshot().entities.fleetRows[sourceEntityKey("source-1", "live-row")]);
+assert.ok(getVisibleGoosewebSnapshot().entities.teams[sourceEntityKey("source-1", "team-live")]);
+assert.ok(getVisibleGoosewebSnapshot().entities.approvals[sourceEntityKey("source-1", "approval-live")]);
+assert.ok(getVisibleGoosewebSnapshot().entities.teamWorkspaces[sourceEntityKey("source-1", "team-live")]);
 
 for (const [index, [viewKind, domain, entityId]] of [
   ["fleet_board", "fleet_rows", "live-row"],
@@ -1047,11 +1057,11 @@ for (const [index, [viewKind, domain, entityId]] of [
   })));
 }
 await waitForPatchFlush();
-assert.equal(getVisibleGoosewebSnapshot().entities.fleetRows["live-row"], undefined);
-assert.equal(getVisibleGoosewebSnapshot().entities.teams["team-live"], undefined);
-assert.equal(getVisibleGoosewebSnapshot().entities.approvals["approval-live"], undefined);
-assert.equal(getVisibleGoosewebSnapshot().entities.teamWorkspaces["team-live"], undefined);
-assert.equal(getVisibleGoosewebSnapshot().entities.sessionDetails["session-1"], undefined);
+assert.equal(getVisibleGoosewebSnapshot().entities.fleetRows[sourceEntityKey("source-1", "live-row")], undefined);
+assert.equal(getVisibleGoosewebSnapshot().entities.teams[sourceEntityKey("source-1", "team-live")], undefined);
+assert.equal(getVisibleGoosewebSnapshot().entities.approvals[sourceEntityKey("source-1", "approval-live")], undefined);
+assert.equal(getVisibleGoosewebSnapshot().entities.teamWorkspaces[sourceEntityKey("source-1", "team-live")], undefined);
+assert.equal(getVisibleGoosewebSnapshot().entities.sessionDetails[sourceEntityKey("source-1", "session-1")], undefined);
 
 await core.handleMessage({
   type: "subscribe", subscriptionId: "process-tail-live", viewKind: "process_tail",
@@ -1061,7 +1071,10 @@ const processTailBody = new TextEncoder().encode(JSON.stringify({
   source_id: "source-1",
   process: {
     source_id: "source-1", process_id: "process-live", status: "running",
-    command: ["make", "check"], exit_code: null
+    command: ["make", "check"], session_id: null, pid: null, cwd: null,
+    started_at: 1, ended_at: null, exit_code: null, signal: null,
+    stdout_bytes: null, stderr_bytes: null, stdout_truncated: null,
+    stderr_truncated: null, version: 1
   },
   stdout: [], stderr: [], samples: []
 }));
@@ -1082,14 +1095,17 @@ assert.equal([...posted].reverse().find((message) =>
     message.subscription.subscriptionId === "process-tail-live"
   ) as Extract<WorkerOutbound, { type: "subscription-state" }>).subscription.status : undefined,
 "active");
-assert.ok(getVisibleGoosewebSnapshot().entities.processes["process-live"]);
+assert.ok(getVisibleGoosewebSnapshot().entities.processes[sourceEntityKey("source-1", "process-live")]);
 
 const cursorBeforeMalformedAbsence = getGoosewebSnapshot().cursor.gatewaySeq;
 const wrongSourceProcessBody = new TextEncoder().encode(JSON.stringify({
   source_id: "source-2",
   process: {
     source_id: "source-2", process_id: "process-live", status: "running",
-    command: ["wrong"], exit_code: null
+    command: ["wrong"], session_id: null, pid: null, cwd: null,
+    started_at: 1, ended_at: null, exit_code: null, signal: null,
+    stdout_bytes: null, stderr_bytes: null, stdout_truncated: null,
+    stderr_truncated: null, version: 1
   },
   stdout: [], stderr: [], samples: []
 }));
@@ -1136,7 +1152,7 @@ for (const [index, malformed] of [
 await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, cursorBeforeMalformedAbsence,
   "malformed not-found frames must not advance canonical authority");
-assert.ok(getVisibleGoosewebSnapshot().entities.processes["process-live"]);
+assert.ok(getVisibleGoosewebSnapshot().entities.processes[sourceEntityKey("source-1", "process-live")]);
 
 const missingProcess = snapshotEnvelope({
   messageId: "process-tail-not-found", subscriptionId: "process-tail-live",
@@ -1148,8 +1164,138 @@ const missingProcess = snapshotEnvelope({
 });
 sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, missingProcess));
 await waitForPatchFlush();
-assert.equal(getVisibleGoosewebSnapshot().entities.processes["process-live"], undefined,
+assert.equal(getVisibleGoosewebSnapshot().entities.processes[
+  sourceEntityKey("source-1", "process-live")
+], undefined,
   "an exact process-tail not-found snapshot removes only the selected process");
+
+const malformedProcessBodies: unknown[] = [
+  { error: "failed" },
+  { ...JSON.parse(new TextDecoder().decode(processTailBody)), process: {
+    ...JSON.parse(new TextDecoder().decode(processTailBody)).process, status: undefined
+  } },
+  { ...JSON.parse(new TextDecoder().decode(processTailBody)), process: {
+    ...JSON.parse(new TextDecoder().decode(processTailBody)).process, command: undefined
+  } },
+  { ...JSON.parse(new TextDecoder().decode(processTailBody)), process: {
+    ...JSON.parse(new TextDecoder().decode(processTailBody)).process, exit_code: "bad"
+  } },
+  { ...JSON.parse(new TextDecoder().decode(processTailBody)), stdout: null },
+  { ...JSON.parse(new TextDecoder().decode(processTailBody)), samples: [{ stream: "stdout" }] },
+  { ...JSON.parse(new TextDecoder().decode(processTailBody)), process: {
+    ...JSON.parse(new TextDecoder().decode(processTailBody)).process, process_id: "other-process"
+  } }
+];
+const cursorBeforeMalformedProcess = getGoosewebSnapshot().cursor.gatewaySeq;
+for (const [index, body] of malformedProcessBodies.entries()) {
+  sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, snapshotEnvelope({
+    messageId: `malformed-process-tail-${index}`, subscriptionId: "process-tail-live",
+    gatewaySeq: 14n, viewKind: "process_tail", domain: "processes",
+    entityIds: ["process-live"],
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 33n }],
+    body: new TextEncoder().encode(JSON.stringify(body)),
+    gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n
+  })));
+}
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, cursorBeforeMalformedProcess,
+  "malformed current process-tail bodies must not advance authority");
+
+await core.handleMessage({
+  type: "subscribe", subscriptionId: "collision-teams", viewKind: "teams", filters: {}
+});
+const strictTeamsBody = {
+  teams: [
+    { source_id: "source-1", team_id: "team-collision", name: "A", lead_member_id: "a" },
+    { source_id: "source-2", team_id: "team-collision", name: "B", lead_member_id: "b" }
+  ],
+  total_rows: 2,
+  cursors: [
+    { source_id: "source-1", source_epoch: "epoch-1", source_seq: 33 },
+    { source_id: "source-2", source_epoch: "epoch-2", source_seq: 9 }
+  ]
+};
+const malformedTeamsBodies: unknown[] = [
+  {}, { error: "failed" }, { teams: null, total_rows: 0, cursors: [] },
+  { teams: {}, total_rows: 0, cursors: [] },
+  { teams: [{ source_id: "source-1" }], total_rows: 1, cursors: [] },
+  { ...strictTeamsBody, teams: [strictTeamsBody.teams[0], strictTeamsBody.teams[0]] },
+  { ...strictTeamsBody, teams: [
+    { source_id: "source-3", team_id: "rogue", name: "Rogue", lead_member_id: "r" }
+  ], total_rows: 1 }
+];
+const cursorBeforeMalformedTeams = getGoosewebSnapshot().cursor.gatewaySeq;
+for (const [index, body] of malformedTeamsBodies.entries()) {
+  sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, snapshotEnvelope({
+    messageId: `malformed-teams-${index}`, subscriptionId: "collision-teams",
+    gatewaySeq: 14n, viewKind: "teams", domain: "teams",
+    sources: [
+      { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 33n },
+      { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n }
+    ],
+    body: new TextEncoder().encode(JSON.stringify(body)),
+    gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n
+  })));
+}
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, cursorBeforeMalformedTeams,
+  "malformed teams lists must not advance authority");
+
+const collisionTeams = snapshotEnvelope({
+  messageId: "collision-teams-valid", subscriptionId: "collision-teams",
+  gatewaySeq: 14n, viewKind: "teams", domain: "teams",
+  sources: [
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 33n },
+    { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n }
+  ],
+  body: new TextEncoder().encode(JSON.stringify(strictTeamsBody)),
+  gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n
+});
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, collisionTeams));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().entities.teams[sourceEntityKey("source-1", "team-collision")]?.name, "A");
+assert.equal(getGoosewebSnapshot().entities.teams[sourceEntityKey("source-2", "team-collision")]?.name, "B");
+
+for (const [index, body] of [
+  { source_id: "source-2", team: { id: "rogue", name: "Rogue", lead_agent_id: "b" }, members: [] },
+  { team: { id: "rogue", name: "Rogue", lead_agent_id: "b" }, members: [] }
+].entries()) {
+  sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, patchEnvelope({
+    messageId: `source-mismatch-patch-${index}`, gatewaySeq: 15n, sourceSeq: 34n,
+    gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
+    viewKind: "team_summary", domain: "teams", entityId: "rogue",
+    operation: ViewOperation.UPSERT,
+    body: new TextEncoder().encode(JSON.stringify(body))
+  })));
+}
+const multiSourcePatch = patchEnvelope({
+  messageId: "multi-source-entity-patch", gatewaySeq: 15n, sourceSeq: 34n,
+  gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
+  viewKind: "team_summary", domain: "teams", entityId: "rogue",
+  operation: ViewOperation.UPSERT,
+  body: new TextEncoder().encode(JSON.stringify({
+    source_id: "source-1", team: { id: "rogue", name: "Rogue", lead_agent_id: "a" }, members: []
+  }))
+});
+if (multiSourcePatch.payload.case === "patch" && multiSourcePatch.payload.value.cursor) {
+  multiSourcePatch.payload.value.cursor.sources.push(create(SourceCursorSchema, {
+    sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n
+  }));
+}
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, multiSourcePatch));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 14n,
+  "body/cursor source mismatch and multi-source entity patches must not advance authority");
+
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, patchEnvelope({
+  messageId: "remove-source-a-collision", gatewaySeq: 15n, sourceSeq: 34n,
+  gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
+  viewKind: "team_summary", domain: "teams", entityId: "team-collision",
+  operation: ViewOperation.REMOVE, body: new Uint8Array()
+})));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().entities.teams[sourceEntityKey("source-1", "team-collision")], undefined);
+assert.equal(getGoosewebSnapshot().entities.teams[sourceEntityKey("source-2", "team-collision")]?.name, "B");
 
 const largeSourceBody = new TextEncoder().encode(JSON.stringify({ source_id: "source-big" }));
 for (const [index, sourceSeq] of [
@@ -1159,7 +1305,7 @@ for (const [index, sourceSeq] of [
 ].entries()) {
   const reset = sourceResyncEnvelope({
     messageId: `large-source-seq-${index}`,
-    gatewaySeq: BigInt(30 + index),
+    gatewaySeq: BigInt(40 + index),
     gatewayEpoch: "gateway-2",
     gatewayStartedAtUnixNs: 2n,
     sourceId: "source-big",

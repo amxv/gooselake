@@ -16,7 +16,8 @@ import {
 import {
   decodePatch,
   decodeSnapshot,
-  ProtocolDecodeError
+  ProtocolDecodeError,
+  sourceEntityKey
 } from "../app/realtime/protocol/entities";
 import {
   getGoosewebSnapshot,
@@ -86,8 +87,11 @@ const corpusEnvelope = fromBinary(
 assert.equal(corpusEnvelope.payload.case, "snapshot");
 assert.equal(corpusEnvelope.payload.value.cursor?.gatewaySeq, 41n);
 assert.equal(corpusEnvelope.payload.value.cursor?.sources[0]?.sourceSeq, 17n);
-const corpusPatch = decodeSnapshot(corpusEnvelope.payload.value);
-assert.equal(corpusPatch.entityOperations[0]?.entityIds[0], "session-1");
+assert.throws(
+  () => decodeSnapshot(corpusEnvelope.payload.value),
+  ProtocolDecodeError,
+  "selected detail coverage must not claim multiple cursor sources"
+);
 const typescriptCorpusFrames = [
   create(RealtimeEnvelopeSchema, {
     protocolVersion: 1,
@@ -202,7 +206,9 @@ const initial = decodeSnapshot(create(SnapshotSchema, {
 }));
 updateGoosewebStore(initial);
 assert.deepEqual(
-  getGoosewebSnapshot().entities.teamWorkspaces["team-1"]?.messages.map((item) => item.id),
+  getGoosewebSnapshot().entities.teamWorkspaces[
+    sourceEntityKey("source-1", "team-1")
+  ]?.messages.map((item) => item.id),
   ["stale-message", "current-message"]
 );
 
@@ -215,7 +221,9 @@ const repair = decodeSnapshot(create(SnapshotSchema, {
 }));
 updateGoosewebStore(repair);
 assert.deepEqual(
-  getGoosewebSnapshot().entities.teamWorkspaces["team-1"]?.messages.map((item) => item.id),
+  getGoosewebSnapshot().entities.teamWorkspaces[
+    sourceEntityKey("source-1", "team-1")
+  ]?.messages.map((item) => item.id),
   ["current-message"],
   "authoritative replacement must remove stale Team Comms detail"
 );
@@ -229,7 +237,9 @@ const session = decodeSnapshot(create(SnapshotSchema, {
 }));
 updateGoosewebStore(session);
 assert.equal(
-  getGoosewebSnapshot().entities.sessionDetails["session-1"]?.transcript
+  getGoosewebSnapshot().entities.sessionDetails[
+    sourceEntityKey("source-1", "session-1")
+  ]?.transcript
     .some((row) => row.text === "terminal answer"),
   true,
   "fresh snapshot must reconstruct minimal terminal session detail"
@@ -239,10 +249,13 @@ const remove = decodePatch(create(PatchSchema, {
   viewKind: "team_workspace",
   schemaVersion: 1,
   operation: ViewOperation.REMOVE,
+  cursor: { sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 1n }] },
   coverage: coverage("team_workspaces", "team-1")
 }));
 updateGoosewebStore(remove);
-assert.equal(getGoosewebSnapshot().entities.teamWorkspaces["team-1"], undefined);
+assert.equal(getGoosewebSnapshot().entities.teamWorkspaces[
+  sourceEntityKey("source-1", "team-1")
+], undefined);
 
 resetGoosewebStoreForTests();
 updateGoosewebStore(decodeSnapshot(create(SnapshotSchema, {
@@ -260,8 +273,12 @@ const emptyWorkspace = decodeSnapshot(create(SnapshotSchema, {
   body: teamBody([])
 }));
 updateGoosewebStore(emptyWorkspace);
-assert.deepEqual(getGoosewebSnapshot().entities.teamWorkspaces["team-1"]?.messages, []);
-assert.deepEqual(getGoosewebSnapshot().entities.teamWorkspaces["team-1"]?.deliveries, []);
+assert.deepEqual(getGoosewebSnapshot().entities.teamWorkspaces[
+  sourceEntityKey("source-1", "team-1")
+]?.messages, []);
+assert.deepEqual(getGoosewebSnapshot().entities.teamWorkspaces[
+  sourceEntityKey("source-1", "team-1")
+]?.deliveries, []);
 
 const malformedBodies = [
   encoder.encode("{}"),
@@ -378,7 +395,7 @@ updateGoosewebStore({
 });
 assert.deepEqual(
   Object.keys(getGoosewebSnapshot().entities.sessionDetails).sort(),
-  ["session-A", "session-B"],
+  [sourceEntityKey("source-1", "session-A"), sourceEntityKey("source-1", "session-B")],
   "same-flush scoped replacements retain both payloads"
 );
 const upsertB = decodePatch(create(PatchSchema, {
@@ -395,13 +412,14 @@ updateGoosewebStore({
 });
 assert.deepEqual(
   Object.keys(getGoosewebSnapshot().entities.sessionDetails).sort(),
-  ["session-A", "session-B"],
+  [sourceEntityKey("source-1", "session-A"), sourceEntityKey("source-1", "session-B")],
   "same-flush replace+upsert retains both scoped payloads"
 );
 const removeB = decodePatch(create(PatchSchema, {
   viewKind: "session_detail",
   schemaVersion: 1,
   operation: ViewOperation.REMOVE,
+  cursor: { sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 1n }] },
   entity: create(EntityRefSchema, { entityId: "session-B" }),
   coverage: coverage("session_details", "session-B")
 }));
@@ -409,7 +427,7 @@ updateGoosewebStore({
   entityOperations: [...upsertB.entityOperations, ...removeB.entityOperations]
 });
 assert.equal(
-  getGoosewebSnapshot().entities.sessionDetails["session-B"],
+  getGoosewebSnapshot().entities.sessionDetails[sourceEntityKey("source-1", "session-B")],
   undefined,
   "same-flush upsert+remove preserves operation order"
 );
@@ -438,7 +456,7 @@ updateGoosewebStore({
 });
 assert.deepEqual(
   Object.keys(getGoosewebSnapshot().entities.teamWorkspaces).sort(),
-  ["team-1", "team-2"],
+  [sourceEntityKey("source-1", "team-1"), sourceEntityKey("source-1", "team-2")],
   "same-flush team replacements retain both payloads"
 );
 

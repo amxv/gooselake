@@ -300,6 +300,11 @@ export class RealtimeWorkerCore {
         }
         try {
           const patch = decodePatch(envelope.payload.value);
+          this.validateEntitySourceAgreement(
+            patch,
+            envelope.payload.value.cursor?.sources.map((source) => source.sourceId) ?? [],
+            true
+          );
           if (!this.applyEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installPatchCoverage(envelope, patch));
         } catch (error) {
@@ -585,6 +590,8 @@ export class RealtimeWorkerCore {
   }
 
   private validateSnapshotPatchSource(snapshot: Snapshot, patch: EntityPatch): void {
+    const cursorSourceIds = snapshot.cursor?.sources.map((source) => source.sourceId) ?? [];
+    this.validateEntitySourceAgreement(patch, cursorSourceIds, isSelectedViewKind(snapshot.viewKind));
     const subscription = this.subscriptions[snapshot.subscriptionId];
     const requestedSourceId = subscription?.filters.source_id;
     if (!requestedSourceId || !isSelectedViewKind(snapshot.viewKind)) return;
@@ -592,6 +599,25 @@ export class RealtimeWorkerCore {
       for (const entity of Object.values(operation.payload)) {
         if ((entity as { sourceId?: string }).sourceId !== requestedSourceId) {
           throw new Error("selected snapshot body disagrees with requested source");
+        }
+      }
+    }
+  }
+
+  private validateEntitySourceAgreement(
+    patch: EntityPatch,
+    cursorSourceIds: readonly string[],
+    requireSingleSource: boolean
+  ): void {
+    if (requireSingleSource && cursorSourceIds.length !== 1) {
+      throw new Error("entity-scoped frame requires exactly one cursor source");
+    }
+    const allowed = new Set(cursorSourceIds);
+    for (const operation of patch.entityOperations) {
+      for (const entity of Object.values(operation.payload)) {
+        const sourceId = (entity as { sourceId?: string }).sourceId;
+        if (!sourceId || !allowed.has(sourceId)) {
+          throw new Error("frame body source is missing from canonical cursor authority");
         }
       }
     }

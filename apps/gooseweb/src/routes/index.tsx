@@ -71,6 +71,7 @@ import {
   unsubscribeRealtime
 } from "../../app/realtime/client";
 import { goosewebConfig } from "../../app/realtime/config";
+import { sourceEntityKey } from "../../app/realtime/protocol/entities";
 import type {
   ConnectionState,
   CommandIntent,
@@ -1111,24 +1112,26 @@ function Index() {
   }, [filters]);
 
   const selectedRow =
-    fleetRows.find((row) => row.rowId === selectedRowId) ?? fleetRows[0];
+    fleetRows.find((row) => sourceEntityKey(row.sourceId, row.rowId) === selectedRowId) ?? fleetRows[0];
   const selectedSession =
-    sessionOptions.find((session) => session.sessionId === selectedSessionId) ??
-    sessionOptions.find((session) => session.sessionId === selectedRow?.sessionId) ??
+    sessionOptions.find((session) => sourceEntityKey(session.sourceId, session.sessionId) === selectedSessionId) ??
+    sessionOptions.find((session) => session.sessionId === selectedRow?.sessionId &&
+      session.sourceId === selectedRow?.sourceId) ??
     sessionOptions[0];
   const selectedAgentSession =
-    sessionOptions.find((session) => session.sessionId === selectedSessionId) ??
+    sessionOptions.find((session) => sourceEntityKey(session.sourceId, session.sessionId) === selectedSessionId) ??
     (selectedSessionId ? selectedSession : undefined);
   const selectedTeam =
-    teams.find((team) => team.teamId === selectedTeamId) ??
-    teams.find((team) => team.teamId === selectedRow?.teamId) ??
+    teams.find((team) => sourceEntityKey(team.sourceId, team.teamId) === selectedTeamId) ??
+    teams.find((team) => team.teamId === selectedRow?.teamId && team.sourceId === selectedRow?.sourceId) ??
     teams[0];
   const selectedApproval =
-    approvals.find((approval) => approval.approvalId === selectedApprovalId) ??
-    approvals.find((approval) => approval.sessionId === selectedSession?.sessionId) ??
+    approvals.find((approval) => sourceEntityKey(approval.sourceId, approval.approvalId) === selectedApprovalId) ??
+    approvals.find((approval) => approval.sessionId === selectedSession?.sessionId &&
+      approval.sourceId === selectedSession?.sourceId) ??
     approvals[0];
   const selectedProcess =
-    processes.find((process) => process.processId === selectedProcessId) ??
+    processes.find((process) => sourceEntityKey(process.sourceId, process.processId) === selectedProcessId) ??
     processes[0];
   const selectedWorktree =
     worktrees.find(
@@ -1141,15 +1144,15 @@ function Index() {
     if (!selectedRow) {
       return;
     }
-    setSelectedRowId(selectedRow.rowId);
+    setSelectedRowId(sourceEntityKey(selectedRow.sourceId, selectedRow.rowId));
     if (selectedRow.sessionId) {
-      subscribeRealtime(`session:${selectedRow.sessionId}`, "session_detail", {
+      subscribeRealtime(`session:${sourceEntityKey(selectedRow.sourceId, selectedRow.sessionId)}`, "session_detail", {
         session_id: selectedRow.sessionId,
         source_id: selectedRow.sourceId
       });
     }
     if (selectedRow.teamId) {
-      subscribeRealtime(`team:${selectedRow.teamId}`, "team_workspace", {
+      subscribeRealtime(`team:${sourceEntityKey(selectedRow.sourceId, selectedRow.teamId)}`, "team_workspace", {
         team_id: selectedRow.teamId,
         source_id: selectedRow.sourceId
       });
@@ -1160,7 +1163,7 @@ function Index() {
     if (!selectedSession?.sessionId) {
       return;
     }
-    subscribeRealtime(`session:${selectedSession.sessionId}`, "session_detail", {
+    subscribeRealtime(`session:${sourceEntityKey(selectedSession.sourceId, selectedSession.sessionId)}`, "session_detail", {
       session_id: selectedSession.sessionId,
       source_id: selectedSession.sourceId
     });
@@ -1170,7 +1173,7 @@ function Index() {
     if (!selectedTeam?.teamId) {
       return;
     }
-    subscribeRealtime(`team:${selectedTeam.teamId}`, "team_workspace", {
+    subscribeRealtime(`team:${sourceEntityKey(selectedTeam.sourceId, selectedTeam.teamId)}`, "team_workspace", {
       team_id: selectedTeam.teamId,
       source_id: selectedTeam.sourceId
     });
@@ -1178,7 +1181,7 @@ function Index() {
 
   useEffect(() => {
     if (selectedProcess?.processId) {
-      subscribeRealtime(`process:${selectedProcess.processId}`, "process_tail", {
+      subscribeRealtime(`process:${sourceEntityKey(selectedProcess.sourceId, selectedProcess.processId)}`, "process_tail", {
         process_id: selectedProcess.processId,
         source_id: selectedProcess.sourceId,
         tail: "visible"
@@ -1191,8 +1194,8 @@ function Index() {
       return;
     }
     const nextTeam = teams[0];
-    setSelectedTeamId(nextTeam.teamId);
-    subscribeRealtime(`team:${nextTeam.teamId}`, "team_workspace", {
+    setSelectedTeamId(sourceEntityKey(nextTeam.sourceId, nextTeam.teamId));
+    subscribeRealtime(`team:${sourceEntityKey(nextTeam.sourceId, nextTeam.teamId)}`, "team_workspace", {
       team_id: nextTeam.teamId,
       source_id: nextTeam.sourceId
     });
@@ -2433,7 +2436,9 @@ function MissionViewBody({
         processes={processes}
         selectedSession={selectedSession}
         sessionDetail={
-          selectedSession ? sessionDetails[selectedSession.sessionId] : undefined
+          selectedSession ? sessionDetails[
+            sourceEntityKey(selectedSession.sourceId, selectedSession.sessionId)
+          ] : undefined
         }
         selectedApproval={selectedApproval}
         teamWorkspaces={teamWorkspaces}
@@ -2450,7 +2455,9 @@ function MissionViewBody({
         sessions={sessions}
         sources={sources}
         selectedTeam={selectedTeam}
-        teamWorkspace={selectedTeam ? teamWorkspaces[selectedTeam.teamId] : undefined}
+        teamWorkspace={selectedTeam ? teamWorkspaces[
+          sourceEntityKey(selectedTeam.sourceId, selectedTeam.teamId)
+        ] : undefined}
         setSelectedTeamId={setSelectedTeamId}
         pendingCommands={pendingCommands}
         sourceGapActive={sourceGapActive}
@@ -2465,7 +2472,9 @@ function MissionViewBody({
     return (
       <TeamCommsPane
         selectedTeam={selectedTeam}
-        teamWorkspace={selectedTeam ? teamWorkspaces[selectedTeam.teamId] : undefined}
+        teamWorkspace={selectedTeam ? teamWorkspaces[
+          sourceEntityKey(selectedTeam.sourceId, selectedTeam.teamId)
+        ] : undefined}
         sourceGapActive={sourceGapActive}
       />
     );
@@ -3088,15 +3097,16 @@ function MissionProcessRail({
                 className={cn(
                   "mission-process-card",
                   process.processId === selectedProcess?.processId &&
+                    process.sourceId === selectedProcess?.sourceId &&
                     "mission-process-card-active"
                 )}
-                key={process.processId}
+                key={sourceEntityKey(process.sourceId, process.processId)}
                 role="button"
                 tabIndex={0}
-                onClick={() => onSelectProcess(process.processId)}
+                onClick={() => onSelectProcess(sourceEntityKey(process.sourceId, process.processId))}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
-                    onSelectProcess(process.processId);
+                    onSelectProcess(sourceEntityKey(process.sourceId, process.processId));
                   }
                 }}
               >
@@ -3563,10 +3573,10 @@ function BoardPane({
                 <TableRow
                   className={cn(
                     "cursor-pointer",
-                    row.rowId === selectedRowId && "bg-muted/60"
+                    sourceEntityKey(row.sourceId, row.rowId) === selectedRowId && "bg-muted/60"
                   )}
-                  key={row.rowId}
-                  onClick={() => setSelectedRowId(row.rowId)}
+                  key={sourceEntityKey(row.sourceId, row.rowId)}
+                  onClick={() => setSelectedRowId(sourceEntityKey(row.sourceId, row.rowId))}
                 >
                   <TableCell>
                     <div className="grid gap-0.5">
@@ -3630,14 +3640,16 @@ function AgentPane({
   }, [focusChangesFixture]);
 
   const sessionApprovals = approvals.filter(
-    (approval) => approval.sessionId === selectedSession?.sessionId
+    (approval) => approval.sessionId === selectedSession?.sessionId &&
+      approval.sourceId === selectedSession?.sourceId
   );
   const relatedProcesses = processes.filter(
     (process) =>
       !selectedSession?.sourceId || process.sourceId === selectedSession.sourceId
   );
   const focusedApproval =
-    selectedApproval?.sessionId === selectedSession?.sessionId
+    selectedApproval?.sessionId === selectedSession?.sessionId &&
+      selectedApproval?.sourceId === selectedSession?.sourceId
       ? selectedApproval
       : sessionApprovals[0];
   const transcriptItems = sessionDetail?.transcript ?? [];
@@ -5580,8 +5592,10 @@ function TeamPane({
             <CardDescription>{selectedTeam?.name || "No team selected"}</CardDescription>
             <CardAction className="flex gap-2">
               <SelectFilter
-                value={selectedTeam?.teamId ?? ""}
-                options={teams.map((team) => team.teamId)}
+                value={selectedTeam
+                  ? sourceEntityKey(selectedTeam.sourceId, selectedTeam.teamId)
+                  : ""}
+                options={teams.map((team) => sourceEntityKey(team.sourceId, team.teamId))}
                 onChange={setSelectedTeamId}
               />
               <Button
@@ -5936,16 +5950,20 @@ function InboxPane({
           <div style={{ height: virtual.topPadding }} />
           <div className="flex flex-col gap-2">
             {virtual.visibleItems.map((approval) => {
-              const reason = rejectReasonById[approval.approvalId] ?? "";
+              const approvalKey = sourceEntityKey(approval.sourceId, approval.approvalId);
+              const reason = rejectReasonById[approvalKey] ?? "";
               return (
                 <Card
                   className={cn(
                     "cursor-pointer",
-                    approval.approvalId === selectedApprovalId && "ring-primary"
+                    sourceEntityKey(approval.sourceId, approval.approvalId) ===
+                      selectedApprovalId && "ring-primary"
                   )}
-                  key={approval.approvalId}
+                  key={sourceEntityKey(approval.sourceId, approval.approvalId)}
                   size="sm"
-                  onClick={() => setSelectedApprovalId(approval.approvalId)}
+                  onClick={() => setSelectedApprovalId(
+                    sourceEntityKey(approval.sourceId, approval.approvalId)
+                  )}
                 >
                   <CardHeader>
                     <CardTitle>{approval.summary || approval.approvalId}</CardTitle>
@@ -5958,7 +5976,7 @@ function InboxPane({
                       onChange={(event) =>
                         setRejectReasonById({
                           ...rejectReasonById,
-                          [approval.approvalId]: event.target.value
+                          [approvalKey]: event.target.value
                         })
                       }
                       placeholder="Rejection feedback"
@@ -7757,26 +7775,29 @@ function makeSessionRosterItem(input: {
     status: session.status || row?.status || "unknown",
     activity: session.activeTurnId ? "turn" : activeProcess ? "process" : "idle",
     selected:
-      session.sessionId === input.selectedSessionId ||
-      team?.teamId === input.selectedTeamId ||
-      Boolean(row?.rowId && row.rowId === input.selectedRowId),
+      sourceEntityKey(session.sourceId, session.sessionId) === input.selectedSessionId ||
+      Boolean(team && sourceEntityKey(team.sourceId, team.teamId) === input.selectedTeamId) ||
+      Boolean(row && sourceEntityKey(row.sourceId, row.rowId) === input.selectedRowId),
     onClick: () => {
-      input.onSelectSession(session.sessionId);
+      input.onSelectSession(sourceEntityKey(session.sourceId, session.sessionId));
       if (row?.rowId) {
-        input.onSelectRow(row.rowId);
+        input.onSelectRow(sourceEntityKey(row.sourceId, row.rowId));
       }
       if (team?.teamId) {
-        input.onSelectTeam(team.teamId);
+        input.onSelectTeam(sourceEntityKey(team.sourceId, team.teamId));
       }
       const pendingApproval = input.approvals.find(
         (approval) =>
+          approval.sourceId === session.sourceId &&
           approval.sessionId === session.sessionId && approval.status === "pending"
       );
       if (pendingApproval) {
-        input.onSelectApproval(pendingApproval.approvalId);
+        input.onSelectApproval(sourceEntityKey(
+          pendingApproval.sourceId, pendingApproval.approvalId
+        ));
       }
       if (activeProcess) {
-        input.onSelectProcess(activeProcess.processId);
+        input.onSelectProcess(sourceEntityKey(activeProcess.sourceId, activeProcess.processId));
       }
     }
   };
@@ -7809,24 +7830,27 @@ function makeRowRosterItem(input: {
     aside: ageFrom(toNumber(row.latestActivityUnixMs)),
     status: row.status || "unknown",
     activity: row.status === "running" ? "turn" : activeProcess ? "process" : "idle",
-    selected: row.rowId === input.selectedRowId,
+    selected: sourceEntityKey(row.sourceId, row.rowId) === input.selectedRowId,
     onClick: () => {
-      input.onSelectRow(row.rowId);
+      input.onSelectRow(sourceEntityKey(row.sourceId, row.rowId));
       if (row.sessionId) {
-        input.onSelectSession(row.sessionId);
+        input.onSelectSession(sourceEntityKey(row.sourceId, row.sessionId));
       }
       if (row.teamId) {
-        input.onSelectTeam(row.teamId);
+        input.onSelectTeam(sourceEntityKey(row.sourceId, row.teamId));
       }
       const pendingApproval = input.approvals.find(
         (approval) =>
+          approval.sourceId === row.sourceId &&
           approval.sessionId === row.sessionId && approval.status === "pending"
       );
       if (pendingApproval) {
-        input.onSelectApproval(pendingApproval.approvalId);
+        input.onSelectApproval(sourceEntityKey(
+          pendingApproval.sourceId, pendingApproval.approvalId
+        ));
       }
       if (activeProcess) {
-        input.onSelectProcess(activeProcess.processId);
+        input.onSelectProcess(sourceEntityKey(activeProcess.sourceId, activeProcess.processId));
       }
     }
   };

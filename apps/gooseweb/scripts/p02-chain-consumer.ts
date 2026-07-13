@@ -6,6 +6,7 @@ import type { WorkerOutbound } from "../app/realtime/types";
 import { applyRealtimeWorkerOutput } from "../app/realtime/client";
 import { getGoosewebSnapshot } from "../app/stores/gooseweb-store";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core";
+import { sourceEntityKey } from "../app/realtime/protocol/entities";
 import { observeFrame, observeStore } from "./support/p02-observers";
 
 const encoded = process.argv[2];
@@ -68,7 +69,10 @@ socket?.receive(bytes);
 await new Promise((resolve) => setTimeout(resolve, 25));
 
 const snapshot = getGoosewebSnapshot();
-const detail = snapshot.entities.sessionDetails["p02-session-001"];
+const detailSourceId = authority.sources[0]?.sourceId ?? envelope.sourceId;
+const detail = snapshot.entities.sessionDetails[
+  sourceEntityKey(detailSourceId, "p02-session-001")
+];
 assert.ok(detail, "actual Worker/store path must materialize the source session detail");
 assert.equal(detail.appendedText, "P02 deterministic terminal");
 assert.equal(posted.some((message) =>

@@ -506,7 +506,11 @@ function operation(domain: EntityDomain, id: string, value: unknown): EntityOper
 
 function entity(domain: EntityDomain, id: string): unknown {
   if (domain === "sessionDetails") {
-    return { sessionId: id, sourceId: "source", transcript: [], appendedText: id, latestActivityUnixMs: 1 };
+    return {
+      sessionId: id, sourceId: "source", provider: "codex", model: "gpt-5",
+      status: "ready", cwd: "/tmp", worktreeId: "", worktreePath: "", activeTurnId: "",
+      transcript: [], appendedText: id, latestActivityUnixMs: 1
+    };
   }
   if (domain === "teamWorkspaces") {
     return { teamId: id, sourceId: "source", messages: [], deliveries: [] };

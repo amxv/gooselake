@@ -87,6 +87,13 @@ export type SessionTranscriptEntry = {
 export type SessionDetailState = {
   readonly sessionId: string;
   readonly sourceId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly status: string;
+  readonly cwd: string;
+  readonly worktreeId: string;
+  readonly worktreePath: string;
+  readonly activeTurnId: string;
   readonly transcript: readonly SessionTranscriptEntry[];
   readonly appendedText: string;
   readonly latestActivityUnixMs: number;

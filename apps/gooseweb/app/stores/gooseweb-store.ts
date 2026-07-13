@@ -1,4 +1,6 @@
+import { create } from "@bufbuild/protobuf";
 import { useSyncExternalStore } from "react";
+import { SessionViewSchema } from "../../src/gen/goosetower/v1/view_pb";
 import type {
   ConnectionState,
   GoosewebStorePatch,
@@ -12,6 +14,7 @@ import type {
   SubscriptionState
 } from "../realtime/types";
 import { emptyCursorState } from "../realtime/cursors";
+import { sourceEntityKey } from "../realtime/protocol/entities";
 
 const emptyEntities = {
   fleetRows: {},
@@ -129,31 +132,71 @@ function applyEntityOperations(
         ...next,
         [operation.domain]: { ...retained, ...incoming }
       } as NormalizedEntities;
-      continue;
-    }
-    if (operation.operation === "upsert") {
+    } else if (operation.operation === "upsert") {
       next = {
         ...next,
         [operation.domain]: { ...existing, ...incoming }
       } as NormalizedEntities;
-      continue;
-    }
-    const domain = operation.entityIds.length === 0
-      ? operation.operation === "replace" ? { ...incoming } : {}
-      : { ...existing };
-    for (const entityId of operation.entityIds) {
-      if (operation.sourceId &&
-        (domain[entityId] as { sourceId?: string } | undefined)?.sourceId !== operation.sourceId) {
-        continue;
+    } else {
+      const domain = operation.entityIds.length === 0
+        ? operation.operation === "replace" ? { ...incoming } : {}
+        : { ...existing };
+      for (const entityId of operation.entityIds) {
+        if (operation.sourceId &&
+          (domain[entityId] as { sourceId?: string } | undefined)?.sourceId !== operation.sourceId) {
+          continue;
+        }
+        delete domain[entityId];
+        if (operation.operation === "replace" && entityId in incoming) {
+          domain[entityId] = incoming[entityId];
+        }
       }
-      delete domain[entityId];
-      if (operation.operation === "replace" && entityId in incoming) {
-        domain[entityId] = incoming[entityId];
-      }
+      next = { ...next, [operation.domain]: domain } as NormalizedEntities;
     }
-    next = { ...next, [operation.domain]: domain } as NormalizedEntities;
+    if (operation.domain === "sessionDetails" && operation.authoritative &&
+      operation.operation !== "remove") {
+      next = projectSessionDetailAuthority(next, Object.keys(incoming));
+    }
   }
   return next;
+}
+
+function projectSessionDetailAuthority(
+  current: NormalizedEntities,
+  entityIds: readonly string[]
+): NormalizedEntities {
+  const sessions = { ...current.sessions };
+  let changed = false;
+  for (const entityId of entityIds) {
+    const detail = current.sessionDetails[entityId];
+    if (!detail) continue;
+    const existing = sessions[entityId];
+    const worktree = detail.worktreeId
+      ? current.worktrees[sourceEntityKey(detail.sourceId, detail.worktreeId)]
+      : undefined;
+    sessions[entityId] = create(SessionViewSchema, {
+      sourceId: detail.sourceId,
+      sessionId: detail.sessionId,
+      provider: detail.provider,
+      model: detail.model,
+      status: detail.status,
+      cwd: detail.cwd,
+      worktreePath: detail.worktreePath ||
+        (detail.worktreeId ? worktree?.path || existing?.worktreePath || "" : ""),
+      activeTurnId: detail.activeTurnId,
+      ...(existing?.contextRemainingPercent === undefined ? {} : {
+        contextRemainingPercent: existing.contextRemainingPercent
+      }),
+      ...(existing?.contextWindowTokens === undefined ? {} : {
+        contextWindowTokens: existing.contextWindowTokens
+      }),
+      ...(existing?.contextUsedTokens === undefined ? {} : {
+        contextUsedTokens: existing.contextUsedTokens
+      })
+    });
+    changed = true;
+  }
+  return changed ? { ...current, sessions } : current;
 }
 
 function mergeEntities(

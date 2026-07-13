@@ -23,17 +23,13 @@ import type {
   EntityOperation,
   NormalizedEntityPatch
 } from "../types";
-
 export type EntityPatch = {
   readonly entityOperations: readonly EntityOperation[];
 };
-
 type DecodedEntities = { readonly entities: NormalizedEntityPatch };
-
 export function sourceEntityKey(sourceId: string, entityId: string): string {
   return `${encodeURIComponent(sourceId)}::${encodeURIComponent(entityId)}`;
 }
-
 export function decodeSnapshot(
   snapshot: Snapshot,
   canonicalSourceIds = snapshot.cursor?.sources.map((source) => source.sourceId) ?? []
@@ -54,7 +50,6 @@ export function decodeSnapshot(
     canonicalSourceIds
   );
 }
-
 export function decodeNotFoundSnapshot(snapshot: Snapshot): EntityPatch {
   if (snapshot.schemaVersion !== 1 || snapshot.operation !== ViewOperation.REPLACE) {
     throw new ProtocolDecodeError("not-found snapshot requires schema v1 replace semantics");
@@ -84,7 +79,6 @@ export function decodeNotFoundSnapshot(snapshot: Snapshot): EntityPatch {
     }]
   };
 }
-
 export function decodePatch(
   patch: Patch,
   canonicalSourceIds = patch.cursor?.sources.map((source) => source.sourceId) ?? []
@@ -111,12 +105,10 @@ export function decodePatch(
     canonicalSourceIds
   );
 }
-
 function isExplicitEmptyBody(body: Uint8Array): boolean {
   const text = new TextDecoder().decode(body).trim();
   return text === "" || text === "null";
 }
-
 function requireDeclaredCoverage(
   schemaVersion: number,
   coverage: Snapshot["coverage"]
@@ -128,7 +120,6 @@ function requireDeclaredCoverage(
     throw new ProtocolDecodeError("versioned view frame lacks authoritative coverage");
   }
 }
-
 function operationFromFrame(
   schemaVersion: number,
   operation: ViewOperation,
@@ -147,7 +138,6 @@ function operationFromFrame(
     default: throw new ProtocolDecodeError("view operation is unspecified or unknown");
   }
 }
-
 function withOperation(
   decoded: DecodedEntities,
   viewKind: string,
@@ -510,6 +500,9 @@ function validateSessionDetailBody(value: unknown): void {
   }
   const session = strictRecord(detail.session, "session_detail.session");
   requireString(session.id, "session_detail.session.id");
+  for (const field of ["cwd", "worktree_id", "worktree_path"] as const) {
+    if (field in session) requireNullableString(session[field], `session_detail.session.${field}`);
+  }
   requireString(detail.source_id, "session_detail.source_id");
   requireArray(detail.transcript, "session_detail.transcript", (item, index) => {
     const row = strictRecord(item, `session_detail.transcript[${index}]`);
@@ -837,6 +830,13 @@ function normalizeSessionDetail(value: unknown) {
   return {
     sessionId,
     sourceId: stringFrom(detail.source_id),
+    provider: stringFrom(record.provider),
+    model: stringFrom(record.model),
+    status: stringFrom(record.status),
+    cwd: stringFrom(record.cwd),
+    worktreeId: stringFrom(record.worktree_id),
+    worktreePath: stringFrom(record.worktree_path),
+    activeTurnId: stringFrom(record.active_turn_id),
     transcript,
     appendedText,
     latestActivityUnixMs: numberFrom(detail.latest_activity_unix_ms)

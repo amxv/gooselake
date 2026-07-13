@@ -77,6 +77,7 @@ function snapshotEnvelope(input: {
   gatewaySeq?: bigint;
   gatewayEpoch?: string;
   gatewayStartedAtUnixNs?: bigint;
+  subscriptionId?: string;
 }) {
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: 1,
@@ -88,6 +89,7 @@ function snapshotEnvelope(input: {
       case: "snapshot",
       value: create(SnapshotSchema, {
         viewKind: input.viewKind,
+        subscriptionId: input.subscriptionId ?? `subscription-${input.viewKind}`,
         schemaVersion: 1,
         operation: ViewOperation.REPLACE,
         cursor: {
@@ -619,8 +621,6 @@ const sourceReplacementRecord: any = JSON.parse(readFileSync(resolve(
   "../../../verification/gooseweb/fixtures/p08-source-replacement-rust.json"
 ), "utf8"));
 sourceReplacementRecord.source_id = "source-1";
-sourceReplacementRecord.source_epoch = "epoch-1";
-sourceReplacementRecord.source_seq = 21;
 const sourceReplacementBody = new TextEncoder().encode(JSON.stringify(sourceReplacementRecord));
 const epochResync = sourceResyncEnvelope({
   messageId: "epoch-source-resync", gatewaySeq: 1n,
@@ -637,6 +637,32 @@ assert.equal(posted.flatMap((message) =>
 ).length, operationsBeforeWrongHelloResync,
 "generation-changing resync must match the authenticated current Hello");
 await core.handleMessage({
+  type: "subscribe",
+  subscriptionId: "reset-board-window",
+  viewKind: "board",
+  filters: { source_id: "source-1", offset: "0", limit: "100" }
+});
+await core.handleMessage({
+  type: "subscribe",
+  subscriptionId: "reset-approval-window",
+  viewKind: "approval_inbox",
+  filters: { source_id: "source-1", include_resolved: "false" }
+});
+const preseededFleetRows = Object.fromEntries(Array.from({ length: 101 }, (_, index) => [
+  `old-row-${index}`,
+  {
+    rowId: `old-row-${index}`,
+    sourceId: "source-1",
+    sessionId: `old-session-${index}`,
+    provider: "codex",
+    status: "ready",
+    pendingApprovalCount: 0,
+    latestActivityUnixMs: 1n
+  }
+]));
+updateGoosewebStore({ entities: { fleetRows: preseededFleetRows } });
+const entitiesBeforeOwnershipReset = structuredClone(getGoosewebSnapshot().entities);
+await core.handleMessage({
   type: "connect",
   goosetowerUrl: "ws://127.0.0.1:18090/v1/realtime",
   ticket: "tower-restarted"
@@ -650,15 +676,19 @@ assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 1n,
   "an explicit epoch reset must rebase the restarted Tower gateway watermark");
 assert.equal(getGoosewebSnapshot().cursor.gatewayEpoch, "gateway-2");
 assert.equal(getGoosewebSnapshot().cursor.sourceCursors["source-1"]?.sourceEpoch, "epoch-1");
-assert.equal(Object.keys(getGoosewebSnapshot().entities.teams).length, 0,
-  "full-source resync must remove stale old-epoch team summaries");
-assert.equal(Object.keys(getGoosewebSnapshot().entities.teamWorkspaces).length, 0,
-  "full-source resync must remove stale old-epoch Team Comms detail");
-assert.deepEqual(Object.keys(getGoosewebSnapshot().entities.sessions), [],
-  "bounded ownership reset must clear summaries until active snapshots refill them");
+assert.deepEqual(getGoosewebSnapshot().entities, entitiesBeforeOwnershipReset,
+  "ownership reset must preserve presentation data while marking its coverage unloaded");
+assert.deepEqual(
+  getGoosewebSnapshot().invalidatedSourceDomains["source-1"],
+  ["fleetRows", "sessions", "sessionDetails", "teams", "teamWorkspaces",
+    "approvals", "processes", "worktrees", "sources"],
+  "reset alone must not represent unloaded source domains as authoritative emptiness"
+);
+assert.equal(getGoosewebSnapshot().connection, "stale",
+  "source must remain stale until every required active coverage snapshot arrives");
 
 const sourceTwoReplacementBody = new TextEncoder().encode(JSON.stringify({
-  source_id: "source-2", source_epoch: "epoch-2", source_seq: 9
+  source_id: "source-2"
 }));
 const sourceTwoResync = sourceResyncEnvelope({
   messageId: "epoch-source-resync-source-2", gatewaySeq: 2n,
@@ -673,15 +703,89 @@ sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, sourceTwoResync));
 await waitForPatchFlush();
 assert.equal(posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
-).length, operationsBeforeSecondSource + 9,
-"distinct multi-source reset publications must each apply exactly once");
+).length, operationsBeforeSecondSource,
+"ownership resets must invalidate coverage without claiming empty entity replacements");
+assert.deepEqual(
+  getGoosewebSnapshot().invalidatedSourceDomains["source-2"],
+  ["fleetRows", "sessions", "sessionDetails", "teams", "teamWorkspaces",
+    "approvals", "processes", "worktrees", "sources"],
+  "each source reset must record every consumed domain as unloaded"
+);
 sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, epochResync));
 sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, sourceTwoResync));
 await waitForPatchFlush();
 assert.equal(posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
-).length, operationsBeforeSecondSource + 9,
+).length, operationsBeforeSecondSource,
 "exact replay of each source reset publication must be suppressed");
+
+const boundedBoardRows = Array.from({ length: 100 }, (_, index) => ({
+  row_id: `fresh-row-${index}`,
+  source_id: "source-1",
+  session_id: `fresh-session-${index}`,
+  provider: "codex",
+  model: null,
+  status: "ready",
+  title: null,
+  team_id: null,
+  worktree_path: null,
+  pending_approval_count: 0,
+  latest_activity_unix_ms: index + 1
+}));
+const boundedBoardRefill = snapshotEnvelope({
+  messageId: "bounded-board-refill",
+  subscriptionId: "reset-board-window",
+  gatewaySeq: 2n,
+  viewKind: "board",
+  domain: "fleet_rows",
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 21n }],
+  body: new TextEncoder().encode(JSON.stringify({ rows: boundedBoardRows })),
+  gatewayEpoch: "gateway-2",
+  gatewayStartedAtUnixNs: 2n
+});
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, boundedBoardRefill));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().connection, "stale",
+  "one of multiple required coverage snapshots must not mark reset complete");
+assert.equal(Object.keys(getGoosewebSnapshot().entities.fleetRows).length > 100, true,
+  "a 100-row window must not make a 101-row preseeded source appear to contain only 100 rows");
+assert.ok(getGoosewebSnapshot().entities.fleetRows["old-row-100"],
+  "out-of-window presentation data remains available but explicitly unloaded");
+assert.equal(
+  getGoosewebSnapshot().loadedCoverage["source-1:fleetRows:reset-board-window"]?.entityIds.length,
+  100,
+  "bounded board refill must record its exact loaded window"
+);
+assert.equal(
+  getGoosewebSnapshot().invalidatedSourceDomains["source-1"]?.includes("fleetRows"),
+  true,
+  "out-of-window fleet coverage must remain explicitly unloaded"
+);
+const emptyApprovalRefill = snapshotEnvelope({
+  messageId: "empty-approval-window-refill",
+  subscriptionId: "reset-approval-window",
+  gatewaySeq: 2n,
+  viewKind: "approval_inbox",
+  domain: "approvals",
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 21n }],
+  body: new TextEncoder().encode(JSON.stringify({ approvals: [] })),
+  gatewayEpoch: "gateway-2",
+  gatewayStartedAtUnixNs: 2n
+});
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, emptyApprovalRefill));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().connection, "connected",
+  "connection becomes live only after all required active coverage snapshots arrive");
+assert.equal(
+  getGoosewebSnapshot().loadedCoverage["source-1:approvals:reset-approval-window"]?.empty,
+  true,
+  "a valid empty snapshot is authoritative empty only for its exact approval window"
+);
+assert.equal(
+  getGoosewebSnapshot().invalidatedSourceDomains["source-1"]?.includes("worktrees"),
+  true,
+  "unsubscribed domains must remain explicitly unloaded for later navigation refill"
+);
 
 const newEpochPatch = patchEnvelope({
   messageId: "new-epoch-patch", gatewaySeq: 3n, sourceSeq: 22n,
@@ -708,18 +812,43 @@ await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 3n,
   "an ordinary same-epoch snapshot must not regress gateway authority");
 
+const largeSourceBody = new TextEncoder().encode(JSON.stringify({ source_id: "source-big" }));
+for (const [index, sourceSeq] of [
+  9_007_199_254_740_991n,
+  9_007_199_254_740_992n,
+  9_223_372_036_854_775_807n
+].entries()) {
+  const reset = sourceResyncEnvelope({
+    messageId: `large-source-seq-${index}`,
+    gatewaySeq: BigInt(4 + index),
+    gatewayEpoch: "gateway-2",
+    gatewayStartedAtUnixNs: 2n,
+    sourceId: "source-big",
+    sourceEpoch: "epoch-big",
+    sourceSeq,
+    body: largeSourceBody
+  });
+  sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, reset));
+  await waitForPatchFlush();
+  assert.equal(
+    getGoosewebSnapshot().cursor.sourceCursors["source-big"]?.sourceSeq,
+    sourceSeq,
+    "protobuf BigInt source authority must apply without JSON numeric duplication"
+  );
+}
+
 const invalidResyncRecords = Array.from({ length: 4 }, () => structuredClone(sourceReplacementRecord));
 invalidResyncRecords[0]!.source_id = "wrong-source";
-invalidResyncRecords[1]!.source_epoch = "body-epoch-mismatch";
-invalidResyncRecords[2]!.source_seq = 999;
-invalidResyncRecords[3]!.unexpected = [];
+invalidResyncRecords[1]!.source_seq = "9007199254740992";
+invalidResyncRecords[2]!.source_seq = -1;
+invalidResyncRecords[3]!.source_seq = "9.1e15";
 const operationsBeforeInvalidResync = posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length;
 for (const [index, invalidRecord] of invalidResyncRecords.entries()) {
   const invalidFrame = sourceResyncEnvelope({
     messageId: `invalid-source-resync-${index}`,
-    gatewaySeq: BigInt(4 + index),
+    gatewaySeq: BigInt(7 + index),
     gatewayEpoch: "gateway-2",
     gatewayStartedAtUnixNs: 2n,
     sourceEpoch: "epoch-1",

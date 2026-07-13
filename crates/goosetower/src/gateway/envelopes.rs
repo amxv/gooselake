@@ -186,7 +186,7 @@ impl GatewayState {
         // This is the atomic ownership reset/commit. It is intentionally
         // independent of source cardinality; bounded active subscriptions
         // repopulate summaries and selected details after the commit.
-        let body = serde_json::to_vec(&state.snapshot_source_replacement(&source_cursor))?;
+        let body = serde_json::to_vec(&state.snapshot_source_replacement())?;
         let mut envelope = envelope_with_payload(
             MessageKind::SourceSnapshotResync,
             Lane::Critical,

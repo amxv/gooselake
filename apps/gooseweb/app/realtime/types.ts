@@ -44,6 +44,17 @@ export type NormalizedEntityPatch = {
 
 export type EntityDomain = keyof NormalizedEntities;
 
+export type LoadedCoverage = {
+  readonly sourceId: string;
+  readonly domain: EntityDomain;
+  readonly subscriptionId: string;
+  readonly kind: "domain" | "window" | "entity";
+  readonly entityIds: readonly string[];
+  readonly filters: Readonly<Record<string, string>>;
+  readonly authoritative: true;
+  readonly empty: boolean;
+};
+
 export type EntityMutation = {
   readonly operation: "replace" | "upsert" | "remove";
   readonly domain: EntityDomain;
@@ -187,6 +198,8 @@ export type GoosewebSnapshot = {
   readonly subscriptions: Readonly<Record<string, SubscriptionState>>;
   readonly pendingCommands: Readonly<Record<string, PendingCommandState>>;
   readonly staleSources: Readonly<Record<string, string>>;
+  readonly invalidatedSourceDomains: Readonly<Record<string, readonly EntityDomain[]>>;
+  readonly loadedCoverage: Readonly<Record<string, LoadedCoverage>>;
   readonly lastError?: string;
 };
 

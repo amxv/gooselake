@@ -8,7 +8,7 @@ const SOURCE_REPLACEMENT_COVERAGE = [
   "approvals", "processes", "worktrees", "sources"
 ] as const;
 
-const SOURCE_REPLACEMENT_DOMAINS = [
+export const SOURCE_REPLACEMENT_DOMAINS = [
   "fleetRows", "sessions", "sessionDetails", "teams", "teamWorkspaces",
   "approvals", "processes", "worktrees", "sources"
 ] as const satisfies readonly EntityDomain[];
@@ -36,33 +36,13 @@ export function decodeSourceSnapshotResync(resync: SourceSnapshotResync): Entity
 
   const body = parseBody(resync.body);
   const keys = Object.keys(body).sort();
-  if (keys.join(",") !== "source_epoch,source_id,source_seq") {
-    throw new ProtocolDecodeError("source resync body must contain only source authority");
+  if (keys.join(",") !== "source_id") {
+    throw new ProtocolDecodeError("source resync body must contain only source identity");
   }
   if (requireString(body.source_id, "source_resync.source_id") !== sourceId) {
     throw new ProtocolDecodeError("source resync body disagrees with source identity");
   }
-  if (
-    requireString(body.source_epoch, "source_resync.source_epoch") !==
-    sourceAuthority.sourceEpoch
-  ) {
-    throw new ProtocolDecodeError("source resync body epoch disagrees with cursor");
-  }
-  const sourceSeq = requireNonnegativeInteger(body.source_seq, "source_resync.source_seq");
-  if (BigInt(sourceSeq) !== sourceAuthority.sourceSeq) {
-    throw new ProtocolDecodeError("source resync body sequence disagrees with cursor");
-  }
-
-  return {
-    entityOperations: SOURCE_REPLACEMENT_DOMAINS.map((domain) => ({
-      operation: "replace",
-      domain,
-      entityIds: [],
-      authoritative: true,
-      sourceId,
-      payload: {}
-    }))
-  };
+  return { entityOperations: [] };
 }
 
 function requireCoverage(resync: SourceSnapshotResync): void {
@@ -92,13 +72,6 @@ function parseBody(bytes: Uint8Array): Record<string, unknown> {
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new ProtocolDecodeError(`${field} must be a nonempty string`);
-  }
-  return value;
-}
-
-function requireNonnegativeInteger(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new ProtocolDecodeError(`${field} must be a nonnegative safe integer`);
   }
   return value;
 }

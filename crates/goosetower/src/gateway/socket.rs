@@ -776,6 +776,7 @@ impl GatewayState {
                     canonical_view_kind,
                     subscription_entity_id(canonical_view_kind, &subscribe.filters),
                 )),
+                subscription_id: subscribe.subscription_id.clone(),
             }),
         );
         envelope.message_id = self.next_view_message_id();

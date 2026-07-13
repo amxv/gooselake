@@ -31,7 +31,9 @@ const initialSnapshot: GoosewebSnapshot = {
   entities: emptyEntities,
   subscriptions: {},
   pendingCommands: {},
-  staleSources: {}
+  staleSources: {},
+  invalidatedSourceDomains: {},
+  loadedCoverage: {}
 };
 
 type Listener = () => void;
@@ -68,7 +70,11 @@ export function updateGoosewebStore(patch: GoosewebStorePatch): void {
       : snapshot.pendingCommands,
     staleSources: patch.staleSources
       ? { ...snapshot.staleSources, ...patch.staleSources }
-      : snapshot.staleSources
+      : snapshot.staleSources,
+    invalidatedSourceDomains: patch.invalidatedSourceDomains
+      ? { ...snapshot.invalidatedSourceDomains, ...patch.invalidatedSourceDomains }
+      : snapshot.invalidatedSourceDomains,
+    loadedCoverage: patch.loadedCoverage ?? snapshot.loadedCoverage
   };
 
   for (const listener of listeners) {

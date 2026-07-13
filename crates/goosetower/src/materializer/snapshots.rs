@@ -15,8 +15,6 @@ pub const MAX_TEAM_DELIVERY_LIMIT: usize = 1_000;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceReplacementView {
     pub source_id: String,
-    pub source_epoch: String,
-    pub source_seq: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -360,14 +358,9 @@ impl MaterializedState {
         self.source_health_view()
     }
 
-    pub fn snapshot_source_replacement(
-        &self,
-        cursor: &super::state::SourceCursorView,
-    ) -> SourceReplacementView {
+    pub fn snapshot_source_replacement(&self) -> SourceReplacementView {
         SourceReplacementView {
             source_id: self.source_id.clone(),
-            source_epoch: cursor.source_epoch.clone(),
-            source_seq: cursor.source_seq,
         }
     }
 

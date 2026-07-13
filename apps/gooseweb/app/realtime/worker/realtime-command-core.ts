@@ -23,10 +23,14 @@ import {
   decodeSourceSnapshotResync,
   type EntityPatch
 } from "../protocol/entities";
+import { SOURCE_REPLACEMENT_DOMAINS } from "../protocol/source-resync";
 import type {
   CursorState,
+  EntityDomain,
+  EntityOperation,
   GoosewebStorePatch,
   GoosewebSnapshot,
+  LoadedCoverage,
   PendingCommandState,
   SourceCursorState,
   SubscriptionState,
@@ -61,6 +65,9 @@ export class RealtimeWorkerCore {
   private queuedPatch: GoosewebStorePatch = {};
   private flushTimer: ReturnType<typeof setTimeout> | undefined;
   private startupFramesSent = false;
+  private invalidatedSourceDomains: Record<string, readonly EntityDomain[]> = {};
+  private loadedCoverage: Record<string, LoadedCoverage> = {};
+  private readonly pendingResetSubscriptions = new Set<string>();
 
   constructor(
     private readonly post: (message: WorkerOutbound) => void,
@@ -266,7 +273,7 @@ export class RealtimeWorkerCore {
         try {
           const patch = decodeSnapshot(envelope.payload.value);
           if (!this.applyEnvelopeCursor(envelope)) return;
-          this.handleEntityPatch(patch);
+          this.handleEntityPatch(this.installSnapshotCoverage(envelope, patch));
         } catch (error) {
           this.failProtocolFrame(error instanceof Error ? error.message : "invalid snapshot");
         }
@@ -323,22 +330,15 @@ export class RealtimeWorkerCore {
         }
         try {
           const patch = decodeSourceSnapshotResync(envelope.payload.value);
-          const resetGatewayGeneration = Boolean(
-            envelope.payload.value.cursor?.gatewayEpoch !== this.cursor.gatewayEpoch &&
-            (this.cursor.gatewayEpoch || this.cursor.gatewaySeq > 0n)
-          );
           if (!this.applySourceResyncCursor(envelope)) return;
-          if (resetGatewayGeneration) {
-            this.handleEntityPatch({
-              entityOperations: patch.entityOperations.map(({ sourceId: _, ...operation }) => ({
-                ...operation,
-                payload: {}
-              }))
-            });
-          }
+          this.invalidateSourceCoverage(envelope.payload.value.sourceId);
           this.handleEntityPatch(patch);
           this.resendActiveSubscriptions();
-          this.emitState({ connection: "connected" });
+          this.emitState({
+            connection: this.pendingResetSubscriptions.size === 0 ? "connected" : "stale",
+            invalidatedSourceDomains: this.invalidatedSourceDomains,
+            loadedCoverage: this.loadedCoverage
+          });
         } catch (error) {
           this.failProtocolFrame(error instanceof Error ? error.message : "invalid source resync");
         }
@@ -415,6 +415,118 @@ export class RealtimeWorkerCore {
     this.emitState({
       entityOperations: patch.entityOperations
     });
+  }
+
+  private invalidateSourceCoverage(sourceId: string): void {
+    this.invalidatedSourceDomains = {
+      ...this.invalidatedSourceDomains,
+      [sourceId]: [...SOURCE_REPLACEMENT_DOMAINS]
+    };
+    this.loadedCoverage = Object.fromEntries(
+      Object.entries(this.loadedCoverage).filter(([, coverage]) => coverage.sourceId !== sourceId)
+    );
+    for (const subscription of Object.values(this.subscriptions)) {
+      if (subscription.status !== "unsubscribed") {
+        this.pendingResetSubscriptions.add(subscription.subscriptionId);
+      }
+    }
+  }
+
+  private installSnapshotCoverage(
+    envelope: RealtimeEnvelope,
+    patch: EntityPatch
+  ): EntityPatch {
+    if (envelope.payload.case !== "snapshot") return patch;
+    const snapshot = envelope.payload.value;
+    const subscriptionId = snapshot.subscriptionId;
+    if (snapshot.schemaVersion === 1 && !subscriptionId) {
+      throw new Error("versioned snapshot lacks subscription provenance");
+    }
+    const subscription = this.subscriptions[subscriptionId];
+    const filters = subscription?.filters ?? {};
+    const sourceIds = snapshot.cursor?.sources.map((source) => source.sourceId) ?? [];
+    const transformed: EntityOperation[] = [];
+    for (const operation of patch.entityOperations) {
+      const kind = snapshotCoverageKind(snapshot.viewKind, operation.entityIds);
+      const removedWindowIds = new Set<string>();
+      for (const sourceId of sourceIds) {
+        const sourcePayload = Object.fromEntries(
+          Object.entries(operation.payload).filter(([, entity]) =>
+            (entity as { sourceId?: string } | undefined)?.sourceId === sourceId
+          )
+        );
+        const payload = sourceIds.length === 1 ? operation.payload : sourcePayload;
+        const payloadIds = Object.keys(payload);
+        const key = `${sourceId}:${operation.domain}:${subscriptionId}`;
+        const previous = this.loadedCoverage[key];
+        const record: LoadedCoverage = {
+          sourceId,
+          domain: operation.domain,
+          subscriptionId,
+          kind,
+          entityIds: payloadIds,
+          filters,
+          authoritative: true,
+          empty: payloadIds.length === 0
+        };
+        this.loadedCoverage = { ...this.loadedCoverage, [key]: record };
+        if (kind === "domain") {
+          const remaining = (this.invalidatedSourceDomains[sourceId] ?? [])
+            .filter((domain) => domain !== operation.domain);
+          this.invalidatedSourceDomains = {
+            ...this.invalidatedSourceDomains,
+            [sourceId]: remaining
+          };
+        }
+        if (kind === "window") {
+          const removed = (previous?.entityIds ?? []).filter((id) => !payloadIds.includes(id));
+          removed.forEach((id) => removedWindowIds.add(id));
+          if (sourceIds.length === 1 && removed.length > 0) {
+            transformed.push({
+              operation: "remove",
+              domain: operation.domain,
+              entityIds: removed,
+              authoritative: true,
+              payload: {}
+            });
+          }
+          if (sourceIds.length === 1) {
+            transformed.push({ ...operation, operation: "upsert", payload });
+          }
+        } else if (sourceIds.length === 1) {
+          transformed.push({
+            ...operation,
+            payload,
+            sourceId: kind === "domain" && sourceIds.length === 1 ? sourceId : operation.sourceId
+          });
+        }
+      }
+      if (sourceIds.length > 1) {
+        if (kind === "window" && removedWindowIds.size > 0) {
+          transformed.push({
+            operation: "remove",
+            domain: operation.domain,
+            entityIds: [...removedWindowIds],
+            authoritative: true,
+            payload: {}
+          });
+        }
+        transformed.push(kind === "window" ? { ...operation, operation: "upsert" } : operation);
+      }
+      if (sourceIds.length === 0) transformed.push(operation);
+    }
+    this.pendingResetSubscriptions.delete(subscriptionId);
+    if (subscription) {
+      const active = { ...subscription, status: "active" as const };
+      this.subscriptions[subscriptionId] = active;
+      this.post({ type: "subscription-state", subscription: active });
+    }
+    this.emitState({
+      loadedCoverage: this.loadedCoverage,
+      invalidatedSourceDomains: this.invalidatedSourceDomains,
+      connection: this.pendingResetSubscriptions.size === 0 ? "connected" : "stale"
+    });
+    return { entityOperations: transformed };
   }
 
   private failProtocolFrame(message: string): void {
@@ -695,6 +807,17 @@ export class RealtimeWorkerCore {
 
 type PendingCommandInput = Parameters<typeof makeCommand>[0];
 
+function snapshotCoverageKind(
+  viewKind: string,
+  entityIds: readonly string[]
+): LoadedCoverage["kind"] {
+  if (entityIds.length > 0) return "entity";
+  if (["board", "fleet_board", "approval_inbox", "teams", "sessions"].includes(viewKind)) {
+    return "window";
+  }
+  return "domain";
+}
+
 function cursorAuthorityFromEnvelope(
   envelope: RealtimeEnvelope
 ): {
@@ -813,6 +936,10 @@ function mergeSnapshotPatch(
     staleSources: next.staleSources
       ? { ...current.staleSources, ...next.staleSources }
       : current.staleSources,
+    invalidatedSourceDomains: next.invalidatedSourceDomains
+      ? { ...current.invalidatedSourceDomains, ...next.invalidatedSourceDomains }
+      : current.invalidatedSourceDomains,
+    loadedCoverage: next.loadedCoverage ?? current.loadedCoverage,
     entityOperations: next.entityOperations
       ? [...(current.entityOperations ?? []), ...next.entityOperations]
       : current.entityOperations

@@ -97,8 +97,7 @@ async fn source_resync_records_bounded_source_ownership_reset() {
         "Rust source replacement fixture drift"
     );
     assert_eq!(replacement["source_id"], "local");
-    assert_eq!(replacement["source_epoch"], "epoch-restarted");
-    assert_eq!(replacement["source_seq"], 1);
+    assert_eq!(replacement.as_object().unwrap().len(), 1);
     assert!(entry.encoded_len <= gateway.config.websocket.max_message_bytes);
 }
 

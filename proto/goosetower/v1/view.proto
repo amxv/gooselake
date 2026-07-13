@@ -127,8 +127,9 @@ message ViewCoverage {
   // Stable normalized browser domains covered by this frame, for example
   // "session_details" or "team_workspaces".
   repeated string domains = 1;
-  // Empty means the complete domain. Otherwise replacement/removal is scoped
-  // to these entity IDs.
+  // Empty means the complete domain within the enclosing snapshot scope. For
+  // bounded snapshots that scope is identified by Snapshot.subscription_id;
+  // otherwise replacement/removal is scoped to these entity IDs.
   repeated string entity_ids = 2;
   bool authoritative = 3;
   reserved 20 to 39;
@@ -141,6 +142,9 @@ message Snapshot {
   uint32 schema_version = 4;
   ViewOperation operation = 5;
   ViewCoverage coverage = 6;
+  // Identifies the active bounded view whose exact coverage this snapshot
+  // installs. Empty is reserved for legacy producers.
+  string subscription_id = 7;
   reserved 20 to 49;
 }
 

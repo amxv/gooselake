@@ -23,6 +23,7 @@ export function preflightMaterializedGap(input: {
   readonly appliedMessageIds: ReadonlySet<string>;
   readonly frozenSources: ReadonlySet<string>;
 }): MaterializedGapDisposition {
+  const isSnapshot = input.envelope.messageKind === MessageKind.SNAPSHOT;
   const authority = cursorAuthorityFromEnvelope(input.envelope);
   const gaps = sourceHealthGapCursors(input.patch, authority?.sources ?? []);
   if (gaps.length === 0) return { kind: "none" };
@@ -31,7 +32,7 @@ export function preflightMaterializedGap(input: {
   }
   if (!authority || !isValidCursorVector(authority.sources) ||
     !authority.gatewayEpoch || authority.gatewayStartedAtUnixNs === 0n ||
-    authority.gatewaySeq === 0n || authority.sources.length === 0) {
+    (!isSnapshot && authority.gatewaySeq === 0n) || authority.sources.length === 0) {
     return { kind: "delegate" };
   }
   if (authority.gatewayEpoch !== input.gatewayEpoch ||
@@ -42,7 +43,7 @@ export function preflightMaterializedGap(input: {
     return { kind: "delegate" };
   }
   if (hasCursorEpochMismatch(input.cursor, authority.sources)) return { kind: "delegate" };
-  if (input.envelope.messageKind !== MessageKind.SNAPSHOT && authority.sources.some((source) => {
+  if (!isSnapshot && authority.sources.some((source) => {
     const known = input.cursor.sourceCursors[source.sourceId];
     return known?.sourceEpoch === source.sourceEpoch && source.sourceSeq > known.sourceSeq + 1n;
   })) return { kind: "delegate" };
@@ -50,7 +51,7 @@ export function preflightMaterializedGap(input: {
   if (!shouldApplyCursorVector(input.cursor, authority.gatewaySeq, authority.sources, {
     allowEqualSourceSeq: true,
     allowEpochChange: false,
-    allowGatewayRegression: false
+    allowGatewayRegression: isSnapshot
   })) return { kind: "drop" };
   return { kind: "arm", sources: gaps };
 }

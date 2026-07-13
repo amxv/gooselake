@@ -97,15 +97,17 @@ if (wrongGeneration.payload.case !== "patch" || !wrongGeneration.payload.value.c
   throw new Error("wrong-generation fixture lacks patch cursor");
 }
 wrongGeneration.payload.value.cursor.gatewayEpoch = "wrong-generation";
-const gatewayRegressive = snapshot(
-  "gateway-regressive-gap", "fleet", request("fleet"), 1n, 5n, fleetBody("gap_detected")
+const gatewayRegressive = sourceHealthPatch(
+  "gateway-regressive-gap", 1n, 5n, "gap_detected"
 );
 for (const frame of [duplicateVector, wrongGeneration, gatewayRegressive]) socket!.receive(frame);
 await flush();
 assert.deepEqual(authorityProjection(), beforeInvalidGaps,
   "invalid materialized gaps fail before cursor/entity/coverage/stale/subscription mutation");
 
-socket!.receive(sourceHealthPatch("gap-health", 3n, 5n, "gap_detected"));
+socket!.receive(snapshot(
+  "gap-health-snapshot", "fleet", request("fleet"), 0n, 5n, fleetBody("gap_detected")
+));
 await flush();
 const held = getGoosewebSnapshot();
 assert.equal(held.connection, "stale");

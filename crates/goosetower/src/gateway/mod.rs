@@ -70,8 +70,10 @@ pub enum GatewayStatus {
 
 #[derive(Debug, Clone)]
 enum SourceRecoverySignal {
-    Filled(SourceCursor),
-    Resync { source_id: String, reason: String },
+    Resync {
+        cursor: SourceCursor,
+        reason: String,
+    },
 }
 
 #[derive(Debug)]
@@ -355,7 +357,7 @@ impl GatewayState {
     }
 
     async fn update_source_health(&self, health: SourceHealth) {
-        let patch = {
+        let (patch, retry_idle_gap) = {
             let mut materialized = self.materialized.write().await;
             let state = materialized
                 .entry(health.source_id.clone())
@@ -371,6 +373,7 @@ impl GatewayState {
             }
             let cursor = state.source_health.last_source_seq;
             let state_is_repairing = state.source_health.state == SourceHealthState::GapDetected;
+            let retry_idle_gap = state_is_repairing && health.state == SourceHealthState::Replaying;
             let next_health = if state_is_repairing {
                 SourceHealthState::GapDetected
             } else {
@@ -378,13 +381,16 @@ impl GatewayState {
             };
             state.source_health.source_epoch = health.source_epoch.clone();
             state.source_health.last_source_seq = cursor;
-            state.transition_source_health(
-                next_health,
-                if state_is_repairing {
-                    state.source_health.last_error.clone()
-                } else {
-                    health.last_error.clone()
-                },
+            (
+                state.transition_source_health(
+                    next_health,
+                    if state_is_repairing {
+                        state.source_health.last_error.clone()
+                    } else {
+                        health.last_error.clone()
+                    },
+                ),
+                retry_idle_gap,
             )
         };
         if matches!(health.state, SourceHealthState::GapDetected) {
@@ -397,6 +403,9 @@ impl GatewayState {
             .await;
         }
         self.publish_materialized_patch(patch).await;
+        if retry_idle_gap {
+            self.retry_idle_gap_after_reconnect(&health.source_id).await;
+        }
     }
 
     #[cfg(test)]

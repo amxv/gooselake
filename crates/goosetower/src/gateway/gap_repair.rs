@@ -33,17 +33,12 @@ impl GapRepairQueue {
             .any(|event| event.source_epoch != current_epoch)
     }
 
-    fn cover_through(&mut self, high_watermark: i64) {
-        self.pending.retain(|seq, _| *seq > high_watermark);
-        if self
-            .highest_observed_seq
-            .is_some_and(|highest| high_watermark >= highest)
-        {
-            self.overflowed = false;
-        }
-        if self.pending.is_empty() && !self.overflowed {
-            self.highest_observed_seq = None;
-        }
+    fn covered_by(&self, source_epoch: &str, high_watermark: i64, allow_overflow: bool) -> bool {
+        (allow_overflow || !self.overflowed)
+            && !self.requires_epoch_rebase(source_epoch)
+            && self
+                .highest_observed_seq
+                .is_none_or(|highest| high_watermark >= highest)
     }
 }
 
@@ -64,6 +59,33 @@ impl GatewayState {
             .await
             .get(source_id)
             .is_some_and(|queue| queue.repairing)
+    }
+
+    pub(super) async fn retry_idle_gap_after_reconnect(&self, source_id: &str) {
+        if self
+            .materialized
+            .read()
+            .await
+            .get(source_id)
+            .is_none_or(|state| state.source_health.state != SourceHealthState::GapDetected)
+        {
+            return;
+        }
+        let retry = {
+            let mut repairs = self.gap_repairs.lock().await;
+            let Some(queue) = repairs.get_mut(source_id) else {
+                return;
+            };
+            if queue.repairing {
+                false
+            } else {
+                queue.repairing = true;
+                true
+            }
+        };
+        if retry {
+            self.repair_source_gap(source_id).await;
+        }
     }
 
     pub async fn ingest_source_event(&self, event: SourceEvent) {
@@ -152,21 +174,25 @@ impl GatewayState {
             .find(|source| source.enabled && source.source_id == source_id)
             .cloned()
         else {
-            self.finish_gap_repair(source_id, false, "runtime source unavailable")
+            self.fail_gap_repair(source_id, "runtime source unavailable")
                 .await;
             return;
         };
         let client = match runtime_client_from_source(&self.config, &source) {
             Ok(client) => client,
             Err(error) => {
-                self.finish_gap_repair(source_id, false, &error.to_string())
-                    .await;
+                self.fail_gap_repair(source_id, &error.to_string()).await;
                 return;
             }
         };
         let page_limit = self.config.replay.max_events_per_request.max(1);
         let repair_started = Instant::now();
         let mut replayed = 0usize;
+        let Some(mut candidate) = self.materialized.read().await.get(source_id).cloned() else {
+            self.fail_gap_repair(source_id, "materialized source unavailable")
+                .await;
+            return;
+        };
         let current_epoch = self.source_cursor_and_epoch(source_id).await.1;
         let requires_epoch_rebase = self
             .gap_repairs
@@ -180,14 +206,22 @@ impl GatewayState {
                 if self.source_gap_overflowed(source_id).await {
                     break;
                 }
-                if self.drain_pending_contiguous(source_id).await {
+                self.stage_pending_contiguous(source_id, &mut candidate)
+                    .await;
+                let recovery_reason =
+                    "source gap filled by replay and authoritative snapshot resync";
+                if self
+                    .complete_gap_candidate(source_id, candidate.clone(), recovery_reason, false)
+                    .await
+                {
                     self.metrics
                         .record_replay(replayed, 0, repair_started.elapsed());
-                    self.finish_gap_repair(source_id, true, "source gap filled by replay")
-                        .await;
+                    self.metrics
+                        .snapshot_resync_count
+                        .fetch_add(1, Ordering::Relaxed);
                     return;
                 }
-                let (cursor, epoch) = self.source_cursor_and_epoch(source_id).await;
+                let cursor = candidate.source_health.last_source_seq;
                 let rows = match client.replay_global_events(cursor, Some(page_limit)).await {
                     Ok(rows) => rows,
                     Err(error) => {
@@ -199,18 +233,41 @@ impl GatewayState {
                     break;
                 }
                 let row_count = rows.len();
+                let mut page_progress = false;
                 for row in rows {
-                    let event =
-                        SourceEvent::from_runtime_event(source_id.to_string(), epoch.clone(), row);
-                    if !self.reduce_contiguous_event(event).await {
+                    if row.row_id <= candidate.source_health.last_source_seq.unwrap_or(0) {
+                        continue;
+                    }
+                    let event = SourceEvent::from_runtime_event(
+                        source_id.to_string(),
+                        candidate.source_epoch.clone(),
+                        row,
+                    );
+                    if !Self::stage_contiguous_event(&mut candidate, event) {
                         break;
                     }
                     replayed += 1;
+                    page_progress = true;
                 }
                 if self.source_gap_overflowed(source_id).await {
                     break;
                 }
-                if row_count < page_limit && !self.drain_pending_contiguous(source_id).await {
+                self.stage_pending_contiguous(source_id, &mut candidate)
+                    .await;
+                let recovery_reason =
+                    "source gap filled by replay and authoritative snapshot resync";
+                if self
+                    .complete_gap_candidate(source_id, candidate.clone(), recovery_reason, false)
+                    .await
+                {
+                    self.metrics
+                        .record_replay(replayed, 0, repair_started.elapsed());
+                    self.metrics
+                        .snapshot_resync_count
+                        .fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+                if !page_progress || row_count < page_limit {
                     break;
                 }
             }
@@ -219,45 +276,130 @@ impl GatewayState {
         match SourceBootstrap::from_runtime_client(&client, BootstrapOptions::default()).await {
             Ok(mut bootstrap) => {
                 bootstrap.state.apply_source_config(&source);
-                let next_epoch = bootstrap.state.source_epoch.clone();
-                let next_cursor = bootstrap.state.source_health.last_source_seq.unwrap_or(0);
-                let old_epoch = self.source_cursor_and_epoch(source_id).await.1;
-                let installed = self.install_gap_fallback(source_id, bootstrap.state).await;
-                if installed {
-                    if let Some(queue) = self.gap_repairs.lock().await.get_mut(source_id) {
-                        if old_epoch != next_epoch {
-                            queue.pending.clear();
-                            queue.overflowed = false;
-                            queue.highest_observed_seq = None;
-                        } else {
-                            queue.cover_through(next_cursor);
-                        }
-                    }
-                }
-                if installed && self.drain_pending_contiguous(source_id).await {
+                let mut fallback = bootstrap.state;
+                self.stage_pending_contiguous(source_id, &mut fallback)
+                    .await;
+                if self
+                    .complete_gap_candidate(
+                        source_id,
+                        fallback,
+                        "source gap repaired by snapshot resync",
+                        true,
+                    )
+                    .await
+                {
                     self.metrics
                         .snapshot_resync_count
                         .fetch_add(1, Ordering::Relaxed);
-                    self.finish_gap_repair(
-                        source_id,
-                        true,
-                        "source gap repaired by snapshot resync",
-                    )
-                    .await;
                     return;
                 }
-                self.finish_gap_repair(source_id, false, "snapshot did not restore continuity")
+                self.fail_gap_repair(source_id, "snapshot did not restore continuity")
                     .await;
             }
             Err(error) => {
-                self.finish_gap_repair(
-                    source_id,
-                    false,
-                    &format!("snapshot resync failed: {error}"),
-                )
-                .await;
+                self.fail_gap_repair(source_id, &format!("snapshot resync failed: {error}"))
+                    .await;
             }
         }
+    }
+
+    fn stage_contiguous_event(candidate: &mut MaterializedState, event: SourceEvent) -> bool {
+        let cursor = candidate.source_health.last_source_seq.unwrap_or(0);
+        if event.source_id != candidate.source_id
+            || event.source_epoch != candidate.source_epoch
+            || event.source_seq != cursor + 1
+        {
+            return false;
+        }
+        !candidate.reduce_source_event(event).duplicate
+    }
+
+    async fn stage_pending_contiguous(&self, source_id: &str, candidate: &mut MaterializedState) {
+        loop {
+            let cursor = candidate.source_health.last_source_seq.unwrap_or(0);
+            let event = self
+                .gap_repairs
+                .lock()
+                .await
+                .get(source_id)
+                .and_then(|queue| queue.pending.get(&(cursor + 1)).cloned());
+            let Some(event) = event else {
+                return;
+            };
+            if !Self::stage_contiguous_event(candidate, event) {
+                return;
+            }
+        }
+    }
+
+    async fn complete_gap_candidate(
+        &self,
+        source_id: &str,
+        mut candidate: MaterializedState,
+        reason: &str,
+        authoritative_fallback: bool,
+    ) -> bool {
+        let mut repairs = self.gap_repairs.lock().await;
+        if candidate.source_id != source_id
+            || candidate.source_epoch.is_empty()
+            || candidate.source_health.source_epoch != candidate.source_epoch
+        {
+            return false;
+        }
+        let candidate_cursor = candidate.source_health.last_source_seq.unwrap_or(0);
+        let mut materialized = self.materialized.write().await;
+        let Some(current) = materialized.get(source_id) else {
+            return false;
+        };
+        let current_cursor = current.source_health.last_source_seq.unwrap_or(0);
+        {
+            let Some(queue) = repairs.get_mut(source_id) else {
+                return false;
+            };
+            if !queue.repairing {
+                return false;
+            }
+            if candidate.source_epoch == current.source_epoch {
+                if candidate_cursor < current_cursor
+                    || !queue.covered_by(
+                        &candidate.source_epoch,
+                        candidate_cursor,
+                        authoritative_fallback,
+                    )
+                {
+                    return false;
+                }
+            } else if authoritative_fallback {
+                queue.pending.clear();
+                queue.overflowed = false;
+                queue.highest_observed_seq = None;
+            } else {
+                return false;
+            }
+        }
+        candidate.transition_source_health(SourceHealthState::Live, None);
+        let Some(cursor) = candidate.cursor().map(|cursor| SourceCursor {
+            source_id: cursor.source_id,
+            source_epoch: cursor.source_epoch,
+            source_seq: cursor.source_seq.max(0) as u64,
+        }) else {
+            return false;
+        };
+        materialized.insert(source_id.to_string(), candidate);
+        repairs.remove(source_id);
+        let _ = self.recoveries.send(SourceRecoverySignal::Resync {
+            cursor,
+            reason: reason.to_string(),
+        });
+        drop(materialized);
+        drop(repairs);
+        self.record_audit(
+            "source.gap_repaired",
+            Some(source_id.to_string()),
+            json!({ "reason": reason }),
+        )
+        .await;
+        true
     }
 
     async fn reduce_contiguous_event(&self, event: SourceEvent) -> bool {
@@ -295,45 +437,6 @@ impl GatewayState {
         true
     }
 
-    async fn drain_pending_contiguous(&self, source_id: &str) -> bool {
-        loop {
-            if self.source_gap_overflowed(source_id).await {
-                return false;
-            }
-            let cursor = self.source_cursor_and_epoch(source_id).await.0.unwrap_or(0);
-            let event = {
-                let mut repairs = self.gap_repairs.lock().await;
-                let Some(queue) = repairs.get_mut(source_id) else {
-                    return true;
-                };
-                queue.pending.retain(|seq, _| *seq > cursor);
-                queue.pending.remove(&(cursor + 1))
-            };
-            match event {
-                Some(event) => {
-                    if self.reduce_contiguous_event(event.clone()).await {
-                        continue;
-                    }
-                    self.gap_repairs
-                        .lock()
-                        .await
-                        .entry(source_id.to_string())
-                        .or_default()
-                        .insert(event, self.pending_gap_event_limit());
-                    return false;
-                }
-                None => {
-                    return self
-                        .gap_repairs
-                        .lock()
-                        .await
-                        .get(source_id)
-                        .is_none_or(|queue| queue.pending.is_empty() && !queue.overflowed);
-                }
-            }
-        }
-    }
-
     async fn source_cursor_and_epoch(&self, source_id: &str) -> (Option<i64>, String) {
         self.materialized
             .read()
@@ -360,80 +463,25 @@ impl GatewayState {
             .is_some_and(|queue| queue.overflowed)
     }
 
-    async fn install_gap_fallback(&self, source_id: &str, next: MaterializedState) -> bool {
-        let mut materialized = self.materialized.write().await;
-        let current_cursor = materialized
-            .get(source_id)
-            .and_then(|state| state.source_health.last_source_seq)
-            .unwrap_or(0);
-        let next_cursor = next.source_health.last_source_seq.unwrap_or(0);
-        if next.source_epoch
-            == materialized
-                .get(source_id)
-                .map(|state| state.source_epoch.as_str())
-                .unwrap_or(next.source_epoch.as_str())
-            && next_cursor < current_cursor
-        {
-            return false;
-        }
-        materialized.insert(source_id.to_string(), next);
-        true
-    }
-
-    async fn finish_gap_repair(&self, source_id: &str, restored: bool, reason: &str) {
+    async fn fail_gap_repair(&self, source_id: &str, reason: &str) {
         let patch = {
             let mut repairs = self.gap_repairs.lock().await;
-            if restored {
-                repairs.remove(source_id);
-            } else if let Some(queue) = repairs.get_mut(source_id) {
+            if let Some(queue) = repairs.get_mut(source_id) {
                 queue.repairing = false;
             }
             let mut materialized = self.materialized.write().await;
             materialized.get_mut(source_id).map(|state| {
                 state.transition_source_health(
-                    if restored {
-                        SourceHealthState::Live
-                    } else {
-                        SourceHealthState::GapDetected
-                    },
-                    (!restored).then(|| reason.to_string()),
+                    SourceHealthState::GapDetected,
+                    Some(reason.to_string()),
                 )
             })
         };
         if let Some(patch) = patch {
             self.publish_materialized_patch(patch).await;
         }
-        if restored {
-            let signal = if reason.contains("snapshot resync") {
-                SourceRecoverySignal::Resync {
-                    source_id: source_id.to_string(),
-                    reason: reason.to_string(),
-                }
-            } else if let Some(cursor) =
-                self.materialized
-                    .read()
-                    .await
-                    .get(source_id)
-                    .and_then(|state| {
-                        state.cursor().map(|cursor| SourceCursor {
-                            source_id: cursor.source_id,
-                            source_epoch: cursor.source_epoch,
-                            source_seq: cursor.source_seq.max(0) as u64,
-                        })
-                    })
-            {
-                SourceRecoverySignal::Filled(cursor)
-            } else {
-                return;
-            };
-            let _ = self.recoveries.send(signal);
-        }
         self.record_audit(
-            if restored {
-                "source.gap_repaired"
-            } else {
-                "source.gap_repair_failed"
-            },
+            "source.gap_repair_failed",
             Some(source_id.to_string()),
             json!({ "reason": reason }),
         )

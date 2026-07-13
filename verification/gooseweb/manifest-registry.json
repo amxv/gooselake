@@ -47,9 +47,9 @@
     {
       "phase_id": "P09",
       "path": "verification/gooseweb/manifests/p09-worker-store-authority.json",
-      "revision": 2,
-      "sha256": "ea229a24c5c11837d4291ad50dcda942cdec41ce7d407a058446e7d2b71df40d",
-      "activated_reason": "P09 verifies lossless ordered Worker/store reduction, explicit authority coverage and stale algebra, targeted gap repair, generation-safe disposable cursor caching, and both owned P04 baseline closures without claiming P10 lifecycle work."
+      "revision": 3,
+      "sha256": "df2b0bcce1b932a03cd8e30beb35c49670fee663593f9176d16373d1ae2b7e48",
+      "activated_reason": "P09 verifies lossless ordered Worker/store reduction, explicit authority coverage and stale algebra, generation-safe disposable cursor caching, and P07R-001 released-repair convergence at the BROWSER-005 first divergent Goosetower layer without claiming P10 lifecycle work."
     }
   ]
 }

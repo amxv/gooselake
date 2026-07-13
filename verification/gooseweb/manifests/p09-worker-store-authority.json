@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P09-WORKER-STORE-AUTHORITY-001",
-  "manifest_revision": 2,
+  "manifest_revision": 3,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "93693215b3fc46d85a03209fc990a84c17db5f4a8ddcfdec52ad3a4e37112bfc"
@@ -17,11 +17,12 @@
   },
   "scenario": {
     "phase_id": "P09",
-    "title": "Lossless authority-aware Worker and external-store reduction",
-    "product_clearance": "approved",
+    "title": "Lossless authority-aware Worker/store reduction with P07R-001 repair convergence",
+    "product_clearance": "pending",
     "stable_scenario_id": "GW-P09-WORKER-STORE-AUTHORITY-001",
     "preconditions": [
       "P08 versioned view frames declare canonical CursorVector, operation, and authoritative coverage.",
+      "P07R-001 ensures an idle same-epoch Goosetower gap repair re-arms on the next runtime Replaying edge and installs continuity before recovery publication.",
       "Two independent sessions, teams, and processes can publish siblings in one bounded Worker drain.",
       "A persisted v1 browser cache and a restarted gateway generation are available as deterministic fixtures."
     ],
@@ -33,7 +34,7 @@
         "expected_command_count": 1,
         "command": "sendTurn",
         "expected_runtime": ["one accepted command remains durable runtime authority"],
-        "expected_goosetower": ["same-drain siblings retain explicit operation, coverage, source epoch, and gateway generation"],
+        "expected_goosetower": ["same-drain siblings retain explicit operation, coverage, source epoch, and gateway generation; released replay/bootstrap repair converges from floor seq4 to runtime high-water seq7 before gap_filled and authoritative replacement"],
         "expected_worker_store": ["all siblings reduce in order in one publication; gaps freeze before mutation and request scoped repair; stale clears only after a valid repair snapshot"],
         "expected_visible": ["two sessions, teams, and processes remain isolated and converge after authoritative repair"]
       }
@@ -45,11 +46,18 @@
         "reconstruction": "The Worker discards an incompatible IndexedDB namespace, accepts the newly authenticated gateway generation, and reconstructs only from authoritative snapshots.",
         "expected_visible": "No stale cached entity is presented as authority after the restart or in the fresh context.",
         "scope_exclusion": "P09 observes reconstruction only and does not claim P10 reconnect lifecycle, subscription cleanup, duplicate-Worker, or empty-composer behavior."
+      },
+      {
+        "id": "p07r-001-released-repair-convergence",
+        "fault": "BROWSER-005 held the initial same-epoch replay and fallback bootstrap while runtime fan-in reached row 7; after all retained requests drained and normal live retry resumed, Tower remained gap_detected at floor row 4.",
+        "reconstruction": "P07R-001 stages replay/bootstrap privately, rejects incomplete or regressive candidates before mutation, re-arms only an idle GapDetected queue on a Replaying edge, then atomically installs seq7 and emits source_gap_filled before one authoritative snapshot_resync coverage replacement. Evidence: tmp/gg/gooseweb-migration/P09/880dc80/attempt-1/repair-release-divergence.redacted.json; sha256 f86fb1e6263c5c03c6dfabc893a8a3ff6b770645e9743ae7e937363c13f1021e.",
+        "expected_visible": "Source stale state, authority, entities, coverage, and command safety remain frozen through release until the installed seq7 recovery sequence clears them.",
+        "scope_exclusion": "This is the narrow P07 prerequisite correction P07R-001 at the first divergent Goosetower repair-convergence layer; it changes no runtime contract and claims no P10 lifecycle behavior."
       }
     ],
     "authority_chain": [
       {"layer": "Gooselake", "required": ["durable entity truth is unchanged", "runtime source epoch and sequence remain authoritative"]},
-      {"layer": "Goosetower", "required": ["P08 operation and coverage are consumed unchanged", "gateway generation is publication authority, not runtime truth"]},
+      {"layer": "Goosetower", "required": ["P08 operation and coverage are consumed unchanged", "gateway generation is publication authority, not runtime truth", "P07R-001 freezes published authority beyond a gap and emits gap_filled before authoritative replacement only after contiguous replay or coherent fallback is installed"]},
       {"layer": "Gooseweb Worker/store", "required": ["sequential lossless bounded reduction", "explicit stale and coverage replacement plus fail-before-mutation repair"]},
       {"layer": "Gooseweb React", "required": ["reads the external store only", "does not invent lifecycle, repair, or optimistic canonical entities"]}
     ],
@@ -69,7 +77,7 @@
   },
   "ownership": {
     "gooselake": {"impact": "no_change", "reason": "P09 changes no runtime record, event, command, migration, or storage authority."},
-    "goosetower": {"impact": "no_change", "reason": "P09 consumes the P06-P08 cursor, generation, operation, and coverage contracts without changing Tower."},
+    "goosetower": {"impact": "changed", "reason": "P07R-001 is a lead-authorized narrow prerequisite correction at the BROWSER-005 first divergent layer: idle released repairs re-arm on Replaying, stage without publication, and atomically install continuity before gap_filled plus authoritative snapshot replacement."},
     "gooseweb": {"impact": "changed", "reason": "The active Worker, cursor cache, external store, deterministic smokes, and acceptance manifest gain lossless authority-aware reduction."},
     "auth_account_state": {"impact": "no_change", "reason": "No account, ticket, workspace, permission, or session-cookie behavior changes."},
     "protocol_generated_code": {"impact": "no_change", "reason": "No Protobuf schema or generated artifact changes; P08 typed shapes are preserved."},
@@ -115,8 +123,8 @@
     "schema_migration": {"status": "not_applicable", "reason": "No runtime, Tower, or protocol schema changes; the browser cache uses a new disposable namespace."},
     "backfill": {"status": "not_applicable", "reason": "Browser caches are disposable and are never backfilled as authority."},
     "compatibility": {"status": "required", "reason": "Incompatible cursor/cache namespaces discard and refetch; P08 legacy decoding remains bounded and explicit."},
-    "rollback": {"status": "required", "reason": "Rollback may discard the v2 browser cache namespace; durable runtime and Tower truth are unaffected."},
-    "performance": {"status": "required", "reason": "Entity operations reduce sequentially inside one bounded drain and publish exactly once."},
+    "rollback": {"status": "required", "reason": "Rollback may discard the v2 browser cache namespace and removes the P07R-001 reconnect-edge re-arm; durable runtime truth remains unaffected."},
+    "performance": {"status": "required", "reason": "Entity operations reduce sequentially inside one bounded drain; P07R-001 uses one active repair loop, bounded replay pages/fallback, and one recovery replacement."},
     "security": {"status": "no_change", "reason": "No credential, ticket, authorization, or secret-bearing data path changes."},
     "data_retention_gc": {"status": "not_applicable", "reason": "Only disposable browser cursor data is namespaced; no product retention policy changes."},
     "deployment": {"status": "not_applicable", "reason": "No server configuration, topology, or deployment artifact changes."},
@@ -135,7 +143,10 @@
       "RealtimeWorkerCore",
       "mergeStorePatch",
       "updateGoosewebStore",
-      "parsePersistedCursorState"
+      "parsePersistedCursorState",
+      "GatewayState::retry_idle_gap_after_reconnect",
+      "GatewayState::complete_gap_candidate",
+      "GatewayState::source_recovery_frames"
     ],
     "native_tauri_assumptions_removed": {"status": "not_applicable", "reason": "Only authority, batching, coverage, and overlay invariants were referenced."}
   }

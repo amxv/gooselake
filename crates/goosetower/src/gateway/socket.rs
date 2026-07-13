@@ -133,15 +133,13 @@ impl GatewayState {
                 }
                 recovery = recovery_rx.recv() => {
                     match recovery {
-                        Ok(SourceRecoverySignal::Filled(cursor)) => {
-                            self.enqueue_connection(&mut conn, self.source_gap_filled(cursor), None);
-                        }
-                        Ok(SourceRecoverySignal::Resync { source_id, reason }) => {
-                            let state = self.materialized.read().await.get(&source_id).cloned();
+                        Ok(SourceRecoverySignal::Resync { cursor, reason }) => {
+                            let state = self.materialized.read().await.get(&cursor.source_id).cloned();
                             if let Some(state) = state {
-                                match self.source_snapshot_resync(&state, &reason) {
-                                    Ok(envelope) => {
-                                        let entry = self.record_replayable(envelope).await;
+                                match self.source_recovery_frames(cursor, &state, &reason) {
+                                    Ok((filled, resync)) => {
+                                        self.enqueue_connection(&mut conn, filled, None);
+                                        let entry = self.record_replayable(resync).await;
                                         self.enqueue_connection(&mut conn, entry.envelope, None);
                                     }
                                     Err(error) => {
@@ -240,6 +238,33 @@ impl GatewayState {
             .await
             .remove(&conn.connection_id);
         conn.status = ConnectionStatus::Offline;
+    }
+
+    pub(super) fn source_recovery_frames(
+        &self,
+        installed_cursor: SourceCursor,
+        state: &MaterializedState,
+        reason: &str,
+    ) -> Result<(RealtimeEnvelope, RealtimeEnvelope)> {
+        let state_cursor = state.source_health.last_source_seq.unwrap_or(0).max(0) as u64;
+        if installed_cursor.source_id != state.source_id
+            || installed_cursor.source_epoch != state.source_epoch
+            || state.source_health.state != SourceHealthState::Live
+            || state_cursor < installed_cursor.source_seq
+        {
+            return Err(anyhow!(
+                "source recovery cursor does not match installed authority"
+            ));
+        }
+        let published_cursor = SourceCursor {
+            source_id: state.source_id.clone(),
+            source_epoch: state.source_epoch.clone(),
+            source_seq: state_cursor,
+        };
+        Ok((
+            self.source_gap_filled(published_cursor),
+            self.source_snapshot_resync(state, reason)?,
+        ))
     }
 
     async fn handle_inbound_message(

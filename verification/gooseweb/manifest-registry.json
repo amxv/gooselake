@@ -1,6 +1,6 @@
 {
   "schema_revision": "gooseweb-manifest-registry/v1",
-  "approved_plan_sha256": "3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d",
+  "approved_plan_sha256": "93693215b3fc46d85a03209fc990a84c17db5f4a8ddcfdec52ad3a4e37112bfc",
   "active_manifests": [
     {
       "phase_id": "P01",
@@ -27,22 +27,29 @@
       "phase_id": "P04",
       "path": "verification/gooseweb/manifests/p04-reconnect-lab.json",
       "revision": 1,
-      "sha256": "0f080f9aad9940b18e7b07fb21ff8e81e5b4c72413248f9e85519531c2322dc7",
+      "sha256": "81a7de9c19b62af8cc6a9f1a1ff69cefa86e492c38d78a132a776d11f3f3c7c0",
       "activated_reason": "P04 defines the deterministic real-path replay, gap, restart, stale-command, and disposable-context laboratory while mapping current product failures to P06-P10."
     },
     {
       "phase_id": "P06",
       "path": "verification/gooseweb/manifests/p06-source-bootstrap-watermark.json",
       "revision": 1,
-      "sha256": "a66f8acedc21e1b8a415eb28a96d7a28ea456de6ee71e02769e2a7500519f3a2",
+      "sha256": "c6a747a0729c1ca246fb8d8687153884dfbb7709387028f1a3ada4fc0150872b",
       "activated_reason": "P06 verifies the runtime-issued durable source epoch, coherent SQLite bootstrap watermark, explicit old-runtime compatibility, monotonic rows 4-11 eligibility, and both owned P02/P04 baseline closures."
     },
     {
       "phase_id": "P07",
       "path": "verification/gooseweb/manifests/p07-monotonic-gap-repair.json",
       "revision": 1,
-      "sha256": "f7c65b0b4f9b2819c2259ddc89a617e6ca76232ec6a1727bcbf1208273110fb3",
+      "sha256": "b3ef04b0818b047be2666626e13f4490f05b4afe6dfbb20f22444a2149aac036",
       "activated_reason": "P07 verifies targeted command merges, monotonic authoritative revisions, one frozen gap cursor owner, replay and atomic high-watermark fallback repair, bounded dedupe, the two owned P01 baseline closures, and honest P08-P10 baseline mapping."
+    },
+    {
+      "phase_id": "P09",
+      "path": "verification/gooseweb/manifests/p09-worker-store-authority.json",
+      "revision": 1,
+      "sha256": "25c4c40944b9c3e9be865845b8fa824025bdefde9d1cc5427452e7fd6a91474a",
+      "activated_reason": "P09 verifies lossless ordered Worker/store reduction, explicit authority coverage and stale algebra, targeted gap repair, generation-safe disposable cursor caching, and both owned P04 baseline closures without claiming P10 lifecycle work."
     }
   ]
 }

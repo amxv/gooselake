@@ -3,35 +3,35 @@
   "cases": [
     {
       "id": "replay-overlap",
-      "current": { "gateway_seq": "10", "source_epoch": "epoch-1", "source_seq": "4" },
-      "next": { "gateway_seq": "10", "source_epoch": "epoch-1", "source_seq": "4" },
+      "current": { "gateway_seq": "10", "gateway_epoch": "gateway-1", "gateway_started_at_unix_ns": "1", "source_epoch": "epoch-1", "source_seq": "4" },
+      "next": { "gateway_seq": "10", "gateway_epoch": "gateway-1", "gateway_started_at_unix_ns": "1", "source_epoch": "epoch-1", "source_seq": "4" },
       "safe_to_apply": false,
       "current_product_applies": false,
       "baseline_defect_id": null
     },
     {
       "id": "missing-source-cursor",
-      "current": { "gateway_seq": "10", "source_epoch": "epoch-1", "source_seq": "4" },
-      "next": { "gateway_seq": "11", "source_epoch": "epoch-1", "source_seq": "6" },
+      "current": { "gateway_seq": "10", "gateway_epoch": "gateway-1", "gateway_started_at_unix_ns": "1", "source_epoch": "epoch-1", "source_seq": "4" },
+      "next": { "gateway_seq": "11", "gateway_epoch": "gateway-1", "gateway_started_at_unix_ns": "1", "source_epoch": "epoch-1", "source_seq": "6" },
       "safe_to_apply": false,
-      "current_product_applies": true,
-      "baseline_defect_id": "BASE-P04-WORKER-SOURCE-GAP-ACCEPTED"
+      "current_product_applies": false,
+      "baseline_defect_id": null
     },
     {
       "id": "source-epoch-change",
-      "current": { "gateway_seq": "10", "source_epoch": "epoch-1", "source_seq": "4" },
-      "next": { "gateway_seq": "11", "source_epoch": "epoch-2", "source_seq": "1" },
+      "current": { "gateway_seq": "10", "gateway_epoch": "gateway-1", "gateway_started_at_unix_ns": "1", "source_epoch": "epoch-1", "source_seq": "4" },
+      "next": { "gateway_seq": "11", "gateway_epoch": "gateway-1", "gateway_started_at_unix_ns": "1", "source_epoch": "epoch-2", "source_seq": "1" },
       "safe_to_apply": true,
       "current_product_applies": true,
       "baseline_defect_id": null
     },
     {
       "id": "tower-restart-gateway-sequence-reset",
-      "current": { "gateway_seq": "10", "source_epoch": "epoch-1", "source_seq": "4" },
-      "next": { "gateway_seq": "1", "source_epoch": "epoch-2", "source_seq": "1" },
+      "current": { "gateway_seq": "10", "gateway_epoch": "gateway-1", "gateway_started_at_unix_ns": "1", "source_epoch": "epoch-1", "source_seq": "4" },
+      "next": { "gateway_seq": "1", "gateway_epoch": "gateway-2", "gateway_started_at_unix_ns": "2", "source_epoch": "epoch-2", "source_seq": "1" },
       "safe_to_apply": true,
-      "current_product_applies": false,
-      "baseline_defect_id": "BASE-P04-GATEWAY-RESTART-CURSOR-FLOOR"
+      "current_product_applies": true,
+      "baseline_defect_id": null
     }
   ]
 }

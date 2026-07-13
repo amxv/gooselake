@@ -7,12 +7,15 @@ import {
 } from "../../src/gen/goosetower/v1/common_pb";
 import type { CursorState, SourceCursorState } from "./types";
 
-const CURSOR_DB_NAME = "gooseweb-realtime";
+export const CURSOR_CACHE_NAMESPACE = "gooseweb-realtime-authority-v2";
+const CURSOR_DB_NAME = CURSOR_CACHE_NAMESPACE;
 const CURSOR_DB_VERSION = 1;
 const CURSOR_STORE = "kv";
-const CURSOR_STORAGE_KEY = "cursor.v1";
+const CURSOR_STORAGE_KEY = "cursor.v2";
+const CURSOR_SCHEMA = "gooseweb-cursor/v2";
 
 type PersistedCursorState = {
+  readonly schema: typeof CURSOR_SCHEMA;
   readonly gatewaySeq: string;
   readonly gatewayEpoch?: string;
   readonly gatewayStartedAtUnixNs?: string;
@@ -39,29 +42,43 @@ export async function loadCursorState(): Promise<CursorState> {
   }
 
   try {
-    const parsed = JSON.parse(raw) as PersistedCursorState;
-    const sourceCursors: Record<string, SourceCursorState> = {};
-    for (const [sourceId, cursor] of Object.entries(parsed.sourceCursors ?? {})) {
-      sourceCursors[sourceId] = {
-        sourceId: cursor.sourceId,
-        sourceEpoch: cursor.sourceEpoch,
-        sourceSeq: BigInt(cursor.sourceSeq)
-      };
-    }
-
-    return {
-      gatewaySeq: BigInt(parsed.gatewaySeq),
-      gatewayEpoch: parsed.gatewayEpoch ?? "",
-      gatewayStartedAtUnixNs: BigInt(parsed.gatewayStartedAtUnixNs ?? "0"),
-      sourceCursors
-    };
+    return parsePersistedCursorState(raw);
   } catch {
     return emptyCursorState;
   }
 }
 
+export function parsePersistedCursorState(raw: string): CursorState {
+  const parsed = JSON.parse(raw) as PersistedCursorState;
+  if (parsed.schema !== CURSOR_SCHEMA || !parsed.sourceCursors ||
+    typeof parsed.gatewaySeq !== "string") {
+    throw new Error("incompatible realtime cursor cache namespace");
+  }
+  const sourceCursors: Record<string, SourceCursorState> = {};
+  for (const [sourceId, cursor] of Object.entries(parsed.sourceCursors ?? {})) {
+    const sourceSeq = BigInt(cursor.sourceSeq);
+    if (cursor.sourceId !== sourceId || !sourceId || !cursor.sourceEpoch || sourceSeq <= 0n) {
+      throw new Error("invalid persisted source cursor authority");
+    }
+    sourceCursors[sourceId] = {
+      sourceId: cursor.sourceId,
+      sourceEpoch: cursor.sourceEpoch,
+      sourceSeq
+    };
+  }
+  const gatewaySeq = BigInt(parsed.gatewaySeq);
+  const gatewayStartedAtUnixNs = BigInt(parsed.gatewayStartedAtUnixNs ?? "0");
+  const gatewayEpoch = parsed.gatewayEpoch ?? "";
+  if (gatewaySeq < 0n || gatewayStartedAtUnixNs < 0n ||
+    (gatewaySeq > 0n && (!gatewayEpoch || gatewayStartedAtUnixNs === 0n))) {
+    throw new Error("invalid persisted gateway generation authority");
+  }
+  return { gatewaySeq, gatewayEpoch, gatewayStartedAtUnixNs, sourceCursors };
+}
+
 export async function persistCursorState(cursor: CursorState): Promise<void> {
   const persisted: PersistedCursorState = {
+    schema: CURSOR_SCHEMA,
     gatewaySeq: cursor.gatewaySeq.toString(),
     gatewayEpoch: cursor.gatewayEpoch,
     gatewayStartedAtUnixNs: cursor.gatewayStartedAtUnixNs.toString(),
@@ -142,8 +159,7 @@ export function shouldApplyCursor(
   if (currentSource.sourceEpoch !== nextSource.sourceEpoch) {
     return true;
   }
-
-  return nextSource.sourceSeq > currentSource.sourceSeq;
+  return nextSource.sourceSeq === currentSource.sourceSeq + 1n;
 }
 
 export function shouldApplyCursorVector(
@@ -192,6 +208,16 @@ export function hasCursorEpochMismatch(
     const existing = current.sourceCursors[source.sourceId];
     return Boolean(existing && existing.sourceEpoch !== source.sourceEpoch);
   });
+}
+
+export function isNewGatewayGeneration(
+  current: CursorState,
+  gatewayEpoch: string,
+  gatewayStartedAtUnixNs: bigint
+): boolean {
+  return Boolean(gatewayEpoch && gatewayStartedAtUnixNs > 0n &&
+    (current.gatewayEpoch !== gatewayEpoch ||
+      current.gatewayStartedAtUnixNs !== gatewayStartedAtUnixNs));
 }
 
 export function isValidCursorVector(nextSources: readonly SourceCursorState[]): boolean {

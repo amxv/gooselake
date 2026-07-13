@@ -4,7 +4,7 @@
   "manifest_revision": 1,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
-    "sha256": "3ae08ecfa2f27c16e9ee93fbd3e32643cc96c33cf1ba1c82a028238887f3c41d"
+    "sha256": "93693215b3fc46d85a03209fc990a84c17db5f4a8ddcfdec52ad3a4e37112bfc"
   },
   "browser_contract": {
     "mechanism": "agent-browser",

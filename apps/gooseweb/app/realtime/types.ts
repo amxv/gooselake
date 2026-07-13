@@ -69,6 +69,12 @@ export type EntityOperation = EntityMutation & {
   readonly sourceId?: string;
 };
 
+export type StaleSourceOperation = {
+  readonly operation: "add" | "remove" | "replace";
+  readonly sourceIds: readonly string[];
+  readonly reasons: Readonly<Record<string, string>>;
+};
+
 export type SessionTranscriptEntry = {
   readonly id: string;
   readonly sessionId: string;
@@ -240,4 +246,5 @@ export type WorkerOutbound =
 export type GoosewebStorePatch = Partial<Omit<GoosewebSnapshot, "entities">> & {
   readonly entities?: NormalizedEntityPatch;
   readonly entityOperations?: readonly EntityOperation[];
+  readonly staleSourceOperations?: readonly StaleSourceOperation[];
 };

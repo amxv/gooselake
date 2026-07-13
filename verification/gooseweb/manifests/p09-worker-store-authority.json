@@ -1,0 +1,155 @@
+{
+  "schema_revision": "gooseweb-acceptance-manifest/v4",
+  "manifest_id": "GW-P09-WORKER-STORE-AUTHORITY-001",
+  "manifest_revision": 1,
+  "approved_plan": {
+    "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
+    "sha256": "93693215b3fc46d85a03209fc990a84c17db5f4a8ddcfdec52ad3a4e37112bfc"
+  },
+  "browser_contract": {
+    "mechanism": "agent-browser",
+    "execution_mode": "headless",
+    "headed_mode_prohibited": true,
+    "fresh_unique_session_required": true,
+    "chromium_binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "chromium_version": "150.0.7871.115",
+    "profile_policy": "fresh_ephemeral"
+  },
+  "scenario": {
+    "phase_id": "P09",
+    "title": "Lossless authority-aware Worker and external-store reduction",
+    "product_clearance": "pending",
+    "stable_scenario_id": "GW-P09-WORKER-STORE-AUTHORITY-001",
+    "preconditions": [
+      "P08 versioned view frames declare canonical CursorVector, operation, and authoritative coverage.",
+      "Two independent sessions, teams, and processes can publish siblings in one bounded Worker drain.",
+      "A persisted v1 browser cache and a restarted gateway generation are available as deterministic fixtures."
+    ],
+    "actions": [
+      {
+        "id": "lossless-authority-repair",
+        "control": {"role": "textbox", "accessible_name": "Message agent"},
+        "submit": {"role": "button", "accessible_name": "Send message"},
+        "expected_command_count": 1,
+        "command": "sendTurn",
+        "expected_runtime": ["one accepted command remains durable runtime authority"],
+        "expected_goosetower": ["same-drain siblings retain explicit operation, coverage, source epoch, and gateway generation"],
+        "expected_worker_store": ["all siblings reduce in order in one publication; gaps freeze before mutation and request scoped repair; stale clears only after a valid repair snapshot"],
+        "expected_visible": ["two sessions, teams, and processes remain isolated and converge after authoritative repair"]
+      },
+      {
+        "id": "gateway-generation-cache-migration",
+        "control": {"role": "button", "accessible_name": "Reconnect"},
+        "submit": {"role": "button", "accessible_name": "Reconnect"},
+        "expected_command_count": 1,
+        "command": "not_applicable_reconnect_observation",
+        "expected_runtime": ["runtime source epoch and sequence remain canonical"],
+        "expected_goosetower": ["new gateway generation may restart its publication sequence below the old generation floor"],
+        "expected_worker_store": ["incompatible IndexedDB namespace is discarded and refetched; the new authenticated generation reconstructs from authoritative snapshots"],
+        "expected_visible": ["no stale cached entity is presented as authority after reload or fresh context"]
+      }
+    ],
+    "authority_chain": [
+      {"layer": "Gooselake", "required": ["durable entity truth is unchanged", "runtime source epoch and sequence remain authoritative"]},
+      {"layer": "Goosetower", "required": ["P08 operation and coverage are consumed unchanged", "gateway generation is publication authority, not runtime truth"]},
+      {"layer": "Gooseweb Worker/store", "required": ["sequential lossless bounded reduction", "explicit stale and coverage replacement plus fail-before-mutation repair"]},
+      {"layer": "Gooseweb React", "required": ["reads the external store only", "does not invent lifecycle, repair, or optimistic canonical entities"]}
+    ],
+    "cardinality": {"browser_actions": 2, "commands": 2, "runtime_messages": 1, "visible_message_instances": 2, "duplicates": 0},
+    "chronology": "oldest_first_by_authoritative_order_not_client_timestamp",
+    "golden_goose_acceptance_lessons": [
+      "sequential bounded reduction",
+      "one publication per drain",
+      "stable per-session isolation",
+      "authoritative replacement deletes absent coverage",
+      "revision jumps fail closed",
+      "gap recovery never guesses",
+      "pending state is a local overlay",
+      "unknown input cannot mutate authority",
+      "cache loss triggers refetch"
+    ]
+  },
+  "ownership": {
+    "gooselake": {"impact": "no_change", "reason": "P09 changes no runtime record, event, command, migration, or storage authority."},
+    "goosetower": {"impact": "no_change", "reason": "P09 consumes the P06-P08 cursor, generation, operation, and coverage contracts without changing Tower."},
+    "gooseweb": {"impact": "changed", "reason": "The active Worker, cursor cache, external store, deterministic smokes, and acceptance manifest gain lossless authority-aware reduction."},
+    "auth_account_state": {"impact": "no_change", "reason": "No account, ticket, workspace, permission, or session-cookie behavior changes."},
+    "protocol_generated_code": {"impact": "no_change", "reason": "No Protobuf schema or generated artifact changes; P08 typed shapes are preserved."},
+    "api_narrative_docs": {"impact": "no_change", "reason": "No runtime HTTP route, OpenAPI artifact, or public narrative API behavior changes."}
+  },
+  "reconstruction": ["ordinary_reload", "fresh_chromium_context_profile", "websocket_loss_reconnect", "navigation_away_and_back"],
+  "responsive": {
+    "viewports": ["1440x1000", "820x1000", "520x900"],
+    "assertions": [
+      "the reviewer observes identical authoritative entities after repair at every viewport",
+      "document width does not overflow",
+      "composer bottom remains inside the viewport",
+      "source-stale safety remains visible and critical actions remain reachable"
+    ]
+  },
+  "states": {
+    "empty": {"applicability": "required", "expectation": "Authoritative empty snapshots remove absent covered entities and nested arrays."},
+    "loading": {"applicability": "required", "expectation": "Subscriptions remain subscribing until their exact valid snapshot arrives."},
+    "stale_gap_replaying": {"applicability": "required", "expectation": "Same-epoch jumps freeze before mutation and stale clears only after authoritative fill or resync."},
+    "rejection_conflict": {"applicability": "required", "expectation": "Revision, epoch, generation, operation, and request mismatches request repair without authority mutation."},
+    "permission_denied": {"applicability": "required", "expectation": "Existing command rejection remains a local pending-command overlay."},
+    "unsupported_provider": {"applicability": "not_applicable", "reason": "Worker/store reduction is provider-neutral."},
+    "terminal_error": {"applicability": "required", "expectation": "Malformed and unknown version/operation frames degrade explicitly before cursor or entity mutation."}
+  },
+  "fixtures": {
+    "allowed_use": "source_fixture_through_real_tower_only",
+    "product_correctness_use": false,
+    "default_fixture_leak_assertions": [
+      "No P09 fake entity enters the default or production UI.",
+      "Deterministic frames run only in source-controlled smoke scripts.",
+      "The active production Worker and smoke import the same core."
+    ],
+    "gating": "No React fixture is added; browser acceptance uses the supervisor-managed real stack."
+  },
+  "allowlists": {
+    "console": "verification/gooseweb/allowlists/console.json",
+    "network": "verification/gooseweb/allowlists/network.json",
+    "unexpected_console_network_protocol_websocket_failure": "fail"
+  },
+  "baseline_detected": [
+    {
+      "scenario_id": "GW-P09-WORKER-STORE-AUTHORITY-001",
+      "defect_id": "BASE-P01-RECONNECT-STATE-DISAGREEMENT",
+      "first_divergent_layer": "Gooseweb reconnect and subscription lifecycle",
+      "evidence_references": ["verification/gooseweb/manifests/p01-team-comms-live.json"],
+      "owning_correction_phase": "P10",
+      "affected_downstream_gates": ["P10", "M1", "P25", "M3", "P56", "M7"],
+      "product_scenario_status": "blocked_not_approved",
+      "description": "P09 does not claim P10 reconnect, subscription cleanup, duplicate Worker, or empty-composer work."
+    }
+  ],
+  "known_defects": [],
+  "non_applicable": {
+    "schema_migration": {"status": "not_applicable", "reason": "No runtime, Tower, or protocol schema changes; the browser cache uses a new disposable namespace."},
+    "backfill": {"status": "not_applicable", "reason": "Browser caches are disposable and are never backfilled as authority."},
+    "compatibility": {"status": "required", "reason": "Incompatible cursor/cache namespaces discard and refetch; P08 legacy decoding remains bounded and explicit."},
+    "rollback": {"status": "required", "reason": "Rollback may discard the v2 browser cache namespace; durable runtime and Tower truth are unaffected."},
+    "performance": {"status": "required", "reason": "Entity operations reduce sequentially inside one bounded drain and publish exactly once."},
+    "security": {"status": "no_change", "reason": "No credential, ticket, authorization, or secret-bearing data path changes."},
+    "data_retention_gc": {"status": "not_applicable", "reason": "Only disposable browser cursor data is namespaced; no product retention policy changes."},
+    "deployment": {"status": "not_applicable", "reason": "No server configuration, topology, or deployment artifact changes."},
+    "provenance_reuse": {"status": "reference_only", "reason": "Golden Goose batching, coverage, and projection tests informed invariants; no source was copied."}
+  },
+  "provenance": {
+    "source_repository": "/Users/ashray/code/amxv/gg-desktop",
+    "source_commit": "af539ec0bf63ffad27ee47b480e817bb8393e02d",
+    "references": [
+      "src/store/agent-store/runtime-event-batcher.ts",
+      "src/store/agent-store/timeline-coverage.ts",
+      "src/store/agent-store/runtime-timeline-projection.test.ts"
+    ],
+    "reuse_status": "reference_only",
+    "destination_symbols": [
+      "RealtimeWorkerCore",
+      "mergeStorePatch",
+      "updateGoosewebStore",
+      "parsePersistedCursorState"
+    ],
+    "native_tauri_assumptions_removed": {"status": "not_applicable", "reason": "Only authority, batching, coverage, and overlay invariants were referenced."}
+  }
+}

@@ -4,6 +4,7 @@ import type {
   GoosewebStorePatch,
   GoosewebSnapshot,
   EntityOperation,
+  StaleSourceOperation,
   NormalizedEntities,
   SessionDetailState,
   TeamWorkspaceState,
@@ -72,9 +73,12 @@ export function updateGoosewebStore(patch: GoosewebStorePatch): void {
     pendingCommands: patch.pendingCommands
       ? { ...snapshot.pendingCommands, ...patch.pendingCommands }
       : snapshot.pendingCommands,
-    staleSources: patch.staleSources
-      ? { ...snapshot.staleSources, ...patch.staleSources }
-      : snapshot.staleSources,
+    staleSources: applyStaleSourceOperations(
+      patch.staleSources
+        ? { ...snapshot.staleSources, ...patch.staleSources }
+        : snapshot.staleSources,
+      patch.staleSourceOperations ?? []
+    ),
     invalidatedSourceDomains: patch.invalidatedSourceDomains
       ? { ...snapshot.invalidatedSourceDomains, ...patch.invalidatedSourceDomains }
       : snapshot.invalidatedSourceDomains,
@@ -84,6 +88,27 @@ export function updateGoosewebStore(patch: GoosewebStorePatch): void {
   for (const listener of listeners) {
     listener();
   }
+}
+
+function applyStaleSourceOperations(
+  current: Readonly<Record<string, string>>,
+  operations: readonly StaleSourceOperation[]
+): Readonly<Record<string, string>> {
+  let next = current;
+  for (const operation of operations) {
+    if (operation.operation === "replace") {
+      next = { ...operation.reasons };
+      continue;
+    }
+    if (operation.operation === "add") {
+      next = { ...next, ...operation.reasons };
+      continue;
+    }
+    const reduced = { ...next };
+    for (const sourceId of operation.sourceIds) delete reduced[sourceId];
+    next = reduced;
+  }
+  return next;
 }
 
 function applyEntityOperations(
@@ -137,7 +162,10 @@ function mergeEntities(
 ): NormalizedEntities {
   return {
     ...current,
-    ...patch,
+    ...Object.fromEntries(Object.entries(patch ?? {}).map(([domain, records]) => [
+      domain,
+      { ...(current[domain as keyof NormalizedEntities] as object), ...(records as object) }
+    ])),
     sessionDetails: patch?.sessionDetails
       ? mergeSessionDetails(current.sessionDetails, patch.sessionDetails)
       : current.sessionDetails,

@@ -12,6 +12,7 @@ import { realtimeUrlWithTicket } from "../config";
 import {
   emptyCursorState,
   hasCursorEpochMismatch,
+  isNewGatewayGeneration,
   isValidCursorVector,
   loadCursorState,
   mergeCursorVector,
@@ -47,10 +48,17 @@ import {
   makeSubscribe,
   makeUnsubscribe
 } from "./command-messages";
+import { mergeStorePatch } from "./store-patch-batcher";
+import { reduceCommandLifecycle } from "./command-rejection";
+import {
+  canonicalViewKind,
+  cursorAuthorityFromEnvelope,
+  isSelectedViewKind,
+  snapshotCoverageKind
+} from "./view-authority";
 
 const HEARTBEAT_FALLBACK_MS = 15_000;
 const PATCH_FLUSH_MS = 16;
-
 export class RealtimeWorkerCore {
   private socket: WebSocket | undefined;
   private cursor: CursorState = emptyCursorState;
@@ -70,12 +78,13 @@ export class RealtimeWorkerCore {
   private invalidatedSourceDomains: Record<string, readonly EntityDomain[]> = {};
   private loadedCoverage: Record<string, LoadedCoverage> = {};
   private readonly pendingResetSubscriptions = new Set<string>();
+  private readonly frozenSources = new Set<string>();
+  private readonly pendingStaleClearSources = new Set<string>();
 
   constructor(
     private readonly post: (message: WorkerOutbound) => void,
     private readonly observeFrame?: (envelope: RealtimeEnvelope) => void
   ) {}
-
   async handleMessage(message: WorkerInbound): Promise<void> {
     switch (message.type) {
       case "connect":
@@ -102,7 +111,6 @@ export class RealtimeWorkerCore {
         break;
     }
   }
-
   private async connect(goosetowerUrl: string, ticket: string): Promise<void> {
     this.disconnect();
     this.startupFramesSent = false;
@@ -154,7 +162,6 @@ export class RealtimeWorkerCore {
       });
     };
   }
-
   private disconnect(): void {
     this.stopHeartbeat();
     this.socket?.close();
@@ -193,11 +200,7 @@ export class RealtimeWorkerCore {
     this.post({ type: "subscription-state", subscription });
     this.sendEnvelope(makeUnsubscribe(subscriptionId));
     if (retiredResetRequirement) {
-      const recovered = this.pendingResetSubscriptions.size === 0;
-      this.emitState({
-        connection: recovered ? "connected" : "stale",
-        ...(recovered ? { lastError: undefined } : {})
-      });
+      this.emitState(this.recoveryPatch());
     }
   }
 
@@ -346,12 +349,13 @@ export class RealtimeWorkerCore {
           const patch = decodeSourceSnapshotResync(envelope.payload.value);
           if (!this.applySourceResyncCursor(envelope)) return;
           this.invalidateSourceCoverage(envelope.payload.value.sourceId);
+          this.frozenSources.add(envelope.payload.value.sourceId);
+          this.pendingStaleClearSources.add(envelope.payload.value.sourceId);
           this.handleEntityPatch(patch);
           this.resendActiveSubscriptions();
-          const recovered = this.pendingResetSubscriptions.size === 0;
+          const recovery = this.recoveryPatch();
           this.emitState({
-            connection: recovered ? "connected" : "stale",
-            ...(recovered ? { lastError: undefined } : {}),
+            ...recovery,
             invalidatedSourceDomains: this.invalidatedSourceDomains,
             loadedCoverage: this.loadedCoverage
           });
@@ -529,12 +533,11 @@ export class RealtimeWorkerCore {
       this.subscriptions[subscriptionId] = active;
       this.post({ type: "subscription-state", subscription: active });
     }
-    const recovered = this.pendingResetSubscriptions.size === 0;
+    const recovery = this.recoveryPatch();
     this.emitState({
       loadedCoverage: this.loadedCoverage,
       invalidatedSourceDomains: this.invalidatedSourceDomains,
-      connection: recovered ? "connected" : "stale",
-      ...(recovered ? { lastError: undefined } : {})
+      ...recovery
     });
     return { entityOperations: transformed };
   }
@@ -668,50 +671,23 @@ export class RealtimeWorkerCore {
   }
 
   private handleCommandLifecycle(envelope: RealtimeEnvelope): void {
-    const commandId = envelope.commandId || commandIdFromPayload(envelope);
-    if (!commandId) {
-      return;
-    }
-
-    const current = this.pendingCommands[commandId];
-    const base: PendingCommandState = current ?? {
-      commandId,
-      idempotencyKey: commandId,
-      status: "sent",
-      createdAtUnixMs: Date.now()
-    };
-
-    const rejection =
-      envelope.payload.case === "commandRejected"
-        ? envelope.payload.value.error
-        : undefined;
-    const rejectionCode = rejection?.code || "upstream_rejected";
-    const next: PendingCommandState =
-      envelope.messageKind === MessageKind.COMMAND_ACCEPTED
-        ? { ...base, status: "accepted", error: undefined, errorCode: undefined }
-        : envelope.messageKind === MessageKind.COMMAND_DUPLICATE
-          ? {
-              ...base,
-              status: "duplicate",
-              errorCode: "duplicate",
-              error: commandReasonCopy("duplicate")
-            }
-          : {
-              ...base,
-              status: "rejected",
-              errorCode: rejectionCode,
-              error: commandReasonCopy(rejectionCode, rejection?.message),
-              refreshEntity: shouldRefreshRejectedCommand(rejectionCode)
-            };
-
-    this.pendingCommands[commandId] = next;
+    const next = reduceCommandLifecycle(envelope, this.pendingCommands);
+    if (!next) return;
+    this.pendingCommands[next.commandId] = next;
     this.post({ type: "command-state", command: next });
     if (next.status === "rejected" && next.refreshEntity) {
+      const staleSourceId = next.targetEntityId?.startsWith("source:")
+        ? next.targetEntityId.replace(/^source:/, "")
+        : undefined;
       this.emitState({
         lastError: `${next.errorCode}: ${next.error}`,
-        staleSources: next.targetEntityId?.startsWith("source:")
-          ? { [next.targetEntityId.replace(/^source:/, "")]: next.errorCode ?? "source_stale" }
-          : undefined
+        ...(staleSourceId ? {
+          staleSourceOperations: [{
+            operation: "add" as const,
+            sourceIds: [staleSourceId],
+            reasons: { [staleSourceId]: next.errorCode ?? "source_stale" }
+          }]
+        } : {})
       });
     }
   }
@@ -726,7 +702,62 @@ export class RealtimeWorkerCore {
         envelope.payload.value.reason || "snapshot_resync";
     }
 
-    this.emitState({ connection: "stale", staleSources });
+    for (const [sourceId, reason] of Object.entries(staleSources)) {
+      if (!sourceId) continue;
+      this.requestTargetedRepair(sourceId, reason);
+    }
+  }
+
+  private requestTargetedRepair(sourceId: string, reason: string): void {
+    this.frozenSources.add(sourceId);
+    this.pendingStaleClearSources.add(sourceId);
+    this.emitState({
+      connection: "stale",
+      staleSourceOperations: [{
+        operation: "add",
+        sourceIds: [sourceId],
+        reasons: { [sourceId]: reason }
+      }]
+    });
+    for (const subscription of Object.values(this.subscriptions)) {
+      if (subscription.status === "unsubscribed") continue;
+      const requestedSource = subscription.filters.source_id;
+      if (requestedSource && requestedSource !== sourceId) continue;
+      const repairing = {
+        ...subscription,
+        requestId: crypto.randomUUID(),
+        status: "subscribing" as const
+      };
+      this.subscriptions[subscription.subscriptionId] = repairing;
+      this.pendingResetSubscriptions.add(subscription.subscriptionId);
+      this.post({ type: "subscription-state", subscription: repairing });
+      this.sendEnvelope(makeSubscribe(
+        repairing.subscriptionId,
+        repairing.viewKind,
+        repairing.filters,
+        repairing.requestId
+      ));
+    }
+  }
+
+  private recoveryPatch(): GoosewebStorePatch {
+    if (this.pendingResetSubscriptions.size > 0) {
+      return { connection: "stale" };
+    }
+    const recoveredSources = [...this.pendingStaleClearSources];
+    this.pendingStaleClearSources.clear();
+    recoveredSources.forEach((sourceId) => this.frozenSources.delete(sourceId));
+    return {
+      connection: "connected",
+      lastError: undefined,
+      ...(recoveredSources.length > 0 ? {
+        staleSourceOperations: [{
+          operation: "remove" as const,
+          sourceIds: recoveredSources,
+          reasons: {}
+        }]
+      } : {})
+    };
   }
 
   private applyViewEnvelopeCursor(envelope: RealtimeEnvelope): boolean {
@@ -787,11 +818,27 @@ export class RealtimeWorkerCore {
       return false;
     }
     if (hasCursorEpochMismatch(this.cursor, sources)) {
-      this.emitState({
-        connection: "stale",
-        lastError: "source_epoch_mismatch: snapshot repair required"
-      });
+      for (const source of sources) {
+        const existing = this.cursor.sourceCursors[source.sourceId];
+        if (existing && existing.sourceEpoch !== source.sourceEpoch) {
+          this.requestTargetedRepair(source.sourceId, "source_epoch_mismatch");
+        }
+      }
       return false;
+    }
+    if (!isSnapshot) {
+      const jumped = sources.find((source) => {
+        const existing = this.cursor.sourceCursors[source.sourceId];
+        return existing?.sourceEpoch === source.sourceEpoch &&
+          source.sourceSeq > existing.sourceSeq + 1n;
+      });
+      if (jumped) {
+        this.requestTargetedRepair(jumped.sourceId, "source_cursor_gap");
+        return false;
+      }
+      if (sources.some((source) => this.frozenSources.has(source.sourceId))) {
+        return false;
+      }
     }
     if (!shouldApplyCursorVector(
       this.cursor,
@@ -842,9 +889,10 @@ export class RealtimeWorkerCore {
       this.failProtocolFrame("source resync cursor disagrees with source identity");
       return false;
     }
-    const generationChanged = Boolean(
-      (!this.cursor.gatewayEpoch && this.cursor.gatewaySeq > 0n) ||
-      (this.cursor.gatewayEpoch && this.cursor.gatewayEpoch !== authority.gatewayEpoch)
+    const generationChanged = isNewGatewayGeneration(
+      this.cursor,
+      authority.gatewayEpoch,
+      authority.gatewayStartedAtUnixNs
     );
     if (
       authority.gatewayEpoch !== this.gatewayEpoch ||
@@ -931,7 +979,7 @@ export class RealtimeWorkerCore {
   }
 
   private emitState(patch: GoosewebStorePatch): void {
-    this.queuedPatch = mergeSnapshotPatch(this.queuedPatch, patch);
+    this.queuedPatch = mergeStorePatch(this.queuedPatch, patch);
     if (this.flushTimer) {
       return;
     }
@@ -950,154 +998,3 @@ export class RealtimeWorkerCore {
 }
 
 type PendingCommandInput = Parameters<typeof makeCommand>[0];
-
-function snapshotCoverageKind(
-  viewKind: string,
-  entityIds: readonly string[]
-): LoadedCoverage["kind"] {
-  if (entityIds.length > 0) return "entity";
-  if (["board", "fleet_board", "approval_inbox", "teams", "sessions"].includes(viewKind)) {
-    return "window";
-  }
-  return "domain";
-}
-
-function canonicalViewKind(viewKind: string): string {
-  if (viewKind === "session") return "session_detail";
-  if (viewKind === "team" || viewKind === "team_stream") return "team_workspace";
-  if (viewKind === "process") return "process_tail";
-  return viewKind;
-}
-
-function isSelectedViewKind(viewKind: string): boolean {
-  return viewKind === "session_detail" || viewKind === "team_workspace" ||
-    viewKind === "process_tail";
-}
-
-function cursorAuthorityFromEnvelope(
-  envelope: RealtimeEnvelope
-): {
-  gatewayEpoch: string;
-  gatewayStartedAtUnixNs: bigint;
-  gatewaySeq: bigint;
-  sources: SourceCursorState[];
-} | undefined {
-  if (envelope.payload.case === "snapshot" || envelope.payload.case === "patch") {
-    const view = envelope.payload.value;
-    if (view.cursor) {
-      return {
-        gatewayEpoch: view.cursor.gatewayEpoch,
-        gatewayStartedAtUnixNs: view.cursor.gatewayStartedAtUnixNs,
-        gatewaySeq: view.cursor.gatewaySeq,
-        sources: view.cursor.sources.map((source) => ({
-          sourceId: source.sourceId,
-          sourceEpoch: source.sourceEpoch,
-          sourceSeq: source.sourceSeq
-        }))
-      };
-    }
-    if (view.schemaVersion > 0) return undefined;
-  }
-  if (envelope.payload.case === "sourceSnapshotResync") {
-    const resync = envelope.payload.value;
-    if (!resync.cursor || resync.schemaVersion !== 1) return undefined;
-    return {
-      gatewayEpoch: resync.cursor.gatewayEpoch,
-      gatewayStartedAtUnixNs: resync.cursor.gatewayStartedAtUnixNs,
-      gatewaySeq: resync.cursor.gatewaySeq,
-      sources: resync.cursor.sources.map((source) => ({
-        sourceId: source.sourceId,
-        sourceEpoch: source.sourceEpoch,
-        sourceSeq: source.sourceSeq
-      }))
-    };
-  }
-  return {
-    gatewayEpoch: "",
-    gatewayStartedAtUnixNs: 0n,
-    gatewaySeq: envelope.gatewaySeq,
-    sources: envelope.sourceId && envelope.sourceSeq > 0n ? [{
-        sourceId: envelope.sourceId,
-        sourceEpoch: envelope.sourceEpoch,
-        sourceSeq: envelope.sourceSeq
-      }] : []
-  };
-}
-
-function commandIdFromPayload(envelope: RealtimeEnvelope): string {
-  switch (envelope.payload.case) {
-    case "commandAccepted":
-      return envelope.payload.value.commandId;
-    case "commandRejected":
-      return envelope.payload.value.commandId;
-    case "commandDuplicate":
-      return envelope.payload.value.commandId;
-    default:
-      return "";
-  }
-}
-
-function commandReasonCopy(code: string, fallback?: string): string {
-  switch (code) {
-    case "unauthorized":
-      return "This session is not authorized to run that command.";
-    case "invalid_scope":
-      return "The command does not match the selected object type.";
-    case "invalid_target":
-      return "The selected object is no longer available.";
-    case "stale_entity_version":
-      return "The selected object changed. Refreshing its state before retry.";
-    case "source_unavailable":
-      return "The runtime source is unavailable.";
-    case "source_stale":
-      return "The runtime source is stale. Refreshing before retry.";
-    case "source_gap":
-      return "The runtime event stream has a gap. Refreshing before retry.";
-    case "upstream_rejected":
-      return fallback || "The runtime rejected the command.";
-    case "upstream_timeout":
-      return "The runtime did not respond before the command timed out.";
-    case "duplicate":
-      return "This command was already submitted.";
-    default:
-      return fallback || "Command rejected.";
-  }
-}
-
-function shouldRefreshRejectedCommand(code: string): boolean {
-  return (
-    code === "stale_entity_version" ||
-    code === "source_stale" ||
-    code === "source_gap" ||
-    code === "source_unavailable"
-  );
-}
-
-function mergeSnapshotPatch(
-  current: GoosewebStorePatch,
-  next: GoosewebStorePatch
-): GoosewebStorePatch {
-  return {
-    ...current,
-    ...next,
-    entities: next.entities
-      ? { ...current.entities, ...next.entities }
-      : current.entities,
-    pendingCommands: next.pendingCommands
-      ? { ...current.pendingCommands, ...next.pendingCommands }
-      : current.pendingCommands,
-    subscriptions: next.subscriptions
-      ? { ...current.subscriptions, ...next.subscriptions }
-      : current.subscriptions,
-    staleSources: next.staleSources
-      ? { ...current.staleSources, ...next.staleSources }
-      : current.staleSources,
-    invalidatedSourceDomains: next.invalidatedSourceDomains
-      ? { ...current.invalidatedSourceDomains, ...next.invalidatedSourceDomains }
-      : current.invalidatedSourceDomains,
-    loadedCoverage: next.loadedCoverage ?? current.loadedCoverage,
-    entityOperations: next.entityOperations
-      ? [...(current.entityOperations ?? []), ...next.entityOperations]
-      : current.entityOperations
-  };
-}

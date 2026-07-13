@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  mergeCursor,
+  isNewGatewayGeneration,
+  mergeCursorVector,
   shouldApplyCursor
 } from "../app/realtime/cursors";
 import type { CursorState, SourceCursorState } from "../app/realtime/types";
 
 type FixtureCursor = {
   readonly gateway_seq: string;
+  readonly gateway_epoch: string;
+  readonly gateway_started_at_unix_ns: string;
   readonly source_epoch: string;
   readonly source_seq: string;
 };
@@ -50,12 +53,17 @@ for (const entry of fixture.cases) {
   const currentSource = sourceCursor(entry.current);
   const current: CursorState = {
     gatewaySeq: BigInt(entry.current.gateway_seq),
-    gatewayEpoch: "legacy-p04",
-    gatewayStartedAtUnixNs: 1n,
+    gatewayEpoch: entry.current.gateway_epoch,
+    gatewayStartedAtUnixNs: BigInt(entry.current.gateway_started_at_unix_ns),
     sourceCursors: { local: currentSource }
   };
   const nextSource = sourceCursor(entry.next);
-  const observed = shouldApplyCursor(
+  const generationChanged = isNewGatewayGeneration(
+    current,
+    entry.next.gateway_epoch,
+    BigInt(entry.next.gateway_started_at_unix_ns)
+  );
+  const observed = generationChanged || shouldApplyCursor(
     current,
     BigInt(entry.next.gateway_seq),
     nextSource
@@ -70,26 +78,20 @@ for (const entry of fixture.cases) {
 
   assert.equal(entry.baseline_defect_id, null, `${entry.id} has a false baseline`);
   if (observed) {
-    const merged = mergeCursor(
-      current,
-      BigInt(entry.next.gateway_seq),
-      nextSource
-    );
+    const merged = mergeCursorVector(current, BigInt(entry.next.gateway_seq), [nextSource], {
+      replaceGateway: generationChanged,
+      gatewayEpoch: entry.next.gateway_epoch,
+      gatewayStartedAtUnixNs: BigInt(entry.next.gateway_started_at_unix_ns)
+    });
     assert.equal(merged.gatewaySeq, BigInt(entry.next.gateway_seq));
     assert.deepEqual(merged.sourceCursors.local, nextSource);
   }
 }
 
-assert.deepEqual(
-  [...detectedBaselines].sort(),
-  [
-    "BASE-P04-GATEWAY-RESTART-CURSOR-FLOOR",
-    "BASE-P04-WORKER-SOURCE-GAP-ACCEPTED"
-  ]
-);
+assert.deepEqual([...detectedBaselines], []);
 
 console.log(
-  "P04 cursor lab passed: overlap/epoch behavior verified and 2 mapped product baselines detected"
+  "P04 cursor lab passed: source-gap and gateway-generation baselines closed"
 );
 
 function sourceCursor(cursor: FixtureCursor): SourceCursorState {

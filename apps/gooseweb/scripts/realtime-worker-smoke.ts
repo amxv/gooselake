@@ -271,6 +271,23 @@ function helloEnvelope(
   });
 }
 
+function pongEnvelope(messageId: string, gatewaySeq = 0n) {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1,
+    messageId,
+    messageKind: MessageKind.PONG,
+    lane: Lane.CRITICAL,
+    gatewaySeq,
+    sourceId: gatewaySeq > 0n ? "malformed-control-authority" : "",
+    sourceEpoch: gatewaySeq > 0n ? "wrong-control-epoch" : "",
+    sourceSeq: gatewaySeq,
+    payload: { case: "pong", value: create(PongSchema, {
+      clientTimeUnixMs: gatewaySeq,
+      serverTimeUnixMs: gatewaySeq
+    }) }
+  });
+}
+
 const core = new RealtimeWorkerCore((message) => {
   posted.push(message);
   if (message.type === "state") updateGoosewebStore(message.patch);
@@ -826,6 +843,10 @@ assert.deepEqual(
 );
 assert.equal(getGoosewebSnapshot().connection, "stale",
   "source must remain stale until every required active coverage snapshot arrives");
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, pongEnvelope("pong-during-pending-reset", 777n)));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().connection, "stale",
+  "PONG must not bypass pending reset subscriptions or unloaded coverage");
 await core.handleMessage({ type: "unsubscribe", subscriptionId: "subscription-board" });
 assert.equal(getGoosewebSnapshot().connection, "stale",
   "unsubscribe during reset retires only that requirement and reevaluates recovery");
@@ -1700,6 +1721,15 @@ await heartbeatCore.handleMessage({
 const heartbeatSocket = sockets[4];
 assert.ok(heartbeatSocket);
 heartbeatSocket.open();
+heartbeatSocket.receive(toBinary(RealtimeEnvelopeSchema, pongEnvelope("pre-hello-pong", 8_999n)));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().connection, "connecting",
+  "socket-open PONG cannot present an authenticated connected state before Hello");
+assert.equal(heartbeatSocket.sent.some((bytes) => {
+  if (!(bytes instanceof Uint8Array)) return false;
+  const kind = fromBinary(RealtimeEnvelopeSchema, bytes).messageKind;
+  return kind === MessageKind.RESUME || kind === MessageKind.SUBSCRIBE;
+}), false, "startup resume/subscriptions must wait for authenticated Hello");
 heartbeatSocket.receive(toBinary(
   RealtimeEnvelopeSchema,
   helloEnvelope("gateway-heartbeat", 500n, 10)
@@ -1739,19 +1769,10 @@ const heartbeatPings = heartbeatSocket.sent.filter((bytes) =>
 assert.ok(heartbeatPings.length >= 2,
   "real heartbeat timers must emit across at least two configured intervals");
 for (let index = 0; index < 2; index += 1) {
-  heartbeatSocket.receive(toBinary(RealtimeEnvelopeSchema, create(RealtimeEnvelopeSchema, {
-    protocolVersion: 1,
-    messageId: `authorityless-pong-${index}`,
-    messageKind: MessageKind.PONG,
-    lane: Lane.CRITICAL,
-    gatewaySeq: 9_000n + BigInt(index),
-    sourceId: "malformed-control-authority",
-    sourceEpoch: "wrong-control-epoch",
-    sourceSeq: 9_000n + BigInt(index),
-    payload: { case: "pong", value: create(PongSchema, {
-      clientTimeUnixMs: BigInt(index), serverTimeUnixMs: BigInt(index)
-    }) }
-  })));
+  heartbeatSocket.receive(toBinary(
+    RealtimeEnvelopeSchema,
+    pongEnvelope(`authorityless-pong-${index}`, 9_000n + BigInt(index))
+  ));
 }
 await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().connection, "connected");
@@ -1841,11 +1862,23 @@ const controlFrames = [
     }) }
   })
 ];
-for (const frame of controlFrames) {
+const expectedControlConnections = [
+  "connected", "connected", "connected", "degraded", "stale", "replaying", "replaying"
+] as const;
+for (const [index, frame] of controlFrames.entries()) {
   heartbeatSocket.receive(toBinary(RealtimeEnvelopeSchema, frame));
   await waitForPatchFlush();
   assert.deepEqual(getGoosewebSnapshot().cursor, canonicalBeforeControls,
     `${MessageKind[frame.messageKind]} must not mutate canonical view authority`);
+  assert.equal(getGoosewebSnapshot().connection, expectedControlConnections[index]);
+  heartbeatSocket.receive(toBinary(
+    RealtimeEnvelopeSchema,
+    pongEnvelope(`pong-after-${MessageKind[frame.messageKind]}-${index}`, 9_200n + BigInt(index))
+  ));
+  await waitForPatchFlush();
+  assert.equal(getGoosewebSnapshot().connection, expectedControlConnections[index],
+    `PONG must not overwrite ${expectedControlConnections[index]} safety state`);
+  assert.deepEqual(getGoosewebSnapshot().cursor, canonicalBeforeControls);
 }
 assert.equal(heartbeatPosted.some((message) =>
   message.type === "command-state" && message.command.commandId === "control-accepted" &&

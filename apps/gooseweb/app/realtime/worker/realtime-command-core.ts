@@ -118,7 +118,7 @@ export class RealtimeWorkerCore {
       if (this.socket !== socket) {
         return;
       }
-      this.emitState({ connection: "connected", lastError: undefined });
+      this.emitState({ connection: "connecting" });
       this.startHeartbeat();
     };
     socket.onmessage = (event) => {
@@ -319,7 +319,6 @@ export class RealtimeWorkerCore {
         }
         break;
       case MessageKind.PONG:
-        this.emitState({ connection: "connected" });
         break;
       case MessageKind.COMMAND_ACCEPTED:
       case MessageKind.COMMAND_REJECTED:

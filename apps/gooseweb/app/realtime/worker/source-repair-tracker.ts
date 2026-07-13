@@ -31,6 +31,17 @@ export class SourceRepairTracker {
     };
   }
 
+  assertSnapshotAuthority(sources: readonly SourceCursorState[]): void {
+    for (const source of sources) {
+      const repair = this.repairs[source.sourceId];
+      if (!repair) continue;
+      if ((repair.expectedEpoch && source.sourceEpoch !== repair.expectedEpoch) ||
+        (repair.minimumSourceSeq !== undefined && source.sourceSeq < repair.minimumSourceSeq)) {
+        throw new Error(`snapshot cursor misses repair authority for ${source.sourceId}`);
+      }
+    }
+  }
+
   retireSnapshot(
     subscriptionId: string,
     requestId: string,

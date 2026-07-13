@@ -352,7 +352,6 @@ const repairControlState = {
   subscriptions: subscriptionGenerations()
 };
 for (const frame of [
-  gapFilled("wrong-source-fill", { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 7n }),
   gapFilled("wrong-epoch-fill", { sourceId: "source-1", sourceEpoch: "epoch-2", sourceSeq: 7n }),
   gapFilled("zero-fill", { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 0n })
 ]) socket.receive(frame);
@@ -375,6 +374,13 @@ await flush();
 assert.equal(getGoosewebSnapshot().staleSources["source-1"], "gap_detected",
   "a valid bounded snapshot for another source cannot satisfy this source repair");
 
+const beforeRejectedRepairSnapshots = {
+  cursor: structuredClone(getGoosewebSnapshot().cursor),
+  entities: structuredClone(getGoosewebSnapshot().entities),
+  visibleEntities: structuredClone(getVisibleGoosewebSnapshot().entities),
+  coverage: structuredClone(getGoosewebSnapshot().loadedCoverage),
+  subscriptions: subscriptionGenerations()
+};
 socket.receive(snapshot("below-floor-session", repairRequestId, 5n, 5n, "session-a", "below-floor"));
 for (const view of productionViews) {
   socket.receive(boundedSnapshot(
@@ -385,7 +391,20 @@ for (const view of productionViews) {
     { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 5n }
   ));
 }
+socket.receive(boundedSnapshot(
+  "wrong-epoch-board-repair",
+  productionViews[0]!,
+  latestSubscribeRequestId(socket, productionViews[0]!.subscriptionId),
+  5n,
+  { sourceId: "source-1", sourceEpoch: "wrong-epoch", sourceSeq: 7n }
+));
 await flush();
+assert.deepEqual(getGoosewebSnapshot().cursor, beforeRejectedRepairSnapshots.cursor);
+assert.deepEqual(getGoosewebSnapshot().entities, beforeRejectedRepairSnapshots.entities);
+assert.deepEqual(getVisibleGoosewebSnapshot().entities, beforeRejectedRepairSnapshots.visibleEntities);
+assert.deepEqual(getGoosewebSnapshot().loadedCoverage, beforeRejectedRepairSnapshots.coverage);
+assert.deepEqual(subscriptionGenerations(), beforeRejectedRepairSnapshots.subscriptions,
+  "repair-authority mismatch rejects snapshots before cursor/entity/coverage/subscription mutation");
 assert.equal(getGoosewebSnapshot().staleSources["source-1"], "gap_detected",
   "current-generation snapshots below the repair floor cannot retire requirements");
 
@@ -431,6 +450,36 @@ assert.deepEqual(getGoosewebSnapshot().entities.worktrees, coherentBeforeGap.wor
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.sessions).length, 0);
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.worktrees).length, 0,
   "successful bounded replay does not expose domains without repaired coverage");
+
+socket.receive(gapDetected("source-2-gap",
+  { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 1n },
+  { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 3n }));
+await flush();
+assert.equal(getGoosewebSnapshot().staleSources["source-2"], "gap_detected");
+const beforeDelayedSourceOneFill = {
+  cursor: structuredClone(getGoosewebSnapshot().cursor),
+  entities: structuredClone(getGoosewebSnapshot().entities),
+  visibleEntities: structuredClone(getVisibleGoosewebSnapshot().entities),
+  coverage: structuredClone(getGoosewebSnapshot().loadedCoverage),
+  subscriptions: subscriptionGenerations(),
+  lastError: getGoosewebSnapshot().lastError,
+  errorCount: posted.filter((message) => message.type === "error").length
+};
+socket.receive(gapFilled("delayed-source-1-fill", {
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n
+}));
+await flush();
+assert.equal(getGoosewebSnapshot().connection, "stale");
+assert.equal(getGoosewebSnapshot().staleSources["source-2"], "gap_detected");
+assert.deepEqual(getGoosewebSnapshot().cursor, beforeDelayedSourceOneFill.cursor);
+assert.deepEqual(getGoosewebSnapshot().entities, beforeDelayedSourceOneFill.entities);
+assert.deepEqual(getVisibleGoosewebSnapshot().entities, beforeDelayedSourceOneFill.visibleEntities);
+assert.deepEqual(getGoosewebSnapshot().loadedCoverage, beforeDelayedSourceOneFill.coverage);
+assert.deepEqual(subscriptionGenerations(), beforeDelayedSourceOneFill.subscriptions);
+assert.equal(getGoosewebSnapshot().lastError, beforeDelayedSourceOneFill.lastError);
+assert.equal(posted.filter((message) => message.type === "error").length,
+  beforeDelayedSourceOneFill.errorCount,
+  "delayed valid fill is idempotent and cannot poison another source repair");
 
 const authorityBeforeMalformed = getGoosewebSnapshot();
 socket.receive(patchFrame("unknown-operation", 6n, 8n, "session-a", "bad", {

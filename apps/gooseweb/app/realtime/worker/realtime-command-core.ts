@@ -287,6 +287,7 @@ export class RealtimeWorkerCore {
               cursorAuthorityFromEnvelope(envelope)?.sources.map((source) => source.sourceId) ?? []
             );
           this.validateSnapshotPatchSource(envelope, envelope.payload.value, patch);
+          this.sourceRepairs.assertSnapshotAuthority(cursorAuthorityFromEnvelope(envelope)?.sources ?? []);
           if (!this.applyViewEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installSnapshotCoverage(envelope, patch));
         } catch (error) {
@@ -702,8 +703,7 @@ export class RealtimeWorkerCore {
     try {
       const filled = gapFilledAuthorityFromEnvelope(envelope, this.cursor);
       const result = this.sourceRepairs.markGapFilled(filled);
-      if (result === "invalid" || (result === "untracked" && this.sourceRepairs.hasPending))
-        throw new Error("gap-filled cursor misses pending repair authority");
+      if (result === "invalid") throw new Error("gap-filled cursor misses pending repair authority");
       this.emitState(result === "marked"
         ? { connection: "replaying", ...this.recoveryPatch() }
         : { connection: this.sourceRepairs.hasPending ? "stale" : "replaying" });

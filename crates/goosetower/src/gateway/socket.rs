@@ -1,5 +1,40 @@
 use super::*;
 
+pub(super) enum SocketPublication {
+    Recovery(Result<SourceRecoverySignal, broadcast::error::RecvError>),
+    Patch(Result<MaterializedPatch, broadcast::error::RecvError>),
+}
+
+pub(super) fn take_ready_socket_publication(
+    recovery_rx: &mut broadcast::Receiver<SourceRecoverySignal>,
+    patch_rx: &mut broadcast::Receiver<MaterializedPatch>,
+) -> Option<SocketPublication> {
+    match recovery_rx.try_recv() {
+        Ok(recovery) => return Some(SocketPublication::Recovery(Ok(recovery))),
+        Err(broadcast::error::TryRecvError::Lagged(count)) => {
+            return Some(SocketPublication::Recovery(Err(
+                broadcast::error::RecvError::Lagged(count),
+            )));
+        }
+        Err(broadcast::error::TryRecvError::Closed) => {
+            return Some(SocketPublication::Recovery(Err(
+                broadcast::error::RecvError::Closed,
+            )));
+        }
+        Err(broadcast::error::TryRecvError::Empty) => {}
+    }
+    match patch_rx.try_recv() {
+        Ok(patch) => Some(SocketPublication::Patch(Ok(patch))),
+        Err(broadcast::error::TryRecvError::Lagged(count)) => Some(SocketPublication::Patch(Err(
+            broadcast::error::RecvError::Lagged(count),
+        ))),
+        Err(broadcast::error::TryRecvError::Closed) => Some(SocketPublication::Patch(Err(
+            broadcast::error::RecvError::Closed,
+        ))),
+        Err(broadcast::error::TryRecvError::Empty) => None,
+    }
+}
+
 impl GatewayState {
     pub async fn handle_socket(self: Arc<Self>, socket: WebSocket, auth: AuthContext) {
         let connection_id = format!(
@@ -106,85 +141,63 @@ impl GatewayState {
         );
 
         loop {
-            tokio::select! {
-                biased;
-                patch = patch_rx.recv() => {
-                    match patch {
-                        Ok(patch) if conn.patch_matches(&patch) => {
-                            self.enqueue_patch(&mut conn, patch).await;
-                        }
-                        Ok(_) => {}
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
-                            conn.status = ConnectionStatus::Degraded;
-                            self.enqueue_connection(
-                                &mut conn,
-                                self.connection_degraded("gateway replay buffer lagged"),
-                                Some("connection_status".to_string()),
-                            );
-                            self.enqueue_connection(&mut conn, self.audit_event("source.gap", Scope::Source, ""), None);
-                            self.record_audit(
-                                "source.gap",
-                                Some(conn.connection_id.clone()),
-                                json!({ "reason": "gateway replay buffer lagged" }),
-                            ).await;
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
+            if let Some(publication) =
+                take_ready_socket_publication(&mut recovery_rx, &mut patch_rx)
+            {
+                if matches!(
+                    self.enqueue_socket_publication(&mut conn, publication)
+                        .await,
+                    Continue::No
+                ) {
+                    break;
                 }
-                recovery = recovery_rx.recv() => {
-                    match recovery {
-                        Ok(SourceRecoverySignal::Resync { cursor, reason }) => {
-                            let state = self.materialized.read().await.get(&cursor.source_id).cloned();
-                            if let Some(state) = state {
-                                match self.source_recovery_frames(cursor, &state, &reason) {
-                                    Ok((filled, resync)) => {
-                                        self.enqueue_connection(&mut conn, filled, None);
-                                        let entry = self.record_replayable(resync).await;
-                                        self.enqueue_connection(&mut conn, entry.envelope, None);
-                                    }
-                                    Err(error) => {
-                                        conn.status = ConnectionStatus::Degraded;
-                                        self.enqueue_connection(
-                                            &mut conn,
-                                            self.connection_degraded(error.to_string()),
-                                            Some("connection_status".to_string()),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(_)) => {
-                            conn.status = ConnectionStatus::Degraded;
-                            self.enqueue_connection(
+            } else {
+                tokio::select! {
+                    biased;
+                    recovery = recovery_rx.recv() => {
+                        if matches!(
+                            self.enqueue_socket_publication(
                                 &mut conn,
-                                self.connection_degraded("source recovery signal lagged"),
-                                Some("connection_status".to_string()),
-                            );
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-                next = tokio::time::timeout(heartbeat_timeout, receiver.next()) => {
-                    let message = match next {
-                        Ok(Some(Ok(message))) => message,
-                        Ok(Some(Err(_))) | Ok(None) => break,
-                        Err(_) => {
-                            let _ = sender.send(Message::Close(Some(CloseFrame {
-                                code: 4000,
-                                reason: "heartbeat timeout".into(),
-                            }))).await;
+                                SocketPublication::Recovery(recovery),
+                            ).await,
+                            Continue::No
+                        ) {
                             break;
                         }
-                    };
-                    match self.handle_inbound_message(message, &mut conn).await {
-                        Ok(Continue::Yes) => {}
-                        Ok(Continue::No) => break,
-                        Err(error) => {
-                            self.enqueue_connection(
+                    }
+                    patch = patch_rx.recv() => {
+                        if matches!(
+                            self.enqueue_socket_publication(
                                 &mut conn,
-                                error_envelope("protocol_error", error.to_string(), false),
-                                None,
-                            );
+                                SocketPublication::Patch(patch),
+                            ).await,
+                            Continue::No
+                        ) {
+                            break;
+                        }
+                    }
+                    next = tokio::time::timeout(heartbeat_timeout, receiver.next()) => {
+                        let message = match next {
+                            Ok(Some(Ok(message))) => message,
+                            Ok(Some(Err(_))) | Ok(None) => break,
+                            Err(_) => {
+                                let _ = sender.send(Message::Close(Some(CloseFrame {
+                                    code: 4000,
+                                    reason: "heartbeat timeout".into(),
+                                }))).await;
+                                break;
+                            }
+                        };
+                        match self.handle_inbound_message(message, &mut conn).await {
+                            Ok(Continue::Yes) => {}
+                            Ok(Continue::No) => break,
+                            Err(error) => {
+                                self.enqueue_connection(
+                                    &mut conn,
+                                    error_envelope("protocol_error", error.to_string(), false),
+                                    None,
+                                );
+                            }
                         }
                     }
                 }
@@ -240,29 +253,89 @@ impl GatewayState {
         conn.status = ConnectionStatus::Offline;
     }
 
+    pub(super) async fn enqueue_socket_publication(
+        &self,
+        conn: &mut ConnectionState,
+        publication: SocketPublication,
+    ) -> Continue {
+        match publication {
+            SocketPublication::Patch(Ok(patch)) if conn.patch_matches(&patch) => {
+                self.enqueue_patch(conn, patch).await;
+            }
+            SocketPublication::Patch(Ok(_)) => {}
+            SocketPublication::Patch(Err(broadcast::error::RecvError::Lagged(_))) => {
+                conn.status = ConnectionStatus::Degraded;
+                self.enqueue_connection(
+                    conn,
+                    self.connection_degraded("gateway replay buffer lagged"),
+                    Some("connection_status".to_string()),
+                );
+                self.enqueue_connection(
+                    conn,
+                    self.audit_event("source.gap", Scope::Source, ""),
+                    None,
+                );
+                self.record_audit(
+                    "source.gap",
+                    Some(conn.connection_id.clone()),
+                    json!({ "reason": "gateway replay buffer lagged" }),
+                )
+                .await;
+            }
+            SocketPublication::Patch(Err(broadcast::error::RecvError::Closed)) => {
+                return Continue::No;
+            }
+            SocketPublication::Recovery(Ok(SourceRecoverySignal::Resync {
+                cursor,
+                state,
+                reason,
+            })) => match self.source_recovery_frames(cursor, &state, &reason) {
+                Ok((filled, resync)) => {
+                    self.enqueue_connection(conn, filled, None);
+                    let entry = self.record_replayable(resync).await;
+                    self.enqueue_connection(conn, entry.envelope, None);
+                }
+                Err(error) => {
+                    conn.status = ConnectionStatus::Degraded;
+                    self.enqueue_connection(
+                        conn,
+                        self.connection_degraded(error.to_string()),
+                        Some("connection_status".to_string()),
+                    );
+                }
+            },
+            SocketPublication::Recovery(Err(broadcast::error::RecvError::Lagged(_))) => {
+                conn.status = ConnectionStatus::Degraded;
+                self.enqueue_connection(
+                    conn,
+                    self.connection_degraded("source recovery signal lagged"),
+                    Some("connection_status".to_string()),
+                );
+            }
+            SocketPublication::Recovery(Err(broadcast::error::RecvError::Closed)) => {
+                return Continue::No;
+            }
+        }
+        Continue::Yes
+    }
+
     pub(super) fn source_recovery_frames(
         &self,
-        installed_cursor: SourceCursor,
+        cursor: SourceCursor,
         state: &MaterializedState,
         reason: &str,
     ) -> Result<(RealtimeEnvelope, RealtimeEnvelope)> {
-        let state_cursor = state.source_health.last_source_seq.unwrap_or(0).max(0) as u64;
-        if installed_cursor.source_id != state.source_id
-            || installed_cursor.source_epoch != state.source_epoch
+        if cursor.source_id != state.source_id
+            || cursor.source_epoch != state.source_epoch
+            || cursor.source_seq != state.source_health.last_source_seq.unwrap_or(0).max(0) as u64
             || state.source_health.state != SourceHealthState::Live
-            || state_cursor < installed_cursor.source_seq
         {
             return Err(anyhow!(
                 "source recovery cursor does not match installed authority"
             ));
         }
-        let published_cursor = SourceCursor {
-            source_id: state.source_id.clone(),
-            source_epoch: state.source_epoch.clone(),
-            source_seq: state_cursor,
-        };
         Ok((
-            self.source_gap_filled(published_cursor),
+            self.source_gap_filled(cursor),
             self.source_snapshot_resync(state, reason)?,
         ))
     }
@@ -914,7 +987,7 @@ fn replay_entry_matches(conn: &ConnectionState, entry: &ReplayEntry) -> bool {
     }
 }
 
-enum Continue {
+pub(super) enum Continue {
     Yes,
     No,
 }

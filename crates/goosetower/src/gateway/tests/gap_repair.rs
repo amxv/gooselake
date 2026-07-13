@@ -304,12 +304,17 @@ async fn released_failed_repair_rearms_once_on_replaying_and_converges_atomicall
             .is_none_or(|cursor| cursor.source_seq <= 4));
     }
 
-    let SourceRecoverySignal::Resync { cursor, reason } =
-        recoveries.try_recv().expect("one recovery replacement");
+    let SourceRecoverySignal::Resync {
+        cursor,
+        state: recovery_state,
+        reason,
+    } = recoveries.try_recv().expect("one recovery replacement");
     assert_eq!(cursor.source_seq, 7);
+    assert_eq!(recovery_state.source_health.last_source_seq, Some(7));
+    assert_eq!(recovery_state.source_health.state, SourceHealthState::Live);
     assert!(recoveries.try_recv().is_err());
     let (filled, replacement) = gateway
-        .source_recovery_frames(cursor.clone(), &state, &reason)
+        .source_recovery_frames(cursor.clone(), &recovery_state, &reason)
         .expect("installed recovery authority");
     assert!(matches!(filled.payload, Some(Payload::SourceGapFilled(_))));
     let Some(Payload::SourceSnapshotResync(replacement)) = replacement.payload else {
@@ -326,30 +331,154 @@ async fn released_failed_repair_rearms_once_on_replaying_and_converges_atomicall
             .authoritative
     );
 
-    let mut advanced = state.clone();
-    assert!(!advanced.reduce_source_event(runtime_event(8)).duplicate);
-    let (filled, replacement) = gateway
-        .source_recovery_frames(cursor.clone(), &advanced, &reason)
-        .expect("contiguous live authority may advance before recovery delivery");
-    let Some(Payload::SourceGapFilled(filled)) = filled.payload else {
-        panic!("advanced recovery must remain gap_filled first");
-    };
-    assert_eq!(filled.cursor.expect("advanced fill cursor").source_seq, 8);
-    let Some(Payload::SourceSnapshotResync(replacement)) = replacement.payload else {
-        panic!("advanced recovery must retain its authoritative replacement");
-    };
-    assert_eq!(
-        replacement.cursor.expect("advanced resync cursor").sources[0].source_seq,
-        8
-    );
-
-    advanced.transition_source_health(
+    let mut second_gap = recovery_state;
+    second_gap.transition_source_health(
         SourceHealthState::GapDetected,
         Some("second gap".to_string()),
     );
     assert!(gateway
-        .source_recovery_frames(cursor, &advanced, &reason)
+        .source_recovery_frames(cursor, &second_gap, &reason)
         .is_err());
+}
+
+#[tokio::test]
+async fn ready_recovery_queue_is_served_before_a_later_live_patch() {
+    let runtime_addr = spawn_failed_repair_runtime().await;
+    let gateway = gateway_at_cursor(runtime_addr, 7).await;
+    let recovery_state = gateway.materialized.read().await["local"].clone();
+    let cursor = SourceCursor {
+        source_id: "local".into(),
+        source_epoch: "static-0".into(),
+        source_seq: 7,
+    };
+    let mut recovery_rx = gateway.recoveries.subscribe();
+    let mut patch_rx = gateway.verification_patch_receiver();
+    let mut conn = test_connection(&gateway);
+    conn.subscriptions.insert(
+        "sub_ledger".into(),
+        Subscription::from_proto(&ledger_sub()).expect("ledger subscription"),
+    );
+
+    gateway
+        .recoveries
+        .send(SourceRecoverySignal::Resync {
+            cursor,
+            state: recovery_state.clone(),
+            reason: "installed seq7 authority".into(),
+        })
+        .expect("recovery receiver");
+    let mut advanced_state = recovery_state;
+    assert!(
+        !advanced_state
+            .reduce_source_event(runtime_event(8))
+            .duplicate
+    );
+    gateway
+        .replace_materialized_state("local".into(), advanced_state)
+        .await;
+    assert_eq!(
+        gateway.materialized.read().await["local"]
+            .source_health
+            .last_source_seq,
+        Some(8)
+    );
+    gateway.publish_patch(ledger_patch(8));
+
+    let first =
+        super::super::socket::take_ready_socket_publication(&mut recovery_rx, &mut patch_rx)
+            .expect("ready recovery publication");
+    assert!(matches!(
+        first,
+        super::super::socket::SocketPublication::Recovery(Ok(_))
+    ));
+    assert!(matches!(
+        gateway.enqueue_socket_publication(&mut conn, first).await,
+        super::super::socket::Continue::Yes
+    ));
+    let recovery_payloads = drain_payloads(&mut conn);
+    assert!(matches!(
+        recovery_payloads.as_slice(),
+        [
+            Payload::SourceGapFilled(_),
+            Payload::SourceSnapshotResync(_)
+        ]
+    ));
+
+    let second =
+        super::super::socket::take_ready_socket_publication(&mut recovery_rx, &mut patch_rx)
+            .expect("later live patch publication");
+    assert!(matches!(
+        second,
+        super::super::socket::SocketPublication::Patch(Ok(_))
+    ));
+    assert!(matches!(
+        gateway.enqueue_socket_publication(&mut conn, second).await,
+        super::super::socket::Continue::Yes
+    ));
+    let patch_payloads = drain_payloads(&mut conn);
+    let [Payload::Patch(patch)] = patch_payloads.as_slice() else {
+        panic!("only the later live patch may follow recovery");
+    };
+    assert_eq!(
+        patch.cursor.as_ref().expect("live patch cursor").sources[0].source_seq,
+        8
+    );
+}
+
+#[tokio::test]
+async fn stale_fallback_cannot_overwrite_a_concurrent_epoch_install() {
+    let controls = StaleFallbackControls::default();
+    let runtime_addr = spawn_stale_fallback_runtime(controls.clone()).await;
+    let gateway = Arc::new(gateway_at_cursor(runtime_addr, 3).await);
+    let mut recoveries = gateway.recoveries.subscribe();
+    let mut patches = gateway.verification_patch_receiver();
+
+    let repair_gateway = gateway.clone();
+    let repair = tokio::spawn(async move {
+        repair_gateway.ingest_source_event(runtime_event(11)).await;
+    });
+    controls.bootstrap_started.notified().await;
+    let initial_gap = patches.try_recv().expect("initial epoch-a gap patch");
+    assert_eq!(
+        initial_gap.kind,
+        MaterializedPatchKind::SourceHealthTransition
+    );
+    assert_eq!(
+        initial_gap
+            .source_cursor
+            .as_ref()
+            .map(|cursor| (cursor.source_epoch.as_str(), cursor.source_seq)),
+        Some(("static-0", 3))
+    );
+    assert!(patches.try_recv().is_err());
+
+    let mut epoch_b = MaterializedState::new("local", "epoch-b");
+    epoch_b
+        .source_health
+        .transition(SourceHealthState::Live, Some(2), None);
+    epoch_b.mark_bootstrap_watermark(2);
+    epoch_b.mark_live();
+    assert_eq!(
+        gateway
+            .install_epoch_replacement("local", "epoch-b", epoch_b)
+            .await,
+        Some(2)
+    );
+
+    controls.release_bootstrap.notify_one();
+    repair.await.expect("stale fallback repair task");
+
+    let state = gateway.materialized.read().await["local"].clone();
+    assert_eq!(state.source_epoch, "epoch-b");
+    assert_eq!(state.source_health.source_epoch, "epoch-b");
+    assert_eq!(state.source_health.last_source_seq, Some(2));
+    assert_eq!(state.source_health.state, SourceHealthState::Live);
+    assert_eq!(gateway.verification_gap_queue("local").await.0, 0);
+    assert!(recoveries.try_recv().is_err());
+    assert!(
+        patches.try_recv().is_err(),
+        "the released stale repair must not publish after epoch-b installation"
+    );
 }
 
 async fn assert_frozen_at_four(gateway: &GatewayState) {
@@ -370,6 +499,12 @@ struct ReleasedRepairControls {
     release_bootstrap: Arc<Notify>,
     replay_calls: Arc<AtomicUsize>,
     bootstrap_calls: Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Default)]
+struct StaleFallbackControls {
+    bootstrap_started: Arc<Notify>,
+    release_bootstrap: Arc<Notify>,
 }
 
 #[derive(Clone, Copy)]
@@ -476,6 +611,49 @@ async fn spawn_failed_repair_runtime() -> SocketAddr {
         .route(
             "/v1/bootstrap",
             get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "bootstrap unavailable") }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    addr
+}
+
+async fn spawn_stale_fallback_runtime(controls: StaleFallbackControls) -> SocketAddr {
+    let bootstrap_controls = controls.clone();
+    let bootstrap = move || {
+        let controls = bootstrap_controls.clone();
+        async move {
+            controls.bootstrap_started.notify_one();
+            controls.release_bootstrap.notified().await;
+            Json(json!({
+                "source_epoch": "static-0",
+                "high_watermark": 11,
+                "records": {
+                    "sessions": [], "approvals": [], "teams": [], "team_members": [],
+                    "team_messages": [], "team_deliveries": [], "managed_worktrees": [],
+                    "managed_worktree_claims": [], "processes": []
+                }
+            }))
+        }
+    };
+    let app = Router::new()
+        .route(
+            "/v1/events",
+            get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "replay unavailable") }),
+        )
+        .route("/v1/bootstrap", get(bootstrap))
+        .route(
+            "/v1/providers",
+            get(|| async { Json(json!({ "providers": [] })) }),
+        )
+        .route(
+            "/v1/diagnostics",
+            get(|| async {
+                Json(json!({
+                    "providers": {}, "comms": {}, "processes": {},
+                    "worktrees": {}, "recovery": {}
+                }))
+            }),
         );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

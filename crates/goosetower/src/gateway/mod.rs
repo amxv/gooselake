@@ -72,6 +72,7 @@ pub enum GatewayStatus {
 enum SourceRecoverySignal {
     Resync {
         cursor: SourceCursor,
+        state: MaterializedState,
         reason: String,
     },
 }
@@ -296,25 +297,33 @@ impl GatewayState {
                             if bootstrap.state.source_epoch == change.source_epoch =>
                         {
                             bootstrap.state.apply_source_config(&source_config);
-                            let installed_cursor =
-                                bootstrap.state.source_health.last_source_seq.unwrap_or(0);
-                            gateway
-                                .materialized
-                                .write()
-                                .await
-                                .insert(source_config.source_id.clone(), bootstrap.state);
-                            gateway
-                                .record_audit(
-                                    "source.epoch_rebased",
-                                    Some(source_config.source_id.clone()),
-                                    json!({
-                                        "source_epoch": change.source_epoch,
-                                        "announced_high_watermark": change.high_watermark,
-                                        "installed_high_watermark": installed_cursor,
-                                    }),
+                            if let Some(installed_cursor) = gateway
+                                .install_epoch_replacement(
+                                    &source_config.source_id,
+                                    &change.source_epoch,
+                                    bootstrap.state,
                                 )
-                                .await;
-                            change.acknowledge(change.source_epoch.clone(), installed_cursor);
+                                .await
+                            {
+                                gateway
+                                    .record_audit(
+                                        "source.epoch_rebased",
+                                        Some(source_config.source_id.clone()),
+                                        json!({
+                                            "source_epoch": change.source_epoch,
+                                            "announced_high_watermark": change.high_watermark,
+                                            "installed_high_watermark": installed_cursor,
+                                        }),
+                                    )
+                                    .await;
+                                change.acknowledge(change.source_epoch.clone(), installed_cursor);
+                            } else {
+                                tracing::warn!(
+                                    source_id = %source_config.source_id,
+                                    "replacement epoch bootstrap did not match announced authority"
+                                );
+                                change.reject();
+                            }
                         }
                         Ok(_) => {
                             tracing::warn!(

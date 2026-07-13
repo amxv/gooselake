@@ -44,7 +44,7 @@ async fn replay_publication_reserves_one_matching_nested_gateway_sequence() {
 }
 
 #[tokio::test]
-async fn source_resync_records_complete_source_replacement_authority() {
+async fn source_resync_records_bounded_source_ownership_reset() {
     let gateway = test_gateway(GoosetowerConfig::default());
     let mut state = MaterializedState::new("local", "epoch-restarted");
     state.upsert_session(session_record());
@@ -86,9 +86,8 @@ async fn source_resync_records_complete_source_replacement_authority() {
             "sources",
         ]
     );
-    let mut replacement: Value =
+    let replacement: Value =
         serde_json::from_slice(&resync.body).expect("typed source replacement body");
-    replacement["source_health"]["observed_at_unix_ms"] = json!(0);
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../../../verification/gooseweb/fixtures/p08-source-replacement-rust.json"
     ))
@@ -98,12 +97,28 @@ async fn source_resync_records_complete_source_replacement_authority() {
         "Rust source replacement fixture drift"
     );
     assert_eq!(replacement["source_id"], "local");
-    assert_eq!(replacement["sessions"].as_array().unwrap().len(), 1);
-    assert!(replacement["session_details"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert_eq!(replacement["source_epoch"], "epoch-restarted");
+    assert_eq!(replacement["source_seq"], 1);
     assert!(entry.encoded_len <= gateway.config.websocket.max_message_bytes);
+}
+
+#[test]
+fn prebuilt_multi_source_resets_have_collision_resistant_ids() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    let mut first = MaterializedState::new("source-a", "epoch-a");
+    first.reduce_source_event(runtime_source_event("source-a", "epoch-a", "a", 1));
+    let mut second = MaterializedState::new("source-b", "epoch-b");
+    second.reduce_source_event(runtime_source_event("source-b", "epoch-b", "b", 1));
+
+    let first = gateway.source_snapshot_resync(&first, "restart").unwrap();
+    let second = gateway.source_snapshot_resync(&second, "restart").unwrap();
+    assert_ne!(first.message_id, second.message_id);
+    assert!(first
+        .message_id
+        .starts_with(&format!("view_{}_", gateway.gateway_epoch)));
+    assert!(second
+        .message_id
+        .starts_with(&format!("view_{}_", gateway.gateway_epoch)));
 }
 
 #[tokio::test]
@@ -144,23 +159,43 @@ async fn resume_from_prior_gateway_generation_emits_same_source_epoch_reset() {
     assert_eq!(gateway.next_gateway_seq.load(Ordering::Relaxed), 2);
 }
 
-#[test]
-fn oversized_source_resync_fails_explicitly_before_publication() {
-    let mut config = GoosetowerConfig::default();
-    config.websocket.max_message_bytes = 512;
-    let gateway = test_gateway(config);
+#[tokio::test]
+async fn source_over_prior_byte_budget_resets_and_refills_bounded_page() {
+    let gateway = test_gateway(GoosetowerConfig::default());
     let mut state = MaterializedState::new("local", "epoch-1");
-    state.upsert_session(session_record());
+    for index in 0..10_000 {
+        let mut session = session_record();
+        session.id = format!("session-{index:05}");
+        state.sessions.insert(session.id.clone(), session);
+    }
     state.reduce_source_event(runtime_source_event("local", "epoch-1", "session_1", 1));
-    let error = gateway
+    let envelope = gateway
         .source_snapshot_resync(&state, "bounded source replacement")
-        .expect_err("oversized replacement must fail before replay publication");
-    assert!(error.to_string().contains("byte budget") || error.to_string().contains("websocket"));
-    assert_eq!(gateway.next_gateway_seq.load(Ordering::Relaxed), 1);
+        .expect("large source uses bounded ownership reset");
+    assert!(envelope.encode_to_vec().len() <= gateway.config.websocket.max_message_bytes);
+    gateway
+        .replace_materialized_state("local".to_string(), state)
+        .await;
+    let refill = gateway
+        .snapshot_for_subscription(Subscribe {
+            subscription_id: "bounded-board".to_string(),
+            view_kind: "board".to_string(),
+            filters: HashMap::from([
+                ("source_id".to_string(), "local".to_string()),
+                ("limit".to_string(), "100".to_string()),
+            ]),
+        })
+        .await;
+    assert!(refill.encode_to_vec().len() <= gateway.config.websocket.max_message_bytes);
+    let Some(Payload::Snapshot(snapshot)) = refill.payload else {
+        panic!("expected bounded board refill");
+    };
+    let body: crate::materializer::FleetBoardView = serde_json::from_slice(&snapshot.body).unwrap();
+    assert_eq!(body.rows.len(), 100);
 }
 
-#[test]
-fn over_entity_budget_source_resync_fails_before_snapshot_allocation() {
+#[tokio::test]
+async fn source_over_prior_entity_budget_resets_and_refills_exact_selected_detail() {
     let gateway = test_gateway(GoosetowerConfig::default());
     let mut state = MaterializedState::new("local", "epoch-1");
     for index in 0..1_025 {
@@ -169,11 +204,30 @@ fn over_entity_budget_source_resync_fails_before_snapshot_allocation() {
         state.sessions.insert(session.id.clone(), session);
     }
     state.reduce_source_event(runtime_source_event("local", "epoch-1", "session_1", 1));
-    let error = gateway
+    let envelope = gateway
         .source_snapshot_resync(&state, "bounded source replacement")
-        .expect_err("entity budget overflow must fail before snapshot construction");
-    assert!(error.to_string().contains("entity budget"));
-    assert_eq!(gateway.next_gateway_seq.load(Ordering::Relaxed), 1);
+        .expect("large source uses bounded ownership reset");
+    assert!(envelope.encode_to_vec().len() <= gateway.config.websocket.max_message_bytes);
+    gateway
+        .replace_materialized_state("local".to_string(), state)
+        .await;
+    let refill = gateway
+        .snapshot_for_subscription(Subscribe {
+            subscription_id: "selected-session".to_string(),
+            view_kind: "session_detail".to_string(),
+            filters: HashMap::from([
+                ("source_id".to_string(), "local".to_string()),
+                ("session_id".to_string(), "session-1024".to_string()),
+            ]),
+        })
+        .await;
+    assert!(refill.encode_to_vec().len() <= gateway.config.websocket.max_message_bytes);
+    let Some(Payload::Snapshot(snapshot)) = refill.payload else {
+        panic!("expected selected detail refill");
+    };
+    let body: crate::materializer::SessionDetailView =
+        serde_json::from_slice(&snapshot.body).unwrap();
+    assert_eq!(body.session.id, "session-1024");
 }
 
 #[test]

@@ -778,11 +778,7 @@ impl GatewayState {
                 )),
             }),
         );
-        envelope.message_id = format!(
-            "view_{}_{}",
-            now_ms(),
-            self.next_message_id.fetch_add(1, Ordering::Relaxed)
-        );
+        envelope.message_id = self.next_view_message_id();
         envelope
     }
 }

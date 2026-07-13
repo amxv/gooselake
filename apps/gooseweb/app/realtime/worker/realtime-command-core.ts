@@ -49,6 +49,8 @@ export class RealtimeWorkerCore {
   private socket: WebSocket | undefined;
   private cursor: CursorState = emptyCursorState;
   private connectionId: string | undefined;
+  private gatewayEpoch: string | undefined;
+  private gatewayStartedAtUnixNs: bigint | undefined;
   private heartbeatIntervalMs = HEARTBEAT_FALLBACK_MS;
   private readonly appliedViewMessageIds = new Set<string>();
   private readonly appliedViewMessageOrder: string[] = [];
@@ -95,6 +97,8 @@ export class RealtimeWorkerCore {
   private async connect(goosetowerUrl: string, ticket: string): Promise<void> {
     this.disconnect();
     this.startupFramesSent = false;
+    this.gatewayEpoch = undefined;
+    this.gatewayStartedAtUnixNs = undefined;
     this.cursor = await loadCursorState();
     this.emitState({ connection: "connecting", cursor: this.cursor });
 
@@ -107,7 +111,6 @@ export class RealtimeWorkerCore {
       }
       this.emitState({ connection: "connected" });
       this.startHeartbeat();
-      this.sendStartupFrames();
     };
     socket.onmessage = (event) => {
       if (this.socket !== socket) {
@@ -366,7 +369,22 @@ export class RealtimeWorkerCore {
     }
 
     const hello = envelope.payload.value;
+    if (!hello.gatewayEpoch || hello.gatewayStartedAtUnixNs === 0n) {
+      this.failProtocolFrame("hello lacks gateway generation authority");
+      return;
+    }
+    if (this.gatewayEpoch || this.gatewayStartedAtUnixNs) {
+      if (
+        hello.gatewayEpoch !== this.gatewayEpoch ||
+        hello.gatewayStartedAtUnixNs !== this.gatewayStartedAtUnixNs
+      ) {
+        this.failProtocolFrame("connection gateway generation changed after hello");
+      }
+      return;
+    }
     this.connectionId = hello.connectionId;
+    this.gatewayEpoch = hello.gatewayEpoch;
+    this.gatewayStartedAtUnixNs = hello.gatewayStartedAtUnixNs;
     this.heartbeatIntervalMs =
       hello.heartbeatIntervalMs || HEARTBEAT_FALLBACK_MS;
     this.emitState({
@@ -493,6 +511,16 @@ export class RealtimeWorkerCore {
       return false;
     }
     if (
+      gatewayEpoch !== this.gatewayEpoch ||
+      gatewayStartedAtUnixNs !== this.gatewayStartedAtUnixNs
+    ) {
+      this.emitState({
+        connection: "stale",
+        lastError: "gateway_generation_mismatch: frame does not match current hello"
+      });
+      return false;
+    }
+    if (
       (!this.cursor.gatewayEpoch && this.cursor.gatewaySeq > 0n) ||
       (this.cursor.gatewayEpoch && this.cursor.gatewayEpoch !== gatewayEpoch)
     ) {
@@ -563,12 +591,12 @@ export class RealtimeWorkerCore {
       (this.cursor.gatewayEpoch && this.cursor.gatewayEpoch !== authority.gatewayEpoch)
     );
     if (
-      generationChanged &&
-      authority.gatewayStartedAtUnixNs <= this.cursor.gatewayStartedAtUnixNs
+      authority.gatewayEpoch !== this.gatewayEpoch ||
+      authority.gatewayStartedAtUnixNs !== this.gatewayStartedAtUnixNs
     ) {
       this.emitState({
         connection: "stale",
-        lastError: "stale_gateway_generation: source resync rejected"
+        lastError: "gateway_generation_mismatch: source resync rejected"
       });
       return false;
     }

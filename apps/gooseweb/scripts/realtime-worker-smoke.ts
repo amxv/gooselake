@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
 import {
+  HelloSchema,
   RealtimeEnvelopeSchema,
   SourceSnapshotResyncSchema
 } from "../src/gen/goosetower/v1/realtime_pb";
@@ -92,7 +93,7 @@ function snapshotEnvelope(input: {
         cursor: {
           gatewaySeq: input.gatewaySeq ?? 1n,
           gatewayEpoch: input.gatewayEpoch ?? "gateway-1",
-          gatewayStartedAtUnixNs: input.gatewayStartedAtUnixNs ?? 1n,
+          gatewayStartedAtUnixNs: input.gatewayStartedAtUnixNs ?? 100n,
           sources: input.sources
         },
         coverage: create(ViewCoverageSchema, {
@@ -135,7 +136,7 @@ function patchEnvelope(input: {
         cursor: {
           gatewaySeq: input.gatewaySeq,
           gatewayEpoch: input.gatewayEpoch ?? "gateway-1",
-          gatewayStartedAtUnixNs: input.gatewayStartedAtUnixNs ?? 1n,
+          gatewayStartedAtUnixNs: input.gatewayStartedAtUnixNs ?? 100n,
           sources: [{
             sourceId: "source-1",
             sourceEpoch: input.sourceEpoch ?? "epoch-1",
@@ -161,6 +162,7 @@ function sourceResyncEnvelope(input: {
   body: Uint8Array;
   gatewayEpoch: string;
   gatewayStartedAtUnixNs: bigint;
+  sourceId?: string;
 }) {
   const domains = [
     "fleet_rows", "sessions", "session_details", "teams", "team_workspaces",
@@ -175,7 +177,7 @@ function sourceResyncEnvelope(input: {
     payload: {
       case: "sourceSnapshotResync",
       value: create(SourceSnapshotResyncSchema, {
-        sourceId: "source-1",
+        sourceId: input.sourceId ?? "source-1",
         reason: "tower restart",
         schemaVersion: 1,
         cursor: {
@@ -183,7 +185,7 @@ function sourceResyncEnvelope(input: {
           gatewayEpoch: input.gatewayEpoch,
           gatewayStartedAtUnixNs: input.gatewayStartedAtUnixNs,
           sources: [{
-            sourceId: "source-1",
+            sourceId: input.sourceId ?? "source-1",
             sourceEpoch: input.sourceEpoch,
             sourceSeq: input.sourceSeq
           }]
@@ -193,6 +195,25 @@ function sourceResyncEnvelope(input: {
           authoritative: true
         }),
         body: input.body
+      })
+    }
+  });
+}
+
+function helloEnvelope(gatewayEpoch: string, gatewayStartedAtUnixNs: bigint) {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1,
+    messageId: `hello-${gatewayEpoch}`,
+    messageKind: MessageKind.HELLO,
+    lane: Lane.CRITICAL,
+    payload: {
+      case: "hello",
+      value: create(HelloSchema, {
+        connectionId: `connection-${gatewayEpoch}`,
+        protocolVersion: 1,
+        resumeSupported: true,
+        gatewayEpoch,
+        gatewayStartedAtUnixNs
       })
     }
   });
@@ -279,6 +300,7 @@ await core.handleMessage({
 });
 assert.equal(sockets.length, 3);
 sockets[2]?.open();
+sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, helloEnvelope("gateway-1", 100n)));
 await waitForPatchFlush();
 assert.equal(
   posted.some(
@@ -597,21 +619,32 @@ const sourceReplacementRecord: any = JSON.parse(readFileSync(resolve(
   "../../../verification/gooseweb/fixtures/p08-source-replacement-rust.json"
 ), "utf8"));
 sourceReplacementRecord.source_id = "source-1";
-sourceReplacementRecord.fleet_rows[0].source_id = "source-1";
-sourceReplacementRecord.fleet_rows[0].row_id = "session-1";
-sourceReplacementRecord.fleet_rows[0].session_id = "session-1";
-sourceReplacementRecord.sessions[0].source_id = "source-1";
-sourceReplacementRecord.sessions[0].session.id = "session-1";
-sourceReplacementRecord.source_health.source_id = "source-1";
-sourceReplacementRecord.source_health.source_epoch = "epoch-1";
-sourceReplacementRecord.source_health.last_source_seq = 21;
+sourceReplacementRecord.source_epoch = "epoch-1";
+sourceReplacementRecord.source_seq = 21;
 const sourceReplacementBody = new TextEncoder().encode(JSON.stringify(sourceReplacementRecord));
 const epochResync = sourceResyncEnvelope({
   messageId: "epoch-source-resync", gatewaySeq: 1n,
   gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
   sourceEpoch: "epoch-1", sourceSeq: 21n, body: sourceReplacementBody
 });
+const operationsBeforeWrongHelloResync = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
 sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, epochResync));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeWrongHelloResync,
+"generation-changing resync must match the authenticated current Hello");
+await core.handleMessage({
+  type: "connect",
+  goosetowerUrl: "ws://127.0.0.1:18090/v1/realtime",
+  ticket: "tower-restarted"
+});
+assert.equal(sockets.length, 4);
+sockets[3]?.open();
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, helloEnvelope("gateway-2", 2n)));
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, epochResync));
 await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 1n,
   "an explicit epoch reset must rebase the restarted Tower gateway watermark");
@@ -621,15 +654,42 @@ assert.equal(Object.keys(getGoosewebSnapshot().entities.teams).length, 0,
   "full-source resync must remove stale old-epoch team summaries");
 assert.equal(Object.keys(getGoosewebSnapshot().entities.teamWorkspaces).length, 0,
   "full-source resync must remove stale old-epoch Team Comms detail");
-assert.deepEqual(Object.keys(getGoosewebSnapshot().entities.sessions), ["session-1"]);
+assert.deepEqual(Object.keys(getGoosewebSnapshot().entities.sessions), [],
+  "bounded ownership reset must clear summaries until active snapshots refill them");
+
+const sourceTwoReplacementBody = new TextEncoder().encode(JSON.stringify({
+  source_id: "source-2", source_epoch: "epoch-2", source_seq: 9
+}));
+const sourceTwoResync = sourceResyncEnvelope({
+  messageId: "epoch-source-resync-source-2", gatewaySeq: 2n,
+  gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
+  sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n,
+  body: sourceTwoReplacementBody
+});
+const operationsBeforeSecondSource = posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length;
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, sourceTwoResync));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeSecondSource + 9,
+"distinct multi-source reset publications must each apply exactly once");
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, epochResync));
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, sourceTwoResync));
+await waitForPatchFlush();
+assert.equal(posted.flatMap((message) =>
+  message.type === "state" ? message.patch.entityOperations ?? [] : []
+).length, operationsBeforeSecondSource + 9,
+"exact replay of each source reset publication must be suppressed");
 
 const newEpochPatch = patchEnvelope({
-  messageId: "new-epoch-patch", gatewaySeq: 2n, sourceSeq: 22n,
+  messageId: "new-epoch-patch", gatewaySeq: 3n, sourceSeq: 22n,
   gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
   sourceEpoch: "epoch-1", viewKind: "session_detail", domain: "session_details",
   entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
 });
-sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, newEpochPatch));
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, newEpochPatch));
 await waitForPatchFlush();
 assert.equal(posted.some((message) =>
     message.type === "state" &&
@@ -637,60 +697,36 @@ assert.equal(posted.some((message) =>
   message.patch.cursor?.sourceCursors["source-1"]?.sourceSeq === 22n
 ), true, "snapshot resync must establish the new epoch for later patches");
 const sameEpochLowSnapshot = snapshotEnvelope({
-  messageId: "same-epoch-low-snapshot", gatewaySeq: 1n,
+  messageId: "same-epoch-low-snapshot", gatewaySeq: 2n,
   viewKind: "session_detail", domain: "session_details", entityIds: ["session-1"],
   gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n,
   sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 22n }],
   body: selectedBody
 });
-sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, sameEpochLowSnapshot));
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, sameEpochLowSnapshot));
 await waitForPatchFlush();
-assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 2n,
+assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 3n,
   "an ordinary same-epoch snapshot must not regress gateway authority");
 
-const validTeamSummary = {
-  source_id: "source-1",
-  team: { id: "team-x", name: "Team X", lead_agent_id: "session-1" },
-  members: []
-};
-const validApproval = {
-  source_id: "source-1", approval_id: "approval-x", session_id: "session-1",
-  turn_id: "turn-x", risk: "low", status: "pending", summary: "Approve"
-};
-const validProcess = {
-  source_id: "source-1", process_id: "process-x", status: "running",
-  command: { argv: ["true"] }, exit_code: null
-};
-const validWorktree = {
-  source_id: "source-1", worktree_id: "worktree-x", worktree_root: "/tmp/wt",
-  branch_name: "main", status: "available"
-};
-const invalidResyncRecords = Array.from({ length: 11 }, () => structuredClone(sourceReplacementRecord));
-invalidResyncRecords[0]!.source_health.source_epoch = "body-epoch-mismatch";
-invalidResyncRecords[1]!.source_health.last_source_seq = 999;
-invalidResyncRecords[2]!.fleet_rows.push(structuredClone(invalidResyncRecords[2]!.fleet_rows[0]));
-invalidResyncRecords[3]!.sessions.push(structuredClone(invalidResyncRecords[3]!.sessions[0]));
-invalidResyncRecords[4]!.teams = [structuredClone(validTeamSummary), structuredClone(validTeamSummary)];
-invalidResyncRecords[5]!.approvals = [structuredClone(validApproval), structuredClone(validApproval)];
-invalidResyncRecords[6]!.processes = [structuredClone(validProcess), structuredClone(validProcess)];
-invalidResyncRecords[7]!.worktrees = [structuredClone(validWorktree), structuredClone(validWorktree)];
-delete invalidResyncRecords[8]!.fleet_rows[0].provider;
-invalidResyncRecords[9]!.approvals = [{ ...validApproval, status: 42 }];
-delete invalidResyncRecords[10]!.source_health.display_name;
+const invalidResyncRecords = Array.from({ length: 4 }, () => structuredClone(sourceReplacementRecord));
+invalidResyncRecords[0]!.source_id = "wrong-source";
+invalidResyncRecords[1]!.source_epoch = "body-epoch-mismatch";
+invalidResyncRecords[2]!.source_seq = 999;
+invalidResyncRecords[3]!.unexpected = [];
 const operationsBeforeInvalidResync = posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length;
 for (const [index, invalidRecord] of invalidResyncRecords.entries()) {
   const invalidFrame = sourceResyncEnvelope({
     messageId: `invalid-source-resync-${index}`,
-    gatewaySeq: 1n,
-    gatewayEpoch: `gateway-invalid-${index}`,
-    gatewayStartedAtUnixNs: BigInt(3 + index),
+    gatewaySeq: BigInt(4 + index),
+    gatewayEpoch: "gateway-2",
+    gatewayStartedAtUnixNs: 2n,
     sourceEpoch: "epoch-1",
     sourceSeq: 21n,
     body: new TextEncoder().encode(JSON.stringify(invalidRecord))
   });
-  sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, invalidFrame));
+  sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, invalidFrame));
 }
 await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().cursor.gatewayEpoch, "gateway-2",
@@ -698,42 +734,42 @@ assert.equal(getGoosewebSnapshot().cursor.gatewayEpoch, "gateway-2",
 assert.equal(posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length, operationsBeforeInvalidResync,
-"malformed or duplicate source replacement entities must not mutate the store");
+"malformed ownership-reset authority must not mutate the store");
 
 const delayedOldEpochPatch = patchEnvelope({
   messageId: "delayed-old-generation", gatewaySeq: 101n, sourceSeq: 999n,
-  gatewayEpoch: "gateway-1", gatewayStartedAtUnixNs: 1n,
+  gatewayEpoch: "gateway-1", gatewayStartedAtUnixNs: 100n,
   sourceEpoch: "epoch-1", viewKind: "session_detail", domain: "session_details",
   entityId: "session-1", operation: ViewOperation.REPLACE, body: selectedBody
 });
 const operationsBeforeOldEpoch = posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length;
-sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, delayedOldEpochPatch));
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, delayedOldEpochPatch));
 await waitForPatchFlush();
 assert.equal(posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length, operationsBeforeOldEpoch, "delayed old-epoch patch must not flip authority");
 const delayedOldResync = sourceResyncEnvelope({
   messageId: "delayed-old-generation-resync", gatewaySeq: 1n,
-  gatewayEpoch: "gateway-1", gatewayStartedAtUnixNs: 1n,
+  gatewayEpoch: "gateway-1", gatewayStartedAtUnixNs: 100n,
   sourceEpoch: "epoch-1", sourceSeq: 21n, body: sourceReplacementBody
 });
-sockets[2]?.receive(toBinary(RealtimeEnvelopeSchema, delayedOldResync));
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, delayedOldResync));
 await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().cursor.gatewayEpoch, "gateway-2",
   "a delayed old gateway generation resync must not roll authority back");
 assert.equal(posted.flatMap((message) =>
   message.type === "state" ? message.patch.entityOperations ?? [] : []
 ).length, operationsBeforeOldEpoch, "a delayed old resync must not mutate entities");
-sockets[2]?.receive(new Uint8Array([0xff]));
+sockets[3]?.receive(new Uint8Array([0xff]));
 await waitForPatchFlush();
 assert.equal(posted.some((message) =>
   message.type === "error" &&
   message.retryable === false &&
   message.message.startsWith("Realtime protocol error:")
 ), true, "malformed outer frames must fail safely");
-const sentBeforeCommand = sockets[2]?.sent.length ?? 0;
+const sentBeforeCommand = sockets[3]?.sent.length ?? 0;
 
 await core.handleMessage({
   type: "command",
@@ -760,8 +796,8 @@ await core.handleMessage({
   }
 });
 
-assert.equal((sockets[2]?.sent.length ?? 0) > sentBeforeCommand, true);
-const sentCommandFrame = sockets[2]?.sent.at(-1);
+assert.equal((sockets[3]?.sent.length ?? 0) > sentBeforeCommand, true);
+const sentCommandFrame = sockets[3]?.sent.at(-1);
 assert.ok(sentCommandFrame instanceof Uint8Array);
 const sentCommandEnvelope = fromBinary(RealtimeEnvelopeSchema, sentCommandFrame);
 assert.equal(sentCommandEnvelope.payload.case, "command");
@@ -776,7 +812,7 @@ assert.equal(
   true
 );
 
-const sentBeforeFallbackCommand = sockets[2]?.sent.length ?? 0;
+const sentBeforeFallbackCommand = sockets[3]?.sent.length ?? 0;
 await core.handleMessage({
   type: "command",
   command: {
@@ -798,8 +834,8 @@ await core.handleMessage({
     }
   } as never
 });
-assert.equal((sockets[2]?.sent.length ?? 0) > sentBeforeFallbackCommand, true);
-const fallbackCommandFrame = sockets[2]?.sent.at(-1);
+assert.equal((sockets[3]?.sent.length ?? 0) > sentBeforeFallbackCommand, true);
+const fallbackCommandFrame = sockets[3]?.sent.at(-1);
 assert.ok(fallbackCommandFrame instanceof Uint8Array);
 const fallbackCommandEnvelope = fromBinary(
   RealtimeEnvelopeSchema,
@@ -808,7 +844,7 @@ const fallbackCommandEnvelope = fromBinary(
 assert.equal(fallbackCommandEnvelope.payload.case, "command");
 assert.equal(fallbackCommandEnvelope.payload.value.payload.case, "createSession");
 
-const sentBeforeImageTurnCommand = sockets[2]?.sent.length ?? 0;
+const sentBeforeImageTurnCommand = sockets[3]?.sent.length ?? 0;
 await core.handleMessage({
   type: "command",
   command: {
@@ -837,8 +873,8 @@ await core.handleMessage({
     }
   }
 });
-assert.equal((sockets[2]?.sent.length ?? 0) > sentBeforeImageTurnCommand, true);
-const imageTurnFrame = sockets[2]?.sent.at(-1);
+assert.equal((sockets[3]?.sent.length ?? 0) > sentBeforeImageTurnCommand, true);
+const imageTurnFrame = sockets[3]?.sent.at(-1);
 assert.ok(imageTurnFrame instanceof Uint8Array);
 const imageTurnEnvelope = fromBinary(RealtimeEnvelopeSchema, imageTurnFrame);
 assert.equal(imageTurnEnvelope.payload.case, "command");
@@ -849,7 +885,7 @@ assert.equal(imageTurnPayload.input[1]?.type, "image");
 assert.equal(imageTurnPayload.input[1]?.mediaType, "image/png");
 assert.equal(imageTurnPayload.input[1]?.data, "iVBORw0KGgo=");
 
-const sentBeforeJoinCommand = sockets[2]?.sent.length ?? 0;
+const sentBeforeJoinCommand = sockets[3]?.sent.length ?? 0;
 await core.handleMessage({
   type: "command",
   command: {
@@ -872,14 +908,14 @@ await core.handleMessage({
     }
   }
 });
-assert.equal((sockets[2]?.sent.length ?? 0) > sentBeforeJoinCommand, true);
-const joinCommandFrame = sockets[2]?.sent.at(-1);
+assert.equal((sockets[3]?.sent.length ?? 0) > sentBeforeJoinCommand, true);
+const joinCommandFrame = sockets[3]?.sent.at(-1);
 assert.ok(joinCommandFrame instanceof Uint8Array);
 const joinCommandEnvelope = fromBinary(RealtimeEnvelopeSchema, joinCommandFrame);
 assert.equal(joinCommandEnvelope.payload.case, "command");
 assert.equal(joinCommandEnvelope.payload.value.payload.case, "joinTeamMember");
 
-sockets[2]?.closeFromServer();
+sockets[3]?.closeFromServer();
 await waitForPatchFlush();
 
 console.log("realtime worker socket ownership smoke fixture passed");

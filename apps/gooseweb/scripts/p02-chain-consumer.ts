@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { fromBinary } from "@bufbuild/protobuf";
-import { RealtimeEnvelopeSchema } from "../src/gen/goosetower/v1/realtime_pb";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
+import { HelloSchema, RealtimeEnvelopeSchema } from "../src/gen/goosetower/v1/realtime_pb";
 import type { WorkerOutbound } from "../app/realtime/types";
 import { applyRealtimeWorkerOutput } from "../app/realtime/client";
 import { getGoosewebSnapshot } from "../app/stores/gooseweb-store";
@@ -42,6 +43,27 @@ const core = new RealtimeWorkerCore((message) => {
 });
 await core.handleMessage({ type: "connect", goosetowerUrl: "ws://p02.invalid/v1/realtime", ticket: "redacted-test-ticket" });
 await new Promise((resolve) => setTimeout(resolve, 0));
+const authority = envelope.payload.case === "patch" || envelope.payload.case === "snapshot"
+  ? envelope.payload.value.cursor
+  : undefined;
+assert.ok(authority?.gatewayEpoch && authority.gatewayStartedAtUnixNs > 0n,
+  "actual gateway frame must carry generation authority");
+socket?.receive(toBinary(RealtimeEnvelopeSchema, create(RealtimeEnvelopeSchema, {
+  protocolVersion: 1,
+  messageId: `hello-${authority.gatewayEpoch}`,
+  messageKind: MessageKind.HELLO,
+  lane: Lane.CRITICAL,
+  payload: {
+    case: "hello",
+    value: create(HelloSchema, {
+      connectionId: "p02-chain",
+      protocolVersion: 1,
+      resumeSupported: true,
+      gatewayEpoch: authority.gatewayEpoch,
+      gatewayStartedAtUnixNs: authority.gatewayStartedAtUnixNs
+    })
+  }
+})));
 socket?.receive(bytes);
 await new Promise((resolve) => setTimeout(resolve, 25));
 

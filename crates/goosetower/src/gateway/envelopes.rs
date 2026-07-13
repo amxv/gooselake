@@ -83,11 +83,7 @@ impl GatewayState {
                 coverage: Some(coverage),
             }),
         );
-        envelope.message_id = format!(
-            "view_{}_{}",
-            now_ms(),
-            self.next_message_id.fetch_add(1, Ordering::Relaxed)
-        );
+        envelope.message_id = self.next_view_message_id();
         envelope
     }
 
@@ -187,20 +183,10 @@ impl GatewayState {
         let source_cursor = state
             .cursor()
             .ok_or_else(|| anyhow!("source snapshot resync lacks a source cursor"))?;
-        let entity_count = state.sessions.len().saturating_mul(2)
-            + state.teams.len().saturating_mul(2)
-            + state.approvals.len()
-            + state.processes.len()
-            + state.worktrees.len()
-            + 1;
-        if entity_count > MAX_SOURCE_REPLACEMENT_ENTITIES {
-            return Err(anyhow!(
-                "source snapshot resync exceeds entity budget ({entity_count} > {MAX_SOURCE_REPLACEMENT_ENTITIES})"
-            ));
-        }
-        let mut writer = BoundedJsonWriter::new(self.config.websocket.max_message_bytes);
-        serde_json::to_writer(&mut writer, &state.snapshot_source_replacement())
-            .map_err(|error| anyhow!("source snapshot resync exceeds byte budget: {error}"))?;
+        // This is the atomic ownership reset/commit. It is intentionally
+        // independent of source cardinality; bounded active subscriptions
+        // repopulate summaries and selected details after the commit.
+        let body = serde_json::to_vec(&state.snapshot_source_replacement(&source_cursor))?;
         let mut envelope = envelope_with_payload(
             MessageKind::SourceSnapshotResync,
             Lane::Critical,
@@ -217,11 +203,12 @@ impl GatewayState {
                     gateway_epoch: self.gateway_epoch.clone(),
                     gateway_started_at_unix_ns: self.gateway_started_at_unix_ns,
                 }),
-                body: writer.into_bytes().into(),
+                body: body.into(),
                 schema_version: DETAIL_SCHEMA_VERSION,
                 coverage: Some(source_replacement_coverage()),
             }),
         );
+        envelope.message_id = self.next_view_message_id();
         envelope.gateway_seq = u64::MAX;
         if let Some(Payload::SourceSnapshotResync(resync)) = envelope.payload.as_mut() {
             if let Some(cursor) = resync.cursor.as_mut() {
@@ -242,6 +229,14 @@ impl GatewayState {
             }
         }
         Ok(envelope)
+    }
+
+    pub(super) fn next_view_message_id(&self) -> String {
+        format!(
+            "view_{}_{}",
+            self.gateway_epoch,
+            self.next_message_id.fetch_add(1, Ordering::Relaxed)
+        )
     }
 
     pub(super) fn audit_event(&self, kind: &str, scope: Scope, scope_id: &str) -> RealtimeEnvelope {
@@ -439,38 +434,6 @@ impl GatewayState {
     #[cfg(test)]
     pub fn publish_patch(&self, patch: MaterializedPatch) {
         let _ = self.patches.send(patch);
-    }
-}
-
-struct BoundedJsonWriter {
-    bytes: Vec<u8>,
-    limit: usize,
-}
-
-impl BoundedJsonWriter {
-    fn new(limit: usize) -> Self {
-        Self {
-            bytes: Vec::with_capacity(limit.min(64 * 1024)),
-            limit,
-        }
-    }
-
-    fn into_bytes(self) -> Vec<u8> {
-        self.bytes
-    }
-}
-
-impl std::io::Write for BoundedJsonWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if buf.len() > self.limit.saturating_sub(self.bytes.len()) {
-            return Err(std::io::Error::other("bounded source replacement overflow"));
-        }
-        self.bytes.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 

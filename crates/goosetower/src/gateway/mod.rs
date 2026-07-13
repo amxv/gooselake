@@ -23,9 +23,7 @@ use crate::materializer::{
     ApprovalInboxSubscription, BoardSubscription, BootstrapOptions, LedgerSubscription,
     SourceBootstrap,
 };
-use crate::materializer::{
-    MaterializedPatch, MaterializedPatchKind, MaterializedState, MAX_SOURCE_REPLACEMENT_ENTITIES,
-};
+use crate::materializer::{MaterializedPatch, MaterializedPatchKind, MaterializedState};
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;
 use crate::protocol::generated::goosetower::v1::{
     AuthExpiring, AuthRefresh, AuthRefreshed, Command, CommandAccepted, ConnectionDegraded,

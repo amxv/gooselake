@@ -381,6 +381,7 @@ impl GatewayState {
                     .take(32)
                     .filter_map(|session_id| {
                         state.snapshot_session(&SelectedSessionSubscription {
+                            source_id: state.source_id.clone(),
                             session_id: session_id.clone(),
                             include_text: true,
                         })

@@ -5,13 +5,14 @@ use serde::{Deserialize, Serialize};
 
 use super::state::{
     AgentRowView, ApprovalInboxView, ApprovalRowView, FleetBoardView, LedgerView, ProcessTailView,
-    ProcessView, SessionDetailView, SourceHealthView, TeamMemberView, TeamWorkspaceView,
-    TranscriptEntryView, WorktreeView,
+    ProcessView, SessionDetailView, SourceHealthView, TeamMemberView, TeamSummaryListView,
+    TeamSummaryView, TeamWorkspaceView, TranscriptEntryView, WorktreeView,
 };
 use super::MaterializedState;
 
 pub const MAX_TEAM_MESSAGE_LIMIT: usize = 100;
 pub const MAX_TEAM_DELIVERY_LIMIT: usize = 1_000;
+pub const MAX_TEAM_SUMMARY_LIMIT: usize = 100;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SourceReplacementView {
     pub source_id: String,
@@ -34,20 +35,30 @@ pub struct ApprovalInboxSubscription {
     pub source_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamSummarySubscription {
+    pub offset: usize,
+    pub limit: usize,
+    pub source_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectedSessionSubscription {
+    pub source_id: String,
     pub session_id: String,
     pub include_text: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectedTeamSubscription {
+    pub source_id: String,
     pub team_id: String,
     pub message_limit: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessTailSubscription {
+    pub source_id: String,
     pub process_id: String,
     pub tail_lines: usize,
 }
@@ -454,6 +465,53 @@ pub fn snapshot_cross_source_approval_inbox(
             .then_with(|| left.approval_id.cmp(&right.approval_id))
     });
     ApprovalInboxView { approvals }
+}
+
+pub fn snapshot_cross_source_teams(
+    states: &BTreeMap<String, MaterializedState>,
+    subscription: &TeamSummarySubscription,
+) -> TeamSummaryListView {
+    let mut teams = states
+        .values()
+        .filter(|state| {
+            subscription
+                .source_id
+                .as_deref()
+                .is_none_or(|source_id| state.source_id == source_id)
+        })
+        .flat_map(|state| {
+            state.teams.values().map(|team| TeamSummaryView {
+                source_id: state.source_id.clone(),
+                team_id: team.id.clone(),
+                name: team.name.clone(),
+                lead_member_id: team.lead_agent_id.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    teams.sort_by(|left, right| {
+        left.team_id
+            .cmp(&right.team_id)
+            .then_with(|| left.source_id.cmp(&right.source_id))
+    });
+    let total_rows = teams.len();
+    let offset = subscription.offset.min(total_rows);
+    let limit = subscription.limit.clamp(1, MAX_TEAM_SUMMARY_LIMIT);
+    let teams = teams.into_iter().skip(offset).take(limit).collect();
+    let cursors = states
+        .values()
+        .filter(|state| {
+            subscription
+                .source_id
+                .as_deref()
+                .is_none_or(|source_id| state.source_id == source_id)
+        })
+        .filter_map(MaterializedState::cursor)
+        .collect();
+    TeamSummaryListView {
+        teams,
+        total_rows,
+        cursors,
+    }
 }
 
 pub fn snapshot_cross_source_ledger(

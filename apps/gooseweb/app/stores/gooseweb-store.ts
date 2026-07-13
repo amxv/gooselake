@@ -117,6 +117,10 @@ function applyEntityOperations(
       ? operation.operation === "replace" ? { ...incoming } : {}
       : { ...existing };
     for (const entityId of operation.entityIds) {
+      if (operation.sourceId &&
+        (domain[entityId] as { sourceId?: string } | undefined)?.sourceId !== operation.sourceId) {
+        continue;
+      }
       delete domain[entityId];
       if (operation.operation === "replace" && entityId in incoming) {
         domain[entityId] = incoming[entityId];

@@ -61,7 +61,7 @@ async fn snapshots_use_last_reserved_authority_without_stealing_first_patch() {
         gateway.snapshot_for_subscription(subscribe()),
         gateway.snapshot_for_subscription(subscribe())
     );
-    for snapshot in [first, second] {
+    for snapshot in [first.unwrap(), second.unwrap()] {
         let Some(Payload::Snapshot(snapshot)) = snapshot.payload else {
             panic!("expected snapshot");
         };
@@ -82,6 +82,152 @@ async fn snapshots_use_last_reserved_authority_without_stealing_first_patch() {
     assert_eq!(
         payload_count(&drain_payloads(&mut conn), MessageKind::Patch),
         1
+    );
+}
+
+#[tokio::test]
+async fn selected_snapshots_bind_body_cursor_and_coverage_to_requested_source() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    for (source_id, epoch) in [("source-a", "epoch-a"), ("source-b", "epoch-b")] {
+        let mut state = materialized_session_state(source_id, epoch, "session_1");
+        state.reduce_source_event(runtime_source_event(source_id, epoch, "session_1", 1));
+        gateway
+            .replace_materialized_state(source_id.to_string(), state)
+            .await;
+    }
+    let envelope = gateway
+        .snapshot_for_subscription(Subscribe {
+            subscription_id: "selected-b".to_string(),
+            request_id: "request-b".to_string(),
+            view_kind: "session_detail".to_string(),
+            filters: HashMap::from([
+                ("source_id".to_string(), "source-b".to_string()),
+                ("session_id".to_string(), "session_1".to_string()),
+            ]),
+        })
+        .await
+        .expect("source-scoped selected snapshot");
+    let Some(Payload::Snapshot(snapshot)) = envelope.payload else {
+        panic!("expected selected snapshot");
+    };
+    let cursor = snapshot.cursor.expect("selected cursor");
+    assert_eq!(cursor.sources.len(), 1);
+    assert_eq!(cursor.sources[0].source_id, "source-b");
+    assert_eq!(
+        snapshot.coverage.expect("selected coverage").entity_ids,
+        vec!["session_1"]
+    );
+    let body: crate::materializer::SessionDetailView =
+        serde_json::from_slice(&snapshot.body).unwrap();
+    assert_eq!(body.source_id, "source-b");
+    assert!(gateway
+        .snapshot_for_subscription(Subscribe {
+            subscription_id: "ambiguous".to_string(),
+            request_id: "ambiguous-request".to_string(),
+            view_kind: "session_detail".to_string(),
+            filters: HashMap::from([("session_id".to_string(), "session_1".to_string())]),
+        })
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn teams_snapshot_is_bounded_cross_source_summary_only() {
+    let gateway = test_gateway(GoosetowerConfig::default());
+    for (source_id, epoch) in [("source-a", "epoch-a"), ("source-b", "epoch-b")] {
+        let mut state = materialized_session_state(source_id, epoch, "session_1");
+        for index in 0..150 {
+            let mut team = team_record(&format!("team-{index:03}-{source_id}"));
+            team.name = format!("{source_id} team {index}");
+            state.upsert_team(team);
+        }
+        state.reduce_source_event(runtime_source_event(source_id, epoch, "session_1", 1));
+        gateway
+            .replace_materialized_state(source_id.to_string(), state)
+            .await;
+    }
+    let envelope = gateway
+        .snapshot_for_subscription(Subscribe {
+            subscription_id: "teams-page".to_string(),
+            request_id: "teams-request".to_string(),
+            view_kind: "teams".to_string(),
+            filters: HashMap::from([
+                ("offset".to_string(), "0".to_string()),
+                ("limit".to_string(), "10000".to_string()),
+            ]),
+        })
+        .await
+        .expect("bounded team summaries");
+    assert!(envelope.encoded_len() <= gateway.config.websocket.max_message_bytes);
+    let Some(Payload::Snapshot(snapshot)) = envelope.payload else {
+        panic!("expected teams snapshot");
+    };
+    assert_eq!(snapshot.cursor.as_ref().unwrap().sources.len(), 2);
+    let body: crate::materializer::TeamSummaryListView =
+        serde_json::from_slice(&snapshot.body).unwrap();
+    assert_eq!(body.total_rows, 300);
+    assert_eq!(
+        body.teams.len(),
+        crate::materializer::MAX_TEAM_SUMMARY_LIMIT
+    );
+    let json = serde_json::to_value(&body).unwrap();
+    assert!(json.to_string().find("messages").is_none());
+    assert!(json.to_string().find("deliveries").is_none());
+    assert!(body.teams.iter().any(|team| team.source_id == "source-a"));
+    assert!(body.teams.iter().any(|team| team.source_id == "source-b"));
+}
+
+#[tokio::test]
+async fn process_tail_coverage_and_snapshot_overflow_fail_closed() {
+    let mut config = GoosetowerConfig::default();
+    let gateway = test_gateway(config.clone());
+    let mut state = materialized_session_state("local", "epoch-1", "session_1");
+    state.reduce_source_event(runtime_source_event("local", "epoch-1", "session_1", 1));
+    gateway
+        .replace_materialized_state("local".to_string(), state)
+        .await;
+    let envelope = gateway
+        .snapshot_for_subscription(Subscribe {
+            subscription_id: "missing-process".to_string(),
+            request_id: "process-request".to_string(),
+            view_kind: "process_tail".to_string(),
+            filters: HashMap::from([
+                ("source_id".to_string(), "local".to_string()),
+                ("process_id".to_string(), "process-missing".to_string()),
+            ]),
+        })
+        .await
+        .expect("explicit process absence");
+    let Some(Payload::Snapshot(snapshot)) = envelope.payload else {
+        panic!("expected process snapshot");
+    };
+    assert!(snapshot.not_found);
+    assert_eq!(
+        snapshot.coverage.unwrap().entity_ids,
+        vec!["process-missing"]
+    );
+
+    config.websocket.max_message_bytes = 64;
+    let tiny_gateway = test_gateway(config);
+    let mut tiny_state = materialized_session_state("local", "epoch-1", "session_1");
+    tiny_state.reduce_source_event(runtime_source_event("local", "epoch-1", "session_1", 1));
+    tiny_gateway
+        .replace_materialized_state("local".to_string(), tiny_state)
+        .await;
+    let before = tiny_gateway.next_gateway_seq.load(Ordering::Relaxed);
+    let error = tiny_gateway
+        .snapshot_for_subscription(Subscribe {
+            subscription_id: "oversized".to_string(),
+            request_id: "oversized-request".to_string(),
+            view_kind: "board".to_string(),
+            filters: HashMap::new(),
+        })
+        .await
+        .expect_err("oversized snapshot must not publish");
+    assert!(error.to_string().contains("max_message_bytes"));
+    assert_eq!(
+        tiny_gateway.next_gateway_seq.load(Ordering::Relaxed),
+        before
     );
 }
 
@@ -227,7 +373,8 @@ async fn source_over_prior_byte_budget_resets_and_refills_bounded_page() {
                 ("limit".to_string(), "100".to_string()),
             ]),
         })
-        .await;
+        .await
+        .expect("bounded board snapshot");
     assert!(refill.encode_to_vec().len() <= gateway.config.websocket.max_message_bytes);
     let Some(Payload::Snapshot(snapshot)) = refill.payload else {
         panic!("expected bounded board refill");
@@ -263,7 +410,8 @@ async fn source_over_prior_entity_budget_resets_and_refills_exact_selected_detai
                 ("session_id".to_string(), "session-1024".to_string()),
             ]),
         })
-        .await;
+        .await
+        .expect("selected detail snapshot");
     assert!(refill.encode_to_vec().len() <= gateway.config.websocket.max_message_bytes);
     let Some(Payload::Snapshot(snapshot)) = refill.payload else {
         panic!("expected selected detail refill");
@@ -288,6 +436,7 @@ fn selected_team_message_limits_are_clamped_for_all_filter_inputs() {
             request_id: format!("request-team-{raw}"),
             view_kind: "team_workspace".to_string(),
             filters: HashMap::from([
+                ("source_id".to_string(), "local".to_string()),
                 ("team_id".to_string(), "team_1".to_string()),
                 ("message_limit".to_string(), raw.to_string()),
             ]),
@@ -443,8 +592,14 @@ async fn legacy_detail_subscriptions_publish_canonical_replacement_snapshots() {
             ("session_id".to_string(), "session_1".to_string()),
         ]),
     };
-    let envelope = gateway.snapshot_for_subscription(subscribe()).await;
-    let second = gateway.snapshot_for_subscription(subscribe()).await;
+    let envelope = gateway
+        .snapshot_for_subscription(subscribe())
+        .await
+        .unwrap();
+    let second = gateway
+        .snapshot_for_subscription(subscribe())
+        .await
+        .unwrap();
     assert_ne!(envelope.message_id, second.message_id);
     let Some(Payload::Snapshot(snapshot)) = envelope.payload else {
         panic!("expected snapshot payload");

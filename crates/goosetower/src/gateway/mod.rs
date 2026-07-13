@@ -19,9 +19,9 @@ use crate::config::{GoosetowerConfig, RuntimeSourceConfig};
 use crate::materializer::SelectedSessionSubscription;
 use crate::materializer::{
     snapshot_cross_source_approval_inbox, snapshot_cross_source_board,
-    snapshot_cross_source_health, snapshot_cross_source_ledger, snapshot_cross_source_worktrees,
-    ApprovalInboxSubscription, BoardSubscription, BootstrapOptions, LedgerSubscription,
-    SourceBootstrap,
+    snapshot_cross_source_health, snapshot_cross_source_ledger, snapshot_cross_source_teams,
+    snapshot_cross_source_worktrees, ApprovalInboxSubscription, BoardSubscription,
+    BootstrapOptions, LedgerSubscription, SourceBootstrap, TeamSummarySubscription,
 };
 use crate::materializer::{MaterializedPatch, MaterializedPatchKind, MaterializedState};
 use crate::protocol::generated::goosetower::v1::realtime_envelope::Payload;

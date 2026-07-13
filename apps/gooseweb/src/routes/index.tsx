@@ -1144,12 +1144,14 @@ function Index() {
     setSelectedRowId(selectedRow.rowId);
     if (selectedRow.sessionId) {
       subscribeRealtime(`session:${selectedRow.sessionId}`, "session_detail", {
-        session_id: selectedRow.sessionId
+        session_id: selectedRow.sessionId,
+        source_id: selectedRow.sourceId
       });
     }
     if (selectedRow.teamId) {
       subscribeRealtime(`team:${selectedRow.teamId}`, "team_workspace", {
-        team_id: selectedRow.teamId
+        team_id: selectedRow.teamId,
+        source_id: selectedRow.sourceId
       });
     }
   }, [selectedRow]);
@@ -1159,27 +1161,30 @@ function Index() {
       return;
     }
     subscribeRealtime(`session:${selectedSession.sessionId}`, "session_detail", {
-      session_id: selectedSession.sessionId
+      session_id: selectedSession.sessionId,
+      source_id: selectedSession.sourceId
     });
-  }, [selectedSession?.sessionId]);
+  }, [selectedSession?.sessionId, selectedSession?.sourceId]);
 
   useEffect(() => {
     if (!selectedTeam?.teamId) {
       return;
     }
     subscribeRealtime(`team:${selectedTeam.teamId}`, "team_workspace", {
-      team_id: selectedTeam.teamId
+      team_id: selectedTeam.teamId,
+      source_id: selectedTeam.sourceId
     });
-  }, [selectedTeam?.teamId]);
+  }, [selectedTeam?.teamId, selectedTeam?.sourceId]);
 
   useEffect(() => {
     if (selectedProcess?.processId) {
       subscribeRealtime(`process:${selectedProcess.processId}`, "process_tail", {
         process_id: selectedProcess.processId,
+        source_id: selectedProcess.sourceId,
         tail: "visible"
       });
     }
-  }, [selectedProcess?.processId]);
+  }, [selectedProcess?.processId, selectedProcess?.sourceId]);
 
   useEffect(() => {
     if (!landInTeamCommsAfterCreate || !teams.length) {
@@ -1188,7 +1193,8 @@ function Index() {
     const nextTeam = teams[0];
     setSelectedTeamId(nextTeam.teamId);
     subscribeRealtime(`team:${nextTeam.teamId}`, "team_workspace", {
-      team_id: nextTeam.teamId
+      team_id: nextTeam.teamId,
+      source_id: nextTeam.sourceId
     });
     setActiveView("team-comms");
     setLandInTeamCommsAfterCreate(false);

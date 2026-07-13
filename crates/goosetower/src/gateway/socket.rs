@@ -667,6 +667,7 @@ impl GatewayState {
         subscribe: Subscribe,
     ) -> Result<RealtimeEnvelope> {
         let subscription = Subscription::from_proto(&subscribe)?;
+        let snapshot = self.snapshot_for_subscription(subscribe.clone()).await?;
         conn.subscriptions
             .insert(subscribe.subscription_id.clone(), subscription);
         tracing::info!(
@@ -685,10 +686,13 @@ impl GatewayState {
             }),
         )
         .await;
-        Ok(self.snapshot_for_subscription(subscribe).await)
+        Ok(snapshot)
     }
 
-    pub(super) async fn snapshot_for_subscription(&self, subscribe: Subscribe) -> RealtimeEnvelope {
+    pub(super) async fn snapshot_for_subscription(
+        &self,
+        subscribe: Subscribe,
+    ) -> Result<RealtimeEnvelope> {
         let materialized = self.materialized.read().await;
         let source_id = optional_subscribe_filter(&subscribe.filters, "source_id");
         let canonical_view_kind = canonical_subscription_view_kind(&subscribe.view_kind);
@@ -740,18 +744,30 @@ impl GatewayState {
             "worktrees" => serde_json::to_value(snapshot_cross_source_worktrees(
                 &materialized,
                 source_id.as_deref(),
-            ))
-            .unwrap_or_else(|error| json!({ "error": error.to_string() })),
+            ))?,
+            "teams" => serde_json::to_value(snapshot_cross_source_teams(
+                &materialized,
+                &TeamSummarySubscription {
+                    offset: parse_filter_usize(&subscribe.filters, "offset", 0),
+                    limit: parse_filter_usize(&subscribe.filters, "limit", 100),
+                    source_id: source_id.clone(),
+                },
+            ))?,
             _ => {
-                let selected_source_id = source_id
-                    .clone()
-                    .or_else(|| materialized.keys().next().cloned());
-                match selected_source_id
-                    .as_deref()
-                    .and_then(|source_id| materialized.get(source_id))
-                {
-                    Some(state) => snapshot_body(state, canonical_view_kind, &subscribe.filters)
-                        .unwrap_or_else(|error| json!({ "error": error.to_string() })),
+                let selected_source_id = source_id.as_deref().ok_or_else(|| {
+                    anyhow!("{canonical_view_kind} subscription requires source_id")
+                })?;
+                match materialized.get(selected_source_id) {
+                    Some(state) => {
+                        let value = snapshot_body(state, canonical_view_kind, &subscribe.filters)?;
+                        if canonical_view_kind == "process_tail"
+                            && value.get("process").is_some_and(Value::is_null)
+                        {
+                            Value::Null
+                        } else {
+                            value
+                        }
+                    }
                     None => Value::Null,
                 }
             }
@@ -784,7 +800,14 @@ impl GatewayState {
             }),
         );
         envelope.message_id = self.next_view_message_id();
-        envelope
+        let encoded_len = envelope.encoded_len();
+        if encoded_len > self.config.websocket.max_message_bytes {
+            return Err(anyhow!(
+                "snapshot frame exceeds websocket.max_message_bytes: {encoded_len} > {}",
+                self.config.websocket.max_message_bytes
+            ));
+        }
+        Ok(envelope)
     }
 }
 
@@ -800,6 +823,7 @@ fn subscription_entity_id(view_kind: &str, filters: &HashMap<String, String>) ->
     match view_kind {
         "session_detail" => optional_subscribe_filter(filters, "session_id"),
         "team_workspace" => optional_subscribe_filter(filters, "team_id"),
+        "process_tail" => optional_subscribe_filter(filters, "process_id"),
         _ => None,
     }
 }

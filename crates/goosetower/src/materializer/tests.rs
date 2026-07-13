@@ -158,6 +158,7 @@ fn terminal_turn_usage_updates_session_context_window() {
     assert!(!effect.duplicate);
     let snapshot = state
         .snapshot_session(&SelectedSessionSubscription {
+            source_id: "local".to_string(),
             session_id: "sess_1".to_string(),
             include_text: true,
         })
@@ -214,6 +215,7 @@ fn materializer_snapshots_board_inbox_session_team_and_ledger() {
 
     let session = state
         .snapshot_session(&SelectedSessionSubscription {
+            source_id: "local".to_string(),
             session_id: "sess_1".to_string(),
             include_text: true,
         })
@@ -223,6 +225,7 @@ fn materializer_snapshots_board_inbox_session_team_and_ledger() {
 
     let team = state
         .snapshot_team(&SelectedTeamSubscription {
+            source_id: "local".to_string(),
             team_id: "team_1".to_string(),
             message_limit: 10,
         })
@@ -516,6 +519,7 @@ fn snapshot_and_patch_detail_bodies_have_identical_typed_shapes() {
 
     let session_snapshot = state
         .snapshot_session(&SelectedSessionSubscription {
+            source_id: "local".to_string(),
             session_id: "sess_1".to_string(),
             include_text: true,
         })
@@ -531,6 +535,7 @@ fn snapshot_and_patch_detail_bodies_have_identical_typed_shapes() {
 
     let team_snapshot = state
         .snapshot_team(&SelectedTeamSubscription {
+            source_id: "local".to_string(),
             team_id: "team_1".to_string(),
             message_limit: 100,
         })
@@ -586,6 +591,7 @@ fn team_workspace_clamps_messages_and_filters_deliveries_to_the_window() {
     for requested in [0, usize::MAX] {
         let workspace = state
             .snapshot_team(&SelectedTeamSubscription {
+                source_id: "local".to_string(),
                 team_id: "team_1".to_string(),
                 message_limit: requested,
             })

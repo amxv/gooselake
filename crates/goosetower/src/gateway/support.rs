@@ -472,6 +472,7 @@ impl Subscription {
                 source_id: optional_filter(filters, "source_id"),
             }),
             "session" | "session_detail" => Self::Session(SelectedSessionSubscription {
+                source_id: required_filter(filters, "source_id")?,
                 session_id: required_filter(filters, "session_id")?,
                 include_text: filters
                     .get("include_text")
@@ -479,11 +480,13 @@ impl Subscription {
             }),
             "teams" => Self::Teams,
             "team" | "team_workspace" | "team_stream" => Self::Team(SelectedTeamSubscription {
+                source_id: required_filter(filters, "source_id")?,
                 team_id: required_filter(filters, "team_id")?,
                 message_limit: parse_usize(filters.get("message_limit"), 100)
                     .clamp(1, crate::materializer::MAX_TEAM_MESSAGE_LIMIT),
             }),
             "process_tail" => Self::ProcessTail(ProcessTailSubscription {
+                source_id: required_filter(filters, "source_id")?,
                 process_id: required_filter(filters, "process_id")?,
                 tail_lines: parse_usize(filters.get("tail_lines"), 200),
             }),
@@ -530,10 +533,10 @@ impl Subscription {
                 (patch.view_kind == "session_summary"
                     || patch.view_kind == "session"
                     || patch.view_kind == "session_detail")
-                    && patch
-                        .entity
-                        .as_ref()
-                        .is_some_and(|entity| entity.entity_id == subscription.session_id)
+                    && patch.entity.as_ref().is_some_and(|entity| {
+                        entity.entity_id == subscription.session_id
+                            && entity.source_id == subscription.source_id
+                    })
             }
             Self::Teams => {
                 patch.view_kind == "teams"
@@ -545,17 +548,17 @@ impl Subscription {
                     || patch.view_kind == "team"
                     || patch.view_kind == "team_workspace"
                     || patch.view_kind == "team_stream")
-                    && patch
-                        .entity
-                        .as_ref()
-                        .is_some_and(|entity| entity.entity_id == subscription.team_id)
+                    && patch.entity.as_ref().is_some_and(|entity| {
+                        entity.entity_id == subscription.team_id
+                            && entity.source_id == subscription.source_id
+                    })
             }
             Self::ProcessTail(subscription) => {
                 patch.view_kind == "process_tail"
-                    && patch
-                        .entity
-                        .as_ref()
-                        .is_some_and(|entity| entity.entity_id == subscription.process_id)
+                    && patch.entity.as_ref().is_some_and(|entity| {
+                        entity.entity_id == subscription.process_id
+                            && entity.source_id == subscription.source_id
+                    })
             }
             Self::Ledger(_) => patch.view_kind == "ledger",
             Self::Fleet => patch.view_kind == "fleet" || patch.view_kind == "source_health",
@@ -699,26 +702,16 @@ pub(super) fn snapshot_body(
         )?,
         "session" | "session_detail" => serde_json::to_value(
             state.snapshot_session(&SelectedSessionSubscription {
+                source_id: state.source_id.clone(),
                 session_id: required_filter(filters, "session_id")?,
                 include_text: filters
                     .get("include_text")
                     .is_none_or(|value| value == "true"),
             }),
         )?,
-        "teams" => serde_json::json!({
-            "teams": state
-                .teams
-                .keys()
-                .filter_map(|team_id| {
-                    state.snapshot_team(&SelectedTeamSubscription {
-                        team_id: team_id.clone(),
-                        message_limit: 100,
-                    })
-                })
-                .collect::<Vec<_>>()
-        }),
         "team" | "team_workspace" | "team_stream" => serde_json::to_value(
             state.snapshot_team(&SelectedTeamSubscription {
+                source_id: state.source_id.clone(),
                 team_id: required_filter(filters, "team_id")?,
                 message_limit: parse_usize(filters.get("message_limit"), 100)
                     .clamp(1, crate::materializer::MAX_TEAM_MESSAGE_LIMIT),
@@ -726,6 +719,7 @@ pub(super) fn snapshot_body(
         )?,
         "process_tail" => {
             serde_json::to_value(state.snapshot_process_tail(&ProcessTailSubscription {
+                source_id: state.source_id.clone(),
                 process_id: required_filter(filters, "process_id")?,
                 tail_lines: parse_usize(filters.get("tail_lines"), 200),
             }))?
@@ -928,6 +922,7 @@ mod tests {
     #[test]
     fn subscription_interest_filters_matching_patches() {
         let subscription = Subscription::Session(SelectedSessionSubscription {
+            source_id: "local".to_string(),
             session_id: "session_1".to_string(),
             include_text: true,
         });

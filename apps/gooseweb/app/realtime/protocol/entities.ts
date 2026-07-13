@@ -47,10 +47,17 @@ export function decodeSnapshot(snapshot: Snapshot): EntityPatch {
 }
 
 export function decodeNotFoundSnapshot(snapshot: Snapshot): EntityPatch {
-  requireDeclaredCoverage(snapshot.schemaVersion, snapshot.coverage);
+  if (snapshot.schemaVersion !== 1 || snapshot.operation !== ViewOperation.REPLACE) {
+    throw new ProtocolDecodeError("not-found snapshot requires schema v1 replace semantics");
+  }
   const domain = domainForViewKind(snapshot.viewKind);
+  const expectedWireDomain = domain ? domainToWire(domain) : undefined;
   const ids = snapshot.coverage?.entityIds ?? [];
-  if (!domain || !isScopedDetailView(snapshot.viewKind) || ids.length !== 1) {
+  const domains = snapshot.coverage?.domains ?? [];
+  if (
+    !domain || !isScopedDetailView(snapshot.viewKind) || !snapshot.coverage?.authoritative ||
+    domains.length !== 1 || domains[0] !== expectedWireDomain || ids.length !== 1 || !ids[0]
+  ) {
     throw new ProtocolDecodeError("not-found snapshot must cover one selected detail entity");
   }
   if (new TextDecoder().decode(snapshot.body).trim() !== "null") {
@@ -198,7 +205,8 @@ function withOperation(
 }
 
 function isScopedDetailView(viewKind: string): boolean {
-  return viewKind === "session_detail" || viewKind === "team_workspace" || viewKind === "team_stream";
+  return viewKind === "session_detail" || viewKind === "team_workspace" ||
+    viewKind === "team_stream" || viewKind === "process_tail";
 }
 
 function domainForViewKind(viewKind: string): EntityDomain | undefined {
@@ -209,7 +217,7 @@ function domainForViewKind(viewKind: string): EntityDomain | undefined {
     case "team": case "team_summary": case "teams": return "teams";
     case "team_workspace": case "team_stream": return "teamWorkspaces";
     case "approval": case "approval_inbox": return "approvals";
-    case "process": return "processes";
+    case "process": case "process_tail": return "processes";
     case "worktree": case "worktrees": return "worktrees";
     case "source-health": case "source_health": case "source": case "fleet": return "sources";
     default: return undefined;
@@ -357,6 +365,15 @@ function decodeJsonViewBody(
       const detail = normalizeSessionDetail(value);
       if (!detail) throw new ProtocolDecodeError("session_detail normalization failed");
       return { entities: { sessionDetails: { [detail.sessionId]: detail } } };
+    }
+    case "process_tail": {
+      const tail = strictRecord(value, "process_tail");
+      const process = normalizeProcess(tail.process);
+      if (!process) throw new ProtocolDecodeError("process_tail lacks a valid process");
+      if (stringFrom(tail.source_id) !== process.sourceId) {
+        throw new ProtocolDecodeError("process_tail source disagrees with process");
+      }
+      return { entities: { processes: { [process.processId]: process } } };
     }
     case "team_workspace":
     case "team_stream": {
@@ -730,9 +747,25 @@ function normalizeTeam(value: unknown) {
   return create(TeamViewSchema, {
     sourceId: stringFrom(workspace.source_id),
     teamId,
-    name: stringFrom(teamRecord.name),
-    leadMemberId: stringFrom(teamRecord.lead_agent_id),
+    name: stringFrom(teamRecord.name || workspace.name),
+    leadMemberId: stringFrom(teamRecord.lead_agent_id || workspace.lead_member_id),
     members
+  });
+}
+
+function normalizeProcess(value: unknown) {
+  const process = recordFrom(value);
+  const processId = stringFrom(process.process_id);
+  const sourceId = stringFrom(process.source_id);
+  if (!processId || !sourceId) return undefined;
+  return create(ProcessViewSchema, {
+    sourceId,
+    processId,
+    status: stringFrom(process.status),
+    command: typeof process.command === "string"
+      ? process.command
+      : JSON.stringify(process.command ?? ""),
+    exitCode: numberFrom(process.exit_code)
   });
 }
 

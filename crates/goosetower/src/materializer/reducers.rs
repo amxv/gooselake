@@ -569,6 +569,7 @@ impl MaterializedState {
         }
         if let Some(detail) =
             self.snapshot_session(&super::snapshots::SelectedSessionSubscription {
+                source_id: self.source_id.clone(),
                 session_id: session_id.to_string(),
                 include_text: true,
             })
@@ -603,6 +604,7 @@ impl MaterializedState {
             json!({ "source_id": self.source_id, "team": team, "members": self.members_by_team.get(team_id) }),
         )];
         if let Some(workspace) = self.snapshot_team(&super::snapshots::SelectedTeamSubscription {
+            source_id: self.source_id.clone(),
             team_id: team_id.to_string(),
             message_limit: 100,
         }) {

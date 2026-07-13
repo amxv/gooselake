@@ -106,6 +106,21 @@ pub struct TeamWorkspaceView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TeamSummaryView {
+    pub source_id: String,
+    pub team_id: String,
+    pub name: String,
+    pub lead_member_id: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TeamSummaryListView {
+    pub teams: Vec<TeamSummaryView>,
+    pub total_rows: usize,
+    pub cursors: Vec<SourceCursorView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TeamMemberView {
     pub member: TeamMemberRecord,
     pub session: Option<SessionRecord>,

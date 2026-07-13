@@ -286,6 +286,7 @@ export class RealtimeWorkerCore {
           const patch = envelope.payload.value.notFound
             ? decodeNotFoundSnapshot(envelope.payload.value)
             : decodeSnapshot(envelope.payload.value);
+          this.validateSnapshotPatchSource(envelope.payload.value, patch);
           if (!this.applyEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installSnapshotCoverage(envelope, patch));
         } catch (error) {
@@ -300,7 +301,7 @@ export class RealtimeWorkerCore {
         try {
           const patch = decodePatch(envelope.payload.value);
           if (!this.applyEnvelopeCursor(envelope)) return;
-          this.handleEntityPatch(patch);
+          this.handleEntityPatch(this.installPatchCoverage(envelope, patch));
         } catch (error) {
           this.failProtocolFrame(error instanceof Error ? error.message : "invalid patch");
         }
@@ -508,7 +509,7 @@ export class RealtimeWorkerCore {
           transformed.push({
             ...operation,
             payload,
-            sourceId: kind === "domain" && sourceIds.length === 1 ? sourceId : operation.sourceId
+            sourceId
           });
         }
       }
@@ -541,6 +542,9 @@ export class RealtimeWorkerCore {
   }
 
   private validateSnapshotProvenance(snapshot: Snapshot): void {
+    if (snapshot.notFound && snapshot.schemaVersion !== 1) {
+      throw new Error("not-found snapshot uses an unsupported schema version");
+    }
     if (snapshot.schemaVersion !== 1) return;
     if (!snapshot.subscriptionId || !snapshot.requestId) {
       throw new Error("versioned snapshot lacks subscription provenance");
@@ -571,6 +575,67 @@ export class RealtimeWorkerCore {
     )) {
       throw new Error("snapshot selected entity disagrees with subscription filters");
     }
+    if (selectedFilterKey) {
+      const sourceId = subscription.filters.source_id;
+      if (!sourceId || snapshot.cursor?.sources.length !== 1 ||
+        snapshot.cursor.sources[0]?.sourceId !== sourceId) {
+        throw new Error("selected snapshot source authority disagrees with subscription");
+      }
+    }
+  }
+
+  private validateSnapshotPatchSource(snapshot: Snapshot, patch: EntityPatch): void {
+    const subscription = this.subscriptions[snapshot.subscriptionId];
+    const requestedSourceId = subscription?.filters.source_id;
+    if (!requestedSourceId || !isSelectedViewKind(snapshot.viewKind)) return;
+    for (const operation of patch.entityOperations) {
+      for (const entity of Object.values(operation.payload)) {
+        if ((entity as { sourceId?: string }).sourceId !== requestedSourceId) {
+          throw new Error("selected snapshot body disagrees with requested source");
+        }
+      }
+    }
+  }
+
+  private installPatchCoverage(envelope: RealtimeEnvelope, patch: EntityPatch): EntityPatch {
+    const sourceIds = (cursorAuthorityFromEnvelope(envelope)?.sources ?? [])
+      .map((source) => source.sourceId);
+    const transformed = patch.entityOperations.map((operation) => {
+      if (operation.operation === "remove") {
+        const scopedSourceId = operation.sourceId ?? (sourceIds.length === 1 ? sourceIds[0] : undefined);
+        this.loadedCoverage = Object.fromEntries(
+          Object.entries(this.loadedCoverage).map(([key, coverage]) => [key, {
+            ...coverage,
+            entityIds: coverage.domain === operation.domain &&
+              (!scopedSourceId || coverage.sourceId === scopedSourceId)
+              ? coverage.entityIds.filter((id) => !operation.entityIds.includes(id))
+              : coverage.entityIds
+          }])
+        );
+        return { ...operation, sourceId: scopedSourceId };
+      }
+      for (const [entityId, entity] of Object.entries(operation.payload)) {
+        const sourceId = (entity as { sourceId?: string }).sourceId;
+        if (!sourceId) continue;
+        const key = `${sourceId}:${operation.domain}:__patch__:${entityId}`;
+        this.loadedCoverage = {
+          ...this.loadedCoverage,
+          [key]: {
+            sourceId,
+            domain: operation.domain,
+            subscriptionId: "__patch__",
+            kind: "entity",
+            entityIds: [entityId],
+            filters: {},
+            authoritative: true,
+            empty: false
+          }
+        };
+      }
+      return operation;
+    });
+    this.emitState({ loadedCoverage: this.loadedCoverage });
+    return { entityOperations: transformed };
   }
 
   private failProtocolFrame(message: string): void {
@@ -867,6 +932,11 @@ function canonicalViewKind(viewKind: string): string {
   if (viewKind === "team" || viewKind === "team_stream") return "team_workspace";
   if (viewKind === "process") return "process_tail";
   return viewKind;
+}
+
+function isSelectedViewKind(viewKind: string): boolean {
+  return viewKind === "session_detail" || viewKind === "team_workspace" ||
+    viewKind === "process_tail";
 }
 
 function cursorAuthorityFromEnvelope(

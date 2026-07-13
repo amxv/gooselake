@@ -34,16 +34,20 @@ export class SourceRepairTracker {
   retireSnapshot(
     subscriptionId: string,
     requestId: string,
-    sourceIds: readonly string[]
+    sources: readonly SourceCursorState[]
   ): void {
-    for (const sourceId of sourceIds) {
-      const repair = this.repairs[sourceId];
+    for (const source of sources) {
+      const repair = this.repairs[source.sourceId];
       if (!repair || repair.requirements[subscriptionId] !== requestId) continue;
+      if ((repair.expectedEpoch && source.sourceEpoch !== repair.expectedEpoch) ||
+        (repair.minimumSourceSeq !== undefined && source.sourceSeq < repair.minimumSourceSeq)) {
+        continue;
+      }
       const requirements = { ...repair.requirements };
       delete requirements[subscriptionId];
       this.repairs = {
         ...this.repairs,
-        [sourceId]: { ...repair, requirements }
+        [source.sourceId]: { ...repair, requirements }
       };
     }
   }
@@ -76,18 +80,19 @@ export class SourceRepairTracker {
     return retired;
   }
 
-  markGapFilled(cursor: SourceCursorState): boolean {
+  markGapFilled(cursor: SourceCursorState): "marked" | "untracked" | "invalid" {
     const repair = this.repairs[cursor.sourceId];
-    if (!repair || repair.completion !== "gap_fill" ||
+    if (!repair) return "untracked";
+    if (repair.completion !== "gap_fill" ||
       (repair.expectedEpoch && cursor.sourceEpoch !== repair.expectedEpoch) ||
       (repair.minimumSourceSeq !== undefined && cursor.sourceSeq < repair.minimumSourceSeq)) {
-      return false;
+      return "invalid";
     }
     this.repairs = {
       ...this.repairs,
       [cursor.sourceId]: { ...repair, gapFilled: true }
     };
-    return true;
+    return "marked";
   }
 
   takeRecovered(authoritativeResetSourceId?: string): string[] {

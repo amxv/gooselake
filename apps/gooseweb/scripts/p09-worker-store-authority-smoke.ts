@@ -4,6 +4,8 @@ import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
 import {
   HelloSchema,
   RealtimeEnvelopeSchema,
+  SourceGapDetectedSchema,
+  SourceGapFilledSchema,
   type RealtimeEnvelope
 } from "../src/gen/goosetower/v1/realtime_pb";
 import {
@@ -20,6 +22,7 @@ import {
 } from "../app/realtime/cursors";
 import { sourceEntityKey } from "../app/realtime/protocol/entities";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core";
+import { SourceRepairTracker } from "../app/realtime/worker/source-repair-tracker";
 import { mergeStorePatch } from "../app/realtime/worker/store-patch-batcher";
 import {
   getGoosewebSnapshot,
@@ -141,6 +144,60 @@ assert.equal(restarted.gatewaySeq, 1n);
 assert.equal(restarted.gatewayEpoch, "gateway-new",
   "new gateway generation accepts sequence below the persisted generation floor");
 
+const fillFirst = new SourceRepairTracker();
+fillFirst.begin("source-1", "gap_fill", { board: "request-1" }, {
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n
+});
+fillFirst.retireSnapshot("board", "request-1", [{
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 6n
+}]);
+fillFirst.retireSnapshot("board", "request-1", [{
+  sourceId: "source-1", sourceEpoch: "wrong-epoch", sourceSeq: 7n
+}]);
+assert.equal(fillFirst.markGapFilled({
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n
+}), "marked");
+assert.deepEqual(fillFirst.takeRecovered(), [],
+  "fill-first repair cannot clear after below-floor or wrong-epoch snapshots");
+fillFirst.retireSnapshot("board", "request-1", [{
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n
+}]);
+assert.deepEqual(fillFirst.takeRecovered(), ["source-1"]);
+
+const snapshotFirst = new SourceRepairTracker();
+snapshotFirst.begin("source-1", "gap_fill", { board: "request-2" }, {
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n
+});
+snapshotFirst.retireSnapshot("board", "request-2", [{
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n
+}]);
+assert.deepEqual(snapshotFirst.takeRecovered(), [],
+  "at-floor snapshots remain frozen until their matching fill cursor arrives");
+assert.equal(snapshotFirst.markGapFilled({
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n
+}), "marked");
+assert.deepEqual(snapshotFirst.takeRecovered(), ["source-1"]);
+
+const multiSource = new SourceRepairTracker();
+multiSource.begin("source-1", "gap_fill", { board: "shared-request" }, {
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n
+});
+multiSource.begin("source-2", "gap_fill", { board: "shared-request" }, {
+  sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n
+});
+multiSource.retireSnapshot("board", "shared-request", [
+  { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 6n },
+  { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n }
+]);
+multiSource.markGapFilled({ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n });
+multiSource.markGapFilled({ sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 9n });
+assert.deepEqual(multiSource.takeRecovered(), ["source-2"],
+  "multi-source snapshots evaluate each source cursor against its own repair floor");
+multiSource.retireSnapshot("board", "shared-request", [{
+  sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n
+}]);
+assert.deepEqual(multiSource.takeRecovered(), ["source-1"]);
+
 class FakeSocket {
   static readonly OPEN = 1;
   readyState = 0;
@@ -246,11 +303,41 @@ updateGoosewebStore({ entityOperations: [
   })
 ] });
 const coherentBeforeGap = structuredClone(getGoosewebSnapshot().entities);
-socket.receive(patchFrame("jump", 4n, 7n, "session-a", "must-not-apply"));
+const authorityBeforeMalformedControls = {
+  cursor: structuredClone(getGoosewebSnapshot().cursor),
+  entities: structuredClone(getGoosewebSnapshot().entities),
+  coverage: structuredClone(getGoosewebSnapshot().loadedCoverage),
+  subscriptions: subscriptionGenerations()
+};
+for (const frame of [
+  gapDetected("missing-gap", undefined, undefined),
+  gapDetected("cross-source-gap",
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 5n },
+    { sourceId: "source-2", sourceEpoch: "epoch-1", sourceSeq: 7n }),
+  gapDetected("cross-epoch-gap",
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 5n },
+    { sourceId: "source-1", sourceEpoch: "epoch-2", sourceSeq: 7n }),
+  gapDetected("regressive-gap",
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 5n },
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 5n }),
+  gapDetected("unknown-last-seen-gap",
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 4n },
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n })
+]) socket.receive(frame);
+await flush();
+assert.deepEqual(getGoosewebSnapshot().cursor, authorityBeforeMalformedControls.cursor);
+assert.deepEqual(getGoosewebSnapshot().entities, authorityBeforeMalformedControls.entities);
+assert.deepEqual(getGoosewebSnapshot().loadedCoverage, authorityBeforeMalformedControls.coverage);
+assert.deepEqual(subscriptionGenerations(), authorityBeforeMalformedControls.subscriptions,
+  "malformed gap controls fail before cursor/entity/coverage/subscription mutation");
+
+socket.receive(gapDetected("valid-gap",
+  { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 5n },
+  { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n }));
 await flush();
 assert.deepEqual(getGoosewebSnapshot().entities, coherentBeforeGap,
-  "same-epoch source jump freezes before entity mutation");
-assert.equal(getGoosewebSnapshot().staleSources["source-1"], "source_cursor_gap");
+  "valid same-epoch gap control freezes before entity mutation");
+assert.equal(getGoosewebSnapshot().staleSources["source-1"], "gap_detected");
 assert.equal(getGoosewebSnapshot().subscriptions["session-detail"]?.status, "subscribing");
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.sessions).length, 0);
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.teamWorkspaces).length, 0);
@@ -258,6 +345,25 @@ assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.processes).length
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.worktrees).length, 0,
   "same-epoch repair hides every uncovered source-owned domain before refill");
 const repairRequestId = latestSubscribeRequestId(socket, "session-detail");
+const repairControlState = {
+  cursor: structuredClone(getGoosewebSnapshot().cursor),
+  entities: structuredClone(getGoosewebSnapshot().entities),
+  coverage: structuredClone(getGoosewebSnapshot().loadedCoverage),
+  subscriptions: subscriptionGenerations()
+};
+for (const frame of [
+  gapFilled("wrong-source-fill", { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 7n }),
+  gapFilled("wrong-epoch-fill", { sourceId: "source-1", sourceEpoch: "epoch-2", sourceSeq: 7n }),
+  gapFilled("zero-fill", { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 0n })
+]) socket.receive(frame);
+await flush();
+assert.deepEqual(getGoosewebSnapshot().cursor, repairControlState.cursor);
+assert.deepEqual(getGoosewebSnapshot().entities, repairControlState.entities);
+assert.deepEqual(getGoosewebSnapshot().loadedCoverage, repairControlState.coverage);
+assert.deepEqual(subscriptionGenerations(), repairControlState.subscriptions,
+  "malformed gap-filled controls fail before authority or repair-generation mutation");
+assert.equal(getGoosewebSnapshot().staleSources["source-1"], "gap_detected");
+
 socket.receive(boundedSnapshot(
   "other-source-board-repair",
   productionViews[0]!,
@@ -266,8 +372,22 @@ socket.receive(boundedSnapshot(
   { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 1n }
 ));
 await flush();
-assert.equal(getGoosewebSnapshot().staleSources["source-1"], "source_cursor_gap",
+assert.equal(getGoosewebSnapshot().staleSources["source-1"], "gap_detected",
   "a valid bounded snapshot for another source cannot satisfy this source repair");
+
+socket.receive(snapshot("below-floor-session", repairRequestId, 5n, 5n, "session-a", "below-floor"));
+for (const view of productionViews) {
+  socket.receive(boundedSnapshot(
+    `below-floor-${view.subscriptionId}`,
+    view,
+    latestSubscribeRequestId(socket, view.subscriptionId),
+    5n,
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 5n }
+  ));
+}
+await flush();
+assert.equal(getGoosewebSnapshot().staleSources["source-1"], "gap_detected",
+  "current-generation snapshots below the repair floor cannot retire requirements");
 
 socket.receive(create(RealtimeEnvelopeSchema, {
   protocolVersion: 1, messageId: "gap-filled", messageKind: MessageKind.SOURCE_GAP_FILLED,
@@ -276,16 +396,16 @@ socket.receive(create(RealtimeEnvelopeSchema, {
   } }
 }));
 await flush();
-assert.equal(getGoosewebSnapshot().staleSources["source-1"], "source_cursor_gap",
+assert.equal(getGoosewebSnapshot().staleSources["source-1"], "gap_detected",
   "gap-filled signal cannot clear safety before authoritative repair");
 
-socket.receive(snapshot("repair", repairRequestId, 5n, 7n, "session-a", "repaired"));
+socket.receive(snapshot("repair", repairRequestId, 6n, 7n, "session-a", "repaired"));
 for (const view of productionViews) {
   socket.receive(boundedSnapshot(
     `repair-${view.subscriptionId}`,
     view,
     latestSubscribeRequestId(socket, view.subscriptionId),
-    5n,
+    6n,
     { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n }
   ));
 }
@@ -483,6 +603,45 @@ function productionRepairViews(): RepairView[] {
         stderr_bytes: null, stdout_truncated: null, stderr_truncated: null, version: 1
       }, stdout: [], stderr: [], samples: [] }) }
   ];
+}
+
+type ControlCursor = {
+  readonly sourceId: string;
+  readonly sourceEpoch: string;
+  readonly sourceSeq: bigint;
+};
+
+function gapDetected(
+  messageId: string,
+  lastSeen: ControlCursor | undefined,
+  nextAvailable: ControlCursor | undefined
+): RealtimeEnvelope {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1, messageId, messageKind: MessageKind.SOURCE_GAP_DETECTED,
+    lane: Lane.CRITICAL,
+    payload: { case: "sourceGapDetected", value: create(SourceGapDetectedSchema, {
+      lastSeen, nextAvailable
+    }) }
+  });
+}
+
+function gapFilled(messageId: string, filled: ControlCursor): RealtimeEnvelope {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1, messageId, messageKind: MessageKind.SOURCE_GAP_FILLED,
+    lane: Lane.CONTROL,
+    payload: { case: "sourceGapFilled", value: create(SourceGapFilledSchema, {
+      cursor: filled
+    }) }
+  });
+}
+
+function subscriptionGenerations() {
+  return Object.fromEntries(Object.entries(getGoosewebSnapshot().subscriptions).map(
+    ([subscriptionId, subscription]) => [subscriptionId, {
+      requestId: subscription.requestId,
+      status: subscription.status
+    }]
+  ));
 }
 
 function detail(sessionId: string) {

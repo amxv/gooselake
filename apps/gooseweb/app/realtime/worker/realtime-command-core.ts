@@ -44,6 +44,7 @@ import {
 } from "./command-messages";
 import { mergeStorePatch } from "./store-patch-batcher";
 import { reduceCommandLifecycle } from "./command-rejection";
+import { gapDetectedAuthorityFromEnvelope, gapFilledAuthorityFromEnvelope } from "./source-repair-controls";
 import { SourceRepairTracker, sourceRepairRecoveryPatch } from "./source-repair-tracker";
 import {
   canonicalViewKind,
@@ -359,19 +360,7 @@ export class RealtimeWorkerCore {
         }
         break;
       case MessageKind.SOURCE_GAP_FILLED:
-        if (envelope.payload.case !== "sourceGapFilled") {
-          this.failProtocolFrame("gap-filled envelope is missing its payload");
-          return;
-        }
-        if (!envelope.payload.value.cursor) {
-          this.failProtocolFrame("gap-filled payload lacks its source cursor");
-          return;
-        }
-        if (this.sourceRepairs.markGapFilled(envelope.payload.value.cursor)) {
-          this.emitState({ connection: "replaying", ...this.recoveryPatch() });
-        } else {
-          this.emitState({ connection: this.sourceRepairs.hasPending ? "stale" : "replaying" });
-        }
+        this.handleGapFilled(envelope);
         break;
       case MessageKind.ERROR:
         this.emitError(
@@ -458,7 +447,10 @@ export class RealtimeWorkerCore {
     const subscriptionId = snapshot.subscriptionId;
     const subscription = this.subscriptions[subscriptionId];
     const filters = subscription?.filters ?? {};
-    const sourceIds = snapshot.cursor?.sources.map((source) => source.sourceId) ?? [];
+    const sourceCursors = snapshot.cursor?.sources.map((source) => ({
+      sourceId: source.sourceId, sourceEpoch: source.sourceEpoch, sourceSeq: source.sourceSeq
+    })) ?? [];
+    const sourceIds = sourceCursors.map((source) => source.sourceId);
     const transformed: EntityOperation[] = [];
     for (const operation of patch.entityOperations) {
       const kind = snapshotCoverageKind(snapshot.viewKind, operation.entityIds);
@@ -532,7 +524,7 @@ export class RealtimeWorkerCore {
     this.sourceRepairs.retireSnapshot(
       subscriptionId,
       snapshot.requestId,
-      sourceIds
+      sourceCursors
     );
     if (subscription) {
       const active = { ...subscription, status: "active" as const };
@@ -699,18 +691,26 @@ export class RealtimeWorkerCore {
   }
 
   private handleStaleSignal(envelope: RealtimeEnvelope): void {
-    if (envelope.payload.case !== "sourceGapDetected") return;
-    const next = envelope.payload.value.nextAvailable;
-    const lastSeen = envelope.payload.value.lastSeen;
-    const sourceId = next?.sourceId || lastSeen?.sourceId || envelope.sourceId;
-    if (!sourceId) return;
-    this.requestTargetedRepair(sourceId, "gap_detected", next ? {
-      sourceId,
-      sourceEpoch: next.sourceEpoch,
-      sourceSeq: next.sourceSeq
-    } : undefined, "gap_fill");
+    try {
+      const expected = gapDetectedAuthorityFromEnvelope(envelope, this.cursor);
+      this.requestTargetedRepair(expected.sourceId, "gap_detected", expected, "gap_fill");
+    } catch (error) {
+      this.failProtocolFrame(error instanceof Error ? error.message : "invalid gap control");
+    }
   }
-
+  private handleGapFilled(envelope: RealtimeEnvelope): void {
+    try {
+      const filled = gapFilledAuthorityFromEnvelope(envelope, this.cursor);
+      const result = this.sourceRepairs.markGapFilled(filled);
+      if (result === "invalid" || (result === "untracked" && this.sourceRepairs.hasPending))
+        throw new Error("gap-filled cursor misses pending repair authority");
+      this.emitState(result === "marked"
+        ? { connection: "replaying", ...this.recoveryPatch() }
+        : { connection: this.sourceRepairs.hasPending ? "stale" : "replaying" });
+    } catch (error) {
+      this.failProtocolFrame(error instanceof Error ? error.message : "invalid gap-filled control");
+    }
+  }
   private requestTargetedRepair(
     sourceId: string,
     reason: string,

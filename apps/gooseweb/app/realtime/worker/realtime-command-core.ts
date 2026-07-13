@@ -44,7 +44,8 @@ import {
 } from "./command-messages";
 import { mergeStorePatch } from "./store-patch-batcher";
 import { reduceCommandLifecycle } from "./command-rejection";
-import { sourceHealthGapCursors, validateEntitySourceAgreement } from "./frame-source-authority";
+import { validateEntitySourceAgreement } from "./frame-source-authority";
+import { preflightMaterializedGap } from "./materialized-gap-preflight";
 import { gapDetectedAuthorityFromEnvelope, gapFilledAuthorityFromEnvelope } from "./source-repair-controls";
 import { SourceRepairTracker, sourceRepairRecoveryPatch } from "./source-repair-tracker";
 import {
@@ -162,7 +163,6 @@ export class RealtimeWorkerCore {
     this.socket = undefined;
     this.emitState({ connection: "idle" });
   }
-
   private subscribe(
     subscriptionId: string,
     viewKind: string,
@@ -179,7 +179,6 @@ export class RealtimeWorkerCore {
     this.post({ type: "subscription-state", subscription });
     this.sendEnvelope(makeSubscribe(subscriptionId, viewKind, filters, subscription.requestId));
   }
-
   private unsubscribe(subscriptionId: string): void {
     const existing = this.subscriptions[subscriptionId];
     const subscription: SubscriptionState = {
@@ -196,7 +195,6 @@ export class RealtimeWorkerCore {
       this.emitState(this.recoveryPatch());
     }
   }
-
   private resendActiveSubscriptions(): void {
     for (const subscription of Object.values(this.subscriptions)) {
       if (subscription.status === "unsubscribed") {
@@ -212,7 +210,6 @@ export class RealtimeWorkerCore {
       );
     }
   }
-
   private sendCommand(command: PendingCommandInput, idempotencyKey?: string): void {
     const commandId = command.commandId || crypto.randomUUID();
     const pending: PendingCommandState = {
@@ -227,7 +224,6 @@ export class RealtimeWorkerCore {
     };
     this.pendingCommands[commandId] = pending;
     this.post({ type: "command-state", command: pending });
-
     const fullCommand = {
       ...command,
       commandId,
@@ -235,7 +231,6 @@ export class RealtimeWorkerCore {
       createdAtClientUnixMs:
         command.createdAtClientUnixMs || BigInt(pending.createdAtUnixMs)
     };
-
     if (!this.sendEnvelope(makeCommand(fullCommand))) {
       const rejected = {
         ...pending,
@@ -247,7 +242,6 @@ export class RealtimeWorkerCore {
       this.post({ type: "command-state", command: rejected });
       return;
     }
-
     const sent = { ...pending, status: "sent" as const };
     this.pendingCommands[commandId] = sent;
     this.post({ type: "command-state", command: sent });
@@ -289,7 +283,7 @@ export class RealtimeWorkerCore {
               resolvedSources.map((source) => source.sourceId)
             );
           this.validateSnapshotPatchSource(envelope, envelope.payload.value, patch);
-          if (this.armMaterializedSourceGaps(patch, resolvedSources)) return;
+          if (this.armMaterializedSourceGaps(envelope, patch)) return;
           if (this.sourceRepairs.shouldDeferSnapshot(resolvedSources)) return;
           this.sourceRepairs.assertSnapshotAuthority(resolvedSources);
           if (!this.applyViewEnvelopeCursor(envelope)) return;
@@ -308,7 +302,7 @@ export class RealtimeWorkerCore {
           const resolvedSourceIds = resolvedSources.map((source) => source.sourceId);
           const patch = decodePatch(envelope.payload.value, resolvedSourceIds);
           validateEntitySourceAgreement(patch, resolvedSourceIds, true);
-          if (this.armMaterializedSourceGaps(patch, resolvedSources)) return;
+          if (this.armMaterializedSourceGaps(envelope, patch)) return;
           if (!this.applyViewEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installPatchCoverage(envelope, patch));
         } catch (error) {
@@ -697,19 +691,25 @@ export class RealtimeWorkerCore {
     }
   }
   private armMaterializedSourceGaps(
-    patch: EntityPatch,
-    cursors: readonly SourceCursorState[]
+    envelope: RealtimeEnvelope,
+    patch: EntityPatch
   ): boolean {
-    const gaps = sourceHealthGapCursors(patch, cursors).filter((source) => {
-      const known = this.cursor.sourceCursors[source.sourceId];
-      return !known || (known.sourceEpoch === source.sourceEpoch && source.sourceSeq >= known.sourceSeq);
+    const disposition = preflightMaterializedGap({
+      envelope, patch, cursor: this.cursor,
+      gatewayEpoch: this.gatewayEpoch,
+      gatewayStartedAtUnixNs: this.gatewayStartedAtUnixNs,
+      appliedMessageIds: this.appliedViewMessageIds,
+      frozenSources: this.frozenSources
     });
-    for (const source of gaps) {
+    if (disposition.kind === "none") return false;
+    if (disposition.kind === "delegate") this.applyViewEnvelopeCursor(envelope);
+    if (disposition.kind !== "arm") return true;
+    for (const source of disposition.sources) {
       if (!this.sourceRepairs.isPendingSource(source.sourceId)) {
         this.requestTargetedRepair(source.sourceId, "gap_detected", source, "materialized_gap_fill");
       }
     }
-    return gaps.length > 0;
+    return true;
   }
   private requestTargetedRepair(
     sourceId: string,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
-import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
+import { Lane, MessageKind, SourceCursorSchema } from "../src/gen/goosetower/v1/common_pb";
 import {
   HelloSchema,
   RealtimeEnvelopeSchema,
@@ -82,6 +82,29 @@ const initial = structuredClone(getGoosewebSnapshot());
 assert.equal(initial.connection, "connected");
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.fleetRows).length, 1);
 
+const beforeInvalidGaps = authorityProjection();
+const duplicateVector = snapshot(
+  "duplicate-vector-gap", "fleet", request("fleet"), 3n, 5n, fleetBody("gap_detected")
+);
+if (duplicateVector.payload.case !== "snapshot" || !duplicateVector.payload.value.cursor) {
+  throw new Error("duplicate-vector fixture lacks snapshot cursor");
+}
+duplicateVector.payload.value.cursor.sources.push(create(SourceCursorSchema, {
+  sourceId: SOURCE, sourceEpoch: EPOCH, sourceSeq: 5n
+}));
+const wrongGeneration = sourceHealthPatch("wrong-generation-gap", 3n, 5n, "gap_detected");
+if (wrongGeneration.payload.case !== "patch" || !wrongGeneration.payload.value.cursor) {
+  throw new Error("wrong-generation fixture lacks patch cursor");
+}
+wrongGeneration.payload.value.cursor.gatewayEpoch = "wrong-generation";
+const gatewayRegressive = snapshot(
+  "gateway-regressive-gap", "fleet", request("fleet"), 1n, 5n, fleetBody("gap_detected")
+);
+for (const frame of [duplicateVector, wrongGeneration, gatewayRegressive]) socket!.receive(frame);
+await flush();
+assert.deepEqual(authorityProjection(), beforeInvalidGaps,
+  "invalid materialized gaps fail before cursor/entity/coverage/stale/subscription mutation");
+
 socket!.receive(sourceHealthPatch("gap-health", 3n, 5n, "gap_detected"));
 await flush();
 const held = getGoosewebSnapshot();
@@ -138,7 +161,8 @@ assert.equal(recovered.cursor.sourceCursors[SOURCE]?.sourceSeq, 8n);
 assert.equal(recovered.entities.fleetRows[sourceEntityKey(SOURCE, SESSION)]?.title, "repaired");
 assert.equal(recovered.entities.sources[sourceEntityKey(SOURCE, SOURCE)]?.health, "live");
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.fleetRows).length, 1);
-assert.equal(posted.some((message) => message.type === "error"), false);
+assert.equal(posted.filter((message) => message.type === "error").length, 1,
+  "only the malformed duplicate cursor vector emits the existing protocol error signal");
 await core.handleMessage({ type: "disconnect" });
 
 console.log("P09 materialized held-gap safety and authoritative recovery passed");
@@ -204,6 +228,22 @@ function request(subscriptionId: string): string {
       envelope.payload.value.subscriptionId === subscriptionId) return envelope.payload.value.requestId;
   }
   throw new Error(`missing subscribe request for ${subscriptionId}`);
+}
+
+function authorityProjection() {
+  const raw = getGoosewebSnapshot();
+  return structuredClone({
+    cursor: raw.cursor,
+    entities: raw.entities,
+    visibleEntities: getVisibleGoosewebSnapshot().entities,
+    loadedCoverage: raw.loadedCoverage,
+    staleSources: raw.staleSources,
+    subscriptions: Object.fromEntries(Object.entries(raw.subscriptions).map(
+      ([id, subscription]) => [id, {
+        requestId: subscription.requestId, status: subscription.status
+      }]
+    ))
+  });
 }
 
 function json(value: unknown): Uint8Array {

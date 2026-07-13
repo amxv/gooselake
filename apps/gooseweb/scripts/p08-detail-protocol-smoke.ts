@@ -431,6 +431,11 @@ assert.equal(
   undefined,
   "same-flush upsert+remove preserves operation order"
 );
+assert.equal(
+  getGoosewebSnapshot().entities.sessions[sourceEntityKey("source-1", "session-B")],
+  undefined,
+  "same-flush detail removal withdraws its render projection"
+);
 const replaceTeam1 = decodeSnapshot(create(SnapshotSchema, {
   viewKind: "team_workspace",
   schemaVersion: 1,

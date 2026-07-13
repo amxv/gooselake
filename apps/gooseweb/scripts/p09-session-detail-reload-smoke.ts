@@ -56,6 +56,8 @@ resetGoosewebStoreForTests();
 const liveCore = await connectedCore();
 socket!.receive(detailPatch("live-session-detail"));
 await flush();
+const key = sourceEntityKey(SOURCE, SESSION);
+const liveDetail = getGoosewebSnapshot().entities.sessionDetails[key]!;
 const liveOwnership = ownershipProjection();
 assert.deepEqual(liveOwnership, {
   detailCwd: CWD,
@@ -74,7 +76,86 @@ await flush();
 assert.deepEqual(ownershipProjection(), liveOwnership,
   "valid reload snapshot reconstructs the live patch cwd and worktree ownership");
 assert.equal(getGoosewebSnapshot().subscriptions["session-detail"]?.status, "active");
+socket!.receive(detailPatch("remove-detail", 5n, 5n, ViewOperation.REMOVE));
+await flush();
+assert.equal(getGoosewebSnapshot().entities.sessionDetails[key], undefined);
+assert.equal(getGoosewebSnapshot().entities.sessions[key], undefined,
+  "authoritative detail remove withdraws a detail-only render projection");
+socket!.receive(detailSnapshot("restore-detail", requestId, 6n, 6n));
+await flush();
+socket!.receive(detailSnapshot("not-found-detail", requestId, 7n, 7n, true));
+await flush();
+assert.equal(getGoosewebSnapshot().entities.sessionDetails[key], undefined);
+assert.equal(getGoosewebSnapshot().entities.sessions[key], undefined,
+  "authoritative not-found snapshot cannot leave a ghost session");
 await reloadCore.handleMessage({ type: "disconnect" });
+
+resetGoosewebStoreForTests();
+const summaryCore = await connectedCore();
+socket!.receive(sessionSummaryPatch("summary", 3n, 3n));
+socket!.receive(detailPatch("summary-detail", 4n, 4n));
+await flush();
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.cwd, CWD,
+  "later detail authority wins exact operation order");
+socket!.receive(detailPatch("summary-detail-remove", 5n, 5n, ViewOperation.REMOVE));
+await flush();
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.cwd, "/summary/workspace",
+  "detail removal reveals independently authoritative session summary");
+await summaryCore.handleMessage({ type: "disconnect" });
+
+const detailUpsert = {
+  operation: "upsert" as const,
+  domain: "sessionDetails" as const,
+  entityIds: [key],
+  authoritative: true,
+  payload: { [key]: liveDetail }
+};
+const detailRemove = {
+  operation: "remove" as const,
+  domain: "sessionDetails" as const,
+  entityIds: [key],
+  authoritative: true,
+  payload: {}
+};
+const replaceDetailsEmpty = {
+  operation: "replace" as const,
+  domain: "sessionDetails" as const,
+  entityIds: [],
+  authoritative: true,
+  payload: {}
+};
+resetGoosewebStoreForTests();
+updateGoosewebStore({ entityOperations: [detailUpsert, replaceDetailsEmpty] });
+assert.equal(getGoosewebSnapshot().entities.sessions[key], undefined,
+  "authoritative replacement excluding a detail withdraws its projection");
+updateGoosewebStore({ entityOperations: [replaceDetailsEmpty, detailUpsert] });
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.cwd, CWD,
+  "replace then upsert preserves exact ordered reduction");
+updateGoosewebStore({ entityOperations: [detailUpsert, detailRemove] });
+assert.equal(getGoosewebSnapshot().entities.sessions[key], undefined,
+  "upsert then remove preserves exact ordered reduction");
+
+const worktreeKey = sourceEntityKey(SOURCE, WORKTREE);
+updateGoosewebStore({ entityOperations: [{
+  operation: "upsert", domain: "worktrees", entityIds: [worktreeKey], authoritative: true,
+  payload: { [worktreeKey]: {
+    sourceId: SOURCE, worktreeId: WORKTREE, path: "/p02/worktree", label: "workspace"
+  } }
+}, detailUpsert] });
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.worktreePath, "/p02/worktree");
+updateGoosewebStore({ entityOperations: [{
+  ...detailUpsert,
+  authoritative: false,
+  payload: { [key]: { ...liveDetail, cwd: "/optimistic/workspace" } }
+}] });
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.cwd, CWD,
+  "non-authoritative detail overlays cannot mutate the canonical session projection");
+updateGoosewebStore({ entityOperations: [{
+  operation: "remove", domain: "worktrees", entityIds: [worktreeKey],
+  authoritative: true, payload: {}
+}] });
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.worktreePath, "",
+  "removing worktree authority withdraws the detail-derived path fallback");
 
 console.log("P09 session detail live/reload ownership converges");
 
@@ -110,7 +191,12 @@ async function connectedCore(): Promise<RealtimeWorkerCore> {
   return core;
 }
 
-function detailPatch(messageId: string): RealtimeEnvelope {
+function detailPatch(
+  messageId: string,
+  gatewaySeq = 4n,
+  sourceSeq = 4n,
+  operation = ViewOperation.UPSERT
+): RealtimeEnvelope {
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: 1,
     messageId,
@@ -119,16 +205,22 @@ function detailPatch(messageId: string): RealtimeEnvelope {
     payload: { case: "patch", value: create(PatchSchema, {
       viewKind: "session_detail",
       schemaVersion: 1,
-      operation: ViewOperation.UPSERT,
+      operation,
       entity: create(EntityRefSchema, { entityId: SESSION }),
-      cursor: cursor(),
+      cursor: cursor(gatewaySeq, sourceSeq),
       coverage: coverage(),
-      body: body()
+      body: operation === ViewOperation.REMOVE ? new TextEncoder().encode("null") : body()
     }) }
   });
 }
 
-function detailSnapshot(messageId: string, requestId: string): RealtimeEnvelope {
+function detailSnapshot(
+  messageId: string,
+  requestId: string,
+  gatewaySeq = 4n,
+  sourceSeq = 4n,
+  notFound = false
+): RealtimeEnvelope {
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: 1,
     messageId,
@@ -140,19 +232,45 @@ function detailSnapshot(messageId: string, requestId: string): RealtimeEnvelope 
       requestId,
       schemaVersion: 1,
       operation: ViewOperation.REPLACE,
-      cursor: cursor(),
+      notFound,
+      cursor: cursor(gatewaySeq, sourceSeq),
       coverage: coverage(),
-      body: body()
+      body: notFound ? new TextEncoder().encode("null") : body()
     }) }
   });
 }
 
-function cursor() {
+function sessionSummaryPatch(
+  messageId: string,
+  gatewaySeq: bigint,
+  sourceSeq: bigint
+): RealtimeEnvelope {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1, messageId, messageKind: MessageKind.PATCH, lane: Lane.STATE,
+    payload: { case: "patch", value: create(PatchSchema, {
+      viewKind: "session_summary", schemaVersion: 1, operation: ViewOperation.UPSERT,
+      entity: create(EntityRefSchema, { entityId: SESSION }),
+      cursor: cursor(gatewaySeq, sourceSeq),
+      coverage: create(ViewCoverageSchema, {
+        domains: ["sessions"], entityIds: [SESSION], authoritative: true
+      }),
+      body: new TextEncoder().encode(JSON.stringify({
+        source_id: SOURCE,
+        session: {
+          id: SESSION, provider: "codex", model: "gpt-5", status: "ready",
+          cwd: "/summary/workspace", worktree_path: "/summary/tree", active_turn_id: null
+        }
+      }))
+    }) }
+  });
+}
+
+function cursor(gatewaySeq: bigint, sourceSeq: bigint) {
   return {
-    gatewaySeq: 4n,
+    gatewaySeq,
     gatewayEpoch: GATEWAY,
     gatewayStartedAtUnixNs: 1n,
-    sources: [{ sourceId: SOURCE, sourceEpoch: EPOCH, sourceSeq: 4n }]
+    sources: [{ sourceId: SOURCE, sourceEpoch: EPOCH, sourceSeq }]
   };
 }
 

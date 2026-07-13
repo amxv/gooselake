@@ -1,6 +1,4 @@
-import { create } from "@bufbuild/protobuf";
 import { useSyncExternalStore } from "react";
-import { SessionViewSchema } from "../../src/gen/goosetower/v1/view_pb";
 import type {
   ConnectionState,
   GoosewebStorePatch,
@@ -14,7 +12,13 @@ import type {
   SubscriptionState
 } from "../realtime/types";
 import { emptyCursorState } from "../realtime/cursors";
-import { sourceEntityKey } from "../realtime/protocol/entities";
+import {
+  emptySessionAuthorityProjection,
+  reduceSessionContributor,
+  renderSessionContributors,
+  seedSessionSummaryPatch,
+  type SessionAuthorityProjection
+} from "./session-authority-projection";
 
 const emptyEntities = {
   fleetRows: {},
@@ -43,6 +47,7 @@ const initialSnapshot: GoosewebSnapshot = {
 type Listener = () => void;
 
 let snapshot = initialSnapshot;
+let sessionAuthorityProjection = emptySessionAuthorityProjection;
 const listeners = new Set<Listener>();
 
 export function getGoosewebSnapshot(): GoosewebSnapshot {
@@ -55,6 +60,7 @@ export function getVisibleGoosewebSnapshot(): GoosewebSnapshot {
 
 export function resetGoosewebStoreForTests(): void {
   snapshot = initialSnapshot;
+  sessionAuthorityProjection = emptySessionAuthorityProjection;
 }
 
 export function subscribeGoosewebStore(listener: Listener): () => void {
@@ -63,13 +69,26 @@ export function subscribeGoosewebStore(listener: Listener): () => void {
 }
 
 export function updateGoosewebStore(patch: GoosewebStorePatch): void {
+  const mergedEntities = patch.entities
+    ? mergeEntities(snapshot.entities, patch.entities)
+    : snapshot.entities;
+  const seededProjection = seedSessionSummaryPatch(
+    sessionAuthorityProjection,
+    patch.entities?.sessions
+  );
+  const projectedEntities = seededProjection === sessionAuthorityProjection
+    ? mergedEntities
+    : { ...mergedEntities, sessions: renderSessionContributors(seededProjection) };
+  const reduced = applyEntityOperations(
+    projectedEntities,
+    patch.entityOperations ?? [],
+    seededProjection
+  );
+  sessionAuthorityProjection = reduced.projection;
   snapshot = {
     ...snapshot,
     ...patch,
-    entities: applyEntityOperations(
-      patch.entities ? mergeEntities(snapshot.entities, patch.entities) : snapshot.entities,
-      patch.entityOperations ?? []
-    ),
+    entities: reduced.entities,
     subscriptions: patch.subscriptions
       ? { ...snapshot.subscriptions, ...patch.subscriptions }
       : snapshot.subscriptions,
@@ -116,10 +135,18 @@ function applyStaleSourceOperations(
 
 function applyEntityOperations(
   current: NormalizedEntities,
-  operations: readonly EntityOperation[]
-): NormalizedEntities {
+  operations: readonly EntityOperation[],
+  currentProjection: SessionAuthorityProjection
+): { readonly entities: NormalizedEntities; readonly projection: SessionAuthorityProjection } {
+  let projection = currentProjection;
   let next = current;
   for (const operation of operations) {
+    const previous = next;
+    if (operation.domain === "sessions") {
+      projection = reduceSessionContributor(projection, previous, next, operation);
+      next = { ...next, sessions: renderSessionContributors(projection) };
+      continue;
+    }
     const existing = next[operation.domain] as Readonly<Record<string, unknown>>;
     const incoming = operation.payload;
     if (operation.operation === "replace" && operation.sourceId) {
@@ -153,50 +180,10 @@ function applyEntityOperations(
       }
       next = { ...next, [operation.domain]: domain } as NormalizedEntities;
     }
-    if (operation.domain === "sessionDetails" && operation.authoritative &&
-      operation.operation !== "remove") {
-      next = projectSessionDetailAuthority(next, Object.keys(incoming));
-    }
+    projection = reduceSessionContributor(projection, previous, next, operation);
+    next = { ...next, sessions: renderSessionContributors(projection) };
   }
-  return next;
-}
-
-function projectSessionDetailAuthority(
-  current: NormalizedEntities,
-  entityIds: readonly string[]
-): NormalizedEntities {
-  const sessions = { ...current.sessions };
-  let changed = false;
-  for (const entityId of entityIds) {
-    const detail = current.sessionDetails[entityId];
-    if (!detail) continue;
-    const existing = sessions[entityId];
-    const worktree = detail.worktreeId
-      ? current.worktrees[sourceEntityKey(detail.sourceId, detail.worktreeId)]
-      : undefined;
-    sessions[entityId] = create(SessionViewSchema, {
-      sourceId: detail.sourceId,
-      sessionId: detail.sessionId,
-      provider: detail.provider,
-      model: detail.model,
-      status: detail.status,
-      cwd: detail.cwd,
-      worktreePath: detail.worktreePath ||
-        (detail.worktreeId ? worktree?.path || existing?.worktreePath || "" : ""),
-      activeTurnId: detail.activeTurnId,
-      ...(existing?.contextRemainingPercent === undefined ? {} : {
-        contextRemainingPercent: existing.contextRemainingPercent
-      }),
-      ...(existing?.contextWindowTokens === undefined ? {} : {
-        contextWindowTokens: existing.contextWindowTokens
-      }),
-      ...(existing?.contextUsedTokens === undefined ? {} : {
-        contextUsedTokens: existing.contextUsedTokens
-      })
-    });
-    changed = true;
-  }
-  return changed ? { ...current, sessions } : current;
+  return { entities: next, projection };
 }
 
 function mergeEntities(

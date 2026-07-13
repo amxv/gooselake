@@ -1,12 +1,6 @@
 import { fromBinary, toBinary } from "@bufbuild/protobuf";
-import {
-  Lane,
-  MessageKind
-} from "../../../src/gen/goosetower/v1/common_pb";
-import {
-  RealtimeEnvelopeSchema,
-  type RealtimeEnvelope
-} from "../../../src/gen/goosetower/v1/realtime_pb";
+import { Lane, MessageKind } from "../../../src/gen/goosetower/v1/common_pb";
+import { RealtimeEnvelopeSchema, type RealtimeEnvelope } from "../../../src/gen/goosetower/v1/realtime_pb";
 import type { Snapshot } from "../../../src/gen/goosetower/v1/view_pb";
 import { realtimeUrlWithTicket } from "../config";
 import {
@@ -50,13 +44,13 @@ import {
 } from "./command-messages";
 import { mergeStorePatch } from "./store-patch-batcher";
 import { reduceCommandLifecycle } from "./command-rejection";
+import { SourceRepairTracker, sourceRepairRecoveryPatch } from "./source-repair-tracker";
 import {
   canonicalViewKind,
   cursorAuthorityFromEnvelope,
   isSelectedViewKind,
   snapshotCoverageKind
 } from "./view-authority";
-
 const HEARTBEAT_FALLBACK_MS = 15_000;
 const PATCH_FLUSH_MS = 16;
 export class RealtimeWorkerCore {
@@ -78,8 +72,7 @@ export class RealtimeWorkerCore {
   private invalidatedSourceDomains: Record<string, readonly EntityDomain[]> = {};
   private loadedCoverage: Record<string, LoadedCoverage> = {};
   private readonly frozenSources = new Set<string>();
-  private readonly pendingStaleClearSources = new Set<string>();
-
+  private readonly sourceRepairs = new SourceRepairTracker();
   constructor(
     private readonly post: (message: WorkerOutbound) => void,
     private readonly observeFrame?: (envelope: RealtimeEnvelope) => void
@@ -197,6 +190,9 @@ export class RealtimeWorkerCore {
     this.subscriptions[subscriptionId] = subscription;
     this.post({ type: "subscription-state", subscription });
     this.sendEnvelope(makeUnsubscribe(subscriptionId));
+    if (this.sourceRepairs.retireSubscription(subscriptionId)) {
+      this.emitState(this.recoveryPatch());
+    }
   }
 
   private resendActiveSubscriptions(): void {
@@ -345,7 +341,11 @@ export class RealtimeWorkerCore {
           if (!this.applySourceResyncCursor(envelope)) return;
           this.invalidateSourceCoverage(envelope.payload.value.sourceId);
           this.frozenSources.add(envelope.payload.value.sourceId);
-          this.pendingStaleClearSources.add(envelope.payload.value.sourceId);
+          this.sourceRepairs.begin(
+            envelope.payload.value.sourceId,
+            "source_resync",
+            {}
+          );
           this.handleEntityPatch(patch);
           this.resendActiveSubscriptions();
           const recovery = this.recoveryPatch(envelope.payload.value.sourceId);
@@ -359,7 +359,19 @@ export class RealtimeWorkerCore {
         }
         break;
       case MessageKind.SOURCE_GAP_FILLED:
-        this.emitState({ connection: "replaying" });
+        if (envelope.payload.case !== "sourceGapFilled") {
+          this.failProtocolFrame("gap-filled envelope is missing its payload");
+          return;
+        }
+        if (!envelope.payload.value.cursor) {
+          this.failProtocolFrame("gap-filled payload lacks its source cursor");
+          return;
+        }
+        if (this.sourceRepairs.markGapFilled(envelope.payload.value.cursor)) {
+          this.emitState({ connection: "replaying", ...this.recoveryPatch() });
+        } else {
+          this.emitState({ connection: this.sourceRepairs.hasPending ? "stale" : "replaying" });
+        }
         break;
       case MessageKind.ERROR:
         this.emitError(
@@ -517,6 +529,11 @@ export class RealtimeWorkerCore {
       }
       if (sourceIds.length === 0) transformed.push(operation);
     }
+    this.sourceRepairs.retireSnapshot(
+      subscriptionId,
+      snapshot.requestId,
+      sourceIds
+    );
     if (subscription) {
       const active = { ...subscription, status: "active" as const };
       this.subscriptions[subscriptionId] = active;
@@ -682,25 +699,26 @@ export class RealtimeWorkerCore {
   }
 
   private handleStaleSignal(envelope: RealtimeEnvelope): void {
-    const staleSources: Record<string, string> = {};
-    if (envelope.payload.case === "sourceGapDetected") {
-      staleSources[envelope.payload.value.lastSeen?.sourceId ?? envelope.sourceId] =
-        "gap_detected";
-    } else if (envelope.payload.case === "sourceSnapshotResync") {
-      staleSources[envelope.payload.value.sourceId || envelope.sourceId] =
-        envelope.payload.value.reason || "snapshot_resync";
-    }
-
-    for (const [sourceId, reason] of Object.entries(staleSources)) {
-      if (!sourceId) continue;
-      this.requestTargetedRepair(sourceId, reason);
-    }
+    if (envelope.payload.case !== "sourceGapDetected") return;
+    const next = envelope.payload.value.nextAvailable;
+    const lastSeen = envelope.payload.value.lastSeen;
+    const sourceId = next?.sourceId || lastSeen?.sourceId || envelope.sourceId;
+    if (!sourceId) return;
+    this.requestTargetedRepair(sourceId, "gap_detected", next ? {
+      sourceId,
+      sourceEpoch: next.sourceEpoch,
+      sourceSeq: next.sourceSeq
+    } : undefined, "gap_fill");
   }
 
-  private requestTargetedRepair(sourceId: string, reason: string): void {
+  private requestTargetedRepair(
+    sourceId: string,
+    reason: string,
+    expected?: SourceCursorState,
+    completion: "gap_fill" | "source_resync" = "source_resync"
+  ): void {
     this.invalidateSourceCoverage(sourceId);
     this.frozenSources.add(sourceId);
-    this.pendingStaleClearSources.add(sourceId);
     this.emitState({
       connection: "stale",
       invalidatedSourceDomains: this.invalidatedSourceDomains,
@@ -711,6 +729,7 @@ export class RealtimeWorkerCore {
         reasons: { [sourceId]: reason }
       }]
     });
+    const requirements: Record<string, string> = {};
     for (const subscription of Object.values(this.subscriptions)) {
       if (subscription.status === "unsubscribed") continue;
       const requestedSource = subscription.filters.source_id;
@@ -721,6 +740,8 @@ export class RealtimeWorkerCore {
         status: "subscribing" as const
       };
       this.subscriptions[subscription.subscriptionId] = repairing;
+      requirements[repairing.subscriptionId] = repairing.requestId;
+      this.sourceRepairs.renewSubscription(repairing.subscriptionId, repairing.requestId);
       this.post({ type: "subscription-state", subscription: repairing });
       this.sendEnvelope(makeSubscribe(
         repairing.subscriptionId,
@@ -729,26 +750,14 @@ export class RealtimeWorkerCore {
         repairing.requestId
       ));
     }
+    this.sourceRepairs.begin(sourceId, completion, requirements, expected);
   }
-
   private recoveryPatch(authoritativeResetSourceId?: string): GoosewebStorePatch {
-    const recoveredSources = [...this.pendingStaleClearSources].filter(
-      (sourceId) => sourceId === authoritativeResetSourceId ||
-        (this.invalidatedSourceDomains[sourceId] ?? SOURCE_REPLACEMENT_DOMAINS).length === 0
+    return sourceRepairRecoveryPatch(
+      this.sourceRepairs,
+      this.frozenSources,
+      authoritativeResetSourceId
     );
-    recoveredSources.forEach((sourceId) => this.pendingStaleClearSources.delete(sourceId));
-    recoveredSources.forEach((sourceId) => this.frozenSources.delete(sourceId));
-    return {
-      connection: this.pendingStaleClearSources.size > 0 ? "stale" : "connected",
-      ...(this.pendingStaleClearSources.size === 0 ? { lastError: undefined } : {}),
-      ...(recoveredSources.length > 0 ? {
-        staleSourceOperations: [{
-          operation: "remove" as const,
-          sourceIds: recoveredSources,
-          reasons: {}
-        }]
-      } : {})
-    };
   }
 
   private applyViewEnvelopeCursor(envelope: RealtimeEnvelope): boolean {
@@ -812,7 +821,7 @@ export class RealtimeWorkerCore {
       for (const source of sources) {
         const existing = this.cursor.sourceCursors[source.sourceId];
         if (existing && existing.sourceEpoch !== source.sourceEpoch) {
-          this.requestTargetedRepair(source.sourceId, "source_epoch_mismatch");
+          this.requestTargetedRepair(source.sourceId, "source_epoch_mismatch", source);
         }
       }
       return false;
@@ -824,7 +833,7 @@ export class RealtimeWorkerCore {
           source.sourceSeq > existing.sourceSeq + 1n;
       });
       if (jumped) {
-        this.requestTargetedRepair(jumped.sourceId, "source_cursor_gap");
+        this.requestTargetedRepair(jumped.sourceId, "source_cursor_gap", jumped, "gap_fill");
         return false;
       }
       if (sources.some((source) => this.frozenSources.has(source.sourceId))) {

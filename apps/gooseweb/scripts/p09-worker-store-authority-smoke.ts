@@ -4,7 +4,6 @@ import { Lane, MessageKind } from "../src/gen/goosetower/v1/common_pb";
 import {
   HelloSchema,
   RealtimeEnvelopeSchema,
-  SourceSnapshotResyncSchema,
   type RealtimeEnvelope
 } from "../src/gen/goosetower/v1/realtime_pb";
 import {
@@ -186,13 +185,26 @@ await core.handleMessage({
   type: "subscribe", subscriptionId: "session-detail", viewKind: "session_detail",
   filters: { source_id: "source-1", session_id: "session-a" }
 });
-await core.handleMessage({
-  type: "subscribe", subscriptionId: "ledger", viewKind: "ledger",
-  filters: { source_id: "source-1" }
-});
+const productionViews = productionRepairViews();
+for (const view of productionViews) {
+  await core.handleMessage({
+    type: "subscribe",
+    subscriptionId: view.subscriptionId,
+    viewKind: view.viewKind,
+    filters: view.filters
+  });
+}
 const initialRequestId = latestSubscribeRequestId(socket, "session-detail");
 socket.receive(snapshot("initial", initialRequestId, 1n, 4n, "session-a", "initial"));
-socket.receive(ledgerSnapshot("initial-ledger", latestSubscribeRequestId(socket, "ledger"), 1n, 4n));
+for (const view of productionViews) {
+  socket.receive(boundedSnapshot(
+    `initial-${view.subscriptionId}`,
+    view,
+    latestSubscribeRequestId(socket, view.subscriptionId),
+    1n,
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 4n }
+  ));
+}
 await flush();
 assert.equal(getGoosewebSnapshot().subscriptions["session-detail"]?.status, "active",
   "subscription activates only after its valid snapshot");
@@ -246,7 +258,16 @@ assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.processes).length
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.worktrees).length, 0,
   "same-epoch repair hides every uncovered source-owned domain before refill");
 const repairRequestId = latestSubscribeRequestId(socket, "session-detail");
-const ledgerRepairRequestId = latestSubscribeRequestId(socket, "ledger");
+socket.receive(boundedSnapshot(
+  "other-source-board-repair",
+  productionViews[0]!,
+  latestSubscribeRequestId(socket, productionViews[0]!.subscriptionId),
+  4n,
+  { sourceId: "source-2", sourceEpoch: "epoch-2", sourceSeq: 1n }
+));
+await flush();
+assert.equal(getGoosewebSnapshot().staleSources["source-1"], "source_cursor_gap",
+  "a valid bounded snapshot for another source cannot satisfy this source repair");
 
 socket.receive(create(RealtimeEnvelopeSchema, {
   protocolVersion: 1, messageId: "gap-filled", messageKind: MessageKind.SOURCE_GAP_FILLED,
@@ -258,35 +279,38 @@ await flush();
 assert.equal(getGoosewebSnapshot().staleSources["source-1"], "source_cursor_gap",
   "gap-filled signal cannot clear safety before authoritative repair");
 
-socket.receive(snapshot("repair", repairRequestId, 4n, 7n, "session-a", "repaired"));
-socket.receive(ledgerSnapshot("repair-ledger", ledgerRepairRequestId, 4n, 7n));
+socket.receive(snapshot("repair", repairRequestId, 5n, 7n, "session-a", "repaired"));
+for (const view of productionViews) {
+  socket.receive(boundedSnapshot(
+    `repair-${view.subscriptionId}`,
+    view,
+    latestSubscribeRequestId(socket, view.subscriptionId),
+    5n,
+    { sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 7n }
+  ));
+}
 await flush();
-assert.equal(getGoosewebSnapshot().staleSources["source-1"], "source_cursor_gap",
-  "selected and coverage-free ledger snapshots cannot clear source-wide staleness");
+assert.equal(getGoosewebSnapshot().staleSources["source-1"], undefined,
+  "gap fill plus every current bounded repair generation clears source safety");
+assert.equal(getGoosewebSnapshot().connection, "connected");
 assert.equal(getGoosewebSnapshot().subscriptions["session-detail"]?.status, "active");
 assert.equal(detail("session-a")?.appendedText, "repaired");
 assert.equal(getVisibleGoosewebSnapshot().entities.sessionDetails[
   sourceEntityKey("source-1", "session-b")
 ], undefined, "unrepaired sibling detail remains hidden");
-assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.teamWorkspaces).length, 0);
-assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.processes).length, 0);
+assert.ok(getVisibleGoosewebSnapshot().entities.teamWorkspaces["source-1::team-a"]);
+assert.equal(getVisibleGoosewebSnapshot().entities.teamWorkspaces["source-1::team-b"], undefined);
+assert.ok(getVisibleGoosewebSnapshot().entities.processes["source-1::process-a"]);
+assert.equal(getVisibleGoosewebSnapshot().entities.processes["source-1::process-b"], undefined);
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.worktrees).length, 0,
-  "uncovered team/process/worktree siblings remain hidden and non-actionable");
-
-socket.receive(sourceReset("repair-reset", 5n, 7n));
-await flush();
-assert.equal(getGoosewebSnapshot().staleSources["source-1"], undefined,
-  "only the authoritative full-source reset clears the remaining stale safety state");
-assert.equal(getGoosewebSnapshot().connection, "connected");
-assert.deepEqual(getGoosewebSnapshot().entities.sessions, coherentBeforeGap.sessions);
-assert.deepEqual(getGoosewebSnapshot().entities.teamWorkspaces, coherentBeforeGap.teamWorkspaces);
-assert.deepEqual(getGoosewebSnapshot().entities.processes, coherentBeforeGap.processes);
+  "bounded repair exposes selected coverage while uncovered siblings remain non-actionable");
+assert.ok(getGoosewebSnapshot().entities.sessions["source-1::session-b"]);
+assert.ok(getGoosewebSnapshot().entities.teamWorkspaces["source-1::team-b"]);
+assert.ok(getGoosewebSnapshot().entities.processes["source-1::process-b"]);
 assert.deepEqual(getGoosewebSnapshot().entities.worktrees, coherentBeforeGap.worktrees);
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.sessions).length, 0);
-assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.teamWorkspaces).length, 0);
-assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.processes).length, 0);
 assert.equal(Object.keys(getVisibleGoosewebSnapshot().entities.worktrees).length, 0,
-  "full-source reset keeps pre-gap presentation data invalidated and non-actionable");
+  "successful bounded replay does not expose domains without repaired coverage");
 
 const authorityBeforeMalformed = getGoosewebSnapshot();
 socket.receive(patchFrame("unknown-operation", 6n, 8n, "session-a", "bad", {
@@ -399,42 +423,66 @@ function latestSubscribeRequestId(socket: FakeSocket, subscriptionId: string): s
   throw new Error("subscribe frame missing");
 }
 
-function ledgerSnapshot(
+type RepairView = {
+  readonly subscriptionId: string;
+  readonly viewKind: string;
+  readonly domain: string;
+  readonly entityIds: readonly string[];
+  readonly filters: Readonly<Record<string, string>>;
+  readonly body: Uint8Array;
+};
+
+function boundedSnapshot(
   messageId: string,
+  view: RepairView,
   requestId: string,
   gatewaySeq: bigint,
-  sourceSeq: bigint
+  source: { sourceId: string; sourceEpoch: string; sourceSeq: bigint }
 ): RealtimeEnvelope {
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: 1, messageId, messageKind: MessageKind.SNAPSHOT, lane: Lane.STATE,
     payload: { case: "snapshot", value: create(SnapshotSchema, {
-      viewKind: "ledger", schemaVersion: 1, operation: ViewOperation.REPLACE,
-      subscriptionId: "ledger", requestId, cursor: cursor(gatewaySeq, sourceSeq),
+      viewKind: view.viewKind, schemaVersion: 1, operation: ViewOperation.REPLACE,
+      subscriptionId: view.subscriptionId, requestId,
+      cursor: {
+        gatewaySeq, gatewayEpoch: "gateway-1", gatewayStartedAtUnixNs: 1n,
+        sources: [source]
+      },
       coverage: create(ViewCoverageSchema, {
-        domains: ["processes"], entityIds: [], authoritative: true
+        domains: [view.domain], entityIds: [...view.entityIds], authoritative: true
       }),
-      body: new TextEncoder().encode(JSON.stringify({ entities: {} }))
+      body: view.body
     }) }
   });
 }
 
-function sourceReset(messageId: string, gatewaySeq: bigint, sourceSeq: bigint): RealtimeEnvelope {
-  return create(RealtimeEnvelopeSchema, {
-    protocolVersion: 1, messageId, messageKind: MessageKind.SOURCE_SNAPSHOT_RESYNC,
-    lane: Lane.CRITICAL,
-    payload: { case: "sourceSnapshotResync", value: create(SourceSnapshotResyncSchema, {
-      sourceId: "source-1", reason: "gap repair", schemaVersion: 1,
-      cursor: cursor(gatewaySeq, sourceSeq),
-      coverage: create(ViewCoverageSchema, {
-        domains: [
-          "fleet_rows", "sessions", "session_details", "teams", "team_workspaces",
-          "approvals", "processes", "worktrees", "sources"
-        ],
-        authoritative: true
-      }),
-      body: new TextEncoder().encode(JSON.stringify({ source_id: "source-1" }))
-    }) }
-  });
+function productionRepairViews(): RepairView[] {
+  const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+  return [
+    { subscriptionId: "board", viewKind: "board", domain: "fleet_rows", entityIds: [],
+      filters: { window: "0:120" }, body: json({ rows: [] }) },
+    { subscriptionId: "approvals", viewKind: "approval_inbox", domain: "approvals", entityIds: [],
+      filters: { status: "pending" }, body: json({ approvals: [] }) },
+    { subscriptionId: "fleet", viewKind: "fleet", domain: "sources", entityIds: [],
+      filters: {}, body: json([{ source_id: "source-1", state: "healthy" }]) },
+    { subscriptionId: "teams", viewKind: "teams", domain: "teams", entityIds: [],
+      filters: {}, body: json({ total_rows: 0, teams: [], cursors: [] }) },
+    { subscriptionId: "ledger", viewKind: "ledger", domain: "processes", entityIds: [],
+      filters: { window: "0:120" }, body: json({ entities: {} }) },
+    { subscriptionId: "team-detail", viewKind: "team_workspace", domain: "team_workspaces",
+      entityIds: ["team-a"], filters: { source_id: "source-1", team_id: "team-a" },
+      body: json({ source_id: "source-1", team: {
+        id: "team-a", name: "Team A", lead_agent_id: "session-a"
+      }, members: [], messages: [], deliveries: [] }) },
+    { subscriptionId: "process-detail", viewKind: "process_tail", domain: "processes",
+      entityIds: ["process-a"], filters: { source_id: "source-1", process_id: "process-a" },
+      body: json({ source_id: "source-1", process: {
+        source_id: "source-1", process_id: "process-a", status: "running",
+        session_id: null, cwd: null, pid: null, command: null, started_at: 1,
+        ended_at: null, exit_code: null, signal: null, stdout_bytes: null,
+        stderr_bytes: null, stdout_truncated: null, stderr_truncated: null, version: 1
+      }, stdout: [], stderr: [], samples: [] }) }
+  ];
 }
 
 function detail(sessionId: string) {

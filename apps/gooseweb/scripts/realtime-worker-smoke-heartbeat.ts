@@ -172,7 +172,7 @@ const controlFrames = [
   })
 ];
 const expectedControlConnections = [
-  "connected", "connected", "connected", "degraded", "stale", "replaying", "replaying"
+  "connected", "connected", "connected", "degraded", "stale", "stale", "stale"
 ] as const;
 for (const [index, frame] of controlFrames.entries()) {
   heartbeatSocket.receive(toBinary(RealtimeEnvelopeSchema, frame));

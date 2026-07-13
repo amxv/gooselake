@@ -285,8 +285,11 @@ export class RealtimeWorkerCore {
           this.validateSnapshotProvenance(envelope.payload.value);
           const patch = envelope.payload.value.notFound
             ? decodeNotFoundSnapshot(envelope.payload.value)
-            : decodeSnapshot(envelope.payload.value);
-          this.validateSnapshotPatchSource(envelope.payload.value, patch);
+            : decodeSnapshot(
+              envelope.payload.value,
+              cursorAuthorityFromEnvelope(envelope)?.sources.map((source) => source.sourceId) ?? []
+            );
+          this.validateSnapshotPatchSource(envelope, envelope.payload.value, patch);
           if (!this.applyEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installSnapshotCoverage(envelope, patch));
         } catch (error) {
@@ -299,10 +302,12 @@ export class RealtimeWorkerCore {
           return;
         }
         try {
-          const patch = decodePatch(envelope.payload.value);
+          const resolvedSourceIds = cursorAuthorityFromEnvelope(envelope)?.sources
+            .map((source) => source.sourceId) ?? [];
+          const patch = decodePatch(envelope.payload.value, resolvedSourceIds);
           this.validateEntitySourceAgreement(
             patch,
-            envelope.payload.value.cursor?.sources.map((source) => source.sourceId) ?? [],
+            resolvedSourceIds,
             true
           );
           if (!this.applyEnvelopeCursor(envelope)) return;
@@ -514,7 +519,7 @@ export class RealtimeWorkerCore {
           transformed.push({
             ...operation,
             payload,
-            sourceId
+            sourceId: kind === "domain" ? sourceId : operation.sourceId
           });
         }
       }
@@ -589,8 +594,13 @@ export class RealtimeWorkerCore {
     }
   }
 
-  private validateSnapshotPatchSource(snapshot: Snapshot, patch: EntityPatch): void {
-    const cursorSourceIds = snapshot.cursor?.sources.map((source) => source.sourceId) ?? [];
+  private validateSnapshotPatchSource(
+    envelope: RealtimeEnvelope,
+    snapshot: Snapshot,
+    patch: EntityPatch
+  ): void {
+    const cursorSourceIds = cursorAuthorityFromEnvelope(envelope)?.sources
+      .map((source) => source.sourceId) ?? [];
     this.validateEntitySourceAgreement(patch, cursorSourceIds, isSelectedViewKind(snapshot.viewKind));
     const subscription = this.subscriptions[snapshot.subscriptionId];
     const requestedSourceId = subscription?.filters.source_id;
@@ -746,7 +756,14 @@ export class RealtimeWorkerCore {
       this.failProtocolFrame("versioned view frame lacks canonical cursor authority");
       return false;
     }
-    const { gatewayEpoch, gatewayStartedAtUnixNs, gatewaySeq, sources } = authority;
+    const usesLegacyViewAuthority = isViewFrame &&
+      (envelope.payload.case === "snapshot" || envelope.payload.case === "patch") &&
+      envelope.payload.value.schemaVersion === 0 && !envelope.payload.value.cursor;
+    const gatewayEpoch = usesLegacyViewAuthority ? this.gatewayEpoch : authority.gatewayEpoch;
+    const gatewayStartedAtUnixNs = usesLegacyViewAuthority
+      ? this.gatewayStartedAtUnixNs
+      : authority.gatewayStartedAtUnixNs;
+    const { gatewaySeq, sources } = authority;
     if (
       !isValidCursorVector(sources) ||
       (isViewFrame && (

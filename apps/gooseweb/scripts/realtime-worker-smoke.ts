@@ -70,6 +70,16 @@ class FakeSocket {
 
 globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
 
+function sessionBodyFor(sourceId: string, sessionId: string, text: string): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify({
+    source_id: sourceId,
+    session: { id: sessionId, provider: "codex", status: "ready" },
+    transcript: [{ role: "assistant", text }],
+    appended_text: "",
+    latest_activity_unix_ms: 200
+  }));
+}
+
 function snapshotEnvelope(input: {
   messageId: string;
   viewKind: string;
@@ -1296,6 +1306,130 @@ sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, patchEnvelope({
 await waitForPatchFlush();
 assert.equal(getGoosewebSnapshot().entities.teams[sourceEntityKey("source-1", "team-collision")], undefined);
 assert.equal(getGoosewebSnapshot().entities.teams[sourceEntityKey("source-2", "team-collision")]?.name, "B");
+
+const scopedSubscriptions = [
+  ["scoped-session-1", "session_detail", { session_id: "scoped-1", source_id: "source-1" }],
+  ["scoped-session-2", "session_detail", { session_id: "scoped-2", source_id: "source-1" }],
+  ["scoped-team-1", "team_workspace", { team_id: "scoped-team-1", source_id: "source-1" }],
+  ["scoped-team-2", "team_workspace", { team_id: "scoped-team-2", source_id: "source-1" }],
+  ["scoped-process-1", "process_tail", { process_id: "scoped-process-1", source_id: "source-1" }],
+  ["scoped-process-2", "process_tail", { process_id: "scoped-process-2", source_id: "source-1" }]
+] as const;
+for (const [subscriptionId, viewKind, filters] of scopedSubscriptions) {
+  await core.handleMessage({ type: "subscribe", subscriptionId, viewKind, filters });
+}
+const scopedProcessBody = (processId: string) => new TextEncoder().encode(JSON.stringify({
+  source_id: "source-1",
+  process: {
+    source_id: "source-1", process_id: processId, status: "running", command: ["true"],
+    session_id: null, pid: null, cwd: null, started_at: 1, ended_at: null,
+    exit_code: null, signal: null, stdout_bytes: null, stderr_bytes: null,
+    stdout_truncated: null, stderr_truncated: null, version: 1
+  },
+  stdout: [], stderr: [], samples: []
+}));
+const scopedFrames = [
+  snapshotEnvelope({
+    messageId: "scoped-session-1", subscriptionId: "scoped-session-1", gatewaySeq: 15n,
+    viewKind: "session_detail", domain: "session_details", entityIds: ["scoped-1"],
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 34n }],
+    body: sessionBodyFor("source-1", "scoped-1", "one"),
+    gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n
+  }),
+  snapshotEnvelope({
+    messageId: "scoped-session-2", subscriptionId: "scoped-session-2", gatewaySeq: 15n,
+    viewKind: "session_detail", domain: "session_details", entityIds: ["scoped-2"],
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 34n }],
+    body: sessionBodyFor("source-1", "scoped-2", "two"),
+    gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n
+  }),
+  ...["scoped-team-1", "scoped-team-2"].map((teamId) => snapshotEnvelope({
+    messageId: teamId, subscriptionId: teamId, gatewaySeq: 15n,
+    viewKind: "team_workspace", domain: "team_workspaces", entityIds: [teamId],
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 34n }],
+    body: new TextEncoder().encode(JSON.stringify({
+      source_id: "source-1", team: { id: teamId, name: teamId, lead_agent_id: "lead" },
+      members: [], messages: [], deliveries: []
+    })), gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n
+  })),
+  ...["scoped-process-1", "scoped-process-2"].map((processId) => snapshotEnvelope({
+    messageId: processId, subscriptionId: processId, gatewaySeq: 15n,
+    viewKind: "process_tail", domain: "processes", entityIds: [processId],
+    sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 34n }],
+    body: scopedProcessBody(processId), gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n
+  }))
+];
+for (const frame of scopedFrames) sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, frame));
+await waitForPatchFlush();
+for (const [domain, ids] of [
+  ["sessionDetails", ["scoped-1", "scoped-2"]],
+  ["teamWorkspaces", ["scoped-team-1", "scoped-team-2"]],
+  ["processes", ["scoped-process-1", "scoped-process-2"]]
+] as const) {
+  for (const id of ids) assert.ok(getGoosewebSnapshot().entities[domain][sourceEntityKey("source-1", id)]);
+}
+const scopedSessionOneRefresh = { ...scopedFrames[0]!, messageId: "scoped-session-1-refresh" };
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, scopedSessionOneRefresh));
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, snapshotEnvelope({
+  messageId: "scoped-session-1-remove", subscriptionId: "scoped-session-1", gatewaySeq: 15n,
+  viewKind: "session_detail", domain: "session_details", entityIds: ["scoped-1"],
+  sources: [{ sourceId: "source-1", sourceEpoch: "epoch-1", sourceSeq: 34n }],
+  body: new TextEncoder().encode("null"), notFound: true,
+  gatewayEpoch: "gateway-2", gatewayStartedAtUnixNs: 2n
+})));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().entities.sessionDetails[sourceEntityKey("source-1", "scoped-1")], undefined);
+assert.ok(getGoosewebSnapshot().entities.sessionDetails[sourceEntityKey("source-1", "scoped-2")]);
+for (const [subscriptionId] of scopedSubscriptions) {
+  await core.handleMessage({ type: "unsubscribe", subscriptionId });
+}
+
+const legacyPatch = create(RealtimeEnvelopeSchema, {
+  protocolVersion: 1, messageId: "legacy-v0-patch", messageKind: MessageKind.PATCH,
+  lane: Lane.STATE, gatewaySeq: 16n, sourceId: "source-1", sourceEpoch: "epoch-1",
+  sourceSeq: 35n,
+  payload: { case: "patch", value: create(PatchSchema, {
+    viewKind: "team", schemaVersion: 0, operation: ViewOperation.UNSPECIFIED,
+    entity: create(EntityRefSchema, { entityId: "legacy-team" }),
+    body: new TextEncoder().encode(JSON.stringify({
+      source_id: "source-1",
+      team: { id: "legacy-team", name: "Legacy", lead_agent_id: "lead" }, members: []
+    }))
+  }) }
+});
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, legacyPatch));
+await waitForPatchFlush();
+assert.ok(getGoosewebSnapshot().entities.teams[sourceEntityKey("source-1", "legacy-team")],
+  "v0 patch must use bounded top-level source authority fallback");
+const legacySnapshot = create(RealtimeEnvelopeSchema, {
+  protocolVersion: 1, messageId: "legacy-v0-snapshot", messageKind: MessageKind.SNAPSHOT,
+  lane: Lane.STATE, gatewaySeq: 17n, sourceId: "source-1", sourceEpoch: "epoch-1",
+  sourceSeq: 36n,
+  payload: { case: "snapshot", value: create(SnapshotSchema, {
+    viewKind: "session", schemaVersion: 0, operation: ViewOperation.UNSPECIFIED,
+    body: sessionBodyFor("source-1", "legacy-session", "legacy")
+  }) }
+});
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, legacySnapshot));
+await waitForPatchFlush();
+assert.ok(getGoosewebSnapshot().entities.sessions[
+  sourceEntityKey("source-1", "legacy-session")
+], "v0 snapshot alias must use bounded top-level source authority fallback");
+const legacyWrongSource = structuredClone(legacyPatch);
+legacyWrongSource.messageId = "legacy-v0-wrong-source";
+legacyWrongSource.gatewaySeq = 18n;
+legacyWrongSource.sourceSeq = 37n;
+if (legacyWrongSource.payload.case === "patch") {
+  legacyWrongSource.payload.value.body = new TextEncoder().encode(JSON.stringify({
+    source_id: "source-2",
+    team: { id: "legacy-wrong", name: "Wrong", lead_agent_id: "lead" }, members: []
+  }));
+  legacyWrongSource.payload.value.entity = create(EntityRefSchema, { entityId: "legacy-wrong" });
+}
+sockets[3]?.receive(toBinary(RealtimeEnvelopeSchema, legacyWrongSource));
+await waitForPatchFlush();
+assert.equal(getGoosewebSnapshot().cursor.gatewaySeq, 17n,
+  "v0 top-level A authority with B body must fail before mutation");
 
 const largeSourceBody = new TextEncoder().encode(JSON.stringify({ source_id: "source-big" }));
 for (const [index, sourceSeq] of [

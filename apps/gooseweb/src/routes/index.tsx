@@ -264,9 +264,10 @@ type ModelPresetSpawnFixturePayload = {
 };
 
 type StopAgentTarget = {
+  readonly sourceId: string;
   readonly sessionId: string;
   readonly turnId: string;
-  readonly teamId: string;
+  readonly teamKey: string;
 };
 
 type TeamCommsMessageItem = {
@@ -1310,8 +1311,12 @@ function Index() {
             sessionDetails={sessionDetails}
             teamWorkspaces={teamWorkspaces}
             selectedApproval={selectedApproval}
-            selectedRowId={selectedRow?.rowId ?? ""}
-            selectedApprovalId={selectedApproval?.approvalId ?? ""}
+            selectedRowId={selectedRow
+              ? sourceEntityKey(selectedRow.sourceId, selectedRow.rowId)
+              : ""}
+            selectedApprovalId={selectedApproval
+              ? sourceEntityKey(selectedApproval.sourceId, selectedApproval.approvalId)
+              : ""}
             setSelectedRowId={setSelectedRowId}
             setSelectedSessionId={setSelectedSessionId}
             setSelectedTeamId={setSelectedTeamId}
@@ -1402,7 +1407,7 @@ function MissionChrome({
     teams
   );
   const teamStopAgentTargets = currentTeamId
-    ? stopAgentTargets.filter((target) => target.teamId === currentTeamId)
+    ? stopAgentTargets.filter((target) => target.teamKey === currentTeamId)
     : [];
   const isStoppingUnsafe =
     state.connection === "stale" ||
@@ -7444,23 +7449,26 @@ function getStopAgentTargets(
     }
     return [
       {
+        sourceId: session.sourceId,
         sessionId: session.sessionId,
         turnId: session.activeTurnId,
-        teamId: getStopAgentTeamId(session.sessionId, teams)
+        teamKey: getStopAgentTeamKey(session.sourceId, session.sessionId, teams)
       }
     ];
   });
 }
 
-function getStopAgentTeamId(
+function getStopAgentTeamKey(
+  sourceId: string,
   sessionId: string,
   teams: readonly TeamView[]
 ): string {
   const team = teams.find((candidate) =>
+    candidate.sourceId === sourceId &&
     candidate.members.some((member) => member.sessionId === sessionId)
   );
   if (team?.teamId) {
-    return team.teamId;
+    return sourceEntityKey(team.sourceId, team.teamId);
   }
   if (
     isStopAgentsVisualFixtureEnabled() &&
@@ -7480,22 +7488,27 @@ function getCurrentStopAgentsTeamId(
     return selectedTeamId;
   }
   const selectedSessionId = selectedSession?.sessionId ?? "";
-  if (!selectedSessionId) {
+  const selectedSourceId = selectedSession?.sourceId ?? "";
+  if (!selectedSessionId || !selectedSourceId) {
     return "";
   }
-  return getStopAgentTeamId(selectedSessionId, teams);
+  return getStopAgentTeamKey(selectedSourceId, selectedSessionId, teams);
 }
 
 function dispatchStopAgentTargets(
   scope: StopAgentsScope,
   targets: readonly StopAgentTarget[]
 ) {
-  const commands = targets.map((target) =>
-    makeCommand("session", target.sessionId, "interruptTurn", {
+  const commands = targets.map((target) => {
+    const command = makeCommand("session", target.sessionId, "interruptTurn", {
       sessionId: target.sessionId,
       turnId: target.turnId
-    })
-  );
+    });
+    return {
+      ...command,
+      target: { ...command.target, entityId: `source:${target.sourceId}` }
+    };
+  });
   if (isStopAgentsVisualFixtureEnabled() && typeof window !== "undefined") {
     const fixtureWindow = window as Window & {
       __goosewebStopAgentsDispatches?: readonly {

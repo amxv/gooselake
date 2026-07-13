@@ -33,7 +33,10 @@ export function sourceEntityKey(sourceId: string, entityId: string): string {
   return `${encodeURIComponent(sourceId)}::${encodeURIComponent(entityId)}`;
 }
 
-export function decodeSnapshot(snapshot: Snapshot): EntityPatch {
+export function decodeSnapshot(
+  snapshot: Snapshot,
+  canonicalSourceIds = snapshot.cursor?.sources.map((source) => source.sourceId) ?? []
+): EntityPatch {
   const operation = operationFromFrame(snapshot.schemaVersion, snapshot.operation, "replace");
   if (operation !== "replace") {
     throw new ProtocolDecodeError(`snapshot operation must be replace, received ${operation}`);
@@ -47,7 +50,7 @@ export function decodeSnapshot(snapshot: Snapshot): EntityPatch {
     snapshot.coverage?.entityIds,
     snapshot.coverage?.authoritative ?? snapshot.schemaVersion === 0,
     undefined,
-    snapshot.cursor?.sources.map((source) => source.sourceId) ?? []
+    canonicalSourceIds
   );
 }
 
@@ -81,7 +84,10 @@ export function decodeNotFoundSnapshot(snapshot: Snapshot): EntityPatch {
   };
 }
 
-export function decodePatch(patch: Patch): EntityPatch {
+export function decodePatch(
+  patch: Patch,
+  canonicalSourceIds = patch.cursor?.sources.map((source) => source.sourceId) ?? []
+): EntityPatch {
   const operation = operationFromFrame(patch.schemaVersion, patch.operation, "upsert");
   requireDeclaredCoverage(patch.schemaVersion, patch.coverage);
   const entityIds = patch.coverage?.entityIds.length
@@ -101,7 +107,7 @@ export function decodePatch(patch: Patch): EntityPatch {
     entityIds,
     patch.coverage?.authoritative ?? patch.schemaVersion === 0,
     patch.entity?.entityId || undefined,
-    patch.cursor?.sources.map((source) => source.sourceId) ?? []
+    canonicalSourceIds
   );
 }
 

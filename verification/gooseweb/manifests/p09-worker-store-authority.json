@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P09-WORKER-STORE-AUTHORITY-001",
-  "manifest_revision": 4,
+  "manifest_revision": 5,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "93693215b3fc46d85a03209fc990a84c17db5f4a8ddcfdec52ad3a4e37112bfc"
@@ -24,6 +24,7 @@
       "P08 versioned view frames declare canonical CursorVector, operation, and authoritative coverage.",
       "P07R-001 ensures an idle same-epoch Goosetower gap repair re-arms on the next runtime Replaying edge and installs continuity before recovery publication.",
       "P09R-002 keeps a current selected-session detail projection authoritative over same-drain summaries after gap_filled and source_snapshot_resync.",
+      "BASE-P01-FAVICON-NOT-FOUND and every static-asset or React-route correction remain explicitly owned by P10 and are absent from the P09 candidate behavior and check inventory.",
       "Two independent sessions, teams, and processes can publish siblings in one bounded Worker drain.",
       "A persisted v1 browser cache and a restarted gateway generation are available as deterministic fixtures."
     ],
@@ -60,7 +61,7 @@
         "fault": "P09-BROWSER-006 forced a same-epoch selected-session gap after cwd/worktree ownership was visible; Tower then published ordered gap_filled, source_snapshot_resync, current authoritative session_detail, and a same-drain session summary, but the rendered SessionView elected the summary and omitted detail-only ownership until reload.",
         "reconstruction": "P09R-002 retains the current authoritative detail contributor as the canonical SessionView projection when a same-drain or later summary refreshes shared fields. The deterministic production-Worker smoke proves gap withdrawal, frozen-source non-leakage, one bounded recovery publication, stale clearing only with valid current-generation recovery, and cwd/worktree restoration without reload or resubscription.",
         "expected_visible": "The selected live SessionView is connected and shows the repaired cwd/worktree ownership and complete covered detail immediately after the bounded recovery drain.",
-        "scope_exclusion": "Worker/external-store projection only; no React subscription, reconnect, protocol, Goosetower, runtime, composer, P10, or later-phase redesign."
+        "scope_exclusion": "Worker/external-store projection only; no React subscription, reconnect, protocol, Goosetower, runtime, composer, favicon/static-route correction, BASE-P01-FAVICON-NOT-FOUND claim, P10, or later-phase redesign."
       }
     ],
     "authority_chain": [
@@ -86,7 +87,7 @@
   "ownership": {
     "gooselake": {"impact": "no_change", "reason": "P09 changes no runtime record, event, command, migration, or storage authority."},
     "goosetower": {"impact": "changed", "reason": "P07R-001 is a lead-authorized narrow prerequisite correction at the BROWSER-005 first divergent layer: idle released repairs re-arm on Replaying, stage without publication, and atomically install continuity before gap_filled plus authoritative snapshot replacement."},
-    "gooseweb": {"impact": "changed", "reason": "The active Worker/external store and deterministic smokes retain lossless authority-aware reduction; P09R-002 rebuilds the canonical selected-session SessionView from current detail after bounded gap repair even when a summary follows in the same drain."},
+    "gooseweb": {"impact": "changed", "reason": "The active Worker/external store and deterministic authority smokes retain lossless authority-aware reduction; P09R-002 rebuilds the canonical selected-session SessionView from current detail after bounded gap repair even when a summary follows in the same drain. React root links, favicon/static assets, and the P10-owned BASE-P01-FAVICON-NOT-FOUND correction are unchanged from the pre-P09 base."},
     "auth_account_state": {"impact": "no_change", "reason": "No account, ticket, workspace, permission, or session-cookie behavior changes."},
     "protocol_generated_code": {"impact": "no_change", "reason": "No Protobuf schema or generated artifact changes; P08 typed shapes are preserved."},
     "api_narrative_docs": {"impact": "no_change", "reason": "No runtime HTTP route, OpenAPI artifact, or public narrative API behavior changes."}
@@ -135,7 +136,7 @@
     "performance": {"status": "required", "reason": "Entity operations reduce sequentially inside one bounded drain; P07R-001 uses one active repair loop, bounded replay pages/fallback, and one recovery replacement; P09R-002 reprojects only touched session contributors and retains one publication per drain."},
     "security": {"status": "no_change", "reason": "No credential, ticket, authorization, or secret-bearing data path changes."},
     "data_retention_gc": {"status": "not_applicable", "reason": "Only disposable browser cursor data is namespaced; no product retention policy changes."},
-    "deployment": {"status": "not_applicable", "reason": "No server configuration, topology, or deployment artifact changes."},
+    "deployment": {"status": "not_applicable", "reason": "No server configuration, topology, static asset, favicon route, or deployment artifact changes; BASE-P01-FAVICON-NOT-FOUND remains assigned to P10."},
     "provenance_reuse": {"status": "reference_only", "reason": "Golden Goose batching, coverage, and projection tests informed invariants; no source was copied."}
   },
   "provenance": {

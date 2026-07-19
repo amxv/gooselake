@@ -4,6 +4,9 @@ import { EntityRefSchema, Lane, MessageKind } from "../src/gen/goosetower/v1/com
 import {
   HelloSchema,
   RealtimeEnvelopeSchema,
+  SourceGapDetectedSchema,
+  SourceGapFilledSchema,
+  SourceSnapshotResyncSchema,
   type RealtimeEnvelope
 } from "../src/gen/goosetower/v1/realtime_pb";
 import {
@@ -17,6 +20,7 @@ import type { WorkerOutbound } from "../app/realtime/types";
 import { RealtimeWorkerCore } from "../app/realtime/worker/realtime-command-core";
 import {
   getGoosewebSnapshot,
+  getVisibleGoosewebSnapshot,
   resetGoosewebStoreForTests,
   setSubscription,
   updateGoosewebStore
@@ -103,6 +107,72 @@ assert.equal(getGoosewebSnapshot().entities.sessions[key]?.cwd, "/summary/worksp
   "detail removal reveals independently authoritative session summary");
 await summaryCore.handleMessage({ type: "disconnect" });
 
+resetGoosewebStoreForTests();
+let repairPublications = 0;
+const repairErrors: string[] = [];
+const repairCore = await connectedCore(
+  () => { repairPublications += 1; },
+  (message) => { repairErrors.push(message); }
+);
+socket!.receive(detailPatch("pre-gap-detail", 3n, 3n));
+socket!.receive(sessionSummaryPatch("pre-gap-summary", 4n, 4n));
+await flush();
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.cwd, CWD,
+  "selected detail remains the render authority when a summary follows it");
+socket!.receive(gapDetected("forced-gap", 4n, 6n));
+await flush();
+assert.equal(getGoosewebSnapshot().connection, "stale");
+assert.equal(getGoosewebSnapshot().staleSources[SOURCE], "gap_detected");
+assert.equal(getGoosewebSnapshot().entities.sessionDetails[key]?.cwd, CWD,
+  "gap detection retains the last coherent internal detail cache");
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.cwd, CWD);
+assert.equal(visibleOwnershipProjection().detailCwd, undefined,
+  "gap detection withdraws untrusted selected detail from the visible projection");
+socket!.receive(detailPatch(
+  "frozen-later-detail",
+  5n,
+  6n,
+  ViewOperation.UPSERT,
+  body("/untrusted/later", "untrusted-worktree")
+));
+await flush();
+assert.equal(getGoosewebSnapshot().entities.sessionDetails[key]?.cwd, CWD,
+  "later detail authority cannot mutate the coherent cache while the source is frozen");
+assert.equal(visibleOwnershipProjection().detailCwd, undefined,
+  "later detail authority cannot leak into the visible projection while frozen");
+const repairRequestId = latestRequestId();
+const publicationsBeforeRecovery = repairPublications;
+socket!.receive(gapFilled("gap-filled", 6n));
+socket!.receive(sourceResync("source-resync", 6n, 6n));
+assert.equal(latestRequestId(), repairRequestId,
+  "source resync retains the current bounded repair request generation");
+socket!.receive(detailSnapshot(
+  "post-resync-detail",
+  repairRequestId,
+  7n,
+  6n,
+  false,
+  body("/repaired/workspace", "repaired-worktree", "/repaired/tree")
+));
+socket!.receive(sessionSummaryPatch("post-resync-summary", 8n, 6n));
+await flush();
+assert.equal(repairPublications, publicationsBeforeRecovery + 1,
+  "gap fill, resync, detail, and summary publish once in one bounded drain");
+assert.equal(getGoosewebSnapshot().connection, "connected", repairErrors.join("\n"));
+assert.deepEqual(repairErrors, []);
+assert.equal(getGoosewebSnapshot().staleSources[SOURCE], undefined);
+assert.deepEqual(ownershipProjection(), {
+  detailCwd: "/repaired/workspace",
+  detailWorktreeId: "repaired-worktree",
+  sessionCwd: "/repaired/workspace",
+  sourceId: SOURCE,
+  sessionId: SESSION
+}, "current-generation detail restores selected-session ownership without reload");
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.worktreePath, "/repaired/tree");
+assert.equal(getGoosewebSnapshot().entities.sessions[key]?.contextRemainingPercent, 42,
+  "same-drain summary metadata enriches rather than replaces the detail projection");
+await repairCore.handleMessage({ type: "disconnect" });
+
 const detailUpsert = {
   operation: "upsert" as const,
   domain: "sessionDetails" as const,
@@ -173,10 +243,17 @@ assert.equal(getGoosewebSnapshot().entities.sessions[key]?.worktreePath, "",
 
 console.log("P09 session detail live/reload ownership converges");
 
-async function connectedCore(): Promise<RealtimeWorkerCore> {
+async function connectedCore(
+  onPublication?: () => void,
+  onError?: (message: string) => void
+): Promise<RealtimeWorkerCore> {
   const core = new RealtimeWorkerCore((message: WorkerOutbound) => {
-    if (message.type === "state") updateGoosewebStore(message.patch);
+    if (message.type === "state") {
+      updateGoosewebStore(message.patch);
+      onPublication?.();
+    }
     if (message.type === "subscription-state") setSubscription(message.subscription);
+    if (message.type === "error") onError?.(message.message);
   });
   await core.handleMessage({
     type: "connect", ticket: "ticket", goosetowerUrl: "ws://p02.invalid/v1/realtime"
@@ -209,7 +286,8 @@ function detailPatch(
   messageId: string,
   gatewaySeq = 4n,
   sourceSeq = 4n,
-  operation = ViewOperation.UPSERT
+  operation = ViewOperation.UPSERT,
+  detailBody = body()
 ): RealtimeEnvelope {
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: 1,
@@ -223,7 +301,7 @@ function detailPatch(
       entity: create(EntityRefSchema, { entityId: SESSION }),
       cursor: cursor(gatewaySeq, sourceSeq),
       coverage: coverage(),
-      body: operation === ViewOperation.REMOVE ? new TextEncoder().encode("null") : body()
+      body: operation === ViewOperation.REMOVE ? new TextEncoder().encode("null") : detailBody
     }) }
   });
 }
@@ -233,7 +311,8 @@ function detailSnapshot(
   requestId: string,
   gatewaySeq = 4n,
   sourceSeq = 4n,
-  notFound = false
+  notFound = false,
+  detailBody = body()
 ): RealtimeEnvelope {
   return create(RealtimeEnvelopeSchema, {
     protocolVersion: 1,
@@ -249,7 +328,7 @@ function detailSnapshot(
       notFound,
       cursor: cursor(gatewaySeq, sourceSeq),
       coverage: coverage(),
-      body: notFound ? new TextEncoder().encode("null") : body()
+      body: notFound ? new TextEncoder().encode("null") : detailBody
     }) }
   });
 }
@@ -272,9 +351,68 @@ function sessionSummaryPatch(
         source_id: SOURCE,
         session: {
           id: SESSION, provider: "codex", model: "gpt-5", status: "ready",
-          cwd: "/summary/workspace", worktree_path: "/summary/tree", active_turn_id: null
+          cwd: "/summary/workspace", worktree_path: "/summary/tree", active_turn_id: null,
+          metadata: { context_window: {
+            remaining_percent: 42, window_tokens: 200_000, used_tokens: 116_000
+          } }
         }
       }))
+    }) }
+  });
+}
+
+function gapDetected(
+  messageId: string,
+  lastSeenSeq: bigint,
+  nextAvailableSeq: bigint
+): RealtimeEnvelope {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1,
+    messageId,
+    messageKind: MessageKind.SOURCE_GAP_DETECTED,
+    lane: Lane.CRITICAL,
+    payload: { case: "sourceGapDetected", value: create(SourceGapDetectedSchema, {
+      lastSeen: { sourceId: SOURCE, sourceEpoch: EPOCH, sourceSeq: lastSeenSeq },
+      nextAvailable: { sourceId: SOURCE, sourceEpoch: EPOCH, sourceSeq: nextAvailableSeq }
+    }) }
+  });
+}
+
+function gapFilled(messageId: string, sourceSeq: bigint): RealtimeEnvelope {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1,
+    messageId,
+    messageKind: MessageKind.SOURCE_GAP_FILLED,
+    lane: Lane.CRITICAL,
+    payload: { case: "sourceGapFilled", value: create(SourceGapFilledSchema, {
+      cursor: { sourceId: SOURCE, sourceEpoch: EPOCH, sourceSeq }
+    }) }
+  });
+}
+
+function sourceResync(
+  messageId: string,
+  gatewaySeq: bigint,
+  sourceSeq: bigint
+): RealtimeEnvelope {
+  return create(RealtimeEnvelopeSchema, {
+    protocolVersion: 1,
+    messageId,
+    messageKind: MessageKind.SOURCE_SNAPSHOT_RESYNC,
+    lane: Lane.CRITICAL,
+    payload: { case: "sourceSnapshotResync", value: create(SourceSnapshotResyncSchema, {
+      sourceId: SOURCE,
+      reason: "gap repair fallback",
+      schemaVersion: 1,
+      cursor: cursor(gatewaySeq, sourceSeq),
+      coverage: create(ViewCoverageSchema, {
+        domains: [
+          "fleet_rows", "sessions", "session_details", "teams", "team_workspaces",
+          "approvals", "processes", "worktrees", "sources"
+        ],
+        authoritative: true
+      }),
+      body: new TextEncoder().encode(JSON.stringify({ source_id: SOURCE }))
     }) }
   });
 }
@@ -296,7 +434,11 @@ function coverage() {
   });
 }
 
-function body(): Uint8Array {
+function body(
+  cwd = CWD,
+  worktreeId = WORKTREE,
+  worktreePath: string | null = null
+): Uint8Array {
   return new TextEncoder().encode(JSON.stringify({
     source_id: SOURCE,
     session: {
@@ -304,9 +446,9 @@ function body(): Uint8Array {
       provider: "codex",
       model: "gpt-5",
       status: "ready",
-      cwd: CWD,
-      worktree_id: WORKTREE,
-      worktree_path: null,
+      cwd,
+      worktree_id: worktreeId,
+      worktree_path: worktreePath,
       active_turn_id: null
     },
     transcript: [],
@@ -328,6 +470,20 @@ function latestRequestId(): string {
 
 function ownershipProjection() {
   const state = getGoosewebSnapshot();
+  const key = sourceEntityKey(SOURCE, SESSION);
+  const detail = state.entities.sessionDetails[key];
+  const session = state.entities.sessions[key];
+  return {
+    detailCwd: detail?.cwd,
+    detailWorktreeId: detail?.worktreeId,
+    sessionCwd: session?.cwd,
+    sourceId: session?.sourceId,
+    sessionId: session?.sessionId
+  };
+}
+
+function visibleOwnershipProjection() {
+  const state = getVisibleGoosewebSnapshot();
   const key = sourceEntityKey(SOURCE, SESSION);
   const detail = state.entities.sessionDetails[key];
   const session = state.entities.sessions[key];

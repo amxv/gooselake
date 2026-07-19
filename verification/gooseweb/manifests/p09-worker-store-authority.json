@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P09-WORKER-STORE-AUTHORITY-001",
-  "manifest_revision": 3,
+  "manifest_revision": 4,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "93693215b3fc46d85a03209fc990a84c17db5f4a8ddcfdec52ad3a4e37112bfc"
@@ -17,12 +17,13 @@
   },
   "scenario": {
     "phase_id": "P09",
-    "title": "Lossless authority-aware Worker/store reduction with P07R-001 repair convergence",
+    "title": "Lossless authority-aware Worker/store reduction with P07R-001 convergence and P09R-002 detail reprojection",
     "product_clearance": "pending",
     "stable_scenario_id": "GW-P09-WORKER-STORE-AUTHORITY-001",
     "preconditions": [
       "P08 versioned view frames declare canonical CursorVector, operation, and authoritative coverage.",
       "P07R-001 ensures an idle same-epoch Goosetower gap repair re-arms on the next runtime Replaying edge and installs continuity before recovery publication.",
+      "P09R-002 keeps a current selected-session detail projection authoritative over same-drain summaries after gap_filled and source_snapshot_resync.",
       "Two independent sessions, teams, and processes can publish siblings in one bounded Worker drain.",
       "A persisted v1 browser cache and a restarted gateway generation are available as deterministic fixtures."
     ],
@@ -36,7 +37,7 @@
         "expected_runtime": ["one accepted command remains durable runtime authority"],
         "expected_goosetower": ["same-drain siblings retain explicit operation, coverage, source epoch, and gateway generation; released replay/bootstrap repair converges from floor seq4 to runtime high-water seq7 before gap_filled and authoritative replacement"],
         "expected_worker_store": ["all siblings reduce in order in one publication; gaps freeze before mutation and request scoped repair; stale clears only after a valid repair snapshot"],
-        "expected_visible": ["two sessions, teams, and processes remain isolated and converge after authoritative repair"]
+        "expected_visible": ["two sessions, teams, and processes remain isolated and converge after authoritative repair", "the selected live SessionView regains cwd and worktree ownership from current detail without reload or resubscription"]
       }
     ],
     "fault_observations": [
@@ -53,12 +54,19 @@
         "reconstruction": "P07R-001 stages replay/bootstrap privately, rejects incomplete or regressive candidates before mutation, re-arms only an idle GapDetected queue on a Replaying edge, then atomically installs seq7 and emits source_gap_filled before one authoritative snapshot_resync coverage replacement. Evidence: tmp/gg/gooseweb-migration/P09/880dc80/attempt-1/repair-release-divergence.redacted.json; sha256 f86fb1e6263c5c03c6dfabc893a8a3ff6b770645e9743ae7e937363c13f1021e.",
         "expected_visible": "Source stale state, authority, entities, coverage, and command safety remain frozen through release until the installed seq7 recovery sequence clears them.",
         "scope_exclusion": "This is the narrow P07 prerequisite correction P07R-001 at the first divergent Goosetower repair-convergence layer; it changes no runtime contract and claims no P10 lifecycle behavior."
+      },
+      {
+        "id": "p09r-002-current-detail-reprojection",
+        "fault": "P09-BROWSER-006 forced a same-epoch selected-session gap after cwd/worktree ownership was visible; Tower then published ordered gap_filled, source_snapshot_resync, current authoritative session_detail, and a same-drain session summary, but the rendered SessionView elected the summary and omitted detail-only ownership until reload.",
+        "reconstruction": "P09R-002 retains the current authoritative detail contributor as the canonical SessionView projection when a same-drain or later summary refreshes shared fields. The deterministic production-Worker smoke proves gap withdrawal, frozen-source non-leakage, one bounded recovery publication, stale clearing only with valid current-generation recovery, and cwd/worktree restoration without reload or resubscription.",
+        "expected_visible": "The selected live SessionView is connected and shows the repaired cwd/worktree ownership and complete covered detail immediately after the bounded recovery drain.",
+        "scope_exclusion": "Worker/external-store projection only; no React subscription, reconnect, protocol, Goosetower, runtime, composer, P10, or later-phase redesign."
       }
     ],
     "authority_chain": [
       {"layer": "Gooselake", "required": ["durable entity truth is unchanged", "runtime source epoch and sequence remain authoritative"]},
       {"layer": "Goosetower", "required": ["P08 operation and coverage are consumed unchanged", "gateway generation is publication authority, not runtime truth", "P07R-001 freezes published authority beyond a gap and emits gap_filled before authoritative replacement only after contiguous replay or coherent fallback is installed"]},
-      {"layer": "Gooseweb Worker/store", "required": ["sequential lossless bounded reduction", "explicit stale and coverage replacement plus fail-before-mutation repair"]},
+      {"layer": "Gooseweb Worker/store", "required": ["sequential lossless bounded reduction", "explicit stale and coverage replacement plus fail-before-mutation repair", "current detail remains the canonical selected-session projection when summary and detail share a bounded recovery drain"]},
       {"layer": "Gooseweb React", "required": ["reads the external store only", "does not invent lifecycle, repair, or optimistic canonical entities"]}
     ],
     "cardinality": {"browser_actions": 1, "commands": 1, "runtime_messages": 1, "visible_message_instances": 2, "duplicates": 0},
@@ -78,7 +86,7 @@
   "ownership": {
     "gooselake": {"impact": "no_change", "reason": "P09 changes no runtime record, event, command, migration, or storage authority."},
     "goosetower": {"impact": "changed", "reason": "P07R-001 is a lead-authorized narrow prerequisite correction at the BROWSER-005 first divergent layer: idle released repairs re-arm on Replaying, stage without publication, and atomically install continuity before gap_filled plus authoritative snapshot replacement."},
-    "gooseweb": {"impact": "changed", "reason": "The active Worker, cursor cache, external store, deterministic smokes, and acceptance manifest gain lossless authority-aware reduction."},
+    "gooseweb": {"impact": "changed", "reason": "The active Worker/external store and deterministic smokes retain lossless authority-aware reduction; P09R-002 rebuilds the canonical selected-session SessionView from current detail after bounded gap repair even when a summary follows in the same drain."},
     "auth_account_state": {"impact": "no_change", "reason": "No account, ticket, workspace, permission, or session-cookie behavior changes."},
     "protocol_generated_code": {"impact": "no_change", "reason": "No Protobuf schema or generated artifact changes; P08 typed shapes are preserved."},
     "api_narrative_docs": {"impact": "no_change", "reason": "No runtime HTTP route, OpenAPI artifact, or public narrative API behavior changes."}
@@ -122,9 +130,9 @@
   "non_applicable": {
     "schema_migration": {"status": "not_applicable", "reason": "No runtime, Tower, or protocol schema changes; the browser cache uses a new disposable namespace."},
     "backfill": {"status": "not_applicable", "reason": "Browser caches are disposable and are never backfilled as authority."},
-    "compatibility": {"status": "required", "reason": "Incompatible cursor/cache namespaces discard and refetch; P08 legacy decoding remains bounded and explicit."},
-    "rollback": {"status": "required", "reason": "Rollback may discard the v2 browser cache namespace and removes the P07R-001 reconnect-edge re-arm; durable runtime truth remains unaffected."},
-    "performance": {"status": "required", "reason": "Entity operations reduce sequentially inside one bounded drain; P07R-001 uses one active repair loop, bounded replay pages/fallback, and one recovery replacement."},
+    "compatibility": {"status": "required", "reason": "Incompatible cursor/cache namespaces discard and refetch; P08 legacy decoding remains bounded and explicit; P09R-002 changes only in-memory contributor arbitration and requires no persisted cache migration."},
+    "rollback": {"status": "required", "reason": "Rollback may discard the v2 browser cache namespace, removes the P07R-001 reconnect-edge re-arm, and restores summary-last SessionView arbitration that reopens P09-BROWSER-006; durable runtime truth remains unaffected."},
+    "performance": {"status": "required", "reason": "Entity operations reduce sequentially inside one bounded drain; P07R-001 uses one active repair loop, bounded replay pages/fallback, and one recovery replacement; P09R-002 reprojects only touched session contributors and retains one publication per drain."},
     "security": {"status": "no_change", "reason": "No credential, ticket, authorization, or secret-bearing data path changes."},
     "data_retention_gc": {"status": "not_applicable", "reason": "Only disposable browser cursor data is namespaced; no product retention policy changes."},
     "deployment": {"status": "not_applicable", "reason": "No server configuration, topology, or deployment artifact changes."},
@@ -143,6 +151,7 @@
       "RealtimeWorkerCore",
       "mergeStorePatch",
       "updateGoosewebStore",
+      "reduceSessionContributor",
       "parsePersistedCursorState",
       "GatewayState::retry_idle_gap_after_reconnect",
       "GatewayState::complete_gap_candidate",

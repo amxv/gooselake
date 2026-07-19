@@ -85,8 +85,8 @@ function reduceSummaryOperation(
   for (const id of touched) {
     const detail = current.detailStates[id];
     if (detail) details[id] = projectDetail(detail, summaries[id], entities);
-    if (summaries[id]) winners[id] = "summary";
-    else if (details[id]) winners[id] = "detail";
+    if (details[id]) winners[id] = "detail";
+    else if (summaries[id]) winners[id] = "summary";
     else delete winners[id];
   }
   return { ...current, summaries, details, winners };

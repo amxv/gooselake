@@ -47,9 +47,9 @@
     {
       "phase_id": "P09",
       "path": "verification/gooseweb/manifests/p09-worker-store-authority.json",
-      "revision": 5,
-      "sha256": "e8fd9c0894c3f01e6c90607bf79160dab6c341f30bf312c4e8ecf64df07569c4",
-      "activated_reason": "P09 verifies lossless ordered Worker/store reduction, explicit authority coverage and stale algebra, generation-safe disposable cursor caching, P07R-001 released-repair convergence, and P09R-002 live selected-session detail reprojection after bounded gap repair; favicon/static-route behavior and BASE-P01-FAVICON-NOT-FOUND remain explicitly excluded as P10 scope."
+      "revision": 6,
+      "sha256": "bab5f3d5834b09fa97077f8777d8f5ea70f6e110caeeae96973f013b8d5f776a",
+      "activated_reason": "P09 verifies lossless ordered Worker/store reduction, explicit authority coverage and stale algebra, generation-safe disposable cursor caching, P07R-001 released-repair convergence, P09R-002 live selected-session detail reprojection after bounded gap repair, and P09-REVIEW-002 fail-closed recovery from a normal replaying source command rejection; favicon/static-route behavior and BASE-P01-FAVICON-NOT-FOUND remain explicitly excluded as P10 scope."
     }
   ]
 }

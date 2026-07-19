@@ -44,7 +44,7 @@ import {
 } from "./command-messages";
 import { mergeStorePatch } from "./store-patch-batcher";
 import { reduceCommandLifecycle } from "./command-rejection";
-import { validateEntitySourceAgreement } from "./frame-source-authority";
+import { sourceHealthLiveCursors, validateEntitySourceAgreement } from "./frame-source-authority";
 import { preflightMaterializedGap } from "./materialized-gap-preflight";
 import { gapDetectedAuthorityFromEnvelope, gapFilledAuthorityFromEnvelope } from "./source-repair-controls";
 import { SourceRepairTracker, sourceRepairRecoveryPatch } from "./source-repair-tracker";
@@ -287,6 +287,7 @@ export class RealtimeWorkerCore {
           if (this.sourceRepairs.shouldDeferSnapshot(resolvedSources)) return;
           this.sourceRepairs.assertSnapshotAuthority(resolvedSources);
           if (!this.applyViewEnvelopeCursor(envelope)) return;
+          sourceHealthLiveCursors(patch, resolvedSources).forEach((source) => this.sourceRepairs.markSourceLive(source));
           this.handleEntityPatch(this.installSnapshotCoverage(envelope, patch));
         } catch (error) {
           this.failProtocolFrame(error instanceof Error ? error.message : "invalid snapshot");
@@ -303,6 +304,13 @@ export class RealtimeWorkerCore {
           const patch = decodePatch(envelope.payload.value, resolvedSourceIds);
           validateEntitySourceAgreement(patch, resolvedSourceIds, true);
           if (this.armMaterializedSourceGaps(envelope, patch)) return;
+          const liveRepair = sourceHealthLiveCursors(patch, resolvedSources).find((source) => this.sourceRepairs.canCompleteFromLive(source));
+          if (liveRepair && this.frozenSources.has(liveRepair.sourceId)) {
+            if (!this.applyViewEnvelopeCursor(envelope, liveRepair.sourceId)) return;
+            this.requestTargetedRepair(liveRepair.sourceId, "source_live", liveRepair, "source_live");
+            this.sourceRepairs.markSourceLive(liveRepair);
+            return;
+          }
           if (!this.applyViewEnvelopeCursor(envelope)) return;
           this.handleEntityPatch(this.installPatchCoverage(envelope, patch));
         } catch (error) {
@@ -651,19 +659,12 @@ export class RealtimeWorkerCore {
     this.pendingCommands[next.commandId] = next;
     this.post({ type: "command-state", command: next });
     if (next.status === "rejected" && next.refreshEntity) {
-      const staleSourceId = next.targetEntityId?.startsWith("source:")
-        ? next.targetEntityId.replace(/^source:/, "")
-        : undefined;
-      this.emitState({
-        lastError: `${next.errorCode}: ${next.error}`,
-        ...(staleSourceId ? {
-          staleSourceOperations: [{
-            operation: "add" as const,
-            sourceIds: [staleSourceId],
-            reasons: { [staleSourceId]: next.errorCode ?? "source_stale" }
-          }]
-        } : {})
-      });
+      const staleSourceId = next.targetEntityId?.startsWith("source:") ? next.targetEntityId.replace(/^source:/, "") : undefined;
+      this.emitState({ lastError: `${next.errorCode}: ${next.error}` });
+      if (staleSourceId && !this.sourceRepairs.isPendingSource(staleSourceId)) {
+        this.requestTargetedRepair(staleSourceId, next.errorCode ?? "source_stale", this.cursor.sourceCursors[staleSourceId],
+          next.errorCode === "source_gap" ? "gap_fill" : "source_live");
+      }
     }
   }
 
@@ -715,7 +716,7 @@ export class RealtimeWorkerCore {
     sourceId: string,
     reason: string,
     expected?: SourceCursorState,
-    completion: "gap_fill" | "materialized_gap_fill" | "source_resync" = "source_resync"
+    completion: "gap_fill" | "materialized_gap_fill" | "source_live" | "source_resync" = "source_resync"
   ): void {
     this.invalidateSourceCoverage(sourceId);
     this.frozenSources.add(sourceId);
@@ -759,8 +760,7 @@ export class RealtimeWorkerCore {
       authoritativeResetSourceId
     );
   }
-
-  private applyViewEnvelopeCursor(envelope: RealtimeEnvelope): boolean {
+  private applyViewEnvelopeCursor(envelope: RealtimeEnvelope, allowedFrozenSourceId?: string): boolean {
     const isSnapshot = envelope.messageKind === MessageKind.SNAPSHOT;
     const isViewFrame = isSnapshot || envelope.messageKind === MessageKind.PATCH;
     if (!isViewFrame) {
@@ -836,7 +836,7 @@ export class RealtimeWorkerCore {
         this.requestTargetedRepair(jumped.sourceId, "source_cursor_gap", jumped, "gap_fill");
         return false;
       }
-      if (sources.some((source) => this.frozenSources.has(source.sourceId))) {
+      if (sources.some((source) => this.frozenSources.has(source.sourceId) && source.sourceId !== allowedFrozenSourceId)) {
         return false;
       }
     }

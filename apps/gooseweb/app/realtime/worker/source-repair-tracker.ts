@@ -1,13 +1,13 @@
 import type { GoosewebStorePatch, SourceCursorState } from "../types";
 
-type RepairCompletion = "gap_fill" | "materialized_gap_fill" | "source_resync";
+type RepairCompletion = "gap_fill" | "materialized_gap_fill" | "source_live" | "source_resync";
 
 type SourceRepair = {
   readonly completion: RepairCompletion;
   readonly expectedEpoch?: string;
   readonly minimumSourceSeq?: bigint;
   readonly requirements: Readonly<Record<string, string>>;
-  readonly gapFilled: boolean;
+  readonly authorityReady: boolean;
 };
 
 export class SourceRepairTracker {
@@ -26,7 +26,7 @@ export class SourceRepairTracker {
         expectedEpoch: expected?.sourceEpoch,
         minimumSourceSeq: expected?.sourceSeq,
         requirements: { ...requirements },
-        gapFilled: false
+        authorityReady: false
       }
     };
   }
@@ -45,7 +45,7 @@ export class SourceRepairTracker {
   shouldDeferSnapshot(sources: readonly SourceCursorState[]): boolean {
     return sources.some((source) => {
       const repair = this.repairs[source.sourceId];
-      return repair?.completion === "materialized_gap_fill" && !repair.gapFilled;
+      return repair?.completion === "materialized_gap_fill" && !repair.authorityReady;
     });
   }
 
@@ -108,9 +108,26 @@ export class SourceRepairTracker {
     }
     this.repairs = {
       ...this.repairs,
-      [cursor.sourceId]: { ...repair, gapFilled: true }
+      [cursor.sourceId]: { ...repair, authorityReady: true }
     };
     return "marked";
+  }
+
+  canCompleteFromLive(cursor: SourceCursorState): boolean {
+    const repair = this.repairs[cursor.sourceId];
+    return Boolean(repair?.completion === "source_live" &&
+      (!repair.expectedEpoch || cursor.sourceEpoch === repair.expectedEpoch) &&
+      (repair.minimumSourceSeq === undefined || cursor.sourceSeq >= repair.minimumSourceSeq));
+  }
+
+  markSourceLive(cursor: SourceCursorState): boolean {
+    const repair = this.repairs[cursor.sourceId];
+    if (!repair || !this.canCompleteFromLive(cursor)) return false;
+    this.repairs = {
+      ...this.repairs,
+      [cursor.sourceId]: { ...repair, authorityReady: true }
+    };
+    return true;
   }
 
   needsPostFillSnapshot(cursor: SourceCursorState): boolean {
@@ -128,8 +145,9 @@ export class SourceRepairTracker {
   takeRecovered(authoritativeResetSourceId?: string): string[] {
     const recovered = Object.entries(this.repairs)
       .filter(([sourceId, repair]) => sourceId === authoritativeResetSourceId ||
-        ((repair.completion === "gap_fill" || repair.completion === "materialized_gap_fill") &&
-          repair.gapFilled &&
+        ((repair.completion === "gap_fill" || repair.completion === "materialized_gap_fill" ||
+          repair.completion === "source_live") &&
+          repair.authorityReady &&
           Object.keys(repair.requirements).length === 0))
       .map(([sourceId]) => sourceId);
     if (authoritativeResetSourceId && !recovered.includes(authoritativeResetSourceId)) {

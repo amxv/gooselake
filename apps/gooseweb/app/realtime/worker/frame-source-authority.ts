@@ -36,3 +36,20 @@ export function sourceHealthGapCursors(
   }
   return cursors.filter((cursor) => gapSourceIds.has(cursor.sourceId));
 }
+
+export function sourceHealthLiveCursors(
+  patch: EntityPatch,
+  cursors: readonly SourceCursorState[]
+): SourceCursorState[] {
+  const liveSourceIds = new Set<string>();
+  for (const operation of patch.entityOperations) {
+    if (operation.domain !== "sources" || operation.operation === "remove") continue;
+    for (const entity of Object.values(operation.payload)) {
+      const source = entity as { sourceId?: string; health?: string; lifecycle?: string };
+      if (source.health === "live" || source.lifecycle === "live") {
+        if (source.sourceId) liveSourceIds.add(source.sourceId);
+      }
+    }
+  }
+  return cursors.filter((cursor) => liveSourceIds.has(cursor.sourceId));
+}

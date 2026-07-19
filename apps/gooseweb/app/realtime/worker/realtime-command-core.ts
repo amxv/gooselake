@@ -285,9 +285,12 @@ export class RealtimeWorkerCore {
           this.validateSnapshotPatchSource(envelope, envelope.payload.value, patch);
           if (this.armMaterializedSourceGaps(envelope, patch)) return;
           if (this.sourceRepairs.shouldDeferSnapshot(resolvedSources)) return;
+          const holdUntilLive = this.sourceRepairs.shouldHoldSnapshotUntilLive(resolvedSources);
           this.sourceRepairs.assertSnapshotAuthority(resolvedSources);
           if (!this.applyViewEnvelopeCursor(envelope)) return;
-          sourceHealthLiveCursors(patch, resolvedSources).forEach((source) => this.sourceRepairs.markSourceLive(source));
+          if (holdUntilLive) {
+            this.sourceRepairs.retireSnapshot(envelope.payload.value.subscriptionId, envelope.payload.value.requestId, resolvedSources); return;
+          }
           this.handleEntityPatch(this.installSnapshotCoverage(envelope, patch));
         } catch (error) {
           this.failProtocolFrame(error instanceof Error ? error.message : "invalid snapshot");
@@ -647,12 +650,10 @@ export class RealtimeWorkerCore {
     this.emitState({ loadedCoverage: this.loadedCoverage });
     return { entityOperations: transformed };
   }
-
   private failProtocolFrame(message: string): void {
     this.emitState({ connection: "degraded", lastError: `protocol_error: ${message}` });
     this.emitError(`Realtime protocol error: ${message}`, false);
   }
-
   private handleCommandLifecycle(envelope: RealtimeEnvelope): void {
     const next = reduceCommandLifecycle(envelope, this.pendingCommands);
     if (!next) return;
@@ -667,7 +668,6 @@ export class RealtimeWorkerCore {
       }
     }
   }
-
   private handleStaleSignal(envelope: RealtimeEnvelope): void {
     try {
       const expected = gapDetectedAuthorityFromEnvelope(envelope, this.cursor);

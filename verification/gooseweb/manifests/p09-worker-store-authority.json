@@ -1,7 +1,7 @@
 {
   "schema_revision": "gooseweb-acceptance-manifest/v4",
   "manifest_id": "GW-P09-WORKER-STORE-AUTHORITY-001",
-  "manifest_revision": 6,
+  "manifest_revision": 7,
   "approved_plan": {
     "path": "tmp/gg/golden-goose-gooseweb-migration-implementation-plan.md",
     "sha256": "93693215b3fc46d85a03209fc990a84c17db5f4a8ddcfdec52ad3a4e37112bfc"
@@ -25,6 +25,7 @@
       "P07R-001 ensures an idle same-epoch Goosetower gap repair re-arms on the next runtime Replaying edge and installs continuity before recovery publication.",
       "P09R-002 keeps a current selected-session detail projection authoritative over same-drain summaries after gap_filled and source_snapshot_resync.",
       "P09-REVIEW-002 treats a source-scoped source_stale command rejection as targeted Worker repair and requires current-generation Live authority plus a fresh bounded snapshot generation before stale removal.",
+      "P09-REVIEW-003 accepts the source Live repair floor exactly once from the authoritative patch edge; pre-floor Live snapshots remain held and duplicate Live patches cannot rotate the accepted post-floor generation.",
       "BASE-P01-FAVICON-NOT-FOUND and every static-asset or React-route correction remain explicitly owned by P10 and are absent from the P09 candidate behavior and check inventory.",
       "Two independent sessions, teams, and processes can publish siblings in one bounded Worker drain.",
       "A persisted v1 browser cache and a restarted gateway generation are available as deterministic fixtures."
@@ -70,12 +71,19 @@
         "reconstruction": "The production Worker now converts a refreshable source-scoped rejection into a frozen targeted repair. Replaying snapshots cannot clear safety; a valid current-generation Live source-health patch is consumed only as the next repair floor, rotates all active source-relevant requests, and remains hidden while frozen. Stale clears only when that exact bounded board, fleet, and selected-detail snapshot generation reconstructs authority in one publication.",
         "expected_visible": "A normal Replaying-to-Live transition restores connected command safety and materializes the lead session, cwd, and worktree ownership without reload or manual resubscription.",
         "scope_exclusion": "Worker/external-store authority only; no React lifecycle, reconnect, runtime, protocol, Goosetower, favicon/static route, P10, or later-phase change."
+      },
+      {
+        "id": "p09-review-003-single-edge-live-floor",
+        "fault": "A Live snapshot from the already-issued pre-floor request generation could previously mark the repair ready after other pre-floor requirements retired, while repeated Live patches could repeatedly replace the post-floor request generation before it completed.",
+        "reconstruction": "Live-floor acceptance is exclusive to the first valid current-generation source-health patch edge. Pre-floor snapshots validate and retire internal requirements but remain held without entity or coverage publication; the accepted patch rotates one fresh bounded request generation and marks its floor ready. Later Live frames are level duplicates, remain frozen, and cannot rotate those request IDs again.",
+        "expected_visible": "A pre-floor Live snapshot leaves the source hidden and command-unsafe; duplicate Live patches leave the first post-floor request generation intact; only matching snapshots from that generation restore visible source/session/detail authority and clear stale once.",
+        "scope_exclusion": "Worker repair ordering only; no Tower/runtime/protocol/React/P10 or later-phase change."
       }
     ],
     "authority_chain": [
       {"layer": "Gooselake", "required": ["durable entity truth is unchanged", "runtime source epoch and sequence remain authoritative"]},
       {"layer": "Goosetower", "required": ["P08 operation and coverage are consumed unchanged", "gateway generation is publication authority, not runtime truth", "P07R-001 freezes published authority beyond a gap and emits gap_filled before authoritative replacement only after contiguous replay or coherent fallback is installed"]},
-      {"layer": "Gooseweb Worker/store", "required": ["sequential lossless bounded reduction", "explicit stale and coverage replacement plus fail-before-mutation repair", "refreshable source-scoped command rejection starts targeted repair", "current-generation Live health rotates fresh bounded recovery snapshots without leaking while frozen", "current detail remains the canonical selected-session projection when summary and detail share a bounded recovery drain"]},
+      {"layer": "Gooseweb Worker/store", "required": ["sequential lossless bounded reduction", "explicit stale and coverage replacement plus fail-before-mutation repair", "refreshable source-scoped command rejection starts targeted repair", "only the first current-generation Live patch edge rotates fresh bounded recovery snapshots", "pre-floor Live snapshots and duplicate Live patches cannot leak or replace the accepted generation while frozen", "current detail remains the canonical selected-session projection when summary and detail share a bounded recovery drain"]},
       {"layer": "Gooseweb React", "required": ["reads the external store only", "does not invent lifecycle, repair, or optimistic canonical entities"]}
     ],
     "cardinality": {"browser_actions": 1, "commands": 1, "runtime_messages": 1, "visible_message_instances": 2, "duplicates": 0},
@@ -95,7 +103,7 @@
   "ownership": {
     "gooselake": {"impact": "no_change", "reason": "P09 changes no runtime record, event, command, migration, or storage authority."},
     "goosetower": {"impact": "changed", "reason": "P07R-001 is a lead-authorized narrow prerequisite correction at the BROWSER-005 first divergent layer: idle released repairs re-arm on Replaying, stage without publication, and atomically install continuity before gap_filled plus authoritative snapshot replacement."},
-    "gooseweb": {"impact": "changed", "reason": "The active Worker/external store and deterministic authority smokes retain lossless authority-aware reduction; P09R-002 rebuilds the canonical selected-session SessionView from current detail after bounded gap repair, and P09-REVIEW-002 gives source-scoped refreshable command rejection a fail-closed Live-plus-snapshot recovery completion. React root links, favicon/static assets, and the P10-owned BASE-P01-FAVICON-NOT-FOUND correction are unchanged from the pre-P09 base."},
+    "gooseweb": {"impact": "changed", "reason": "The active Worker/external store and deterministic authority smokes retain lossless authority-aware reduction; P09R-002 rebuilds the canonical selected-session SessionView from current detail after bounded gap repair, P09-REVIEW-002 gives source-scoped refreshable command rejection a fail-closed Live-plus-snapshot recovery completion, and P09-REVIEW-003 makes its Live floor a single patch edge with one post-floor generation. React root links, favicon/static assets, and the P10-owned BASE-P01-FAVICON-NOT-FOUND correction are unchanged from the pre-P09 base."},
     "auth_account_state": {"impact": "no_change", "reason": "No account, ticket, workspace, permission, or session-cookie behavior changes."},
     "protocol_generated_code": {"impact": "no_change", "reason": "No Protobuf schema or generated artifact changes; P08 typed shapes are preserved."},
     "api_narrative_docs": {"impact": "no_change", "reason": "No runtime HTTP route, OpenAPI artifact, or public narrative API behavior changes."}
@@ -114,7 +122,7 @@
     "empty": {"applicability": "required", "expectation": "Authoritative empty snapshots remove absent covered entities and nested arrays."},
     "loading": {"applicability": "required", "expectation": "Subscriptions remain subscribing until their exact valid snapshot arrives."},
     "stale_gap_replaying": {"applicability": "required", "expectation": "Same-epoch jumps freeze before mutation and stale clears only after authoritative fill or resync."},
-    "rejection_conflict": {"applicability": "required", "expectation": "Revision, epoch, generation, operation, and request mismatches request repair without authority mutation; source-scoped source_stale rejection remains frozen through Replaying and clears only after current-generation Live authority rotates and completes fresh bounded snapshots."},
+    "rejection_conflict": {"applicability": "required", "expectation": "Revision, epoch, generation, operation, and request mismatches request repair without authority mutation; source-scoped source_stale rejection remains frozen through Replaying and pre-floor Live snapshots, accepts one current-generation Live patch floor, ignores duplicate Live resets, and clears only after that exact bounded snapshot generation completes."},
     "permission_denied": {"applicability": "required", "expectation": "Existing command rejection remains a local pending-command overlay."},
     "unsupported_provider": {"applicability": "not_applicable", "reason": "Worker/store reduction is provider-neutral."},
     "terminal_error": {"applicability": "required", "expectation": "Malformed and unknown version/operation frames degrade explicitly before cursor or entity mutation."}
@@ -139,9 +147,9 @@
   "non_applicable": {
     "schema_migration": {"status": "not_applicable", "reason": "No runtime, Tower, or protocol schema changes; the browser cache uses a new disposable namespace."},
     "backfill": {"status": "not_applicable", "reason": "Browser caches are disposable and are never backfilled as authority."},
-    "compatibility": {"status": "required", "reason": "Incompatible cursor/cache namespaces discard and refetch; P08 legacy decoding remains bounded and explicit; P09R-002 contributor arbitration and P09-REVIEW-002 source-live repair completion are in-memory only and require no persisted cache migration."},
-    "rollback": {"status": "required", "reason": "Rollback may discard the v2 browser cache namespace, removes the P07R-001 reconnect-edge re-arm, restores summary-last SessionView arbitration that reopens P09-BROWSER-006, and restores permanent staleSource retention after a normally replaying source rejects a command; durable runtime truth remains unaffected."},
-    "performance": {"status": "required", "reason": "Entity operations reduce sequentially inside one bounded drain; P07R-001 uses one active repair loop, bounded replay pages/fallback, and one recovery replacement; P09R-002 reprojects only touched session contributors; P09-REVIEW-002 rotates one bounded active-subscription generation at the accepted Live floor and retains one publication per drain."},
+    "compatibility": {"status": "required", "reason": "Incompatible cursor/cache namespaces discard and refetch; P08 legacy decoding remains bounded and explicit; P09R-002 contributor arbitration plus the P09-REVIEW-002/003 single-edge source-live repair completion are in-memory only and require no persisted cache migration."},
+    "rollback": {"status": "required", "reason": "Rollback may discard the v2 browser cache namespace, removes the P07R-001 reconnect-edge re-arm, restores summary-last SessionView arbitration that reopens P09-BROWSER-006, restores permanent staleSource retention after a normally replaying source rejects a command, or reopens pre-floor/duplicate-Live recovery ordering; durable runtime truth remains unaffected."},
+    "performance": {"status": "required", "reason": "Entity operations reduce sequentially inside one bounded drain; P07R-001 uses one active repair loop, bounded replay pages/fallback, and one recovery replacement; P09R-002 reprojects only touched session contributors; P09-REVIEW-002/003 rotates exactly one bounded active-subscription generation at the accepted Live patch floor and retains one publication per drain."},
     "security": {"status": "no_change", "reason": "No credential, ticket, authorization, or secret-bearing data path changes."},
     "data_retention_gc": {"status": "not_applicable", "reason": "Only disposable browser cursor data is namespaced; no product retention policy changes."},
     "deployment": {"status": "not_applicable", "reason": "No server configuration, topology, static asset, favicon route, or deployment artifact changes; BASE-P01-FAVICON-NOT-FOUND remains assigned to P10."},
@@ -167,6 +175,7 @@
       "GatewayState::source_recovery_frames",
       "SourceRepairTracker::canCompleteFromLive",
       "SourceRepairTracker::markSourceLive",
+      "SourceRepairTracker::shouldHoldSnapshotUntilLive",
       "sourceHealthLiveCursors"
     ],
     "native_tauri_assumptions_removed": {"status": "not_applicable", "reason": "Only authority, batching, coverage, and overlay invariants were referenced."}

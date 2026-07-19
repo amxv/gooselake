@@ -49,6 +49,13 @@ export class SourceRepairTracker {
     });
   }
 
+  shouldHoldSnapshotUntilLive(sources: readonly SourceCursorState[]): boolean {
+    return sources.some((source) => {
+      const repair = this.repairs[source.sourceId];
+      return repair?.completion === "source_live" && !repair.authorityReady;
+    });
+  }
+
   retireSnapshot(
     subscriptionId: string,
     requestId: string,
@@ -115,7 +122,7 @@ export class SourceRepairTracker {
 
   canCompleteFromLive(cursor: SourceCursorState): boolean {
     const repair = this.repairs[cursor.sourceId];
-    return Boolean(repair?.completion === "source_live" &&
+    return Boolean(repair?.completion === "source_live" && !repair.authorityReady &&
       (!repair.expectedEpoch || cursor.sourceEpoch === repair.expectedEpoch) &&
       (repair.minimumSourceSeq === undefined || cursor.sourceSeq >= repair.minimumSourceSeq));
   }

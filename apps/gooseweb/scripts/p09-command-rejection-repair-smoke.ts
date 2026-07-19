@@ -104,16 +104,32 @@ await flush();
 assert.equal(getGoosewebSnapshot().staleSources[SOURCE], "source_stale",
   "bounded snapshots cannot clear command safety while source authority is replaying");
 
-socket!.receive(sourceHealthPatch("source-live", 7n, "live"));
+const requestsBeforeSnapshotFloor = requests();
+socket!.receive(snapshot("prefloor-live-fleet", "fleet", 7n, fleetBody("live")));
+await flush();
+assert.deepEqual(requests(), requestsBeforeSnapshotFloor,
+  "a Live snapshot from the pre-floor generation cannot rotate repair requests");
+assert.equal(getGoosewebSnapshot().staleSources[SOURCE], "source_stale");
+assert.equal(getVisibleGoosewebSnapshot().entities.sources[sourceEntityKey(SOURCE, SOURCE)], undefined,
+  "a pre-floor Live snapshot remains frozen and cannot become command authority");
+
+socket!.receive(sourceHealthPatch("source-live", 8n, "live"));
 await flush();
 const liveFloorRequests = requests();
 assert.notDeepEqual(liveFloorRequests, firstRepairRequests,
   "current-generation live authority rotates every repair snapshot onto its floor");
 assert.equal(getGoosewebSnapshot().staleSources[SOURCE], "source_live");
-assert.equal(getGoosewebSnapshot().entities.sources[sourceEntityKey(SOURCE, SOURCE)]?.health,
-  "replaying", "live authority cannot leak into entities while repair remains frozen");
+assert.equal(getVisibleGoosewebSnapshot().entities.sources[sourceEntityKey(SOURCE, SOURCE)], undefined,
+  "accepted live-floor authority cannot leak into visible entities while repair remains frozen");
 
-const wrongGeneration = snapshot("wrong-generation-board", "board", 8n, boardBody(true));
+socket!.receive(sourceHealthPatch("duplicate-source-live", 9n, "live"));
+await flush();
+assert.deepEqual(requests(), liveFloorRequests,
+  "a duplicate Live patch cannot rotate the accepted post-floor generation again");
+assert.equal(getGoosewebSnapshot().staleSources[SOURCE], "source_live",
+  "duplicate Live authority cannot clear stale before post-floor snapshots complete");
+
+const wrongGeneration = snapshot("wrong-generation-board", "board", 10n, boardBody(true));
 if (wrongGeneration.payload.case !== "snapshot" || !wrongGeneration.payload.value.cursor) {
   throw new Error("wrong-generation fixture lacks cursor");
 }
@@ -125,9 +141,9 @@ assert.equal(getGoosewebSnapshot().entities.fleetRows[sourceEntityKey(SOURCE, SE
   "old-generation snapshots cannot materialize a repaired session");
 
 const beforeRecoveryPublications = publications;
-socket!.receive(snapshot("live-board", "board", 8n, boardBody(true)));
-socket!.receive(snapshot("live-detail", "session-detail", 9n, detailBody()));
-socket!.receive(snapshot("live-fleet", "fleet", 10n, fleetBody("live")));
+socket!.receive(snapshot("live-board", "board", 10n, boardBody(true)));
+socket!.receive(snapshot("live-detail", "session-detail", 11n, detailBody()));
+socket!.receive(snapshot("live-fleet", "fleet", 12n, fleetBody("live")));
 await flush();
 const recovered = getGoosewebSnapshot();
 const sessionKey = sourceEntityKey(SOURCE, SESSION);

@@ -4,6 +4,8 @@ export const siteConfig = {
   description:
     "Gooselake is a machine-side runtime for durable agent sessions, provider abstraction, streaming control, and real execution.",
   repoUrl: "https://github.com/amxv/gooselake",
+  accentColor: "#0f766e",
+  accentColorDark: "#5eead4",
   footerSections: [
     {
       title: "Gooselake",
@@ -34,7 +36,6 @@ export const docCategories = [
 ] as const;
 
 export const primaryNav = [
-  { href: "/", label: "Overview" },
   { href: "/docs", label: "Docs" },
   { href: siteConfig.repoUrl, label: "GitHub", external: true }
 ];

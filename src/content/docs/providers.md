@@ -48,15 +48,25 @@ Codex is configured through the Codex provider adapter.
 
 The current Codex model catalog includes:
 
+- `gpt-5.6-sol`
+- `gpt-5.6-terra`
+- `gpt-5.6-luna`
 - `gpt-5.5`
 - `gpt-5.4`
 - `gpt-5.4-mini`
+- `gpt-5.3-codex-spark`
 
 Check the running server rather than hardcoding:
 
 ```bash
 curl "$BASE_URL/v1/providers/codex/models" "${AUTH[@]}"
 ```
+
+Each model response includes provider-owned `reasoning_levels`. The GPT-5.6
+Sol, Terra, and Luna entries expose `low`, `medium`, `high`, `extra-high`,
+`max`, and `ultra`. GPT-5.3 Codex Spark exposes `low`, `medium`, `high`, and
+`extra-high`. Clients should populate reasoning-effort selectors from this
+field instead of hardcoding a fixed set.
 
 ### Auth
 

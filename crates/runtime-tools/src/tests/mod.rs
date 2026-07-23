@@ -57,6 +57,7 @@ impl RuntimeProvider for WorktreeTestProvider {
         Ok(vec![ProviderModel {
             id: "test-model".to_string(),
             display_name: "Test Model".to_string(),
+            reasoning_levels: Vec::new(),
         }])
     }
 

@@ -105,6 +105,43 @@ fn provider_new_absolutizes_relative_home_dir() {
     );
 }
 
+#[tokio::test]
+async fn codex_model_catalog_exposes_supported_models_and_reasoning_levels() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let provider = CodexProvider::new(CodexProviderConfig {
+        enabled: true,
+        home_dir: temp_dir.path().to_path_buf(),
+        max_transports: 1,
+        max_sessions_per_transport: 1,
+        gg_mcp: CodexGgMcpConfig::default(),
+    });
+    let models = provider.list_models().await.expect("list models");
+
+    let full_levels = vec!["low", "medium", "high", "extra-high", "max", "ultra"];
+    let standard_levels = vec!["low", "medium", "high", "extra-high"];
+    let expected = [
+        ("gpt-5.6-sol", full_levels.as_slice(), true),
+        ("gpt-5.6-terra", full_levels.as_slice(), true),
+        ("gpt-5.6-luna", full_levels.as_slice(), true),
+        ("gpt-5.5", standard_levels.as_slice(), false),
+        ("gpt-5.4", standard_levels.as_slice(), false),
+        ("gpt-5.4-mini", standard_levels.as_slice(), false),
+        ("gpt-5.3-codex-spark", standard_levels.as_slice(), true),
+    ];
+
+    assert_eq!(models.len(), expected.len());
+    for (model_id, reasoning_levels, uses_slug_display_name) in expected {
+        let model = models
+            .iter()
+            .find(|model| model.id == model_id)
+            .expect("expected codex model");
+        assert_eq!(model.reasoning_levels, reasoning_levels);
+        if uses_slug_display_name {
+            assert_eq!(model.display_name, model_id);
+        }
+    }
+}
+
 #[test]
 fn copy_auth_file_stages_into_runtime_home() {
     let source_dir = tempfile::tempdir().expect("source dir");

@@ -37,6 +37,7 @@ Auth legend:
 - `POST /v1/providers/claude/auth/logout` (Bearer)
 
 Provider behavior notes:
+- `GET /v1/providers/{provider}/models` returns `reasoning_levels` for each model. Clients should treat this list as dynamic, provider-owned capability metadata.
 - ACP v1 exposes only `GET /v1/providers/acp/auth/status` for auth. No ACP logout, API-key, JSON import, or file import routes are implemented.
 - ACP auth status is agent-managed. The response reports configuration/readiness, not runtime-owned credentials.
 - `GET /v1/providers/acp/models` may return an empty list because ACP model selection can be driven by session-scoped agent config.

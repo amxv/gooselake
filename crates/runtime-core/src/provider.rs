@@ -42,6 +42,8 @@ pub struct ProviderMetadata {
 pub struct ProviderModel {
     pub id: String,
     pub display_name: String,
+    #[serde(default)]
+    pub reasoning_levels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -454,52 +454,42 @@ impl RuntimeProvider for CodexProvider {
         Ok(vec![
             ProviderModel {
                 id: "gpt-5.6-sol".to_string(),
-                display_name: "gpt-5.6-sol".to_string(),
+                display_name: "GPT-5.6-Sol".to_string(),
                 reasoning_levels: reasoning_levels(&[
-                    "low",
-                    "medium",
-                    "high",
-                    "extra-high",
-                    "max",
-                    "ultra",
+                    "low", "medium", "high", "xhigh", "max", "ultra",
                 ]),
             },
             ProviderModel {
                 id: "gpt-5.6-terra".to_string(),
-                display_name: "gpt-5.6-terra".to_string(),
+                display_name: "GPT-5.6-Terra".to_string(),
                 reasoning_levels: reasoning_levels(&[
-                    "low",
-                    "medium",
-                    "high",
-                    "extra-high",
-                    "max",
-                    "ultra",
+                    "low", "medium", "high", "xhigh", "max", "ultra",
                 ]),
             },
             ProviderModel {
                 id: "gpt-5.6-luna".to_string(),
-                display_name: "gpt-5.6-luna".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "extra-high", "max"]),
+                display_name: "GPT-5.6-Luna".to_string(),
+                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh", "max"]),
             },
             ProviderModel {
                 id: "gpt-5.5".to_string(),
                 display_name: "GPT 5.5".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "extra-high"]),
+                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh"]),
             },
             ProviderModel {
                 id: "gpt-5.4".to_string(),
                 display_name: "GPT 5.4".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "extra-high"]),
+                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh"]),
             },
             ProviderModel {
                 id: "gpt-5.4-mini".to_string(),
                 display_name: "GPT 5.4 Mini".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "extra-high"]),
+                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh"]),
             },
             ProviderModel {
                 id: "gpt-5.3-codex-spark".to_string(),
-                display_name: "gpt-5.3-codex-spark".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "extra-high"]),
+                display_name: "GPT-5.3-Codex-Spark".to_string(),
+                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh"]),
             },
         ])
     }

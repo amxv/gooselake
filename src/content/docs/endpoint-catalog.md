@@ -37,7 +37,7 @@ Auth legend:
 - `POST /v1/providers/claude/auth/logout` (Bearer)
 
 Provider behavior notes:
-- `GET /v1/providers/{provider}/models` returns dynamic, provider-adapter-owned `reasoning_levels` using Gooselake public values. Codex `extra-high` normalizes upstream `xhigh`.
+- `GET /v1/providers/{provider}/models` returns dynamic, provider-owned `reasoning_levels` using raw runtime capability tokens such as Codex `xhigh`.
 - ACP v1 exposes only `GET /v1/providers/acp/auth/status` for auth. No ACP logout, API-key, JSON import, or file import routes are implemented.
 - ACP auth status is agent-managed. The response reports configuration/readiness, not runtime-owned credentials.
 - `GET /v1/providers/acp/models` may return an empty list because ACP model selection can be driven by session-scoped agent config.

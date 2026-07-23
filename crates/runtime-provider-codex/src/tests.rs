@@ -117,29 +117,35 @@ async fn codex_model_catalog_exposes_supported_models_and_reasoning_levels() {
     });
     let models = provider.list_models().await.expect("list models");
 
-    let sol_terra_levels = vec!["low", "medium", "high", "extra-high", "max", "ultra"];
-    let luna_levels = vec!["low", "medium", "high", "extra-high", "max"];
-    let standard_levels = vec!["low", "medium", "high", "extra-high"];
+    let sol_terra_levels = vec!["low", "medium", "high", "xhigh", "max", "ultra"];
+    let luna_levels = vec!["low", "medium", "high", "xhigh", "max"];
+    let standard_levels = vec!["low", "medium", "high", "xhigh"];
     let expected = [
-        ("gpt-5.6-sol", sol_terra_levels.as_slice(), true),
-        ("gpt-5.6-terra", sol_terra_levels.as_slice(), true),
-        ("gpt-5.6-luna", luna_levels.as_slice(), true),
-        ("gpt-5.5", standard_levels.as_slice(), false),
-        ("gpt-5.4", standard_levels.as_slice(), false),
-        ("gpt-5.4-mini", standard_levels.as_slice(), false),
-        ("gpt-5.3-codex-spark", standard_levels.as_slice(), true),
+        ("gpt-5.6-sol", "GPT-5.6-Sol", sol_terra_levels.as_slice()),
+        (
+            "gpt-5.6-terra",
+            "GPT-5.6-Terra",
+            sol_terra_levels.as_slice(),
+        ),
+        ("gpt-5.6-luna", "GPT-5.6-Luna", luna_levels.as_slice()),
+        ("gpt-5.5", "GPT 5.5", standard_levels.as_slice()),
+        ("gpt-5.4", "GPT 5.4", standard_levels.as_slice()),
+        ("gpt-5.4-mini", "GPT 5.4 Mini", standard_levels.as_slice()),
+        (
+            "gpt-5.3-codex-spark",
+            "GPT-5.3-Codex-Spark",
+            standard_levels.as_slice(),
+        ),
     ];
 
     assert_eq!(models.len(), expected.len());
-    for (model_id, reasoning_levels, uses_slug_display_name) in expected {
+    for (model_id, display_name, reasoning_levels) in expected {
         let model = models
             .iter()
             .find(|model| model.id == model_id)
             .expect("expected codex model");
+        assert_eq!(model.display_name, display_name);
         assert_eq!(model.reasoning_levels, reasoning_levels);
-        if uses_slug_display_name {
-            assert_eq!(model.display_name, model_id);
-        }
     }
 }
 

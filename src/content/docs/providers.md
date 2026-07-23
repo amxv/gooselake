@@ -62,13 +62,11 @@ Check the running server rather than hardcoding:
 curl "$BASE_URL/v1/providers/codex/models" "${AUTH[@]}"
 ```
 
-Each model response includes provider-adapter-owned `reasoning_levels` using
-Gooselake's public names. GPT-5.6 Sol and Terra expose `low`, `medium`, `high`,
-`extra-high`, `max`, and `ultra`; Luna exposes the same list through `max`; and
-GPT-5.3 Codex Spark exposes the list through `extra-high`. For Codex,
-`extra-high` is Gooselake's normalized alias for the upstream `xhigh` token.
-Consumers that pass a selection to a provider-token surface must translate
-`extra-high` back to `xhigh`.
+Each model response includes provider-owned `reasoning_levels` using the raw
+runtime capability tokens. GPT-5.6 Sol and Terra expose `low`, `medium`, `high`,
+`xhigh`, `max`, and `ultra`; Luna exposes the same list through `max`; and
+GPT-5.3 Codex Spark exposes the list through `xhigh`. Clients should use these
+values directly instead of inventing aliases.
 
 ### Auth
 

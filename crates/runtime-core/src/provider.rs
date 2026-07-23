@@ -315,12 +315,12 @@ mod tests {
     fn provider_model_serializes_client_visible_reasoning_levels_exactly() {
         let model = ProviderModel {
             id: "gpt-5.6-luna".to_string(),
-            display_name: "gpt-5.6-luna".to_string(),
+            display_name: "GPT-5.6-Luna".to_string(),
             reasoning_levels: vec![
                 "low".to_string(),
                 "medium".to_string(),
                 "high".to_string(),
-                "extra-high".to_string(),
+                "xhigh".to_string(),
                 "max".to_string(),
             ],
         };
@@ -329,8 +329,8 @@ mod tests {
             serde_json::to_value(model).expect("serialize provider model"),
             json!({
                 "id": "gpt-5.6-luna",
-                "display_name": "gpt-5.6-luna",
-                "reasoning_levels": ["low", "medium", "high", "extra-high", "max"]
+                "display_name": "GPT-5.6-Luna",
+                "reasoning_levels": ["low", "medium", "high", "xhigh", "max"]
             })
         );
     }

@@ -214,9 +214,11 @@ Model catalogs:
 - ACP: can return an empty list because model selection can be session-scoped inside the configured agent
 
 `GET /v1/providers/{provider}/models` returns `id`, `display_name`, and
-provider-owned `reasoning_levels` for each model. Clients should use
-`reasoning_levels` to populate reasoning-effort controls. The list can be empty
-when a model does not expose a global selector.
+provider-adapter-owned `reasoning_levels` for each model. Clients should use
+these public values to populate reasoning-effort controls. For Codex,
+`extra-high` normalizes the upstream `xhigh` token; clients that submit a
+selection to a provider-token surface must map `extra-high` back to `xhigh`.
+The list can be empty when a model does not expose a global selector.
 
 Auth status examples:
 

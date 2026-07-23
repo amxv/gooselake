@@ -479,14 +479,7 @@ impl RuntimeProvider for CodexProvider {
             ProviderModel {
                 id: "gpt-5.6-luna".to_string(),
                 display_name: "gpt-5.6-luna".to_string(),
-                reasoning_levels: reasoning_levels(&[
-                    "low",
-                    "medium",
-                    "high",
-                    "extra-high",
-                    "max",
-                    "ultra",
-                ]),
+                reasoning_levels: reasoning_levels(&["low", "medium", "high", "extra-high", "max"]),
             },
             ProviderModel {
                 id: "gpt-5.5".to_string(),

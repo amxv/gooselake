@@ -286,7 +286,8 @@ pub trait RuntimeProvider: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::ProviderKind;
+    use super::{ProviderKind, ProviderModel};
+    use serde_json::json;
 
     #[test]
     fn provider_kind_as_str_includes_acp() {
@@ -297,5 +298,40 @@ mod tests {
     fn provider_kind_from_str_parses_acp_case_insensitively() {
         assert_eq!(ProviderKind::from_str("acp"), Some(ProviderKind::Acp));
         assert_eq!(ProviderKind::from_str(" ACP "), Some(ProviderKind::Acp));
+    }
+
+    #[test]
+    fn provider_model_deserializes_legacy_json_without_reasoning_levels() {
+        let model: ProviderModel = serde_json::from_value(json!({
+            "id": "legacy-model",
+            "display_name": "Legacy Model"
+        }))
+        .expect("deserialize legacy provider model");
+
+        assert!(model.reasoning_levels.is_empty());
+    }
+
+    #[test]
+    fn provider_model_serializes_client_visible_reasoning_levels_exactly() {
+        let model = ProviderModel {
+            id: "gpt-5.6-luna".to_string(),
+            display_name: "gpt-5.6-luna".to_string(),
+            reasoning_levels: vec![
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+                "extra-high".to_string(),
+                "max".to_string(),
+            ],
+        };
+
+        assert_eq!(
+            serde_json::to_value(model).expect("serialize provider model"),
+            json!({
+                "id": "gpt-5.6-luna",
+                "display_name": "gpt-5.6-luna",
+                "reasoning_levels": ["low", "medium", "high", "extra-high", "max"]
+            })
+        );
     }
 }

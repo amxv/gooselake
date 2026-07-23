@@ -117,12 +117,13 @@ async fn codex_model_catalog_exposes_supported_models_and_reasoning_levels() {
     });
     let models = provider.list_models().await.expect("list models");
 
-    let full_levels = vec!["low", "medium", "high", "extra-high", "max", "ultra"];
+    let sol_terra_levels = vec!["low", "medium", "high", "extra-high", "max", "ultra"];
+    let luna_levels = vec!["low", "medium", "high", "extra-high", "max"];
     let standard_levels = vec!["low", "medium", "high", "extra-high"];
     let expected = [
-        ("gpt-5.6-sol", full_levels.as_slice(), true),
-        ("gpt-5.6-terra", full_levels.as_slice(), true),
-        ("gpt-5.6-luna", full_levels.as_slice(), true),
+        ("gpt-5.6-sol", sol_terra_levels.as_slice(), true),
+        ("gpt-5.6-terra", sol_terra_levels.as_slice(), true),
+        ("gpt-5.6-luna", luna_levels.as_slice(), true),
         ("gpt-5.5", standard_levels.as_slice(), false),
         ("gpt-5.4", standard_levels.as_slice(), false),
         ("gpt-5.4-mini", standard_levels.as_slice(), false),

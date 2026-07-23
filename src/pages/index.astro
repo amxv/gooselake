@@ -1,156 +1,602 @@
 ---
 import BaseLayout from "zuedocs/layouts/BaseLayout.astro";
-import { getCollection } from "astro:content";
 import { primaryNav, siteConfig } from "../data/docs";
+import "../styles/landing.css";
 
-const docs = (await getCollection("docs")).sort((a, b) => a.data.order - b.data.order);
-
-const proofPoints = [
+const capabilities = [
   {
-    title: "Durable sessions",
-    body: "Persist turns and replay event history instead of forcing the frontend to guess what happened after a disconnect."
+    index: "01",
+    title: "Provider-neutral, harness-native",
+    body:
+      "Codex, Claude, and ACP map their native lifecycles into one runtime model for sessions, turns, approvals, and terminal state. Real capability differences remain explicit instead of being papered over.",
+    href: "/docs/providers",
+    link: "Compare providers"
   },
   {
-    title: "Provider abstraction",
-    body: "Normalize Codex, Claude, and ACP behind one runtime contract so the UI does not become a museum of provider quirks."
+    index: "02",
+    title: "Events with receipts",
+    body:
+      "Important transitions land in SQLite with scoped sequence numbers. Clients can resume from a cursor, replay the gap, and follow the live tail without inventing missing state.",
+    href: "/docs/events-and-recovery",
+    link: "Follow the event model"
   },
   {
-    title: "Machine-side execution",
-    body: "Keep processes, worktrees, filesystem actions, and MCP tool wiring on the host where they belong."
+    index: "03",
+    title: "Recovery at boot",
+    body:
+      "Startup reconciles sessions, turns, approvals, deferred deliveries, processes, and worktree claims. Work either resumes safely or becomes an inspectable failure, never a convincing ghost.",
+    href: "/docs/events-and-recovery#startup-recovery",
+    link: "Understand recovery"
   },
   {
-    title: "Team coordination",
-    body: "Support multi-agent communication and delivery semantics without inventing another browser-tab-only orchestration layer."
+    index: "04",
+    title: "Processes with an owner",
+    body:
+      "The runtime starts commands, enforces ownership and concurrency, records lifecycle, and keeps bounded stdout and stderr logs. Live output is a sample; the log files are authoritative.",
+    href: "/docs/processes",
+    link: "Inspect process control"
+  },
+  {
+    index: "05",
+    title: "Worktrees with claims",
+    body:
+      "Managed Git workspaces have durable records, explicit claims, cleanup policy, and startup repair. Team spawn treats session, worktree, membership, and onboarding as one journaled saga.",
+    href: "/docs/worktrees",
+    link: "See worktree lifecycle"
+  },
+  {
+    index: "06",
+    title: "Messages that get delivered",
+    body:
+      "Team messages produce per-recipient delivery records with policies, deferral, retries, cancellation, and replayable state. Coordination is transport infrastructure, not prompt roleplay.",
+    href: "/docs/teams",
+    link: "Open teams and comms"
   }
 ];
 
-const audience = [
-  "Product teams building serious agent interfaces that cannot depend on a browser tab staying alive.",
-  "Platform and infra engineers who want a reusable runtime contract instead of repeating orchestration logic in every client.",
-  "Operator-heavy workflows where agents need file access, process control, recovery, and receipts."
+const readingPaths = [
+  {
+    marker: "BOOT",
+    title: "Run the first control loop",
+    body: "Install the server, verify provider readiness, create a session, and watch replayed and live events.",
+    href: "/docs/setup",
+    link: "Start with setup"
+  },
+  {
+    marker: "MODEL",
+    title: "Learn where truth lives",
+    body: "Get the vocabulary and boundaries for sessions, turns, providers, events, teams, processes, and worktrees.",
+    href: "/docs/concepts",
+    link: "Read core concepts"
+  },
+  {
+    marker: "BUILD",
+    title: "Design a thin client",
+    body: "Use records and cursors to build a web app, desktop UI, CLI, or operations console that can reconnect cleanly.",
+    href: "/docs/client-design",
+    link: "Open the client guide"
+  },
+  {
+    marker: "RUN",
+    title: "Operate the machine",
+    body: "Inspect health, diagnostics, recovery summaries, provider state, logs, and host resources before guessing.",
+    href: "/docs/operations",
+    link: "Use the runbook"
+  }
+];
+
+const runtimeTruth = [
+  "provider-backed sessions and opaque provider references",
+  "turns, approvals, and one-active-turn coordination",
+  "event history, scoped cursors, and recovery diagnostics",
+  "process records, logs, worktrees, claims, and team deliveries"
+];
+
+const clientState = [
+  "the selected session or team",
+  "the last processed event cursor",
+  "draft input and optimistic presentation",
+  "local display preferences"
 ];
 ---
 
 <BaseLayout
-  title="Gooselake | Agent runtime control tower"
-  description="Gooselake is a machine-side runtime for durable agent sessions, provider abstraction, streaming control, and real execution."
+  title="Gooselake | The durable runtime for machine agents"
+  description="Gooselake gives agent products a durable machine-side runtime for provider-neutral sessions, replayable events, recovery, processes, worktrees, and team messaging."
   siteConfig={siteConfig}
   primaryNav={primaryNav}
 >
-  <section class="hero shell">
-    <div class="hero__copy">
-      <p class="section-label">Machine-side agent infrastructure</p>
-      <h1>
-        Stop treating agent orchestration like frontend garnish.
-      </h1>
-      <p class="hero__lede">
-        Gooselake is the runtime layer for agents that need to persist, recover,
-        stream, coordinate, and keep working after the client disappears. The UI
-        becomes a remote control. The runtime becomes the engine room.
-      </p>
-      <div class="hero__actions">
-        <a class="button button--solid" href="/docs/setup">Read the quick start</a>
-        <a class="button button--ghost" href="/docs">Explore the docs</a>
-      </div>
-    </div>
-    <aside class="hero__panel">
-      <p class="hero__panel-label">Why it exists</p>
-      <ul class="hero__signal-list">
-        <li>Frontend-first agent stacks quietly turn into distributed systems.</li>
-        <li>Sessions, streams, approvals, and process lifetime belong near the machine.</li>
-        <li>Provider churn should not rewrite your product architecture every quarter.</li>
-      </ul>
-      <div class="hero__terminal">
-        <span>$ control-plane</span>
-        <span>providers: codex / claude / acp</span>
-        <span>state: sqlite-backed / replayable</span>
-        <span>execution: processes / tools / worktrees</span>
-      </div>
-    </aside>
-  </section>
+  <div class="lake-home">
+    <section class="lake-hero">
+      <div class="shell">
+        <div class="lake-hero__registration" aria-label="Product classification">
+          <span>GG / MACHINE RUNTIME</span>
+          <span class="lake-hero__rule" aria-hidden="true"></span>
+          <span>HTTP COMMANDS · SSE RECEIPTS</span>
+        </div>
 
-  <section class="shell section-grid">
-    <div class="section-heading">
-      <p class="section-label">What Gooselake is</p>
-      <h2>An air traffic control tower for machine agents.</h2>
-      <p>
-        It owns the hard parts that surface once an agent stops being a demo:
-        event durability, reconnectable streams, auth staging, process lifetime,
-        machine operations, and cross-provider normalization.
-      </p>
-    </div>
-    <div class="proof-grid">
-      {proofPoints.map((item) => (
-        <article class="proof-card">
-          <h3>{item.title}</h3>
-          <p>{item.body}</p>
+        <div class="lake-hero__grid">
+          <div class="lake-hero__copy">
+            <p class="lake-eyebrow">Headless infrastructure for agent products</p>
+            <h1>The client can disappear. <em>The work should not.</em></h1>
+            <p class="lake-hero__lede">
+              Gooselake is a machine-side runtime for agents that operate on
+              real hosts. It keeps sessions, event history, processes,
+              worktrees, and team coordination durable while any web app,
+              desktop UI, or CLI stays thin.
+            </p>
+            <div class="lake-actions">
+              <a class="lake-button lake-button--signal" href="/docs/setup">
+                Start the runtime
+                <span aria-hidden="true">↗</span>
+              </a>
+              <a class="lake-button lake-button--quiet" href="/docs/architecture">
+                Inspect the architecture
+                <span aria-hidden="true">→</span>
+              </a>
+            </div>
+          </div>
+
+          <aside class="control-plate" aria-label="Gooselake runtime topology">
+            <div class="control-plate__header">
+              <span>RUNTIME TOPOLOGY / 001</span>
+              <span class="control-plate__ready"><i aria-hidden="true"></i> READY</span>
+            </div>
+
+            <div class="control-plate__body">
+              <div class="control-node control-node--client">
+                <span class="control-node__code">CLIENT</span>
+                <strong>Thin interfaces</strong>
+                <small>web · desktop · CLI</small>
+              </div>
+
+              <div class="control-link" aria-hidden="true">
+                <span>HTTP ↓</span>
+                <span>SSE ↑</span>
+              </div>
+
+              <div class="control-node control-node--runtime">
+                <span class="control-node__code">CONTROL PLANE</span>
+                <strong>gooselake</strong>
+                <small>state transitions · ownership · recovery</small>
+              </div>
+
+              <div class="control-fanout" aria-hidden="true"><i></i><i></i><i></i></div>
+
+              <div class="control-plate__services">
+                <div class="control-service">
+                  <span>A</span>
+                  <strong>Harnesses</strong>
+                  <small>Codex · Claude · ACP</small>
+                </div>
+                <div class="control-service">
+                  <span>B</span>
+                  <strong>Ledger</strong>
+                  <small>SQLite · replay · recovery</small>
+                </div>
+                <div class="control-service">
+                  <span>C</span>
+                  <strong>Host</strong>
+                  <small>processes · worktrees · MCP</small>
+                </div>
+              </div>
+            </div>
+
+            <div class="control-plate__stream" aria-label="Example event receipt">
+              <span>SEQ 00481</span>
+              <code>team.delivery.deferred</code>
+              <span>ACK</span>
+            </div>
+          </aside>
+        </div>
+
+        <dl class="runtime-ledger" aria-label="Runtime contract at a glance">
+          <div>
+            <dt>Provider dialects</dt>
+            <dd>Codex · Claude · ACP</dd>
+          </div>
+          <div>
+            <dt>Durable truth</dt>
+            <dd>SQLite event ledger</dd>
+          </div>
+          <div>
+            <dt>Client contract</dt>
+            <dd>HTTP · SSE · cursors</dd>
+          </div>
+          <div>
+            <dt>Machine surface</dt>
+            <dd>Processes · Git · MCP</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="lake-section lake-manifest shell">
+      <header class="lake-section__header">
+        <p class="lake-eyebrow">The architectural bet</p>
+        <p class="lake-section__folio">01 / BUILD THE DISTRIBUTED SYSTEM ON PURPOSE</p>
+      </header>
+
+      <div class="lake-manifest__statement">
+        <h2>Put the durable truth on the machine where the agent works.</h2>
+        <div class="lake-manifest__copy">
+          <p>
+            Agent products begin as interfaces and quietly accumulate a
+            runtime: a second provider, background execution, resumable
+            sessions, approvals, delivery queues, and another client. Gooselake
+            makes that boundary explicit from the first turn.
+          </p>
+          <p>
+            The result is one long-lived Rust control plane behind HTTP and
+            SSE. Provider adapters translate. SQLite remembers. Clients render
+            what the runtime can prove.
+          </p>
+          <a
+            class="lake-story-link"
+            href="https://ashray.xyz/projects/gooselake"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Read the story behind Gooselake
+            <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="boundary-map" aria-label="The Gooselake product boundary">
+        <div class="boundary-map__edge boundary-map__edge--clients">
+          <div class="boundary-map__label">
+            <span>OUTSIDE / CLIENTS</span>
+            <small>replaceable views</small>
+          </div>
+          <ul>
+            <li>Web app</li>
+            <li>Desktop UI</li>
+            <li>CLI</li>
+            <li>Ops console</li>
+          </ul>
+        </div>
+
+        <div class="boundary-map__seam boundary-map__seam--in" aria-hidden="true">
+          <span>commands →</span>
+          <i></i>
+          <span>← receipts</span>
+        </div>
+
+        <div class="boundary-map__core">
+          <div class="boundary-map__core-head">
+            <span>INSIDE / DURABLE RUNTIME</span>
+            <span>HOST OWNED</span>
+          </div>
+          <strong>Sessions become runtime records, not component state.</strong>
+          <div class="boundary-map__core-grid">
+            <span>sessions + turns</span>
+            <span>events + recovery</span>
+            <span>teams + deliveries</span>
+            <span>processes + worktrees</span>
+          </div>
+        </div>
+
+        <div class="boundary-map__seam boundary-map__seam--out" aria-hidden="true">
+          <span>adapters →</span>
+          <i></i>
+          <span>← results</span>
+        </div>
+
+        <div class="boundary-map__edge boundary-map__edge--machine">
+          <div class="boundary-map__label">
+            <span>OUTSIDE / MACHINE</span>
+            <small>specialized engines</small>
+          </div>
+          <ul>
+            <li>Codex</li>
+            <li>Claude</li>
+            <li>ACP agents</li>
+            <li>Host OS + Git</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="lake-section lake-capabilities">
+      <div class="shell">
+        <header class="lake-section__header">
+          <p class="lake-eyebrow">What the runtime earns</p>
+          <p class="lake-section__folio">02 / INFRASTRUCTURE AFTER THE DEMO</p>
+        </header>
+
+        <div class="lake-capabilities__intro">
+          <h2>Six hard problems. One reusable control plane.</h2>
+          <p>
+            Gooselake is valuable because these concerns reinforce each other.
+            The event ledger makes recovery inspectable. Session ownership
+            makes process control and message delivery safe. Worktree claims
+            give team operations a real machine boundary.
+          </p>
+        </div>
+
+        <div class="capability-grid">
+          {capabilities.map((capability) => (
+            <article class="capability-card">
+              <span class="capability-card__index">{capability.index}</span>
+              <h3>{capability.title}</h3>
+              <p>{capability.body}</p>
+              <a href={capability.href}>
+                {capability.link}
+                <span aria-hidden="true">↗</span>
+              </a>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="event-room">
+      <div class="shell event-room__grid">
+        <div class="event-room__copy">
+          <p class="lake-eyebrow">The flight recorder</p>
+          <h2>Reconnect without guessing.</h2>
+          <p>
+            Every important event is a scoped, sequenced receipt. A client
+            remembers the last cursor it processed, asks for everything after
+            it, renders the backlog, and then follows live state.
+          </p>
+          <p>
+            Session and process streams subscribe before replay handoff to
+            close the live-event gap. Lifecycle transitions are critical;
+            high-volume output can be droppable because full process logs stay
+            authoritative.
+          </p>
+          <a href="/docs/events-and-recovery">
+            Read events and recovery
+            <span aria-hidden="true">→</span>
+          </a>
+        </div>
+
+        <div class="event-recorder" aria-label="A reconnect-safe event sequence">
+          <div class="event-recorder__head">
+            <span>SESSION / SESS_7F2A</span>
+            <span>CURSOR 128</span>
+          </div>
+          <ol>
+            <li>
+              <span class="event-recorder__seq">0129</span>
+              <div>
+                <strong>turn.started</strong>
+                <small>critical · persisted</small>
+              </div>
+              <span class="event-recorder__state">REPLAY</span>
+            </li>
+            <li>
+              <span class="event-recorder__seq">0130</span>
+              <div>
+                <strong>process.output</strong>
+                <small>droppable · sampled</small>
+              </div>
+              <span class="event-recorder__state">REPLAY</span>
+            </li>
+            <li>
+              <span class="event-recorder__seq">0131</span>
+              <div>
+                <strong>approval.requested</strong>
+                <small>critical · persisted</small>
+              </div>
+              <span class="event-recorder__state">REPLAY</span>
+            </li>
+            <li class="event-recorder__handoff">
+              <span aria-hidden="true">↳</span>
+              <div>
+                <strong>high-water mark</strong>
+                <small>backlog reconciled with live subscription</small>
+              </div>
+              <span>HANDOFF</span>
+            </li>
+            <li class="event-recorder__live">
+              <span class="event-recorder__seq">0132</span>
+              <div>
+                <strong>turn.completed</strong>
+                <small>critical · persisted</small>
+              </div>
+              <span class="event-recorder__state">LIVE</span>
+            </li>
+          </ol>
+          <div class="event-recorder__foot">
+            <span><i aria-hidden="true"></i> STREAM ATTACHED</span>
+            <span>SQLITE IS TRUTH</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="lake-section lake-operations shell">
+      <header class="lake-section__header">
+        <p class="lake-eyebrow">Host work and agent teams</p>
+        <p class="lake-section__folio">03 / OWNERSHIP ALL THE WAY DOWN</p>
+      </header>
+
+      <div class="lake-operations__intro">
+        <h2>Work has a place. Coordination has a delivery state.</h2>
+        <p>
+          An agent that can edit a repository and run a build needs more than a
+          chat transcript. Gooselake makes the host resources and the handoffs
+          between agents explicit, durable, and queryable.
+        </p>
+      </div>
+
+      <div class="operations-grid">
+        <article class="operations-panel operations-panel--host">
+          <div class="operations-panel__head">
+            <span>HOST MANIFEST</span>
+            <span>OWNED RESOURCES</span>
+          </div>
+          <div class="host-record">
+            <span class="host-record__icon" aria-hidden="true">⌁</span>
+            <div>
+              <small>WORKTREE / WT_03</small>
+              <strong>feature/agent-runtime</strong>
+              <span>claim: sess_codex_14 · cleanup: on release</span>
+            </div>
+          </div>
+          <div class="host-record">
+            <span class="host-record__icon" aria-hidden="true">›_</span>
+            <div>
+              <small>PROCESS / PROC_92</small>
+              <strong>bun test</strong>
+              <span>owner: sess_codex_14 · logs: authoritative</span>
+            </div>
+          </div>
+          <p>
+            Creation, claims, lifecycle, logs, and cleanup stay separate so the
+            runtime can explain exactly who owns what.
+          </p>
+          <a href="/docs/workflows">
+            Follow the host workflows
+            <span aria-hidden="true">↗</span>
+          </a>
         </article>
-      ))}
-    </div>
-  </section>
 
-  <section class="shell split-section">
-    <div>
-      <p class="section-label">Who it is for</p>
-      <h2>Teams building agent systems with operational consequences.</h2>
-    </div>
-    <div class="stack-list">
-      {audience.map((item) => (
-        <article class="stack-list__item">
-          <p>{item}</p>
+        <article class="operations-panel operations-panel--team">
+          <div class="operations-panel__head">
+            <span>TEAM DELIVERY / MSG_81</span>
+            <span>NON-INTERRUPTING</span>
+          </div>
+          <div class="delivery-flow" aria-label="Team message delivery states">
+            <div>
+              <span>01</span>
+              <strong>Message recorded</strong>
+              <small>idempotency key accepted</small>
+            </div>
+            <i aria-hidden="true"></i>
+            <div class="delivery-flow__active">
+              <span>02</span>
+              <strong>Recipient busy</strong>
+              <small>delivery deferred</small>
+            </div>
+            <i aria-hidden="true"></i>
+            <div>
+              <span>03</span>
+              <strong>Turn boundary</strong>
+              <small>inject, retry, or cancel</small>
+            </div>
+          </div>
+          <p>
+            A direct message or broadcast becomes one message plus a delivery
+            record per recipient. Restart the runtime and deferred delivery is
+            still runtime state.
+          </p>
+          <a href="/docs/teams">
+            See delivery semantics
+            <span aria-hidden="true">↗</span>
+          </a>
         </article>
-      ))}
-    </div>
-  </section>
+      </div>
+    </section>
 
-  <section class="shell capability-band">
-    <div class="capability-band__intro">
-      <p class="section-label">Core capabilities</p>
-      <h2>The runtime owns what the product will eventually depend on anyway.</h2>
-    </div>
-    <div class="capability-band__grid">
-      <div>
-        <p class="capability-title">Execution</p>
-        <p>Provider-backed turns, terminal output, approvals, and recovery paths.</p>
-      </div>
-      <div>
-        <p class="capability-title">Transport</p>
-        <p>HTTP control APIs, SSE fanout, replayable histories, and reconnect-safe clients.</p>
-      </div>
-      <div>
-        <p class="capability-title">Host operations</p>
-        <p>Processes, worktrees, filesystem actions, and MCP sidecar plumbing.</p>
-      </div>
-      <div>
-        <p class="capability-title">Coordination</p>
-        <p>Team messaging, delivery semantics, and machine-local operational boundaries.</p>
-      </div>
-    </div>
-  </section>
+    <section class="client-boundary">
+      <div class="shell">
+        <header class="lake-section__header">
+          <p class="lake-eyebrow">Thin by design</p>
+          <p class="lake-section__folio">04 / SPEND COMPLEXITY ON THE PRODUCT</p>
+        </header>
 
-  <section class="shell docs-teaser">
-    <div class="section-heading">
-      <p class="section-label">Docs map</p>
-      <h2>A docs area built for first contact, not just API archaeology.</h2>
-      <p>
-        Start with setup, then move through concepts and operator workflows to
-        understand how the runtime behaves once it is doing real work.
-      </p>
-    </div>
-    <div class="docs-teaser__grid">
-      {docs.map((entry) => (
-        <a class="docs-teaser__card" href={`/docs/${entry.id}`}>
-          <span>{entry.data.category}</span>
-          <h3>{entry.data.title}</h3>
-          <p>{entry.data.summary ?? entry.data.description}</p>
-        </a>
-      ))}
-    </div>
-  </section>
-  <section class="shell closing-note">
-    <p>
-      Gooselake is what you build when you stop pretending the browser is the
-      right place to host runtime truth.
-    </p>
-  </section>
+        <div class="client-boundary__headline">
+          <h2>Build the interface your users need. Keep the runtime out of it.</h2>
+          <p>
+            A good client can be killed, restarted, and reconnected without
+            changing the runtime’s understanding of the work.
+          </p>
+        </div>
+
+        <div class="ownership-ledger">
+          <article>
+            <div class="ownership-ledger__head">
+              <span>CLIENT RETAINS</span>
+              <span>EPHEMERAL</span>
+            </div>
+            <ul>
+              {clientState.map((item, index) => (
+                <li><span>{String(index + 1).padStart(2, "0")}</span>{item}</li>
+              ))}
+            </ul>
+          </article>
+          <div class="ownership-ledger__seam" aria-hidden="true">
+            <span>HTTP / SSE</span>
+          </div>
+          <article class="ownership-ledger__runtime">
+            <div class="ownership-ledger__head">
+              <span>RUNTIME OWNS</span>
+              <span>DURABLE</span>
+            </div>
+            <ul>
+              {runtimeTruth.map((item, index) => (
+                <li><span>{String(index + 1).padStart(2, "0")}</span>{item}</li>
+              ))}
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="lake-section lake-guides shell">
+      <header class="lake-section__header">
+        <p class="lake-eyebrow">Documentation flight plan</p>
+        <p class="lake-section__folio">05 / ENTER FROM WHERE YOU STAND</p>
+      </header>
+
+      <div class="lake-guides__heading">
+        <h2>From first boot to day-two operations.</h2>
+        <div>
+          <p>
+            The manual is organized around how the runtime behaves, not around
+            a list of crates. Pick the route that matches the work in front of
+            you.
+          </p>
+          <a href="/docs">
+            Browse the complete manual
+            <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="reading-paths">
+        {readingPaths.map((path, index) => (
+          <a class="reading-path" href={path.href}>
+            <div class="reading-path__meta">
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <span>{path.marker}</span>
+            </div>
+            <h3>{path.title}</h3>
+            <p>{path.body}</p>
+            <span class="reading-path__link">
+              {path.link}
+              <i aria-hidden="true">↗</i>
+            </span>
+          </a>
+        ))}
+      </div>
+    </section>
+
+    <section class="lake-closing">
+      <div class="shell lake-closing__grid">
+        <div>
+          <p class="lake-eyebrow">Control tower, not cockpit</p>
+          <h2>Give the next agent product a foundation that already knows how to survive.</h2>
+        </div>
+        <div class="lake-closing__action">
+          <p>
+            Start locally, create one provider-backed session, and watch the
+            runtime retain its own receipts.
+          </p>
+          <a class="lake-button lake-button--signal" href="/docs/setup">
+            Open the quick start
+            <span aria-hidden="true">↗</span>
+          </a>
+          <a class="lake-closing__github" href="https://github.com/amxv/gooselake" target="_blank" rel="noreferrer">
+            Inspect the source on GitHub
+            <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </div>
+    </section>
+  </div>
 </BaseLayout>

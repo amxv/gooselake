@@ -181,8 +181,8 @@ describe('claude client bridge behavior', () => {
         supportsToolCalling: true,
       },
       {
-        value: 'claude-opus-4-8',
-        displayName: 'Claude Opus 4.8',
+        value: 'claude-opus-5',
+        displayName: 'Claude Opus 5',
         supportsEffort: true,
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
         supportsVision: true,
@@ -212,8 +212,8 @@ describe('claude client bridge behavior', () => {
       mode: 'sdk',
       sdkSupportedModels: async () => [
         {
-          value: ' claude-opus-4-8 ',
-          displayName: ' Claude Opus 4.8 ',
+          value: ' claude-opus-5 ',
+          displayName: ' Claude Opus 5 ',
           supportsEffort: true,
           supportedEffortLevels: ['HIGH', ' medium ', ''],
           supportsVision: true,
@@ -230,8 +230,8 @@ describe('claude client bridge behavior', () => {
     const models = await client.supportedModels()
     expect(models).toEqual([
       {
-        value: 'claude-opus-4-8',
-        displayName: 'Claude Opus 4.8',
+        value: 'claude-opus-5',
+        displayName: 'Claude Opus 5',
         supportsEffort: true,
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
         supportsVision: true,

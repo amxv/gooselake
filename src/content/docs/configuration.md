@@ -240,7 +240,7 @@ thinking_effort = "low"
 [[teams.model_presets]]
 name = "deep"
 provider = "claude"
-model = "claude-opus-4-8"
+model = "claude-opus-5"
 thinking_effort = "high"
 ```
 

@@ -49,8 +49,8 @@ impl RuntimeProvider for ClaudeProvider {
                 reasoning_levels: Vec::new(),
             },
             ProviderModel {
-                id: "claude-opus-4-8".to_string(),
-                display_name: "Claude Opus 4.8".to_string(),
+                id: "claude-opus-5".to_string(),
+                display_name: "Claude Opus 5".to_string(),
                 reasoning_levels: Vec::new(),
             },
             ProviderModel {

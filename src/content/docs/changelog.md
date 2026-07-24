@@ -8,6 +8,15 @@ summary: Version-by-version changes for the Gooselake runtime.
 
 This changelog tracks code and product changes in Gooselake. It intentionally skips docs-site-only updates.
 
+## 0.1.6 - 2026-07-25
+
+- Upgraded the Claude model catalog, built-in team presets, and bundled Claude bridge from Opus 4.8 to Opus 5.
+- Expanded the Codex GPT model catalog and aligned runtime model metadata, including supported reasoning levels.
+- Refactored oversized Rust modules into smaller, stable module trees while preserving their public paths and behavior.
+- Hardened bundled `gg-mcp-server` binary discovery and declared its binary target explicitly.
+- Added a repo-wide validation target and Rust source file-length enforcement.
+- Updated the GitHub release workflow to Node 24-compatible action versions.
+
 ## 0.1.5 — 2026-07-06
 
 - Maintenance release. No direct code behavior changes beyond release preparation.

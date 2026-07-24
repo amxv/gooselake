@@ -374,12 +374,12 @@ impl Default for TeamModelPresetConfig {
 fn default_team_model_presets() -> Vec<TeamModelPresetConfig> {
     [
         ("planner", None, "gpt-5.5", Some("high")),
-        ("designer", Some("claude"), "claude-opus-4-8", Some("high")),
+        ("designer", Some("claude"), "claude-opus-5", Some("high")),
         ("frontend", None, "gpt-5.5", Some("high")),
         ("fast", Some("codex"), "gpt-5.4-mini", Some("low")),
         ("codex", Some("codex"), "gpt-5.5", Some("high")),
-        ("deep", Some("claude"), "claude-opus-4-8", Some("high")),
-        ("opus", Some("claude"), "claude-opus-4-8", Some("high")),
+        ("deep", Some("claude"), "claude-opus-5", Some("high")),
+        ("opus", Some("claude"), "claude-opus-5", Some("high")),
         ("sonnet", Some("claude"), "claude-sonnet-5", Some("high")),
     ]
     .into_iter()

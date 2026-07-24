@@ -11,7 +11,7 @@ fn test_team_model_presets() -> Vec<TeamModelPreset> {
         TeamModelPreset {
             name: "deep".to_string(),
             provider: Some("claude".to_string()),
-            model: "claude-opus-4-8".to_string(),
+            model: "claude-opus-5".to_string(),
             thinking_effort: Some("high".to_string()),
         },
     ]

@@ -29,3 +29,21 @@ tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "net", "sig
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Keep local edit/build/test loops fast while retaining useful file/line
+# backtraces. Dependencies do not need debug info for normal development.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+
+[profile.test.package."*"]
+debug = false
+
+[profile.debugging]
+inherits = "dev"
+debug = true

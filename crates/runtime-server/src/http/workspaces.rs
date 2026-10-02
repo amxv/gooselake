@@ -1,7 +1,7 @@
 use super::*;
 use runtime_core::{prepare_workspace_registration, OperationActor, WorkspaceRegisterRequest};
 
-const OPERATOR_PRINCIPAL: &str = "runtime_operator";
+pub(super) const OPERATOR_PRINCIPAL: &str = "runtime_operator";
 
 pub(super) async fn register_workspace(
     State(state): State<AppState>,
@@ -50,7 +50,7 @@ pub(super) async fn get_operation(
     Ok(Json(operation))
 }
 
-fn parse_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+pub(super) fn parse_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
     let Some(value) = headers.get("idempotency-key") else {
         return Ok(None);
     };

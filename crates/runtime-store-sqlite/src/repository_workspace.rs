@@ -184,7 +184,7 @@ impl SqliteRuntimeRepository {
     }
 }
 
-fn operation_by_idempotency(
+pub(crate) fn operation_by_idempotency(
     connection: &Connection,
     actor_kind: OperationActorKind,
     actor_id: &str,
@@ -256,7 +256,7 @@ fn operation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OperationReco
     })
 }
 
-fn workspace_by_canonical_root(
+pub(crate) fn workspace_by_canonical_root(
     connection: &Connection,
     canonical_root: &str,
 ) -> Result<Option<WorkspaceRecord>, RuntimeError> {
@@ -272,7 +272,7 @@ fn workspace_by_canonical_root(
         .map_err(|error| db_error("failed querying workspace by canonical root", error))
 }
 
-fn workspace_by_id(
+pub(crate) fn workspace_by_id(
     connection: &Connection,
     workspace_id: &str,
 ) -> Result<Option<WorkspaceRecord>, RuntimeError> {

@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 2;
+pub(crate) const SCHEMA_VERSION: i64 = 3;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -341,6 +341,92 @@ CREATE TABLE runtime_operation_outbox_receipts (
 );
 "#;
 
+const MIGRATION_3_SQL: &str = r#"
+CREATE TABLE retired_workspaces (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
+  canonical_root TEXT NOT NULL UNIQUE,
+  retired_by_operation_id TEXT REFERENCES runtime_operations(operation_id),
+  retired_at INTEGER NOT NULL,
+  CHECK (length(trim(canonical_root)) > 0)
+);
+
+CREATE TABLE workspace_session_ownership (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE RESTRICT,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE RESTRICT,
+  source TEXT NOT NULL,
+  source_operation_id TEXT REFERENCES runtime_operations(operation_id),
+  created_at INTEGER NOT NULL,
+  UNIQUE (workspace_id, session_id),
+  CHECK (length(trim(source)) > 0)
+);
+
+CREATE TRIGGER workspace_session_ownership_workspace_immutable
+BEFORE UPDATE OF workspace_id ON workspace_session_ownership
+WHEN OLD.workspace_id <> NEW.workspace_id
+BEGIN
+  SELECT RAISE(ABORT, 'workspace session ownership is immutable');
+END;
+
+CREATE TABLE workspace_agent_profiles (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE RESTRICT,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE RESTRICT,
+  title TEXT,
+  title_provenance TEXT NOT NULL,
+  added_by TEXT NOT NULL,
+  creator_session_id TEXT REFERENCES sessions(id),
+  creator_compaction_subscription TEXT NOT NULL DEFAULT 'auto',
+  joined_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (workspace_id, session_id)
+    REFERENCES workspace_session_ownership(workspace_id, session_id) ON DELETE RESTRICT,
+  CHECK (length(trim(title_provenance)) > 0),
+  CHECK (length(trim(added_by)) > 0),
+  CHECK (length(trim(creator_compaction_subscription)) > 0)
+);
+
+CREATE INDEX idx_workspace_agent_profiles_workspace
+ON workspace_agent_profiles(workspace_id, joined_at, session_id);
+
+CREATE TABLE legacy_workspace_migration_subjects (
+  subject_kind TEXT NOT NULL CHECK (
+    subject_kind IN ('session', 'team', 'team_member', 'managed_worktree', 'worktree_claim')
+  ),
+  subject_id TEXT NOT NULL,
+  classification TEXT NOT NULL CHECK (
+    classification IN ('mapped', 'archived_history', 'unresolved')
+  ),
+  workspace_id TEXT REFERENCES workspaces(workspace_id) ON DELETE RESTRICT,
+  canonical_root TEXT,
+  git_common_dir TEXT,
+  repository_fingerprint TEXT,
+  reason_code TEXT NOT NULL,
+  evidence_json TEXT NOT NULL CHECK (json_valid(evidence_json)),
+  resolution_source TEXT NOT NULL CHECK (
+    resolution_source IN ('deterministic', 'operator_map', 'operator_archive')
+  ),
+  applied_at INTEGER,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (subject_kind, subject_id),
+  CHECK (length(trim(subject_id)) > 0),
+  CHECK (length(trim(reason_code)) > 0)
+);
+
+CREATE INDEX idx_legacy_workspace_migration_classification
+ON legacy_workspace_migration_subjects(classification, subject_kind, subject_id);
+
+CREATE INDEX idx_legacy_workspace_migration_workspace
+ON legacy_workspace_migration_subjects(workspace_id, subject_kind, subject_id)
+WHERE workspace_id IS NOT NULL;
+
+CREATE TABLE legacy_workspace_migration_state (
+  migration_key TEXT PRIMARY KEY,
+  previewed_at INTEGER NOT NULL,
+  CHECK (migration_key = 'workspace_authority')
+);
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -349,5 +435,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 2,
         sql: MIGRATION_2_SQL,
+    },
+    Migration {
+        version: 3,
+        sql: MIGRATION_3_SQL,
     },
 ];

@@ -71,8 +71,7 @@ fn build_openapi_yaml() -> String {
             if !route.requires_auth {
                 out.push_str("      security: []\n");
             }
-            append_path_parameters(&mut out, &path);
-            append_header_parameters(&mut out, &path, method);
+            append_parameters(&mut out, &path, method);
             append_request_body(&mut out, &path, method);
             append_response(&mut out, &path, method);
         }
@@ -187,6 +186,18 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/workspaces") => "Register workspace".to_string(),
         (HttpMethod::Get, "/v2/workspaces") => "List workspaces".to_string(),
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}") => "Get workspace".to_string(),
+        (HttpMethod::Get, "/v2/migrations/workspaces") => {
+            "Get legacy workspace migration status".to_string()
+        }
+        (HttpMethod::Post, "/v2/migrations/workspaces/preview") => {
+            "Preview and persist legacy workspace migration".to_string()
+        }
+        (HttpMethod::Post, "/v2/migrations/workspaces/apply") => {
+            "Apply deterministic legacy workspace migration".to_string()
+        }
+        (HttpMethod::Post, "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}") => {
+            "Resolve legacy workspace migration subject".to_string()
+        }
         (HttpMethod::Get, "/v2/operations/{operation_id}") => "Get durable operation".to_string(),
         (HttpMethod::Get, "/v1/mcp/capabilities") => "Runtime MCP capabilities".to_string(),
         (HttpMethod::Post, "/v1/mcp/invoke") => "Invoke runtime MCP tool".to_string(),
@@ -194,7 +205,7 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
     }
 }
 
-fn append_path_parameters(out: &mut String, path: &str) {
+fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
     let mut params = Vec::new();
     let mut index = 0usize;
     while let Some(start) = path[index..].find('{') {
@@ -210,7 +221,14 @@ fn append_path_parameters(out: &mut String, path: &str) {
             break;
         }
     }
-    if params.is_empty() {
+    let accepts_idempotency_key = method == HttpMethod::Post
+        && matches!(
+            path,
+            "/v2/workspaces"
+                | "/v2/migrations/workspaces/apply"
+                | "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}"
+        );
+    if params.is_empty() && !accepts_idempotency_key {
         return;
     }
     out.push_str("      parameters:\n");
@@ -223,18 +241,13 @@ fn append_path_parameters(out: &mut String, path: &str) {
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
     }
-}
-
-fn append_header_parameters(out: &mut String, path: &str, method: HttpMethod) {
-    if path != "/v2/workspaces" || method != HttpMethod::Post {
-        return;
+    if accepts_idempotency_key {
+        out.push_str("        - name: Idempotency-Key\n");
+        out.push_str("          in: header\n");
+        out.push_str("          required: false\n");
+        out.push_str("          schema:\n");
+        out.push_str("            type: string\n");
     }
-    out.push_str("      parameters:\n");
-    out.push_str("        - name: Idempotency-Key\n");
-    out.push_str("          in: header\n");
-    out.push_str("          required: false\n");
-    out.push_str("          schema:\n");
-    out.push_str("            type: string\n");
 }
 
 fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
@@ -265,6 +278,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v1/teams/{team_id}/messages/{message_id}/cancel"
             | "/v1/teams/{team_id}/interrupt-all"
             | "/v2/workspaces"
+            | "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}"
     );
     if !expects_multipart && !expects_json {
         return;
@@ -472,8 +486,27 @@ mod tests {
         assert!(yaml.contains("  /v1/mcp/invoke:"));
         assert!(yaml.contains("  /v1/providers/acp/auth/status:"));
         assert!(yaml.contains("  /v2/workspaces:"));
+        assert!(yaml.contains("  /v2/migrations/workspaces:"));
+        assert!(yaml.contains("  /v2/migrations/workspaces/preview:"));
+        assert!(yaml.contains("  /v2/migrations/workspaces/apply:"));
+        assert!(
+            yaml.contains("  /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}:")
+        );
         assert!(yaml.contains("  /v2/operations/{operation_id}:"));
         assert!(yaml.contains("        - name: Idempotency-Key"));
         assert!(yaml.contains("  /openapi.yaml:"));
+
+        let resolution_start = yaml
+            .find("  /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}:\n")
+            .expect("workspace migration resolution route");
+        let resolution_tail = &yaml[resolution_start..];
+        let resolution_end = resolution_tail
+            .find("\n  /v2/operations/{operation_id}:")
+            .expect("route following workspace migration resolution");
+        let resolution = &resolution_tail[..resolution_end];
+        assert_eq!(resolution.matches("      parameters:\n").count(), 1);
+        assert!(resolution.contains("        - name: subject_kind\n"));
+        assert!(resolution.contains("        - name: subject_id\n"));
+        assert!(resolution.contains("        - name: Idempotency-Key\n"));
     }
 }

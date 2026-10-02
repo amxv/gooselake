@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use runtime_core::{
-    ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, RuntimeError,
-    RuntimeEventCriticality, RuntimeEventScope,
+    resolve_repository_identity, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
+    NewRuntimeEvent, RuntimeError, RuntimeEventCriticality, RuntimeEventScope,
 };
 use serde_json::Value;
 
@@ -112,24 +112,7 @@ impl RuntimeWorktreeService {
     pub(super) fn resolve_repo_root_from_source_cwd(
         source_cwd: &str,
     ) -> Result<String, RuntimeError> {
-        let output = StdCommand::new("git")
-            .arg("-C")
-            .arg(source_cwd)
-            .args(["rev-parse", "--show-toplevel"])
-            .output()
-            .map_err(|error| RuntimeError::Io(format!("failed to run git rev-parse: {error}")))?;
-        if !output.status.success() {
-            return Err(RuntimeError::InvalidState(
-                "source session cwd is not inside a git repository".to_string(),
-            ));
-        }
-        let repo_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if repo_root.is_empty() {
-            return Err(RuntimeError::InvalidState(
-                "unable to resolve git repository root".to_string(),
-            ));
-        }
-        Ok(repo_root)
+        resolve_repository_identity(Path::new(source_cwd)).map(|identity| identity.canonical_root)
     }
 
     pub(super) fn plan_worktree_paths(

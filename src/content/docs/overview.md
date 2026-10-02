@@ -88,7 +88,7 @@ You are trying to change implementation without breaking the runtime contract.
 
 Gooselake owns these responsibilities because clients are poor places to keep them:
 
-- canonical workspace identity and durable operation/idempotency records for workspace mutations
+- canonical workspace identity, deterministic legacy-authority migration, and durable operation/idempotency records for workspace mutations
 - provider-backed sessions and opaque provider references
 - one-active-turn session coordination
 - durable turns, approvals, and terminal states

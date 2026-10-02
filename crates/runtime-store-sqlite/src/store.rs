@@ -2,11 +2,13 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use runtime_core::{
-    ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
-    RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    ApprovalRecord, LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
+    LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
+    LegacyWorkspaceMigrationStatus, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
+    NewRuntimeEvent, OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord,
+    RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord,
+    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
+    TeamRecord, TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -93,6 +95,31 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn get_operation(&self, operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
         self.repository.get_operation(operation_id)
+    }
+
+    fn persist_workspace_migration_preview(
+        &self,
+        status: &LegacyWorkspaceMigrationStatus,
+    ) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
+        self.repository.persist_workspace_migration_preview(status)
+    }
+
+    fn workspace_migration_status(&self) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
+        self.repository.workspace_migration_status()
+    }
+
+    fn apply_workspace_migration(
+        &self,
+        command: &LegacyWorkspaceMigrationApplyCommand,
+    ) -> Result<LegacyWorkspaceMigrationApplyResponse, RuntimeError> {
+        self.repository.apply_workspace_migration(command)
+    }
+
+    fn resolve_workspace_migration_subject(
+        &self,
+        command: &LegacyWorkspaceMigrationResolutionCommand,
+    ) -> Result<LegacyWorkspaceMigrationResolutionResponse, RuntimeError> {
+        self.repository.resolve_workspace_migration_subject(command)
     }
 
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError> {

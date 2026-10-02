@@ -5,11 +5,13 @@ use std::collections::BTreeMap;
 use tokio::sync::broadcast;
 
 use crate::{
-    ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
-    RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
-    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    ApprovalRecord, LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
+    LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
+    LegacyWorkspaceMigrationStatus, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
+    NewRuntimeEvent, OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord,
+    RuntimeEventScope, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
+    TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 
 #[async_trait]
@@ -54,6 +56,39 @@ pub trait RuntimeStore: Send + Sync {
     fn get_operation(&self, _operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "durable operation authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn persist_workspace_migration_preview(
+        &self,
+        _status: &LegacyWorkspaceMigrationStatus,
+    ) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace migration authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn workspace_migration_status(&self) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace migration authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn apply_workspace_migration(
+        &self,
+        _command: &LegacyWorkspaceMigrationApplyCommand,
+    ) -> Result<LegacyWorkspaceMigrationApplyResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace migration authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn resolve_workspace_migration_subject(
+        &self,
+        _command: &LegacyWorkspaceMigrationResolutionCommand,
+    ) -> Result<LegacyWorkspaceMigrationResolutionResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace migration authority is not implemented by this runtime store".to_string(),
         ))
     }
 

@@ -49,7 +49,7 @@ See [Endpoint Catalog](/docs/endpoint-catalog) for the full route list.
 
 Top-level groups:
 
-- Workspace authority: durable workspace registration/list/get and operation inspection under `/v2`
+- Workspace authority: durable workspace registration/list/get, legacy-authority migration, and operation inspection under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
 - Providers/auth: provider list/models plus Codex, Claude, and ACP auth endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
@@ -111,6 +111,53 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/operations/$OPERATION_
 The operation endpoint exposes the durable operation row plus current claims, transition evidence, effect evidence, outbox rows, and delivery receipts. Workspace registration itself is committed in one SQLite transaction with its operation transitions and canonical-root claim/fence bookkeeping, so a failed commit does not leave a half-created workspace or a falsely terminal operation.
 
 Existing session/team/process/worktree APIs remain under `/v1`; `/v2` is introduced incrementally rather than changing `/v1` behavior in place.
+
+### Migrating legacy workspace authority
+
+The migration surface turns existing `/v1` session/team/worktree evidence into explicit workspace authority without rewriting the legacy rows.
+
+Preview the current classification:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/migrations/workspaces/preview"
+```
+
+The preview persists a diagnostic row for every legacy session, team, team member, managed worktree, and worktree claim. Each subject is classified as `mapped`, `archived_history`, or `unresolved`. Repository identity comes from canonical Git filesystem evidence, including the Git common directory shared by linked worktrees; display names are never used as authority.
+
+Apply all deterministic results:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: migrate-legacy-workspaces" \
+  "$BASE_URL/v2/migrations/workspaces/apply"
+```
+
+Run preview before apply; apply consumes the persisted preview rather than silently refreshing it. Apply creates durable workspace/session ownership and placeholder workspace-agent profiles only for subjects whose repository authority is proven. `unresolved` subjects receive no guessed ownership and keep `cutover_blocked: true` until they are explicitly resolved. Re-running apply is convergent; an exact `Idempotency-Key` retry replays the original terminal operation result without reclassifying legacy rows as a hidden side effect.
+
+Read migration diagnostics:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/migrations/workspaces"
+```
+
+An operator can explicitly map an unresolved subject to an existing active workspace:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: resolve-session-123" \
+  -d "{\"action\":\"map\",\"workspace_id\":\"$WORKSPACE_ID\"}" \
+  "$BASE_URL/v2/migrations/workspaces/resolutions/session/session_123"
+```
+
+Or explicitly classify an unresolved historical subject as archived by sending `{ "action": "archive", "workspace_id": null }` to the same resolution route. Operator resolutions are persisted and are not overwritten by later preview refreshes.
+
+The migration is additive: existing `/v1` session, team, process, and worktree rows and read routes remain intact throughout preview, apply, and explicit resolution.
 
 ## Sessions
 

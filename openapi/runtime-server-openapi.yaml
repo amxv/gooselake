@@ -1025,6 +1025,74 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/migrations/workspaces:
+    get:
+      summary: Get legacy workspace migration status
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/migrations/workspaces/apply:
+    post:
+      summary: Apply deterministic legacy workspace migration
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/migrations/workspaces/preview:
+    post:
+      summary: Preview and persist legacy workspace migration
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}:
+    post:
+      summary: Resolve legacy workspace migration subject
+      parameters:
+        - name: subject_kind
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: subject_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/operations/{operation_id}:
     get:
       summary: Get durable operation

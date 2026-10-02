@@ -36,6 +36,7 @@ mod processes;
 mod sessions;
 mod shared;
 mod teams;
+mod workspace_migrations;
 mod workspaces;
 mod worktrees;
 
@@ -47,6 +48,7 @@ use processes::*;
 use sessions::*;
 use shared::*;
 use teams::*;
+use workspace_migrations::*;
 use workspaces::*;
 use worktrees::*;
 
@@ -169,6 +171,22 @@ pub fn build_router(state: AppState) -> Router {
     let protected_v2 = Router::new()
         .route("/workspaces", post(register_workspace).get(list_workspaces))
         .route("/workspaces/{workspace_id}", get(get_workspace))
+        .route(
+            "/migrations/workspaces",
+            get(get_workspace_migration_status),
+        )
+        .route(
+            "/migrations/workspaces/preview",
+            post(preview_workspace_migration),
+        )
+        .route(
+            "/migrations/workspaces/apply",
+            post(apply_workspace_migration),
+        )
+        .route(
+            "/migrations/workspaces/resolutions/{subject_kind}/{subject_id}",
+            post(resolve_workspace_migration_subject),
+        )
         .route("/operations/{operation_id}", get(get_operation))
         .route_layer(middleware::from_fn_with_state(
             state.bearer_token.clone(),

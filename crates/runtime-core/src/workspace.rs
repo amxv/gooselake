@@ -301,7 +301,9 @@ fn workspace_display_name(
     Ok(display_name)
 }
 
-fn normalize_idempotency_key(value: Option<String>) -> Result<Option<String>, RuntimeError> {
+pub(crate) fn normalize_idempotency_key(
+    value: Option<String>,
+) -> Result<Option<String>, RuntimeError> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -319,7 +321,7 @@ fn normalize_idempotency_key(value: Option<String>) -> Result<Option<String>, Ru
     Ok(Some(normalized.to_string()))
 }
 
-fn normalized_json_hash(value: &Value) -> Result<String, RuntimeError> {
+pub(crate) fn normalized_json_hash(value: &Value) -> Result<String, RuntimeError> {
     let bytes = serde_json::to_vec(value).map_err(|error| {
         RuntimeError::Bootstrap(format!(
             "failed serializing normalized operation input: {error}"
@@ -410,11 +412,11 @@ fn sha256_hex(input: &[u8]) -> String {
     output
 }
 
-fn opaque_id(prefix: &str) -> String {
+pub(crate) fn opaque_id(prefix: &str) -> String {
     format!("{prefix}_{:032x}", rand::random::<u128>())
 }
 
-fn unix_time_ms() -> Result<i64, RuntimeError> {
+pub(crate) fn unix_time_ms() -> Result<i64, RuntimeError> {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| {

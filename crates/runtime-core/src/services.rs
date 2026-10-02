@@ -12,7 +12,9 @@ use crate::{
     RuntimeEventScope, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
     TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
     TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRecord,
-    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
+    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
+    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 
 #[async_trait]
@@ -51,6 +53,73 @@ pub trait RuntimeStore: Send + Sync {
     fn get_workspace(&self, _workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "workspace authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn transition_workspace_lead(
+        &self,
+        _command: &WorkspaceLeadTransitionCommand,
+    ) -> Result<WorkspaceLeadTransitionResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace lead authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn begin_workspace_interrupt(
+        &self,
+        _command: &WorkspaceInterruptCommand,
+    ) -> Result<WorkspaceInterruptAdmission, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace interrupt authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn mark_workspace_interrupt_started(
+        &self,
+        _operation_id: &str,
+        _agent_id: &str,
+        _turn_id: &str,
+        _changed_at: i64,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace interrupt authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn finalize_workspace_interrupt_effect(
+        &self,
+        _operation_id: &str,
+        _agent_id: &str,
+        _turn_id: &str,
+        _interrupted: bool,
+        _reason: &str,
+        _changed_at: i64,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace interrupt authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn mark_workspace_interrupt_uncertain(
+        &self,
+        _operation_id: &str,
+        _agent_id: &str,
+        _turn_id: &str,
+        _error: &Value,
+        _changed_at: i64,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace interrupt authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn complete_workspace_interrupt(
+        &self,
+        _operation_id: &str,
+        _completed_at: i64,
+    ) -> Result<WorkspaceInterruptResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace interrupt authority is not implemented by this runtime store".to_string(),
         ))
     }
 

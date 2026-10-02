@@ -14,7 +14,8 @@ use crate::{
     RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
     TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
     TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TeamSendDirectRequest, TeamSetLeadRequest, TurnAdmissionRecord, TurnRecord,
+    TeamRecord, TeamRemoveMemberRequest, TeamSendDirectRequest, TeamSetLeadRequest,
+    TurnAdmissionRecord, TurnRecord,
 };
 
 #[derive(Default)]
@@ -577,6 +578,44 @@ async fn restart_appends_new_team_event_rows_without_event_id_collision() {
         after.iter().any(|event| event.kind == "team.lead_changed"),
         "expected team.lead_changed event to append after restart"
     );
+}
+
+#[tokio::test]
+async fn legacy_team_lead_removal_requires_explicit_reassignment_instead_of_auto_election() {
+    let store = Arc::new(TestStore::default());
+    let (runtime, service) = build_runtime_and_service(store, 0);
+    let lead = create_test_session(&runtime).await;
+    let member = create_test_session(&runtime).await;
+
+    let created = service
+        .create_team(TeamCreateRequest {
+            name: "No Auto Election".to_string(),
+            lead_agent_id: lead.clone(),
+            member_agent_ids: vec![member.clone()],
+            created_by: Some("test".to_string()),
+        })
+        .await
+        .expect("create team");
+    let team_id = created.team.id.clone();
+
+    let error = service
+        .remove_team_member(TeamRemoveMemberRequest {
+            team_id: team_id.clone(),
+            agent_id: lead.clone(),
+        })
+        .await
+        .expect_err("current lead removal must be rejected");
+    assert!(matches!(error, RuntimeError::InvalidState(_)));
+
+    let unchanged = service
+        .get_team(&team_id)
+        .await
+        .expect("team after rejection");
+    assert_eq!(unchanged.team.lead_agent_id, lead);
+    assert!(unchanged
+        .members
+        .iter()
+        .any(|candidate| candidate.agent_id == member));
 }
 
 #[tokio::test]

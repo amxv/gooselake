@@ -49,7 +49,7 @@ See [Endpoint Catalog](/docs/endpoint-catalog) for the full route list.
 
 Top-level groups:
 
-- Workspace authority: durable workspace registration plus workspace-owned agent create/list/get/archive/restore, legacy-authority migration, and operation inspection under `/v2`
+- Workspace authority: durable workspace registration, nullable/revisioned lead authority, workspace-wide turn interruption, workspace-owned agent create/list/get/archive/restore, legacy-authority migration, and operation inspection under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
 - Providers/auth: provider list/models plus Codex, Claude, and ACP auth endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
@@ -70,6 +70,7 @@ For exact JSON fields, use:
 - durable record structs in `crates/runtime-core/src/state.rs`
 - workspace/operation structs in `crates/runtime-core/src/workspace.rs`
 - workspace-agent identity/recreation structs in `crates/runtime-core/src/workspace_agent.rs`
+- workspace lead, membership-policy, and interrupt structs in `crates/runtime-core/src/workspace_control.rs`
 
 ## Workspace authority and durable operations
 
@@ -168,6 +169,47 @@ curl -fsS -X POST \
 ```
 
 An archived agent is removed from the default active roster and its underlying runtime session rejects new turns. History, workspace ownership, alias, recreation policy, and provider identity remain durable. Restore returns the same agent ID and alias and resumes the provider from the stored policy; it does not implicitly assign any future workspace role such as lead.
+
+### Workspace lead and interrupt authority
+
+Every workspace is allowed to be intentionally leadless. `GET /v2/workspaces/{workspace_id}` exposes nullable `lead_agent_id` plus the workspace `revision`; title and title provenance remain properties of the member profile and are never rewritten by lead changes.
+
+Set or reassign the lead with an optimistic revision guard:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: promote-builder" \
+  -d "{\"lead_agent_id\":\"$AGENT_ID\",\"expected_revision\":0}" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/lead"
+```
+
+Clear leadership without electing a replacement:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: clear-lead" \
+  -d '{"lead_agent_id":null,"expected_revision":1}' \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/lead"
+```
+
+`lead_agent_id`, when non-null, must name an active agent in the same workspace. SQLite enforces that invariant at commit time. A successful change increments the workspace revision; a stale `expected_revision` returns HTTP `409`. Exact retries under the same `Idempotency-Key` replay the original terminal result. Archiving the current lead clears leadership atomically and increments the workspace revision; restoring that agent leaves it as an ordinary active member. There is no oldest-member or other automatic lead election.
+
+The runtime membership authority follows the same workspace policy as Golden Goose: while a workspace is leadless, any active member may add or remove members. Once a lead exists, the lead may manage membership and non-leads are governed independently by the configured `non_lead_can_add_members` and `non_lead_can_remove_members` policy flags. Lead assignment itself remains an operator-only control rather than a model/member action.
+
+Interrupt every currently active turn owned by the workspace roster:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: stop-workspace-now" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/interrupt"
+```
+
+The response contains the durable `operation_id`, `workspace_id`, and deterministic `interrupted_agent_ids` / `skipped_agent_ids` sets. The runtime snapshots only active workspace members, records per-agent interrupt intent before provider calls, skips idle members, and cannot target a session outside the workspace. An exact idempotency-key retry replays the stored terminal result without issuing another provider interrupt. If a process dies after the provider accepted an interrupt but before the effect was finalized, recovery uses the durable `turn.interrupt_requested` event instead of blindly dispatching a duplicate; genuinely ambiguous effects remain non-terminal for explicit recovery rather than being guessed.
 
 ### Migrating legacy workspace authority
 

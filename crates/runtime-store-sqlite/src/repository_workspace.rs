@@ -146,7 +146,7 @@ impl SqliteRuntimeRepository {
         let mut statement = connection
             .prepare(
                 "SELECT workspace_id, canonical_root, display_name, lifecycle_state,
-                        revision, created_at, updated_at
+                        lead_agent_id, revision, created_at, updated_at
                  FROM workspaces
                  ORDER BY created_at ASC, workspace_id ASC",
             )
@@ -263,7 +263,7 @@ pub(crate) fn workspace_by_canonical_root(
     connection
         .query_row(
             "SELECT workspace_id, canonical_root, display_name, lifecycle_state,
-                    revision, created_at, updated_at
+                    lead_agent_id, revision, created_at, updated_at
              FROM workspaces WHERE canonical_root = ?1",
             params![canonical_root],
             workspace_from_row,
@@ -279,7 +279,7 @@ pub(crate) fn workspace_by_id(
     connection
         .query_row(
             "SELECT workspace_id, canonical_root, display_name, lifecycle_state,
-                    revision, created_at, updated_at
+                    lead_agent_id, revision, created_at, updated_at
              FROM workspaces WHERE workspace_id = ?1",
             params![workspace_id],
             workspace_from_row,
@@ -296,16 +296,17 @@ fn workspace_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkspaceReco
             format!("invalid workspace lifecycle state {lifecycle_text:?}"),
         )
     })?;
-    let revision: i64 = row.get(4)?;
+    let revision: i64 = row.get(5)?;
     Ok(WorkspaceRecord {
         workspace_id: row.get(0)?,
         canonical_root: row.get(1)?,
         display_name: row.get(2)?,
         lifecycle_state,
+        lead_agent_id: row.get(4)?,
         revision: u64::try_from(revision)
-            .map_err(|_| invalid_text(4, "negative workspace revision".to_string()))?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+            .map_err(|_| invalid_text(5, "negative workspace revision".to_string()))?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 

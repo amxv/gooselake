@@ -29,6 +29,8 @@ Auth legend:
 - `POST /v2/workspaces` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/workspaces` (Bearer)
 - `GET /v2/workspaces/{workspace_id}` (Bearer)
+- `POST /v2/workspaces/{workspace_id}/lead` (Bearer, JSON; optional `Idempotency-Key` header)
+- `POST /v2/workspaces/{workspace_id}/interrupt` (Bearer; optional `Idempotency-Key` header)
 - `POST /v2/workspaces/{workspace_id}/agents` (Bearer, JSON)
 - `GET /v2/workspaces/{workspace_id}/agents` (Bearer; optional `lifecycle=active|archived|all`, defaults to `active`)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` (Bearer)
@@ -41,6 +43,12 @@ Auth legend:
 - `GET /v2/operations/{operation_id}` (Bearer)
 
 Workspace registration canonicalizes the requested filesystem root and uses that canonical root as the durable uniqueness key. Repeated or concurrent registrations of the same root converge on one workspace identity. With `Idempotency-Key`, an exact retry replays the original terminal result; a different normalized request under the same key returns HTTP `409` without changing state.
+
+Workspace leadership is nullable and revisioned. `POST /v2/workspaces/{workspace_id}/lead` accepts `lead_agent_id` (`string` or `null`) plus `expected_revision`. Non-null leads must be active members of that exact workspace, enforced by both service validation and SQLite triggers. Set/reassign/clear operations use compare-and-swap revision authority and durable operation identity. Archiving the current lead atomically clears leadership; restore never promotes it again. No workspace or legacy-team code path auto-elects a replacement lead.
+
+Workspace membership authorization is leadless-aware: an active member can manage membership when no lead exists; once a lead is set, non-lead add/remove authority follows the configured add/remove flags. Lead assignment itself is reserved for the operator surface.
+
+`POST /v2/workspaces/{workspace_id}/interrupt` snapshots the authoritative active roster and active turn IDs, records durable per-agent effect intent before provider calls, and returns sorted `interrupted_agent_ids` and `skipped_agent_ids`. Idle members are skipped, agents outside the workspace are never touched, and exact `Idempotency-Key` retries replay the original result without redispatch. Durable effect/event evidence supports restart recovery without blindly duplicating an interrupt whose provider outcome may already have crossed the execution boundary.
 
 Workspace-agent creation is the canonical normal `/v2` agent path. The runtime reuses the opaque `sess_*` session ID as the public agent ID, assigns a globally unique durable friendly alias, and commits the session row, immutable workspace ownership, profile, active roster membership, and exact recreation policy in one SQLite transaction. The recreation policy contains provider, model, permission intent, setting sources, system prompt, allowed/disallowed tools, authoritative cwd, and harness-version slot. Provider-native session references remain separate from the public ID and alias.
 
@@ -120,6 +128,8 @@ Global event query parameters:
 - `GET /v1/teams/{team_id}/events` (Bearer)
 - `GET /v1/teams/{team_id}/events/stream` (Bearer, SSE)
 - `POST /v1/teams/{team_id}/interrupt-all` (Bearer)
+
+Legacy `/v1` teams still require a non-null lead. Removing the current legacy lead is rejected until another lead is explicitly assigned; the runtime no longer promotes the oldest remaining member automatically.
 
 Team query parameters:
 - messages: `cursor`, `limit`

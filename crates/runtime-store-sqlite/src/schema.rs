@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 5;
+pub(crate) const SCHEMA_VERSION: i64 = 6;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -501,6 +501,51 @@ BEGIN
 END;
 "#;
 
+const MIGRATION_6_SQL: &str = r#"
+ALTER TABLE workspaces ADD COLUMN lead_agent_id TEXT REFERENCES sessions(id);
+
+CREATE TRIGGER workspace_lead_must_be_active_member_insert
+BEFORE INSERT ON workspaces
+WHEN NEW.lead_agent_id IS NOT NULL
+ AND NOT EXISTS (
+   SELECT 1
+   FROM workspace_agents agent
+   WHERE agent.workspace_id = NEW.workspace_id
+     AND agent.session_id = NEW.lead_agent_id
+     AND agent.lifecycle_state = 'active'
+ )
+BEGIN
+  SELECT RAISE(ABORT, 'workspace lead must be an active same-workspace member');
+END;
+
+CREATE TRIGGER workspace_lead_must_be_active_member_update
+BEFORE UPDATE OF lead_agent_id ON workspaces
+WHEN NEW.lead_agent_id IS NOT NULL
+ AND NOT EXISTS (
+   SELECT 1
+   FROM workspace_agents agent
+   WHERE agent.workspace_id = NEW.workspace_id
+     AND agent.session_id = NEW.lead_agent_id
+     AND agent.lifecycle_state = 'active'
+ )
+BEGIN
+  SELECT RAISE(ABORT, 'workspace lead must be an active same-workspace member');
+END;
+
+CREATE TRIGGER workspace_lead_cannot_be_archived
+BEFORE UPDATE OF lifecycle_state ON workspace_agents
+WHEN NEW.lifecycle_state = 'archived'
+ AND EXISTS (
+   SELECT 1
+   FROM workspaces workspace
+   WHERE workspace.workspace_id = NEW.workspace_id
+     AND workspace.lead_agent_id = NEW.session_id
+ )
+BEGIN
+  SELECT RAISE(ABORT, 'workspace lead must be cleared before archiving the member');
+END;
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -521,5 +566,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 5,
         sql: MIGRATION_5_SQL,
+    },
+    Migration {
+        version: 6,
+        sql: MIGRATION_6_SQL,
     },
 ];

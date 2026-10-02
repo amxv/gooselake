@@ -171,6 +171,11 @@ pub fn build_router(state: AppState) -> Router {
     let protected_v2 = Router::new()
         .route("/workspaces", post(register_workspace).get(list_workspaces))
         .route("/workspaces/{workspace_id}", get(get_workspace))
+        .route("/workspaces/{workspace_id}/lead", post(set_workspace_lead))
+        .route(
+            "/workspaces/{workspace_id}/interrupt",
+            post(interrupt_workspace_turns),
+        )
         .route(
             "/workspaces/{workspace_id}/agents",
             post(create_workspace_agent).get(list_workspace_agents),

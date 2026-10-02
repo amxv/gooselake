@@ -19,6 +19,7 @@ mod recovery;
 mod sessions;
 mod turns;
 mod workspace_agents;
+mod workspace_control;
 
 #[cfg(test)]
 mod test_support;

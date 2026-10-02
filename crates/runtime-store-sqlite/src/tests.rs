@@ -109,7 +109,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
 }
 
 #[test]
@@ -172,6 +172,7 @@ fn initialize_schema_migrates_partially_populated_database_without_reset() {
 mod turn_authority;
 mod workspace_agent;
 mod workspace_authority;
+mod workspace_control;
 mod workspace_migration;
 
 #[test]

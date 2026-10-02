@@ -10,6 +10,7 @@ pub mod team_comms;
 pub mod turn_authority;
 pub mod workspace;
 pub mod workspace_agent;
+pub mod workspace_control;
 pub mod workspace_migration;
 
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
@@ -63,6 +64,13 @@ pub use workspace::{
 pub use workspace_agent::{
     WorkspaceAgentArchiveRequest, WorkspaceAgentCreateRequest, WorkspaceAgentLifecycleState,
     WorkspaceAgentProfile, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+};
+pub use workspace_control::{
+    authorize_workspace_membership_mutation, prepare_workspace_interrupt,
+    prepare_workspace_lead_transition, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
+    WorkspaceInterruptPlan, WorkspaceInterruptResponse, WorkspaceInterruptTarget,
+    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionRequest,
+    WorkspaceLeadTransitionResponse, WorkspaceMembershipAction, WorkspaceMembershipPolicy,
 };
 pub use workspace_migration::{
     plan_legacy_workspace_migration, prepare_legacy_workspace_migration_apply,

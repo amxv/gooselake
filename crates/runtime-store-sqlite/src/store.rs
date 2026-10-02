@@ -9,7 +9,9 @@ use runtime_core::{
     RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord,
     TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
     TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState,
-    WorkspaceAgentRecord, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    WorkspaceAgentRecord, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
+    WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
+    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -92,6 +94,80 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn get_workspace(&self, workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
         self.repository.get_workspace(workspace_id)
+    }
+
+    fn transition_workspace_lead(
+        &self,
+        command: &WorkspaceLeadTransitionCommand,
+    ) -> Result<WorkspaceLeadTransitionResponse, RuntimeError> {
+        self.repository.transition_workspace_lead(command)
+    }
+
+    fn begin_workspace_interrupt(
+        &self,
+        command: &WorkspaceInterruptCommand,
+    ) -> Result<WorkspaceInterruptAdmission, RuntimeError> {
+        self.repository.begin_workspace_interrupt(command)
+    }
+
+    fn mark_workspace_interrupt_started(
+        &self,
+        operation_id: &str,
+        agent_id: &str,
+        turn_id: &str,
+        changed_at: i64,
+    ) -> Result<(), RuntimeError> {
+        self.repository.mark_workspace_interrupt_started(
+            operation_id,
+            agent_id,
+            turn_id,
+            changed_at,
+        )
+    }
+
+    fn finalize_workspace_interrupt_effect(
+        &self,
+        operation_id: &str,
+        agent_id: &str,
+        turn_id: &str,
+        interrupted: bool,
+        reason: &str,
+        changed_at: i64,
+    ) -> Result<(), RuntimeError> {
+        self.repository.finalize_workspace_interrupt_effect(
+            operation_id,
+            agent_id,
+            turn_id,
+            interrupted,
+            reason,
+            changed_at,
+        )
+    }
+
+    fn mark_workspace_interrupt_uncertain(
+        &self,
+        operation_id: &str,
+        agent_id: &str,
+        turn_id: &str,
+        error: &Value,
+        changed_at: i64,
+    ) -> Result<(), RuntimeError> {
+        self.repository.mark_workspace_interrupt_uncertain(
+            operation_id,
+            agent_id,
+            turn_id,
+            error,
+            changed_at,
+        )
+    }
+
+    fn complete_workspace_interrupt(
+        &self,
+        operation_id: &str,
+        completed_at: i64,
+    ) -> Result<WorkspaceInterruptResponse, RuntimeError> {
+        self.repository
+            .complete_workspace_interrupt(operation_id, completed_at)
     }
 
     fn create_workspace_agent(

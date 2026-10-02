@@ -226,6 +226,13 @@ impl SqliteRuntimeRepository {
         let (archived_at, archive_reason) = match lifecycle {
             WorkspaceAgentLifecycleState::Active => (None, None),
             WorkspaceAgentLifecycleState::Archived => {
+                tx.execute(
+                    "UPDATE workspaces
+                     SET lead_agent_id = NULL, revision = revision + 1, updated_at = ?3
+                     WHERE workspace_id = ?1 AND lead_agent_id = ?2",
+                    params![workspace_id, agent_id, changed_at],
+                )
+                .map_err(|error| db_error("failed clearing archived workspace lead", error))?;
                 (Some(changed_at), archive_reason.map(str::to_string))
             }
         };

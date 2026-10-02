@@ -221,6 +221,11 @@ impl TeamCommsService for RuntimeTeamCommsService {
                     agent_id, team_id
                 )));
             }
+            if team_snapshot.lead_agent_id == agent_id {
+                return Err(RuntimeError::InvalidState(format!(
+                    "cannot remove legacy team lead {agent_id} from {team_id}; reassign the lead explicitly first"
+                )));
+            }
             if team.len() <= 1 {
                 return Err(RuntimeError::InvalidState(format!(
                     "cannot remove last member from team {}; delete team instead",
@@ -228,29 +233,10 @@ impl TeamCommsService for RuntimeTeamCommsService {
                 )));
             }
             team.remove(&agent_id);
-            let mut new_lead = team_snapshot.lead_agent_id.clone();
-            if team_snapshot.lead_agent_id == agent_id {
-                let next_lead = team
-                    .values()
-                    .min_by(|left, right| {
-                        left.joined_at
-                            .cmp(&right.joined_at)
-                            .then_with(|| left.agent_id.cmp(&right.agent_id))
-                    })
-                    .map(|member| member.agent_id.clone())
-                    .ok_or_else(|| {
-                        RuntimeError::InvalidState(format!(
-                            "team {} lost lead during removal",
-                            team_id
-                        ))
-                    })?;
-                new_lead = next_lead;
-            }
             let team = state
                 .teams
                 .get_mut(&team_id)
                 .ok_or_else(|| RuntimeError::NotFound(format!("team {}", team_id)))?;
-            team.lead_agent_id = new_lead;
             team.updated_at = now_ms();
             (team.clone(), agent_id)
         };

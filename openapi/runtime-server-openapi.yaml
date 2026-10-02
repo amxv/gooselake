@@ -1268,3 +1268,51 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/interrupt:
+    post:
+      summary: Interrupt active workspace turns
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/lead:
+    post:
+      summary: Set, reassign, or clear workspace lead
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"

@@ -108,6 +108,7 @@ pub struct WorkspaceRecord {
     pub canonical_root: String,
     pub display_name: String,
     pub lifecycle_state: WorkspaceLifecycleState,
+    pub lead_agent_id: Option<String>,
     pub revision: u64,
     pub created_at: i64,
     pub updated_at: i64,

@@ -1,7 +1,8 @@
 use super::*;
 use runtime_core::{
-    prepare_workspace_registration, OperationActor, WorkspaceAgentArchiveRequest,
-    WorkspaceAgentCreateRequest, WorkspaceAgentLifecycleState, WorkspaceRegisterRequest,
+    prepare_workspace_interrupt, prepare_workspace_lead_transition, prepare_workspace_registration,
+    OperationActor, WorkspaceAgentArchiveRequest, WorkspaceAgentCreateRequest,
+    WorkspaceAgentLifecycleState, WorkspaceLeadTransitionRequest, WorkspaceRegisterRequest,
 };
 
 pub(super) const OPERATOR_PRINCIPAL: &str = "runtime_operator";
@@ -38,6 +39,42 @@ pub(super) async fn get_workspace(
         .get_workspace(workspace_id.trim())?
         .ok_or_else(|| ApiError::not_found(format!("workspace {workspace_id}")))?;
     Ok(Json(workspace))
+}
+
+pub(super) async fn set_workspace_lead(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<WorkspaceLeadTransitionRequest>,
+) -> Result<Json<runtime_core::WorkspaceLeadTransitionResponse>, ApiError> {
+    let idempotency_key = parse_idempotency_key(&headers)?;
+    let command = prepare_workspace_lead_transition(
+        workspace_id.trim(),
+        request,
+        OperationActor::operator(OPERATOR_PRINCIPAL),
+        idempotency_key,
+    )?;
+    Ok(Json(
+        state
+            .app
+            .services
+            .store
+            .transition_workspace_lead(&command)?,
+    ))
+}
+
+pub(super) async fn interrupt_workspace_turns(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<runtime_core::WorkspaceInterruptResponse>, ApiError> {
+    let idempotency_key = parse_idempotency_key(&headers)?;
+    let command = prepare_workspace_interrupt(
+        workspace_id.trim(),
+        OperationActor::operator(OPERATOR_PRINCIPAL),
+        idempotency_key,
+    )?;
+    Ok(Json(state.runtime.interrupt_workspace(command).await?))
 }
 
 #[derive(Debug, Deserialize)]

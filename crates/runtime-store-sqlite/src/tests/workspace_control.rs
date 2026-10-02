@@ -265,7 +265,41 @@ fn workspace_lead_db_guards_reject_cross_workspace_and_concurrent_cas_converges(
     let two = registered_workspace(&repository, &root_two, "Two");
     let (_, first) = create_agent(&repository, &one, "sess_one_a", "one-a", "A", None);
     let (_, second) = create_agent(&repository, &one, "sess_one_b", "one-b", "B", None);
+    let (mut archived_session, archived) = create_agent(
+        &repository,
+        &one,
+        "sess_archived",
+        "one-archived",
+        "Archived",
+        None,
+    );
     let (_, outsider) = create_agent(&repository, &two, "sess_two", "two-a", "C", None);
+
+    archived_session.status = "closed".to_string();
+    archived_session.closed_at = Some(150);
+    archived_session.updated_at = 150;
+    repository
+        .set_workspace_agent_lifecycle(
+            &archived_session,
+            &archived.agent_id,
+            WorkspaceAgentLifecycleState::Archived,
+            Some("test archived lead rejection"),
+            150,
+        )
+        .expect("archive candidate");
+
+    for candidate in [Some("sess_missing"), Some(archived.agent_id.as_str())] {
+        let invalid = repository.transition_workspace_lead(&lead_command(
+            &one.workspace_id,
+            candidate,
+            0,
+            candidate.expect("candidate key"),
+        ));
+        assert!(matches!(
+            invalid,
+            Err(runtime_core::RuntimeError::InvalidState(_))
+        ));
+    }
 
     let invalid = repository.transition_workspace_lead(&lead_command(
         &one.workspace_id,
@@ -411,4 +445,83 @@ fn workspace_interrupt_snapshots_roster_and_replays_exact_terminal_result() {
     assert_eq!(details.transitions.len(), 2);
     assert_eq!(details.effects.len(), 2);
     assert!(details.claims.is_empty());
+}
+
+#[test]
+fn workspace_interrupt_recovery_uses_durable_interrupt_event_without_redispatch() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("schema");
+    let root = temp_dir.path().join("workspace");
+    std::fs::create_dir_all(&root).expect("root");
+    let workspace = registered_workspace(&repository, &root, "Interrupt Recovery");
+    let (_, active) = create_agent(
+        &repository,
+        &workspace,
+        "sess_active_recovery",
+        "active-recovery",
+        "Active",
+        Some("turn_recovery"),
+    );
+    let command = prepare_workspace_interrupt(
+        &workspace.workspace_id,
+        OperationActor::operator("workspace-control-test"),
+        Some("interrupt-recovery".to_string()),
+    )
+    .expect("interrupt command");
+    let plan = match repository
+        .begin_workspace_interrupt(&command)
+        .expect("begin interrupt")
+    {
+        WorkspaceInterruptAdmission::Execute(plan) => plan,
+        WorkspaceInterruptAdmission::Replay(_) => panic!("first admission cannot replay"),
+    };
+    repository
+        .mark_workspace_interrupt_started(
+            &plan.operation_id,
+            &active.agent_id,
+            "turn_recovery",
+            200,
+        )
+        .expect("mark started");
+    repository
+        .append_runtime_event(&NewRuntimeEvent {
+            event_id: "evt_interrupt_recovery".to_string(),
+            scope: RuntimeEventScope::Session,
+            scope_id: active.agent_id.clone(),
+            session_id: Some(active.agent_id.clone()),
+            team_id: None,
+            turn_id: Some("turn_recovery".to_string()),
+            kind: "turn.interrupt_requested".to_string(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload: serde_json::json!({}),
+            provider: None,
+            provider_seq: None,
+            created_at: 201,
+        })
+        .expect("durable interrupt event");
+
+    let retry = prepare_workspace_interrupt(
+        &workspace.workspace_id,
+        OperationActor::operator("workspace-control-test"),
+        Some("interrupt-recovery".to_string()),
+    )
+    .expect("retry command");
+    let recovered = repository
+        .begin_workspace_interrupt(&retry)
+        .expect("recover interrupt");
+    let recovered_plan = match recovered {
+        WorkspaceInterruptAdmission::Execute(plan) => plan,
+        WorkspaceInterruptAdmission::Replay(_) => panic!("operation is not terminal yet"),
+    };
+    assert!(
+        recovered_plan.targets.is_empty(),
+        "durable provider-accepted evidence must prevent redispatch"
+    );
+
+    let completed = repository
+        .complete_workspace_interrupt(&plan.operation_id, 202)
+        .expect("complete recovered interrupt");
+    assert_eq!(completed.interrupted_agent_ids, vec![active.agent_id]);
+    assert!(completed.skipped_agent_ids.is_empty());
 }

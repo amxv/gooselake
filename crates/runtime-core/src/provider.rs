@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::broadcast;
 
 use crate::RuntimeError;
 
@@ -120,6 +121,7 @@ pub struct ProviderSession {
 pub struct ProviderTurnAck {
     pub runtime_session_id: String,
     pub turn_id: String,
+    pub provider_native_turn_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -149,6 +151,18 @@ pub struct ProviderTurnResult {
     pub status: ProviderTurnStatus,
     pub usage: Option<Value>,
     pub error: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum ProviderRuntimeEvent {
+    ApprovalRequested {
+        runtime_session_id: String,
+        turn_id: String,
+        provider_approval_ref: String,
+        tool_call_id: Option<String>,
+        request: Value,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +197,10 @@ pub trait RuntimeProvider: Send + Sync {
     fn kind(&self) -> ProviderKind;
 
     fn metadata(&self) -> ProviderMetadata;
+
+    fn subscribe_events(&self) -> Option<broadcast::Receiver<ProviderRuntimeEvent>> {
+        None
+    }
 
     async fn healthcheck(&self) -> Result<(), RuntimeError>;
 
@@ -241,6 +259,17 @@ pub trait RuntimeProvider: Send + Sync {
     ) -> Result<ProviderSession, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "provider resume_session is not supported".to_string(),
+        ))
+    }
+
+    async fn restore_turn_identity_mapping(
+        &self,
+        _runtime_session_id: &str,
+        _turn_id: &str,
+        _provider_native_turn_id: &str,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider turn identity restoration is not supported".to_string(),
         ))
     }
 

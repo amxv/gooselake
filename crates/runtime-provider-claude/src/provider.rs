@@ -4,10 +4,10 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use runtime_core::{ProviderTurnResult, RuntimeError};
+use runtime_core::{ProviderRuntimeEvent, ProviderTurnResult, RuntimeError};
 use serde_json::Value;
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot, Mutex, Notify, RwLock};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify, RwLock};
 
 use crate::auth::{bridge_session_key, claude_smoke_debug_enabled, read_claude_oauth_access_token};
 use crate::bridge::{
@@ -31,6 +31,7 @@ pub(crate) struct ClaudeProviderInner {
     pub(crate) bridge_allocation_lock: Mutex<()>,
     pub(crate) sessions: RwLock<BTreeMap<String, Arc<ClaudeSessionHandle>>>,
     pub(crate) sessions_by_bridge_key: RwLock<BTreeMap<String, Arc<ClaudeSessionHandle>>>,
+    pub(crate) provider_events: broadcast::Sender<ProviderRuntimeEvent>,
 }
 
 #[derive(Debug)]
@@ -41,6 +42,7 @@ pub(crate) struct ClaudeSessionHandle {
     pub(crate) canonical_provider_session_ref: RwLock<Option<String>>,
     pub(crate) bridge: Arc<ClaudeBridgeHandle>,
     pub(crate) active_turn_id: RwLock<Option<String>>,
+    pub(crate) pending_runtime_turn_id: RwLock<Option<String>>,
     pub(crate) bridge_turn_by_runtime_turn: Mutex<BTreeMap<String, String>>,
     pub(crate) runtime_turn_by_bridge_turn: Mutex<BTreeMap<String, String>>,
     pub(crate) completed_turns: Mutex<BTreeMap<String, ProviderTurnResult>>,
@@ -76,6 +78,7 @@ impl ClaudeProvider {
     pub fn new(config: ClaudeProviderConfig) -> Self {
         let max_bridges = config.max_bridges.max(1);
         let max_sessions_per_bridge = config.max_sessions_per_bridge.max(1);
+        let (provider_events, _) = broadcast::channel(256);
         Self {
             inner: Arc::new(ClaudeProviderInner {
                 config: ClaudeProviderConfig {
@@ -90,6 +93,7 @@ impl ClaudeProvider {
                 bridge_allocation_lock: Mutex::new(()),
                 sessions: RwLock::new(BTreeMap::new()),
                 sessions_by_bridge_key: RwLock::new(BTreeMap::new()),
+                provider_events,
             }),
         }
     }

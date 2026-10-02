@@ -172,6 +172,7 @@ impl RuntimeProvider for TestProvider {
             return Ok(ProviderTurnAck {
                 runtime_session_id: req.runtime_session_id,
                 turn_id: req.turn_id,
+                provider_native_turn_id: None,
             });
         }
 
@@ -201,6 +202,7 @@ impl RuntimeProvider for TestProvider {
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: req.turn_id,
+            provider_native_turn_id: None,
         })
     }
 
@@ -361,6 +363,7 @@ impl RuntimeProvider for TestClaudeProvider {
             return Ok(ProviderTurnAck {
                 runtime_session_id: req.runtime_session_id,
                 turn_id: req.turn_id,
+                provider_native_turn_id: None,
             });
         }
 
@@ -379,6 +382,7 @@ impl RuntimeProvider for TestClaudeProvider {
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: req.turn_id,
+            provider_native_turn_id: None,
         })
     }
 
@@ -567,6 +571,7 @@ impl RuntimeProvider for TestAcpProvider {
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: req.turn_id,
+            provider_native_turn_id: None,
         })
     }
 

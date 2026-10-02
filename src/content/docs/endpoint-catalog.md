@@ -73,6 +73,11 @@ Provider behavior notes:
 - `GET /v1/sessions/{session_id}/events` (Bearer)
 - `GET /v1/sessions/{session_id}/events/stream` (Bearer, SSE)
 
+Turn creation durably records the logical turn, input provenance/snapshot authority, dispatch
+policy, and correlation before provider execution. Provider-native turn IDs remain separate from
+the public logical `turn_id`. Approval responses cover both runtime pre-dispatch gates and durable
+provider-originated approval requests.
+
 Session event query parameters:
 - replay: `after_seq`, `limit`
 - stream: `after_seq`, `limit`, optional `Last-Event-ID` header fallback

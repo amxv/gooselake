@@ -207,6 +207,13 @@ TURN_JSON=$(curl -fsS -X POST \
 | `expected_turn_id` | no | Optional client-side concurrency guard. |
 | `permission_mode` | no | Optional per-turn permission override. |
 
+The public turn endpoint accepts only those documented fields. Input provenance, durable
+user-input snapshots, dispatch state, and provider-native turn identifiers are runtime-owned
+authority and cannot be supplied by an API caller. A turn is durably admitted before any
+provider dispatch begins. If the provider cannot prove that a failed dispatch never crossed its
+execution boundary, the runtime retains the turn for reconciliation instead of blindly sending it
+again.
+
 The response is an accepted turn, not necessarily terminal output:
 
 ```json
@@ -232,7 +239,12 @@ curl -fsS -X POST \
 
 ## Approvals
 
-When runtime approval gating is active, a pending approval is stored and emitted in the event stream. Respond with:
+Approvals are durable turn-scoped records. They can originate from the runtime's pre-dispatch
+policy gate or from a provider after a turn has already been dispatched. Provider-originated
+approval records retain their provider approval reference, optional tool-call correlation, and
+request payload; the `origin` field distinguishes them from the runtime pre-dispatch gate.
+
+When an approval is pending, it is stored and emitted in the event stream. Respond with:
 
 ```bash
 curl -fsS -X POST \
@@ -251,7 +263,10 @@ Accepted decision values:
 - `reject`
 - `rejected`
 
-The runtime normalizes to provider approval behavior when the provider supports it.
+For provider-originated approvals, the runtime durably records the decision as pending before
+forwarding it to the provider. If the provider decision outcome becomes ambiguous, the turn is
+left in a recovery-required state instead of assuming the decision succeeded or retrying it
+blindly.
 
 ## SSE and replay model
 

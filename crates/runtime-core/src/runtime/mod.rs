@@ -7,10 +7,12 @@ use serde_json::Value;
 use tokio::sync::{broadcast, RwLock};
 
 use crate::{
-    ApprovalRecord, ProviderKind, ProviderRegistry, RuntimeError, RuntimeEventRecord, RuntimeStore,
-    SessionRecord, TurnRecord,
+    ApprovalRecord, PersistedUserInputSnapshot, ProviderKind, ProviderRegistry, RuntimeError,
+    RuntimeEventRecord, RuntimeStore, SessionRecord, TurnAdmissionRecord,
+    TurnInputProjectionSource, TurnRecord,
 };
 
+mod approvals;
 mod events;
 mod helpers;
 mod recovery;
@@ -36,6 +38,12 @@ pub struct SendTurnInput {
     pub input: Vec<Value>,
     pub expected_turn_id: Option<String>,
     pub permission_mode: Option<String>,
+    #[serde(default)]
+    pub projection_source: Option<TurnInputProjectionSource>,
+    #[serde(default)]
+    pub user_input_snapshot: Option<PersistedUserInputSnapshot>,
+    #[serde(default)]
+    pub correlation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +95,7 @@ pub struct RuntimeSessionManager {
     pub(super) sessions: RwLock<HashMap<String, SessionRecord>>,
     pub(super) turns: RwLock<HashMap<String, TurnRecord>>,
     pub(super) approvals: RwLock<HashMap<String, ApprovalRecord>>,
+    pub(super) turn_admissions: RwLock<HashMap<String, TurnAdmissionRecord>>,
     next_id: AtomicU64,
     pub(super) event_tx: broadcast::Sender<RuntimeEventRecord>,
 }
@@ -113,6 +122,11 @@ impl RuntimeSessionManager {
             .into_iter()
             .map(|approval| (approval.id.clone(), approval))
             .collect::<HashMap<_, _>>();
+        let turn_admissions = store
+            .list_turn_admissions()?
+            .into_iter()
+            .map(|admission| (admission.turn_id.clone(), admission))
+            .collect::<HashMap<_, _>>();
         let (event_tx, _) = broadcast::channel(live_event_capacity.max(128));
 
         Ok(Self {
@@ -121,6 +135,7 @@ impl RuntimeSessionManager {
             sessions: RwLock::new(sessions),
             turns: RwLock::new(turns),
             approvals: RwLock::new(approvals),
+            turn_admissions: RwLock::new(turn_admissions),
             next_id: AtomicU64::new(1),
             event_tx,
         })

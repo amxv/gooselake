@@ -192,6 +192,11 @@ impl RuntimeTeamCommsService {
                     input: injected_input,
                     expected_turn_id: None,
                     permission_mode: None,
+                    projection_source: Some(
+                        crate::TurnInputProjectionSource::AgentMessageDeliveryTransport,
+                    ),
+                    user_input_snapshot: None,
+                    correlation_id: Some(message.id.clone()),
                 },
             )
             .await;

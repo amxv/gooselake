@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 3;
+pub(crate) const SCHEMA_VERSION: i64 = 4;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -427,6 +427,41 @@ CREATE TABLE legacy_workspace_migration_state (
 );
 "#;
 
+const MIGRATION_4_SQL: &str = r#"
+ALTER TABLE approvals ADD COLUMN origin TEXT NOT NULL DEFAULT 'legacy';
+
+CREATE UNIQUE INDEX idx_approvals_provider_identity
+ON approvals(session_id, turn_id, provider_approval_ref)
+WHERE provider_approval_ref IS NOT NULL;
+
+CREATE TABLE turn_admissions (
+  turn_id TEXT PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+  provider TEXT NOT NULL,
+  projection_source TEXT NOT NULL CHECK (
+    projection_source IN ('user_visible', 'agent_message_delivery_transport', 'automation_context')
+  ),
+  user_input_snapshot_json TEXT NOT NULL CHECK (json_valid(user_input_snapshot_json)),
+  dispatch_policy_json TEXT NOT NULL CHECK (json_valid(dispatch_policy_json)),
+  correlation_json TEXT NOT NULL CHECK (json_valid(correlation_json)),
+  dispatch_state TEXT NOT NULL CHECK (
+    dispatch_state IN ('pending', 'dispatching', 'dispatched', 'not_dispatched', 'unknown')
+  ),
+  provider_native_turn_id TEXT,
+  dispatch_error_json TEXT CHECK (dispatch_error_json IS NULL OR json_valid(dispatch_error_json)),
+  admitted_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK (length(trim(provider)) > 0)
+);
+
+CREATE UNIQUE INDEX idx_turn_admissions_provider_native
+ON turn_admissions(session_id, provider_native_turn_id)
+WHERE provider_native_turn_id IS NOT NULL;
+
+CREATE INDEX idx_turn_admissions_session_state
+ON turn_admissions(session_id, dispatch_state, admitted_at, turn_id);
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -439,5 +474,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 3,
         sql: MIGRATION_3_SQL,
+    },
+    Migration {
+        version: 4,
+        sql: MIGRATION_4_SQL,
     },
 ];

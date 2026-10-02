@@ -8,7 +8,8 @@ use runtime_core::{
     NewRuntimeEvent, OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord,
     RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord,
     TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -124,6 +125,25 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_session(record)
+    }
+
+    fn admit_turn(
+        &self,
+        admission: &TurnAdmissionRecord,
+        turn: &TurnRecord,
+        session: &SessionRecord,
+        approval: Option<&ApprovalRecord>,
+    ) -> Result<(), RuntimeError> {
+        self.repository
+            .admit_turn(admission, turn, session, approval)
+    }
+
+    fn upsert_turn_admission(&self, record: &TurnAdmissionRecord) -> Result<(), RuntimeError> {
+        self.repository.upsert_turn_admission(record)
+    }
+
+    fn list_turn_admissions(&self) -> Result<Vec<TurnAdmissionRecord>, RuntimeError> {
+        self.repository.list_turn_admissions()
     }
 
     fn upsert_turn(&self, record: &TurnRecord) -> Result<(), RuntimeError> {

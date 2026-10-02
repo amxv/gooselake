@@ -99,15 +99,62 @@ impl SqliteRuntimeRepository {
 
     pub fn upsert_approval(&self, record: &ApprovalRecord) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        let has_origin_column = connection
+            .prepare("PRAGMA table_info(approvals)")
+            .and_then(|mut statement| {
+                let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+                for column in columns {
+                    if column? == "origin" {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            })
+            .map_err(|error| db_error("failed inspecting approvals schema", error))?;
+
+        if !has_origin_column {
+            connection
+                .execute(
+                    "INSERT INTO approvals (
+                        id, session_id, turn_id, tool_call_id, provider_approval_ref, status,
+                        request_json, response_json, created_at, resolved_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                     ON CONFLICT(id) DO UPDATE SET
+                        session_id = excluded.session_id,
+                        turn_id = excluded.turn_id,
+                        tool_call_id = excluded.tool_call_id,
+                        provider_approval_ref = excluded.provider_approval_ref,
+                        status = excluded.status,
+                        request_json = excluded.request_json,
+                        response_json = excluded.response_json,
+                        resolved_at = excluded.resolved_at",
+                    params![
+                        record.id,
+                        record.session_id,
+                        record.turn_id,
+                        record.tool_call_id,
+                        record.provider_approval_ref,
+                        record.status,
+                        json_to_string(&record.request)?,
+                        opt_json_to_string(record.response.as_ref())?,
+                        record.created_at,
+                        record.resolved_at,
+                    ],
+                )
+                .map_err(|error| db_error("failed upserting legacy approval", error))?;
+            return Ok(());
+        }
+
         connection
             .execute(
                 "INSERT INTO approvals (
-                    id, session_id, turn_id, tool_call_id, provider_approval_ref, status,
+                    id, session_id, turn_id, origin, tool_call_id, provider_approval_ref, status,
                     request_json, response_json, created_at, resolved_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(id) DO UPDATE SET
                     session_id = excluded.session_id,
                     turn_id = excluded.turn_id,
+                    origin = excluded.origin,
                     tool_call_id = excluded.tool_call_id,
                     provider_approval_ref = excluded.provider_approval_ref,
                     status = excluded.status,
@@ -118,6 +165,7 @@ impl SqliteRuntimeRepository {
                     record.id,
                     record.session_id,
                     record.turn_id,
+                    record.origin,
                     record.tool_call_id,
                     record.provider_approval_ref,
                     record.status,

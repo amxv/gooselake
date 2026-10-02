@@ -27,6 +27,7 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
             id: "approval_1".to_string(),
             session_id: session.id.clone(),
             turn_id: "turn_1".to_string(),
+            origin: "legacy".to_string(),
             tool_call_id: Some("tool_1".to_string()),
             provider_approval_ref: Some("provider_approval_1".to_string()),
             status: "pending".to_string(),
@@ -272,7 +273,7 @@ fn failed_migration_rolls_back_and_retry_resumes_cleanly() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
 }
 
 fn registration_command(

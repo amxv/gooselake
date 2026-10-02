@@ -13,6 +13,9 @@ async fn team_status_gateway_invoke_returns_member_rows() {
                 input: vec![json!({ "type": "text", "text": "collect usage" })],
                 expected_turn_id: None,
                 permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await

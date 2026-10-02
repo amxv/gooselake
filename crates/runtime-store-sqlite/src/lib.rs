@@ -6,6 +6,7 @@ mod db;
 mod operation_tx;
 mod repository;
 mod repository_hydration;
+mod repository_turn_authority;
 mod repository_upserts;
 mod repository_workspace;
 mod repository_workspace_migration;

@@ -8,10 +8,14 @@ use crate::{
 
 use super::helpers::{append_session_transcript, extract_assistant_text_from_usage, now_ms};
 use super::test_support::{
-    manager_with_failing_send_provider, manager_with_permission_capture_provider,
-    manager_with_provider, manager_with_provider_and_store,
+    manager_with_permission_capture_provider, manager_with_provider,
+    manager_with_provider_and_store,
 };
 use super::{ApprovalResponseInput, CreateSessionInput, ResumeSessionInput, SendTurnInput};
+
+mod provider_approvals;
+mod turn_authority;
+mod turn_recovery;
 
 #[test]
 fn assistant_text_extraction_supports_snake_and_camel_fields() {
@@ -67,6 +71,9 @@ async fn one_active_turn_per_session_is_enforced() {
                 input: vec![serde_json::json!({"type":"text","text":"first"})],
                 expected_turn_id: None,
                 permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await
@@ -79,6 +86,9 @@ async fn one_active_turn_per_session_is_enforced() {
                 input: vec![serde_json::json!({"type":"text","text":"second"})],
                 expected_turn_id: None,
                 permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await;
@@ -105,6 +115,9 @@ async fn duplicate_terminal_event_is_idempotent_and_conflict_fails_closed() {
                 input: vec![serde_json::json!({"type":"text","text":"hello"})],
                 expected_turn_id: None,
                 permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await
@@ -163,6 +176,9 @@ async fn provider_turn_ownership_mismatch_is_rejected() {
                 input: vec![serde_json::json!({"type":"text","text":"hello"})],
                 expected_turn_id: None,
                 permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await
@@ -181,53 +197,6 @@ async fn provider_turn_ownership_mismatch_is_rejected() {
         mismatched,
         Err(RuntimeError::ProtocolViolation(_))
     ));
-}
-
-#[tokio::test]
-async fn send_turn_failure_does_not_leave_session_bricked() {
-    let manager = manager_with_failing_send_provider();
-    let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
-        .await
-        .expect("create session");
-
-    let send = manager
-        .send_turn(
-            session.id.as_str(),
-            SendTurnInput {
-                input: vec![serde_json::json!({"type":"text","text":"hello"})],
-                expected_turn_id: None,
-                permission_mode: None,
-            },
-        )
-        .await;
-    assert!(matches!(send, Err(RuntimeError::Io(_))));
-
-    let updated = manager
-        .get_session(session.id.as_str())
-        .await
-        .expect("session");
-    assert_eq!(updated.active_turn_id, None);
-    assert_eq!(updated.status, "ready");
-
-    // A follow-up send is still allowed to proceed to provider dispatch path.
-    let second = manager
-        .send_turn(
-            session.id.as_str(),
-            SendTurnInput {
-                input: vec![serde_json::json!({"type":"text","text":"again"})],
-                expected_turn_id: None,
-                permission_mode: None,
-            },
-        )
-        .await;
-    assert!(matches!(second, Err(RuntimeError::Io(_))));
 }
 
 #[tokio::test]
@@ -251,6 +220,9 @@ async fn send_turn_inherits_session_permission_mode_when_turn_omits_it() {
                 input: vec![serde_json::json!({"type":"text","text":"inherit mode"})],
                 expected_turn_id: None,
                 permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await
@@ -285,6 +257,9 @@ async fn approval_requested_and_resolution_transitions_turn() {
                 input: vec![serde_json::json!({"type":"text","text":"needs approval"})],
                 expected_turn_id: None,
                 permission_mode: Some("require_approval".to_string()),
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await
@@ -362,6 +337,9 @@ async fn approval_accept_is_case_insensitive_and_advances_turn() {
                 input: vec![serde_json::json!({"type":"text","text":"needs approval"})],
                 expected_turn_id: None,
                 permission_mode: Some("require_approval".to_string()),
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await
@@ -422,6 +400,9 @@ async fn approval_invalid_decision_is_rejected() {
                 input: vec![serde_json::json!({"type":"text","text":"needs approval"})],
                 expected_turn_id: None,
                 permission_mode: Some("require_approval".to_string()),
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await
@@ -523,6 +504,7 @@ async fn startup_recovery_clears_stale_active_turn_and_orphaned_pending_approval
             id: "apr_orphan".to_string(),
             session_id: "sess_recover".to_string(),
             turn_id: "turn_missing".to_string(),
+            origin: "legacy".to_string(),
             tool_call_id: None,
             provider_approval_ref: None,
             status: "pending".to_string(),
@@ -618,6 +600,7 @@ async fn startup_recovery_preserves_waiting_for_approval_turn_without_spawning_w
             id: "apr_pending".to_string(),
             session_id: "sess_pending".to_string(),
             turn_id: "turn_pending".to_string(),
+            origin: "legacy".to_string(),
             tool_call_id: None,
             provider_approval_ref: None,
             status: "pending".to_string(),

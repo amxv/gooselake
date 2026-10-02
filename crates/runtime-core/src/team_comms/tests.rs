@@ -14,12 +14,13 @@ use crate::{
     RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
     TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
     TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TeamSendDirectRequest, TeamSetLeadRequest, TurnRecord,
+    TeamRecord, TeamSendDirectRequest, TeamSetLeadRequest, TurnAdmissionRecord, TurnRecord,
 };
 
 #[derive(Default)]
 struct TestStore {
     hydrated: std::sync::Mutex<crate::RuntimeHydratedState>,
+    turn_admissions: std::sync::Mutex<Vec<TurnAdmissionRecord>>,
     events: std::sync::Mutex<Vec<RuntimeEventRecord>>,
 }
 
@@ -109,6 +110,59 @@ impl RuntimeStore for TestStore {
         let mut hydrated = self.hydrated.lock().expect("hydrated lock");
         Self::upsert_with_key(&mut hydrated.sessions, record.clone(), |row| row.id.clone());
         Ok(())
+    }
+
+    fn admit_turn(
+        &self,
+        admission: &TurnAdmissionRecord,
+        turn: &TurnRecord,
+        session: &SessionRecord,
+        approval: Option<&ApprovalRecord>,
+    ) -> Result<(), RuntimeError> {
+        let mut hydrated = self.hydrated.lock().expect("hydrated lock");
+        if hydrated
+            .sessions
+            .iter()
+            .find(|row| row.id == session.id)
+            .and_then(|row| row.active_turn_id.as_ref())
+            .is_some()
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "session {} already has an active turn",
+                session.id
+            )));
+        }
+        Self::upsert_with_key(&mut hydrated.turns, turn.clone(), |row| row.id.clone());
+        Self::upsert_with_key(&mut hydrated.sessions, session.clone(), |row| {
+            row.id.clone()
+        });
+        if let Some(approval) = approval {
+            Self::upsert_with_key(&mut hydrated.approvals, approval.clone(), |row| {
+                row.id.clone()
+            });
+        }
+        drop(hydrated);
+        let mut turn_admissions = self.turn_admissions.lock().expect("turn admissions lock");
+        Self::upsert_with_key(&mut turn_admissions, admission.clone(), |row| {
+            row.turn_id.clone()
+        });
+        Ok(())
+    }
+
+    fn upsert_turn_admission(&self, record: &TurnAdmissionRecord) -> Result<(), RuntimeError> {
+        let mut turn_admissions = self.turn_admissions.lock().expect("turn admissions lock");
+        Self::upsert_with_key(&mut turn_admissions, record.clone(), |row| {
+            row.turn_id.clone()
+        });
+        Ok(())
+    }
+
+    fn list_turn_admissions(&self) -> Result<Vec<TurnAdmissionRecord>, RuntimeError> {
+        Ok(self
+            .turn_admissions
+            .lock()
+            .expect("turn admissions lock")
+            .clone())
     }
 
     fn upsert_turn(&self, record: &TurnRecord) -> Result<(), RuntimeError> {
@@ -366,6 +420,7 @@ impl RuntimeProvider for TestProvider {
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: req.turn_id,
+            provider_native_turn_id: None,
         })
     }
 

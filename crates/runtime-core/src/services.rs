@@ -11,7 +11,8 @@ use crate::{
     NewRuntimeEvent, OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord,
     RuntimeEventScope, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
     TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    TurnAdmissionRecord, TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse,
 };
 
 #[async_trait]
@@ -93,6 +94,26 @@ pub trait RuntimeStore: Send + Sync {
     }
 
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError>;
+
+    fn admit_turn(
+        &self,
+        _admission: &TurnAdmissionRecord,
+        _turn: &TurnRecord,
+        _session: &SessionRecord,
+        _approval: Option<&ApprovalRecord>,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "atomic turn admission is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn upsert_turn_admission(&self, _record: &TurnAdmissionRecord) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    fn list_turn_admissions(&self) -> Result<Vec<TurnAdmissionRecord>, RuntimeError> {
+        Ok(Vec::new())
+    }
 
     fn upsert_turn(&self, record: &TurnRecord) -> Result<(), RuntimeError>;
 

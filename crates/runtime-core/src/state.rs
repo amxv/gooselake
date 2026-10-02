@@ -98,6 +98,7 @@ pub struct ApprovalRecord {
     pub id: String,
     pub session_id: String,
     pub turn_id: String,
+    pub origin: String,
     pub tool_call_id: Option<String>,
     pub provider_approval_ref: Option<String>,
     pub status: String,

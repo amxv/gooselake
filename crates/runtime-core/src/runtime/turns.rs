@@ -1,19 +1,38 @@
 use std::sync::Arc;
 
 use serde_json::Value;
+use tokio::sync::broadcast;
 
 use crate::{
-    ApprovalDecision, ApprovalRecord, ProviderApprovalResponseRequest,
-    ProviderInterruptTurnRequest, ProviderKind, ProviderResumeSessionRequest,
+    ApprovalRecord, PersistedUserInputSnapshot, ProviderDispatchOutcome,
+    ProviderInterruptTurnRequest, ProviderKind, ProviderResumeSessionRequest, ProviderRuntimeEvent,
     ProviderSendTurnRequest, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest,
-    RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, TurnRecord,
+    RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,
+    TurnAdmissionRecord, TurnCorrelationState, TurnDispatchPolicySnapshot, TurnDispatchState,
+    TurnInputProjectionSource, TurnRecord,
 };
 
 use super::helpers::{
     append_session_transcript, extract_assistant_text_from_usage, extract_turn_user_text,
     is_terminal_turn_status, now_ms,
 };
-use super::{ApprovalResponseInput, RuntimeSessionManager, SendTurnAccepted, SendTurnInput};
+use super::{RuntimeSessionManager, SendTurnAccepted, SendTurnInput};
+
+fn is_valid_dispatch_transition(from: TurnDispatchState, to: TurnDispatchState) -> bool {
+    use TurnDispatchState::{Dispatched, Dispatching, NotDispatched, Pending, Unknown};
+
+    matches!(
+        (from, to),
+        (Pending, Pending | Dispatching | NotDispatched)
+            | (
+                Dispatching,
+                Dispatching | Dispatched | NotDispatched | Unknown
+            )
+            | (Dispatched, Dispatched)
+            | (NotDispatched, NotDispatched)
+            | (Unknown, Unknown | Dispatched | NotDispatched)
+    )
+}
 
 impl RuntimeSessionManager {
     pub async fn send_turn(
@@ -48,176 +67,253 @@ impl RuntimeSessionManager {
         } else {
             None
         };
-
-        let session_metadata_for_provider = session.metadata.clone();
-        let provider_send_input = ProviderSendTurnRequest {
-            runtime_session_id: session_id.to_string(),
-            turn_id: turn_id.clone(),
-            input: input.input.clone(),
-            expected_turn_id: input.expected_turn_id.clone(),
-            permission_mode: effective_permission_mode.clone(),
-            approval_id: approval_id.clone(),
-        };
-        let ack_result = self
-            .dispatch_send_turn_with_resume_fallback(
-                provider_kind,
-                provider_send_input,
-                session.cwd.clone(),
-                session.provider_session_ref.clone(),
-                session.canonical_provider_session_ref.clone(),
-                session_metadata_for_provider,
-            )
-            .await;
-
-        let ack = match ack_result {
-            Ok(ack) => {
-                if ack.runtime_session_id != session_id || ack.turn_id != turn_id {
-                    return Err(RuntimeError::ProtocolViolation(format!(
-                        "provider send_turn acknowledgement mismatch (expected_session={}, expected_turn={}, actual_session={}, actual_turn={})",
-                        session_id, turn_id, ack.runtime_session_id, ack.turn_id
-                    )));
-                }
-                ack
+        let projection_source = input.projection_source.unwrap_or_default();
+        let user_input_snapshot = input
+            .user_input_snapshot
+            .clone()
+            .unwrap_or_else(|| PersistedUserInputSnapshot::from_input(&input.input));
+        let source = match projection_source {
+            TurnInputProjectionSource::UserVisible => "user",
+            TurnInputProjectionSource::AgentMessageDeliveryTransport => {
+                "agent_message_delivery_transport"
             }
-            Err(error) => {
-                // Fail closed: persist a terminal failed turn and keep session writable.
-                let failed_turn = TurnRecord {
-                    id: turn_id.clone(),
-                    session_id: session_id.to_string(),
-                    provider_turn_ref: None,
-                    status: "failed".to_string(),
-                    input: Value::Array(input.input),
-                    source: Some("user".to_string()),
-                    started_at: Some(now),
-                    completed_at: Some(now_ms()),
-                    usage: None,
-                    error: Some(serde_json::json!({ "message": error.to_string() })),
-                };
-                let mut failed_session = session.clone();
-                failed_session.active_turn_id = None;
-                if failed_session.status != "closed" && failed_session.status != "failed" {
-                    failed_session.status = "ready".to_string();
-                }
-                failed_session.updated_at = now_ms();
-                self.store.upsert_turn(&failed_turn)?;
-                self.store.upsert_session(&failed_session)?;
-                {
-                    let mut turns = self.turns.write().await;
-                    turns.insert(turn_id.clone(), failed_turn);
-                }
-                {
-                    let mut sessions = self.sessions.write().await;
-                    sessions.insert(session_id.to_string(), failed_session);
-                }
-                let _ = self
-                    .append_event(
-                        RuntimeEventScope::Session,
-                        session_id,
-                        Some(session_id),
-                        Some(turn_id.as_str()),
-                        "turn.failed",
-                        RuntimeEventCriticality::Critical,
-                        serde_json::json!({ "error": error.to_string() }),
-                    )
-                    .await?;
-                return Err(error);
-            }
+            TurnInputProjectionSource::AutomationContext => "automation_context",
         };
-
         let turn = TurnRecord {
             id: turn_id.clone(),
             session_id: session_id.to_string(),
             provider_turn_ref: None,
-            status: if requires_approval {
-                "waiting_for_approval".to_string()
-            } else {
-                "in_progress".to_string()
-            },
-            input: Value::Array(input.input),
-            source: Some("user".to_string()),
+            status: "admitted".to_string(),
+            input: Value::Array(input.input.clone()),
+            source: Some(source.to_string()),
             started_at: Some(now),
             completed_at: None,
             usage: None,
             error: None,
         };
         let mut updated_session = session.clone();
-        updated_session.status = if requires_approval {
-            "waiting_for_approval".to_string()
-        } else {
-            "turn_running".to_string()
-        };
+        updated_session.status = "turn_admitted".to_string();
         updated_session.active_turn_id = Some(turn_id.clone());
         updated_session.updated_at = now;
+        let approval = approval_id.as_ref().map(|approval_id| ApprovalRecord {
+            id: approval_id.clone(),
+            session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            origin: "runtime_pre_dispatch_policy".to_string(),
+            tool_call_id: None,
+            provider_approval_ref: None,
+            status: "pending".to_string(),
+            request: serde_json::json!({
+                "reason": "manual approval required before provider execution",
+            }),
+            response: None,
+            created_at: now,
+            resolved_at: None,
+        });
+        let admission = TurnAdmissionRecord {
+            turn_id: turn_id.clone(),
+            session_id: session_id.to_string(),
+            provider: provider_kind.as_str().to_string(),
+            projection_source,
+            user_input_snapshot,
+            dispatch_policy: TurnDispatchPolicySnapshot {
+                permission_mode: effective_permission_mode.clone(),
+                pre_dispatch_approval_required: requires_approval,
+            },
+            correlation: TurnCorrelationState {
+                expected_turn_id: input.expected_turn_id.clone(),
+                correlation_id: input.correlation_id.clone(),
+            },
+            dispatch_state: TurnDispatchState::Pending,
+            provider_native_turn_id: None,
+            dispatch_error: None,
+            admitted_at: now,
+            updated_at: now,
+        };
 
-        self.store.upsert_turn(&turn)?;
-        self.store.upsert_session(&updated_session)?;
+        self.store
+            .admit_turn(&admission, &turn, &updated_session, approval.as_ref())?;
         {
             let mut turns = self.turns.write().await;
             turns.insert(turn_id.clone(), turn.clone());
         }
         {
             let mut sessions = self.sessions.write().await;
-            sessions.insert(session_id.to_string(), updated_session);
+            sessions.insert(session_id.to_string(), updated_session.clone());
         }
+        if let Some(approval) = approval.clone() {
+            {
+                let mut approvals = self.approvals.write().await;
+                approvals.insert(approval.id.clone(), approval);
+            }
+        }
+        self.turn_admissions
+            .write()
+            .await
+            .insert(turn_id.clone(), admission);
+        self.append_event(
+            RuntimeEventScope::Session,
+            session_id,
+            Some(session_id),
+            Some(turn_id.as_str()),
+            "turn.admitted",
+            RuntimeEventCriticality::Critical,
+            serde_json::json!({
+                "projection_source": projection_source.as_str(),
+                "requires_approval": requires_approval,
+            }),
+        )
+        .await?;
+
         if requires_approval {
             let approval_id =
                 approval_id.expect("approval id must exist when approval is required");
-            let approval = ApprovalRecord {
-                id: approval_id.clone(),
-                session_id: session_id.to_string(),
-                turn_id: turn_id.clone(),
-                tool_call_id: None,
-                provider_approval_ref: Some(approval_id.clone()),
-                status: "pending".to_string(),
-                request: serde_json::json!({
-                    "reason": "manual approval required before provider execution",
-                }),
-                response: None,
-                created_at: now,
-                resolved_at: None,
-            };
-            self.store.upsert_approval(&approval)?;
             {
-                let mut approvals = self.approvals.write().await;
-                approvals.insert(approval_id.clone(), approval);
+                let mut turns = self.turns.write().await;
+                let turn = turns
+                    .get_mut(&turn_id)
+                    .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
+                turn.status = "waiting_for_approval".to_string();
+                self.store.upsert_turn(turn)?;
             }
-            let _ = self
-                .append_event(
-                    RuntimeEventScope::Session,
-                    session_id,
-                    Some(session_id),
-                    Some(turn_id.as_str()),
-                    "approval.requested",
-                    RuntimeEventCriticality::Critical,
-                    serde_json::json!({
-                        "approval_id": approval_id,
-                    }),
-                )
-                .await?;
-        } else {
-            let _ = self
-                .append_event(
-                    RuntimeEventScope::Session,
-                    session_id,
-                    Some(session_id),
-                    Some(turn_id.as_str()),
-                    "turn.started",
-                    RuntimeEventCriticality::Critical,
-                    serde_json::json!({}),
-                )
-                .await?;
-            self.spawn_wait_for_turn(provider_kind, session_id.to_string(), turn_id.clone());
+            {
+                let mut sessions = self.sessions.write().await;
+                let session = sessions
+                    .get_mut(session_id)
+                    .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+                session.status = "waiting_for_approval".to_string();
+                session.updated_at = now_ms();
+                self.store.upsert_session(session)?;
+            }
+            self.append_event(
+                RuntimeEventScope::Session,
+                session_id,
+                Some(session_id),
+                Some(turn_id.as_str()),
+                "approval.requested",
+                RuntimeEventCriticality::Critical,
+                serde_json::json!({
+                    "approval_id": approval_id,
+                    "origin": "runtime_pre_dispatch_policy",
+                }),
+            )
+            .await?;
+            return Ok(SendTurnAccepted {
+                session_id: session_id.to_string(),
+                turn_id,
+                status: "waiting_for_approval".to_string(),
+            });
         }
+
+        self.update_turn_dispatch_authority(
+            turn_id.as_str(),
+            TurnDispatchState::Dispatching,
+            None,
+            None,
+        )
+        .await?;
+
+        let provider_send_input = ProviderSendTurnRequest {
+            runtime_session_id: session_id.to_string(),
+            turn_id: turn_id.clone(),
+            input: input.input,
+            expected_turn_id: input.expected_turn_id,
+            permission_mode: effective_permission_mode,
+            approval_id: approval_id.clone(),
+        };
+        let (ack, provider_events) = match self
+            .dispatch_send_turn_with_resume_fallback(
+                provider_kind,
+                provider_send_input,
+                session.cwd.clone(),
+                session.provider_session_ref.clone(),
+                session.canonical_provider_session_ref.clone(),
+                session.metadata.clone(),
+            )
+            .await
+        {
+            Ok((ack, provider_events))
+                if ack.runtime_session_id == session_id && ack.turn_id == turn_id =>
+            {
+                (ack, provider_events)
+            }
+            Ok((ack, _)) => {
+                let error = RuntimeError::provider_dispatch_unknown(
+                    "ack_identity_mismatch",
+                    format!(
+                        "provider send_turn acknowledgement mismatch (expected_session={session_id}, expected_turn={turn_id}, actual_session={}, actual_turn={})",
+                        ack.runtime_session_id, ack.turn_id
+                    ),
+                );
+                self.mark_dispatch_unknown(session_id, turn_id.as_str(), &error)
+                    .await?;
+                return Err(error);
+            }
+            Err(error)
+                if error.provider_dispatch_outcome() == ProviderDispatchOutcome::NotDispatched =>
+            {
+                self.mark_not_dispatched(session_id, turn_id.as_str(), &error)
+                    .await?;
+                return Err(error);
+            }
+            Err(error) => {
+                let unknown = RuntimeError::provider_dispatch_unknown(
+                    error.provider_dispatch_code().unwrap_or("provider_error"),
+                    error.to_string(),
+                );
+                self.mark_dispatch_unknown(session_id, turn_id.as_str(), &unknown)
+                    .await?;
+                return Err(unknown);
+            }
+        };
+
+        self.update_turn_dispatch_authority(
+            turn_id.as_str(),
+            TurnDispatchState::Dispatched,
+            ack.provider_native_turn_id.clone(),
+            None,
+        )
+        .await?;
+
+        {
+            let mut turns = self.turns.write().await;
+            let turn = turns
+                .get_mut(&turn_id)
+                .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
+            turn.status = "in_progress".to_string();
+            self.store.upsert_turn(turn)?;
+        }
+        {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+            session.status = "turn_running".to_string();
+            session.updated_at = now_ms();
+            self.store.upsert_session(session)?;
+        }
+
+        self.append_event(
+            RuntimeEventScope::Session,
+            session_id,
+            Some(session_id),
+            Some(turn_id.as_str()),
+            "turn.started",
+            RuntimeEventCriticality::Critical,
+            serde_json::json!({}),
+        )
+        .await?;
+        self.spawn_wait_for_turn(
+            provider_kind,
+            session_id.to_string(),
+            turn_id.clone(),
+            provider_events,
+        );
 
         Ok(SendTurnAccepted {
             session_id: session_id.to_string(),
             turn_id,
-            status: if requires_approval {
-                "waiting_for_approval".to_string()
-            } else {
-                let _ = ack;
-                "in_progress".to_string()
-            },
+            status: "in_progress".to_string(),
         })
     }
 
@@ -258,144 +354,6 @@ impl RuntimeSessionManager {
         Ok(())
     }
 
-    pub async fn respond_approval(
-        self: &Arc<Self>,
-        session_id: &str,
-        approval_id: &str,
-        input: ApprovalResponseInput,
-    ) -> Result<ApprovalRecord, RuntimeError> {
-        let session = self.get_session(session_id).await?;
-        let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
-            RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
-        })?;
-        let provider = self.providers.get(provider_kind).ok_or_else(|| {
-            RuntimeError::ProviderNotRegistered(provider_kind.as_str().to_string())
-        })?;
-
-        let mut approvals = self.approvals.write().await;
-        let existing = approvals
-            .get(approval_id)
-            .cloned()
-            .ok_or_else(|| RuntimeError::NotFound(format!("approval {approval_id}")))?;
-        if existing.session_id != session_id {
-            return Err(RuntimeError::ProtocolViolation(format!(
-                "approval {} does not belong to session {}",
-                approval_id, session_id
-            )));
-        }
-        if existing.status != "pending" {
-            return Err(RuntimeError::InvalidState(format!(
-                "approval {} is not pending",
-                approval_id
-            )));
-        }
-        let normalized_decision = ApprovalDecision::parse(input.decision.as_str())?;
-
-        provider
-            .respond_approval(ProviderApprovalResponseRequest {
-                runtime_session_id: session_id.to_string(),
-                turn_id: existing.turn_id.clone(),
-                approval_id: approval_id.to_string(),
-                decision: normalized_decision.as_str().to_string(),
-                payload: input.payload.clone(),
-            })
-            .await?;
-
-        let mut resolved = existing.clone();
-        resolved.status = normalized_decision.as_str().to_string();
-        resolved.response = input.payload.clone();
-        resolved.resolved_at = Some(now_ms());
-        self.store.upsert_approval(&resolved)?;
-        approvals.insert(approval_id.to_string(), resolved.clone());
-        drop(approvals);
-
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                session_id,
-                Some(session_id),
-                Some(resolved.turn_id.as_str()),
-                "approval.resolved",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({ "approval_id": approval_id }),
-            )
-            .await?;
-
-        if normalized_decision == ApprovalDecision::Accept {
-            let mut turns = self.turns.write().await;
-            let mut sessions = self.sessions.write().await;
-            if let Some(turn) = turns.get_mut(&resolved.turn_id) {
-                turn.status = "in_progress".to_string();
-                turn.error = None;
-                self.store.upsert_turn(turn)?;
-            }
-            if let Some(session) = sessions.get_mut(session_id) {
-                session.status = "turn_running".to_string();
-                session.updated_at = now_ms();
-                self.store.upsert_session(session)?;
-            }
-            drop(sessions);
-            drop(turns);
-
-            let _ = self
-                .append_event(
-                    RuntimeEventScope::Session,
-                    session_id,
-                    Some(session_id),
-                    Some(resolved.turn_id.as_str()),
-                    "turn.started",
-                    RuntimeEventCriticality::Critical,
-                    serde_json::json!({
-                        "source": "approval.accepted",
-                    }),
-                )
-                .await?;
-            self.spawn_wait_for_turn(
-                provider_kind,
-                session_id.to_string(),
-                resolved.turn_id.clone(),
-            );
-        } else {
-            let mut turns = self.turns.write().await;
-            let mut sessions = self.sessions.write().await;
-            if let Some(turn) = turns.get_mut(&resolved.turn_id) {
-                turn.status = "interrupted".to_string();
-                turn.completed_at = Some(now_ms());
-                turn.error = Some(serde_json::json!({
-                    "message": "approval declined",
-                }));
-                self.store.upsert_turn(turn)?;
-            }
-            if let Some(session) = sessions.get_mut(session_id) {
-                if session.active_turn_id.as_deref() == Some(resolved.turn_id.as_str()) {
-                    session.active_turn_id = None;
-                }
-                if session.status != "closed" && session.status != "failed" {
-                    session.status = "ready".to_string();
-                }
-                session.updated_at = now_ms();
-                self.store.upsert_session(session)?;
-            }
-            drop(sessions);
-            drop(turns);
-            let _ = self
-                .append_event(
-                    RuntimeEventScope::Session,
-                    session_id,
-                    Some(session_id),
-                    Some(resolved.turn_id.as_str()),
-                    "turn.interrupted",
-                    RuntimeEventCriticality::Critical,
-                    serde_json::json!({
-                        "source": "approval.declined",
-                    }),
-                )
-                .await?;
-        }
-
-        Ok(resolved)
-    }
-
     pub fn replay_session_events(
         &self,
         session_id: &str,
@@ -409,7 +367,195 @@ impl RuntimeSessionManager {
         )
     }
 
-    async fn dispatch_send_turn_with_resume_fallback(
+    pub(super) async fn update_turn_dispatch_authority(
+        &self,
+        turn_id: &str,
+        state: TurnDispatchState,
+        provider_native_turn_id: Option<String>,
+        dispatch_error: Option<Value>,
+    ) -> Result<TurnAdmissionRecord, RuntimeError> {
+        let current = self
+            .turn_admissions
+            .read()
+            .await
+            .get(turn_id)
+            .cloned()
+            .ok_or_else(|| RuntimeError::NotFound(format!("turn admission {turn_id}")))?;
+        if !is_valid_dispatch_transition(current.dispatch_state, state) {
+            return Err(RuntimeError::ProtocolViolation(format!(
+                "invalid provider dispatch transition for turn {turn_id}: {} -> {}",
+                current.dispatch_state.as_str(),
+                state.as_str()
+            )));
+        }
+        if let Some(provider_native_turn_id) = provider_native_turn_id.as_deref() {
+            if provider_native_turn_id.trim().is_empty()
+                || provider_native_turn_id.trim() != provider_native_turn_id
+            {
+                return Err(RuntimeError::ProtocolViolation(format!(
+                    "provider-native turn id for {turn_id} must be non-empty and trimmed"
+                )));
+            }
+            if !matches!(
+                state,
+                TurnDispatchState::Dispatched | TurnDispatchState::Unknown
+            ) {
+                return Err(RuntimeError::ProtocolViolation(format!(
+                    "provider-native turn id for {turn_id} cannot be attached in dispatch state {}",
+                    state.as_str()
+                )));
+            }
+            if let Some(existing) = current.provider_native_turn_id.as_deref() {
+                if existing != provider_native_turn_id {
+                    return Err(RuntimeError::ProtocolViolation(format!(
+                        "logical turn {turn_id} cannot be remapped from provider-native turn {existing} to {provider_native_turn_id}"
+                    )));
+                }
+            }
+        }
+        let mut updated = current;
+        updated.dispatch_state = state;
+        if provider_native_turn_id.is_some() {
+            updated.provider_native_turn_id = provider_native_turn_id;
+        }
+        updated.dispatch_error = dispatch_error;
+        updated.updated_at = now_ms();
+        self.store.upsert_turn_admission(&updated)?;
+        self.turn_admissions
+            .write()
+            .await
+            .insert(turn_id.to_string(), updated.clone());
+        Ok(updated)
+    }
+
+    pub(super) async fn mark_not_dispatched(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        error: &RuntimeError,
+    ) -> Result<(), RuntimeError> {
+        self.update_turn_dispatch_authority(
+            turn_id,
+            TurnDispatchState::NotDispatched,
+            None,
+            Some(serde_json::json!({
+                "code": error.provider_dispatch_code(),
+                "message": error.to_string(),
+            })),
+        )
+        .await?;
+        {
+            let mut turns = self.turns.write().await;
+            let turn = turns
+                .get_mut(turn_id)
+                .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
+            turn.status = "failed".to_string();
+            turn.completed_at = Some(now_ms());
+            turn.error = Some(serde_json::json!({
+                "message": error.to_string(),
+                "provider_dispatch_outcome": "not_dispatched",
+            }));
+            self.store.upsert_turn(turn)?;
+        }
+        {
+            let mut approvals = self.approvals.write().await;
+            for approval in approvals.values_mut().filter(|approval| {
+                approval.session_id == session_id
+                    && approval.turn_id == turn_id
+                    && approval.status == "pending"
+            }) {
+                approval.status = "cancelled".to_string();
+                approval.response = Some(serde_json::json!({
+                    "reason": "provider dispatch was proven not to have occurred",
+                }));
+                approval.resolved_at = Some(now_ms());
+                self.store.upsert_approval(approval)?;
+            }
+        }
+        {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+            if session.active_turn_id.as_deref() == Some(turn_id) {
+                session.active_turn_id = None;
+            }
+            if !matches!(session.status.as_str(), "closed" | "failed") {
+                session.status = "ready".to_string();
+            }
+            session.updated_at = now_ms();
+            self.store.upsert_session(session)?;
+        }
+        self.append_event(
+            RuntimeEventScope::Session,
+            session_id,
+            Some(session_id),
+            Some(turn_id),
+            "turn.failed",
+            RuntimeEventCriticality::Critical,
+            serde_json::json!({
+                "error": error.to_string(),
+                "provider_dispatch_outcome": "not_dispatched",
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub(super) async fn mark_dispatch_unknown(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        error: &RuntimeError,
+    ) -> Result<(), RuntimeError> {
+        self.update_turn_dispatch_authority(
+            turn_id,
+            TurnDispatchState::Unknown,
+            None,
+            Some(serde_json::json!({
+                "code": error.provider_dispatch_code(),
+                "message": error.to_string(),
+            })),
+        )
+        .await?;
+        {
+            let mut turns = self.turns.write().await;
+            let turn = turns
+                .get_mut(turn_id)
+                .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
+            turn.status = "dispatch_unknown".to_string();
+            turn.error = Some(serde_json::json!({
+                "message": error.to_string(),
+                "provider_dispatch_outcome": "unknown",
+            }));
+            self.store.upsert_turn(turn)?;
+        }
+        {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions
+                .get_mut(session_id)
+                .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+            session.status = "turn_recovery_required".to_string();
+            session.updated_at = now_ms();
+            self.store.upsert_session(session)?;
+        }
+        self.append_event(
+            RuntimeEventScope::Session,
+            session_id,
+            Some(session_id),
+            Some(turn_id),
+            "turn.dispatch_unknown",
+            RuntimeEventCriticality::Critical,
+            serde_json::json!({
+                "error": error.to_string(),
+                "provider_dispatch_outcome": "unknown",
+            }),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub(super) async fn dispatch_send_turn_with_resume_fallback(
         &self,
         provider_kind: ProviderKind,
         request: ProviderSendTurnRequest,
@@ -417,18 +563,34 @@ impl RuntimeSessionManager {
         provider_session_ref: Option<String>,
         canonical_provider_session_ref: Option<String>,
         metadata: Value,
-    ) -> Result<crate::ProviderTurnAck, RuntimeError> {
+    ) -> Result<
+        (
+            crate::ProviderTurnAck,
+            Option<broadcast::Receiver<ProviderRuntimeEvent>>,
+        ),
+        RuntimeError,
+    > {
         let provider = self.providers.get(provider_kind).ok_or_else(|| {
-            RuntimeError::ProviderNotRegistered(provider_kind.as_str().to_string())
+            RuntimeError::provider_not_dispatched(
+                "provider_not_registered",
+                format!("provider '{}' is not registered", provider_kind.as_str()),
+            )
         })?;
+        let provider_events = provider.subscribe_events();
         match provider.send_turn(request.clone()).await {
-            Ok(ack) => Ok(ack),
-            Err(RuntimeError::NotFound(_)) => {
+            Ok(ack) => Ok((ack, provider_events)),
+            Err(error)
+                if error.provider_dispatch_outcome() == ProviderDispatchOutcome::NotDispatched
+                    && error.provider_dispatch_code() == Some("session_not_found") =>
+            {
                 let provider_session_ref = provider_session_ref.ok_or_else(|| {
-                    RuntimeError::NotFound(format!(
-                        "provider session {} was not found and cannot be resumed",
-                        request.runtime_session_id
-                    ))
+                    RuntimeError::provider_not_dispatched(
+                        "provider_session_unavailable",
+                        format!(
+                            "provider session {} was not found and cannot be resumed",
+                            request.runtime_session_id
+                        ),
+                    )
                 })?;
                 provider
                     .resume_session(ProviderResumeSessionRequest {
@@ -438,8 +600,17 @@ impl RuntimeSessionManager {
                         cwd,
                         metadata: Some(metadata),
                     })
-                    .await?;
-                provider.send_turn(request).await
+                    .await
+                    .map_err(|resume_error| {
+                        RuntimeError::provider_not_dispatched(
+                            "provider_resume_failed",
+                            resume_error.to_string(),
+                        )
+                    })?;
+                provider
+                    .send_turn(request)
+                    .await
+                    .map(|ack| (ack, provider_events))
             }
             Err(error) => Err(error),
         }
@@ -450,6 +621,7 @@ impl RuntimeSessionManager {
         provider: ProviderKind,
         session_id: String,
         turn_id: String,
+        provider_events: Option<broadcast::Receiver<ProviderRuntimeEvent>>,
     ) {
         let manager = Arc::clone(self);
         tokio::spawn(async move {
@@ -457,13 +629,77 @@ impl RuntimeSessionManager {
                 Some(provider_adapter) => provider_adapter,
                 None => return,
             };
-            let result = provider_adapter
-                .wait_for_turn(ProviderWaitTurnRequest {
-                    runtime_session_id: session_id.clone(),
-                    turn_id: turn_id.clone(),
-                    timeout_ms: None,
-                })
-                .await;
+            let wait = provider_adapter.wait_for_turn(ProviderWaitTurnRequest {
+                runtime_session_id: session_id.clone(),
+                turn_id: turn_id.clone(),
+                timeout_ms: None,
+            });
+            tokio::pin!(wait);
+            let mut provider_events =
+                provider_events.or_else(|| provider_adapter.subscribe_events());
+            let result = loop {
+                let Some(events) = provider_events.as_mut() else {
+                    break wait.await;
+                };
+                tokio::select! {
+                    result = &mut wait => break result,
+                    event = events.recv() => {
+                        match event {
+                            Ok(ProviderRuntimeEvent::ApprovalRequested {
+                                runtime_session_id,
+                                turn_id: event_turn_id,
+                                provider_approval_ref,
+                                tool_call_id,
+                                request,
+                            }) if runtime_session_id == session_id && event_turn_id == turn_id => {
+                                if let Err(error) = manager
+                                    .record_provider_approval(
+                                        session_id.as_str(),
+                                        turn_id.as_str(),
+                                        provider_approval_ref.as_str(),
+                                        tool_call_id,
+                                        request,
+                                    )
+                                    .await
+                                {
+                                    let _ = manager
+                                        .mark_provider_event_stream_unknown(
+                                            session_id.as_str(),
+                                            turn_id.as_str(),
+                                            "provider_approval_persistence_failed",
+                                            error.to_string(),
+                                        )
+                                        .await;
+                                    return;
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                                let _ = manager
+                                    .mark_provider_event_stream_unknown(
+                                        session_id.as_str(),
+                                        turn_id.as_str(),
+                                        "provider_event_stream_lagged",
+                                        format!("provider event stream skipped {skipped} events"),
+                                    )
+                                    .await;
+                                return;
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                let _ = manager
+                                    .mark_provider_event_stream_unknown(
+                                        session_id.as_str(),
+                                        turn_id.as_str(),
+                                        "provider_event_stream_closed",
+                                        "provider event stream closed before turn completion".to_string(),
+                                    )
+                                    .await;
+                                return;
+                            }
+                        }
+                    }
+                }
+            };
             match result {
                 Ok(turn_result) => {
                     if let Err(error) = manager.apply_terminal_result(turn_result).await {
@@ -486,6 +722,50 @@ impl RuntimeSessionManager {
                 }
             }
         });
+    }
+
+    async fn mark_provider_event_stream_unknown(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        code: &str,
+        message: String,
+    ) -> Result<(), RuntimeError> {
+        {
+            let mut turns = self.turns.write().await;
+            if let Some(turn) = turns.get_mut(turn_id) {
+                turn.status = "provider_event_recovery_required".to_string();
+                turn.error = Some(serde_json::json!({
+                    "code": code,
+                    "message": message,
+                }));
+                self.store.upsert_turn(turn)?;
+            }
+        }
+        {
+            let mut sessions = self.sessions.write().await;
+            if let Some(session) = sessions.get_mut(session_id) {
+                session.status = "turn_recovery_required".to_string();
+                session.failure_code = Some(code.to_string());
+                session.failure_message = Some(message.clone());
+                session.updated_at = now_ms();
+                self.store.upsert_session(session)?;
+            }
+        }
+        self.append_event(
+            RuntimeEventScope::Session,
+            session_id,
+            Some(session_id),
+            Some(turn_id),
+            "provider.event_stream_unknown",
+            RuntimeEventCriticality::Critical,
+            serde_json::json!({
+                "code": code,
+                "message": message,
+            }),
+        )
+        .await?;
+        Ok(())
     }
 
     pub(super) async fn apply_terminal_result(

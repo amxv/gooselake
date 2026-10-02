@@ -87,6 +87,10 @@ impl From<RuntimeError> for ApiError {
                 status: StatusCode::CONFLICT,
                 message,
             },
+            RuntimeError::ProviderDispatch { message, .. } => Self {
+                status: StatusCode::CONFLICT,
+                message,
+            },
             RuntimeError::ProviderAlreadyRegistered(message)
             | RuntimeError::Bootstrap(message)
             | RuntimeError::Io(message) => Self {

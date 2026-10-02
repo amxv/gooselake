@@ -96,6 +96,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         "workspace_agent_profiles",
         "legacy_workspace_migration_subjects",
         "legacy_workspace_migration_state",
+        "turn_admissions",
     ] {
         assert!(table_names.contains(expected), "missing table {expected}");
     }
@@ -107,7 +108,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
 }
 
 #[test]
@@ -167,6 +168,7 @@ fn initialize_schema_migrates_partially_populated_database_without_reset() {
     assert_eq!(count, 1);
 }
 
+mod turn_authority;
 mod workspace_authority;
 mod workspace_migration;
 
@@ -514,6 +516,7 @@ fn hydrate_runtime_state_round_trips_core_entities() {
             id: "apr_1".to_string(),
             session_id: session.id.clone(),
             turn_id: turn.id.clone(),
+            origin: "legacy".to_string(),
             tool_call_id: Some("tool_1".to_string()),
             provider_approval_ref: Some("prov_apr_1".to_string()),
             status: "pending".to_string(),

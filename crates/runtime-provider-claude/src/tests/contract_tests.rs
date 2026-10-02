@@ -361,6 +361,9 @@ async fn runtime_manager_recovers_send_turn_after_bridge_session_not_found() {
                 })],
                 expected_turn_id: None,
                 permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
             },
         )
         .await

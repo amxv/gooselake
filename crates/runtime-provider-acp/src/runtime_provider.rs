@@ -234,14 +234,20 @@ impl RuntimeProvider for AcpProvider {
             let session = sessions
                 .get_mut(req.runtime_session_id.as_str())
                 .ok_or_else(|| {
-                    RuntimeError::NotFound(format!("acp session {}", req.runtime_session_id))
+                    RuntimeError::provider_not_dispatched(
+                        "session_not_found",
+                        format!("acp session {}", req.runtime_session_id),
+                    )
                 })?;
 
             if session.active_turn.is_some() || !session.pending_approvals.is_empty() {
-                return Err(RuntimeError::InvalidState(format!(
-                    "acp session {} already has an active turn",
-                    req.runtime_session_id
-                )));
+                return Err(RuntimeError::provider_not_dispatched(
+                    "turn_in_progress",
+                    format!(
+                        "acp session {} already has an active turn",
+                        req.runtime_session_id
+                    ),
+                ));
             }
 
             if let Some(approval_id) = req.approval_id.clone() {
@@ -269,6 +275,7 @@ impl RuntimeProvider for AcpProvider {
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: req.turn_id,
+            provider_native_turn_id: None,
         })
     }
 

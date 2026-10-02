@@ -108,6 +108,7 @@ impl RuntimeProvider for WorktreeTestProvider {
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: req.turn_id,
+            provider_native_turn_id: None,
         })
     }
 

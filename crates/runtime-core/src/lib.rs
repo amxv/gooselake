@@ -7,17 +7,18 @@ pub mod runtime;
 pub mod services;
 pub mod state;
 pub mod team_comms;
+pub mod turn_authority;
 pub mod workspace;
 pub mod workspace_migration;
 
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
-pub use error::RuntimeError;
+pub use error::{ProviderDispatchOutcome, RuntimeError};
 pub use provider::{
     ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
     ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
     ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionRequest,
-    ProviderSendTurnRequest, ProviderSession, ProviderTurnAck, ProviderTurnResult,
-    ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeProvider,
+    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession, ProviderTurnAck,
+    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeProvider,
 };
 pub use provider_registry::ProviderRegistry;
 pub use repository_identity::{resolve_repository_identity, RepositoryIdentity};
@@ -46,6 +47,11 @@ pub use state::{
     TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
 pub use team_comms::{RuntimeTeamCommsConfig, RuntimeTeamCommsService};
+pub use turn_authority::{
+    PersistedUserInputSnapshot, PersistedUserInputSnapshotImageRef,
+    PersistedUserInputSnapshotInvocation, TurnAdmissionRecord, TurnCorrelationState,
+    TurnDispatchPolicySnapshot, TurnDispatchState, TurnInputProjectionSource,
+};
 pub use workspace::{
     prepare_workspace_registration, OperationActor, OperationActorKind, OperationDetails,
     OperationEffectRecord, OperationOutboxReceiptRecord, OperationOutboxRecord, OperationPhase,

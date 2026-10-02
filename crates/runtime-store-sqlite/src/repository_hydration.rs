@@ -80,28 +80,47 @@ impl SqliteRuntimeRepository {
         };
 
         let approvals = {
+            let has_origin_column = connection
+                .prepare("PRAGMA table_info(approvals)")
+                .and_then(|mut statement| {
+                    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+                    for column in columns {
+                        if column? == "origin" {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
+                })
+                .map_err(|error| db_error("failed inspecting approvals schema", error))?;
+            let query = if has_origin_column {
+                "SELECT id, session_id, turn_id, origin, tool_call_id, provider_approval_ref,
+                        status, request_json, response_json, created_at, resolved_at
+                 FROM approvals
+                 ORDER BY created_at ASC, id ASC"
+            } else {
+                "SELECT id, session_id, turn_id, 'legacy' AS origin, tool_call_id, provider_approval_ref,
+                        status, request_json, response_json, created_at, resolved_at
+                 FROM approvals
+                 ORDER BY created_at ASC, id ASC"
+            };
             let mut statement = connection
-                .prepare(
-                    "SELECT id, session_id, turn_id, tool_call_id, provider_approval_ref,
-                            status, request_json, response_json, created_at, resolved_at
-                     FROM approvals
-                     ORDER BY created_at ASC, id ASC",
-                )
+                .prepare(query)
                 .map_err(|error| db_error("failed preparing approval hydration query", error))?;
             let rows = statement
                 .query_map([], |row| {
-                    let response_json: Option<String> = row.get(7)?;
+                    let response_json: Option<String> = row.get(8)?;
                     Ok(ApprovalRecord {
                         id: row.get(0)?,
                         session_id: row.get(1)?,
                         turn_id: row.get(2)?,
-                        tool_call_id: row.get(3)?,
-                        provider_approval_ref: row.get(4)?,
-                        status: row.get(5)?,
-                        request: string_to_json(row.get(6)?)?,
+                        origin: row.get(3)?,
+                        tool_call_id: row.get(4)?,
+                        provider_approval_ref: row.get(5)?,
+                        status: row.get(6)?,
+                        request: string_to_json(row.get(7)?)?,
                         response: opt_string_to_json(response_json)?,
-                        created_at: row.get(8)?,
-                        resolved_at: row.get(9)?,
+                        created_at: row.get(9)?,
+                        resolved_at: row.get(10)?,
                     })
                 })
                 .map_err(|error| db_error("failed running approval hydration query", error))?;

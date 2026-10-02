@@ -6,11 +6,11 @@ use runtime_core::{
     ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
     ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
     ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionRequest,
-    ProviderSendTurnRequest, ProviderSession, ProviderTurnAck, ProviderTurnResult,
-    ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
+    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession, ProviderTurnAck,
+    ProviderTurnResult, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
 };
 use serde_json::Value;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::auth::{
     claude_smoke_debug_enabled, extract_assistant_text, extract_turn_status,
@@ -32,6 +32,10 @@ impl RuntimeProvider for ClaudeProvider {
             display_name: "Claude".to_string(),
             enabled: self.inner.config.enabled,
         }
+    }
+
+    fn subscribe_events(&self) -> Option<broadcast::Receiver<ProviderRuntimeEvent>> {
+        Some(self.inner.provider_events.subscribe())
     }
 
     async fn healthcheck(&self) -> Result<(), RuntimeError> {
@@ -215,6 +219,7 @@ impl RuntimeProvider for ClaudeProvider {
             canonical_provider_session_ref: RwLock::new(canonical_provider_session_ref.clone()),
             bridge,
             active_turn_id: RwLock::new(None),
+            pending_runtime_turn_id: RwLock::new(None),
             bridge_turn_by_runtime_turn: Mutex::new(BTreeMap::new()),
             runtime_turn_by_bridge_turn: Mutex::new(BTreeMap::new()),
             completed_turns: Mutex::new(BTreeMap::new()),
@@ -313,6 +318,7 @@ impl RuntimeProvider for ClaudeProvider {
             canonical_provider_session_ref: RwLock::new(canonical_provider_session_ref.clone()),
             bridge,
             active_turn_id: RwLock::new(None),
+            pending_runtime_turn_id: RwLock::new(None),
             bridge_turn_by_runtime_turn: Mutex::new(BTreeMap::new()),
             runtime_turn_by_bridge_turn: Mutex::new(BTreeMap::new()),
             completed_turns: Mutex::new(BTreeMap::new()),
@@ -327,12 +333,57 @@ impl RuntimeProvider for ClaudeProvider {
         })
     }
 
+    async fn restore_turn_identity_mapping(
+        &self,
+        runtime_session_id: &str,
+        turn_id: &str,
+        provider_native_turn_id: &str,
+    ) -> Result<(), RuntimeError> {
+        let session = self.get_session(runtime_session_id).await?;
+        let mut bridge_turn_by_runtime_turn = session.bridge_turn_by_runtime_turn.lock().await;
+        let mut runtime_turn_by_bridge_turn = session.runtime_turn_by_bridge_turn.lock().await;
+
+        if let Some(existing) = bridge_turn_by_runtime_turn.get(turn_id) {
+            if existing != provider_native_turn_id {
+                return Err(RuntimeError::ProtocolViolation(format!(
+                    "runtime turn {turn_id} is already mapped to Claude turn {existing}, not {provider_native_turn_id}"
+                )));
+            }
+        }
+        if let Some(existing) = runtime_turn_by_bridge_turn.get(provider_native_turn_id) {
+            if existing != turn_id {
+                return Err(RuntimeError::ProtocolViolation(format!(
+                    "Claude turn {provider_native_turn_id} is already mapped to runtime turn {existing}, not {turn_id}"
+                )));
+            }
+        }
+
+        bridge_turn_by_runtime_turn
+            .insert(turn_id.to_string(), provider_native_turn_id.to_string());
+        runtime_turn_by_bridge_turn
+            .insert(provider_native_turn_id.to_string(), turn_id.to_string());
+        Ok(())
+    }
+
     async fn send_turn(
         &self,
         req: ProviderSendTurnRequest,
     ) -> Result<ProviderTurnAck, RuntimeError> {
-        let session = self.get_session(req.runtime_session_id.as_str()).await?;
+        let session = self
+            .get_session(req.runtime_session_id.as_str())
+            .await
+            .map_err(|error| match error {
+                RuntimeError::NotFound(message) => {
+                    RuntimeError::provider_not_dispatched("session_not_found", message)
+                }
+                other => other,
+            })?;
         let runtime_turn_id = req.turn_id.clone();
+
+        {
+            let mut pending_runtime_turn_id = session.pending_runtime_turn_id.write().await;
+            *pending_runtime_turn_id = Some(runtime_turn_id.clone());
+        }
 
         let result = send_bridge_request(
             &self.inner,
@@ -345,7 +396,22 @@ impl RuntimeProvider for ClaudeProvider {
             }),
             self.inner.config.request_timeout_ms,
         )
-        .await?;
+        .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                let mut pending_runtime_turn_id = session.pending_runtime_turn_id.write().await;
+                if pending_runtime_turn_id.as_deref() == Some(runtime_turn_id.as_str()) {
+                    *pending_runtime_turn_id = None;
+                }
+                return Err(match error {
+                    RuntimeError::NotFound(message) if message.contains("SESSION_NOT_FOUND") => {
+                        RuntimeError::provider_not_dispatched("session_not_found", message)
+                    }
+                    other => other,
+                });
+            }
+        };
 
         let bridge_turn_id = result
             .get("turnId")
@@ -353,6 +419,7 @@ impl RuntimeProvider for ClaudeProvider {
             .map(str::to_string)
             .unwrap_or_else(|| runtime_turn_id.clone());
 
+        let provider_native_turn_id = bridge_turn_id.clone();
         {
             let mut bridge_turn_by_runtime_turn = session.bridge_turn_by_runtime_turn.lock().await;
             bridge_turn_by_runtime_turn.insert(runtime_turn_id.clone(), bridge_turn_id.clone());
@@ -366,10 +433,17 @@ impl RuntimeProvider for ClaudeProvider {
             let mut active_turn_id = session.active_turn_id.write().await;
             *active_turn_id = Some(runtime_turn_id.clone());
         }
+        {
+            let mut pending_runtime_turn_id = session.pending_runtime_turn_id.write().await;
+            if pending_runtime_turn_id.as_deref() == Some(runtime_turn_id.as_str()) {
+                *pending_runtime_turn_id = None;
+            }
+        }
 
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: runtime_turn_id,
+            provider_native_turn_id: Some(provider_native_turn_id),
         })
     }
 

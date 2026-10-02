@@ -3,7 +3,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use runtime_core::{ProviderTurnResult, ProviderTurnStatus, RuntimeError};
+use runtime_core::{ProviderRuntimeEvent, ProviderTurnResult, ProviderTurnStatus, RuntimeError};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
@@ -481,12 +481,17 @@ async fn handle_bridge_event(
     }
     let event_turn_id = if let Some(bridge_turn_id) = event_turn_id {
         let runtime_turn_by_bridge_turn = session.runtime_turn_by_bridge_turn.lock().await;
-        Some(
-            runtime_turn_by_bridge_turn
-                .get(bridge_turn_id.as_str())
-                .cloned()
-                .unwrap_or(bridge_turn_id),
-        )
+        if let Some(runtime_turn_id) = runtime_turn_by_bridge_turn.get(bridge_turn_id.as_str()) {
+            Some(runtime_turn_id.clone())
+        } else {
+            drop(runtime_turn_by_bridge_turn);
+            session
+                .pending_runtime_turn_id
+                .read()
+                .await
+                .clone()
+                .or(Some(bridge_turn_id))
+        }
     } else {
         None
     };
@@ -527,6 +532,45 @@ async fn handle_bridge_event(
                 let mut active_turn_id = session.active_turn_id.write().await;
                 *active_turn_id = Some(turn_id);
             }
+        }
+        "approval.requested" => {
+            let Some(turn_id) = event_turn_id else {
+                fail_bridge(
+                    inner,
+                    bridge,
+                    format!("approval.requested event missing turn id: {payload_body}"),
+                )
+                .await;
+                return;
+            };
+            let Some(provider_approval_ref) = payload_body
+                .get("approvalId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+            else {
+                fail_bridge(
+                    inner,
+                    bridge,
+                    format!("approval.requested event missing approvalId: {payload_body}"),
+                )
+                .await;
+                return;
+            };
+            let tool_call_id = payload_body
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let _ = inner
+                .provider_events
+                .send(ProviderRuntimeEvent::ApprovalRequested {
+                    runtime_session_id: session.runtime_session_id.clone(),
+                    turn_id,
+                    provider_approval_ref,
+                    tool_call_id,
+                    request: payload_body.clone(),
+                });
         }
         "turn.completed" => {
             if let Some(turn_id) = event_turn_id {

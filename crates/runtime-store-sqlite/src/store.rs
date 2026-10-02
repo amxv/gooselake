@@ -8,8 +8,8 @@ use runtime_core::{
     NewRuntimeEvent, OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord,
     RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord,
     TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand,
-    WorkspaceRegisterResponse,
+    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState,
+    WorkspaceAgentRecord, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -92,6 +92,55 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn get_workspace(&self, workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
         self.repository.get_workspace(workspace_id)
+    }
+
+    fn create_workspace_agent(
+        &self,
+        session: &SessionRecord,
+        agent: &WorkspaceAgentRecord,
+    ) -> Result<(), RuntimeError> {
+        self.repository.create_workspace_agent(session, agent)
+    }
+
+    fn list_workspace_agents(
+        &self,
+        workspace_id: &str,
+        lifecycle: Option<WorkspaceAgentLifecycleState>,
+    ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
+        self.repository
+            .list_workspace_agents(workspace_id, lifecycle)
+    }
+
+    fn get_workspace_agent(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+    ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
+        self.repository.get_workspace_agent(workspace_id, agent_id)
+    }
+
+    fn get_workspace_agent_by_id(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
+        self.repository.get_workspace_agent_by_id(agent_id)
+    }
+
+    fn set_workspace_agent_lifecycle(
+        &self,
+        session: &SessionRecord,
+        agent_id: &str,
+        lifecycle: WorkspaceAgentLifecycleState,
+        archive_reason: Option<&str>,
+        changed_at: i64,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        self.repository.set_workspace_agent_lifecycle(
+            session,
+            agent_id,
+            lifecycle,
+            archive_reason,
+            changed_at,
+        )
     }
 
     fn get_operation(&self, operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {

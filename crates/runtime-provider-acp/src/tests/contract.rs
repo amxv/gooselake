@@ -112,6 +112,11 @@ async fn lifecycle_methods_require_configured_command() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -133,6 +138,11 @@ async fn real_adapter_contract_create_send_wait_resume_and_close() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -173,6 +183,13 @@ async fn real_adapter_contract_create_send_wait_resume_and_close() {
             provider_session_ref: created.provider_session_ref.clone(),
             canonical_provider_session_ref: created.canonical_provider_session_ref.clone(),
             cwd: None,
+            model: None,
+            permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -212,6 +229,11 @@ async fn create_and_resume_include_expected_gg_mcp_server_shape() {
             model: None,
             cwd: Some("/tmp/create".to_string()),
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -222,6 +244,13 @@ async fn create_and_resume_include_expected_gg_mcp_server_shape() {
             provider_session_ref: "sess_1".to_string(),
             canonical_provider_session_ref: Some("sess_1".to_string()),
             cwd: Some("/tmp/resume".to_string()),
+            model: None,
+            permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -291,6 +320,11 @@ async fn real_adapter_contract_load_based_resume_is_supported() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -302,6 +336,13 @@ async fn real_adapter_contract_load_based_resume_is_supported() {
             provider_session_ref: created.provider_session_ref.clone(),
             canonical_provider_session_ref: created.canonical_provider_session_ref.clone(),
             cwd: None,
+            model: None,
+            permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -319,6 +360,11 @@ async fn real_adapter_contract_interrupts_active_prompt() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -367,6 +413,11 @@ async fn real_adapter_contract_fails_permission_requests_clearly() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -411,6 +462,11 @@ async fn real_adapter_contract_fails_permission_request_id_collisions_clearly() 
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -455,6 +511,11 @@ async fn real_adapter_contract_maps_non_happy_stop_reasons_to_failed() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -513,6 +574,11 @@ async fn create_session_enforces_configured_capacity() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -524,6 +590,11 @@ async fn create_session_enforces_configured_capacity() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -556,6 +627,11 @@ async fn concurrent_create_session_enforces_configured_capacity() {
                 model: None,
                 cwd: None,
                 permission_mode: None,
+                setting_sources: Vec::new(),
+                system_prompt: None,
+                allowed_tools: Vec::new(),
+                disallowed_tools: Vec::new(),
+                harness_version_slot: None,
                 metadata: None,
             })
             .await
@@ -567,6 +643,11 @@ async fn concurrent_create_session_enforces_configured_capacity() {
                 model: None,
                 cwd: None,
                 permission_mode: None,
+                setting_sources: Vec::new(),
+                system_prompt: None,
+                allowed_tools: Vec::new(),
+                disallowed_tools: Vec::new(),
+                harness_version_slot: None,
                 metadata: None,
             })
             .await

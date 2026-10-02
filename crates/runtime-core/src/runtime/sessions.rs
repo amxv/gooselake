@@ -2,8 +2,7 @@ use serde_json::Value;
 
 use crate::{
     ProviderAuthStatus, ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderKind,
-    ProviderResumeSessionRequest, RuntimeError, RuntimeEventCriticality, RuntimeEventScope,
-    SessionRecord, TurnRecord,
+    RuntimeError, RuntimeEventCriticality, RuntimeEventScope, SessionRecord, TurnRecord,
 };
 
 use super::helpers::now_ms;
@@ -135,6 +134,11 @@ impl RuntimeSessionManager {
                 model: input.model.clone(),
                 cwd: input.cwd.clone(),
                 permission_mode: input.permission_mode.clone(),
+                setting_sources: Vec::new(),
+                system_prompt: None,
+                allowed_tools: Vec::new(),
+                disallowed_tools: Vec::new(),
+                harness_version_slot: None,
                 metadata: input.metadata.clone(),
             })
             .await?;
@@ -250,15 +254,12 @@ impl RuntimeSessionManager {
             .canonical_provider_session_ref
             .or_else(|| session.canonical_provider_session_ref.clone());
 
-        let resumed = provider
-            .resume_session(ProviderResumeSessionRequest {
-                runtime_session_id: session_id.to_string(),
-                provider_session_ref: provider_session_ref.clone(),
-                canonical_provider_session_ref: canonical_provider_session_ref.clone(),
-                cwd: session.cwd.clone(),
-                metadata: Some(session.metadata.clone()),
-            })
-            .await?;
+        let resume_request = self.provider_resume_request_for_session(
+            &session,
+            provider_session_ref.clone(),
+            canonical_provider_session_ref.clone(),
+        )?;
+        let resumed = provider.resume_session(resume_request).await?;
         if resumed.runtime_session_id != session_id {
             return Err(RuntimeError::ProtocolViolation(format!(
                 "provider resume returned mismatched session id (expected={}, actual={})",

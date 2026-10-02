@@ -49,7 +49,7 @@ See [Endpoint Catalog](/docs/endpoint-catalog) for the full route list.
 
 Top-level groups:
 
-- Workspace authority: durable workspace registration/list/get, legacy-authority migration, and operation inspection under `/v2`
+- Workspace authority: durable workspace registration plus workspace-owned agent create/list/get/archive/restore, legacy-authority migration, and operation inspection under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
 - Providers/auth: provider list/models plus Codex, Claude, and ACP auth endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
@@ -69,6 +69,7 @@ For exact JSON fields, use:
 - shared input/output structs in `crates/runtime-core/src/runtime.rs` and `crates/runtime-core/src/services.rs`
 - durable record structs in `crates/runtime-core/src/state.rs`
 - workspace/operation structs in `crates/runtime-core/src/workspace.rs`
+- workspace-agent identity/recreation structs in `crates/runtime-core/src/workspace_agent.rs`
 
 ## Workspace authority and durable operations
 
@@ -111,6 +112,62 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/operations/$OPERATION_
 The operation endpoint exposes the durable operation row plus current claims, transition evidence, effect evidence, outbox rows, and delivery receipts. Workspace registration itself is committed in one SQLite transaction with its operation transitions and canonical-root claim/fence bookkeeping, so a failed commit does not leave a half-created workspace or a falsely terminal operation.
 
 Existing session/team/process/worktree APIs remain under `/v1`; `/v2` is introduced incrementally rather than changing `/v1` behavior in place.
+
+### Workspace-owned agents
+
+Normal `/v2` agent creation is always scoped to a registered workspace:
+
+```bash
+AGENT_RESULT=$(curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider":"claude",
+    "model":"claude-sonnet-5-5",
+    "permission_intent":"default",
+    "setting_sources_intent":["user","project","local"],
+    "system_prompt":"Work on the repository task.",
+    "allowed_tools":["Read","Grep"],
+    "disallowed_tools":["WebFetch"],
+    "harness_version_slot":"default",
+    "title":"Builder"
+  }' \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents")
+
+AGENT_ID=$(echo "$AGENT_RESULT" | jq -r '.agent_id')
+```
+
+The runtime uses the opaque `sess_*` value as the durable public agent ID and allocates a separate friendly alias for display and human references. The alias does **not** replace provider-native session references. Creation commits the session, immutable workspace ownership, workspace profile, active roster membership, and the recreation policy atomically; there is no normal `/v2/agents` unowned-creation route and no separate join step.
+
+The recreation policy is durable and is reused for startup recovery, lazy provider resume, and explicit restore. It currently includes provider, selected model, permission intent, setting-source intent, system prompt, allowed/disallowed tools, authoritative cwd, harness-version slot, and persisted provider session identity.
+
+Read the roster or one agent:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents"
+
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID"
+```
+
+The list defaults to active agents. Use `?lifecycle=archived` for archived history or `?lifecycle=all` for both states.
+
+Archive and restore without changing identity or policy:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"paused"}' \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/archive"
+
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/restore"
+```
+
+An archived agent is removed from the default active roster and its underlying runtime session rejects new turns. History, workspace ownership, alias, recreation policy, and provider identity remain durable. Restore returns the same agent ID and alias and resumes the provider from the stored policy; it does not implicitly assign any future workspace role such as lead.
 
 ### Migrating legacy workspace authority
 

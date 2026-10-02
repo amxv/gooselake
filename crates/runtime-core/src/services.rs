@@ -11,8 +11,8 @@ use crate::{
     NewRuntimeEvent, OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord,
     RuntimeEventScope, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
     TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnAdmissionRecord, TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand,
-    WorkspaceRegisterResponse,
+    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRecord,
+    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 
 #[async_trait]
@@ -51,6 +51,56 @@ pub trait RuntimeStore: Send + Sync {
     fn get_workspace(&self, _workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "workspace authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn create_workspace_agent(
+        &self,
+        _session: &SessionRecord,
+        _agent: &WorkspaceAgentRecord,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace agent authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn list_workspace_agents(
+        &self,
+        _workspace_id: &str,
+        _lifecycle: Option<WorkspaceAgentLifecycleState>,
+    ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace agent authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn get_workspace_agent(
+        &self,
+        _workspace_id: &str,
+        _agent_id: &str,
+    ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace agent authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn get_workspace_agent_by_id(
+        &self,
+        _agent_id: &str,
+    ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn set_workspace_agent_lifecycle(
+        &self,
+        _session: &SessionRecord,
+        _agent_id: &str,
+        _lifecycle: WorkspaceAgentLifecycleState,
+        _archive_reason: Option<&str>,
+        _changed_at: i64,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace agent authority is not implemented by this runtime store".to_string(),
         ))
     }
 

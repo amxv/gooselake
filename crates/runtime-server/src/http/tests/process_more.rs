@@ -87,7 +87,18 @@ async fn mcp_body_limit_is_scoped_to_mcp_routes_only() {
 
 #[tokio::test]
 async fn max_concurrent_one_blocks_second_spawn_until_first_finishes() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, temp_dir) = build_test_router().await;
+    let release_path = temp_dir.path().join("release-first-process");
+    let waiter_path = temp_dir.path().join("wait-for-release.sh");
+    std::fs::write(
+        &waiter_path,
+        format!(
+            "#!/bin/sh\nwhile [ ! -f '{}' ]; do sleep 0.05; done\n",
+            release_path.display()
+        ),
+    )
+    .expect("write process waiter");
+    let first_command = format!("sh {}", waiter_path.display());
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -128,7 +139,7 @@ async fn max_concurrent_one_blocks_second_spawn_until_first_finishes() {
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::from(
                     serde_json::json!({
-                        "command": "sleep 1",
+                        "command": first_command,
                         "session_id": session_id,
                     })
                     .to_string(),
@@ -178,6 +189,7 @@ async fn max_concurrent_one_blocks_second_spawn_until_first_finishes() {
         early.is_err(),
         "second process started too early before slot became available"
     );
+    std::fs::write(&release_path, b"release").expect("release first process");
 
     let mut first_done = false;
     for _ in 0..80 {

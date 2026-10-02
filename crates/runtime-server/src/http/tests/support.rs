@@ -31,8 +31,9 @@ struct TestProviderSession {
 }
 
 #[derive(Default)]
-struct TestProvider {
+pub(super) struct TestProvider {
     state: Mutex<TestProviderState>,
+    resumed_requests: Mutex<Vec<ProviderResumeSessionRequest>>,
 }
 
 #[derive(Default)]
@@ -66,6 +67,10 @@ impl TestProvider {
             }
         }
         "empty".to_string()
+    }
+
+    pub(super) async fn resumed_requests(&self) -> Vec<ProviderResumeSessionRequest> {
+        self.resumed_requests.lock().await.clone()
     }
 }
 
@@ -142,6 +147,7 @@ impl RuntimeProvider for TestProvider {
         &self,
         req: ProviderResumeSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
+        self.resumed_requests.lock().await.push(req.clone());
         let mut state = self.state.lock().await;
         let session = state
             .sessions

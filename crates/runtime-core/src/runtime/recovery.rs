@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    ProviderDispatchOutcome, ProviderKind, ProviderResumeSessionRequest, ProviderSendTurnRequest,
-    RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,
-    TurnDispatchState,
+    ProviderDispatchOutcome, ProviderKind, ProviderSendTurnRequest, RuntimeError,
+    RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, TurnDispatchState,
 };
 
 use super::helpers::{is_terminal_turn_status, now_ms};
@@ -78,18 +77,12 @@ impl RuntimeSessionManager {
                             ))
                         })?;
                     if let Some(provider) = self.providers.get(provider_kind) {
-                        match provider
-                            .resume_session(ProviderResumeSessionRequest {
-                                runtime_session_id: session.id.clone(),
-                                provider_session_ref,
-                                canonical_provider_session_ref: session
-                                    .canonical_provider_session_ref
-                                    .clone(),
-                                cwd: session.cwd.clone(),
-                                metadata: Some(session.metadata.clone()),
-                            })
-                            .await
-                        {
+                        let resume_request = self.provider_resume_request_for_session(
+                            &session,
+                            provider_session_ref,
+                            session.canonical_provider_session_ref.clone(),
+                        )?;
+                        match provider.resume_session(resume_request).await {
                             Ok(resumed) => {
                                 summary.resumed_sessions += 1;
                                 if updated_session.provider_session_ref
@@ -375,10 +368,7 @@ impl RuntimeSessionManager {
                                 .dispatch_send_turn_with_resume_fallback(
                                     provider_kind,
                                     request,
-                                    updated_session.cwd.clone(),
-                                    updated_session.provider_session_ref.clone(),
-                                    updated_session.canonical_provider_session_ref.clone(),
-                                    updated_session.metadata.clone(),
+                                    &updated_session,
                                 )
                                 .await
                             {

@@ -172,6 +172,22 @@ pub fn build_router(state: AppState) -> Router {
         .route("/workspaces", post(register_workspace).get(list_workspaces))
         .route("/workspaces/{workspace_id}", get(get_workspace))
         .route(
+            "/workspaces/{workspace_id}/agents",
+            post(create_workspace_agent).get(list_workspace_agents),
+        )
+        .route(
+            "/workspaces/{workspace_id}/agents/{agent_id}",
+            get(get_workspace_agent),
+        )
+        .route(
+            "/workspaces/{workspace_id}/agents/{agent_id}/archive",
+            post(archive_workspace_agent),
+        )
+        .route(
+            "/workspaces/{workspace_id}/agents/{agent_id}/restore",
+            post(restore_workspace_agent),
+        )
+        .route(
             "/migrations/workspaces",
             get(get_workspace_migration_status),
         )

@@ -195,6 +195,11 @@ async fn bridge_spawn_defaults_to_host_machine_home_and_config_resolution() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -271,6 +276,11 @@ async fn bridge_spawn_allows_explicit_passthrough_home_and_config_overrides() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -307,6 +317,11 @@ async fn bridge_spawn_does_not_export_oauth_token_by_default() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -344,6 +359,11 @@ async fn bridge_spawn_exports_oauth_token_when_explicitly_forced() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -378,6 +398,11 @@ async fn bridge_spawn_fails_fast_when_runtime_credentials_missing() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await;
@@ -412,6 +437,11 @@ async fn bridge_spawn_fails_fast_when_runtime_config_is_malformed() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await;
@@ -446,6 +476,11 @@ async fn bridge_spawn_explicit_api_key_override_bypasses_oauth_preflight() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await

@@ -156,6 +156,10 @@ impl RuntimeProvider for ClaudeProvider {
             "cwd": req.cwd,
             "model": req.model,
             "permissionMode": req.permission_mode,
+            "settingSources": req.setting_sources,
+            "systemPrompt": req.system_prompt,
+            "allowedTools": req.allowed_tools,
+            "disallowedTools": req.disallowed_tools,
         });
         let configure_gg_mcp_server = self.inner.config.gg_mcp.enabled;
         if configure_gg_mcp_server {
@@ -246,6 +250,12 @@ impl RuntimeProvider for ClaudeProvider {
             "providerSessionRef": req.provider_session_ref,
             "claudeCanonicalSessionRef": req.canonical_provider_session_ref,
             "cwd": req.cwd,
+            "model": req.model,
+            "permissionMode": req.permission_mode,
+            "settingSources": req.setting_sources,
+            "systemPrompt": req.system_prompt,
+            "allowedTools": req.allowed_tools,
+            "disallowedTools": req.disallowed_tools,
         });
         let configure_gg_mcp_server = self.inner.config.gg_mcp.enabled;
         if configure_gg_mcp_server {

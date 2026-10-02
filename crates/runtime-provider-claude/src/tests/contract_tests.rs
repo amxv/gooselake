@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 
 #[tokio::test]
 async fn real_adapter_contract_covers_create_resume_send_interrupt_approval_wait_and_close() {
@@ -11,6 +12,11 @@ async fn real_adapter_contract_covers_create_resume_send_interrupt_approval_wait
             model: Some("claude-sonnet-5".to_string()),
             cwd: Some("/tmp/project".to_string()),
             permission_mode: Some("default".to_string()),
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -83,6 +89,13 @@ async fn real_adapter_contract_covers_create_resume_send_interrupt_approval_wait
             provider_session_ref: "provider-session-upstream".to_string(),
             canonical_provider_session_ref: Some("canonical-upstream".to_string()),
             cwd: Some("/tmp/resumed".to_string()),
+            model: None,
+            permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -116,7 +129,7 @@ async fn real_adapter_contract_covers_create_resume_send_interrupt_approval_wait
 }
 
 #[tokio::test]
-async fn create_and_resume_include_expected_gg_mcp_server_shape() {
+async fn create_and_resume_forward_full_recreation_policy_and_gg_mcp_shape() {
     let harness = FakeClaudeBridgeHarness::new("normal");
     let provider = harness.provider(ClaudeGgMcpConfig {
         enabled: true,
@@ -131,9 +144,14 @@ async fn create_and_resume_include_expected_gg_mcp_server_shape() {
     provider
         .create_session(ProviderCreateSessionRequest {
             runtime_session_id: "sess-create".to_string(),
-            model: None,
+            model: Some("claude-create-model".to_string()),
             cwd: Some("/tmp/create".to_string()),
             permission_mode: Some("default".to_string()),
+            setting_sources: vec!["user".to_string(), "project".to_string()],
+            system_prompt: Some("create-system".to_string()),
+            allowed_tools: vec!["Read".to_string(), "Grep".to_string()],
+            disallowed_tools: vec!["Bash".to_string()],
+            harness_version_slot: Some("bridge-v1".to_string()),
             metadata: None,
         })
         .await
@@ -152,6 +170,13 @@ async fn create_and_resume_include_expected_gg_mcp_server_shape() {
             provider_session_ref: "provider-resume".to_string(),
             canonical_provider_session_ref: Some("canonical-resume".to_string()),
             cwd: Some("/tmp/resume".to_string()),
+            model: Some("claude-resume-model".to_string()),
+            permission_mode: Some("plan".to_string()),
+            setting_sources: vec!["user".to_string(), "local".to_string()],
+            system_prompt: Some("resume-system".to_string()),
+            allowed_tools: vec!["Read".to_string()],
+            disallowed_tools: vec!["Write".to_string()],
+            harness_version_slot: Some("bridge-v1".to_string()),
             metadata: None,
         })
         .await
@@ -169,6 +194,22 @@ async fn create_and_resume_include_expected_gg_mcp_server_shape() {
     let resume = requests_for_method(&requests, "session.resume");
     assert_eq!(create.len(), 1);
     assert_eq!(resume.len(), 1);
+
+    let create_params = create[0].get("params").expect("create params");
+    assert_eq!(create_params["model"], "claude-create-model");
+    assert_eq!(create_params["permissionMode"], "default");
+    assert_eq!(create_params["settingSources"], json!(["user", "project"]));
+    assert_eq!(create_params["systemPrompt"], "create-system");
+    assert_eq!(create_params["allowedTools"], json!(["Read", "Grep"]));
+    assert_eq!(create_params["disallowedTools"], json!(["Bash"]));
+
+    let resume_params = resume[0].get("params").expect("resume params");
+    assert_eq!(resume_params["model"], "claude-resume-model");
+    assert_eq!(resume_params["permissionMode"], "plan");
+    assert_eq!(resume_params["settingSources"], json!(["user", "local"]));
+    assert_eq!(resume_params["systemPrompt"], "resume-system");
+    assert_eq!(resume_params["allowedTools"], json!(["Read"]));
+    assert_eq!(resume_params["disallowedTools"], json!(["Write"]));
 
     let create_gg_mcp = create[0]
         .get("params")
@@ -254,6 +295,11 @@ async fn create_and_resume_retry_with_gg_mcp_when_bridge_requires_it() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -272,6 +318,13 @@ async fn create_and_resume_retry_with_gg_mcp_when_bridge_requires_it() {
             provider_session_ref: "provider-resume".to_string(),
             canonical_provider_session_ref: Some("canonical-resume".to_string()),
             cwd: None,
+            model: None,
+            permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -462,6 +515,11 @@ async fn ignored_real_claude_smoke_with_standalone_bridge() {
                     .to_string(),
             ),
             permission_mode: Some("default".to_string()),
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await

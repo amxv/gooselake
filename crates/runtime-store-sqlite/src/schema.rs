@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 4;
+pub(crate) const SCHEMA_VERSION: i64 = 5;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -462,6 +462,45 @@ CREATE INDEX idx_turn_admissions_session_state
 ON turn_admissions(session_id, dispatch_state, admitted_at, turn_id);
 "#;
 
+const MIGRATION_5_SQL: &str = r#"
+CREATE TABLE workspace_agents (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE RESTRICT,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id) ON DELETE RESTRICT,
+  identity_alias TEXT NOT NULL UNIQUE,
+  lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('active', 'archived')),
+  recreation_policy_json TEXT NOT NULL CHECK (json_valid(recreation_policy_json)),
+  archived_at INTEGER,
+  archive_reason TEXT,
+  revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (workspace_id, session_id)
+    REFERENCES workspace_session_ownership(workspace_id, session_id) ON DELETE RESTRICT,
+  CHECK (length(trim(identity_alias)) > 0),
+  CHECK (
+    (lifecycle_state = 'active' AND archived_at IS NULL)
+    OR (lifecycle_state = 'archived' AND archived_at IS NOT NULL)
+  )
+);
+
+CREATE INDEX idx_workspace_agents_workspace_lifecycle
+ON workspace_agents(workspace_id, lifecycle_state, created_at, session_id);
+
+CREATE TRIGGER workspace_agents_workspace_immutable
+BEFORE UPDATE OF workspace_id ON workspace_agents
+WHEN OLD.workspace_id <> NEW.workspace_id
+BEGIN
+  SELECT RAISE(ABORT, 'workspace agent ownership is immutable');
+END;
+
+CREATE TRIGGER workspace_agents_alias_immutable
+BEFORE UPDATE OF identity_alias ON workspace_agents
+WHEN OLD.identity_alias <> NEW.identity_alias
+BEGIN
+  SELECT RAISE(ABORT, 'workspace agent alias is immutable');
+END;
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -478,5 +517,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 4,
         sql: MIGRATION_4_SQL,
+    },
+    Migration {
+        version: 5,
+        sql: MIGRATION_5_SQL,
     },
 ];

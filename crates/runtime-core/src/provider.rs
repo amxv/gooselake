@@ -60,6 +60,14 @@ pub struct ProviderCreateSessionRequest {
     pub model: Option<String>,
     pub cwd: Option<String>,
     pub permission_mode: Option<String>,
+    #[serde(default)]
+    pub setting_sources: Vec<String>,
+    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
+    pub harness_version_slot: Option<String>,
     pub metadata: Option<Value>,
 }
 
@@ -69,6 +77,16 @@ pub struct ProviderResumeSessionRequest {
     pub provider_session_ref: String,
     pub canonical_provider_session_ref: Option<String>,
     pub cwd: Option<String>,
+    pub model: Option<String>,
+    pub permission_mode: Option<String>,
+    #[serde(default)]
+    pub setting_sources: Vec<String>,
+    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
+    pub harness_version_slot: Option<String>,
     pub metadata: Option<Value>,
 }
 

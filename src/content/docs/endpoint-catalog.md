@@ -29,6 +29,11 @@ Auth legend:
 - `POST /v2/workspaces` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/workspaces` (Bearer)
 - `GET /v2/workspaces/{workspace_id}` (Bearer)
+- `POST /v2/workspaces/{workspace_id}/agents` (Bearer, JSON)
+- `GET /v2/workspaces/{workspace_id}/agents` (Bearer; optional `lifecycle=active|archived|all`, defaults to `active`)
+- `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` (Bearer)
+- `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/archive` (Bearer, JSON)
+- `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/restore` (Bearer)
 - `GET /v2/migrations/workspaces` (Bearer)
 - `POST /v2/migrations/workspaces/preview` (Bearer)
 - `POST /v2/migrations/workspaces/apply` (Bearer; optional `Idempotency-Key` header)
@@ -36,6 +41,10 @@ Auth legend:
 - `GET /v2/operations/{operation_id}` (Bearer)
 
 Workspace registration canonicalizes the requested filesystem root and uses that canonical root as the durable uniqueness key. Repeated or concurrent registrations of the same root converge on one workspace identity. With `Idempotency-Key`, an exact retry replays the original terminal result; a different normalized request under the same key returns HTTP `409` without changing state.
+
+Workspace-agent creation is the canonical normal `/v2` agent path. The runtime reuses the opaque `sess_*` session ID as the public agent ID, assigns a globally unique durable friendly alias, and commits the session row, immutable workspace ownership, profile, active roster membership, and exact recreation policy in one SQLite transaction. The recreation policy contains provider, model, permission intent, setting sources, system prompt, allowed/disallowed tools, authoritative cwd, and harness-version slot. Provider-native session references remain separate from the public ID and alias.
+
+Archiving removes the agent from the default active roster and makes its runtime session non-writable while preserving history, alias, immutable workspace ownership, provider identity, and recreation policy. `restore` reuses the same opaque agent ID and alias and resumes the provider with the persisted recreation policy. Archived history is available with `lifecycle=archived`; `lifecycle=all` returns both active and archived records.
 
 The operation resource exposes durable transition, resource-claim, effect, outbox, and receipt evidence for the operation. Completed registration operations have released their live canonical-root claim, while the transition evidence retains the fence generation used for the commit.
 

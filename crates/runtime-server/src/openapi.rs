@@ -186,6 +186,21 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/workspaces") => "Register workspace".to_string(),
         (HttpMethod::Get, "/v2/workspaces") => "List workspaces".to_string(),
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}") => "Get workspace".to_string(),
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents") => {
+            "Create workspace-owned agent".to_string()
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/agents") => {
+            "List workspace agents".to_string()
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/agents/{agent_id}") => {
+            "Get workspace agent".to_string()
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive") => {
+            "Archive workspace agent".to_string()
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore") => {
+            "Restore workspace agent".to_string()
+        }
         (HttpMethod::Get, "/v2/migrations/workspaces") => {
             "Get legacy workspace migration status".to_string()
         }
@@ -241,6 +256,14 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
     }
+    if method == HttpMethod::Get && path == "/v2/workspaces/{workspace_id}/agents" {
+        out.push_str("        - name: lifecycle\n");
+        out.push_str("          in: query\n");
+        out.push_str("          required: false\n");
+        out.push_str("          schema:\n");
+        out.push_str("            type: string\n");
+        out.push_str("            enum: [active, archived, all]\n");
+    }
     if accepts_idempotency_key {
         out.push_str("        - name: Idempotency-Key\n");
         out.push_str("          in: header\n");
@@ -278,6 +301,8 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v1/teams/{team_id}/messages/{message_id}/cancel"
             | "/v1/teams/{team_id}/interrupt-all"
             | "/v2/workspaces"
+            | "/v2/workspaces/{workspace_id}/agents"
+            | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
             | "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}"
     );
     if !expects_multipart && !expects_json {
@@ -486,6 +511,10 @@ mod tests {
         assert!(yaml.contains("  /v1/mcp/invoke:"));
         assert!(yaml.contains("  /v1/providers/acp/auth/status:"));
         assert!(yaml.contains("  /v2/workspaces:"));
+        assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents:"));
+        assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}:"));
+        assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}/archive:"));
+        assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}/restore:"));
         assert!(yaml.contains("  /v2/migrations/workspaces:"));
         assert!(yaml.contains("  /v2/migrations/workspaces/preview:"));
         assert!(yaml.contains("  /v2/migrations/workspaces/apply:"));

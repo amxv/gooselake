@@ -551,6 +551,8 @@ impl RuntimeProvider for CodexProvider {
         session.provider_session_ref = req.provider_session_ref.clone();
         session.canonical_provider_session_ref = req.canonical_provider_session_ref.clone();
         session.cwd = req.cwd;
+        session.model = req.model;
+        session.permission_mode = req.permission_mode;
 
         Ok(ProviderSession {
             runtime_session_id: req.runtime_session_id,

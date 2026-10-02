@@ -155,14 +155,7 @@ impl RuntimeSessionManager {
                 approval_id: None,
             };
             let (ack, provider_events) = match self
-                .dispatch_send_turn_with_resume_fallback(
-                    provider_kind,
-                    request,
-                    session.cwd.clone(),
-                    session.provider_session_ref.clone(),
-                    session.canonical_provider_session_ref.clone(),
-                    session.metadata.clone(),
-                )
+                .dispatch_send_turn_with_resume_fallback(provider_kind, request, &session)
                 .await
             {
                 Ok((ack, provider_events))

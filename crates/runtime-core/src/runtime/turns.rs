@@ -5,11 +5,11 @@ use tokio::sync::broadcast;
 
 use crate::{
     ApprovalRecord, PersistedUserInputSnapshot, ProviderDispatchOutcome,
-    ProviderInterruptTurnRequest, ProviderKind, ProviderResumeSessionRequest, ProviderRuntimeEvent,
-    ProviderSendTurnRequest, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest,
-    RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,
-    TurnAdmissionRecord, TurnCorrelationState, TurnDispatchPolicySnapshot, TurnDispatchState,
-    TurnInputProjectionSource, TurnRecord,
+    ProviderInterruptTurnRequest, ProviderKind, ProviderRuntimeEvent, ProviderSendTurnRequest,
+    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
+    RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, TurnAdmissionRecord,
+    TurnCorrelationState, TurnDispatchPolicySnapshot, TurnDispatchState, TurnInputProjectionSource,
+    TurnRecord,
 };
 
 use super::helpers::{
@@ -222,14 +222,7 @@ impl RuntimeSessionManager {
             approval_id: approval_id.clone(),
         };
         let (ack, provider_events) = match self
-            .dispatch_send_turn_with_resume_fallback(
-                provider_kind,
-                provider_send_input,
-                session.cwd.clone(),
-                session.provider_session_ref.clone(),
-                session.canonical_provider_session_ref.clone(),
-                session.metadata.clone(),
-            )
+            .dispatch_send_turn_with_resume_fallback(provider_kind, provider_send_input, &session)
             .await
         {
             Ok((ack, provider_events))
@@ -559,10 +552,7 @@ impl RuntimeSessionManager {
         &self,
         provider_kind: ProviderKind,
         request: ProviderSendTurnRequest,
-        cwd: Option<String>,
-        provider_session_ref: Option<String>,
-        canonical_provider_session_ref: Option<String>,
-        metadata: Value,
+        session: &crate::SessionRecord,
     ) -> Result<
         (
             crate::ProviderTurnAck,
@@ -583,23 +573,30 @@ impl RuntimeSessionManager {
                 if error.provider_dispatch_outcome() == ProviderDispatchOutcome::NotDispatched
                     && error.provider_dispatch_code() == Some("session_not_found") =>
             {
-                let provider_session_ref = provider_session_ref.ok_or_else(|| {
-                    RuntimeError::provider_not_dispatched(
-                        "provider_session_unavailable",
-                        format!(
-                            "provider session {} was not found and cannot be resumed",
-                            request.runtime_session_id
-                        ),
-                    )
-                })?;
-                provider
-                    .resume_session(ProviderResumeSessionRequest {
-                        runtime_session_id: request.runtime_session_id.clone(),
+                let provider_session_ref =
+                    session.provider_session_ref.clone().ok_or_else(|| {
+                        RuntimeError::provider_not_dispatched(
+                            "provider_session_unavailable",
+                            format!(
+                                "provider session {} was not found and cannot be resumed",
+                                request.runtime_session_id
+                            ),
+                        )
+                    })?;
+                let resume_request = self
+                    .provider_resume_request_for_session(
+                        session,
                         provider_session_ref,
-                        canonical_provider_session_ref,
-                        cwd,
-                        metadata: Some(metadata),
-                    })
+                        session.canonical_provider_session_ref.clone(),
+                    )
+                    .map_err(|resume_error| {
+                        RuntimeError::provider_not_dispatched(
+                            "provider_resume_failed",
+                            resume_error.to_string(),
+                        )
+                    })?;
+                provider
+                    .resume_session(resume_request)
                     .await
                     .map_err(|resume_error| {
                         RuntimeError::provider_not_dispatched(

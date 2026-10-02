@@ -19,6 +19,11 @@ async fn close_session_shuts_down_idle_connection() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -48,6 +53,11 @@ async fn close_session_succeeds_after_connection_death_without_respawn() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -109,6 +119,11 @@ async fn close_session_ignores_close_rpc_timeout_after_local_cleanup() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -142,6 +157,11 @@ async fn close_session_ignores_close_rpc_error_after_local_cleanup() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -182,6 +202,11 @@ async fn create_session_failure_during_initialize_cleans_up_connection_and_child
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -225,6 +250,11 @@ async fn bad_protocol_initialize_cleans_up_connection_and_child() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -245,6 +275,11 @@ async fn real_adapter_contract_handles_malformed_agent_output() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -289,6 +324,11 @@ async fn real_adapter_contract_handles_process_death() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -333,6 +373,11 @@ async fn real_adapter_contract_preserves_ordered_updates_in_terminal_usage() {
             model: None,
             cwd: None,
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -397,6 +442,11 @@ async fn real_adapter_contract_stages_runtime_approval_before_execution() {
             model: None,
             cwd: None,
             permission_mode: Some("require_approval".to_string()),
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await
@@ -446,6 +496,11 @@ async fn real_adapter_contract_declined_runtime_approval_interrupts_turn() {
             model: None,
             cwd: None,
             permission_mode: Some("require_approval".to_string()),
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await

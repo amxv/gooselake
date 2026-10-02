@@ -182,6 +182,11 @@ async fn accepted_approval_launch_failure_keeps_pending_turn_retryable() {
             model: Some("gpt-5.4-mini".to_string()),
             cwd: Some(missing_cwd.display().to_string()),
             permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
             metadata: None,
         })
         .await

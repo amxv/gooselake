@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 mod db;
+mod operation_tx;
 mod repository;
 mod repository_hydration;
 mod repository_upserts;
+mod repository_workspace;
 mod schema;
 mod store;
 

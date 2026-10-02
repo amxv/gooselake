@@ -8,7 +8,7 @@ summary: "Use this page as the map for the runtime manual."
 
 Gooselake is a machine-side runtime for durable agent work. Think of it as an **air traffic control tower** for coding agents: clients ask for flights, providers fly the planes, and the runtime keeps the flight plan, radio log, runway state, crash reports, and replayable black-box recorder.
 
-The important shift is that the UI is not the runtime. A desktop app, web console, local script, or future CLI can disappear without losing the truth of the work. The runtime owns provider sessions, turn execution, event history, process execution, worktrees, team communication, diagnostics, and recovery.
+The important shift is that the UI is not the runtime. A desktop app, web console, local script, or future CLI can disappear without losing the truth of the work. The runtime owns canonical workspace identity, durable mutation operations, provider sessions, turn execution, event history, process execution, worktrees, team communication, diagnostics, and recovery.
 
 ## What to read first
 
@@ -88,6 +88,7 @@ You are trying to change implementation without breaking the runtime contract.
 
 Gooselake owns these responsibilities because clients are poor places to keep them:
 
+- canonical workspace identity and durable operation/idempotency records for workspace mutations
 - provider-backed sessions and opaque provider references
 - one-active-turn session coordination
 - durable turns, approvals, and terminal states

@@ -2,10 +2,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use runtime_core::{RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
 
-use crate::schema::{SCHEMA_SQL, SCHEMA_VERSION};
+use crate::schema::{MIGRATIONS, SCHEMA_VERSION};
 
 pub(crate) fn open_connection(path: &Path) -> Result<Connection, RuntimeError> {
     let connection = Connection::open(path).map_err(|error| {
@@ -28,36 +28,103 @@ pub(crate) fn open_connection(path: &Path) -> Result<Connection, RuntimeError> {
 }
 
 pub(crate) fn apply_schema(connection: &mut Connection) -> Result<(), RuntimeError> {
-    let transaction = connection
-        .transaction()
-        .map_err(|error| db_error("failed to start sqlite schema transaction", error))?;
+    reject_newer_schema(connection)?;
+    for migration in MIGRATIONS {
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| db_error("failed to start sqlite migration transaction", error))?;
 
-    transaction
-        .execute_batch(SCHEMA_SQL)
-        .map_err(|error| db_error("failed applying sqlite schema", error))?;
+        let already_applied = if table_exists(&transaction, "schema_migrations")? {
+            transaction
+                .query_row(
+                    "SELECT version FROM schema_migrations WHERE version = ?1",
+                    params![migration.version],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|error| db_error("failed reading schema_migrations", error))?
+                .is_some()
+        } else {
+            false
+        };
 
-    let existing: Option<i64> = transaction
-        .query_row(
-            "SELECT version FROM schema_migrations WHERE version = ?1",
-            params![SCHEMA_VERSION],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| db_error("failed reading schema_migrations", error))?;
+        if !already_applied {
+            transaction.execute_batch(migration.sql).map_err(|error| {
+                db_error(
+                    format!("failed applying sqlite migration {}", migration.version),
+                    error,
+                )
+            })?;
+            transaction
+                .execute(
+                    "INSERT INTO schema_migrations (version, applied_at)
+                     VALUES (?1, CAST(strftime('%s','now') AS INTEGER))",
+                    params![migration.version],
+                )
+                .map_err(|error| {
+                    db_error(
+                        format!("failed recording sqlite migration {}", migration.version),
+                        error,
+                    )
+                })?;
+        }
 
-    if existing.is_none() {
-        transaction
-            .execute(
-                "INSERT INTO schema_migrations (version, applied_at)
-                 VALUES (?1, strftime('%s','now'))",
-                params![SCHEMA_VERSION],
+        transaction.commit().map_err(|error| {
+            db_error(
+                format!("failed committing sqlite migration {}", migration.version),
+                error,
             )
-            .map_err(|error| db_error("failed writing schema migration row", error))?;
+        })?;
     }
 
-    transaction
-        .commit()
-        .map_err(|error| db_error("failed committing schema transaction", error))?;
+    verify_migration_chain(connection)?;
+    Ok(())
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, RuntimeError> {
+    let count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![table],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| db_error("failed checking sqlite table existence", error))?;
+    Ok(count == 1)
+}
+
+fn reject_newer_schema(connection: &Connection) -> Result<(), RuntimeError> {
+    if !table_exists(connection, "schema_migrations")? {
+        return Ok(());
+    }
+    let max_version = connection
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+            row.get::<_, Option<i64>>(0)
+        })
+        .map_err(|error| db_error("failed reading current sqlite schema version", error))?
+        .unwrap_or(0);
+    if max_version > SCHEMA_VERSION {
+        return Err(RuntimeError::Bootstrap(format!(
+            "database schema version {max_version} is newer than supported version {SCHEMA_VERSION}"
+        )));
+    }
+    Ok(())
+}
+
+fn verify_migration_chain(connection: &Connection) -> Result<(), RuntimeError> {
+    let mut statement = connection
+        .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
+        .map_err(|error| db_error("failed preparing migration verification", error))?;
+    let versions = statement
+        .query_map([], |row| row.get::<_, i64>(0))
+        .map_err(|error| db_error("failed reading applied migrations", error))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| db_error("failed collecting applied migrations", error))?;
+    let expected = (1..=SCHEMA_VERSION).collect::<Vec<_>>();
+    if versions != expected {
+        return Err(RuntimeError::Bootstrap(format!(
+            "sqlite migration chain is incomplete: expected {expected:?}, found {versions:?}"
+        )));
+    }
     Ok(())
 }
 

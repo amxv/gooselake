@@ -1,6 +1,11 @@
-pub(crate) const SCHEMA_VERSION: i64 = 1;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
-pub(crate) const SCHEMA_SQL: &str = r#"
+pub(crate) struct Migration {
+    pub version: i64,
+    pub sql: &'static str,
+}
+
+pub(crate) const MIGRATION_1_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
   applied_at INTEGER NOT NULL
@@ -214,3 +219,135 @@ CREATE TABLE IF NOT EXISTS diagnostics_journal (
   created_at INTEGER NOT NULL
 );
 "#;
+
+const MIGRATION_2_SQL: &str = r#"
+CREATE TABLE workspaces (
+  workspace_id TEXT PRIMARY KEY,
+  canonical_root TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('active', 'retired')),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK (length(trim(workspace_id)) > 0),
+  CHECK (length(trim(canonical_root)) > 0),
+  CHECK (length(trim(display_name)) > 0)
+);
+
+CREATE TABLE runtime_operations (
+  operation_id TEXT PRIMARY KEY,
+  workspace_id TEXT REFERENCES workspaces(workspace_id) DEFERRABLE INITIALLY DEFERRED,
+  kind TEXT NOT NULL,
+  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('operator', 'agent', 'system')),
+  actor_id TEXT NOT NULL,
+  idempotency_key TEXT,
+  normalized_request_hash TEXT NOT NULL,
+  normalized_request_json TEXT NOT NULL CHECK (json_valid(normalized_request_json)),
+  phase TEXT NOT NULL CHECK (phase IN ('requested', 'manual_review', 'completed', 'failed')),
+  exact_terminal_result_json TEXT CHECK (
+    exact_terminal_result_json IS NULL OR json_valid(exact_terminal_result_json)
+  ),
+  error_code TEXT,
+  error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK (length(trim(operation_id)) > 0),
+  CHECK (length(trim(kind)) > 0),
+  CHECK (length(trim(actor_id)) > 0),
+  CHECK (length(trim(normalized_request_hash)) > 0),
+  CHECK (
+    (phase IN ('completed', 'failed') AND exact_terminal_result_json IS NOT NULL)
+    OR (phase NOT IN ('completed', 'failed') AND exact_terminal_result_json IS NULL)
+  )
+);
+
+CREATE UNIQUE INDEX idx_runtime_operations_actor_idempotency
+ON runtime_operations(actor_kind, actor_id, idempotency_key)
+WHERE idempotency_key IS NOT NULL;
+
+CREATE INDEX idx_runtime_operations_recovery
+ON runtime_operations(updated_at, operation_id)
+WHERE phase NOT IN ('completed', 'failed');
+
+CREATE TABLE runtime_operation_resource_fences (
+  resource_kind TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  last_generation INTEGER NOT NULL CHECK (last_generation >= 0),
+  PRIMARY KEY (resource_kind, resource_id)
+);
+
+CREATE TABLE runtime_operation_resource_claims (
+  resource_kind TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  claim_mode TEXT NOT NULL CHECK (claim_mode = 'exclusive'),
+  owner_operation_id TEXT NOT NULL REFERENCES runtime_operations(operation_id) ON DELETE CASCADE,
+  fence_generation INTEGER NOT NULL CHECK (fence_generation > 0),
+  acquired_at INTEGER NOT NULL,
+  PRIMARY KEY (resource_kind, resource_id, claim_mode)
+);
+
+CREATE INDEX idx_runtime_operation_claim_owner
+ON runtime_operation_resource_claims(owner_operation_id, resource_kind, resource_id);
+
+CREATE TABLE runtime_operation_transitions (
+  operation_id TEXT NOT NULL REFERENCES runtime_operations(operation_id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL CHECK (sequence > 0),
+  from_phase TEXT CHECK (from_phase IS NULL OR from_phase IN ('requested', 'manual_review', 'completed', 'failed')),
+  to_phase TEXT NOT NULL CHECK (to_phase IN ('requested', 'manual_review', 'completed', 'failed')),
+  evidence_json TEXT CHECK (evidence_json IS NULL OR json_valid(evidence_json)),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (operation_id, sequence)
+);
+
+CREATE TABLE runtime_operation_effects (
+  effect_id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL REFERENCES runtime_operations(operation_id) ON DELETE CASCADE,
+  effect_kind TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('intended', 'started', 'observed', 'finalized', 'uncertain', 'manual_review')),
+  idempotency_key TEXT NOT NULL,
+  evidence_json TEXT CHECK (evidence_json IS NULL OR json_valid(evidence_json)),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE (operation_id, idempotency_key)
+);
+
+CREATE TABLE runtime_operation_outbox (
+  outbox_id TEXT PRIMARY KEY,
+  operation_id TEXT NOT NULL REFERENCES runtime_operations(operation_id) ON DELETE CASCADE,
+  delivery_kind TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'delivering', 'delivered', 'failed', 'manual_review')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  next_attempt_at INTEGER,
+  last_error_json TEXT CHECK (last_error_json IS NULL OR json_valid(last_error_json)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  delivered_at INTEGER,
+  UNIQUE (operation_id, idempotency_key)
+);
+
+CREATE INDEX idx_runtime_operation_outbox_retry
+ON runtime_operation_outbox(state, next_attempt_at, created_at, outbox_id);
+
+CREATE TABLE runtime_operation_outbox_receipts (
+  outbox_id TEXT PRIMARY KEY REFERENCES runtime_operation_outbox(outbox_id) ON DELETE CASCADE,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  received_at INTEGER NOT NULL,
+  receipt_json TEXT CHECK (receipt_json IS NULL OR json_valid(receipt_json))
+);
+"#;
+
+pub(crate) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: MIGRATION_1_SQL,
+    },
+    Migration {
+        version: 2,
+        sql: MIGRATION_2_SQL,
+    },
+];

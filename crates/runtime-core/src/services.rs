@@ -6,9 +6,10 @@ use tokio::sync::broadcast;
 
 use crate::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState,
-    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
+    RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
     TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
+    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 
 #[async_trait]
@@ -28,6 +29,33 @@ pub trait RuntimeStore: Send + Sync {
         after_seq: Option<i64>,
         limit: usize,
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError>;
+
+    fn register_workspace(
+        &self,
+        _command: &WorkspaceRegisterCommand,
+    ) -> Result<WorkspaceRegisterResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn get_workspace(&self, _workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn get_operation(&self, _operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable operation authority is not implemented by this runtime store".to_string(),
+        ))
+    }
 
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError>;
 

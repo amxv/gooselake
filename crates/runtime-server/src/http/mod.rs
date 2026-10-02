@@ -36,6 +36,7 @@ mod processes;
 mod sessions;
 mod shared;
 mod teams;
+mod workspaces;
 mod worktrees;
 
 use auth::*;
@@ -46,6 +47,7 @@ use processes::*;
 use sessions::*;
 use shared::*;
 use teams::*;
+use workspaces::*;
 use worktrees::*;
 
 const MCP_MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
@@ -164,10 +166,20 @@ pub fn build_router(state: AppState) -> Router {
             bearer_auth,
         ));
 
+    let protected_v2 = Router::new()
+        .route("/workspaces", post(register_workspace).get(list_workspaces))
+        .route("/workspaces/{workspace_id}", get(get_workspace))
+        .route("/operations/{operation_id}", get(get_operation))
+        .route_layer(middleware::from_fn_with_state(
+            state.bearer_token.clone(),
+            bearer_auth,
+        ));
+
     Router::new()
         .route("/health", get(health))
         .route("/openapi.yaml", get(openapi_yaml))
         .nest("/v1", protected)
+        .nest("/v2", protected_v2)
         .with_state(state)
 }
 

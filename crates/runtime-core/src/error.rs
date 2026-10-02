@@ -17,6 +17,9 @@ pub enum RuntimeError {
     #[error("invalid state: {0}")]
     InvalidState(String),
 
+    #[error("conflict: {0}")]
+    Conflict(String),
+
     #[error("protocol violation: {0}")]
     ProtocolViolation(String),
 

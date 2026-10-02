@@ -3,9 +3,10 @@ use std::path::Path;
 use async_trait::async_trait;
 use runtime_core::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState,
-    RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
+    OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
+    RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
+    TurnRecord, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -73,6 +74,25 @@ impl RuntimeStore for SqliteRuntimeStore {
         limit: usize,
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError> {
         self.repository.list_runtime_events(scope, after_seq, limit)
+    }
+
+    fn register_workspace(
+        &self,
+        command: &WorkspaceRegisterCommand,
+    ) -> Result<WorkspaceRegisterResponse, RuntimeError> {
+        self.repository.register_workspace(command)
+    }
+
+    fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
+        self.repository.list_workspaces()
+    }
+
+    fn get_workspace(&self, workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
+        self.repository.get_workspace(workspace_id)
+    }
+
+    fn get_operation(&self, operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
+        self.repository.get_operation(operation_id)
     }
 
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError> {

@@ -6,6 +6,7 @@ pub mod runtime;
 pub mod services;
 pub mod state;
 pub mod team_comms;
+pub mod workspace;
 
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
 pub use error::RuntimeError;
@@ -42,3 +43,10 @@ pub use state::{
     TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
 pub use team_comms::{RuntimeTeamCommsConfig, RuntimeTeamCommsService};
+pub use workspace::{
+    prepare_workspace_registration, OperationActor, OperationActorKind, OperationDetails,
+    OperationEffectRecord, OperationOutboxReceiptRecord, OperationOutboxRecord, OperationPhase,
+    OperationRecord, OperationResourceClaimRecord, OperationTransitionRecord,
+    WorkspaceLifecycleState, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterRequest,
+    WorkspaceRegisterResponse,
+};

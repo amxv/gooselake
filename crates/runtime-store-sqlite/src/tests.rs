@@ -49,7 +49,7 @@ fn sample_turn() -> TurnRecord {
 }
 
 #[test]
-fn initialize_schema_creates_all_phase_two_tables() {
+fn initialize_schema_creates_all_runtime_tables() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let repository = repo(&temp_dir);
 
@@ -83,9 +83,26 @@ fn initialize_schema_creates_all_phase_two_tables() {
         "team_operation_journal",
         "team_operation_diagnostics",
         "diagnostics_journal",
+        "workspaces",
+        "runtime_operations",
+        "runtime_operation_resource_fences",
+        "runtime_operation_resource_claims",
+        "runtime_operation_transitions",
+        "runtime_operation_effects",
+        "runtime_operation_outbox",
+        "runtime_operation_outbox_receipts",
     ] {
         assert!(table_names.contains(expected), "missing table {expected}");
     }
+
+    let versions = connection
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .expect("prepare versions")
+        .query_map([], |row| row.get::<_, i64>(0))
+        .expect("query versions")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect versions");
+    assert_eq!(versions, vec![1, 2]);
 }
 
 #[test]
@@ -144,6 +161,8 @@ fn initialize_schema_migrates_partially_populated_database_without_reset() {
         .expect("query");
     assert_eq!(count, 1);
 }
+
+mod workspace_authority;
 
 #[test]
 fn append_runtime_event_assigns_monotonic_scope_sequence() {

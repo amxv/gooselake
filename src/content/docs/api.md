@@ -1,6 +1,6 @@
 ---
 title: "API guide"
-description: "Use the Gooselake HTTP and SSE API for sessions, turns, events, approvals, providers, processes, worktrees, teams, diagnostics, and MCP gateway calls."
+description: "Use the Gooselake HTTP and SSE API for workspace authority, durable operations, sessions, turns, events, providers, processes, worktrees, teams, diagnostics, and MCP gateway calls."
 order: 22
 category: "Client Builders"
 summary: "The human-facing API guide for building clients on top of the runtime."
@@ -35,6 +35,7 @@ Public routes:
 Protected routes:
 
 - all `/v1/**` routes require `Authorization: Bearer <token>`
+- all `/v2/**` routes require `Authorization: Bearer <token>`
 
 Auth failure returns HTTP `401` with:
 
@@ -48,6 +49,7 @@ See [Endpoint Catalog](/docs/endpoint-catalog) for the full route list.
 
 Top-level groups:
 
+- Workspace authority: durable workspace registration/list/get and operation inspection under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
 - Providers/auth: provider list/models plus Codex, Claude, and ACP auth endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
@@ -66,6 +68,49 @@ For exact JSON fields, use:
 - handler input structs in `crates/runtime-server/src/http/`
 - shared input/output structs in `crates/runtime-core/src/runtime.rs` and `crates/runtime-core/src/services.rs`
 - durable record structs in `crates/runtime-core/src/state.rs`
+- workspace/operation structs in `crates/runtime-core/src/workspace.rs`
+
+## Workspace authority and durable operations
+
+The `/v2` surface currently starts with workspace identity. A workspace is keyed by its canonical filesystem root, so concurrent or repeated registration of the same root converges on one durable `workspace_id`.
+
+Register a workspace:
+
+```bash
+WORKSPACE_RESULT=$(curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: register-my-repo" \
+  -d '{
+    "canonical_root":"/workspace/repo",
+    "display_name":"My Repo"
+  }' \
+  "$BASE_URL/v2/workspaces")
+
+WORKSPACE_ID=$(echo "$WORKSPACE_RESULT" | jq -r '.workspace.workspace_id')
+OPERATION_ID=$(echo "$WORKSPACE_RESULT" | jq -r '.operation_id')
+```
+
+`POST /v2/workspaces` accepts:
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `canonical_root` | yes | Must resolve to an existing directory. The runtime canonicalizes it before durable admission. |
+| `display_name` | no | Defaults to the canonical root's final path component. Re-registering an existing root does not rename it. |
+
+`Idempotency-Key` is optional, but recommended for retried mutations. The key is scoped to the authenticated operator principal. Repeating the same key with the same normalized input replays the exact terminal response, including the original `operation_id`. Reusing the same key with different normalized input returns HTTP `409` and does not mutate workspace state.
+
+Read the durable state:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/workspaces"
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/workspaces/$WORKSPACE_ID"
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/operations/$OPERATION_ID"
+```
+
+The operation endpoint exposes the durable operation row plus current claims, transition evidence, effect evidence, outbox rows, and delivery receipts. Workspace registration itself is committed in one SQLite transaction with its operation transitions and canonical-root claim/fence bookkeeping, so a failed commit does not leave a half-created workspace or a falsely terminal operation.
+
+Existing session/team/process/worktree APIs remain under `/v1`; `/v2` is introduced incrementally rather than changing `/v1` behavior in place.
 
 ## Sessions
 

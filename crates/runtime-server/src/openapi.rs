@@ -72,6 +72,7 @@ fn build_openapi_yaml() -> String {
                 out.push_str("      security: []\n");
             }
             append_path_parameters(&mut out, &path);
+            append_header_parameters(&mut out, &path, method);
             append_request_body(&mut out, &path, method);
             append_response(&mut out, &path, method);
         }
@@ -183,6 +184,10 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v1/teams/{team_id}/interrupt-all") => {
             "Interrupt all active team turns".to_string()
         }
+        (HttpMethod::Post, "/v2/workspaces") => "Register workspace".to_string(),
+        (HttpMethod::Get, "/v2/workspaces") => "List workspaces".to_string(),
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}") => "Get workspace".to_string(),
+        (HttpMethod::Get, "/v2/operations/{operation_id}") => "Get durable operation".to_string(),
         (HttpMethod::Get, "/v1/mcp/capabilities") => "Runtime MCP capabilities".to_string(),
         (HttpMethod::Post, "/v1/mcp/invoke") => "Invoke runtime MCP tool".to_string(),
         _ => format!("{} {}", method.as_str().to_uppercase(), path),
@@ -220,6 +225,18 @@ fn append_path_parameters(out: &mut String, path: &str) {
     }
 }
 
+fn append_header_parameters(out: &mut String, path: &str, method: HttpMethod) {
+    if path != "/v2/workspaces" || method != HttpMethod::Post {
+        return;
+    }
+    out.push_str("      parameters:\n");
+    out.push_str("        - name: Idempotency-Key\n");
+    out.push_str("          in: header\n");
+    out.push_str("          required: false\n");
+    out.push_str("          schema:\n");
+    out.push_str("            type: string\n");
+}
+
 fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
     if method != HttpMethod::Post {
         return;
@@ -247,6 +264,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v1/teams/{team_id}/deliveries/{delivery_id}/retry"
             | "/v1/teams/{team_id}/messages/{message_id}/cancel"
             | "/v1/teams/{team_id}/interrupt-all"
+            | "/v2/workspaces"
     );
     if !expects_multipart && !expects_json {
         return;
@@ -315,11 +333,18 @@ fn collect_routes() -> BTreeMap<String, RouteSpec> {
         .unwrap_or(mcp_start);
     let protected_marker = "let protected = Router::new()";
     let protected_body_start = protected_start + protected_marker.len();
-    let root_marker = "Router::new()\n        .route(\"/health\", get(health))";
-    let root_start = source[protected_body_start..]
-        .find(root_marker)
+    let protected_v2_start = source[protected_body_start..]
+        .find("let protected_v2 = Router::new()")
         .map(|offset| protected_body_start + offset)
-        .unwrap_or(protected_body_start);
+        .unwrap_or(source.len());
+    let protected_v2_marker = "let protected_v2 = Router::new()";
+    let protected_v2_body_start = protected_v2_start.saturating_add(protected_v2_marker.len());
+    let root_marker = "Router::new()\n        .route(\"/health\", get(health))";
+    let root_search_start = protected_v2_body_start.min(source.len());
+    let root_start = source[root_search_start..]
+        .find(root_marker)
+        .map(|offset| root_search_start + offset)
+        .unwrap_or(root_search_start);
     let root_end = source[root_start..]
         .find(".with_state(state)")
         .map(|offset| root_start + offset)
@@ -331,8 +356,15 @@ fn collect_routes() -> BTreeMap<String, RouteSpec> {
     } else {
         String::new()
     };
-    let protected_block = if protected_body_start <= root_start && root_start <= source.len() {
-        source[protected_body_start..root_start].to_string()
+    let protected_block =
+        if protected_body_start <= protected_v2_start && protected_v2_start <= source.len() {
+            source[protected_body_start..protected_v2_start].to_string()
+        } else {
+            String::new()
+        };
+    let protected_v2_block = if protected_v2_body_start <= root_start && root_start <= source.len()
+    {
+        source[protected_v2_body_start..root_start].to_string()
     } else {
         String::new()
     };
@@ -346,6 +378,7 @@ fn collect_routes() -> BTreeMap<String, RouteSpec> {
     let mut routes = BTreeMap::<String, RouteSpec>::new();
     collect_block_routes(&mut routes, &mcp_block, "/v1/mcp", true);
     collect_block_routes(&mut routes, &protected_block, "/v1", true);
+    collect_block_routes(&mut routes, &protected_v2_block, "/v2", true);
     collect_block_routes(&mut routes, &root_block, "", false);
     routes
 }
@@ -438,6 +471,9 @@ mod tests {
         assert!(yaml.contains("  /v1/teams/{team_id}/messages:"));
         assert!(yaml.contains("  /v1/mcp/invoke:"));
         assert!(yaml.contains("  /v1/providers/acp/auth/status:"));
+        assert!(yaml.contains("  /v2/workspaces:"));
+        assert!(yaml.contains("  /v2/operations/{operation_id}:"));
+        assert!(yaml.contains("        - name: Idempotency-Key"));
         assert!(yaml.contains("  /openapi.yaml:"));
     }
 }

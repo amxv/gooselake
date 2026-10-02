@@ -81,6 +81,7 @@ Docs-signal files:
 - SSE replay semantics and cursor precedence
 - operational examples and runbooks
 - process/worktree ownership rules
+- `/v2` workspace canonicalization, idempotency, and durable-operation semantics
 - team delivery policy and recovery semantics
 - deployment and config pitfalls
 

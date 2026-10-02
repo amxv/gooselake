@@ -39,5 +39,6 @@ mod mcp_policy_process;
 mod process_more;
 mod session_basics;
 mod team_routes;
+mod workspace_routes;
 mod worktree_create_cleanup;
 mod worktree_existing_smoke;

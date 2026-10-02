@@ -83,6 +83,10 @@ impl From<RuntimeError> for ApiError {
             | RuntimeError::InvalidState(message)
             | RuntimeError::ProtocolViolation(message)
             | RuntimeError::Unsupported(message) => Self::bad_request(message),
+            RuntimeError::Conflict(message) => Self {
+                status: StatusCode::CONFLICT,
+                message,
+            },
             RuntimeError::ProviderAlreadyRegistered(message)
             | RuntimeError::Bootstrap(message)
             | RuntimeError::Io(message) => Self {

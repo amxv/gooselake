@@ -24,6 +24,17 @@ Auth legend:
 - `GET /v1/openapi.yaml` (Bearer)
 - `GET /v1/version` (Bearer)
 
+## Workspace Authority + Durable Operations
+
+- `POST /v2/workspaces` (Bearer, JSON; optional `Idempotency-Key` header)
+- `GET /v2/workspaces` (Bearer)
+- `GET /v2/workspaces/{workspace_id}` (Bearer)
+- `GET /v2/operations/{operation_id}` (Bearer)
+
+Workspace registration canonicalizes the requested filesystem root and uses that canonical root as the durable uniqueness key. Repeated or concurrent registrations of the same root converge on one workspace identity. With `Idempotency-Key`, an exact retry replays the original terminal result; a different normalized request under the same key returns HTTP `409` without changing state.
+
+The operation resource exposes durable transition, resource-claim, effect, outbox, and receipt evidence for the operation. Completed registration operations have released their live canonical-root claim, while the transition evidence retains the fence generation used for the commit.
+
 ## Providers
 
 - `GET /v1/providers` (Bearer)

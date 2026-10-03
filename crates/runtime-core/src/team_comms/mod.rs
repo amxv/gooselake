@@ -1,3 +1,5 @@
+mod agent_delivery;
+mod agent_messages;
 mod delivery;
 mod helpers;
 mod service_impl;
@@ -82,6 +84,19 @@ impl RuntimeTeamCommsService {
             }
         }
 
+        for message in hydrated.agent_messages {
+            max_message_id = max_message_id.max(parse_counter(&message.id).unwrap_or(0));
+            if let Some(idempotency_key) = normalized_non_empty(message.idempotency_key.as_deref())
+            {
+                state.agent_idempotency_index.insert(
+                    agent_idempotency_index_key(&message, &idempotency_key),
+                    message.id.clone(),
+                );
+            }
+            state.agent_message_ids.push(message.id.clone());
+            state.agent_messages.insert(message.id.clone(), message);
+        }
+
         for message in hydrated.team_messages {
             if !state.teams.contains_key(&message.team_id) {
                 continue;
@@ -105,6 +120,24 @@ impl RuntimeTeamCommsService {
                 .or_default()
                 .push(message.id.clone());
             state.messages.insert(message.id.clone(), message);
+        }
+
+        for delivery in hydrated.agent_deliveries {
+            if !state.agent_messages.contains_key(&delivery.message_id) {
+                continue;
+            }
+            max_delivery_id = max_delivery_id.max(parse_counter(&delivery.id).unwrap_or(0));
+            state
+                .agent_message_delivery_ids
+                .entry(delivery.message_id.clone())
+                .or_default()
+                .push(delivery.id.clone());
+            state
+                .agent_recipient_delivery_ids
+                .entry(delivery.recipient_agent_id.clone())
+                .or_default()
+                .push(delivery.id.clone());
+            state.agent_deliveries.insert(delivery.id.clone(), delivery);
         }
 
         for delivery in hydrated.team_deliveries {
@@ -163,6 +196,12 @@ impl RuntimeTeamCommsService {
                             DeliveryAttemptTrigger::TurnCompletedBoundary,
                         )
                         .await;
+                    let _ = replay_service
+                        .resume_deferred_agent_for_recipient(
+                            session_id.as_str(),
+                            DeliveryAttemptTrigger::TurnCompletedBoundary,
+                        )
+                        .await;
                 }
             }
         });
@@ -174,14 +213,18 @@ impl RuntimeTeamCommsService {
         self.ensure_enabled()?;
         let recipients = {
             let state = self.state.read().await;
-            state
+            let mut recipients = state
                 .recipient_delivery_ids
                 .keys()
                 .cloned()
-                .collect::<Vec<_>>()
+                .chain(state.agent_recipient_delivery_ids.keys().cloned())
+                .collect::<Vec<_>>();
+            recipients.sort();
+            recipients.dedup();
+            recipients
         };
 
-        let mut retried = 0usize;
+        let mut retried = self.recover_startup_agent_deliveries().await?;
         for recipient_id in recipients {
             let recipient_session = match self.runtime.get_session(recipient_id.as_str()).await {
                 Ok(session) => session,
@@ -193,7 +236,7 @@ impl RuntimeTeamCommsService {
             if recipient_session.active_turn_id.is_some() {
                 continue;
             }
-            let deferred_ids = {
+            let recoverable_legacy_ids = {
                 let state = self.state.read().await;
                 state
                     .recipient_delivery_ids
@@ -202,17 +245,60 @@ impl RuntimeTeamCommsService {
                     .unwrap_or_default()
                     .into_iter()
                     .filter(|delivery_id| {
+                        if state.agent_deliveries.contains_key(delivery_id) {
+                            return false;
+                        }
                         state
                             .deliveries
                             .get(delivery_id)
-                            .map(|delivery| delivery.status == DELIVERY_STATUS_DEFERRED)
+                            .map(|delivery| {
+                                matches!(
+                                    delivery.status.as_str(),
+                                    DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED
+                                )
+                            })
                             .unwrap_or(false)
                     })
                     .collect::<Vec<_>>()
             };
-            for delivery_id in deferred_ids {
+            for delivery_id in recoverable_legacy_ids {
                 if let Ok(updated) = self
                     .inject_delivery(
+                        delivery_id.as_str(),
+                        DeliveryAttemptTrigger::StartupRecovery,
+                    )
+                    .await
+                {
+                    if updated.status != DELIVERY_STATUS_DEFERRED {
+                        retried += 1;
+                    }
+                }
+            }
+            let recoverable_agent_ids = {
+                let state = self.state.read().await;
+                state
+                    .agent_recipient_delivery_ids
+                    .get(recipient_id.as_str())
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|delivery_id| {
+                        state
+                            .agent_deliveries
+                            .get(delivery_id)
+                            .map(|delivery| {
+                                matches!(
+                                    delivery.status.as_str(),
+                                    DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED
+                                )
+                            })
+                            .unwrap_or(false)
+                    })
+                    .collect::<Vec<_>>()
+            };
+            for delivery_id in recoverable_agent_ids {
+                if let Ok(updated) = self
+                    .inject_agent_delivery(
                         delivery_id.as_str(),
                         DeliveryAttemptTrigger::StartupRecovery,
                     )
@@ -280,7 +366,7 @@ impl RuntimeTeamCommsService {
                 "msg_{}",
                 self.next_message_id.fetch_add(1, Ordering::Relaxed)
             );
-            if !state.messages.contains_key(&id) {
+            if !state.messages.contains_key(&id) && !state.agent_messages.contains_key(&id) {
                 return id;
             }
         }
@@ -292,7 +378,7 @@ impl RuntimeTeamCommsService {
                 "dlv_{}",
                 self.next_delivery_id.fetch_add(1, Ordering::Relaxed)
             );
-            if !state.deliveries.contains_key(&id) {
+            if !state.deliveries.contains_key(&id) && !state.agent_deliveries.contains_key(&id) {
                 return id;
             }
         }

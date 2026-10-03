@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamRecord};
+use crate::{
+    AgentDeliveryRecord, AgentMessageRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamRecord,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DeliveryAttemptTrigger {
@@ -21,4 +24,10 @@ pub(super) struct TeamCommsState {
     pub(super) message_delivery_ids: HashMap<String, Vec<String>>,
     pub(super) recipient_delivery_ids: HashMap<String, Vec<String>>,
     pub(super) idempotency_index: HashMap<String, String>,
+    pub(super) agent_messages: HashMap<String, AgentMessageRecord>,
+    pub(super) agent_deliveries: HashMap<String, AgentDeliveryRecord>,
+    pub(super) agent_message_ids: Vec<String>,
+    pub(super) agent_message_delivery_ids: HashMap<String, Vec<String>>,
+    pub(super) agent_recipient_delivery_ids: HashMap<String, Vec<String>>,
+    pub(super) agent_idempotency_index: HashMap<String, String>,
 }

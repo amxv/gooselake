@@ -207,6 +207,19 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore") => {
             "Restore workspace agent".to_string()
         }
+        (HttpMethod::Post, "/v2/messages") => {
+            "Send agent direct message or workspace broadcast".to_string()
+        }
+        (HttpMethod::Get, "/v2/messages") => "List canonical agent messages".to_string(),
+        (HttpMethod::Get, "/v2/messages/{message_id}/deliveries") => {
+            "List canonical message deliveries".to_string()
+        }
+        (HttpMethod::Post, "/v2/messages/{message_id}/cancel") => {
+            "Cancel outstanding canonical message deliveries".to_string()
+        }
+        (HttpMethod::Post, "/v2/deliveries/{delivery_id}/retry") => {
+            "Retry canonical agent delivery".to_string()
+        }
         (HttpMethod::Get, "/v2/migrations/workspaces") => {
             "Get legacy workspace migration status".to_string()
         }
@@ -248,10 +261,18 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
             "/v2/workspaces"
                 | "/v2/workspaces/{workspace_id}/lead"
                 | "/v2/workspaces/{workspace_id}/interrupt"
+                | "/v2/messages"
                 | "/v2/migrations/workspaces/apply"
                 | "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}"
         );
-    if params.is_empty() && !accepts_idempotency_key {
+    let has_query_parameters = method == HttpMethod::Get
+        && matches!(
+            path,
+            "/v2/workspaces/{workspace_id}/agents"
+                | "/v2/messages"
+                | "/v2/messages/{message_id}/deliveries"
+        );
+    if params.is_empty() && !accepts_idempotency_key && !has_query_parameters {
         return;
     }
     out.push_str("      parameters:\n");
@@ -271,6 +292,28 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
         out.push_str("            enum: [active, archived, all]\n");
+    }
+    if method == HttpMethod::Get && path == "/v2/messages" {
+        for name in ["workspace_id", "sender_agent_id", "cursor", "limit"] {
+            out.push_str("        - name: ");
+            out.push_str(name);
+            out.push('\n');
+            out.push_str("          in: query\n");
+            out.push_str("          required: false\n");
+            out.push_str("          schema:\n");
+            out.push_str(if name == "limit" {
+                "            type: integer\n"
+            } else {
+                "            type: string\n"
+            });
+        }
+    }
+    if method == HttpMethod::Get && path == "/v2/messages/{message_id}/deliveries" {
+        out.push_str("        - name: recipient_agent_id\n");
+        out.push_str("          in: query\n");
+        out.push_str("          required: false\n");
+        out.push_str("          schema:\n");
+        out.push_str("            type: string\n");
     }
     if accepts_idempotency_key {
         out.push_str("        - name: Idempotency-Key\n");
@@ -312,6 +355,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/workspaces/{workspace_id}/lead"
             | "/v2/workspaces/{workspace_id}/agents"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
+            | "/v2/messages"
             | "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}"
     );
     if !expects_multipart && !expects_json {
@@ -526,6 +570,10 @@ mod tests {
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}/archive:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}/restore:"));
+        assert!(yaml.contains("  /v2/messages:"));
+        assert!(yaml.contains("  /v2/messages/{message_id}/deliveries:"));
+        assert!(yaml.contains("  /v2/messages/{message_id}/cancel:"));
+        assert!(yaml.contains("  /v2/deliveries/{delivery_id}/retry:"));
         assert!(yaml.contains("  /v2/migrations/workspaces:"));
         assert!(yaml.contains("  /v2/migrations/workspaces/preview:"));
         assert!(yaml.contains("  /v2/migrations/workspaces/apply:"));

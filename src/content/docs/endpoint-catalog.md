@@ -58,6 +58,20 @@ The operation resource exposes durable transition, resource-claim, effect, outbo
 
 Legacy workspace migration preview classifies every persisted legacy authority subject as `mapped`, `archived_history`, or `unresolved`. Deterministic mapping uses canonical repository and worktree evidence rather than display names. Apply consumes the persisted preview, creates workspace/session authority only for proven mappings, leaves unresolved subjects without guessed ownership, and reports `cutover_blocked: true` while any unresolved subject remains. The resolution endpoint lets an operator explicitly map an unresolved subject to an existing active workspace or archive it as history. Legacy `/v1` rows and read routes are not rewritten by this migration.
 
+## Agent Messages + Deliveries
+
+- `POST /v2/messages` (Bearer, JSON; optional `Idempotency-Key` header)
+- `GET /v2/messages` (Bearer; optional `workspace_id`, `sender_agent_id`, `cursor`, `limit`)
+- `GET /v2/messages/{message_id}/deliveries` (Bearer; optional `recipient_agent_id`)
+- `POST /v2/messages/{message_id}/cancel` (Bearer)
+- `POST /v2/deliveries/{delivery_id}/retry` (Bearer)
+
+Canonical `/v2` messages are agent-first and do not require a legacy team ID. Direct routing can target any active/routable agent in the runtime: same-workspace direct messages use `workspace_team` context and cross-workspace/migration-compatible directs use `global_direct` context. Workspace broadcasts derive the sender workspace from canonical ownership, snapshot the active roster once, exclude the sender, and never fan out across workspace boundaries.
+
+Message creation commits the canonical message and every recipient delivery atomically. `Idempotency-Key` replays an exact duplicate and returns `409` if the same scoped key is reused with different normalized message input. Delivery status is durable per recipient; failed/deferred deliveries can be retried, pending/deferred messages can be cancelled when every outstanding delivery remains cancellable, and startup recovery resumes pending/deferred canonical work without duplicating migrated legacy delivery injection.
+
+`image_paths` accepts up to eight ordered PNG, JPEG, GIF, or WebP files that must be regular/readable and match a supported byte signature. The current v2 transport delivers them as native structured image input to Claude; Codex and ACP reject image-bearing v2 messages explicitly rather than silently flattening or dropping attachments. Validation errors are path-redacted.
+
 ## Providers
 
 - `GET /v1/providers` (Bearer)

@@ -1,8 +1,9 @@
 use runtime_core::{
-    ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
-    ProcessRecord, RuntimeError, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord,
-    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TurnRecord,
+    AgentDeliveryRecord, AgentMessageContextKind, AgentMessageRecord, ApprovalRecord,
+    CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, ProcessRecord,
+    RuntimeError, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
+    TurnRecord,
 };
 
 use crate::db::{collect_rows, db_error, open_connection, opt_string_to_json, string_to_json};
@@ -177,6 +178,49 @@ impl SqliteRuntimeRepository {
             collect_rows(rows)?
         };
 
+        let agent_messages = if table_exists(&connection, "agent_messages")? {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, scope, context_kind, workspace_id, legacy_team_id,
+                            sender_agent_id, recipient_agent_ids_json, input_json,
+                            image_paths_json, priority, policy, correlation_id,
+                            reply_to_message_id, idempotency_key, created_at
+                     FROM agent_messages ORDER BY created_at ASC, id ASC",
+                )
+                .map_err(|error| {
+                    db_error("failed preparing agent message hydration query", error)
+                })?;
+            let rows = statement
+                .query_map([], |row| {
+                    let context_raw: String = row.get(2)?;
+                    let context_kind = AgentMessageContextKind::from_str(&context_raw)
+                        .ok_or_else(|| invalid_text(2, "invalid agent message context"))?;
+                    let recipients = string_to_json(row.get(6)?)?;
+                    let images = string_to_json(row.get(8)?)?;
+                    Ok(AgentMessageRecord {
+                        id: row.get(0)?,
+                        scope: row.get(1)?,
+                        context_kind,
+                        workspace_id: row.get(3)?,
+                        legacy_team_id: row.get(4)?,
+                        sender_agent_id: row.get(5)?,
+                        recipient_agent_ids: json_string_array(6, recipients)?,
+                        input: string_to_json(row.get(7)?)?,
+                        image_paths: json_string_array(8, images)?,
+                        priority: row.get(9)?,
+                        policy: row.get(10)?,
+                        correlation_id: row.get(11)?,
+                        reply_to_message_id: row.get(12)?,
+                        idempotency_key: row.get(13)?,
+                        created_at: row.get(14)?,
+                    })
+                })
+                .map_err(|error| db_error("failed running agent message hydration query", error))?;
+            collect_rows(rows)?
+        } else {
+            Vec::new()
+        };
+
         let team_messages = {
             let mut statement = connection
                 .prepare(
@@ -209,6 +253,42 @@ impl SqliteRuntimeRepository {
                 })
                 .map_err(|error| db_error("failed running team message hydration query", error))?;
             collect_rows(rows)?
+        };
+
+        let agent_deliveries = if table_exists(&connection, "agent_deliveries")? {
+            let mut statement = connection
+                .prepare(
+                    "SELECT id, message_id, recipient_agent_id, provider, status,
+                            effective_policy, injection_strategy, injected_turn_id,
+                            last_error_code, last_error_message, created_at, updated_at
+                     FROM agent_deliveries ORDER BY created_at ASC, id ASC",
+                )
+                .map_err(|error| {
+                    db_error("failed preparing agent delivery hydration query", error)
+                })?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok(AgentDeliveryRecord {
+                        id: row.get(0)?,
+                        message_id: row.get(1)?,
+                        recipient_agent_id: row.get(2)?,
+                        provider: row.get(3)?,
+                        status: row.get(4)?,
+                        effective_policy: row.get(5)?,
+                        injection_strategy: row.get(6)?,
+                        injected_turn_id: row.get(7)?,
+                        last_error_code: row.get(8)?,
+                        last_error_message: row.get(9)?,
+                        created_at: row.get(10)?,
+                        updated_at: row.get(11)?,
+                    })
+                })
+                .map_err(|error| {
+                    db_error("failed running agent delivery hydration query", error)
+                })?;
+            collect_rows(rows)?
+        } else {
+            Vec::new()
         };
 
         let team_deliveries = {
@@ -439,6 +519,8 @@ impl SqliteRuntimeRepository {
             sessions,
             turns,
             approvals,
+            agent_messages,
+            agent_deliveries,
             teams,
             team_members,
             team_messages,
@@ -451,4 +533,41 @@ impl SqliteRuntimeRepository {
             credentials,
         })
     }
+}
+
+fn json_string_array(index: usize, value: serde_json::Value) -> rusqlite::Result<Vec<String>> {
+    let values = value
+        .as_array()
+        .ok_or_else(|| invalid_text(index, "expected JSON array"))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| invalid_text(index, "expected JSON string array"))
+        })
+        .collect()
+}
+
+fn invalid_text(index: usize, message: &str) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        index,
+        rusqlite::types::Type::Text,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message.to_string(),
+        )),
+    )
+}
+
+fn table_exists(connection: &rusqlite::Connection, table: &str) -> Result<bool, RuntimeError> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed checking hydration table existence", error))?;
+    Ok(count == 1)
 }

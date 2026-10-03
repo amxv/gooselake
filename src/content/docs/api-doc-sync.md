@@ -82,6 +82,7 @@ Docs-signal files:
 - operational examples and runbooks
 - process/worktree ownership rules
 - `/v2` workspace canonicalization, idempotency, and durable-operation semantics
+- `/v2` agent-first direct/broadcast context, recipient snapshot, delivery recovery, idempotency, and native-image capability semantics
 - team delivery policy and recovery semantics
 - deployment and config pitfalls
 

@@ -5,7 +5,10 @@ use std::collections::BTreeMap;
 use tokio::sync::broadcast;
 
 use crate::{
-    ApprovalRecord, LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
+    AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
+    AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageListRequest,
+    AgentMessageListResponse, AgentMessageRecord, AgentRetryDeliveryRequest, ApprovalRecord,
+    LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
     LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
     LegacyWorkspaceMigrationStatus, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
     NewRuntimeEvent, OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord,
@@ -247,6 +250,22 @@ pub trait RuntimeStore: Send + Sync {
     fn upsert_team_message(&self, record: &TeamMessageRecord) -> Result<(), RuntimeError>;
 
     fn upsert_team_delivery(&self, record: &TeamDeliveryRecord) -> Result<(), RuntimeError>;
+
+    fn insert_agent_message_with_deliveries(
+        &self,
+        _message: &AgentMessageRecord,
+        _deliveries: &[AgentDeliveryRecord],
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "agent message persistence is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn upsert_agent_delivery(&self, _record: &AgentDeliveryRecord) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "agent delivery persistence is not implemented by this runtime store".to_string(),
+        ))
+    }
 
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError>;
 
@@ -592,6 +611,60 @@ pub trait TeamCommsService: Send + Sync {
         &self,
         request: TeamBroadcastRequest,
     ) -> Result<TeamMessageAck, RuntimeError>;
+
+    async fn send_agent_direct(
+        &self,
+        _request: AgentDirectMessageRequest,
+    ) -> Result<AgentMessageAck, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "agent-first direct messaging is not implemented by this comms service".to_string(),
+        ))
+    }
+
+    async fn broadcast_workspace(
+        &self,
+        _request: AgentBroadcastMessageRequest,
+    ) -> Result<AgentMessageAck, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "agent-first broadcast messaging is not implemented by this comms service".to_string(),
+        ))
+    }
+
+    async fn list_agent_messages(
+        &self,
+        _request: AgentMessageListRequest,
+    ) -> Result<AgentMessageListResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "agent-first message listing is not implemented by this comms service".to_string(),
+        ))
+    }
+
+    async fn get_agent_deliveries(
+        &self,
+        _request: AgentDeliveryListRequest,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "agent-first delivery listing is not implemented by this comms service".to_string(),
+        ))
+    }
+
+    async fn retry_agent_delivery(
+        &self,
+        _request: AgentRetryDeliveryRequest,
+    ) -> Result<AgentDeliveryRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "agent-first delivery retry is not implemented by this comms service".to_string(),
+        ))
+    }
+
+    async fn cancel_agent_message(
+        &self,
+        _request: AgentCancelMessageRequest,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "agent-first message cancellation is not implemented by this comms service".to_string(),
+        ))
+    }
 
     async fn list_messages(
         &self,

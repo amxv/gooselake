@@ -35,6 +35,22 @@ fn is_valid_dispatch_transition(from: TurnDispatchState, to: TurnDispatchState) 
 }
 
 impl RuntimeSessionManager {
+    pub async fn admitted_turn_for_correlation(
+        &self,
+        session_id: &str,
+        correlation_id: &str,
+    ) -> Option<String> {
+        self.turn_admissions
+            .read()
+            .await
+            .values()
+            .find(|admission| {
+                admission.session_id == session_id
+                    && admission.correlation.correlation_id.as_deref() == Some(correlation_id)
+            })
+            .map(|admission| admission.turn_id.clone())
+    }
+
     pub async fn send_turn(
         self: &Arc<Self>,
         session_id: &str,

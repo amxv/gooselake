@@ -281,6 +281,8 @@ pub struct RuntimeHydratedState {
     pub sessions: Vec<SessionRecord>,
     pub turns: Vec<TurnRecord>,
     pub approvals: Vec<ApprovalRecord>,
+    pub agent_messages: Vec<crate::AgentMessageRecord>,
+    pub agent_deliveries: Vec<crate::AgentDeliveryRecord>,
     pub teams: Vec<TeamRecord>,
     pub team_members: Vec<TeamMemberRecord>,
     pub team_messages: Vec<TeamMessageRecord>,

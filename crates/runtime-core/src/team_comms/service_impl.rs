@@ -3,12 +3,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use async_trait::async_trait;
 
 use crate::{
-    RuntimeError, RuntimeEventRecord, RuntimeEventScope, TeamBroadcastRequest,
-    TeamCancelMessageRequest, TeamCommsService, TeamCreateRequest, TeamDeliveryRecord,
-    TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamInterruptAllResponse, TeamJoinRequest,
-    TeamListMessagesRequest, TeamListMessagesResponse, TeamMemberRecord, TeamMessageAck,
-    TeamRecord, TeamRemoveMemberRequest, TeamRetryDeliveryRequest, TeamSendDirectRequest,
-    TeamSetLeadRequest, TeamViewSnapshotRequest, TeamViewSnapshotResponse, TeamWithMembers,
+    AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
+    AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageListRequest,
+    AgentMessageListResponse, AgentRetryDeliveryRequest, RuntimeError, RuntimeEventRecord,
+    RuntimeEventScope, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCommsService,
+    TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamInterruptAllRequest,
+    TeamInterruptAllResponse, TeamJoinRequest, TeamListMessagesRequest, TeamListMessagesResponse,
+    TeamMemberRecord, TeamMessageAck, TeamRecord, TeamRemoveMemberRequest,
+    TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest,
+    TeamViewSnapshotResponse, TeamWithMembers,
 };
 
 use super::{
@@ -378,14 +381,45 @@ impl TeamCommsService for RuntimeTeamCommsService {
         };
 
         self.store.upsert_team(&deleted)?;
+        let mut canonical_recipients_to_resume = HashSet::new();
         for delivery in &cancelled_deliveries {
             self.store.upsert_team_delivery(delivery)?;
+            let canonical_cancel = {
+                let mut state = self.state.write().await;
+                state
+                    .agent_deliveries
+                    .get_mut(&delivery.id)
+                    .and_then(|canonical| {
+                        if matches!(
+                            canonical.status.as_str(),
+                            DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED
+                        ) {
+                            canonical.status = DELIVERY_STATUS_CANCELLED.to_string();
+                            canonical.updated_at = delivery.updated_at;
+                            Some(canonical.clone())
+                        } else {
+                            None
+                        }
+                    })
+            };
+            if let Some(canonical) = canonical_cancel {
+                self.store.upsert_agent_delivery(&canonical)?;
+                canonical_recipients_to_resume.insert(canonical.recipient_agent_id);
+            }
             let _ = self
                 .append_team_event(
                     team_id.as_str(),
                     "team_delivery.cancelled",
                     serde_json::json!({ "delivery": delivery }),
                     Some(delivery.recipient_agent_id.clone()),
+                )
+                .await;
+        }
+        for recipient_agent_id in canonical_recipients_to_resume {
+            let _ = self
+                .resume_deferred_agent_for_recipient(
+                    &recipient_agent_id,
+                    DeliveryAttemptTrigger::TurnCompletedBoundary,
                 )
                 .await;
         }
@@ -532,6 +566,48 @@ impl TeamCommsService for RuntimeTeamCommsService {
         Ok(ack)
     }
 
+    async fn send_agent_direct(
+        &self,
+        request: AgentDirectMessageRequest,
+    ) -> Result<AgentMessageAck, RuntimeError> {
+        self.send_agent_direct_impl(request).await
+    }
+
+    async fn broadcast_workspace(
+        &self,
+        request: AgentBroadcastMessageRequest,
+    ) -> Result<AgentMessageAck, RuntimeError> {
+        self.broadcast_workspace_impl(request).await
+    }
+
+    async fn list_agent_messages(
+        &self,
+        request: AgentMessageListRequest,
+    ) -> Result<AgentMessageListResponse, RuntimeError> {
+        self.list_agent_messages_impl(request).await
+    }
+
+    async fn get_agent_deliveries(
+        &self,
+        request: AgentDeliveryListRequest,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        self.get_agent_deliveries_impl(request).await
+    }
+
+    async fn retry_agent_delivery(
+        &self,
+        request: AgentRetryDeliveryRequest,
+    ) -> Result<AgentDeliveryRecord, RuntimeError> {
+        self.retry_agent_delivery_impl(request).await
+    }
+
+    async fn cancel_agent_message(
+        &self,
+        request: AgentCancelMessageRequest,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        self.cancel_agent_message_impl(request).await
+    }
+
     async fn list_messages(
         &self,
         request: TeamListMessagesRequest,
@@ -641,6 +717,35 @@ impl TeamCommsService for RuntimeTeamCommsService {
         let team_id = normalize_non_empty(request.team_id.as_str(), "team_id")?;
         let delivery_id = normalize_non_empty(request.delivery_id.as_str(), "delivery_id")?;
 
+        let migrated_to_agent_authority = {
+            let state = self.state.read().await;
+            let delivery = state
+                .deliveries
+                .get(&delivery_id)
+                .ok_or_else(|| RuntimeError::NotFound(format!("delivery {}", delivery_id)))?;
+            if delivery.team_id != team_id {
+                return Err(RuntimeError::InvalidState(format!(
+                    "delivery {} does not belong to team {}",
+                    delivery_id, team_id
+                )));
+            }
+            state.agent_deliveries.contains_key(&delivery_id)
+        };
+        if migrated_to_agent_authority {
+            self.retry_agent_delivery_impl(AgentRetryDeliveryRequest {
+                delivery_id: delivery_id.clone(),
+            })
+            .await?;
+            return self
+                .state
+                .read()
+                .await
+                .deliveries
+                .get(&delivery_id)
+                .cloned()
+                .ok_or_else(|| RuntimeError::NotFound(format!("delivery {}", delivery_id)));
+        }
+
         let updated = {
             let mut state = self.state.write().await;
             let delivery = state
@@ -692,6 +797,37 @@ impl TeamCommsService for RuntimeTeamCommsService {
         self.ensure_enabled()?;
         let team_id = normalize_non_empty(request.team_id.as_str(), "team_id")?;
         let message_id = normalize_non_empty(request.message_id.as_str(), "message_id")?;
+
+        let migrated_to_agent_authority = {
+            let state = self.state.read().await;
+            let message = state
+                .messages
+                .get(&message_id)
+                .ok_or_else(|| RuntimeError::NotFound(format!("message {}", message_id)))?;
+            if message.team_id != team_id {
+                return Err(RuntimeError::InvalidState(format!(
+                    "message {} does not belong to team {}",
+                    message_id, team_id
+                )));
+            }
+            state.agent_messages.contains_key(&message_id)
+        };
+        if migrated_to_agent_authority {
+            self.cancel_agent_message_impl(AgentCancelMessageRequest {
+                message_id: message_id.clone(),
+            })
+            .await?;
+            let state = self.state.read().await;
+            let delivery_ids = state
+                .message_delivery_ids
+                .get(&message_id)
+                .cloned()
+                .unwrap_or_default();
+            return Ok(delivery_ids
+                .into_iter()
+                .filter_map(|delivery_id| state.deliveries.get(&delivery_id).cloned())
+                .collect());
+        }
 
         let cancelled = {
             let mut state = self.state.write().await;

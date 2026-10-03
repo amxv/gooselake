@@ -32,6 +32,7 @@ mod auth;
 mod diagnostics;
 mod events;
 mod mcp;
+mod messages;
 mod processes;
 mod sessions;
 mod shared;
@@ -44,6 +45,7 @@ use auth::*;
 use diagnostics::*;
 use events::*;
 use mcp::*;
+use messages::*;
 use processes::*;
 use sessions::*;
 use shared::*;
@@ -191,6 +193,19 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/workspaces/{workspace_id}/agents/{agent_id}/restore",
             post(restore_workspace_agent),
+        )
+        .route(
+            "/messages",
+            post(create_agent_message).get(list_agent_messages),
+        )
+        .route(
+            "/messages/{message_id}/deliveries",
+            get(list_agent_deliveries),
+        )
+        .route("/messages/{message_id}/cancel", post(cancel_agent_message))
+        .route(
+            "/deliveries/{delivery_id}/retry",
+            post(retry_agent_delivery),
         )
         .route(
             "/migrations/workspaces",

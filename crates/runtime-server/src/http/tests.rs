@@ -34,6 +34,7 @@ use support::*;
 mod claude_acp_smoke;
 mod codex_runtime_smoke;
 use codex_runtime_smoke::{codex_test_model, create_test_session};
+mod agent_message_routes;
 mod mcp_core;
 mod mcp_policy_process;
 mod process_more;

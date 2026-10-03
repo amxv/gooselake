@@ -1,6 +1,6 @@
 ---
 title: "API guide"
-description: "Use the Gooselake HTTP and SSE API for workspace authority, durable operations, sessions, turns, events, providers, processes, worktrees, teams, diagnostics, and MCP gateway calls."
+description: "Use the Gooselake HTTP and SSE API for workspace authority, agent messaging, durable operations, sessions, turns, events, providers, processes, worktrees, diagnostics, and MCP gateway calls."
 order: 22
 category: "Client Builders"
 summary: "The human-facing API guide for building clients on top of the runtime."
@@ -50,6 +50,7 @@ See [Endpoint Catalog](/docs/endpoint-catalog) for the full route list.
 Top-level groups:
 
 - Workspace authority: durable workspace registration, nullable/revisioned lead authority, workspace-wide turn interruption, workspace-owned agent create/list/get/archive/restore, legacy-authority migration, and operation inspection under `/v2`
+- Agent messaging: agent-first direct messages across workspaces plus workspace-local broadcasts, delivery inspection, retry, and cancellation under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
 - Providers/auth: provider list/models plus Codex, Claude, and ACP auth endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
@@ -71,6 +72,7 @@ For exact JSON fields, use:
 - workspace/operation structs in `crates/runtime-core/src/workspace.rs`
 - workspace-agent identity/recreation structs in `crates/runtime-core/src/workspace_agent.rs`
 - workspace lead, membership-policy, and interrupt structs in `crates/runtime-core/src/workspace_control.rs`
+- agent message/delivery structs in `crates/runtime-core/src/agent_comms.rs`
 
 ## Workspace authority and durable operations
 
@@ -112,7 +114,7 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/operations/$OPERATION_
 
 The operation endpoint exposes the durable operation row plus current claims, transition evidence, effect evidence, outbox rows, and delivery receipts. Workspace registration itself is committed in one SQLite transaction with its operation transitions and canonical-root claim/fence bookkeeping, so a failed commit does not leave a half-created workspace or a falsely terminal operation.
 
-Existing session/team/process/worktree APIs remain under `/v1`; `/v2` is introduced incrementally rather than changing `/v1` behavior in place.
+Existing session/team/process/worktree APIs remain under `/v1`; `/v2` is introduced incrementally rather than changing `/v1` behavior in place. Canonical agent messaging is also available under `/v2` without requiring a legacy team ID.
 
 ### Workspace-owned agents
 
@@ -257,6 +259,71 @@ curl -fsS -X POST \
 Or explicitly classify an unresolved historical subject as archived by sending `{ "action": "archive", "workspace_id": null }` to the same resolution route. Operator resolutions are persisted and are not overwritten by later preview refreshes.
 
 The migration is additive: existing `/v1` session, team, process, and worktree rows and read routes remain intact throughout preview, apply, and explicit resolution.
+
+### Agent-first messages and deliveries
+
+`POST /v2/messages` creates one canonical message plus its per-recipient delivery rows. Direct messages address an active runtime agent by `recipient_agent_id` and do not require the sender and recipient to share a workspace. When both agents belong to the same workspace, the message records `workspace_team` context; a cross-workspace or migration-compatible direct records `global_direct` context instead of inventing legacy team ownership.
+
+Send a direct message:
+
+```bash
+MESSAGE_RESULT=$(curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: ask-agent-once" \
+  -d "{
+    \"mode\":\"direct\",
+    \"sender_agent_id\":\"$AGENT_ID\",
+    \"recipient_agent_id\":\"$OTHER_AGENT_ID\",
+    \"input\":[{\"type\":\"text\",\"text\":\"Please inspect the failure.\"}],
+    \"policy\":\"non_interrupting\"
+  }" \
+  "$BASE_URL/v2/messages")
+
+MESSAGE_ID=$(echo "$MESSAGE_RESULT" | jq -r '.message.id')
+DELIVERY_ID=$(echo "$MESSAGE_RESULT" | jq -r '.deliveries[0].id')
+```
+
+Broadcasts derive the sender's current canonical workspace from durable agent ownership; callers do not supply a workspace or team ID. The active roster is snapshotted once at send time, the sender is excluded, and later roster changes do not rewrite historical recipients. A leadless workspace and a workspace with no other active members are both valid broadcast states.
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: broadcast-once" \
+  -d "{
+    \"mode\":\"broadcast\",
+    \"sender_agent_id\":\"$AGENT_ID\",
+    \"input\":[{\"type\":\"text\",\"text\":\"New constraint: keep the API compatible.\"}]
+  }" \
+  "$BASE_URL/v2/messages"
+```
+
+The create body accepts `mode`, `sender_agent_id`, structured `input`, optional ordered `image_paths`, `priority`, `policy`, and `correlation_id`. Direct mode additionally accepts `recipient_agent_id` and `reply_to_message_id`; broadcast rejects those direct-only fields. `Idempotency-Key` is an HTTP header: an exact retry returns the existing message, while reusing the key with different normalized content returns HTTP `409`.
+
+Image paths are validated before message admission: at most eight regular readable files, with PNG, JPEG, GIF, or WebP identified from file bytes. Ordering is preserved. The canonical v2 transport currently sends images natively to Claude sessions; Codex and ACP v2 message recipients reject image-bearing sends with an explicit unsupported error rather than dropping or flattening attachments. Validation errors identify the failing image index/reason without echoing the local path.
+
+Inspect message history and durable delivery state:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/messages?workspace_id=$WORKSPACE_ID&limit=100"
+
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/messages/$MESSAGE_ID/deliveries"
+```
+
+`GET /v2/messages` supports `workspace_id`, `sender_agent_id`, `cursor`, and bounded `limit` filters. Delivery state is per recipient and remains explicit across `pending`, `deferred`, `injecting`, `injected`, `failed`, and `cancelled` transitions. Retry is allowed from failed/deferred state, and cancellation applies only while all outstanding deliveries are still cancellable:
+
+```bash
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/deliveries/$DELIVERY_ID/retry"
+
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/messages/$MESSAGE_ID/cancel"
+```
+
+Message creation and its recipient snapshot commit atomically. Startup recovery resumes canonical `pending`/`deferred` work, and migrated legacy delivery rows mirror canonical terminal transitions so `/v1` compatibility views cannot inject the same migrated delivery twice.
 
 ## Sessions
 

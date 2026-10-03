@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 mod db;
 mod operation_tx;
 mod repository;
+mod repository_agent_comms;
 mod repository_hydration;
 mod repository_turn_authority;
 mod repository_upserts;

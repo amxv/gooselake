@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 6;
+pub(crate) const SCHEMA_VERSION: i64 = 7;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -546,6 +546,129 @@ BEGIN
 END;
 "#;
 
+const MIGRATION_7_SQL: &str = r#"
+CREATE TABLE agent_messages (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL CHECK (scope IN ('direct', 'broadcast')),
+  context_kind TEXT NOT NULL CHECK (
+    context_kind IN ('workspace_team', 'global_direct', 'legacy_team')
+  ),
+  workspace_id TEXT REFERENCES workspaces(workspace_id) ON DELETE RESTRICT,
+  legacy_team_id TEXT,
+  sender_agent_id TEXT NOT NULL,
+  recipient_agent_ids_json TEXT NOT NULL CHECK (json_valid(recipient_agent_ids_json)),
+  input_json TEXT NOT NULL CHECK (json_valid(input_json)),
+  image_paths_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(image_paths_json)),
+  priority TEXT NOT NULL,
+  policy TEXT NOT NULL,
+  correlation_id TEXT,
+  reply_to_message_id TEXT,
+  idempotency_key TEXT,
+  created_at INTEGER NOT NULL,
+  CHECK (length(trim(id)) > 0),
+  CHECK (length(trim(sender_agent_id)) > 0),
+  CHECK (
+    (context_kind = 'workspace_team' AND workspace_id IS NOT NULL)
+    OR (context_kind = 'global_direct' AND workspace_id IS NULL AND scope = 'direct')
+    OR (context_kind = 'legacy_team' AND legacy_team_id IS NOT NULL)
+  )
+);
+
+CREATE INDEX idx_agent_messages_workspace_created
+ON agent_messages(workspace_id, created_at, id)
+WHERE workspace_id IS NOT NULL;
+
+CREATE INDEX idx_agent_messages_sender_created
+ON agent_messages(sender_agent_id, created_at, id);
+
+CREATE UNIQUE INDEX idx_agent_messages_idempotency
+ON agent_messages(
+  sender_agent_id,
+  scope,
+  context_kind,
+  COALESCE(workspace_id, ''),
+  COALESCE(legacy_team_id, ''),
+  idempotency_key
+)
+WHERE idempotency_key IS NOT NULL;
+
+CREATE TABLE agent_deliveries (
+  id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL REFERENCES agent_messages(id) ON DELETE RESTRICT,
+  recipient_agent_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  status TEXT NOT NULL,
+  effective_policy TEXT,
+  injection_strategy TEXT,
+  injected_turn_id TEXT,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK (length(trim(id)) > 0),
+  CHECK (length(trim(recipient_agent_id)) > 0)
+);
+
+CREATE INDEX idx_agent_deliveries_message
+ON agent_deliveries(message_id, created_at, id);
+
+CREATE INDEX idx_agent_deliveries_recipient_status
+ON agent_deliveries(recipient_agent_id, status, created_at, id);
+
+INSERT INTO agent_messages (
+  id, scope, context_kind, workspace_id, legacy_team_id, sender_agent_id,
+  recipient_agent_ids_json, input_json, image_paths_json, priority, policy,
+  correlation_id, reply_to_message_id, idempotency_key, created_at
+)
+SELECT
+  message.id,
+  message.scope,
+  CASE
+    WHEN migration.classification = 'mapped' AND migration.workspace_id IS NOT NULL
+      THEN 'workspace_team'
+    ELSE 'legacy_team'
+  END,
+  CASE
+    WHEN migration.classification = 'mapped' THEN migration.workspace_id
+    ELSE NULL
+  END,
+  message.team_id,
+  message.sender_agent_id,
+  message.recipient_agent_ids_json,
+  message.input_json,
+  message.image_paths_json,
+  message.priority,
+  message.policy,
+  message.correlation_id,
+  message.reply_to_message_id,
+  message.idempotency_key,
+  message.created_at
+FROM team_messages message
+LEFT JOIN legacy_workspace_migration_subjects migration
+  ON migration.subject_kind = 'team' AND migration.subject_id = message.team_id;
+
+INSERT INTO agent_deliveries (
+  id, message_id, recipient_agent_id, provider, status, effective_policy,
+  injection_strategy, injected_turn_id, last_error_code, last_error_message,
+  created_at, updated_at
+)
+SELECT
+  delivery.id,
+  delivery.message_id,
+  delivery.recipient_agent_id,
+  delivery.provider,
+  delivery.status,
+  delivery.effective_policy,
+  delivery.injection_strategy,
+  delivery.injected_turn_id,
+  delivery.last_error_code,
+  delivery.last_error_message,
+  delivery.created_at,
+  delivery.updated_at
+FROM team_deliveries delivery
+JOIN agent_messages message ON message.id = delivery.message_id;
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -570,5 +693,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 6,
         sql: MIGRATION_6_SQL,
+    },
+    Migration {
+        version: 7,
+        sql: MIGRATION_7_SQL,
     },
 ];

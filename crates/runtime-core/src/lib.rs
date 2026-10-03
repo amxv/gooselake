@@ -1,3 +1,4 @@
+pub mod agent_comms;
 pub mod app;
 pub mod error;
 pub mod provider;
@@ -13,6 +14,12 @@ pub mod workspace_agent;
 pub mod workspace_control;
 pub mod workspace_migration;
 
+pub use agent_comms::{
+    AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
+    AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageContextKind,
+    AgentMessageListRequest, AgentMessageListResponse, AgentMessageRecord,
+    AgentRetryDeliveryRequest,
+};
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
 pub use error::{ProviderDispatchOutcome, RuntimeError};
 pub use provider::{

@@ -194,10 +194,30 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
 
     repository.initialize_schema().expect("upgrade schema");
 
+    let mut after = repository.hydrate_runtime_state().expect("hydrate after");
+    let agent_messages = std::mem::take(&mut after.agent_messages);
+    let agent_deliveries = std::mem::take(&mut after.agent_deliveries);
     assert_eq!(
-        repository.hydrate_runtime_state().expect("hydrate after"),
-        before
+        after, before,
+        "all generation-one authority must remain unchanged"
     );
+    assert_eq!(agent_messages.len(), 1, "legacy message is backfilled once");
+    assert_eq!(agent_messages[0].id, "msg_legacy");
+    assert_eq!(
+        agent_messages[0].context_kind,
+        runtime_core::AgentMessageContextKind::LegacyTeam
+    );
+    assert_eq!(
+        agent_messages[0].legacy_team_id.as_deref(),
+        Some("team_legacy")
+    );
+    assert_eq!(
+        agent_deliveries.len(),
+        1,
+        "legacy delivery is backfilled once"
+    );
+    assert_eq!(agent_deliveries[0].id, "delivery_legacy");
+    assert_eq!(agent_deliveries[0].status, "pending");
     assert_eq!(
         repository
             .list_runtime_events(None, None, 100)
@@ -273,7 +293,7 @@ fn failed_migration_rolls_back_and_retry_resumes_cleanly() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
 }
 
 fn registration_command(

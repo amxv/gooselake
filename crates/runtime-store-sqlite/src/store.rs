@@ -2,16 +2,17 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use runtime_core::{
-    ApprovalRecord, LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
-    LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
-    LegacyWorkspaceMigrationStatus, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
-    NewRuntimeEvent, OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord,
-    RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord,
-    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState,
-    WorkspaceAgentRecord, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
-    WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
-    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    AgentDeliveryRecord, AgentMessageRecord, ApprovalRecord, LegacyWorkspaceMigrationApplyCommand,
+    LegacyWorkspaceMigrationApplyResponse, LegacyWorkspaceMigrationResolutionCommand,
+    LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
+    ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
+    ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState,
+    RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
+    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceInterruptAdmission,
+    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
+    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -297,6 +298,19 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn upsert_team_delivery(&self, record: &TeamDeliveryRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_team_delivery(record)
+    }
+
+    fn insert_agent_message_with_deliveries(
+        &self,
+        message: &AgentMessageRecord,
+        deliveries: &[AgentDeliveryRecord],
+    ) -> Result<(), RuntimeError> {
+        self.repository
+            .insert_agent_message_with_deliveries(message, deliveries)
+    }
+
+    fn upsert_agent_delivery(&self, record: &AgentDeliveryRecord) -> Result<(), RuntimeError> {
+        self.repository.upsert_agent_delivery(record)
     }
 
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError> {

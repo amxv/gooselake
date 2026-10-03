@@ -76,6 +76,8 @@ fn initialize_schema_creates_all_runtime_tables() {
         "team_members",
         "team_messages",
         "team_deliveries",
+        "agent_messages",
+        "agent_deliveries",
         "managed_worktrees",
         "managed_worktree_claims",
         "processes",
@@ -109,7 +111,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
 }
 
 #[test]
@@ -169,6 +171,7 @@ fn initialize_schema_migrates_partially_populated_database_without_reset() {
     assert_eq!(count, 1);
 }
 
+mod agent_comms;
 mod turn_authority;
 mod workspace_agent;
 mod workspace_authority;

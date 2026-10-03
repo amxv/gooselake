@@ -143,7 +143,7 @@ fn register_workspace(
             canonical_root: root.display().to_string(),
             display_name: Some(display_name.to_string()),
         },
-        OperationActor::operator("phase7-process-test"),
+        OperationActor::operator("managed-process-test"),
         None,
     )
     .expect("prepare workspace registration");

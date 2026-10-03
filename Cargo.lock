@@ -715,6 +715,7 @@ dependencies = [
  "rand",
  "runtime-core",
  "runtime-store-sqlite",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

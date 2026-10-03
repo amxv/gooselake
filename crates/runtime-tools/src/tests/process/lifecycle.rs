@@ -168,6 +168,113 @@ async fn spawn_failure_is_terminalized_from_durable_admission() {
 }
 
 #[tokio::test]
+async fn terminal_event_waits_for_durable_terminal_state() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let database_path = temp_dir.path().join("runtime.sqlite3");
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: database_path.clone(),
+    }));
+    store.initialize().await.expect("initialize store");
+    let gate = rusqlite::Connection::open(&database_path).expect("open terminal persistence gate");
+    gate.execute_batch(
+        "CREATE TABLE terminal_persistence_gate (blocked INTEGER NOT NULL);
+         INSERT INTO terminal_persistence_gate (blocked) VALUES (1);
+         CREATE TRIGGER block_managed_process_terminal_write
+         BEFORE UPDATE OF status ON managed_processes
+         WHEN NEW.status IN ('completed', 'failed', 'timed_out', 'killed', 'interrupted')
+           AND (SELECT blocked FROM terminal_persistence_gate LIMIT 1) = 1
+         BEGIN
+           SELECT RAISE(ABORT, 'terminal persistence gated for test');
+         END;",
+    )
+    .expect("install terminal persistence gate");
+
+    let manager =
+        RuntimeProcessManager::new(store.clone(), process_config(&temp_dir, 1, 1_000_000))
+            .await
+            .expect("process manager");
+    let marker = temp_dir.path().join("terminal-command-finished");
+    let admitted = manager
+        .run_process(runtime_core::ProcessRunRequest {
+            caller_session_id: Some("sess_owner".to_string()),
+            tool_call_id: Some("terminal_persistence".to_string()),
+            command: format!("printf done > {}", marker.display()),
+            cwd: Some(temp_dir.path().display().to_string()),
+            timeout_ms: None,
+        })
+        .await
+        .expect("admit process");
+
+    for _ in 0..200 {
+        if marker.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        marker.exists(),
+        "native process should finish while terminal persistence is gated"
+    );
+    tokio::time::sleep(Duration::from_millis(120)).await;
+
+    let durable = store
+        .get_managed_process(&admitted.process.process_id)
+        .expect("read gated process")
+        .expect("gated process row");
+    assert_eq!(durable.status, "running");
+    let events = store
+        .list_runtime_events(
+            Some((
+                runtime_core::RuntimeEventScope::Process,
+                admitted.process.process_id.as_str(),
+            )),
+            None,
+            100,
+        )
+        .expect("read gated process events");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event.kind.as_str(),
+            "process.completed" | "process.failed" | "process.timed_out" | "process.killed"
+        )),
+        "terminal events must not get ahead of durable terminal state"
+    );
+
+    gate.execute("UPDATE terminal_persistence_gate SET blocked = 0", [])
+        .expect("release terminal persistence gate");
+    let terminal = wait_for_terminal(&manager, &admitted.process.process_id).await;
+    assert_eq!(terminal.process.status, "completed");
+
+    let mut terminal_event_count = 0;
+    for _ in 0..100 {
+        let events = store
+            .list_runtime_events(
+                Some((
+                    runtime_core::RuntimeEventScope::Process,
+                    admitted.process.process_id.as_str(),
+                )),
+                None,
+                100,
+            )
+            .expect("read converged process events");
+        terminal_event_count = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind.as_str(),
+                    "process.completed" | "process.failed" | "process.timed_out" | "process.killed"
+                )
+            })
+            .count();
+        if terminal_event_count > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(terminal_event_count, 1);
+}
+
+#[tokio::test]
 async fn nonzero_exit_preserves_exit_code_and_running_cancel_is_idempotent() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
@@ -227,7 +334,7 @@ async fn nonzero_exit_preserves_exit_code_and_running_cancel_is_idempotent() {
         .kill_process(ProcessKillRequest {
             process_id: process_id.clone(),
             caller_session_id: Some("sess_owner".to_string()),
-            reason: Some("phase7_running_cancel".to_string()),
+            reason: Some("running_cancel_test".to_string()),
         })
         .await
         .expect("request running cancel");

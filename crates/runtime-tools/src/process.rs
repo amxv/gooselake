@@ -17,6 +17,7 @@ use crate::{now_ms, os_process, ProcessManagerConfig};
 pub(crate) const COMPLETION_CORRELATION_PREFIX: &str = "process_completion:";
 pub(crate) const COMPLETION_PREVIEW_BYTES_PER_STREAM: usize = 4 * 1024;
 const COMPLETION_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+const SCHEDULER_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 pub(crate) const LAUNCH_AUTH_RETRY_MAX: Duration = Duration::from_secs(1);
 
 pub struct RuntimeProcessManager {
@@ -237,7 +238,10 @@ impl RuntimeProcessManager {
             };
             let notify = Arc::clone(&manager.scheduler_notify);
             drop(manager);
-            notify.notified().await;
+            tokio::select! {
+                _ = notify.notified() => {},
+                _ = tokio::time::sleep(SCHEDULER_RETRY_INTERVAL) => {},
+            }
             let Some(manager) = weak.upgrade() else {
                 return;
             };

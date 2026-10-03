@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use runtime_core::{
-    ManagedProcessRecord, ManagedProcessTerminalUpdate, NewRuntimeEvent, RuntimeError,
-    RuntimeEventCriticality, RuntimeEventScope,
+    process_status_is_terminal, ManagedProcessRecord, ManagedProcessTerminalUpdate,
+    NewRuntimeEvent, RuntimeError, RuntimeEventCriticality, RuntimeEventScope,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -16,6 +16,8 @@ use crate::process::{
 };
 use crate::process_helpers::{build_process_command, command_text, file_len};
 use crate::{exit_status_signal, now_ms, os_process};
+
+const TERMINAL_PERSIST_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
 
 impl RuntimeProcessManager {
     pub(crate) async fn launch_claim(self: Arc<Self>, claim: ManagedProcessRecord) {
@@ -308,12 +310,14 @@ impl RuntimeProcessManager {
             stderr_truncated,
             completion_required: self.runtime.is_some() && record.owner_session_id.is_some(),
         };
-        let terminal = self
-            .store
-            .terminalize_managed_process(&record.process_id, &update)
-            .ok()
-            .flatten();
-        let event_kind = match status.as_str() {
+        let Some(terminal) = self
+            .persist_terminal_update(&record.process_id, &update)
+            .await
+        else {
+            self.scheduler_notify.notify_one();
+            return;
+        };
+        let event_kind = match terminal.status.as_str() {
             "completed" => "process.completed",
             "timed_out" => "process.timed_out",
             "killed" => "process.killed",
@@ -326,22 +330,45 @@ impl RuntimeProcessManager {
             RuntimeEventCriticality::Critical,
             json!({
                 "process_id": record.process_id,
-                "status": status,
-                "reason": reason,
-                "exit_code": exit_code,
-                "signal": signal,
-                "execution_duration_ms": update.execution_duration_ms,
-                "stdout_captured_bytes": stdout_bytes,
-                "stderr_captured_bytes": stderr_bytes,
-                "stdout_truncated": stdout_truncated,
-                "stderr_truncated": stderr_truncated,
+                "status": terminal.status,
+                "reason": terminal.terminal_reason,
+                "exit_code": terminal.exit_code,
+                "signal": terminal.signal,
+                "execution_duration_ms": terminal.execution_duration_ms,
+                "stdout_captured_bytes": terminal.stdout_captured_bytes,
+                "stderr_captured_bytes": terminal.stderr_captured_bytes,
+                "stdout_truncated": terminal.stdout_truncated,
+                "stderr_truncated": terminal.stderr_truncated,
             }),
         )
         .await;
-        if terminal.is_some() {
-            self.completion_notify.notify_one();
-        }
+        self.completion_notify.notify_one();
         self.scheduler_notify.notify_one();
+    }
+
+    async fn persist_terminal_update(
+        &self,
+        process_id: &str,
+        update: &ManagedProcessTerminalUpdate,
+    ) -> Option<ManagedProcessRecord> {
+        let mut delay = Duration::from_millis(25);
+        loop {
+            match self.store.terminalize_managed_process(process_id, update) {
+                Ok(record) => return record,
+                Err(_) => match self.store.get_managed_process(process_id) {
+                    Ok(Some(record)) if process_status_is_terminal(&record.status) => {
+                        return Some(record);
+                    }
+                    Ok(None) => return None,
+                    Ok(Some(_)) | Err(_) => {
+                        tokio::time::sleep(delay).await;
+                        delay = delay
+                            .saturating_mul(2)
+                            .min(TERMINAL_PERSIST_RETRY_MAX_DELAY);
+                    }
+                },
+            }
+        }
     }
 
     fn terminate_live_process(
@@ -396,11 +423,13 @@ impl RuntimeProcessManager {
             stderr_truncated: record.stderr_truncated,
             completion_required: self.runtime.is_some() && record.owner_session_id.is_some(),
         };
-        let terminal = self
-            .store
-            .terminalize_managed_process(&record.process_id, &update)
-            .ok()
-            .flatten();
+        let Some(terminal) = self
+            .persist_terminal_update(&record.process_id, &update)
+            .await
+        else {
+            self.scheduler_notify.notify_one();
+            return;
+        };
         self.append_process_event(
             &record.process_id,
             record.owner_session_id.clone(),
@@ -408,14 +437,12 @@ impl RuntimeProcessManager {
             RuntimeEventCriticality::Critical,
             json!({
                 "process_id": record.process_id,
-                "status": "failed",
-                "reason": terminal_reason,
+                "status": terminal.status,
+                "reason": terminal.terminal_reason,
             }),
         )
         .await;
-        if terminal.is_some() {
-            self.completion_notify.notify_one();
-        }
+        self.completion_notify.notify_one();
         self.scheduler_notify.notify_one();
     }
 

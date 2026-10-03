@@ -209,10 +209,10 @@ Do not set these to zero. The runtime validates positive capacities at startup.
 | `enabled` | `true` | Enable runtime process manager and MCP process tools. |
 | `max_concurrent` | `32` | Maximum concurrent managed processes. |
 | `default_timeout_ms` | `600000` | Default process timeout when request omits one. |
-| `max_output_bytes_per_process` | `20000000` | Stored stdout/stderr limit per process. |
+| `max_output_bytes_per_process` | `20000000` | Default capture limit for each stdout/stderr stream. The durable scheduler can override its active capture limit. |
 | `allow_shell` | `true` | Run command strings through the shell when true. |
 
-Process records, lifecycle events, and log paths are persisted. HTTP process access can be scoped with `session_id`; MCP process calls are scoped to the caller session.
+Process records, queue order, scheduler settings, lifecycle events, capture metadata, log paths, and completion-delivery state are persisted. HTTP process access can be scoped with `session_id`; MCP process visibility is workspace-aware and model cancellation is restricted to the submitting session. The operator scheduler API can persist per-workspace concurrency overrides without changing this TOML file.
 
 ## `[teams]`
 

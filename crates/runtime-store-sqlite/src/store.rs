@@ -5,11 +5,13 @@ use runtime_core::{
     AgentDeliveryRecord, AgentMessageRecord, ApprovalRecord, LegacyWorkspaceMigrationApplyCommand,
     LegacyWorkspaceMigrationApplyResponse, LegacyWorkspaceMigrationResolutionCommand,
     LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
+    ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
     ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
-    ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState,
-    RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
-    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceInterruptAdmission,
+    ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings, RuntimeError,
+    RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
+    WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceInterruptAdmission,
     WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
     WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
     WorkspaceRegisterResponse,
@@ -326,6 +328,145 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_process(record)
+    }
+
+    fn admit_managed_process(
+        &self,
+        admission: &ManagedProcessAdmission,
+    ) -> Result<ManagedProcessRecord, RuntimeError> {
+        self.repository.admit_managed_process(admission)
+    }
+
+    fn list_managed_processes(&self) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
+        self.repository.list_managed_processes()
+    }
+
+    fn get_managed_process(
+        &self,
+        process_id: &str,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        self.repository.get_managed_process(process_id)
+    }
+
+    fn claim_managed_processes(
+        &self,
+        settings: &ProcessSchedulerSettings,
+        claimed_at: i64,
+    ) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
+        self.repository
+            .claim_managed_processes(settings, claimed_at)
+    }
+
+    fn mark_managed_process_running(
+        &self,
+        process_id: &str,
+        claim_generation: i64,
+        pid: i64,
+        os_start_identity: &str,
+        started_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        self.repository.mark_managed_process_running(
+            process_id,
+            claim_generation,
+            pid,
+            os_start_identity,
+            started_at,
+        )
+    }
+
+    fn requeue_managed_process_claim(
+        &self,
+        process_id: &str,
+        claim_generation: i64,
+        updated_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        self.repository
+            .requeue_managed_process_claim(process_id, claim_generation, updated_at)
+    }
+
+    fn terminalize_managed_process(
+        &self,
+        process_id: &str,
+        update: &ManagedProcessTerminalUpdate,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        self.repository
+            .terminalize_managed_process(process_id, update)
+    }
+
+    fn update_managed_process_capture_progress(
+        &self,
+        process_id: &str,
+        stream: &str,
+        captured_bytes: i64,
+        truncated: bool,
+        updated_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        self.repository.update_managed_process_capture_progress(
+            process_id,
+            stream,
+            captured_bytes,
+            truncated,
+            updated_at,
+        )
+    }
+
+    fn cancel_queued_managed_process(
+        &self,
+        process_id: &str,
+        owner_session_id: Option<&str>,
+        canceled_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        self.repository
+            .cancel_queued_managed_process(process_id, owner_session_id, canceled_at)
+    }
+
+    fn request_managed_process_cancel(
+        &self,
+        process_id: &str,
+        owner_session_id: Option<&str>,
+        updated_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        self.repository
+            .request_managed_process_cancel(process_id, owner_session_id, updated_at)
+    }
+
+    fn update_managed_process_completion(
+        &self,
+        process_id: &str,
+        update: &ProcessCompletionUpdate,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        self.repository
+            .update_managed_process_completion(process_id, update)
+    }
+
+    fn load_or_initialize_process_scheduler_settings(
+        &self,
+        defaults: &ProcessSchedulerSettings,
+    ) -> Result<ProcessSchedulerSettings, RuntimeError> {
+        self.repository
+            .load_or_initialize_process_scheduler_settings(defaults)
+    }
+
+    fn replace_process_scheduler_settings(
+        &self,
+        settings: &ProcessSchedulerSettings,
+    ) -> Result<ProcessSchedulerSettings, RuntimeError> {
+        self.repository.replace_process_scheduler_settings(settings)
+    }
+
+    fn reorder_queued_managed_process(
+        &self,
+        process_id: &str,
+        before_process_id: Option<&str>,
+        after_process_id: Option<&str>,
+        updated_at: i64,
+    ) -> Result<Vec<String>, RuntimeError> {
+        self.repository.reorder_queued_managed_process(
+            process_id,
+            before_process_id,
+            after_process_id,
+            updated_at,
+        )
     }
 
     fn upsert_team_operation_journal(

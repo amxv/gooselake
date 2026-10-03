@@ -81,6 +81,8 @@ fn initialize_schema_creates_all_runtime_tables() {
         "managed_worktrees",
         "managed_worktree_claims",
         "processes",
+        "managed_processes",
+        "process_scheduler_state",
         "credentials",
         "team_operation_journal",
         "team_operation_diagnostics",
@@ -111,7 +113,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 }
 
 #[test]

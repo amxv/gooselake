@@ -164,14 +164,29 @@ pub(super) fn diagnostics_from_hydrated_state(
         delivery_status_counts,
     };
 
+    let managed_processes = match state.app.services.store.list_managed_processes() {
+        Ok(rows) => Some(rows),
+        Err(runtime_core::RuntimeError::Unsupported(_)) => None,
+        Err(error) => return Err(ApiError::from(error)),
+    };
     let mut process_status_counts = BTreeMap::<String, usize>::new();
-    for process in &hydrated.processes {
-        *process_status_counts
-            .entry(process.status.clone())
-            .or_insert(0) += 1;
-    }
+    let process_total = if let Some(managed_processes) = managed_processes.as_ref() {
+        for process in managed_processes {
+            *process_status_counts
+                .entry(process.status.clone())
+                .or_insert(0) += 1;
+        }
+        managed_processes.len()
+    } else {
+        for process in &hydrated.processes {
+            *process_status_counts
+                .entry(process.status.clone())
+                .or_insert(0) += 1;
+        }
+        hydrated.processes.len()
+    };
     let processes = ProcessDiagnosticsResponse {
-        process_total: hydrated.processes.len(),
+        process_total,
         process_status_counts,
     };
 
@@ -215,13 +230,14 @@ pub(super) fn diagnostics_from_hydrated_state(
 
     let recovery = RecoveryDiagnosticsResponse {
         startup: (*state.startup_recovery).clone(),
-        active_anomalies: collect_recovery_anomalies(&hydrated),
+        active_anomalies: collect_recovery_anomalies(&hydrated, managed_processes.is_none()),
     };
     Ok((comms, processes, worktrees, recovery))
 }
 
 pub(super) fn collect_recovery_anomalies(
     hydrated: &runtime_core::RuntimeHydratedState,
+    include_legacy_process_anomalies: bool,
 ) -> Vec<String> {
     let mut anomalies = Vec::new();
     let turn_by_id = hydrated
@@ -289,12 +305,14 @@ pub(super) fn collect_recovery_anomalies(
         }
     }
 
-    for process in &hydrated.processes {
-        if matches!(process.status.as_str(), "queued" | "running") {
-            anomalies.push(format!(
-                "process {} remained {} across restart",
-                process.id, process.status
-            ));
+    if include_legacy_process_anomalies {
+        for process in &hydrated.processes {
+            if matches!(process.status.as_str(), "queued" | "running") {
+                anomalies.push(format!(
+                    "process {} remained {} across restart",
+                    process.id, process.status
+                ));
+            }
         }
     }
 

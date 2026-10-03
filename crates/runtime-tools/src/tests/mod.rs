@@ -1,18 +1,15 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use runtime_core::{
-    ApprovalRecord, CreateSessionInput, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
-    ProcessListRequest, ProviderAuthStatus, ProviderCreateSessionRequest,
-    ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
-    ProviderResumeSessionRequest, ProviderSendTurnRequest, ProviderSession, ProviderTurnAck,
-    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
-    RuntimeSessionManager, RuntimeStore, RuntimeTeamCommsConfig, RuntimeTeamCommsService,
-    SessionRecord, TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    ToolGateway, TurnRecord,
+    CreateSessionInput, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, ProviderAuthStatus,
+    ProviderCreateSessionRequest, ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata,
+    ProviderModel, ProviderRegistry, ProviderResumeSessionRequest, ProviderSendTurnRequest,
+    ProviderSession, ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus,
+    ProviderWaitTurnRequest, RuntimeError, RuntimeProvider, RuntimeSessionManager, RuntimeStore,
+    RuntimeTeamCommsConfig, RuntimeTeamCommsService, SessionRecord, TeamCommsService,
+    TeamCreateRequest, ToolGateway,
 };
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use serde_json::{json, Value};
@@ -301,137 +298,4 @@ async fn create_team_gateway_sessions(
         .team
         .id;
     (sessions, team_id)
-}
-
-#[derive(Default)]
-struct FailingProcessUpsertStore {
-    last_pid: Mutex<Option<i64>>,
-    upsert_process_calls: AtomicU64,
-}
-
-#[async_trait]
-impl RuntimeStore for FailingProcessUpsertStore {
-    async fn initialize(&self) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    async fn healthcheck(&self) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn append_runtime_event(
-        &self,
-        _event: &runtime_core::NewRuntimeEvent,
-    ) -> Result<runtime_core::RuntimeEventRecord, RuntimeError> {
-        Err(RuntimeError::Io(
-            "event append should not be called in this test".to_string(),
-        ))
-    }
-
-    fn list_runtime_events(
-        &self,
-        _scope: Option<(runtime_core::RuntimeEventScope, &str)>,
-        _after_seq: Option<i64>,
-        _limit: usize,
-    ) -> Result<Vec<runtime_core::RuntimeEventRecord>, RuntimeError> {
-        Ok(Vec::new())
-    }
-
-    fn upsert_session(&self, _record: &SessionRecord) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn upsert_turn(&self, _record: &TurnRecord) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn upsert_approval(&self, _record: &ApprovalRecord) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn upsert_team(&self, _record: &TeamRecord) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn upsert_team_member(&self, _record: &TeamMemberRecord) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn delete_team_member(&self, _team_id: &str, _agent_id: &str) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn upsert_team_message(&self, _record: &TeamMessageRecord) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn upsert_team_delivery(&self, _record: &TeamDeliveryRecord) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn upsert_managed_worktree(&self, _record: &ManagedWorktreeRecord) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn upsert_managed_worktree_claim(
-        &self,
-        _record: &ManagedWorktreeClaimRecord,
-    ) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn upsert_process(&self, record: &runtime_core::ProcessRecord) -> Result<(), RuntimeError> {
-        self.upsert_process_calls
-            .fetch_add(1, AtomicOrdering::Relaxed);
-        *self.last_pid.lock().expect("last pid mutex poisoned") = record.pid;
-        Err(RuntimeError::Io(
-            "forced upsert_process failure".to_string(),
-        ))
-    }
-
-    fn upsert_team_operation_journal(
-        &self,
-        _record: &TeamOperationJournalRecord,
-    ) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn append_team_operation_diagnostic(
-        &self,
-        _operation_id: Option<&str>,
-        _team_id: Option<&str>,
-        _code: &str,
-        _message: &str,
-        _payload: &Value,
-        _created_at: i64,
-    ) -> Result<TeamOperationDiagnosticRecord, RuntimeError> {
-        Ok(TeamOperationDiagnosticRecord {
-            id: 1,
-            operation_id: None,
-            team_id: None,
-            code: "stub".to_string(),
-            message: "stub".to_string(),
-            payload: serde_json::json!({}),
-            created_at: 0,
-        })
-    }
-
-    fn list_team_operation_journal(
-        &self,
-        _team_id: Option<&str>,
-    ) -> Result<Vec<TeamOperationJournalRecord>, RuntimeError> {
-        Ok(Vec::new())
-    }
-
-    fn list_team_operation_diagnostics(
-        &self,
-        _team_id: Option<&str>,
-        _operation_id: Option<&str>,
-    ) -> Result<Vec<TeamOperationDiagnosticRecord>, RuntimeError> {
-        Ok(Vec::new())
-    }
-
-    fn hydrate_runtime_state(&self) -> Result<runtime_core::RuntimeHydratedState, RuntimeError> {
-        Ok(runtime_core::RuntimeHydratedState::default())
-    }
 }

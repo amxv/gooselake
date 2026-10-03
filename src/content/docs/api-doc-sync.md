@@ -80,7 +80,7 @@ Docs-signal files:
 - ACP v1 limitations
 - SSE replay semantics and cursor precedence
 - operational examples and runbooks
-- process/worktree ownership rules
+- process scheduling, queue/capture semantics, completion delivery, and process/worktree ownership rules
 - `/v2` workspace canonicalization, idempotency, and durable-operation semantics
 - `/v2` agent-first direct/broadcast context, recipient snapshot, delivery recovery, idempotency, and native-image capability semantics
 - team delivery policy and recovery semantics

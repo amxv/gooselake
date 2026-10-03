@@ -12,14 +12,15 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use runtime_core::{
     ApprovalResponseInput, CreateSessionInput, ProcessGetRequest, ProcessKillRequest,
-    ProcessListRequest, ProcessLogReadRequest, ProcessRunRequest, ProviderKind, ResumeSessionInput,
-    RuntimeApp, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeSessionManager,
-    SendTurnAccepted, SendTurnInput, StartupRecoverySummary, TeamBroadcastRequest,
-    TeamCancelMessageRequest, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
-    TeamInterruptAllRequest, TeamJoinRequest, TeamListMessagesRequest, TeamMemberSpawnRequest,
-    TeamMemberSpawnResponse, TeamMemberSpawnWorktreeInput, TeamRemoveMemberRequest,
-    TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest,
-    ToolInvokeRequest, WorktreeClaimRequest, WorktreeCleanupRequest, WorktreeCreateRequest,
+    ProcessListRequest, ProcessLogReadRequest, ProcessRunRequest, ProcessSchedulerSettings,
+    ProviderKind, ResumeSessionInput, RuntimeApp, RuntimeError, RuntimeEventRecord,
+    RuntimeEventScope, RuntimeSessionManager, SendTurnAccepted, SendTurnInput,
+    StartupRecoverySummary, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCreateRequest,
+    TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamJoinRequest,
+    TeamListMessagesRequest, TeamMemberSpawnRequest, TeamMemberSpawnResponse,
+    TeamMemberSpawnWorktreeInput, TeamRemoveMemberRequest, TeamRetryDeliveryRequest,
+    TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest, ToolInvokeRequest,
+    WorktreeClaimRequest, WorktreeCleanupRequest, WorktreeCreateRequest,
     WorktreeMemberRemovedRequest, WorktreeReleaseRequest,
 };
 use serde::{Deserialize, Serialize};
@@ -111,6 +112,11 @@ pub fn build_router(state: AppState) -> Router {
             get(stream_session_events),
         )
         .route("/processes", post(start_process).get(list_processes))
+        .route(
+            "/processes/scheduler",
+            get(get_process_scheduler).post(update_process_scheduler),
+        )
+        .route("/processes/queue/reorder", post(reorder_process_queue))
         .route("/processes/{process_id}", get(get_process))
         .route("/processes/{process_id}/logs", get(get_process_logs))
         .route("/processes/{process_id}/events", get(replay_process_events))

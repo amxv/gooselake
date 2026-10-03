@@ -1,6 +1,8 @@
 pub mod agent_comms;
 pub mod app;
 pub mod error;
+pub mod process_authority;
+pub mod process_service;
 pub mod provider;
 pub mod provider_registry;
 pub mod repository_identity;
@@ -22,6 +24,16 @@ pub use agent_comms::{
 };
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
 pub use error::{ProviderDispatchOutcome, RuntimeError};
+pub use process_authority::{
+    process_status_is_terminal, ManagedProcessAdmission, ManagedProcessRecord,
+    ManagedProcessTerminalUpdate, ProcessCompletionUpdate, ProcessQueueEntry,
+    ProcessSchedulerSettings, ProcessSchedulerSnapshot, PROCESS_COMPLETION_DELIVERED,
+    PROCESS_COMPLETION_INJECTING, PROCESS_COMPLETION_NOT_REQUIRED, PROCESS_COMPLETION_PENDING,
+};
+pub use process_service::{
+    ProcessDetails, ProcessGetRequest, ProcessKillRequest, ProcessListRequest,
+    ProcessLogReadRequest, ProcessLogsChunk, ProcessManager, ProcessRunRequest, ProcessSummary,
+};
 pub use provider::{
     ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
     ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
@@ -36,8 +48,6 @@ pub use runtime::{
     SendTurnAccepted, SendTurnInput, StartupRecoveryProviderStatus, StartupRecoverySummary,
 };
 pub use services::{
-    ProcessDetails, ProcessGetRequest, ProcessKillRequest, ProcessListRequest,
-    ProcessLogReadRequest, ProcessLogsChunk, ProcessManager, ProcessRunRequest, ProcessSummary,
     RuntimeStore, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCommsService,
     TeamCreateRequest, TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamInterruptAllResponse,
     TeamJoinRequest, TeamListMessagesRequest, TeamListMessagesResponse, TeamMemberSpawnRequest,

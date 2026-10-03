@@ -189,8 +189,9 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         .await
         .context("failed running startup recovery for session runtime")?;
 
-    let process_manager = RuntimeProcessManager::new(
+    let process_manager = RuntimeProcessManager::new_with_runtime(
         store.clone(),
+        runtime.clone(),
         ProcessManagerConfig {
             enabled: config.processes.enabled,
             max_concurrent: config.processes.max_concurrent,
@@ -209,7 +210,7 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
     let recovered_processes = process_manager.startup_recovered_processes().await;
     if !recovered_processes.is_empty() {
         startup_recovery.notes.push(format!(
-            "startup process recovery marked {} process records as failed: {}",
+            "startup process recovery reconciled {} durable process records: {}",
             recovered_processes.len(),
             recovered_processes.join(", ")
         ));
@@ -343,7 +344,9 @@ fn resolve_claude_bridge_launch() -> (String, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use runtime_core::{ProcessRecord, RuntimeEventScope, RuntimeStore};
+    use runtime_core::{
+        ManagedProcessAdmission, ProcessSchedulerSettings, RuntimeEventScope, RuntimeStore,
+    };
     use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 
     #[tokio::test]
@@ -471,23 +474,42 @@ mod tests {
         });
         store.initialize().await.expect("initialize sqlite store");
         store
-            .upsert_process(&ProcessRecord {
-                id: "proc_9001".to_string(),
-                session_id: None,
+            .admit_managed_process(&ManagedProcessAdmission {
+                process_id: "proc_9001".to_string(),
+                owner_session_id: None,
+                workspace_id: None,
                 tool_call_id: None,
-                pid: Some(12345),
                 command: serde_json::json!({"shell":"echo seeded"}),
                 cwd: None,
-                status: "running".to_string(),
-                exit_code: None,
-                signal: None,
-                stdout_path: None,
-                stderr_path: None,
-                started_at: 1_000,
-                ended_at: None,
                 timeout_ms: None,
+                stdout_path: temp_dir
+                    .path()
+                    .join("proc_9001.stdout.log")
+                    .display()
+                    .to_string(),
+                stderr_path: temp_dir
+                    .path()
+                    .join("proc_9001.stderr.log")
+                    .display()
+                    .to_string(),
+                capture_limit_bytes: 20_000_000,
+                admitted_at: 1_000,
             })
-            .expect("seed running process");
+            .expect("seed durable process admission");
+        let claims = store
+            .claim_managed_processes(
+                &ProcessSchedulerSettings {
+                    max_concurrent: 1,
+                    workspace_max_concurrent: Default::default(),
+                    capture_limit_bytes: 20_000_000,
+                    paused: false,
+                    pause_reason: None,
+                    updated_at: 1_001,
+                },
+                1_001,
+            )
+            .expect("reserve durable process launch");
+        assert_eq!(claims.len(), 1, "expected one launch reservation");
 
         let runtime = bootstrap_runtime(config).await.expect("bootstrap");
         let events = runtime
@@ -524,7 +546,7 @@ mod tests {
         assert!(
             notes.iter().any(|note| {
                 note.as_str()
-                    .map(|text| text.contains("startup process recovery marked"))
+                    .map(|text| text.contains("startup process recovery reconciled"))
                     .unwrap_or(false)
             }),
             "startup event summary should include process recovery note from final bootstrap stage"

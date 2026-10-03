@@ -65,7 +65,7 @@ The runtime gateway requires a caller session identity. Tool calls should be att
 
 The runtime MCP gateway is intentionally narrower than the full HTTP API. It exposes provider-safe control namespaces that are backed by the same runtime services used by HTTP:
 
-- `gg_process`: run a process, get status, read logs, and kill a process
+- `gg_process`: durably schedule a process, inspect status, read logs, and cancel it by stable `process_id`
 - `gg_team`: inspect team status, send direct/broadcast team messages, and add/remove team members
 
 Use `/v1/mcp/capabilities` to inspect what the running server supports:
@@ -75,6 +75,15 @@ curl "$BASE_URL/v1/mcp/capabilities" "${AUTH[@]}"
 ```
 
 Capabilities include `supportedNamespaces`, `tools`, `ggProcessEnabled`, `ggTeamEnabled`, `ggTeamManagePermissions`, and `ggTeamModelPresets`. Team tools are listed only when team MCP is enabled. If disabled, `gg_team_*` calls return an `ok:false` envelope with `feature_disabled`.
+
+The process MCP surface is:
+
+- `gg_process_run`: durably admits a command and returns promptly with a stable `process_id`; execution may remain queued under scheduler capacity.
+- `gg_process_status`: explicitly inspect one process by `process_id`, or list active visible processes when the ID is omitted.
+- `gg_process_logs`: read captured stdout/stderr by `process_id` with optional stream/head/tail bounds.
+- `gg_process_kill`: cancel a process submitted by the caller. Queued cancellation prevents launch and is intentionally silent.
+
+For session-owned work, terminal completion is pushed automatically through the runtime's canonical durable turn path. Models should not poll `gg_process_status` waiting for a command to finish. PID remains diagnostic metadata; the model-facing control handle is always `process_id`.
 
 The team MCP surface is:
 

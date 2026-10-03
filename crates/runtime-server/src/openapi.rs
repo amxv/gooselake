@@ -127,6 +127,15 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         }
         (HttpMethod::Post, "/v1/processes") => "Start process".to_string(),
         (HttpMethod::Get, "/v1/processes") => "List processes".to_string(),
+        (HttpMethod::Get, "/v1/processes/scheduler") => {
+            "Inspect durable process scheduler".to_string()
+        }
+        (HttpMethod::Post, "/v1/processes/scheduler") => {
+            "Update durable process scheduler".to_string()
+        }
+        (HttpMethod::Post, "/v1/processes/queue/reorder") => {
+            "Reorder durable queued processes".to_string()
+        }
         (HttpMethod::Get, "/v1/processes/{process_id}") => "Get process".to_string(),
         (HttpMethod::Get, "/v1/processes/{process_id}/logs") => "Read process logs".to_string(),
         (HttpMethod::Get, "/v1/processes/{process_id}/events") => {
@@ -338,6 +347,8 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v1/sessions/{session_id}/turns"
             | "/v1/sessions/{session_id}/approvals/{approval_id}"
             | "/v1/processes"
+            | "/v1/processes/scheduler"
+            | "/v1/processes/queue/reorder"
             | "/v1/worktrees"
             | "/v1/worktrees/{worktree_id}/claims"
             | "/v1/worktrees/{worktree_id}/release"

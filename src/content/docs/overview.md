@@ -95,7 +95,7 @@ Gooselake owns these responsibilities because clients are poor places to keep th
 - durable turns, approvals, and terminal states
 - replayable session/team/process/global events
 - provider auth staging and provider readiness checks
-- process execution and bounded log capture
+- durable process admission, scheduling, bounded per-stream log capture, restart reconciliation, and model completion delivery
 - durable agent messages and per-recipient delivery/retry/cancellation state, with legacy team compatibility during migration
 - managed worktree creation, claims, release, and cleanup
 - diagnostics and startup recovery summaries

@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use tokio::sync::broadcast;
 
 use crate::{
     AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
@@ -10,14 +9,16 @@ use crate::{
     AgentMessageListResponse, AgentMessageRecord, AgentRetryDeliveryRequest, ApprovalRecord,
     LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
     LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
-    LegacyWorkspaceMigrationStatus, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
-    NewRuntimeEvent, OperationDetails, ProcessRecord, RuntimeError, RuntimeEventRecord,
-    RuntimeEventScope, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRecord,
-    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
-    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
-    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    LegacyWorkspaceMigrationStatus, ManagedProcessAdmission, ManagedProcessRecord,
+    ManagedProcessTerminalUpdate, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
+    NewRuntimeEvent, OperationDetails, ProcessCompletionUpdate, ProcessRecord,
+    ProcessSchedulerSettings, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
+    RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
+    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceInterruptAdmission,
+    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
+    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse,
 };
 
 #[async_trait]
@@ -276,6 +277,158 @@ pub trait RuntimeStore: Send + Sync {
 
     fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError>;
 
+    fn admit_managed_process(
+        &self,
+        _admission: &ManagedProcessAdmission,
+    ) -> Result<ManagedProcessRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process admission authority is not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
+    fn list_managed_processes(&self) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn get_managed_process(
+        &self,
+        _process_id: &str,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn claim_managed_processes(
+        &self,
+        _settings: &ProcessSchedulerSettings,
+        _claimed_at: i64,
+    ) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process scheduler authority is not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
+    fn mark_managed_process_running(
+        &self,
+        _process_id: &str,
+        _claim_generation: i64,
+        _pid: i64,
+        _os_start_identity: &str,
+        _started_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process launch authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn requeue_managed_process_claim(
+        &self,
+        _process_id: &str,
+        _claim_generation: i64,
+        _updated_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process requeue authority is not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
+    fn terminalize_managed_process(
+        &self,
+        _process_id: &str,
+        _update: &ManagedProcessTerminalUpdate,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process terminal authority is not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
+    fn update_managed_process_capture_progress(
+        &self,
+        _process_id: &str,
+        _stream: &str,
+        _captured_bytes: i64,
+        _truncated: bool,
+        _updated_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process capture progress is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn cancel_queued_managed_process(
+        &self,
+        _process_id: &str,
+        _owner_session_id: Option<&str>,
+        _canceled_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process cancellation authority is not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
+    fn request_managed_process_cancel(
+        &self,
+        _process_id: &str,
+        _owner_session_id: Option<&str>,
+        _updated_at: i64,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process cancellation authority is not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
+    fn update_managed_process_completion(
+        &self,
+        _process_id: &str,
+        _update: &ProcessCompletionUpdate,
+    ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process completion authority is not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
+    fn load_or_initialize_process_scheduler_settings(
+        &self,
+        _defaults: &ProcessSchedulerSettings,
+    ) -> Result<ProcessSchedulerSettings, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process scheduler settings are not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
+    fn replace_process_scheduler_settings(
+        &self,
+        _settings: &ProcessSchedulerSettings,
+    ) -> Result<ProcessSchedulerSettings, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process scheduler settings are not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
+    fn reorder_queued_managed_process(
+        &self,
+        _process_id: &str,
+        _before_process_id: Option<&str>,
+        _after_process_id: Option<&str>,
+        _updated_at: i64,
+    ) -> Result<Vec<String>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed-process queue reorder is not implemented by this runtime store".to_string(),
+        ))
+    }
+
     fn upsert_team_operation_journal(
         &self,
         record: &TeamOperationJournalRecord,
@@ -312,81 +465,6 @@ pub struct ToolInvokeRequest {
     pub caller_session_id: String,
     pub invocation_id: Option<String>,
     pub args: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessRunRequest {
-    pub caller_session_id: Option<String>,
-    pub tool_call_id: Option<String>,
-    pub command: String,
-    pub cwd: Option<String>,
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessListRequest {
-    pub caller_session_id: Option<String>,
-    pub include_completed: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessGetRequest {
-    pub process_id: String,
-    pub caller_session_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessLogReadRequest {
-    pub process_id: String,
-    pub caller_session_id: Option<String>,
-    pub stream: Option<String>,
-    pub head_lines: Option<usize>,
-    pub tail_lines: Option<usize>,
-    pub max_bytes: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessKillRequest {
-    pub process_id: String,
-    pub caller_session_id: Option<String>,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessSummary {
-    pub process_id: String,
-    pub session_id: Option<String>,
-    pub pid: Option<i64>,
-    pub status: String,
-    pub command: Value,
-    pub cwd: Option<String>,
-    pub started_at: i64,
-    pub ended_at: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessDetails {
-    pub process: ProcessSummary,
-    pub exit_code: Option<i64>,
-    pub signal: Option<i64>,
-    pub timeout_ms: Option<i64>,
-    pub stdout_path: Option<String>,
-    pub stderr_path: Option<String>,
-    pub stdout_bytes: usize,
-    pub stderr_bytes: usize,
-    pub stdout_truncated: bool,
-    pub stderr_truncated: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessLogsChunk {
-    pub process_id: String,
-    pub stream: String,
-    pub content: String,
-    pub head_lines: usize,
-    pub tail_lines: usize,
-    pub truncated: bool,
-    pub bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -532,42 +610,6 @@ pub trait ToolGateway: Send + Sync {
     async fn invoke_tool(&self, request: ToolInvokeRequest) -> Result<Value, RuntimeError>;
 
     async fn capabilities(&self) -> Result<Value, RuntimeError>;
-}
-
-#[async_trait]
-pub trait ProcessManager: Send + Sync {
-    async fn healthcheck(&self) -> Result<(), RuntimeError>;
-
-    async fn run_process(&self, request: ProcessRunRequest)
-        -> Result<ProcessDetails, RuntimeError>;
-
-    async fn list_processes(
-        &self,
-        request: ProcessListRequest,
-    ) -> Result<Vec<ProcessSummary>, RuntimeError>;
-
-    async fn get_process(&self, request: ProcessGetRequest)
-        -> Result<ProcessDetails, RuntimeError>;
-
-    async fn read_process_logs(
-        &self,
-        request: ProcessLogReadRequest,
-    ) -> Result<Vec<ProcessLogsChunk>, RuntimeError>;
-
-    async fn kill_process(
-        &self,
-        request: ProcessKillRequest,
-    ) -> Result<ProcessDetails, RuntimeError>;
-
-    async fn replay_events(
-        &self,
-        process_id: String,
-        caller_session_id: Option<String>,
-        after_seq: Option<i64>,
-        limit: usize,
-    ) -> Result<Vec<RuntimeEventRecord>, RuntimeError>;
-
-    fn subscribe_events(&self) -> broadcast::Receiver<RuntimeEventRecord>;
 }
 
 #[async_trait]

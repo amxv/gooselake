@@ -19,8 +19,9 @@ use crate::{
         gateway_not_configured_envelope, normalize_non_empty, process_tools_enabled_from_env,
     },
     tool_params::{
-        GgMarkdownOpenRequest, GgProcessKillRequest, GgProcessRunRequest, GgProcessStatusRequest,
-        GgTeamManageRequest, GgTeamMessageRequest, GgTeamStatusRequest, ToolCallMetadata,
+        GgMarkdownOpenRequest, GgProcessKillRequest, GgProcessLogsRequest, GgProcessRunRequest,
+        GgProcessStatusRequest, GgTeamManageRequest, GgTeamMessageRequest, GgTeamStatusRequest,
+        ToolCallMetadata,
     },
 };
 
@@ -121,7 +122,7 @@ impl GgMcpServer {
     }
 
     #[tool(
-        description = "Run a shell command in the background and return immediately with pid and process metadata."
+        description = "Durably accept a shell command for background scheduling and return immediately with a stable process_id. Queue wait does not consume the execution timeout. Terminal completion is pushed back to the owning session automatically, so do not poll status waiting for completion."
     )]
     async fn gg_process_run(
         &self,
@@ -133,7 +134,7 @@ impl GgMcpServer {
     }
 
     #[tool(
-        description = "Inspect a background process by pid or list all running processes for the caller session."
+        description = "Inspect one managed process by stable process_id, or omit process_id to list queued and running processes visible to the caller's workspace. Use this for explicit inspection, not completion polling; terminal completion is pushed automatically."
     )]
     async fn gg_process_status(
         &self,
@@ -148,7 +149,21 @@ impl GgMcpServer {
             .await)
     }
 
-    #[tool(description = "Kill a background process started by the caller session.")]
+    #[tool(
+        description = "Read authoritative captured stdout/stderr for a managed process by stable process_id. Use this for explicit log inspection; bounded completion previews are pushed automatically when the process finishes."
+    )]
+    async fn gg_process_logs(
+        &self,
+        params: Parameters<GgProcessLogsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self
+            .invoke_backend_process_tool("gg_process_logs", &params.0, &params.0.tool_call_metadata)
+            .await)
+    }
+
+    #[tool(
+        description = "Cancel a managed process by stable process_id. Only the submitting agent may cancel through the model-facing tool; queued cancellation prevents launch and is intentionally silent."
+    )]
     async fn gg_process_kill(
         &self,
         params: Parameters<GgProcessKillRequest>,

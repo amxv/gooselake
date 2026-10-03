@@ -52,6 +52,97 @@ pub(super) async fn list_processes(
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct ProcessSchedulerUpdateInput {
+    max_concurrent: Option<usize>,
+    workspace_max_concurrent: Option<BTreeMap<String, usize>>,
+    capture_limit_bytes: Option<usize>,
+    paused: Option<bool>,
+    pause_reason: Option<String>,
+}
+
+pub(super) async fn get_process_scheduler(
+    State(state): State<AppState>,
+) -> Result<Json<runtime_core::ProcessSchedulerSnapshot>, ApiError> {
+    let snapshot = state
+        .app
+        .services
+        .process_manager
+        .scheduler_snapshot()
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(snapshot))
+}
+
+pub(super) async fn update_process_scheduler(
+    State(state): State<AppState>,
+    Json(input): Json<ProcessSchedulerUpdateInput>,
+) -> Result<Json<runtime_core::ProcessSchedulerSnapshot>, ApiError> {
+    let current = state
+        .app
+        .services
+        .process_manager
+        .scheduler_snapshot()
+        .await
+        .map_err(ApiError::from)?;
+    let paused = input.paused.unwrap_or(current.settings.paused);
+    let pause_reason = if paused {
+        input
+            .pause_reason
+            .or(current.settings.pause_reason)
+            .or_else(|| Some("operator_http".to_string()))
+    } else {
+        None
+    };
+    let settings = ProcessSchedulerSettings {
+        max_concurrent: input
+            .max_concurrent
+            .unwrap_or(current.settings.max_concurrent),
+        workspace_max_concurrent: input
+            .workspace_max_concurrent
+            .unwrap_or(current.settings.workspace_max_concurrent),
+        capture_limit_bytes: input
+            .capture_limit_bytes
+            .unwrap_or(current.settings.capture_limit_bytes),
+        paused,
+        pause_reason,
+        updated_at: current.settings.updated_at,
+    };
+    let snapshot = state
+        .app
+        .services
+        .process_manager
+        .update_scheduler_settings(settings)
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(snapshot))
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ProcessQueueReorderInput {
+    process_id: String,
+    before_process_id: Option<String>,
+    after_process_id: Option<String>,
+}
+
+pub(super) async fn reorder_process_queue(
+    State(state): State<AppState>,
+    Json(input): Json<ProcessQueueReorderInput>,
+) -> Result<Json<runtime_core::ProcessSchedulerSnapshot>, ApiError> {
+    let snapshot = state
+        .app
+        .services
+        .process_manager
+        .reorder_process_queue(
+            input.process_id,
+            input.before_process_id,
+            input.after_process_id,
+        )
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(snapshot))
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct ProcessSessionQuery {
     session_id: Option<String>,
 }

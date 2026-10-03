@@ -86,7 +86,7 @@ async fn mcp_body_limit_is_scoped_to_mcp_routes_only() {
 }
 
 #[tokio::test]
-async fn max_concurrent_one_blocks_second_spawn_until_first_finishes() {
+async fn max_concurrent_one_queues_second_process_until_first_finishes() {
     let (router, token, temp_dir) = build_test_router().await;
     let release_path = temp_dir.path().join("release-first-process");
     let waiter_path = temp_dir.path().join("wait-for-release.sh");
@@ -161,33 +161,100 @@ async fn max_concurrent_one_blocks_second_spawn_until_first_finishes() {
         .expect("first process id")
         .to_string();
 
-    let second_router = router.clone();
-    let second_token = token.clone();
-    let second_session = session_id.clone();
-    let mut second_handle = tokio::spawn(async move {
-        second_router
+    let mut first_running = false;
+    for _ in 0..80 {
+        let get_response = router
+            .clone()
             .oneshot(
                 Request::builder()
-                    .method("POST")
-                    .uri("/v1/processes")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header(header::AUTHORIZATION, format!("Bearer {second_token}"))
-                    .body(Body::from(
-                        serde_json::json!({
-                            "command": "seq 1 500000",
-                            "session_id": second_session,
-                        })
-                        .to_string(),
+                    .uri(format!(
+                        "/v1/processes/{first_process_id}?session_id={session_id}"
                     ))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
                     .unwrap(),
             )
             .await
-    });
+            .expect("first running get");
+        let body = to_bytes(get_response.into_body(), usize::MAX)
+            .await
+            .expect("first running body");
+        let row: serde_json::Value = serde_json::from_slice(&body).expect("first running json");
+        if row
+            .pointer("/process/status")
+            .and_then(serde_json::Value::as_str)
+            == Some("running")
+        {
+            first_running = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(first_running, "first process did not occupy the only slot");
 
-    let early = timeout(Duration::from_millis(150), &mut second_handle).await;
-    assert!(
-        early.is_err(),
-        "second process started too early before slot became available"
+    let second_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/processes")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::from(
+                    serde_json::json!({
+                        "command": "printf second > second-process-ran",
+                        "session_id": session_id,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("second process");
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second_json: serde_json::Value = serde_json::from_slice(
+        &to_bytes(second_response.into_body(), usize::MAX)
+            .await
+            .expect("second body"),
+    )
+    .expect("second json");
+    assert_eq!(
+        second_json
+            .pointer("/process/status")
+            .and_then(serde_json::Value::as_str),
+        Some("queued")
+    );
+    let second_process_id = second_json
+        .pointer("/process/process_id")
+        .and_then(serde_json::Value::as_str)
+        .expect("second process id")
+        .to_string();
+
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let queued_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/processes/{second_process_id}?session_id={session_id}"
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("second queued get");
+    let queued_body = to_bytes(queued_response.into_body(), usize::MAX)
+        .await
+        .expect("second queued body");
+    let queued_json: serde_json::Value =
+        serde_json::from_slice(&queued_body).expect("second queued json");
+    assert_eq!(
+        queued_json
+            .pointer("/process/status")
+            .and_then(serde_json::Value::as_str),
+        Some("queued"),
+        "second process must remain queued while the first occupies the only slot"
     );
     std::fs::write(&release_path, b"release").expect("release first process");
 
@@ -221,23 +288,6 @@ async fn max_concurrent_one_blocks_second_spawn_until_first_finishes() {
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
     assert!(first_done, "first process did not complete in time");
-
-    let second_response = second_handle
-        .await
-        .expect("second join")
-        .expect("second response");
-    assert_eq!(second_response.status(), StatusCode::OK);
-    let second_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(second_response.into_body(), usize::MAX)
-            .await
-            .expect("second body"),
-    )
-    .expect("second json");
-    let second_process_id = second_json
-        .pointer("/process/process_id")
-        .and_then(serde_json::Value::as_str)
-        .expect("second process id")
-        .to_string();
 
     let mut second_done = false;
     for _ in 0..240 {

@@ -74,7 +74,9 @@ The recovery path scans sessions, turns, approvals, and providers. It can:
 - preserve pending approvals when still valid
 - mark orphaned waiting states failed
 - retry deferred team deliveries
-- mark previously running process records failed after restart
+- preserve queued process admission and safely re-queue interrupted launch claims
+- reconcile previously running process groups only after matching persisted PID + OS start identity, then mark them `interrupted`
+- resume pending terminal-process completion delivery without duplicating already-dispatched completion turns
 
 A failed recovery note is usually a real operational signal: inspect provider status, runtime logs, and the durable session/turn records before retrying work.
 
@@ -187,6 +189,16 @@ PROCESS_JSON=$(curl -fsS -X POST \
 PROCESS_ID=$(echo "$PROCESS_JSON" | jq -r '.process.process_id')
 ```
 
+Process admission is durable before spawn, so `PROCESS_JSON` may report `queued`. Queue wait is not part of the execution timeout.
+
+Inspect the durable scheduler and active queue:
+
+```bash
+curl -fsS "${AUTH[@]}" "$BASE_URL/v1/processes/scheduler"
+```
+
+Pause/resume or change capacity with `POST /v1/processes/scheduler`. Reorder queued work with `POST /v1/processes/queue/reorder`; the queue order and scheduler settings survive restart.
+
 Inspect it:
 
 ```bash
@@ -208,8 +220,10 @@ curl -fsS -X POST \
 Ownership rules:
 
 - HTTP process endpoints can optionally receive `session_id` to scope access.
-- MCP process calls are owned by the caller session.
+- MCP list/status visibility follows the caller's workspace; cancellation is limited to the submitting session.
 - Closed or failed sessions cannot invoke MCP tools.
+- MCP process completion is pushed automatically to the owning model session; do not poll status waiting for completion.
+- Queued cancellation is atomic, prevents launch, and intentionally does not inject a completion turn.
 
 ## Worktrees
 

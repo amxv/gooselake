@@ -155,6 +155,9 @@ Team query parameters:
 
 - `POST /v1/processes` (Bearer)
 - `GET /v1/processes` (Bearer)
+- `GET /v1/processes/scheduler` (Bearer)
+- `POST /v1/processes/scheduler` (Bearer)
+- `POST /v1/processes/queue/reorder` (Bearer)
 - `GET /v1/processes/{process_id}` (Bearer)
 - `GET /v1/processes/{process_id}/logs` (Bearer)
 - `GET /v1/processes/{process_id}/events` (Bearer)
@@ -166,6 +169,8 @@ Process query parameters:
 - get: `session_id`
 - logs: `session_id`, `stream`, `head_lines`, `tail_lines`, `max_bytes`
 - events replay/stream: `session_id`, `after_seq`, `limit` (+ `Last-Event-ID` fallback for stream)
+
+Process scheduler mutations are durable. `POST /v1/processes/scheduler` accepts optional `max_concurrent`, `workspace_max_concurrent`, `capture_limit_bytes`, `paused`, and `pause_reason`. Queue reorder accepts `process_id` plus exactly one of `before_process_id` or `after_process_id`.
 
 ## Worktrees
 

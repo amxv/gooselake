@@ -3,7 +3,12 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 mod gateway;
+mod os_process;
 mod process;
+mod process_completion;
+mod process_execution;
+mod process_helpers;
+mod process_service;
 #[cfg(test)]
 mod tests;
 mod worktree;
@@ -49,12 +54,6 @@ pub(crate) const GG_TEAM_STATUS: &str = "gg_team_status";
 pub(crate) const GG_TEAM_MESSAGE: &str = "gg_team_message";
 pub(crate) const GG_TEAM_MANAGE: &str = "gg_team_manage";
 pub(crate) const GG_TEAM_ADD_IDEMPOTENCY_CACHE_TTL_SECS: u64 = 10 * 60;
-
-pub(crate) fn parse_process_sequence(process_id: &str) -> Option<u64> {
-    process_id
-        .strip_prefix("proc_")
-        .and_then(|value| value.parse::<u64>().ok())
-}
 
 pub(crate) fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};

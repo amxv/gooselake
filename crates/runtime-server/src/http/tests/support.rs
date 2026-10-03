@@ -633,8 +633,9 @@ pub(super) async fn build_test_router_with_team_policy(
         RuntimeSessionManager::new(store.clone(), provider_registry.clone(), 512)
             .expect("build runtime"),
     );
-    let process_manager = RuntimeProcessManager::new(
+    let process_manager = RuntimeProcessManager::new_with_runtime(
         store.clone(),
+        runtime.clone(),
         ProcessManagerConfig {
             enabled: true,
             max_concurrent: 1,
@@ -744,8 +745,9 @@ pub(super) async fn build_mixed_provider_test_router(
         RuntimeSessionManager::new(store.clone(), provider_registry.clone(), 512)
             .expect("build runtime"),
     );
-    let process_manager = RuntimeProcessManager::new(
+    let process_manager = RuntimeProcessManager::new_with_runtime(
         store.clone(),
+        runtime.clone(),
         ProcessManagerConfig {
             enabled: true,
             max_concurrent: 1,

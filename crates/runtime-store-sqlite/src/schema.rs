@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 7;
+pub(crate) const SCHEMA_VERSION: i64 = 8;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -669,6 +669,143 @@ FROM team_deliveries delivery
 JOIN agent_messages message ON message.id = delivery.message_id;
 "#;
 
+const MIGRATION_8_SQL: &str = r#"
+CREATE TABLE managed_processes (
+  process_id TEXT PRIMARY KEY,
+  owner_session_id TEXT,
+  workspace_id TEXT,
+  tool_call_id TEXT,
+  command_json TEXT NOT NULL CHECK (json_valid(command_json)),
+  cwd TEXT,
+  timeout_ms INTEGER,
+  status TEXT NOT NULL CHECK (status IN (
+    'queued', 'launch_reserved', 'running', 'completed', 'failed',
+    'timed_out', 'killed', 'canceled', 'interrupted'
+  )),
+  admission_order INTEGER NOT NULL UNIQUE,
+  queue_order INTEGER NOT NULL,
+  claim_generation INTEGER NOT NULL DEFAULT 0,
+  claimed_at INTEGER,
+  capture_limit_bytes INTEGER NOT NULL CHECK (capture_limit_bytes > 0),
+  pid INTEGER,
+  os_start_identity TEXT,
+  execution_started_at INTEGER,
+  ended_at INTEGER,
+  execution_duration_ms INTEGER,
+  terminal_recorded_at INTEGER,
+  terminal_reason TEXT,
+  exit_code INTEGER,
+  signal INTEGER,
+  stdout_path TEXT NOT NULL,
+  stderr_path TEXT NOT NULL,
+  stdout_captured_bytes INTEGER NOT NULL DEFAULT 0 CHECK (stdout_captured_bytes >= 0),
+  stderr_captured_bytes INTEGER NOT NULL DEFAULT 0 CHECK (stderr_captured_bytes >= 0),
+  stdout_truncated INTEGER NOT NULL DEFAULT 0 CHECK (stdout_truncated IN (0, 1)),
+  stderr_truncated INTEGER NOT NULL DEFAULT 0 CHECK (stderr_truncated IN (0, 1)),
+  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+  completion_state TEXT NOT NULL DEFAULT 'not_required' CHECK (
+    completion_state IN ('not_required', 'pending', 'injecting', 'delivered')
+  ),
+  completion_turn_id TEXT,
+  completion_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (completion_attempt_count >= 0),
+  completion_last_error TEXT,
+  completion_updated_at INTEGER,
+  admitted_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_managed_processes_queue
+ON managed_processes(status, queue_order, admission_order, process_id);
+
+CREATE INDEX idx_managed_processes_workspace_status
+ON managed_processes(workspace_id, status, queue_order, process_id);
+
+CREATE INDEX idx_managed_processes_owner
+ON managed_processes(owner_session_id, admitted_at, process_id);
+
+CREATE INDEX idx_managed_processes_completion
+ON managed_processes(completion_state, completion_updated_at, process_id);
+
+CREATE TABLE process_scheduler_state (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  max_concurrent INTEGER NOT NULL CHECK (max_concurrent > 0),
+  workspace_max_concurrent_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(workspace_max_concurrent_json)),
+  capture_limit_bytes INTEGER NOT NULL CHECK (capture_limit_bytes > 0),
+  paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)),
+  pause_reason TEXT,
+  updated_at INTEGER NOT NULL
+);
+
+INSERT INTO process_scheduler_state (
+  singleton, max_concurrent, workspace_max_concurrent_json,
+  capture_limit_bytes, paused, pause_reason, updated_at
+) VALUES (1, 32, '{}', 20000000, 0, NULL, 0);
+
+INSERT INTO managed_processes (
+  process_id, owner_session_id, workspace_id, tool_call_id, command_json, cwd,
+  timeout_ms, status, admission_order, queue_order, claim_generation, claimed_at,
+  capture_limit_bytes, pid, os_start_identity, execution_started_at, ended_at,
+  execution_duration_ms, terminal_recorded_at, terminal_reason, exit_code, signal,
+  stdout_path, stderr_path, stdout_captured_bytes, stderr_captured_bytes,
+  stdout_truncated, stderr_truncated, cancel_requested, completion_state,
+  completion_turn_id, completion_attempt_count, completion_last_error,
+  completion_updated_at, admitted_at, updated_at
+)
+SELECT
+  process.id,
+  process.session_id,
+  (
+    SELECT agent.workspace_id
+    FROM workspace_agents agent
+    WHERE agent.session_id = process.session_id
+    LIMIT 1
+  ),
+  process.tool_call_id,
+  process.command_json,
+  process.cwd,
+  process.timeout_ms,
+  CASE process.status
+    WHEN 'completed' THEN 'completed'
+    WHEN 'failed' THEN 'failed'
+    WHEN 'timed_out' THEN 'timed_out'
+    WHEN 'killed' THEN 'killed'
+    WHEN 'queued' THEN 'queued'
+    ELSE 'running'
+  END,
+  process.rowid,
+  process.rowid,
+  0,
+  NULL,
+  20000000,
+  process.pid,
+  NULL,
+  CASE WHEN process.status = 'running' THEN process.started_at ELSE NULL END,
+  process.ended_at,
+  CASE
+    WHEN process.ended_at IS NOT NULL THEN MAX(process.ended_at - process.started_at, 0)
+    ELSE NULL
+  END,
+  process.ended_at,
+  CASE WHEN process.status = 'running' THEN NULL ELSE 'legacy_process_record' END,
+  process.exit_code,
+  process.signal,
+  COALESCE(process.stdout_path, ''),
+  COALESCE(process.stderr_path, ''),
+  0,
+  0,
+  0,
+  0,
+  0,
+  'not_required',
+  NULL,
+  0,
+  NULL,
+  NULL,
+  process.started_at,
+  COALESCE(process.ended_at, process.started_at)
+FROM processes process;
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -697,5 +834,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 7,
         sql: MIGRATION_7_SQL,
+    },
+    Migration {
+        version: 8,
+        sql: MIGRATION_8_SQL,
     },
 ];

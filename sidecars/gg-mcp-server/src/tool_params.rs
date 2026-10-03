@@ -112,7 +112,29 @@ pub(crate) struct GgProcessRunRequest {
 #[serde(deny_unknown_fields)]
 pub(crate) struct GgProcessStatusRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) pid: Option<u64>,
+    #[schemars(
+        schema_with = "crate::schema::nullable_non_empty_string_schema",
+        description = "Stable managed-process ID returned by gg_process_run. Omit to list active processes visible to the caller's workspace."
+    )]
+    pub(crate) process_id: Option<String>,
+    #[serde(default, flatten)]
+    #[schemars(skip)]
+    pub(crate) tool_call_metadata: ToolCallMetadata,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GgProcessLogsRequest {
+    #[schemars(
+        schema_with = "crate::schema::non_empty_string_schema",
+        description = "Stable managed-process ID returned by gg_process_run."
+    )]
+    pub(crate) process_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Optional stream selector: `stdout` or `stderr`. Omit to read both streams."
+    )]
+    pub(crate) stream: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) head_lines: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -125,7 +147,11 @@ pub(crate) struct GgProcessStatusRequest {
 #[derive(Debug, Clone, Deserialize, serde::Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GgProcessKillRequest {
-    pub(crate) pid: u64,
+    #[schemars(
+        schema_with = "crate::schema::non_empty_string_schema",
+        description = "Stable managed-process ID returned by gg_process_run."
+    )]
+    pub(crate) process_id: String,
     #[serde(default, flatten)]
     #[schemars(skip)]
     pub(crate) tool_call_metadata: ToolCallMetadata,

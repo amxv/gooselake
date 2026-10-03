@@ -531,6 +531,31 @@ PROCESS_JSON=$(curl -fsS -X POST \
 | `timeout_ms` | no | Overrides configured default timeout. |
 | `session_id` | no | Associates process ownership with a session. |
 
+Admission is persisted before native spawn. The response returns promptly with a stable `process.process_id`; its initial status may be `queued`. Queue wait does not count against `timeout_ms`, which starts when execution actually begins.
+
+Inspect or update the durable scheduler:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v1/processes/scheduler"
+
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"max_concurrent":32,"workspace_max_concurrent":{"ws_example":4},"paused":false}' \
+  "$BASE_URL/v1/processes/scheduler"
+```
+
+Reorder queued work by providing exactly one of `before_process_id` or `after_process_id`:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"process_id":"proc_a","before_process_id":"proc_b"}' \
+  "$BASE_URL/v1/processes/queue/reorder"
+```
+
 Read logs:
 
 ```bash
@@ -547,6 +572,8 @@ curl -fsS -X POST \
   -d '{"reason":"operator stop"}' \
   "$BASE_URL/v1/processes/$PROCESS_ID/kill"
 ```
+
+Session-owned terminal processes deliver a completion turn back to the owning model through durable turn admission. Completion delivery is tracked separately from terminal process state and survives restart. MCP callers should not poll `gg_process_status` waiting for completion; completion is pushed automatically. Queued cancellation atomically prevents launch and intentionally does not create a model completion turn.
 
 ## Worktrees
 

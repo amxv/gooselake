@@ -175,6 +175,73 @@ async fn team_message_tool_schema_exposes_optional_image_paths() {
 }
 
 #[tokio::test]
+async fn process_tools_expose_stable_ids_logs_and_push_completion_guidance() {
+    let server = GgMcpServer::new();
+    let tools = server.tools_with_runtime_metadata().await;
+
+    let run = tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == "gg_process_run")
+        .expect("process run tool should be present");
+    let run_description = run
+        .description
+        .as_deref()
+        .expect("process run description should be present");
+    assert!(run_description.contains("stable process_id"));
+    assert!(run_description.contains("pushed"));
+    assert!(run_description.contains("do not poll"));
+
+    let status = tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == "gg_process_status")
+        .expect("process status tool should be present");
+    let status_properties = status
+        .input_schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .expect("process status properties should be present");
+    assert!(status_properties.contains_key("process_id"));
+    assert!(!status_properties.contains_key("pid"));
+    assert!(!status_properties.contains_key("head_lines"));
+    assert!(!status_properties.contains_key("tail_lines"));
+
+    let logs = tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == "gg_process_logs")
+        .expect("process logs tool should be present");
+    let logs_required = logs
+        .input_schema
+        .get("required")
+        .and_then(Value::as_array)
+        .expect("process logs required fields should be present");
+    assert!(
+        logs_required
+            .iter()
+            .any(|entry| entry.as_str() == Some("process_id"))
+    );
+
+    let kill = tools
+        .iter()
+        .find(|tool| tool.name.as_ref() == "gg_process_kill")
+        .expect("process kill tool should be present");
+    let kill_required = kill
+        .input_schema
+        .get("required")
+        .and_then(Value::as_array)
+        .expect("process kill required fields should be present");
+    assert!(
+        kill_required
+            .iter()
+            .any(|entry| entry.as_str() == Some("process_id"))
+    );
+    assert!(
+        !kill_required
+            .iter()
+            .any(|entry| entry.as_str() == Some("pid"))
+    );
+}
+
+#[tokio::test]
 async fn team_manage_tool_schema_exposes_remove_agent_ids_as_array() {
     let server = GgMcpServer::new();
     let tools = server.tools_with_runtime_metadata().await;

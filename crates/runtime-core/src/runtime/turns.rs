@@ -634,7 +634,7 @@ impl RuntimeSessionManager {
                         )
                     })?;
                 provider
-                    .resume_session(resume_request)
+                    .resume_session_with_policy(resume_request)
                     .await
                     .map_err(|resume_error| {
                         RuntimeError::provider_not_dispatched(

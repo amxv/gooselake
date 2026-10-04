@@ -16,10 +16,10 @@ use crate::paths::{
 };
 use runtime_core::{
     CreateSessionInput, ProviderApprovalResponseRequest, ProviderCloseSessionRequest,
-    ProviderCreateSessionRequest, ProviderInterruptTurnRequest, ProviderKind, ProviderRegistry,
-    ProviderResumeSessionRequest, ProviderSendTurnRequest, ProviderTurnStatus,
-    ProviderWaitTurnRequest, RuntimeError, RuntimeProvider, RuntimeSessionManager, RuntimeStore,
-    SendTurnInput,
+    ProviderCreateSessionRequest, ProviderDiscoveryMode, ProviderInterruptTurnRequest,
+    ProviderKind, ProviderModelDiscoveryRequest, ProviderRegistry, ProviderResumeSessionRequest,
+    ProviderSendTurnRequest, ProviderThinkingEffort, ProviderTurnStatus, ProviderWaitTurnRequest,
+    RuntimeError, RuntimeProvider, RuntimeSessionManager, RuntimeStore, SendTurnInput,
 };
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use serde_json::Value;

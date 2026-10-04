@@ -640,8 +640,9 @@ fn workspace_agent_record(
         recreation_policy: WorkspaceAgentRecreationPolicy {
             provider,
             model: Some("test-model".to_string()),
-            permission_intent: None,
-            setting_sources_intent: Vec::new(),
+            permission_intent: crate::ProviderPermissionIntent::ProviderDefault,
+            setting_sources_intent: crate::ProviderSettingSourcesIntent::Isolated,
+            current_preferences: crate::ProviderSessionPreferences::default(),
             system_prompt: None,
             allowed_tools: Vec::new(),
             disallowed_tools: Vec::new(),

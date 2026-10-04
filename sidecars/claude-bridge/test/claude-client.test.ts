@@ -173,34 +173,26 @@ describe('claude client bridge behavior', () => {
     const models = await client.supportedModels()
     expect(models).toEqual([
       {
-        value: 'claude-sonnet-5',
-        displayName: 'Claude Sonnet 5',
+        value: 'claude-opus-5-5',
+        displayName: 'Claude Opus 5.5',
         supportsEffort: true,
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
         supportsVision: true,
         supportsToolCalling: true,
       },
       {
-        value: 'claude-opus-5',
-        displayName: 'Claude Opus 5',
+        value: 'claude-fable-5-1',
+        displayName: 'Claude Fable 5.1',
         supportsEffort: true,
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
         supportsVision: true,
         supportsToolCalling: true,
       },
       {
-        value: 'claude-fable-5',
-        displayName: 'Claude Fable 5',
+        value: 'claude-sonnet-5-5',
+        displayName: 'Claude Sonnet 5.5',
         supportsEffort: true,
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
-        supportsVision: true,
-        supportsToolCalling: true,
-      },
-      {
-        value: 'claude-haiku-4-5',
-        displayName: 'Claude Haiku 4.5',
-        supportsEffort: true,
-        supportedEffortLevels: ['low', 'medium', 'high'],
         supportsVision: true,
         supportsToolCalling: true,
       },
@@ -212,8 +204,8 @@ describe('claude client bridge behavior', () => {
       mode: 'sdk',
       sdkSupportedModels: async () => [
         {
-          value: ' claude-opus-5 ',
-          displayName: ' Claude Opus 5 ',
+          value: ' claude-opus-5-5 ',
+          displayName: ' Claude Opus 5.5 ',
           supportsEffort: true,
           supportedEffortLevels: ['HIGH', ' medium ', ''],
           supportsVision: true,
@@ -230,8 +222,8 @@ describe('claude client bridge behavior', () => {
     const models = await client.supportedModels()
     expect(models).toEqual([
       {
-        value: 'claude-opus-5',
-        displayName: 'Claude Opus 5',
+        value: 'claude-opus-5-5',
+        displayName: 'Claude Opus 5.5',
         supportsEffort: true,
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
         supportsVision: true,
@@ -2340,7 +2332,7 @@ function createSdkQueryModelWindowUsageStub() {
           cache_read_input_tokens: 2_779_492,
         },
         modelUsage: {
-          'claude-sonnet-5': {
+          'claude-sonnet-5-5': {
             inputTokens: 12_000,
             outputTokens: 400,
             cacheReadInputTokens: 16_000,
@@ -2385,7 +2377,7 @@ function createSdkQueryMissingUsageSecondTurnStub() {
           session_id: 'sdk_session_cache',
           result: 'first turn',
           modelUsage: {
-            'claude-sonnet-5': {
+            'claude-sonnet-5-5': {
               inputTokens: 9_000,
               outputTokens: 200,
               cacheReadInputTokens: 5_000,

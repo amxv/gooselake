@@ -71,6 +71,77 @@ pub(super) async fn list_provider_models(
     }))
 }
 
+#[derive(Debug, Serialize)]
+pub(super) struct ProviderCapabilitiesResponse {
+    provider: runtime_core::ProviderKind,
+    capabilities: runtime_core::ProviderCapabilities,
+    harness: runtime_core::HarnessContractMetadata,
+}
+
+pub(super) async fn provider_capabilities_v2(
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+) -> Result<Json<ProviderCapabilitiesResponse>, ApiError> {
+    let provider = parse_provider_kind(provider.as_str())?;
+    let adapter = state
+        .app
+        .provider_registry
+        .get(provider)
+        .ok_or_else(|| ApiError::not_found(format!("provider {}", provider.as_str())))?;
+    let harness = runtime_core::harness_contract_metadata(provider).map_err(ApiError::from)?;
+    Ok(Json(ProviderCapabilitiesResponse {
+        provider,
+        capabilities: adapter.capabilities(),
+        harness,
+    }))
+}
+
+pub(super) async fn discover_provider_models_v2(
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+    Json(input): Json<runtime_core::ProviderModelDiscoveryRequest>,
+) -> Result<Json<runtime_core::ProviderModelDiscoveryResponse>, ApiError> {
+    let provider = parse_provider_kind(provider.as_str())?;
+    let adapter = state
+        .app
+        .provider_registry
+        .get(provider)
+        .ok_or_else(|| ApiError::not_found(format!("provider {}", provider.as_str())))?;
+    input
+        .setting_sources_intent
+        .resolved_sources(input.cwd.as_deref())
+        .map_err(ApiError::from)?;
+    Ok(Json(
+        adapter
+            .discover_models(input)
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
+pub(super) async fn discover_provider_skills_v2(
+    State(state): State<AppState>,
+    Path(provider): Path<String>,
+    Json(input): Json<runtime_core::ProviderSkillDiscoveryRequest>,
+) -> Result<Json<runtime_core::ProviderSkillDiscoveryResponse>, ApiError> {
+    let provider = parse_provider_kind(provider.as_str())?;
+    let adapter = state
+        .app
+        .provider_registry
+        .get(provider)
+        .ok_or_else(|| ApiError::not_found(format!("provider {}", provider.as_str())))?;
+    input
+        .setting_sources_intent
+        .resolved_sources(input.cwd.as_deref())
+        .map_err(ApiError::from)?;
+    Ok(Json(
+        adapter
+            .discover_skills(input)
+            .await
+            .map_err(ApiError::from)?,
+    ))
+}
+
 pub(super) async fn codex_auth_status(
     State(state): State<AppState>,
 ) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {

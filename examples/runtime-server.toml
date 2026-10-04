@@ -66,13 +66,13 @@ non_lead_can_remove_members = false
 [[teams.model_presets]]
 name = "fast"
 provider = "codex"
-model = "gpt-5.4-mini"
+model = "gpt-6-luna"
 thinking_effort = "low"
 
 [[teams.model_presets]]
 name = "deep"
 provider = "claude"
-model = "claude-opus-5"
+model = "claude-opus-5-5"
 thinking_effort = "high"
 
 [worktrees]

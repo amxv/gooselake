@@ -192,6 +192,15 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v1/teams/{team_id}/interrupt-all") => {
             "Interrupt all active team turns".to_string()
         }
+        (HttpMethod::Get, "/v2/providers/{provider}/capabilities") => {
+            "Get provider capability contract".to_string()
+        }
+        (HttpMethod::Post, "/v2/providers/{provider}/models/discover") => {
+            "Discover provider models".to_string()
+        }
+        (HttpMethod::Post, "/v2/providers/{provider}/skills/discover") => {
+            "Discover provider skills".to_string()
+        }
         (HttpMethod::Post, "/v2/workspaces") => "Register workspace".to_string(),
         (HttpMethod::Get, "/v2/workspaces") => "List workspaces".to_string(),
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}") => "Get workspace".to_string(),

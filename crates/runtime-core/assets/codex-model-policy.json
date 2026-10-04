@@ -1,0 +1,27 @@
+{
+  "models": [
+    { "id": "gpt-6-astra", "label": "GPT 6 Astra" },
+    { "id": "gpt-6.1-sol", "label": "GPT 6.1 Sol" },
+    { "id": "gpt-6-luna", "label": "GPT 6 Luna" }
+  ],
+  "defaults": {
+    "runtime": "gpt-6-astra",
+    "teamLead": "gpt-6-astra",
+    "gitAutomation": "gpt-6-luna",
+    "persistedFallback": "gpt-6.1-sol"
+  },
+  "thinkingEfforts": ["low", "medium", "high", "xhigh", "max"],
+  "defaultPresets": [
+    { "name": "default", "model": "gpt-6-astra", "thinkingEffort": "high" },
+    { "name": "fast", "model": "gpt-6-luna", "thinkingEffort": "low" },
+    { "name": "luna", "model": "gpt-6-luna", "thinkingEffort": "max" }
+  ],
+  "retiredModelMigrations": {
+    "gpt-6-sol": "gpt-6.1-sol",
+    "gpt-5.6-luna": "gpt-6-luna",
+    "gpt-5.4-mini": "gpt-6-luna"
+  },
+  "retiredFamilyMigrations": [
+    { "prefix": "gpt-5.", "destination": "gpt-6.1-sol" }
+  ]
+}

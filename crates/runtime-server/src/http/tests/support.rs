@@ -5,13 +5,13 @@ fn test_team_model_presets() -> Vec<TeamModelPreset> {
         TeamModelPreset {
             name: "fast".to_string(),
             provider: Some("codex".to_string()),
-            model: "gpt-5.4-mini".to_string(),
+            model: "gpt-6-luna".to_string(),
             thinking_effort: Some("low".to_string()),
         },
         TeamModelPreset {
             name: "deep".to_string(),
             provider: Some("claude".to_string()),
-            model: "claude-opus-5".to_string(),
+            model: "claude-opus-5-5".to_string(),
             thinking_effort: Some("high".to_string()),
         },
     ]
@@ -74,17 +74,7 @@ impl TestProvider {
     }
 }
 
-impl TestClaudeProvider {
-    pub(super) fn extract_text(input: &[serde_json::Value]) -> String {
-        TestProvider::extract_text(input)
-    }
-}
-
 impl TestAcpProvider {
-    pub(super) fn extract_text(input: &[serde_json::Value]) -> String {
-        TestProvider::extract_text(input)
-    }
-
     pub(super) async fn created_sessions(&self) -> Vec<CapturedProviderSessionOpen> {
         self.created_sessions.lock().await.clone()
     }
@@ -101,6 +91,16 @@ impl RuntimeProvider for TestProvider {
             kind: ProviderKind::Codex,
             display_name: "Test Codex".to_string(),
             enabled: true,
+        }
+    }
+
+    fn capabilities(&self) -> runtime_core::ProviderCapabilities {
+        runtime_core::ProviderCapabilities {
+            model_discovery: runtime_core::ProviderDiscoveryMode::Catalog,
+            session_resume: runtime_core::ProviderCapabilitySupport::Supported,
+            interrupt: runtime_core::ProviderCapabilitySupport::Supported,
+            tools: runtime_core::ProviderCapabilitySupport::Supported,
+            ..Default::default()
         }
     }
 
@@ -182,7 +182,7 @@ impl RuntimeProvider for TestProvider {
             });
         }
 
-        let user_text = Self::extract_text(req.input.as_slice());
+        let user_text = TestProvider::extract_text(req.input.as_slice());
         let first_prompt = session
             .history
             .first()
@@ -245,7 +245,7 @@ impl RuntimeProvider for TestProvider {
                 },
             );
         } else {
-            let user_text = Self::extract_text(pending.input.as_slice());
+            let user_text = TestProvider::extract_text(pending.input.as_slice());
             session.completed.insert(
                 req.turn_id.clone(),
                 ProviderTurnResult {
@@ -290,6 +290,17 @@ impl RuntimeProvider for TestClaudeProvider {
             kind: ProviderKind::Claude,
             display_name: "Test Claude".to_string(),
             enabled: true,
+        }
+    }
+
+    fn capabilities(&self) -> runtime_core::ProviderCapabilities {
+        runtime_core::ProviderCapabilities {
+            model_discovery: runtime_core::ProviderDiscoveryMode::Catalog,
+            session_resume: runtime_core::ProviderCapabilitySupport::Supported,
+            interrupt: runtime_core::ProviderCapabilitySupport::Supported,
+            tools: runtime_core::ProviderCapabilitySupport::Supported,
+            setting_sources: runtime_core::ProviderCapabilitySupport::Supported,
+            ..Default::default()
         }
     }
 
@@ -373,7 +384,7 @@ impl RuntimeProvider for TestClaudeProvider {
             });
         }
 
-        let user_text = Self::extract_text(req.input.as_slice());
+        let user_text = TestProvider::extract_text(req.input.as_slice());
         session.completed.insert(
             req.turn_id.clone(),
             ProviderTurnResult {
@@ -425,7 +436,7 @@ impl RuntimeProvider for TestClaudeProvider {
                 },
             );
         } else {
-            let user_text = Self::extract_text(pending.input.as_slice());
+            let user_text = TestProvider::extract_text(pending.input.as_slice());
             session.completed.insert(
                 req.turn_id.clone(),
                 ProviderTurnResult {
@@ -472,6 +483,18 @@ impl RuntimeProvider for TestAcpProvider {
             kind: ProviderKind::Acp,
             display_name: "Test ACP".to_string(),
             enabled: true,
+        }
+    }
+
+    fn capabilities(&self) -> runtime_core::ProviderCapabilities {
+        runtime_core::ProviderCapabilities {
+            model_discovery: runtime_core::ProviderDiscoveryMode::AgentManaged,
+            session_resume: runtime_core::ProviderCapabilitySupport::AgentManaged,
+            streaming: runtime_core::ProviderCapabilitySupport::Supported,
+            interrupt: runtime_core::ProviderCapabilitySupport::Supported,
+            tools: runtime_core::ProviderCapabilitySupport::AgentManaged,
+            setting_sources: runtime_core::ProviderCapabilitySupport::AgentManaged,
+            ..Default::default()
         }
     }
 
@@ -562,7 +585,7 @@ impl RuntimeProvider for TestAcpProvider {
                 RuntimeError::NotFound(format!("test session {}", req.runtime_session_id))
             })?;
 
-        let user_text = Self::extract_text(req.input.as_slice());
+        let user_text = TestProvider::extract_text(req.input.as_slice());
         session.completed.insert(
             req.turn_id.clone(),
             ProviderTurnResult {

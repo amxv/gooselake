@@ -295,7 +295,7 @@ async fn ignored_real_claude_http_smoke_host_credentials_mcp_turn_complete() {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "claude-sonnet-5".to_string());
+        .unwrap_or_else(|| "claude-sonnet-5-5".to_string());
     let smoke_permission_mode = std::env::var("GG_CLAUDE_SMOKE_PERMISSION_MODE")
         .ok()
         .map(|value| value.trim().to_string())

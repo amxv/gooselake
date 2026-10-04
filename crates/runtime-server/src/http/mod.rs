@@ -177,6 +177,18 @@ pub fn build_router(state: AppState) -> Router {
         ));
 
     let protected_v2 = Router::new()
+        .route(
+            "/providers/{provider}/capabilities",
+            get(provider_capabilities_v2),
+        )
+        .route(
+            "/providers/{provider}/models/discover",
+            post(discover_provider_models_v2),
+        )
+        .route(
+            "/providers/{provider}/skills/discover",
+            post(discover_provider_skills_v2),
+        )
         .route("/workspaces", post(register_workspace).get(list_workspaces))
         .route("/workspaces/{workspace_id}", get(get_workspace))
         .route("/workspaces/{workspace_id}/lead", post(set_workspace_lead))

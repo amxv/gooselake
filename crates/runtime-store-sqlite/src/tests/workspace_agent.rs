@@ -4,6 +4,26 @@ use runtime_core::{
     WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRecord,
     WorkspaceAgentRecreationPolicy, WorkspaceRegisterRequest,
 };
+use rusqlite::TransactionBehavior;
+
+fn apply_schema_through(database_path: &std::path::Path, version: i64) {
+    let mut connection = open_connection(database_path).expect("connection");
+    for migration in crate::schema::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version <= version)
+    {
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .expect("migration transaction");
+        tx.execute_batch(migration.sql).expect("migration sql");
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+            params![migration.version, migration.version],
+        )
+        .expect("migration marker");
+        tx.commit().expect("migration commit");
+    }
+}
 
 fn registered_workspace(
     repository: &SqliteRuntimeRepository,
@@ -64,8 +84,18 @@ fn workspace_agent_fixture(
         recreation_policy: WorkspaceAgentRecreationPolicy {
             provider: ProviderKind::Codex,
             model: Some("gpt-test".to_string()),
-            permission_intent: Some("workspace_write".to_string()),
-            setting_sources_intent: vec!["user".to_string(), "project".to_string()],
+            permission_intent: runtime_core::ProviderPermissionIntent::Explicit {
+                mode: "workspace_write".to_string(),
+            },
+            setting_sources_intent: runtime_core::ProviderSettingSourcesIntent::Explicit {
+                sources: vec![
+                    runtime_core::ProviderSettingSource::User,
+                    runtime_core::ProviderSettingSource::Project,
+                ],
+            },
+            current_preferences: runtime_core::ProviderSessionPreferences {
+                thinking_effort: Some(runtime_core::ProviderThinkingEffort::High),
+            },
             system_prompt: Some("persist me".to_string()),
             allowed_tools: vec!["read".to_string()],
             disallowed_tools: vec!["danger".to_string()],
@@ -252,4 +282,125 @@ fn archive_and_restore_preserve_agent_identity_and_policy() {
     assert!(restored.archived_at.is_none());
     assert!(restored.archive_reason.is_none());
     assert_eq!(restored.revision, 2);
+}
+
+#[test]
+fn model_refresh_migration_updates_builtin_provider_state_without_crossing_acp() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let db_path = temp_dir.path().join("runtime.sqlite3");
+    apply_schema_through(&db_path, 8);
+    let repository = SqliteRuntimeRepository::new(db_path.clone());
+    let root = temp_dir.path().join("model-refresh-workspace");
+    std::fs::create_dir_all(&root).expect("workspace root");
+    let workspace = registered_workspace(&repository, &root);
+
+    let (mut codex_session, mut codex_agent) =
+        workspace_agent_fixture(&workspace, "sess_retired_codex", "steady-otter-m1");
+    codex_session.model = Some("gpt-5.4".to_string());
+    codex_agent.recreation_policy.model = Some("gpt-5.4".to_string());
+    repository
+        .create_workspace_agent(&codex_session, &codex_agent)
+        .expect("seed retired codex agent");
+    let legacy_policy = serde_json::json!({
+        "provider": "codex",
+        "model": "gpt-5.4",
+        "permission_intent": null,
+        "setting_sources_intent": [],
+        "system_prompt": "persist me",
+        "allowed_tools": ["read"],
+        "disallowed_tools": ["danger"],
+        "authoritative_cwd": codex_agent.recreation_policy.authoritative_cwd,
+        "harness_version_slot": null
+    });
+    open_connection(&db_path)
+        .expect("legacy policy connection")
+        .execute(
+            "UPDATE workspace_agents SET recreation_policy_json = ?2 WHERE session_id = ?1",
+            params![
+                codex_session.id,
+                serde_json::to_string(&legacy_policy).expect("legacy policy json")
+            ],
+        )
+        .expect("replace recreation policy with legacy wire shape");
+
+    let mut claude_session = sample_session();
+    claude_session.id = "sess_retired_claude".to_string();
+    claude_session.provider = "claude".to_string();
+    claude_session.model = Some("claude-opus-4-9-20260901".to_string());
+    claude_session.active_turn_id = None;
+    claude_session.provider_session_ref = None;
+    claude_session.worktree_id = None;
+    repository
+        .upsert_session(&claude_session)
+        .expect("seed retired claude session");
+
+    let mut acp_session = sample_session();
+    acp_session.id = "sess_agent_managed".to_string();
+    acp_session.provider = "acp".to_string();
+    acp_session.model = Some("gpt-5.4".to_string());
+    acp_session.active_turn_id = None;
+    acp_session.provider_session_ref = None;
+    acp_session.worktree_id = None;
+    repository
+        .upsert_session(&acp_session)
+        .expect("seed ACP session");
+
+    repository
+        .initialize_schema()
+        .expect("apply model refresh migration");
+
+    let hydrated = repository
+        .hydrate_runtime_state()
+        .expect("hydrate migrated state");
+    let session_model = |id: &str| {
+        hydrated
+            .sessions
+            .iter()
+            .find(|session| session.id == id)
+            .and_then(|session| session.model.as_deref())
+            .map(str::to_string)
+    };
+    assert_eq!(
+        session_model("sess_retired_codex").as_deref(),
+        Some("gpt-6.1-sol")
+    );
+    assert_eq!(
+        session_model("sess_retired_claude").as_deref(),
+        Some("claude-opus-5-5")
+    );
+    assert_eq!(
+        session_model("sess_agent_managed").as_deref(),
+        Some("gpt-5.4")
+    );
+
+    let migrated_agent = repository
+        .get_workspace_agent_by_id("sess_retired_codex")
+        .expect("read migrated agent")
+        .expect("migrated agent exists");
+    assert_eq!(
+        migrated_agent.recreation_policy.model.as_deref(),
+        Some("gpt-6.1-sol")
+    );
+    assert_eq!(
+        migrated_agent.recreation_policy.permission_intent,
+        runtime_core::ProviderPermissionIntent::ProviderDefault
+    );
+    assert_eq!(
+        migrated_agent.recreation_policy.setting_sources_intent,
+        runtime_core::ProviderSettingSourcesIntent::Isolated
+    );
+    assert_eq!(
+        migrated_agent.recreation_policy.current_preferences,
+        runtime_core::ProviderSessionPreferences::default()
+    );
+    assert_eq!(migrated_agent.revision, codex_agent.revision + 1);
+
+    repository
+        .initialize_schema()
+        .expect("model migration is restart-idempotent");
+    let replayed_agent = repository
+        .get_workspace_agent_by_id("sess_retired_codex")
+        .expect("read replayed agent")
+        .expect("replayed agent exists");
+    assert_eq!(replayed_agent.revision, migrated_agent.revision);
 }

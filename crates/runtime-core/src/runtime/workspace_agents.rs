@@ -2,10 +2,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::{
-    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderKind,
-    ProviderResumeSessionRequest, RuntimeError, SessionRecord, WorkspaceAgentCreateRequest,
-    WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState,
+    ProviderCloseSessionRequest, ProviderCreateSessionPolicyRequest, ProviderKind,
+    ProviderPermissionIntent, ProviderResumeSessionPolicyRequest, ProviderSessionLaunchPolicy,
+    ProviderSessionPreferences, ProviderSettingSourcesIntent, RuntimeError, SessionRecord,
+    WorkspaceAgentCreateRequest, WorkspaceAgentLifecycleState, WorkspaceAgentProfile,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState,
 };
 
 use super::helpers::now_ms;
@@ -65,17 +66,14 @@ impl RuntimeSessionManager {
         })?;
         let session_id = self.allocate_id("sess", policy.provider.as_str());
         let metadata = request.metadata.unwrap_or_else(|| serde_json::json!({}));
+        let permission_mode = policy.permission_intent.resolved_mode();
         let provider_session = provider
-            .create_session(ProviderCreateSessionRequest {
+            .create_session_with_policy(ProviderCreateSessionPolicyRequest {
                 runtime_session_id: session_id.clone(),
                 model: policy.model.clone(),
                 cwd: Some(policy.authoritative_cwd.clone()),
-                permission_mode: policy.permission_intent.clone(),
-                setting_sources: policy.setting_sources_intent.clone(),
-                system_prompt: policy.system_prompt.clone(),
-                allowed_tools: policy.allowed_tools.clone(),
-                disallowed_tools: policy.disallowed_tools.clone(),
-                harness_version_slot: policy.harness_version_slot.clone(),
+                launch_policy: policy.launch_policy(),
+                current_preferences: policy.current_preferences.clone(),
                 metadata: Some(metadata.clone()),
             })
             .await?;
@@ -87,7 +85,7 @@ impl RuntimeSessionManager {
             status: "ready".to_string(),
             cwd: Some(policy.authoritative_cwd.clone()),
             model: policy.model.clone(),
-            permission_mode: policy.permission_intent.clone(),
+            permission_mode,
             system_prompt: policy.system_prompt.clone(),
             metadata: metadata.clone(),
             provider_session_ref: Some(provider_session.provider_session_ref.clone()),
@@ -216,7 +214,7 @@ impl RuntimeSessionManager {
                 ))
             })?;
         let resumed = provider
-            .resume_session(ProviderResumeSessionRequest {
+            .resume_session_with_policy(ProviderResumeSessionPolicyRequest {
                 runtime_session_id: agent.agent_id.clone(),
                 provider_session_ref,
                 canonical_provider_session_ref: agent
@@ -225,12 +223,8 @@ impl RuntimeSessionManager {
                     .or_else(|| session.canonical_provider_session_ref.clone()),
                 cwd: Some(agent.recreation_policy.authoritative_cwd.clone()),
                 model: agent.recreation_policy.model.clone(),
-                permission_mode: agent.recreation_policy.permission_intent.clone(),
-                setting_sources: agent.recreation_policy.setting_sources_intent.clone(),
-                system_prompt: agent.recreation_policy.system_prompt.clone(),
-                allowed_tools: agent.recreation_policy.allowed_tools.clone(),
-                disallowed_tools: agent.recreation_policy.disallowed_tools.clone(),
-                harness_version_slot: agent.recreation_policy.harness_version_slot.clone(),
+                launch_policy: agent.recreation_policy.launch_policy(),
+                current_preferences: agent.recreation_policy.current_preferences.clone(),
                 metadata: Some(agent.metadata.clone()),
             })
             .await?;
@@ -241,7 +235,7 @@ impl RuntimeSessionManager {
         session.canonical_provider_session_ref = resumed.canonical_provider_session_ref.clone();
         session.cwd = Some(agent.recreation_policy.authoritative_cwd.clone());
         session.model = agent.recreation_policy.model.clone();
-        session.permission_mode = agent.recreation_policy.permission_intent.clone();
+        session.permission_mode = agent.recreation_policy.permission_intent.resolved_mode();
         session.system_prompt = agent.recreation_policy.system_prompt.clone();
         session.status = "ready".to_string();
         session.closed_at = None;
@@ -279,36 +273,37 @@ impl RuntimeSessionManager {
         session: &SessionRecord,
         provider_session_ref: String,
         canonical_provider_session_ref: Option<String>,
-    ) -> Result<ProviderResumeSessionRequest, RuntimeError> {
+    ) -> Result<ProviderResumeSessionPolicyRequest, RuntimeError> {
         if let Some(agent) = self.store.get_workspace_agent_by_id(session.id.as_str())? {
             let policy = agent.recreation_policy;
-            return Ok(ProviderResumeSessionRequest {
+            return Ok(ProviderResumeSessionPolicyRequest {
                 runtime_session_id: session.id.clone(),
                 provider_session_ref,
                 canonical_provider_session_ref,
-                cwd: Some(policy.authoritative_cwd),
-                model: policy.model,
-                permission_mode: policy.permission_intent,
-                setting_sources: policy.setting_sources_intent,
-                system_prompt: policy.system_prompt,
-                allowed_tools: policy.allowed_tools,
-                disallowed_tools: policy.disallowed_tools,
-                harness_version_slot: policy.harness_version_slot,
+                cwd: Some(policy.authoritative_cwd.clone()),
+                model: policy.model.clone(),
+                launch_policy: policy.launch_policy(),
+                current_preferences: policy.current_preferences,
                 metadata: Some(agent.metadata),
             });
         }
-        Ok(ProviderResumeSessionRequest {
+        let permission_intent = match session.permission_mode.clone() {
+            Some(mode) => ProviderPermissionIntent::explicit(mode)?,
+            None => ProviderPermissionIntent::ProviderDefault,
+        };
+        Ok(ProviderResumeSessionPolicyRequest {
             runtime_session_id: session.id.clone(),
             provider_session_ref,
             canonical_provider_session_ref,
             cwd: session.cwd.clone(),
             model: session.model.clone(),
-            permission_mode: session.permission_mode.clone(),
-            setting_sources: Vec::new(),
-            system_prompt: session.system_prompt.clone(),
-            allowed_tools: Vec::new(),
-            disallowed_tools: Vec::new(),
-            harness_version_slot: None,
+            launch_policy: ProviderSessionLaunchPolicy {
+                permission_intent,
+                setting_sources_intent: ProviderSettingSourcesIntent::Isolated,
+                system_prompt: session.system_prompt.clone(),
+                ..ProviderSessionLaunchPolicy::default()
+            },
+            current_preferences: ProviderSessionPreferences::default(),
             metadata: Some(session.metadata.clone()),
         })
     }
@@ -329,14 +324,14 @@ fn normalize_recreation_policy(
             "tool {overlap:?} cannot be both allowed and disallowed"
         )));
     }
+    let setting_sources_intent = request.setting_sources_intent.clone();
+    setting_sources_intent.resolved_sources(Some(authoritative_cwd.as_str()))?;
     Ok(WorkspaceAgentRecreationPolicy {
         provider: request.provider,
         model: normalize_optional(request.model.as_deref()),
-        permission_intent: normalize_optional(request.permission_intent.as_deref()),
-        setting_sources_intent: normalize_string_list(
-            &request.setting_sources_intent,
-            "setting_sources_intent",
-        )?,
+        permission_intent: request.permission_intent.clone(),
+        setting_sources_intent,
+        current_preferences: request.current_preferences.clone(),
         system_prompt: request
             .system_prompt
             .as_ref()

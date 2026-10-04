@@ -83,7 +83,7 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/diagnostics/providers"
 SESSION_JSON=$(curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"provider":"codex","model":"gpt-5.4-mini"}' \
+  -d '{"provider":"codex","model":"gpt-6-astra"}' \
   "$BASE_URL/v1/sessions")
 
 SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.id')

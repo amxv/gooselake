@@ -82,7 +82,7 @@ impl RuntimeSessionManager {
                             provider_session_ref,
                             session.canonical_provider_session_ref.clone(),
                         )?;
-                        match provider.resume_session(resume_request).await {
+                        match provider.resume_session_with_policy(resume_request).await {
                             Ok(resumed) => {
                                 summary.resumed_sessions += 1;
                                 if updated_session.provider_session_ref

@@ -3,9 +3,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use runtime_core::{
-    ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
-    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
-    ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionRequest,
+    claude_model_catalog, ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
+    ProviderCapabilities, ProviderCapabilitySupport, ProviderCloseSessionRequest,
+    ProviderCreateSessionRequest, ProviderDiscoveryMode, ProviderInterruptTurnRequest,
+    ProviderKind, ProviderMetadata, ProviderModel, ProviderModelDescriptor,
+    ProviderModelDiscoveryRequest, ProviderModelDiscoveryResponse, ProviderResumeSessionRequest,
     ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession, ProviderTurnAck,
     ProviderTurnResult, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
 };
@@ -34,6 +36,27 @@ impl RuntimeProvider for ClaudeProvider {
         }
     }
 
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            model_discovery: ProviderDiscoveryMode::Catalog,
+            skill_discovery: ProviderDiscoveryMode::Unsupported,
+            session_resume: ProviderCapabilitySupport::Supported,
+            streaming: ProviderCapabilitySupport::Supported,
+            approvals: ProviderCapabilitySupport::Supported,
+            permission_mutation: ProviderCapabilitySupport::Unsupported,
+            session_preferences: ProviderCapabilitySupport::Unsupported,
+            interrupt: ProviderCapabilitySupport::Supported,
+            tools: ProviderCapabilitySupport::Supported,
+            images: ProviderCapabilitySupport::Supported,
+            structured_output: ProviderCapabilitySupport::Unsupported,
+            setting_sources: ProviderCapabilitySupport::Supported,
+            context_limit_observation: ProviderCapabilitySupport::Unsupported,
+            workspace_rebind: ProviderCapabilitySupport::Unsupported,
+            manual_compact: ProviderCapabilitySupport::Unsupported,
+            hard_fork_edit_rerun: ProviderCapabilitySupport::Unsupported,
+        }
+    }
+
     fn subscribe_events(&self) -> Option<broadcast::Receiver<ProviderRuntimeEvent>> {
         Some(self.inner.provider_events.subscribe())
     }
@@ -46,28 +69,30 @@ impl RuntimeProvider for ClaudeProvider {
         if !self.inner.config.enabled {
             return Ok(Vec::new());
         }
-        Ok(vec![
-            ProviderModel {
-                id: "claude-sonnet-5".to_string(),
-                display_name: "Claude Sonnet 5".to_string(),
-                reasoning_levels: Vec::new(),
-            },
-            ProviderModel {
-                id: "claude-opus-5".to_string(),
-                display_name: "Claude Opus 5".to_string(),
-                reasoning_levels: Vec::new(),
-            },
-            ProviderModel {
-                id: "claude-fable-5".to_string(),
-                display_name: "Claude Fable 5".to_string(),
-                reasoning_levels: Vec::new(),
-            },
-            ProviderModel {
-                id: "claude-haiku-4-5".to_string(),
-                display_name: "Claude Haiku 4.5".to_string(),
-                reasoning_levels: Vec::new(),
-            },
-        ])
+        Ok(claude_model_catalog())
+    }
+
+    async fn discover_models(
+        &self,
+        _req: ProviderModelDiscoveryRequest,
+    ) -> Result<ProviderModelDiscoveryResponse, RuntimeError> {
+        let models = self
+            .list_models()
+            .await?
+            .into_iter()
+            .map(|model| {
+                let mut descriptor =
+                    ProviderModelDescriptor::from_legacy(ProviderKind::Claude, model);
+                descriptor.capabilities.supports_tool_calling = true;
+                descriptor.capabilities.supports_vision = true;
+                descriptor
+            })
+            .collect();
+        Ok(ProviderModelDiscoveryResponse {
+            provider: ProviderKind::Claude,
+            mode: ProviderDiscoveryMode::Catalog,
+            models,
+        })
     }
 
     async fn auth_status(&self) -> Result<ProviderAuthStatus, RuntimeError> {

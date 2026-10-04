@@ -6,7 +6,7 @@
   "scripts": {
     "start": "bun run src/main.ts",
     "start:dev-launcher": "./bin/claude-bridge-dev",
-    "build": "bun build src/main.ts --outfile dist/main.js",
+    "build": "bun build src/main.ts --target bun --outfile dist/main.js",
     "compile:mac-arm64": "bun build src/main.ts --compile --target bun-darwin-arm64 --outfile dist/claude-bridge",
     "test": "bun test",
     "test:compiled-sdk-import": "bun test test/compiled-sdk-import.test.ts"

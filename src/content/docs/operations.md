@@ -88,7 +88,7 @@ Create a session:
 SESSION_JSON=$(curl -fsS -X POST \
   "${AUTH[@]}" \
   -H "Content-Type: application/json" \
-  -d '{"provider":"codex","model":"gpt-5.4-mini","cwd":"/workspace/repo"}' \
+  -d '{"provider":"codex","model":"gpt-6-astra","cwd":"/workspace/repo"}' \
   "$BASE_URL/v1/sessions")
 
 SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.id')

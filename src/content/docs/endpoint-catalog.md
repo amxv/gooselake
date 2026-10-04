@@ -50,7 +50,7 @@ Workspace membership authorization is leadless-aware: an active member can manag
 
 `POST /v2/workspaces/{workspace_id}/interrupt` snapshots the authoritative active roster and active turn IDs, records durable per-agent effect intent before provider calls, and returns sorted `interrupted_agent_ids` and `skipped_agent_ids`. Idle members are skipped, agents outside the workspace are never touched, and exact `Idempotency-Key` retries replay the original result without redispatch. Durable effect/event evidence supports restart recovery without blindly duplicating an interrupt whose provider outcome may already have crossed the execution boundary.
 
-Workspace-agent creation is the canonical normal `/v2` agent path. The runtime reuses the opaque `sess_*` session ID as the public agent ID, assigns a globally unique durable friendly alias, and commits the session row, immutable workspace ownership, profile, active roster membership, and exact recreation policy in one SQLite transaction. The recreation policy contains provider, model, permission intent, setting sources, system prompt, allowed/disallowed tools, authoritative cwd, and harness-version slot. Provider-native session references remain separate from the public ID and alias.
+Workspace-agent creation is the canonical normal `/v2` agent path. The runtime reuses the opaque `sess_*` session ID as the public agent ID, assigns a globally unique durable friendly alias, and commits the session row, immutable workspace ownership, profile, active roster membership, and exact recreation policy in one SQLite transaction. The recreation policy contains provider, model, permission intent, setting-source intent, mutable current preferences, system prompt, allowed/disallowed tools, authoritative cwd, and harness-version slot. Provider-native session references remain separate from both the recreation policy and the public ID/alias.
 
 Archiving removes the agent from the default active roster and makes its runtime session non-writable while preserving history, alias, immutable workspace ownership, provider identity, and recreation policy. `restore` reuses the same opaque agent ID and alias and resumes the provider with the persisted recreation policy. Archived history is available with `lifecycle=archived`; `lifecycle=all` returns both active and archived records.
 
@@ -83,12 +83,18 @@ Message creation commits the canonical message and every recipient delivery atom
 - `POST /v1/providers/claude/auth/import-json` (Bearer)
 - `POST /v1/providers/claude/auth/import-file` (Bearer, `multipart/form-data`, field `file`)
 - `POST /v1/providers/claude/auth/logout` (Bearer)
+- `GET /v2/providers/{provider}/capabilities` (Bearer)
+- `POST /v2/providers/{provider}/models/discover` (Bearer)
+- `POST /v2/providers/{provider}/skills/discover` (Bearer)
 
 Provider behavior notes:
 - `GET /v1/providers/{provider}/models` returns dynamic, provider-owned `reasoning_levels` using raw runtime capability tokens such as Codex `xhigh`.
+- v2 capabilities distinguish `supported`, `agent_managed`, and `unsupported` optional behavior and include harness contract metadata.
+- v2 discovery distinguishes `catalog`, `agent_managed`, and `unsupported`. Model discovery accepts cwd, typed setting-source intent, refresh intent, and `cold`/ `start_runtime` startup intent; skill discovery accepts cwd, typed setting-source intent, and refresh intent.
 - ACP v1 exposes only `GET /v1/providers/acp/auth/status` for auth. No ACP logout, API-key, JSON import, or file import routes are implemented.
 - ACP auth status is agent-managed. The response reports configuration/readiness, not runtime-owned credentials.
 - `GET /v1/providers/acp/models` may return an empty list because ACP model selection can be driven by session-scoped agent config.
+- `POST /v2/providers/acp/models/discover` reports `agent_managed` and does not invent model entries for the external agent.
 - ACP permission requests are unsupported in v1 and fail the active turn clearly if an ACP agent requests them.
 
 ## Sessions

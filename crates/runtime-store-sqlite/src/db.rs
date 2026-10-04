@@ -1,8 +1,11 @@
 use std::path::Path;
 use std::time::Duration;
 
-use runtime_core::{RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope};
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use runtime_core::{
+    migrate_retired_model, ProviderKind, RuntimeError, RuntimeEventCriticality, RuntimeEventRecord,
+    RuntimeEventScope, WorkspaceAgentRecreationPolicy,
+};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::Value;
 
 use crate::schema::{MIGRATIONS, SCHEMA_VERSION};
@@ -55,6 +58,9 @@ pub(crate) fn apply_schema(connection: &mut Connection) -> Result<(), RuntimeErr
                     error,
                 )
             })?;
+            if migration.version == 9 {
+                migrate_persisted_provider_models(&transaction)?;
+            }
             transaction
                 .execute(
                     "INSERT INTO schema_migrations (version, applied_at)
@@ -78,6 +84,83 @@ pub(crate) fn apply_schema(connection: &mut Connection) -> Result<(), RuntimeErr
     }
 
     verify_migration_chain(connection)?;
+    Ok(())
+}
+
+fn migrate_persisted_provider_models(transaction: &Transaction<'_>) -> Result<(), RuntimeError> {
+    let sessions = {
+        let mut statement = transaction
+            .prepare("SELECT id, provider, model FROM sessions WHERE model IS NOT NULL")
+            .map_err(|error| {
+                db_error("failed preparing persisted session model migration", error)
+            })?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|error| db_error("failed reading persisted session models", error))?;
+        collect_rows(rows)?
+    };
+    for (session_id, provider_text, model) in sessions {
+        let Some(provider) = ProviderKind::from_str(provider_text.as_str()) else {
+            continue;
+        };
+        let Some(migrated_model) = migrate_retired_model(provider, model.as_str()) else {
+            continue;
+        };
+        transaction
+            .execute(
+                "UPDATE sessions SET model = ?2 WHERE id = ?1",
+                params![session_id, migrated_model],
+            )
+            .map_err(|error| db_error("failed migrating persisted session model", error))?;
+    }
+
+    let workspace_agents = {
+        let mut statement = transaction
+            .prepare("SELECT session_id, recreation_policy_json FROM workspace_agents")
+            .map_err(|error| db_error("failed preparing workspace-agent model migration", error))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| {
+                db_error("failed reading workspace-agent recreation policies", error)
+            })?;
+        collect_rows(rows)?
+    };
+    for (session_id, policy_json) in workspace_agents {
+        let mut policy = serde_json::from_str::<WorkspaceAgentRecreationPolicy>(&policy_json)
+            .map_err(|error| {
+                RuntimeError::Bootstrap(format!(
+                    "failed decoding workspace-agent recreation policy {session_id} during model migration: {error}"
+                ))
+            })?;
+        let Some(model) = policy.model.as_deref() else {
+            continue;
+        };
+        let Some(migrated_model) = migrate_retired_model(policy.provider, model) else {
+            continue;
+        };
+        policy.model = Some(migrated_model);
+        let migrated_json = serde_json::to_string(&policy).map_err(|error| {
+            RuntimeError::Bootstrap(format!(
+                "failed encoding workspace-agent recreation policy {session_id} during model migration: {error}"
+            ))
+        })?;
+        transaction
+            .execute(
+                "UPDATE workspace_agents
+                 SET recreation_policy_json = ?2, revision = revision + 1
+                 WHERE session_id = ?1",
+                params![session_id, migrated_json],
+            )
+            .map_err(|error| db_error("failed migrating workspace-agent model policy", error))?;
+    }
     Ok(())
 }
 

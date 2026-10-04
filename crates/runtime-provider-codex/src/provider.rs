@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use runtime_core::{
-    ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
-    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
+    codex_model_catalog, ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
+    ProviderCapabilities, ProviderCapabilitySupport, ProviderCloseSessionRequest,
+    ProviderCreateSessionRequest, ProviderDiscoveryMode, ProviderInterruptTurnRequest,
     ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionRequest,
     ProviderSendTurnRequest, ProviderSession, ProviderTurnAck, ProviderTurnResult,
     ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
@@ -415,10 +416,6 @@ fn absolutize_path(path: &Path) -> PathBuf {
     }
 }
 
-fn reasoning_levels(levels: &[&str]) -> Vec<String> {
-    levels.iter().map(|level| (*level).to_string()).collect()
-}
-
 #[async_trait]
 impl RuntimeProvider for CodexProvider {
     fn kind(&self) -> ProviderKind {
@@ -430,6 +427,27 @@ impl RuntimeProvider for CodexProvider {
             kind: ProviderKind::Codex,
             display_name: "Codex".to_string(),
             enabled: self.inner.config.enabled,
+        }
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            model_discovery: ProviderDiscoveryMode::Catalog,
+            skill_discovery: ProviderDiscoveryMode::Unsupported,
+            session_resume: ProviderCapabilitySupport::Supported,
+            streaming: ProviderCapabilitySupport::Unsupported,
+            approvals: ProviderCapabilitySupport::Unsupported,
+            permission_mutation: ProviderCapabilitySupport::Unsupported,
+            session_preferences: ProviderCapabilitySupport::Unsupported,
+            interrupt: ProviderCapabilitySupport::Supported,
+            tools: ProviderCapabilitySupport::Supported,
+            images: ProviderCapabilitySupport::Unsupported,
+            structured_output: ProviderCapabilitySupport::Unsupported,
+            setting_sources: ProviderCapabilitySupport::Unsupported,
+            context_limit_observation: ProviderCapabilitySupport::Unsupported,
+            workspace_rebind: ProviderCapabilitySupport::Unsupported,
+            manual_compact: ProviderCapabilitySupport::Unsupported,
+            hard_fork_edit_rerun: ProviderCapabilitySupport::Unsupported,
         }
     }
 
@@ -451,47 +469,7 @@ impl RuntimeProvider for CodexProvider {
     }
 
     async fn list_models(&self) -> Result<Vec<ProviderModel>, RuntimeError> {
-        Ok(vec![
-            ProviderModel {
-                id: "gpt-5.6-sol".to_string(),
-                display_name: "GPT-5.6-Sol".to_string(),
-                reasoning_levels: reasoning_levels(&[
-                    "low", "medium", "high", "xhigh", "max", "ultra",
-                ]),
-            },
-            ProviderModel {
-                id: "gpt-5.6-terra".to_string(),
-                display_name: "GPT-5.6-Terra".to_string(),
-                reasoning_levels: reasoning_levels(&[
-                    "low", "medium", "high", "xhigh", "max", "ultra",
-                ]),
-            },
-            ProviderModel {
-                id: "gpt-5.6-luna".to_string(),
-                display_name: "GPT-5.6-Luna".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh", "max"]),
-            },
-            ProviderModel {
-                id: "gpt-5.5".to_string(),
-                display_name: "GPT 5.5".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh"]),
-            },
-            ProviderModel {
-                id: "gpt-5.4".to_string(),
-                display_name: "GPT 5.4".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh"]),
-            },
-            ProviderModel {
-                id: "gpt-5.4-mini".to_string(),
-                display_name: "GPT 5.4 Mini".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh"]),
-            },
-            ProviderModel {
-                id: "gpt-5.3-codex-spark".to_string(),
-                display_name: "GPT-5.3-Codex-Spark".to_string(),
-                reasoning_levels: reasoning_levels(&["low", "medium", "high", "xhigh"]),
-            },
-        ])
+        Ok(codex_model_catalog())
     }
 
     async fn auth_status(&self) -> Result<ProviderAuthStatus, RuntimeError> {

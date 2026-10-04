@@ -34,7 +34,7 @@ The runtime should own the hard state: active turns, provider refs, event cursor
 Commands are ordinary HTTP requests:
 
 ```bash
-curl -X POST "$BASE_URL/v1/sessions"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{"provider":"codex","model":"gpt-5.5"}'
+curl -X POST "$BASE_URL/v1/sessions"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{"provider":"codex","model":"gpt-6-astra"}'
 ```
 
 Flow comes from events:

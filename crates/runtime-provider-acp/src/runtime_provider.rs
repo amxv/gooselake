@@ -2,11 +2,12 @@ use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use runtime_core::{
-    ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
-    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
-    ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionRequest,
-    ProviderSendTurnRequest, ProviderSession, ProviderTurnAck, ProviderTurnResult,
-    ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
+    ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus, ProviderCapabilities,
+    ProviderCapabilitySupport, ProviderCloseSessionRequest, ProviderCreateSessionRequest,
+    ProviderDiscoveryMode, ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata,
+    ProviderModel, ProviderResumeSessionRequest, ProviderSendTurnRequest, ProviderSession,
+    ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
+    RuntimeProvider,
 };
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
@@ -25,6 +26,27 @@ impl RuntimeProvider for AcpProvider {
             kind: ProviderKind::Acp,
             display_name: "ACP".to_string(),
             enabled: self.inner.config.enabled,
+        }
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            model_discovery: ProviderDiscoveryMode::AgentManaged,
+            skill_discovery: ProviderDiscoveryMode::Unsupported,
+            session_resume: ProviderCapabilitySupport::AgentManaged,
+            streaming: ProviderCapabilitySupport::Supported,
+            approvals: ProviderCapabilitySupport::Unsupported,
+            permission_mutation: ProviderCapabilitySupport::Unsupported,
+            session_preferences: ProviderCapabilitySupport::Unsupported,
+            interrupt: ProviderCapabilitySupport::Supported,
+            tools: ProviderCapabilitySupport::AgentManaged,
+            images: ProviderCapabilitySupport::Unsupported,
+            structured_output: ProviderCapabilitySupport::Unsupported,
+            setting_sources: ProviderCapabilitySupport::Unsupported,
+            context_limit_observation: ProviderCapabilitySupport::Unsupported,
+            workspace_rebind: ProviderCapabilitySupport::Unsupported,
+            manual_compact: ProviderCapabilitySupport::Unsupported,
+            hard_fork_edit_rerun: ProviderCapabilitySupport::Unsupported,
         }
     }
 

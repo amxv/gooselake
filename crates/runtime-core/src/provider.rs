@@ -3,6 +3,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast;
 
+use crate::provider_contract::{
+    ProviderCapabilities, ProviderCapabilitySupport, ProviderCompactSessionOutcome,
+    ProviderCompactSessionRequest, ProviderContextLimitObservation, ProviderDiscoveryMode,
+    ProviderHardForkEditRerunRequest, ProviderModelDescriptor, ProviderModelDiscoveryRequest,
+    ProviderModelDiscoveryResponse, ProviderPermissionIntent, ProviderSessionLaunchPolicy,
+    ProviderSessionPreferences, ProviderSettingSourcesIntent, ProviderSkillDescriptor,
+    ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse, ProviderWorkspaceRebindEvidence,
+    ProviderWorkspaceRebindRequest,
+};
 use crate::RuntimeError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -71,6 +80,69 @@ pub struct ProviderCreateSessionRequest {
     pub metadata: Option<Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderCreateSessionPolicyRequest {
+    pub runtime_session_id: String,
+    pub model: Option<String>,
+    pub cwd: Option<String>,
+    pub launch_policy: ProviderSessionLaunchPolicy,
+    #[serde(default)]
+    pub current_preferences: ProviderSessionPreferences,
+    pub metadata: Option<Value>,
+}
+
+impl ProviderCreateSessionPolicyRequest {
+    fn into_legacy_transport(self) -> Result<ProviderCreateSessionRequest, RuntimeError> {
+        if self.current_preferences != ProviderSessionPreferences::default() {
+            return Err(RuntimeError::Unsupported(
+                "provider adapter has not implemented typed current session preferences"
+                    .to_string(),
+            ));
+        }
+        let permission_mode = self.launch_policy.permission_intent.resolved_mode();
+        let setting_sources = self
+            .launch_policy
+            .resolved_setting_sources(self.cwd.as_deref())?;
+        Ok(ProviderCreateSessionRequest {
+            runtime_session_id: self.runtime_session_id,
+            model: self.model,
+            cwd: self.cwd,
+            permission_mode,
+            setting_sources,
+            system_prompt: self.launch_policy.system_prompt,
+            allowed_tools: self.launch_policy.allowed_tools,
+            disallowed_tools: self.launch_policy.disallowed_tools,
+            harness_version_slot: self.launch_policy.harness_version_slot,
+            metadata: self.metadata,
+        })
+    }
+
+    pub fn legacy_compatible(
+        runtime_session_id: String,
+        model: Option<String>,
+        cwd: Option<String>,
+        permission_mode: Option<String>,
+        metadata: Option<Value>,
+    ) -> Result<Self, RuntimeError> {
+        let permission_intent = match permission_mode {
+            Some(mode) => ProviderPermissionIntent::explicit(mode)?,
+            None => ProviderPermissionIntent::ProviderDefault,
+        };
+        Ok(Self {
+            runtime_session_id,
+            model,
+            cwd,
+            launch_policy: ProviderSessionLaunchPolicy {
+                permission_intent,
+                setting_sources_intent: ProviderSettingSourcesIntent::Isolated,
+                ..ProviderSessionLaunchPolicy::default()
+            },
+            current_preferences: ProviderSessionPreferences::default(),
+            metadata,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderResumeSessionRequest {
     pub runtime_session_id: String,
@@ -88,6 +160,79 @@ pub struct ProviderResumeSessionRequest {
     pub disallowed_tools: Vec<String>,
     pub harness_version_slot: Option<String>,
     pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderResumeSessionPolicyRequest {
+    pub runtime_session_id: String,
+    pub provider_session_ref: String,
+    pub canonical_provider_session_ref: Option<String>,
+    pub model: Option<String>,
+    pub cwd: Option<String>,
+    pub launch_policy: ProviderSessionLaunchPolicy,
+    #[serde(default)]
+    pub current_preferences: ProviderSessionPreferences,
+    pub metadata: Option<Value>,
+}
+
+impl ProviderResumeSessionPolicyRequest {
+    fn into_legacy_transport(self) -> Result<ProviderResumeSessionRequest, RuntimeError> {
+        if self.current_preferences != ProviderSessionPreferences::default() {
+            return Err(RuntimeError::Unsupported(
+                "provider adapter has not implemented typed current session preferences"
+                    .to_string(),
+            ));
+        }
+        let permission_mode = self.launch_policy.permission_intent.resolved_mode();
+        let setting_sources = self
+            .launch_policy
+            .resolved_setting_sources(self.cwd.as_deref())?;
+        Ok(ProviderResumeSessionRequest {
+            runtime_session_id: self.runtime_session_id,
+            provider_session_ref: self.provider_session_ref,
+            canonical_provider_session_ref: self.canonical_provider_session_ref,
+            cwd: self.cwd,
+            model: self.model,
+            permission_mode,
+            setting_sources,
+            system_prompt: self.launch_policy.system_prompt,
+            allowed_tools: self.launch_policy.allowed_tools,
+            disallowed_tools: self.launch_policy.disallowed_tools,
+            harness_version_slot: self.launch_policy.harness_version_slot,
+            metadata: self.metadata,
+        })
+    }
+
+    pub fn legacy_compatible(
+        runtime_session_id: String,
+        provider_session_ref: String,
+        canonical_provider_session_ref: Option<String>,
+        model: Option<String>,
+        cwd: Option<String>,
+        permission_mode: Option<String>,
+        system_prompt: Option<String>,
+        metadata: Option<Value>,
+    ) -> Result<Self, RuntimeError> {
+        let permission_intent = match permission_mode {
+            Some(mode) => ProviderPermissionIntent::explicit(mode)?,
+            None => ProviderPermissionIntent::ProviderDefault,
+        };
+        Ok(Self {
+            runtime_session_id,
+            provider_session_ref,
+            canonical_provider_session_ref,
+            model,
+            cwd,
+            launch_policy: ProviderSessionLaunchPolicy {
+                permission_intent,
+                setting_sources_intent: ProviderSettingSourcesIntent::Isolated,
+                system_prompt,
+                ..ProviderSessionLaunchPolicy::default()
+            },
+            current_preferences: ProviderSessionPreferences::default(),
+            metadata,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,6 +361,10 @@ pub trait RuntimeProvider: Send + Sync {
 
     fn metadata(&self) -> ProviderMetadata;
 
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+
     fn subscribe_events(&self) -> Option<broadcast::Receiver<ProviderRuntimeEvent>> {
         None
     }
@@ -224,6 +373,97 @@ pub trait RuntimeProvider: Send + Sync {
 
     async fn list_models(&self) -> Result<Vec<ProviderModel>, RuntimeError> {
         Ok(Vec::new())
+    }
+
+    async fn discover_models(
+        &self,
+        _req: ProviderModelDiscoveryRequest,
+    ) -> Result<ProviderModelDiscoveryResponse, RuntimeError> {
+        let capabilities = self.capabilities();
+        let mode = capabilities.model_discovery;
+        let models = if mode == ProviderDiscoveryMode::Catalog {
+            self.list_models()
+                .await?
+                .into_iter()
+                .map(|model| {
+                    let mut descriptor = ProviderModelDescriptor::from_legacy(self.kind(), model);
+                    descriptor.capabilities.supports_tool_calling =
+                        capabilities.tools != ProviderCapabilitySupport::Unsupported;
+                    descriptor.capabilities.supports_vision =
+                        capabilities.images != ProviderCapabilitySupport::Unsupported;
+                    descriptor
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(ProviderModelDiscoveryResponse {
+            provider: self.kind(),
+            mode,
+            models,
+        })
+    }
+
+    async fn list_skills(
+        &self,
+        _req: ProviderSkillDiscoveryRequest,
+    ) -> Result<Vec<ProviderSkillDescriptor>, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider skill discovery is not supported".to_string(),
+        ))
+    }
+
+    async fn discover_skills(
+        &self,
+        req: ProviderSkillDiscoveryRequest,
+    ) -> Result<ProviderSkillDiscoveryResponse, RuntimeError> {
+        let mode = self.capabilities().skill_discovery;
+        let skills = if mode == ProviderDiscoveryMode::Catalog {
+            self.list_skills(req).await?
+        } else {
+            Vec::new()
+        };
+        Ok(ProviderSkillDiscoveryResponse {
+            provider: self.kind(),
+            mode,
+            skills,
+        })
+    }
+
+    async fn observe_context_limit(
+        &self,
+        _runtime_session_id: &str,
+    ) -> Result<ProviderContextLimitObservation, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider context-limit observation is not supported".to_string(),
+        ))
+    }
+
+    async fn rebind_workspace(
+        &self,
+        _req: ProviderWorkspaceRebindRequest,
+    ) -> Result<ProviderWorkspaceRebindEvidence, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider workspace rebinding is not supported".to_string(),
+        ))
+    }
+
+    async fn compact_session(
+        &self,
+        _req: ProviderCompactSessionRequest,
+    ) -> Result<ProviderCompactSessionOutcome, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider manual compaction is not supported".to_string(),
+        ))
+    }
+
+    async fn hard_fork_edit_rerun(
+        &self,
+        _req: ProviderHardForkEditRerunRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider hard-fork edit/rerun is not supported".to_string(),
+        ))
     }
 
     async fn auth_status(&self) -> Result<ProviderAuthStatus, RuntimeError> {
@@ -260,6 +500,20 @@ pub trait RuntimeProvider: Send + Sync {
         Err(RuntimeError::Unsupported(
             "provider auth logout is not supported".to_string(),
         ))
+    }
+
+    async fn create_session_with_policy(
+        &self,
+        req: ProviderCreateSessionPolicyRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        self.create_session(req.into_legacy_transport()?).await
+    }
+
+    async fn resume_session_with_policy(
+        &self,
+        req: ProviderResumeSessionPolicyRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        self.resume_session(req.into_legacy_transport()?).await
     }
 
     async fn create_session(
@@ -333,7 +587,11 @@ pub trait RuntimeProvider: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProviderKind, ProviderModel};
+    use super::{ProviderCreateSessionPolicyRequest, ProviderKind, ProviderModel};
+    use crate::{
+        ProviderPermissionIntent, ProviderSessionLaunchPolicy, ProviderSessionPreferences,
+        ProviderSettingSourcesIntent, ProviderThinkingEffort, RuntimeError,
+    };
     use serde_json::json;
 
     #[test]
@@ -361,8 +619,8 @@ mod tests {
     #[test]
     fn provider_model_serializes_client_visible_reasoning_levels_exactly() {
         let model = ProviderModel {
-            id: "gpt-5.6-luna".to_string(),
-            display_name: "GPT-5.6-Luna".to_string(),
+            id: "gpt-6-luna".to_string(),
+            display_name: "GPT 6 Luna".to_string(),
             reasoning_levels: vec![
                 "low".to_string(),
                 "medium".to_string(),
@@ -375,10 +633,54 @@ mod tests {
         assert_eq!(
             serde_json::to_value(model).expect("serialize provider model"),
             json!({
-                "id": "gpt-5.6-luna",
-                "display_name": "GPT-5.6-Luna",
+                "id": "gpt-6-luna",
+                "display_name": "GPT 6 Luna",
                 "reasoning_levels": ["low", "medium", "high", "xhigh", "max"]
             })
         );
+    }
+    #[test]
+    fn typed_launch_policy_projects_exactly_and_refuses_unimplemented_mutable_preferences() {
+        let request = ProviderCreateSessionPolicyRequest {
+            runtime_session_id: "sess_policy".to_string(),
+            model: Some("gpt-6-astra".to_string()),
+            cwd: Some("/repo".to_string()),
+            launch_policy: ProviderSessionLaunchPolicy {
+                permission_intent: ProviderPermissionIntent::Explicit {
+                    mode: "workspace_write".to_string(),
+                },
+                setting_sources_intent: ProviderSettingSourcesIntent::Standard,
+                system_prompt: Some("system".to_string()),
+                allowed_tools: vec!["read".to_string()],
+                disallowed_tools: vec!["danger".to_string()],
+                harness_version_slot: Some("gooselake-harness-v1".to_string()),
+            },
+            current_preferences: ProviderSessionPreferences::default(),
+            metadata: Some(json!({"source":"test"})),
+        };
+        let projected = request
+            .clone()
+            .into_legacy_transport()
+            .expect("default mutable preferences can use the legacy transport");
+        assert_eq!(
+            projected.permission_mode.as_deref(),
+            Some("workspace_write")
+        );
+        assert_eq!(projected.setting_sources, ["user", "project", "local"]);
+        assert_eq!(projected.system_prompt.as_deref(), Some("system"));
+        assert_eq!(
+            projected.harness_version_slot.as_deref(),
+            Some("gooselake-harness-v1")
+        );
+
+        let error = ProviderCreateSessionPolicyRequest {
+            current_preferences: ProviderSessionPreferences {
+                thinking_effort: Some(ProviderThinkingEffort::High),
+            },
+            ..request
+        }
+        .into_legacy_transport()
+        .expect_err("mutable preferences must not be silently ignored");
+        assert!(matches!(error, RuntimeError::Unsupported(_)));
     }
 }

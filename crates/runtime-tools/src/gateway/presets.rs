@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use runtime_core::ProviderKind;
+use runtime_core::{default_model_presets, ProviderKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -103,24 +103,15 @@ impl ModelPresetCatalog {
 }
 
 pub(crate) fn default_team_model_presets() -> Vec<TeamModelPreset> {
-    [
-        ("planner", None, "gpt-5.5", Some("high")),
-        ("designer", Some("claude"), "claude-opus-5", Some("high")),
-        ("frontend", None, "gpt-5.5", Some("high")),
-        ("fast", Some("codex"), "gpt-5.4-mini", Some("low")),
-        ("codex", Some("codex"), "gpt-5.5", Some("high")),
-        ("deep", Some("claude"), "claude-opus-5", Some("high")),
-        ("opus", Some("claude"), "claude-opus-5", Some("high")),
-        ("sonnet", Some("claude"), "claude-sonnet-5", Some("high")),
-    ]
-    .into_iter()
-    .map(|(name, provider, model, thinking_effort)| TeamModelPreset {
-        name: name.to_string(),
-        provider: provider.map(str::to_string),
-        model: model.to_string(),
-        thinking_effort: thinking_effort.map(str::to_string),
-    })
-    .collect()
+    default_model_presets()
+        .into_iter()
+        .map(|preset| TeamModelPreset {
+            name: preset.name,
+            provider: Some(preset.provider.as_str().to_string()),
+            model: preset.model,
+            thinking_effort: Some(preset.thinking_effort.as_str().to_string()),
+        })
+        .collect()
 }
 
 fn normalize_model_preset_name(value: &str) -> String {

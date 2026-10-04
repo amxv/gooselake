@@ -500,5 +500,5 @@ pub(super) fn codex_test_model() -> String {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "gpt-5.4-mini".to_string())
+        .unwrap_or_else(|| "gpt-6-astra".to_string())
 }

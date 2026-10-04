@@ -157,8 +157,9 @@ fn workspace_agent_request(root: &std::path::Path, title: &str) -> WorkspaceAgen
     WorkspaceAgentCreateRequest {
         provider: ProviderKind::Codex,
         model: Some("test-model".to_string()),
-        permission_intent: None,
-        setting_sources_intent: Vec::new(),
+        permission_intent: runtime_core::ProviderPermissionIntent::ProviderDefault,
+        setting_sources_intent: runtime_core::ProviderSettingSourcesIntent::Isolated,
+        current_preferences: runtime_core::ProviderSessionPreferences::default(),
         system_prompt: None,
         allowed_tools: Vec::new(),
         disallowed_tools: Vec::new(),

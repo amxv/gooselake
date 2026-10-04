@@ -104,7 +104,7 @@ non_lead_can_remove_members = false
 [[teams.model_presets]]
 name = "deep"
 provider = "claude"
-model = "claude-opus-5"
+model = "claude-opus-5-5"
 thinking_effort = "high"
 ```
 

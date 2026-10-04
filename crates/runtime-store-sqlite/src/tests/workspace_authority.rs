@@ -188,6 +188,8 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
         .expect("event");
 
     let before = repository.hydrate_runtime_state().expect("hydrate before");
+    let mut expected_after = before.clone();
+    expected_after.sessions[0].model = Some("gpt-6.1-sol".to_string());
     let before_events = repository
         .list_runtime_events(None, None, 100)
         .expect("events before");
@@ -198,8 +200,8 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
     let agent_messages = std::mem::take(&mut after.agent_messages);
     let agent_deliveries = std::mem::take(&mut after.agent_deliveries);
     assert_eq!(
-        after, before,
-        "all generation-one authority must remain unchanged"
+        after, expected_after,
+        "legacy authority must remain unchanged except approved model migration"
     );
     assert_eq!(agent_messages.len(), 1, "legacy message is backfilled once");
     assert_eq!(agent_messages[0].id, "msg_legacy");
@@ -293,7 +295,7 @@ fn failed_migration_rolls_back_and_retry_resumes_cleanly() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
 }
 
 fn registration_command(

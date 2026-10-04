@@ -242,7 +242,7 @@ async fn workspace_lead_routes_are_revisioned_operator_authority_and_archive_cle
                 ))
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(r#"{"reason":"phase5 archive"}"#))
+                .body(Body::from(r#"{"reason":"workspace archive"}"#))
                 .expect("archive request"),
         )
         .await
@@ -332,13 +332,23 @@ async fn workspace_interrupt_targets_only_active_turns_in_authoritative_roster_a
     assert_eq!(active_turn.status, "waiting_for_approval");
     assert_eq!(outside_turn.status, "waiting_for_approval");
 
-    let first =
-        interrupt_workspace(&router, &token, &workspace.workspace_id, "interrupt-phase5").await;
+    let first = interrupt_workspace(
+        &router,
+        &token,
+        &workspace.workspace_id,
+        "interrupt-regression",
+    )
+    .await;
     assert_eq!(first.interrupted_agent_ids, vec![active.agent_id.clone()]);
     assert_eq!(first.skipped_agent_ids, vec![idle.agent_id.clone()]);
 
-    let replay =
-        interrupt_workspace(&router, &token, &workspace.workspace_id, "interrupt-phase5").await;
+    let replay = interrupt_workspace(
+        &router,
+        &token,
+        &workspace.workspace_id,
+        "interrupt-regression",
+    )
+    .await;
     assert_eq!(replay, first);
 
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
@@ -640,8 +650,11 @@ fn membership_agent_request(root: &Path, title: &str) -> runtime_core::Workspace
     runtime_core::WorkspaceAgentCreateRequest {
         provider: runtime_core::ProviderKind::Codex,
         model: Some("test-model".to_string()),
-        permission_intent: Some("workspace_write".to_string()),
-        setting_sources_intent: Vec::new(),
+        permission_intent: runtime_core::ProviderPermissionIntent::Explicit {
+            mode: "workspace_write".to_string(),
+        },
+        setting_sources_intent: runtime_core::ProviderSettingSourcesIntent::Isolated,
+        current_preferences: runtime_core::ProviderSessionPreferences::default(),
         system_prompt: None,
         allowed_tools: Vec::new(),
         disallowed_tools: Vec::new(),

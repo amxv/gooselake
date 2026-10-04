@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 8;
+pub(crate) const SCHEMA_VERSION: i64 = 9;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -806,6 +806,11 @@ SELECT
 FROM processes process;
 "#;
 
+pub(crate) const MIGRATION_9_SQL: &str = r#"
+-- Model refresh is data-only and is applied transactionally from db.rs so it can
+-- reuse the same provider-family migration policy as runtime creation/restoration.
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -838,5 +843,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 8,
         sql: MIGRATION_8_SQL,
+    },
+    Migration {
+        version: 9,
+        sql: MIGRATION_9_SQL,
     },
 ];

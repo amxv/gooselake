@@ -75,8 +75,11 @@ fn create_agent(
         recreation_policy: WorkspaceAgentRecreationPolicy {
             provider: ProviderKind::Codex,
             model: Some("gpt-test".to_string()),
-            permission_intent: Some("workspace_write".to_string()),
-            setting_sources_intent: Vec::new(),
+            permission_intent: runtime_core::ProviderPermissionIntent::Explicit {
+                mode: "workspace_write".to_string(),
+            },
+            setting_sources_intent: runtime_core::ProviderSettingSourcesIntent::Isolated,
+            current_preferences: runtime_core::ProviderSessionPreferences::default(),
             system_prompt: None,
             allowed_tools: Vec::new(),
             disallowed_tools: Vec::new(),

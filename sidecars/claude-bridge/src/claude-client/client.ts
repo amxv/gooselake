@@ -58,9 +58,9 @@ function normalizeSupportedEffortLevels(
   rawLevels: unknown[]
 ): string[] {
   if (
-    modelValue === 'claude-sonnet-5' ||
-    modelValue === 'claude-opus-5' ||
-    modelValue === 'claude-fable-5'
+    modelValue === 'claude-sonnet-5-5' ||
+    modelValue === 'claude-opus-5-5' ||
+    modelValue === 'claude-fable-5-1'
   ) {
     return ['low', 'medium', 'high', 'xhigh', 'max']
   }
@@ -585,34 +585,26 @@ export class ClaudeClient {
     if (this.mode !== 'sdk') {
       return [
         {
-          value: 'claude-sonnet-5',
-          displayName: 'Claude Sonnet 5',
+          value: 'claude-opus-5-5',
+          displayName: 'Claude Opus 5.5',
           supportsEffort: true,
           supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
           supportsVision: true,
           supportsToolCalling: true,
         },
         {
-          value: 'claude-opus-5',
-          displayName: 'Claude Opus 5',
+          value: 'claude-fable-5-1',
+          displayName: 'Claude Fable 5.1',
           supportsEffort: true,
           supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
           supportsVision: true,
           supportsToolCalling: true,
         },
         {
-          value: 'claude-fable-5',
-          displayName: 'Claude Fable 5',
+          value: 'claude-sonnet-5-5',
+          displayName: 'Claude Sonnet 5.5',
           supportsEffort: true,
           supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
-          supportsVision: true,
-          supportsToolCalling: true,
-        },
-        {
-          value: 'claude-haiku-4-5',
-          displayName: 'Claude Haiku 4.5',
-          supportsEffort: true,
-          supportedEffortLevels: ['low', 'medium', 'high'],
           supportsVision: true,
           supportsToolCalling: true,
         },

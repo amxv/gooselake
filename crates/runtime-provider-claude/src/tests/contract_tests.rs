@@ -9,7 +9,7 @@ async fn real_adapter_contract_covers_create_resume_send_interrupt_approval_wait
     let created = provider
         .create_session(ProviderCreateSessionRequest {
             runtime_session_id: "sess-create".to_string(),
-            model: Some("claude-sonnet-5".to_string()),
+            model: Some("claude-sonnet-5-5".to_string()),
             cwd: Some("/tmp/project".to_string()),
             permission_mode: Some("default".to_string()),
             setting_sources: Vec::new(),
@@ -396,7 +396,7 @@ async fn runtime_manager_recovers_send_turn_after_bridge_session_not_found() {
     let session = manager
         .create_session(CreateSessionInput {
             provider: ProviderKind::Claude,
-            model: Some("claude-sonnet-5".to_string()),
+            model: Some("claude-sonnet-5-5".to_string()),
             cwd: Some("/tmp/runtime".to_string()),
             permission_mode: None,
             metadata: None,
@@ -507,7 +507,7 @@ async fn ignored_real_claude_smoke_with_standalone_bridge() {
     let created = provider
         .create_session(ProviderCreateSessionRequest {
             runtime_session_id: "smoke-claude-runtime-session".to_string(),
-            model: Some("claude-sonnet-5".to_string()),
+            model: Some("claude-sonnet-5-5".to_string()),
             cwd: Some(
                 std::env::current_dir()
                     .expect("current dir")
@@ -557,4 +557,44 @@ async fn ignored_real_claude_smoke_with_standalone_bridge() {
         })
         .await
         .expect("close real Claude smoke session");
+}
+
+#[tokio::test]
+async fn model_discovery_reports_current_catalog_and_known_vision_capability() {
+    let harness = FakeClaudeBridgeHarness::new("normal");
+    let provider = harness.provider(ClaudeGgMcpConfig::default());
+
+    let discovery = provider
+        .discover_models(ProviderModelDiscoveryRequest::default())
+        .await
+        .expect("discover Claude models");
+    assert_eq!(discovery.provider, ProviderKind::Claude);
+    assert_eq!(discovery.mode, ProviderDiscoveryMode::Catalog);
+    let keys = discovery
+        .models
+        .iter()
+        .map(|model| model.model_key.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5"]
+    );
+    assert!(discovery
+        .models
+        .iter()
+        .all(|model| model.capabilities.supports_vision));
+    assert!(discovery
+        .models
+        .iter()
+        .all(|model| model.capabilities.supports_tool_calling));
+    assert!(discovery.models.iter().all(|model| {
+        model.capabilities.supported_thinking_efforts
+            == [
+                ProviderThinkingEffort::Low,
+                ProviderThinkingEffort::Medium,
+                ProviderThinkingEffort::High,
+                ProviderThinkingEffort::Xhigh,
+                ProviderThinkingEffort::Max,
+            ]
+    }));
 }

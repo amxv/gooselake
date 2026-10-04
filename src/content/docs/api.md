@@ -52,7 +52,7 @@ Top-level groups:
 - Workspace authority: durable workspace registration, nullable/revisioned lead authority, workspace-wide turn interruption, workspace-owned agent create/list/get/archive/restore, legacy-authority migration, and operation inspection under `/v2`
 - Agent messaging: agent-first direct messages across workspaces plus workspace-local broadcasts, delivery inspection, retry, and cancellation under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
-- Providers/auth: provider list/models plus Codex, Claude, and ACP auth endpoints
+- Providers/auth: legacy provider list/models/auth plus v2 capability, model-discovery, and skill-discovery endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
 - Global events: replay and stream
 - Teams/comms: team lifecycle, spawn, messages, deliveries, retries, snapshots, interrupts
@@ -127,8 +127,9 @@ AGENT_RESULT=$(curl -fsS -X POST \
   -d '{
     "provider":"claude",
     "model":"claude-sonnet-5-5",
-    "permission_intent":"default",
-    "setting_sources_intent":["user","project","local"],
+    "permission_intent":{"kind":"provider_default"},
+    "setting_sources_intent":{"kind":"explicit","sources":["user","project","local"]},
+    "current_preferences":{},
     "system_prompt":"Work on the repository task.",
     "allowed_tools":["Read","Grep"],
     "disallowed_tools":["WebFetch"],
@@ -142,7 +143,7 @@ AGENT_ID=$(echo "$AGENT_RESULT" | jq -r '.agent_id')
 
 The runtime uses the opaque `sess_*` value as the durable public agent ID and allocates a separate friendly alias for display and human references. The alias does **not** replace provider-native session references. Creation commits the session, immutable workspace ownership, workspace profile, active roster membership, and the recreation policy atomically; there is no normal `/v2/agents` unowned-creation route and no separate join step.
 
-The recreation policy is durable and is reused for startup recovery, lazy provider resume, and explicit restore. It currently includes provider, selected model, permission intent, setting-source intent, system prompt, allowed/disallowed tools, authoritative cwd, harness-version slot, and persisted provider session identity.
+The recreation policy is durable and is reused for startup recovery, lazy provider resume, and explicit restore. It currently includes provider, selected model, immutable launch policy (permission intent, setting-source intent, system prompt, allowed/disallowed tools, authoritative cwd, and harness-version slot), plus mutable current preferences such as thinking effort. Provider-native session identity is persisted separately from that recreation policy.
 
 Read the roster or one agent:
 
@@ -335,7 +336,7 @@ SESSION_JSON=$(curl -fsS -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "provider":"codex",
-    "model":"gpt-5.4-mini",
+    "model":"gpt-6-astra",
     "cwd":"/workspace/repo",
     "permission_mode":"default",
     "metadata":{"purpose":"docs smoke"}
@@ -482,8 +483,8 @@ Provider IDs:
 
 Model catalogs:
 
-- Codex: `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex-spark`
-- Claude: `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-haiku-4-5`
+- Codex: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`
+- Claude: `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`
 - ACP: can return an empty list because model selection can be session-scoped inside the configured agent
 
 `GET /v1/providers/{provider}/models` returns `id`, `display_name`, and
@@ -492,6 +493,18 @@ capability tokens, such as Codex `xhigh`, and clients should use them directly
 when populating reasoning-effort controls. The list can be empty when a model
 does not expose a global selector.
 
+The v2 provider surface makes optional behavior explicit:
+
+- `GET /v2/providers/{provider}/capabilities` returns provider capability support plus the tracked harness contract metadata.
+- `POST /v2/providers/{provider}/models/discover` accepts optional `cwd`, typed `setting_sources_intent`, `force_refresh`, and `startup_mode` (`cold` or `start_runtime`). The response includes a discovery `mode` plus typed model descriptors.
+- `POST /v2/providers/{provider}/skills/discover` accepts optional `cwd`, typed `setting_sources_intent`, and `force_refresh`, and returns a discovery `mode` plus provider-tagged skills.
+
+`mode` is `catalog`, `agent_managed`, or `unsupported`. ACP model discovery is currently `agent_managed`, so its empty model array must not be interpreted as a built-in empty catalog. Skill discovery is currently unsupported by the shipping Codex, Claude, and ACP adapters; later adapters can implement it without changing the client contract.
+
+`setting_sources_intent` is one of `{"kind":"standard"}`,
+`{"kind":"explicit","sources":["user","project","local"]}`, or
+`{"kind":"isolated"}`. Project/local sources require `cwd`.
+
 Auth status examples:
 
 ```bash
@@ -499,6 +512,7 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers"
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers/codex/auth/status"
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers/claude/auth/status"
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v1/providers/acp/auth/status"
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/providers/codex/capabilities"
 ```
 
 ACP v1 notes:
@@ -700,7 +714,7 @@ non_lead_can_remove_members = false
 [[teams.model_presets]]
 name = "fast"
 provider = "codex"
-model = "gpt-5.4-mini"
+model = "gpt-6-luna"
 thinking_effort = "low"
 ```
 

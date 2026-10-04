@@ -15,11 +15,13 @@ The shared contract lives in `crates/runtime-core/src/provider.rs` as the `Runti
 Every provider adapter maps its native lifecycle into the runtime contract:
 
 - `metadata()` exposes `kind`, `display_name`, and enabled state.
+- `capabilities()` reports support, agent-managed behavior, or unsupported behavior for optional runtime features.
 - `healthcheck()` verifies the provider can be used.
 - `list_models()` returns a model catalog when the provider has one.
+- `discover_models()` exposes provider-neutral model discovery without forcing external agents into a built-in catalog.
+- `discover_skills()` exposes provider-neutral skill discovery where an adapter implements it.
 - `auth_status()` reports readiness/auth state when implemented.
-- `create_session()` opens provider-backed work.
-- `resume_session()` reconnects provider state to runtime state.
+- typed create/resume policy carries permission intent, setting-source intent, system prompt, tool policy, harness slot, and current session preferences without clients branching on provider names.
 - `send_turn()` dispatches a turn.
 - `wait_for_turn()` returns terminal turn results.
 - `interrupt_turn()` stops active work when supported.
@@ -27,6 +29,26 @@ Every provider adapter maps its native lifecycle into the runtime contract:
 - `close_session()` closes provider-side state.
 
 Trait defaults return unsupported for features a provider does not implement. That lets new providers be added incrementally.
+
+The v2 provider contract exposes those distinctions directly:
+
+```bash
+curl "$BASE_URL/v2/providers/codex/capabilities" "${AUTH[@]}"
+
+curl -X POST "$BASE_URL/v2/providers/codex/models/discover" \
+  "${AUTH[@]}" \
+  -H 'Content-Type: application/json' \
+  -d '{"setting_sources_intent":{"kind":"standard"},"force_refresh":false,"startup_mode":"cold"}'
+
+curl -X POST "$BASE_URL/v2/providers/claude/skills/discover" \
+  "${AUTH[@]}" \
+  -H 'Content-Type: application/json' \
+  -d '{"cwd":"/repo","setting_sources_intent":{"kind":"standard"},"force_refresh":false}'
+```
+
+Capability values are `supported`, `agent_managed`, or `unsupported`. Discovery modes are `catalog`, `agent_managed`, or `unsupported`. An empty result is therefore not ambiguous: check the reported mode before treating an empty catalog as “no models exist.”
+
+Setting-source intent is typed. `standard` resolves to the user source and, when a working directory is present, the project/local sources as well. `explicit` names an ordered subset of `user`, `project`, and `local`; project/local sources require a cwd. `isolated` selects no ambient setting sources. Model discovery also accepts `startup_mode: "cold"` (default) or `"start_runtime"` so dynamic adapters can distinguish cache-only discovery from discovery that may start provider machinery.
 
 ## Provider IDs
 
@@ -48,13 +70,9 @@ Codex is configured through the Codex provider adapter.
 
 The current Codex model catalog includes:
 
-- `gpt-5.6-sol`
-- `gpt-5.6-terra`
-- `gpt-5.6-luna`
-- `gpt-5.5`
-- `gpt-5.4`
-- `gpt-5.4-mini`
-- `gpt-5.3-codex-spark`
+- `gpt-6-astra`
+- `gpt-6.1-sol`
+- `gpt-6-luna`
 
 Check the running server rather than hardcoding:
 
@@ -62,11 +80,10 @@ Check the running server rather than hardcoding:
 curl "$BASE_URL/v1/providers/codex/models" "${AUTH[@]}"
 ```
 
-Each model response includes provider-owned `reasoning_levels` using the raw
-runtime capability tokens. GPT-5.6 Sol and Terra expose `low`, `medium`, `high`,
-`xhigh`, `max`, and `ultra`; Luna exposes the same list through `max`; and
-GPT-5.3 Codex Spark exposes the list through `xhigh`. Clients should use these
-values directly instead of inventing aliases.
+Each current Codex model supports the curated `low`, `medium`, `high`,
+`xhigh`, and `max` thinking-effort values. The v2 discovery response projects
+these values as typed model capabilities. Clients should use the returned values
+instead of inventing aliases.
 
 ### Auth
 
@@ -90,10 +107,9 @@ Claude uses the Claude provider adapter plus the bundled Claude bridge sidecar.
 
 The current Claude model catalog includes:
 
-- `claude-sonnet-5`
-- `claude-opus-5`
-- `claude-fable-5`
-- `claude-haiku-4-5`
+- `claude-opus-5-5`
+- `claude-fable-5-1`
+- `claude-sonnet-5-5`
 
 Check:
 
@@ -168,7 +184,9 @@ If ACP is not registered, provider-specific ACP routes return not-found behavior
 
 ### Models
 
-ACP model catalogs may be empty. Some ACP agents expose model choices through session config rather than provider-global lists.
+ACP model catalogs are agent-managed. The v2 model discovery endpoint reports `mode: "agent_managed"` with no invented built-in entries; an empty list is valid because the configured ACP agent may own model selection privately.
+
+Gooselake does not inject the tracked Golden Goose harness as hidden ACP user text. ACP owns its private model/system harness and receives the Gooselake collaboration surface through scoped GG MCP configuration. The capabilities response reports that distinction in the harness metadata.
 
 ### Current limitations
 
@@ -188,6 +206,7 @@ Useful endpoints:
 curl "$BASE_URL/v1/providers" "${AUTH[@]}"
 curl "$BASE_URL/v1/diagnostics/providers" "${AUTH[@]}"
 curl "$BASE_URL/v1/providers/{provider}/models" "${AUTH[@]}"
+curl "$BASE_URL/v2/providers/{provider}/capabilities" "${AUTH[@]}"
 ```
 
 Provider diagnostics should be the first stop before blaming sessions or clients.

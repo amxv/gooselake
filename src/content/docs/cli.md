@@ -126,7 +126,7 @@ curl "$BASE_URL/v1/health" "${AUTH[@]}"
 
 A first-class client CLI should not duplicate runtime logic. It should help humans compose the existing API:
 
-- `gg session create --provider codex --model gpt-5.5`
+- `gg session create --provider codex --model gpt-6-astra`
 - `gg turn send <session> --message ...`
 - `gg events follow --session <session>`
 - `gg team broadcast <team> --message ...`

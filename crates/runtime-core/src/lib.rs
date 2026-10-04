@@ -1,9 +1,12 @@
 pub mod agent_comms;
 pub mod app;
 pub mod error;
+pub mod harness;
+pub mod model_policy;
 pub mod process_authority;
 pub mod process_service;
 pub mod provider;
+pub mod provider_contract;
 pub mod provider_registry;
 pub mod repository_identity;
 pub mod runtime;
@@ -24,6 +27,15 @@ pub use agent_comms::{
 };
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
 pub use error::{ProviderDispatchOutcome, RuntimeError};
+pub use harness::{
+    harness_contract_metadata, harness_sections, provider_harness_text, HarnessContractMetadata,
+    HarnessInjectionMode, HarnessSections, HARNESS_VERSION,
+};
+pub use model_policy::{
+    claude_model_catalog, codex_model_catalog, codex_model_policy, default_model_presets,
+    migrate_retired_model, ProviderModelPreset, CLAUDE_FABLE_MODEL, CLAUDE_OPUS_MODEL,
+    CLAUDE_SONNET_MODEL,
+};
 pub use process_authority::{
     process_status_is_terminal, ManagedProcessAdmission, ManagedProcessRecord,
     ManagedProcessTerminalUpdate, ProcessCompletionUpdate, ProcessQueueEntry,
@@ -36,10 +48,21 @@ pub use process_service::{
 };
 pub use provider::{
     ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
-    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
-    ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionRequest,
-    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession, ProviderTurnAck,
-    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeProvider,
+    ProviderCloseSessionRequest, ProviderCreateSessionPolicyRequest, ProviderCreateSessionRequest,
+    ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata, ProviderModel,
+    ProviderResumeSessionPolicyRequest, ProviderResumeSessionRequest, ProviderRuntimeEvent,
+    ProviderSendTurnRequest, ProviderSession, ProviderTurnAck, ProviderTurnResult,
+    ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeProvider,
+};
+pub use provider_contract::{
+    semantic_tool_contract_manifest, ProviderCapabilities, ProviderCapabilitySupport,
+    ProviderCompactSessionOutcome, ProviderCompactSessionRequest, ProviderContextLimitObservation,
+    ProviderDiscoveryMode, ProviderHardForkEditRerunRequest, ProviderModelCapabilities,
+    ProviderModelDescriptor, ProviderModelDiscoveryRequest, ProviderModelDiscoveryResponse,
+    ProviderModelDiscoveryStartupMode, ProviderPermissionIntent, ProviderSessionLaunchPolicy,
+    ProviderSessionPreferences, ProviderSettingSource, ProviderSettingSourcesIntent,
+    ProviderSkillDescriptor, ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse,
+    ProviderThinkingEffort, ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest,
 };
 pub use provider_registry::ProviderRegistry;
 pub use repository_identity::{resolve_repository_identity, RepositoryIdentity};

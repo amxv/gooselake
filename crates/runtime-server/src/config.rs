@@ -372,26 +372,15 @@ impl Default for TeamModelPresetConfig {
 }
 
 fn default_team_model_presets() -> Vec<TeamModelPresetConfig> {
-    [
-        ("planner", None, "gpt-5.5", Some("high")),
-        ("designer", Some("claude"), "claude-opus-5", Some("high")),
-        ("frontend", None, "gpt-5.5", Some("high")),
-        ("fast", Some("codex"), "gpt-5.4-mini", Some("low")),
-        ("codex", Some("codex"), "gpt-5.5", Some("high")),
-        ("deep", Some("claude"), "claude-opus-5", Some("high")),
-        ("opus", Some("claude"), "claude-opus-5", Some("high")),
-        ("sonnet", Some("claude"), "claude-sonnet-5", Some("high")),
-    ]
-    .into_iter()
-    .map(
-        |(name, provider, model, thinking_effort)| TeamModelPresetConfig {
-            name: name.to_string(),
-            provider: provider.map(str::to_string),
-            model: model.to_string(),
-            thinking_effort: thinking_effort.map(str::to_string),
-        },
-    )
-    .collect()
+    runtime_core::default_model_presets()
+        .into_iter()
+        .map(|preset| TeamModelPresetConfig {
+            name: preset.name,
+            provider: Some(preset.provider.as_str().to_string()),
+            model: preset.model,
+            thinking_effort: Some(preset.thinking_effort.as_str().to_string()),
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -467,7 +456,12 @@ mod tests {
             .teams
             .model_presets
             .iter()
-            .any(|preset| preset.name == "deep"));
+            .any(|preset| preset.name == "default" && preset.model == "gpt-6-astra"));
+        assert!(config
+            .teams
+            .model_presets
+            .iter()
+            .any(|preset| preset.name == "opus" && preset.model == "claude-opus-5-5"));
         assert!(config.worktrees.enabled);
     }
 
@@ -483,7 +477,7 @@ non_lead_can_remove_members = true
 [[teams.model_presets]]
 name = "reviewer"
 provider = "claude"
-model = "claude-sonnet-5"
+model = "claude-sonnet-5-5"
 thinking_effort = "high"
 "#,
         )

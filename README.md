@@ -447,6 +447,7 @@ Important routes:
 - `/v1/worktrees/*`
 - `/v1/mcp/*`
 - `/v2/workspaces/*`
+- `/v2/providers/*`
 - `/v2/migrations/workspaces/*`
 - `/v2/operations/*`
 

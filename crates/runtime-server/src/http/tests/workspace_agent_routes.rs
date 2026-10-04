@@ -18,7 +18,7 @@ async fn workspace_agent_create_archive_restore_and_restart_preserve_authority()
         "cwd": workspace_root,
         "harness_version_slot": "runtime-v2",
         "title": "Builder",
-        "metadata": {"purpose":"phase4"}
+        "metadata": {"purpose":"workspace_agent_route"}
     });
     let create_response = router
         .clone()
@@ -46,7 +46,13 @@ async fn workspace_agent_create_archive_restore_and_restart_preserve_authority()
     assert_eq!(created.profile.title.as_deref(), Some("Builder"));
     assert_eq!(
         created.recreation_policy.setting_sources_intent,
-        vec!["user", "project", "local"]
+        runtime_core::ProviderSettingSourcesIntent::Explicit {
+            sources: vec![
+                runtime_core::ProviderSettingSource::User,
+                runtime_core::ProviderSettingSource::Project,
+                runtime_core::ProviderSettingSource::Local,
+            ],
+        }
     );
     assert_eq!(
         created.recreation_policy.system_prompt.as_deref(),

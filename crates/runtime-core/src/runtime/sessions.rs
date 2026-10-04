@@ -1,8 +1,9 @@
 use serde_json::Value;
 
 use crate::{
-    ProviderAuthStatus, ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderKind,
-    RuntimeError, RuntimeEventCriticality, RuntimeEventScope, SessionRecord, TurnRecord,
+    ProviderAuthStatus, ProviderCloseSessionRequest, ProviderCreateSessionPolicyRequest,
+    ProviderKind, RuntimeError, RuntimeEventCriticality, RuntimeEventScope, SessionRecord,
+    TurnRecord,
 };
 
 use super::helpers::now_ms;
@@ -128,20 +129,14 @@ impl RuntimeSessionManager {
         })?;
         let now = now_ms();
         let session_id = self.allocate_id("sess", input.provider.as_str());
-        let created = provider
-            .create_session(ProviderCreateSessionRequest {
-                runtime_session_id: session_id.clone(),
-                model: input.model.clone(),
-                cwd: input.cwd.clone(),
-                permission_mode: input.permission_mode.clone(),
-                setting_sources: Vec::new(),
-                system_prompt: None,
-                allowed_tools: Vec::new(),
-                disallowed_tools: Vec::new(),
-                harness_version_slot: None,
-                metadata: input.metadata.clone(),
-            })
-            .await?;
+        let create_request = ProviderCreateSessionPolicyRequest::legacy_compatible(
+            session_id.clone(),
+            input.model.clone(),
+            input.cwd.clone(),
+            input.permission_mode.clone(),
+            input.metadata.clone(),
+        )?;
+        let created = provider.create_session_with_policy(create_request).await?;
 
         if created.runtime_session_id != session_id {
             return Err(RuntimeError::ProtocolViolation(format!(
@@ -259,7 +254,7 @@ impl RuntimeSessionManager {
             provider_session_ref.clone(),
             canonical_provider_session_ref.clone(),
         )?;
-        let resumed = provider.resume_session(resume_request).await?;
+        let resumed = provider.resume_session_with_policy(resume_request).await?;
         if resumed.runtime_session_id != session_id {
             return Err(RuntimeError::ProtocolViolation(format!(
                 "provider resume returned mismatched session id (expected={}, actual={})",

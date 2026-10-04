@@ -32,7 +32,7 @@ fn build_turn_command_args_places_output_flag_under_exec() {
     let args = CodexProvider::build_turn_command_args(
         Path::new("/tmp/last.txt"),
         "runtime:session",
-        Some("gpt-5.4"),
+        Some("gpt-6-astra"),
         Some("full_auto"),
         "hello",
     );
@@ -51,7 +51,7 @@ fn build_turn_command_args_places_output_flag_under_exec() {
             "-o",
             "/tmp/last.txt",
             "-m",
-            "gpt-5.4",
+            "gpt-6-astra",
             "--full-auto",
             "hello",
         ]
@@ -117,25 +117,11 @@ async fn codex_model_catalog_exposes_supported_models_and_reasoning_levels() {
     });
     let models = provider.list_models().await.expect("list models");
 
-    let sol_terra_levels = vec!["low", "medium", "high", "xhigh", "max", "ultra"];
-    let luna_levels = vec!["low", "medium", "high", "xhigh", "max"];
-    let standard_levels = vec!["low", "medium", "high", "xhigh"];
+    let reasoning_levels = vec!["low", "medium", "high", "xhigh", "max"];
     let expected = [
-        ("gpt-5.6-sol", "GPT-5.6-Sol", sol_terra_levels.as_slice()),
-        (
-            "gpt-5.6-terra",
-            "GPT-5.6-Terra",
-            sol_terra_levels.as_slice(),
-        ),
-        ("gpt-5.6-luna", "GPT-5.6-Luna", luna_levels.as_slice()),
-        ("gpt-5.5", "GPT 5.5", standard_levels.as_slice()),
-        ("gpt-5.4", "GPT 5.4", standard_levels.as_slice()),
-        ("gpt-5.4-mini", "GPT 5.4 Mini", standard_levels.as_slice()),
-        (
-            "gpt-5.3-codex-spark",
-            "GPT-5.3-Codex-Spark",
-            standard_levels.as_slice(),
-        ),
+        ("gpt-6-astra", "GPT 6 Astra", reasoning_levels.as_slice()),
+        ("gpt-6.1-sol", "GPT 6.1 Sol", reasoning_levels.as_slice()),
+        ("gpt-6-luna", "GPT 6 Luna", reasoning_levels.as_slice()),
     ];
 
     assert_eq!(models.len(), expected.len());
@@ -179,7 +165,7 @@ async fn accepted_approval_launch_failure_keeps_pending_turn_retryable() {
     provider
         .create_session(ProviderCreateSessionRequest {
             runtime_session_id: "sess_retry".to_string(),
-            model: Some("gpt-5.4-mini".to_string()),
+            model: Some("gpt-6-luna".to_string()),
             cwd: Some(missing_cwd.display().to_string()),
             permission_mode: None,
             setting_sources: Vec::new(),

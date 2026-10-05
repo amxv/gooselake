@@ -73,7 +73,7 @@ make vps-deploy SCOPE=system SERVICE=gg-runtime.service
 On the VPS:
 - `curl`
 - `tar`
-- provider CLIs you plan to use (`codex`, `claude`)
+- provider CLIs you plan to use (`codex`, `claude`); Codex must expose `codex app-server`
 - an ACP-compatible agent command if you plan to enable ACP
 - `systemd --user` available for your account
 
@@ -149,8 +149,11 @@ ACP deployment constraints in v1:
 
 ```bash
 codex login
+codex app-server --help >/dev/null
 claude login
 ```
+
+If the service environment cannot resolve the Codex executable, set `GG_CODEX_COMMAND` to its absolute path. The runtime otherwise checks common standalone install locations before falling back to `PATH`.
 
 For ACP, there is no runtime login step in v1. Instead, ensure the configured ACP agent command starts successfully on the host and that any agent-specific environment variables are present in `[providers.acp.env]` or the systemd environment file.
 
@@ -312,6 +315,7 @@ This log plane is distinct from systemd journal logs.
 
 2. Provider auth failures
 - verify host login material: rerun `codex login` and/or `claude login`
+- verify the Codex runtime primitive directly with `codex app-server --help`; if service `PATH` differs from your shell, set `GG_CODEX_COMMAND`
 - check auth status endpoints:
   - `/v1/providers/codex/auth/status`
   - `/v1/providers/acp/auth/status`
@@ -368,6 +372,7 @@ For local/personal use, the existing simple path remains valid:
 make install
 cp "$HOME/.local/runtime-server.toml.example" ./runtime-server.toml
 codex login
+codex app-server --help >/dev/null
 claude login
 gg-runtime-server --config ./runtime-server.toml
 ```

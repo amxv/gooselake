@@ -40,7 +40,7 @@ curl -X POST "$BASE_URL/v2/providers/codex/models/discover" \
   -H 'Content-Type: application/json' \
   -d '{"setting_sources_intent":{"kind":"standard"},"force_refresh":false,"startup_mode":"cold"}'
 
-curl -X POST "$BASE_URL/v2/providers/claude/skills/discover" \
+curl -X POST "$BASE_URL/v2/providers/codex/skills/discover" \
   "${AUTH[@]}" \
   -H 'Content-Type: application/json' \
   -d '{"cwd":"/repo","setting_sources_intent":{"kind":"standard"},"force_refresh":false}'
@@ -64,7 +64,7 @@ Provider IDs are parsed case-insensitively after trimming.
 
 ## Codex
 
-Codex is configured through the Codex provider adapter.
+Codex is configured through the Codex provider adapter and runs through the Codex app-server JSON-RPC protocol. The host Codex CLI must expose `codex app-server`; there is no `codex exec` compatibility fallback.
 
 ### Models
 
@@ -97,7 +97,11 @@ curl "$BASE_URL/v1/providers/codex/auth/status" "${AUTH[@]}"
 
 ### Runtime behavior
 
-Codex sessions use runtime-owned IDs. Provider-specific session references are persisted as opaque provider refs. If a provider-side session disappears but refs exist, the runtime may attempt resume before retrying dispatch.
+Each runtime Codex session owns a persistent app-server process and a deterministic provider home while the temporary caller-scoped GG MCP bridge remains in use. The provider-native `thread.id` is persisted separately from the runtime's opaque session ID and is reused through `thread/resume` after restart. Logical runtime turn IDs are likewise correlated with provider-native turn IDs instead of being inferred from process output.
+
+Turn input remains structured at the provider boundary. Text, local images, and native skill references are sent as app-server input items instead of being flattened into a prompt. Current thinking effort is passed on `turn/start`. Provider-originated command/file approvals are correlated back into runtime approval records, and the adapter implements app-server interrupt, context-window observation, manual compaction, workspace rebind, and hard-fork/revert primitives.
+
+Codex skill discovery is `catalog` mode and delegates to app-server `skills/list`. The result is therefore scoped to what the installed Codex runtime can discover for the requested working directory rather than a hardcoded Gooselake list.
 
 ## Claude
 

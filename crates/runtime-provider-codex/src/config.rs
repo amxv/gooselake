@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 pub struct CodexProviderConfig {
     pub enabled: bool,
     pub home_dir: PathBuf,
+    pub command: String,
+    pub app_server_args: Vec<String>,
+    pub request_timeout_ms: u64,
     pub max_transports: usize,
     pub max_sessions_per_transport: usize,
     pub gg_mcp: CodexGgMcpConfig,

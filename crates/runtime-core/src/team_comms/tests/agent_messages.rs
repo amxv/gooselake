@@ -211,7 +211,7 @@ async fn agent_message_idempotency_replays_identical_request_and_rejects_mismatc
 }
 
 #[tokio::test]
-async fn agent_message_images_are_validated_and_delivered_as_native_items_for_claude() {
+async fn agent_message_images_are_validated_and_delivered_as_native_items_for_codex_and_claude() {
     let store = Arc::new(TestStore::default());
     let (runtime, service) = build_runtime_and_service(store, 0);
     let sender = create_test_session(&runtime).await;
@@ -254,10 +254,10 @@ async fn agent_message_images_are_validated_and_delivered_as_native_items_for_cl
         }));
 
     let codex = create_test_session(&runtime).await;
-    let unsupported = service
+    service
         .send_agent_direct(AgentDirectMessageRequest {
             sender_agent_id: recipient,
-            recipient_agent_id: codex,
+            recipient_agent_id: codex.clone(),
             input: serde_json::json!([{ "type": "text", "text": "image" }]),
             image_paths: vec![image_path.to_string_lossy().to_string()],
             priority: "normal".to_string(),
@@ -266,8 +266,22 @@ async fn agent_message_images_are_validated_and_delivered_as_native_items_for_cl
             reply_to_message_id: None,
             idempotency_key: None,
         })
-        .await;
-    assert!(matches!(unsupported, Err(RuntimeError::Unsupported(_))));
+        .await
+        .expect("codex image send");
+    let codex_turns = runtime
+        .list_session_turns(&codex)
+        .await
+        .expect("codex turns");
+    assert!(codex_turns
+        .last()
+        .and_then(|turn| turn.input.as_array())
+        .expect("codex delivered turn input")
+        .iter()
+        .any(|item| {
+            item.get("type").and_then(Value::as_str) == Some("image")
+                && item.get("path").and_then(Value::as_str)
+                    == Some(image_path.to_string_lossy().as_ref())
+        }));
 
     let fake_png = temp_dir.path().join("fake.png");
     std::fs::write(&fake_png, b"not actually an image").expect("write fake image");

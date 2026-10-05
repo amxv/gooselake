@@ -326,6 +326,12 @@ pub enum ProviderRuntimeEvent {
         tool_call_id: Option<String>,
         request: Value,
     },
+    TurnOutcomeUnknown {
+        runtime_session_id: String,
+        turn_id: String,
+        code: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

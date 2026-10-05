@@ -54,6 +54,7 @@ Use whichever providers you plan to run:
 
 ```bash
 codex login
+codex app-server --help >/dev/null
 claude login
 ```
 

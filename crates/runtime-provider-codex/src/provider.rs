@@ -1,24 +1,29 @@
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use runtime_core::{
     codex_model_catalog, ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
     ProviderCapabilities, ProviderCapabilitySupport, ProviderCloseSessionRequest,
-    ProviderCreateSessionRequest, ProviderDiscoveryMode, ProviderInterruptTurnRequest,
-    ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionRequest,
-    ProviderSendTurnRequest, ProviderSession, ProviderTurnAck, ProviderTurnResult,
-    ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
+    ProviderCompactSessionOutcome, ProviderCompactSessionRequest, ProviderContextLimitObservation,
+    ProviderCreateSessionPolicyRequest, ProviderCreateSessionRequest, ProviderDiscoveryMode,
+    ProviderDispatchOutcome, ProviderHardForkEditRerunRequest, ProviderInterruptTurnRequest,
+    ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionPolicyRequest,
+    ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
+    ProviderSkillDescriptor, ProviderSkillDiscoveryRequest, ProviderTurnAck, ProviderTurnResult,
+    ProviderWaitTurnRequest, ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest,
+    RuntimeError, RuntimeProvider,
 };
-use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::process::Command;
-use tokio::sync::{oneshot, Mutex, RwLock};
+use serde_json::{json, Map, Value};
+use tokio::sync::{broadcast, oneshot};
 
-use crate::mcp_config::format_codex_gg_mcp_config;
-use crate::state::{CodexProviderInner, CodexSessionState, PendingApprovalTurn, RunningTurn};
+use crate::protocol::{
+    absolutize_path, apply_turn_permission_mode, build_native_input, extract_thread_id,
+    extract_turn_id, terminal_turn_from_thread_read,
+};
+use crate::rebind::canonical_paths_equal;
+use crate::state::{CodexProviderInner, CodexSessionState};
 use crate::CodexProviderConfig;
 
 #[derive(Clone, Debug)]
@@ -28,6 +33,7 @@ pub struct CodexProvider {
 
 impl CodexProvider {
     pub fn new(config: CodexProviderConfig) -> Self {
+        let (events, _) = broadcast::channel(1024);
         let config = CodexProviderConfig {
             home_dir: absolutize_path(config.home_dir.as_path()),
             ..config
@@ -35,384 +41,11 @@ impl CodexProvider {
         Self {
             inner: Arc::new(CodexProviderInner {
                 config,
-                sessions: RwLock::new(std::collections::HashMap::new()),
+                sessions: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+                events,
+                admission_lock: tokio::sync::Mutex::new(()),
             }),
         }
-    }
-
-    fn codex_auth_path(&self) -> PathBuf {
-        self.inner.config.home_dir.join("auth.json")
-    }
-
-    fn codex_config_path(&self) -> PathBuf {
-        self.inner.config.home_dir.join("config.toml")
-    }
-
-    fn write_gg_mcp_config_for_session(
-        &self,
-        runtime_session_id: &str,
-    ) -> Result<(), RuntimeError> {
-        if !self.inner.config.gg_mcp.enabled {
-            return Ok(());
-        }
-        std::fs::create_dir_all(&self.inner.config.home_dir).map_err(|error| {
-            RuntimeError::Io(format!(
-                "failed to create codex home {}: {error}",
-                self.inner.config.home_dir.display()
-            ))
-        })?;
-        let config = format_codex_gg_mcp_config(&self.inner.config.gg_mcp, runtime_session_id);
-        let config_path = self.codex_config_path();
-        std::fs::write(config_path.as_path(), config).map_err(|error| {
-            RuntimeError::Io(format!(
-                "failed to write codex MCP config {}: {error}",
-                config_path.display()
-            ))
-        })
-    }
-
-    pub(crate) fn build_turn_prompt(input: &[Value]) -> String {
-        let mut lines = Vec::new();
-        for item in input {
-            if let Some(text) = item
-                .get("text")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                lines.push(text.to_string());
-                continue;
-            }
-            if let Some(kind) = item.get("type").and_then(Value::as_str) {
-                lines.push(format!("[{kind}] {item}"));
-                continue;
-            }
-            if let Some(raw) = item
-                .as_str()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                lines.push(raw.to_string());
-                continue;
-            }
-            lines.push(item.to_string());
-        }
-
-        if lines.is_empty() {
-            return "Continue with the latest task context.".to_string();
-        }
-        lines.join("\n\n")
-    }
-
-    fn is_placeholder_provider_ref(provider_session_ref: &str) -> bool {
-        provider_session_ref.starts_with("runtime:")
-    }
-
-    pub(crate) fn build_turn_command_args(
-        last_message_path: &Path,
-        provider_session_ref: &str,
-        model: Option<&str>,
-        permission_mode: Option<&str>,
-        prompt: &str,
-    ) -> Vec<OsString> {
-        let mut args = Vec::new();
-        args.push(OsString::from("exec"));
-
-        if !Self::is_placeholder_provider_ref(provider_session_ref) {
-            args.push(OsString::from("resume"));
-        }
-
-        args.push(OsString::from("--json"));
-        args.push(OsString::from("--skip-git-repo-check"));
-        args.push(OsString::from("-o"));
-        args.push(last_message_path.as_os_str().to_os_string());
-
-        if let Some(model) = model {
-            args.push(OsString::from("-m"));
-            args.push(OsString::from(model));
-        }
-
-        match permission_mode {
-            Some("full_auto") => args.push(OsString::from("--full-auto")),
-            Some("danger_full_access") | Some("danger-full-access") => {
-                args.push(OsString::from("--dangerously-bypass-approvals-and-sandbox"))
-            }
-            _ => {}
-        }
-
-        if !Self::is_placeholder_provider_ref(provider_session_ref) {
-            args.push(OsString::from(provider_session_ref));
-        }
-        args.push(OsString::from(prompt));
-        args
-    }
-
-    fn spawn_turn(
-        &self,
-        runtime_session_id: &str,
-        turn_id: &str,
-        input: &[Value],
-        session: &CodexSessionState,
-    ) -> Result<RunningTurn, RuntimeError> {
-        let prompt = Self::build_turn_prompt(input);
-        let last_message_path = self
-            .inner
-            .config
-            .home_dir
-            .join("turn-last-message")
-            .join(format!("{runtime_session_id}-{turn_id}.txt"));
-        if let Some(parent) = last_message_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                RuntimeError::Io(format!(
-                    "failed to create codex last-message dir {}: {error}",
-                    parent.display()
-                ))
-            })?;
-        }
-        self.write_gg_mcp_config_for_session(runtime_session_id)?;
-
-        let mut command = Command::new("codex");
-        command.env("CODEX_HOME", self.inner.config.home_dir.as_os_str());
-        let provider_ref = session.provider_session_ref.clone();
-        for arg in Self::build_turn_command_args(
-            last_message_path.as_path(),
-            provider_ref.as_str(),
-            session.model.as_deref(),
-            session.permission_mode.as_deref(),
-            prompt.as_str(),
-        ) {
-            command.arg(arg);
-        }
-
-        if let Some(cwd) = session.cwd.as_ref() {
-            command.current_dir(cwd);
-        }
-
-        command.stdout(std::process::Stdio::piped());
-        command.stderr(std::process::Stdio::piped());
-
-        let mut child = command
-            .spawn()
-            .map_err(|error| RuntimeError::Io(format!("failed to spawn codex: {error}")))?;
-
-        let stdout = child.stdout.take().ok_or_else(|| {
-            RuntimeError::Io("codex process did not expose stdout pipe".to_string())
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
-            RuntimeError::Io("codex process did not expose stderr pipe".to_string())
-        })?;
-
-        let child = Arc::new(Mutex::new(child));
-        let interrupt_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-        let provider = self.clone();
-        let runtime_session_id = runtime_session_id.to_string();
-        let turn_id = turn_id.to_string();
-        let interrupt_state = Arc::clone(&interrupt_requested);
-        let child_for_task = Arc::clone(&child);
-        let last_message_path_for_task = last_message_path.clone();
-
-        tokio::spawn(async move {
-            let stderr_task = tokio::spawn(async move {
-                let mut reader = BufReader::new(stderr);
-                let mut bytes = Vec::new();
-                if reader.read_to_end(&mut bytes).await.is_err() {
-                    return String::new();
-                }
-                String::from_utf8_lossy(&bytes).to_string()
-            });
-
-            let mut line_reader = BufReader::new(stdout).lines();
-            let mut thread_id: Option<String> = None;
-            let mut terminal_status: Option<ProviderTurnStatus> = None;
-            let mut usage_payload: Option<Value> = None;
-            let mut error_payload: Option<Value> = None;
-            let mut last_message: Option<String> = None;
-
-            while let Ok(Some(line)) = line_reader.next_line().await {
-                let Ok(event) = serde_json::from_str::<Value>(line.as_str()) else {
-                    continue;
-                };
-                let event_type = event.get("type").and_then(Value::as_str);
-                match event_type {
-                    Some("thread.started") => {
-                        thread_id = event
-                            .get("thread_id")
-                            .and_then(Value::as_str)
-                            .map(str::to_string);
-                    }
-                    Some("item.completed") => {
-                        if let Some(item) = event.get("item") {
-                            let is_agent_message = item
-                                .get("type")
-                                .and_then(Value::as_str)
-                                .is_some_and(|kind| kind == "agent_message");
-                            if is_agent_message {
-                                last_message = item
-                                    .get("text")
-                                    .and_then(Value::as_str)
-                                    .map(str::trim)
-                                    .filter(|value| !value.is_empty())
-                                    .map(str::to_string);
-                            }
-                        }
-                    }
-                    Some("turn.completed") => {
-                        terminal_status = Some(ProviderTurnStatus::Completed);
-                        usage_payload = event.get("usage").cloned();
-                    }
-                    Some("turn.interrupted") => {
-                        terminal_status = Some(ProviderTurnStatus::Interrupted);
-                        usage_payload = event.get("usage").cloned();
-                        error_payload = event.get("error").cloned();
-                    }
-                    Some("turn.failed") => {
-                        terminal_status = Some(ProviderTurnStatus::Failed);
-                        usage_payload = event.get("usage").cloned();
-                        error_payload = event.get("error").cloned();
-                    }
-                    _ => {}
-                }
-            }
-
-            let exit_status = {
-                let mut child = child_for_task.lock().await;
-                child.wait().await
-            };
-            let stderr_text = stderr_task.await.unwrap_or_default();
-
-            let status = match terminal_status {
-                Some(status) => status,
-                None => match exit_status {
-                    Ok(status) if status.success() => ProviderTurnStatus::Completed,
-                    Ok(_) => {
-                        if interrupt_state.load(Ordering::SeqCst) {
-                            ProviderTurnStatus::Interrupted
-                        } else {
-                            ProviderTurnStatus::Failed
-                        }
-                    }
-                    Err(_) => {
-                        if interrupt_state.load(Ordering::SeqCst) {
-                            ProviderTurnStatus::Interrupted
-                        } else {
-                            ProviderTurnStatus::Failed
-                        }
-                    }
-                },
-            };
-
-            if last_message.is_none() {
-                if let Ok(file_last_message) =
-                    tokio::fs::read_to_string(&last_message_path_for_task).await
-                {
-                    let trimmed = file_last_message.trim();
-                    if !trimmed.is_empty() {
-                        last_message = Some(trimmed.to_string());
-                    }
-                }
-            }
-            let _ = tokio::fs::remove_file(&last_message_path_for_task).await;
-
-            if let Some(last_message) = last_message {
-                match usage_payload.as_mut() {
-                    Some(Value::Object(object)) => {
-                        object.insert("last_message".to_string(), Value::String(last_message));
-                    }
-                    Some(value) => {
-                        usage_payload = Some(serde_json::json!({
-                            "raw_usage": value,
-                            "last_message": last_message,
-                        }));
-                    }
-                    None => {
-                        usage_payload = Some(serde_json::json!({
-                            "last_message": last_message,
-                        }));
-                    }
-                }
-            }
-
-            if error_payload.is_none() && status == ProviderTurnStatus::Failed {
-                let error_message = match exit_status {
-                    Ok(exit) => format!(
-                        "codex turn process exited unsuccessfully for {} (exit_status={exit})",
-                        turn_id
-                    ),
-                    Err(error) => format!(
-                        "failed waiting for codex turn process for {}: {}",
-                        turn_id, error
-                    ),
-                };
-                error_payload = Some(serde_json::json!({
-                    "message": error_message,
-                    "stderr": stderr_text,
-                }));
-            }
-
-            let result = ProviderTurnResult {
-                runtime_session_id: runtime_session_id.clone(),
-                turn_id: turn_id.clone(),
-                status,
-                usage: usage_payload,
-                error: error_payload,
-            };
-
-            provider
-                .complete_turn(
-                    runtime_session_id.as_str(),
-                    turn_id.as_str(),
-                    result,
-                    thread_id,
-                )
-                .await;
-        });
-
-        Ok(RunningTurn {
-            child,
-            interrupt_requested,
-        })
-    }
-
-    async fn complete_turn(
-        &self,
-        runtime_session_id: &str,
-        turn_id: &str,
-        result: ProviderTurnResult,
-        provider_session_ref: Option<String>,
-    ) {
-        let waiters = {
-            let mut sessions = self.inner.sessions.write().await;
-            let Some(session) = sessions.get_mut(runtime_session_id) else {
-                return;
-            };
-            session.active_turns.remove(turn_id);
-            session
-                .pending_approvals
-                .retain(|_, pending| pending.turn_id != turn_id);
-            if let Some(provider_session_ref) = provider_session_ref {
-                session.provider_session_ref = provider_session_ref;
-                session.canonical_provider_session_ref = None;
-            }
-            session
-                .completed_turns
-                .insert(turn_id.to_string(), result.clone());
-            session.waiters.remove(turn_id).unwrap_or_default()
-        };
-
-        for waiter in waiters {
-            let _ = waiter.send(result.clone());
-        }
-    }
-}
-
-fn absolutize_path(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        return path.to_path_buf();
-    }
-    match std::env::current_dir() {
-        Ok(cwd) => cwd.join(path),
-        Err(_) => path.to_path_buf(),
     }
 }
 
@@ -433,22 +66,26 @@ impl RuntimeProvider for CodexProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             model_discovery: ProviderDiscoveryMode::Catalog,
-            skill_discovery: ProviderDiscoveryMode::Unsupported,
+            skill_discovery: ProviderDiscoveryMode::Catalog,
             session_resume: ProviderCapabilitySupport::Supported,
             streaming: ProviderCapabilitySupport::Unsupported,
-            approvals: ProviderCapabilitySupport::Unsupported,
-            permission_mutation: ProviderCapabilitySupport::Unsupported,
-            session_preferences: ProviderCapabilitySupport::Unsupported,
+            approvals: ProviderCapabilitySupport::Supported,
+            permission_mutation: ProviderCapabilitySupport::Supported,
+            session_preferences: ProviderCapabilitySupport::Supported,
             interrupt: ProviderCapabilitySupport::Supported,
             tools: ProviderCapabilitySupport::Supported,
-            images: ProviderCapabilitySupport::Unsupported,
+            images: ProviderCapabilitySupport::Supported,
             structured_output: ProviderCapabilitySupport::Unsupported,
             setting_sources: ProviderCapabilitySupport::Unsupported,
-            context_limit_observation: ProviderCapabilitySupport::Unsupported,
-            workspace_rebind: ProviderCapabilitySupport::Unsupported,
-            manual_compact: ProviderCapabilitySupport::Unsupported,
-            hard_fork_edit_rerun: ProviderCapabilitySupport::Unsupported,
+            context_limit_observation: ProviderCapabilitySupport::Supported,
+            workspace_rebind: ProviderCapabilitySupport::Supported,
+            manual_compact: ProviderCapabilitySupport::Supported,
+            hard_fork_edit_rerun: ProviderCapabilitySupport::Supported,
         }
+    }
+
+    fn subscribe_events(&self) -> Option<broadcast::Receiver<ProviderRuntimeEvent>> {
+        Some(self.inner.events.subscribe())
     }
 
     async fn healthcheck(&self) -> Result<(), RuntimeError> {
@@ -457,14 +94,8 @@ impl RuntimeProvider for CodexProvider {
                 "codex provider disabled".to_string(),
             ));
         }
-        tokio::fs::create_dir_all(&self.inner.config.home_dir)
-            .await
-            .map_err(|error| {
-                RuntimeError::Io(format!(
-                    "failed to create codex home {}: {error}",
-                    self.inner.config.home_dir.display()
-                ))
-            })?;
+        let transport = self.spawn_auxiliary_transport("healthcheck").await?;
+        transport.shutdown().await;
         Ok(())
     }
 
@@ -472,78 +103,359 @@ impl RuntimeProvider for CodexProvider {
         Ok(codex_model_catalog())
     }
 
+    async fn list_skills(
+        &self,
+        req: ProviderSkillDiscoveryRequest,
+    ) -> Result<Vec<ProviderSkillDescriptor>, RuntimeError> {
+        let transport = self.spawn_auxiliary_transport("skill-discovery").await?;
+        let mut params = Map::new();
+        let cwds = req
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|cwd| vec![cwd])
+            .unwrap_or_default();
+        params.insert("cwds".to_string(), json!(cwds));
+        params.insert("forceReload".to_string(), json!(req.force_refresh));
+        let result = transport
+            .request("skills/list", Value::Object(params))
+            .await;
+        transport.shutdown().await;
+        let result = result?;
+        let mut skills = Vec::new();
+        let mut seen = HashSet::new();
+        let entries = result
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                RuntimeError::ProtocolViolation(
+                    "Codex skills/list response missing data array".to_string(),
+                )
+            })?;
+        for entry in entries {
+            let Some(entry_skills) = entry.get("skills").and_then(Value::as_array) else {
+                continue;
+            };
+            for skill in entry_skills {
+                if skill.get("enabled").and_then(Value::as_bool) == Some(false) {
+                    continue;
+                }
+                let Some(name) = skill
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    continue;
+                };
+                let path = skill
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string);
+                if !seen.insert(format!("{name}:{}", path.as_deref().unwrap_or_default())) {
+                    continue;
+                }
+                let interface = skill.get("interface");
+                let description = skill
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        interface
+                            .and_then(|value| value.get("shortDescription"))
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_else(|| "No description provided.".to_string());
+                skills.push(ProviderSkillDescriptor {
+                    provider: ProviderKind::Codex,
+                    name: name.to_string(),
+                    description,
+                    display_name: interface
+                        .and_then(|interface| {
+                            interface
+                                .get("displayName")
+                                .or_else(|| interface.get("display_name"))
+                        })
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string),
+                    path,
+                    argument_hint: interface
+                        .and_then(|interface| {
+                            interface
+                                .get("argumentHint")
+                                .or_else(|| interface.get("argument_hint"))
+                        })
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string),
+                });
+            }
+        }
+        Ok(skills)
+    }
+
     async fn auth_status(&self) -> Result<ProviderAuthStatus, RuntimeError> {
         let auth_exists = self.codex_auth_path().exists();
         Ok(ProviderAuthStatus {
             authenticated: auth_exists,
-            mode: if auth_exists {
-                Some("auth_json".to_string())
+            mode: auth_exists.then(|| "auth_json".to_string()),
+            detail: Some(if auth_exists {
+                format!(
+                    "using staged Codex auth at {}",
+                    self.codex_auth_path().display()
+                )
             } else {
-                None
-            },
-            detail: if auth_exists {
-                Some(format!(
-                    "using CODEX_HOME at {}",
-                    self.inner.config.home_dir.display()
-                ))
-            } else {
-                Some(format!("missing {}", self.codex_auth_path().display()))
-            },
+                format!("missing {}", self.codex_auth_path().display())
+            }),
         })
+    }
+
+    async fn auth_set_api_key(&self, api_key: String) -> Result<ProviderAuthStatus, RuntimeError> {
+        if api_key.trim().is_empty() {
+            return Err(RuntimeError::InvalidState(
+                "Codex API key must not be empty".to_string(),
+            ));
+        }
+        self.auth_import_json(json!({"OPENAI_API_KEY": api_key}))
+            .await
+    }
+
+    async fn auth_import_json(&self, auth_json: Value) -> Result<ProviderAuthStatus, RuntimeError> {
+        std::fs::create_dir_all(&self.inner.config.home_dir)?;
+        let encoded = serde_json::to_vec_pretty(&auth_json)
+            .map_err(|error| RuntimeError::InvalidState(error.to_string()))?;
+        std::fs::write(self.codex_auth_path(), encoded)?;
+        self.auth_status().await
+    }
+
+    async fn auth_import_json_text(
+        &self,
+        auth_json_text: String,
+    ) -> Result<ProviderAuthStatus, RuntimeError> {
+        let auth_json = serde_json::from_str::<Value>(&auth_json_text).map_err(|error| {
+            RuntimeError::InvalidState(format!("invalid Codex auth JSON: {error}"))
+        })?;
+        self.auth_import_json(auth_json).await
+    }
+
+    async fn auth_logout(&self) -> Result<ProviderAuthStatus, RuntimeError> {
+        match std::fs::remove_file(self.codex_auth_path()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(RuntimeError::Io(error.to_string())),
+        }
+        self.auth_status().await
+    }
+
+    async fn create_session_with_policy(
+        &self,
+        req: ProviderCreateSessionPolicyRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        if !self.inner.config.enabled {
+            return Err(RuntimeError::provider_not_dispatched(
+                "codex_disabled",
+                "Codex provider is disabled",
+            ));
+        }
+        let thread_start_params = Self::thread_start_params(&req)?;
+        let developer_instructions =
+            Self::developer_instructions(req.launch_policy.system_prompt.as_deref())?;
+        let _admission = self.inner.admission_lock.lock().await;
+        self.ensure_capacity_for_new_session(req.runtime_session_id.as_str())
+            .await?;
+        let (transport, _session_home) = self
+            .spawn_transport_for_session(req.runtime_session_id.as_str())
+            .await?;
+        let result = transport.request("thread/start", thread_start_params).await;
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                transport.shutdown().await;
+                return Err(error);
+            }
+        };
+        let Some(provider_session_ref) = extract_thread_id(&result) else {
+            transport.shutdown().await;
+            return Err(RuntimeError::ProtocolViolation(
+                "Codex thread/start response missing thread.id".to_string(),
+            ));
+        };
+        let state = CodexSessionState::new(
+            transport,
+            provider_session_ref.clone(),
+            Some(provider_session_ref.clone()),
+            req.cwd,
+            req.model,
+            developer_instructions,
+            req.launch_policy.permission_intent.resolved_mode(),
+            req.current_preferences,
+        );
+        self.install_session(req.runtime_session_id, state).await
+    }
+
+    async fn resume_session_with_policy(
+        &self,
+        req: ProviderResumeSessionPolicyRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        if !self.inner.config.enabled {
+            return Err(RuntimeError::provider_not_dispatched(
+                "codex_disabled",
+                "Codex provider is disabled",
+            ));
+        }
+        if let Some(canonical_provider_session_ref) = req
+            .canonical_provider_session_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if canonical_provider_session_ref != req.provider_session_ref {
+                return Err(RuntimeError::ProtocolViolation(format!(
+                    "Codex canonical provider session ref {canonical_provider_session_ref} does not match thread id {}",
+                    req.provider_session_ref
+                )));
+            }
+        }
+        let thread_resume_params = Self::thread_resume_params(&req)?;
+        let developer_instructions =
+            Self::developer_instructions(req.launch_policy.system_prompt.as_deref())?;
+        let _admission = self.inner.admission_lock.lock().await;
+        if let Some(existing) = self
+            .inner
+            .sessions
+            .write()
+            .await
+            .remove(req.runtime_session_id.as_str())
+        {
+            existing.transport.shutdown().await;
+        }
+        self.ensure_capacity_for_new_session(req.runtime_session_id.as_str())
+            .await?;
+        let (transport, _session_home) = self
+            .spawn_transport_for_session(req.runtime_session_id.as_str())
+            .await?;
+        let result = transport
+            .request("thread/resume", thread_resume_params)
+            .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                transport.shutdown().await;
+                return Err(error);
+            }
+        };
+        let Some(provider_session_ref) = extract_thread_id(&result) else {
+            transport.shutdown().await;
+            return Err(RuntimeError::ProtocolViolation(
+                "Codex thread/resume response missing thread.id".to_string(),
+            ));
+        };
+        if provider_session_ref != req.provider_session_ref {
+            transport.shutdown().await;
+            return Err(RuntimeError::ProtocolViolation(format!(
+                "Codex thread/resume returned {}, expected {}",
+                provider_session_ref, req.provider_session_ref
+            )));
+        }
+        let effective_cwd = if let Some(expected_cwd) = req
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let returned_cwd = result
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let Some(returned_cwd) = returned_cwd else {
+                transport.shutdown().await;
+                return Err(RuntimeError::ProtocolViolation(
+                    "Codex thread/resume response missing required top-level cwd evidence"
+                        .to_string(),
+                ));
+            };
+            if !canonical_paths_equal(expected_cwd, returned_cwd) {
+                transport.shutdown().await;
+                return Err(RuntimeError::ProtocolViolation(format!(
+                    "Codex thread/resume returned mismatched cwd evidence (expected {expected_cwd}, actual {returned_cwd})"
+                )));
+            }
+            Some(returned_cwd.to_string())
+        } else {
+            req.cwd.clone()
+        };
+        let state = CodexSessionState::new(
+            transport,
+            provider_session_ref.clone(),
+            Some(provider_session_ref.clone()),
+            effective_cwd,
+            req.model,
+            developer_instructions,
+            req.launch_policy.permission_intent.resolved_mode(),
+            req.current_preferences,
+        );
+        self.install_session(req.runtime_session_id, state).await
     }
 
     async fn create_session(
         &self,
         req: ProviderCreateSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
-        let state = CodexSessionState {
-            provider_session_ref: format!("runtime:{}", req.runtime_session_id),
-            canonical_provider_session_ref: None,
-            cwd: req.cwd,
-            model: req.model,
-            permission_mode: req.permission_mode,
-            ..Default::default()
-        };
-
-        let provider_session_ref = state.provider_session_ref.clone();
-        let canonical_provider_session_ref = state.canonical_provider_session_ref.clone();
-
-        let mut sessions = self.inner.sessions.write().await;
-        sessions.insert(req.runtime_session_id.clone(), state);
-
-        Ok(ProviderSession {
-            runtime_session_id: req.runtime_session_id,
-            provider_session_ref,
-            canonical_provider_session_ref,
-        })
+        self.create_session_with_policy(ProviderCreateSessionPolicyRequest::legacy_compatible(
+            req.runtime_session_id,
+            req.model,
+            req.cwd,
+            req.permission_mode,
+            req.metadata,
+        )?)
+        .await
     }
 
     async fn resume_session(
         &self,
         req: ProviderResumeSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
-        let mut sessions = self.inner.sessions.write().await;
-        let session = sessions
-            .entry(req.runtime_session_id.clone())
-            .or_insert_with(CodexSessionState::default);
-        session.provider_session_ref = req.provider_session_ref.clone();
-        session.canonical_provider_session_ref = req.canonical_provider_session_ref.clone();
-        session.cwd = req.cwd;
-        session.model = req.model;
-        session.permission_mode = req.permission_mode;
+        self.resume_session_with_policy(ProviderResumeSessionPolicyRequest::legacy_compatible(
+            req.runtime_session_id,
+            req.provider_session_ref,
+            req.canonical_provider_session_ref,
+            req.model,
+            req.cwd,
+            req.permission_mode,
+            req.system_prompt,
+            req.metadata,
+        )?)
+        .await
+    }
 
-        Ok(ProviderSession {
-            runtime_session_id: req.runtime_session_id,
-            provider_session_ref: session.provider_session_ref.clone(),
-            canonical_provider_session_ref: session.canonical_provider_session_ref.clone(),
-        })
+    async fn restore_turn_identity_mapping(
+        &self,
+        runtime_session_id: &str,
+        turn_id: &str,
+        provider_native_turn_id: &str,
+    ) -> Result<(), RuntimeError> {
+        self.bind_native_turn(runtime_session_id, turn_id, provider_native_turn_id)
+            .await
     }
 
     async fn send_turn(
         &self,
         req: ProviderSendTurnRequest,
     ) -> Result<ProviderTurnAck, RuntimeError> {
-        let running_turn = {
+        let native_input = build_native_input(req.input.as_slice())?;
+        let (transport, thread_id, model, cwd, thinking_effort, permission_mode) = {
             let mut sessions = self.inner.sessions.write().await;
             let session = sessions
                 .get_mut(req.runtime_session_id.as_str())
@@ -553,76 +465,121 @@ impl RuntimeProvider for CodexProvider {
                         format!("codex session {}", req.runtime_session_id),
                     )
                 })?;
-
-            if !session.active_turns.is_empty() || !session.pending_approvals.is_empty() {
+            if session.active_turn_id.is_some() || !session.pending_approvals.is_empty() {
                 return Err(RuntimeError::provider_not_dispatched(
                     "turn_in_progress",
                     format!(
-                        "codex session {} already has an active turn",
+                        "codex session {} already has active work",
                         req.runtime_session_id
                     ),
                 ));
             }
-
-            if let Some(approval_id) = req.approval_id {
-                session.pending_approvals.insert(
-                    approval_id,
-                    PendingApprovalTurn {
-                        turn_id: req.turn_id.clone(),
-                        input: req.input,
-                        expected_turn_id: req.expected_turn_id,
-                        permission_mode: req.permission_mode,
-                    },
-                );
-                None
-            } else {
-                let running_turn = self.spawn_turn(
-                    req.runtime_session_id.as_str(),
-                    req.turn_id.as_str(),
-                    req.input.as_slice(),
-                    session,
-                )?;
-                session
-                    .active_turns
-                    .insert(req.turn_id.clone(), running_turn);
-                Some(())
-            }
+            session.active_turn_id = Some(req.turn_id.clone());
+            (
+                Arc::clone(&session.transport),
+                session.provider_session_ref.clone(),
+                session.model.clone(),
+                session.cwd.clone(),
+                session.current_preferences.thinking_effort,
+                req.permission_mode
+                    .clone()
+                    .or_else(|| session.permission_mode.clone()),
+            )
         };
 
-        let _ = running_turn;
+        let mut params = json!({
+            "threadId": thread_id,
+            "input": native_input,
+            "summary": "concise",
+        });
+        if let Some(model) = model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params["model"] = json!(model);
+        }
+        if let Some(cwd) = cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            params["cwd"] = json!(cwd);
+        }
+        if let Some(effort) = thinking_effort {
+            params["effort"] = json!(effort.as_str());
+        }
+        apply_turn_permission_mode(&mut params, permission_mode.as_deref());
 
+        let result = transport.request("turn/start", params).await;
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                if error.provider_dispatch_outcome() == ProviderDispatchOutcome::NotDispatched {
+                    if let Some(session) = self
+                        .inner
+                        .sessions
+                        .write()
+                        .await
+                        .get_mut(req.runtime_session_id.as_str())
+                    {
+                        if session.active_turn_id.as_deref() == Some(req.turn_id.as_str()) {
+                            session.active_turn_id = None;
+                        }
+                    }
+                }
+                return Err(error);
+            }
+        };
+        let native_turn_id = extract_turn_id(&result).ok_or_else(|| {
+            RuntimeError::provider_dispatch_unknown(
+                "codex_turn_id_missing",
+                "Codex turn/start response missing turn.id",
+            )
+        })?;
+        self.bind_native_turn(
+            req.runtime_session_id.as_str(),
+            req.turn_id.as_str(),
+            native_turn_id.as_str(),
+        )
+        .await?;
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: req.turn_id,
-            provider_native_turn_id: None,
+            provider_native_turn_id: Some(native_turn_id),
         })
     }
 
     async fn interrupt_turn(&self, req: ProviderInterruptTurnRequest) -> Result<(), RuntimeError> {
-        let child = {
+        let (transport, thread_id, native_turn_id) = {
             let sessions = self.inner.sessions.read().await;
             let session = sessions
                 .get(req.runtime_session_id.as_str())
                 .ok_or_else(|| {
                     RuntimeError::NotFound(format!("codex session {}", req.runtime_session_id))
                 })?;
-            let running_turn = session
-                .active_turns
+            let native_turn_id = session
+                .logical_to_native_turns
                 .get(req.turn_id.as_str())
+                .cloned()
                 .ok_or_else(|| {
-                    RuntimeError::InvalidState(format!(
-                        "turn {} is not active for session {}",
+                    RuntimeError::NotFound(format!(
+                        "native turn for {} in session {}",
                         req.turn_id, req.runtime_session_id
                     ))
                 })?;
-            running_turn
-                .interrupt_requested
-                .store(true, Ordering::SeqCst);
-            Arc::clone(&running_turn.child)
+            (
+                Arc::clone(&session.transport),
+                session.provider_session_ref.clone(),
+                native_turn_id,
+            )
         };
-
-        let mut child = child.lock().await;
-        let _ = child.kill().await;
+        transport
+            .request(
+                "turn/interrupt",
+                json!({"threadId": thread_id, "turnId": native_turn_id}),
+            )
+            .await?;
         Ok(())
     }
 
@@ -631,86 +588,95 @@ impl RuntimeProvider for CodexProvider {
         req: ProviderApprovalResponseRequest,
     ) -> Result<(), RuntimeError> {
         let decision = ApprovalDecision::parse(req.decision.as_str())?;
-
-        if decision == ApprovalDecision::Decline {
-            let result = ProviderTurnResult {
-                runtime_session_id: req.runtime_session_id.clone(),
-                turn_id: req.turn_id.clone(),
-                status: ProviderTurnStatus::Interrupted,
-                usage: None,
-                error: Some(serde_json::json!({
-                    "message": "approval declined",
-                })),
-            };
-            self.complete_turn(
-                req.runtime_session_id.as_str(),
-                req.turn_id.as_str(),
-                result,
-                None,
-            )
-            .await;
-            return Ok(());
-        }
-
-        {
+        let (transport, pending) = {
             let mut sessions = self.inner.sessions.write().await;
             let session = sessions
                 .get_mut(req.runtime_session_id.as_str())
                 .ok_or_else(|| {
                     RuntimeError::NotFound(format!("codex session {}", req.runtime_session_id))
                 })?;
-
             let pending = session
                 .pending_approvals
-                .get(req.approval_id.as_str())
-                .cloned()
+                .remove(req.approval_id.as_str())
                 .ok_or_else(|| RuntimeError::NotFound(format!("approval {}", req.approval_id)))?;
-
-            if pending.turn_id != req.turn_id {
+            let mapped = session
+                .native_to_logical_turns
+                .get(pending.native_turn_id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::ProtocolViolation(format!(
+                        "approval {} has no logical turn mapping",
+                        req.approval_id
+                    ))
+                })?;
+            if mapped != &req.turn_id {
                 return Err(RuntimeError::ProtocolViolation(format!(
                     "approval {} turn mismatch (expected={}, actual={})",
-                    req.approval_id, pending.turn_id, req.turn_id
+                    req.approval_id, mapped, req.turn_id
                 )));
             }
+            (Arc::clone(&session.transport), pending)
+        };
 
-            let mut execute_request = ProviderSendTurnRequest {
-                runtime_session_id: req.runtime_session_id.clone(),
-                turn_id: pending.turn_id,
-                input: pending.input,
-                expected_turn_id: pending.expected_turn_id,
-                permission_mode: pending.permission_mode,
-                approval_id: None,
-            };
-
-            if let Some(payload) = req.payload.as_ref() {
-                if let Some(mode) = payload
-                    .get("permission_mode")
+        match pending.method.as_str() {
+            "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
+                let response_decision = req
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("decision"))
                     .and_then(Value::as_str)
                     .map(str::to_string)
+                    .unwrap_or_else(|| decision.as_str().to_string());
+                transport
+                    .respond(pending.rpc_id, json!({"decision": response_decision}))
+                    .await
+            }
+            "item/permissions/requestApproval" => {
+                if decision == ApprovalDecision::Decline {
+                    transport
+                        .respond(pending.rpc_id, json!({"permissions": {}, "scope": "turn"}))
+                        .await
+                } else if let Some(provider_response) = req
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("provider_response"))
+                    .cloned()
                 {
-                    execute_request.permission_mode = Some(mode);
+                    transport.respond(pending.rpc_id, provider_response).await
+                } else {
+                    let requested = pending
+                        .request
+                        .get("permissions")
+                        .cloned()
+                        .unwrap_or_else(|| json!({}));
+                    let mut granted = Map::new();
+                    if let Some(network) = requested.get("network").filter(|value| !value.is_null())
+                    {
+                        granted.insert("network".to_string(), network.clone());
+                    }
+                    if let Some(file_system) =
+                        requested.get("fileSystem").filter(|value| !value.is_null())
+                    {
+                        granted.insert("fileSystem".to_string(), file_system.clone());
+                    }
+                    transport
+                        .respond(
+                            pending.rpc_id,
+                            json!({"permissions": Value::Object(granted), "scope": "turn"}),
+                        )
+                        .await
                 }
             }
-
-            let running_turn = self.spawn_turn(
-                execute_request.runtime_session_id.as_str(),
-                execute_request.turn_id.as_str(),
-                execute_request.input.as_slice(),
-                session,
-            )?;
-            session.pending_approvals.remove(req.approval_id.as_str());
-            session
-                .active_turns
-                .insert(execute_request.turn_id, running_turn);
+            other => Err(RuntimeError::ProtocolViolation(format!(
+                "unsupported Codex approval request method {other}"
+            ))),
         }
-        Ok(())
     }
 
     async fn wait_for_turn(
         &self,
         req: ProviderWaitTurnRequest,
     ) -> Result<ProviderTurnResult, RuntimeError> {
-        {
+        let (transport, thread_id, native_turn_id) = {
             let sessions = self.inner.sessions.read().await;
             let session = sessions
                 .get(req.runtime_session_id.as_str())
@@ -720,17 +686,76 @@ impl RuntimeProvider for CodexProvider {
             if let Some(result) = session.completed_turns.get(req.turn_id.as_str()) {
                 return Ok(result.clone());
             }
-            if !session.active_turns.contains_key(req.turn_id.as_str())
+            if session.active_turn_id.as_deref() != Some(req.turn_id.as_str())
                 && !session
-                    .pending_approvals
-                    .values()
-                    .any(|approval| approval.turn_id == req.turn_id)
+                    .logical_to_native_turns
+                    .contains_key(req.turn_id.as_str())
             {
                 return Err(RuntimeError::NotFound(format!(
                     "turn {} in session {}",
                     req.turn_id, req.runtime_session_id
                 )));
             }
+            let native_turn_id = session
+                .logical_to_native_turns
+                .get(req.turn_id.as_str())
+                .cloned()
+                .ok_or_else(|| {
+                    RuntimeError::NotFound(format!(
+                        "native turn for {} in session {}",
+                        req.turn_id, req.runtime_session_id
+                    ))
+                })?;
+            (
+                Arc::clone(&session.transport),
+                session.provider_session_ref.clone(),
+                native_turn_id,
+            )
+        };
+
+        let observation = transport
+            .request(
+                "thread/read",
+                json!({"threadId": thread_id, "includeTurns": true}),
+            )
+            .await
+            .map_err(|error| {
+                if error.provider_dispatch_code().is_some() {
+                    error
+                } else {
+                    RuntimeError::provider_dispatch_unknown(
+                        "codex_turn_observation_failed",
+                        format!(
+                            "failed to reconcile dispatched Codex turn {} via thread/read: {error}",
+                            req.turn_id
+                        ),
+                    )
+                }
+            })?;
+        if let Some((status, usage, error)) =
+            terminal_turn_from_thread_read(&observation, native_turn_id.as_str())
+        {
+            if let Some(usage) = usage {
+                if let Some(session) = self
+                    .inner
+                    .sessions
+                    .write()
+                    .await
+                    .get_mut(req.runtime_session_id.as_str())
+                {
+                    session
+                        .usage_by_native_turn
+                        .insert(native_turn_id.clone(), usage);
+                }
+            }
+            Self::complete_native_turn(
+                &self.inner,
+                req.runtime_session_id.as_str(),
+                native_turn_id.as_str(),
+                status,
+                error,
+            )
+            .await;
         }
 
         let (sender, receiver) = oneshot::channel();
@@ -752,47 +777,129 @@ impl RuntimeProvider for CodexProvider {
         }
 
         if let Some(timeout_ms) = req.timeout_ms {
-            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), receiver).await
-            {
-                Ok(result) => result.map_err(|_| {
-                    RuntimeError::InvalidState(format!(
-                        "turn result channel closed for {}",
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), receiver).await {
+                Ok(Ok(result)) => Ok(result),
+                Ok(Err(_)) => Err(RuntimeError::provider_dispatch_unknown(
+                    "codex_turn_result_channel_closed",
+                    format!(
+                        "turn result channel closed for dispatched turn {}",
                         req.turn_id
-                    ))
-                }),
-                Err(_) => Err(RuntimeError::InvalidState(format!(
-                    "timed out waiting for turn {}",
-                    req.turn_id
-                ))),
+                    ),
+                )),
+                Err(_) => Err(RuntimeError::provider_dispatch_unknown(
+                    "codex_turn_wait_timeout",
+                    format!("timed out waiting for dispatched turn {}", req.turn_id),
+                )),
             }
         } else {
             receiver.await.map_err(|_| {
-                RuntimeError::InvalidState(format!(
-                    "turn result channel closed for {}",
-                    req.turn_id
-                ))
+                RuntimeError::provider_dispatch_unknown(
+                    "codex_turn_result_channel_closed",
+                    format!(
+                        "turn result channel closed for dispatched turn {}",
+                        req.turn_id
+                    ),
+                )
             })
         }
     }
 
-    async fn close_session(&self, req: ProviderCloseSessionRequest) -> Result<(), RuntimeError> {
-        let session = {
+    async fn observe_context_limit(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<ProviderContextLimitObservation, RuntimeError> {
+        let sessions = self.inner.sessions.read().await;
+        let session = sessions
+            .get(runtime_session_id)
+            .ok_or_else(|| RuntimeError::NotFound(format!("codex session {runtime_session_id}")))?;
+        let model_context_window = session.model_context_window.ok_or_else(|| {
+            RuntimeError::InvalidState(format!(
+                "Codex session {runtime_session_id} has no context-limit observation yet"
+            ))
+        })?;
+        let last_total_tokens = session.last_total_tokens.unwrap_or(0);
+        let remaining = model_context_window.saturating_sub(last_total_tokens);
+        let remaining_percentage = if model_context_window == 0 {
+            0
+        } else {
+            ((remaining.saturating_mul(100) / model_context_window).min(100)) as u8
+        };
+        Ok(ProviderContextLimitObservation {
+            model_context_window,
+            last_total_tokens,
+            remaining_percentage,
+        })
+    }
+
+    async fn rebind_workspace(
+        &self,
+        req: ProviderWorkspaceRebindRequest,
+    ) -> Result<ProviderWorkspaceRebindEvidence, RuntimeError> {
+        self.rebind_workspace_with_evidence(req).await
+    }
+
+    async fn compact_session(
+        &self,
+        req: ProviderCompactSessionRequest,
+    ) -> Result<ProviderCompactSessionOutcome, RuntimeError> {
+        let (transport, thread_id, receiver) = {
             let mut sessions = self.inner.sessions.write().await;
-            sessions.remove(req.runtime_session_id.as_str())
+            let session = sessions
+                .get_mut(req.runtime_session_id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::NotFound(format!("codex session {}", req.runtime_session_id))
+                })?;
+            if session.active_turn_id.is_some() || !session.pending_approvals.is_empty() {
+                return Err(RuntimeError::Conflict(format!(
+                    "cannot compact busy Codex session {}",
+                    req.runtime_session_id
+                )));
+            }
+            let (sender, receiver) = oneshot::channel();
+            session.compaction_waiters.push(sender);
+            (
+                Arc::clone(&session.transport),
+                session.provider_session_ref.clone(),
+                receiver,
+            )
         };
-
-        let Some(session) = session else {
-            return Ok(());
-        };
-
-        for (_turn_id, running_turn) in session.active_turns {
-            running_turn
-                .interrupt_requested
-                .store(true, Ordering::SeqCst);
-            let mut child = running_turn.child.lock().await;
-            let _ = child.kill().await;
+        transport
+            .request("thread/compact/start", json!({"threadId": thread_id}))
+            .await?;
+        match tokio::time::timeout(
+            Duration::from_millis(self.inner.config.request_timeout_ms.max(1)),
+            receiver,
+        )
+        .await
+        {
+            Ok(Ok(())) => Ok(ProviderCompactSessionOutcome::Accepted),
+            Ok(Err(_)) => Err(RuntimeError::InvalidState(
+                "Codex compaction observation channel closed".to_string(),
+            )),
+            Err(_) => Err(RuntimeError::provider_dispatch_unknown(
+                "codex_compaction_timeout",
+                "Codex compaction request was accepted but no completion observation arrived",
+            )),
         }
+    }
 
+    async fn hard_fork_edit_rerun(
+        &self,
+        req: ProviderHardForkEditRerunRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        self.hard_fork_edit_rerun_verified(req).await
+    }
+
+    async fn close_session(&self, req: ProviderCloseSessionRequest) -> Result<(), RuntimeError> {
+        let session = self
+            .inner
+            .sessions
+            .write()
+            .await
+            .remove(req.runtime_session_id.as_str());
+        if let Some(session) = session {
+            session.transport.shutdown().await;
+        }
         Ok(())
     }
 }

@@ -302,7 +302,7 @@ curl -fsS -X POST \
 
 The create body accepts `mode`, `sender_agent_id`, structured `input`, optional ordered `image_paths`, `priority`, `policy`, and `correlation_id`. Direct mode additionally accepts `recipient_agent_id` and `reply_to_message_id`; broadcast rejects those direct-only fields. `Idempotency-Key` is an HTTP header: an exact retry returns the existing message, while reusing the key with different normalized content returns HTTP `409`.
 
-Image paths are validated before message admission: at most eight regular readable files, with PNG, JPEG, GIF, or WebP identified from file bytes. Ordering is preserved. The canonical v2 transport currently sends images natively to Claude sessions; Codex and ACP v2 message recipients reject image-bearing sends with an explicit unsupported error rather than dropping or flattening attachments. Validation errors identify the failing image index/reason without echoing the local path.
+Image paths are validated before message admission: at most eight regular readable files, with PNG, JPEG, GIF, or WebP identified from file bytes. Ordering is preserved. The canonical v2 transport sends images as native structured provider input to Codex and Claude sessions. ACP still rejects image-bearing v2 messages explicitly rather than dropping or flattening attachments. Validation errors identify the failing image index/reason without echoing the local path.
 
 Inspect message history and durable delivery state:
 
@@ -499,7 +499,7 @@ The v2 provider surface makes optional behavior explicit:
 - `POST /v2/providers/{provider}/models/discover` accepts optional `cwd`, typed `setting_sources_intent`, `force_refresh`, and `startup_mode` (`cold` or `start_runtime`). The response includes a discovery `mode` plus typed model descriptors.
 - `POST /v2/providers/{provider}/skills/discover` accepts optional `cwd`, typed `setting_sources_intent`, and `force_refresh`, and returns a discovery `mode` plus provider-tagged skills.
 
-`mode` is `catalog`, `agent_managed`, or `unsupported`. ACP model discovery is currently `agent_managed`, so its empty model array must not be interpreted as a built-in empty catalog. Skill discovery is currently unsupported by the shipping Codex, Claude, and ACP adapters; later adapters can implement it without changing the client contract.
+`mode` is `catalog`, `agent_managed`, or `unsupported`. ACP model discovery is currently `agent_managed`, so its empty model array must not be interpreted as a built-in empty catalog. Codex skill discovery is `catalog` mode and delegates to its app-server `skills/list` method; Claude and ACP skill discovery remain unsupported by the shipping adapters.
 
 `setting_sources_intent` is one of `{"kind":"standard"}`,
 `{"kind":"explicit","sources":["user","project","local"]}`, or

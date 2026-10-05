@@ -19,7 +19,7 @@ make help
 Prereqs on host:
 - `curl`
 - `tar`
-- provider CLIs you want to use (`codex`, `claude`)
+- provider CLIs you want to use (`codex`, `claude`); Codex must expose `codex app-server`
 - an ACP-compatible agent command if you want to enable ACP
 
 Install latest release to `~/.local`:
@@ -53,10 +53,13 @@ Then:
 export PATH="$HOME/.local/bin:$PATH"
 cp "$HOME/.local/runtime-server.toml.example" ./runtime-server.toml
 codex login
+codex app-server --help >/dev/null
 claude login
 gg-runtime-server --check-config --config ./runtime-server.toml
 gg-runtime-server --config ./runtime-server.toml
 ```
+
+Codex command resolution checks `GG_CODEX_COMMAND`, then `~/.local/bin/codex`, `~/.volta/bin/codex`, `~/.bun/bin/codex`, then `PATH`. Set `GG_CODEX_COMMAND` to an absolute executable path when a service environment cannot see the host install.
 
 If you want ACP enabled in the first release, edit `./runtime-server.toml` before the config check:
 

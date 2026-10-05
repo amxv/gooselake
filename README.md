@@ -378,6 +378,7 @@ GG_RUNTIME_REPO=owner/repo make install
 
 ```bash
 codex login
+codex app-server --help >/dev/null
 claude login
 ```
 
@@ -478,7 +479,7 @@ Team orchestration is already a first-class runtime API here. The MCP-facing tea
 
 ## Auth Model
 
-- Codex: machine login via `codex login`, with staged runtime auth support from `~/.gg/codex/auth.json`
+- Codex: machine login via `codex login`, staged runtime auth from `~/.gg/codex/auth.json`, and a CLI build that exposes the persistent `codex app-server` runtime primitive
 - Claude default: `host_machine`, which uses machine login material
 - Claude optional: `runtime_managed`, which lets the runtime own imported auth/config files
 - ACP: configured agent command over stdio, with auth handled by the agent itself in v1

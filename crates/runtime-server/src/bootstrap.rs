@@ -49,6 +49,9 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
     let codex_provider = Arc::new(CodexProvider::new(CodexProviderConfig {
         enabled: config.providers.codex.enabled,
         home_dir: codex_home.clone(),
+        command: resolve_codex_command(),
+        app_server_args: vec!["app-server".to_string()],
+        request_timeout_ms: 30_000,
         max_transports: config.providers.codex.max_instances,
         max_sessions_per_transport: config.providers.codex.max_sessions_per_instance,
         gg_mcp: CodexGgMcpConfig {
@@ -318,6 +321,29 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         public_base_url: config.server.public_base_url,
         startup_recovery,
     })
+}
+
+fn resolve_codex_command() -> String {
+    if let Ok(command) = std::env::var("GG_CODEX_COMMAND") {
+        let trimmed = command.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        for candidate in [
+            home.join(".local/bin/codex"),
+            home.join(".volta/bin/codex"),
+            home.join(".bun/bin/codex"),
+        ] {
+            if candidate.is_file() {
+                return candidate.display().to_string();
+            }
+        }
+    }
+
+    "codex".to_string()
 }
 
 fn resolve_claude_bridge_launch() -> (String, Vec<String>) {

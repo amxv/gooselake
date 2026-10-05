@@ -708,6 +708,22 @@ impl RuntimeSessionManager {
                                     return;
                                 }
                             }
+                            Ok(ProviderRuntimeEvent::TurnOutcomeUnknown {
+                                runtime_session_id,
+                                turn_id: event_turn_id,
+                                code,
+                                message,
+                            }) if runtime_session_id == session_id && event_turn_id == turn_id => {
+                                let _ = manager
+                                    .mark_provider_event_stream_unknown(
+                                        session_id.as_str(),
+                                        turn_id.as_str(),
+                                        code.as_str(),
+                                        message,
+                                    )
+                                    .await;
+                                return;
+                            }
                             Ok(_) => {}
                             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                                 let _ = manager
@@ -751,9 +767,20 @@ impl RuntimeSessionManager {
                     }
                 }
                 Err(error) => {
-                    let _ = manager
-                        .apply_terminal_failure(session_id.as_str(), turn_id.as_str(), error)
-                        .await;
+                    if let Some(code) = error.provider_dispatch_code() {
+                        let _ = manager
+                            .mark_provider_event_stream_unknown(
+                                session_id.as_str(),
+                                turn_id.as_str(),
+                                code,
+                                error.to_string(),
+                            )
+                            .await;
+                    } else {
+                        let _ = manager
+                            .apply_terminal_failure(session_id.as_str(), turn_id.as_str(), error)
+                            .await;
+                    }
                 }
             }
         });

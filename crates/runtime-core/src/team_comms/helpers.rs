@@ -201,8 +201,8 @@ pub(super) fn ensure_message_images_supported(
         return Ok(());
     }
     match ProviderKind::from_str(provider) {
-        Some(ProviderKind::Claude) => Ok(()),
-        Some(ProviderKind::Codex | ProviderKind::Acp) => Err(RuntimeError::Unsupported(format!(
+        Some(ProviderKind::Codex | ProviderKind::Claude) => Ok(()),
+        Some(ProviderKind::Acp) => Err(RuntimeError::Unsupported(format!(
             "message image delivery is not supported by the active {provider} transport"
         ))),
         None => Err(RuntimeError::ProtocolViolation(format!(

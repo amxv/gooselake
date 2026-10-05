@@ -128,10 +128,12 @@ Place `claude_auth_mode` under `[providers]`, not under `[providers.acp.env]`.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | Register the Codex provider. |
-| `max_instances` | `4` | Maximum Codex transport/process instances. |
-| `max_sessions_per_instance` | `8` | Capacity per transport. |
+| `max_instances` | `4` | Codex admission-capacity multiplier. |
+| `max_sessions_per_instance` | `8` | Codex admission-capacity multiplier; total active Codex capacity is `max_instances × max_sessions_per_instance`. |
 
-At bootstrap, if `~/.gg/codex/auth.json` exists, the runtime stages it into `data.providers_dir/codex/home` and the Codex provider reports auth status against that staged home.
+Codex requires a CLI build that exposes `codex app-server`. The runtime resolves the executable from `GG_CODEX_COMMAND` first, then common standalone install locations (`~/.local/bin`, Volta, Bun), then `PATH`.
+
+At bootstrap, if `~/.gg/codex/auth.json` exists, the runtime stages it into `data.providers_dir/codex/home` and the Codex provider reports auth status against that staged home. While the temporary GG MCP bridge remains session-scoped, each active runtime session gets a deterministic child Codex home and its own persistent app-server process. Auth is copied into that child home, and the base runtime `config.toml` is preserved while the session-scoped GG MCP entry is overlaid with that session's caller identity; unrelated Codex settings and MCP servers are retained. The configured aggregate admission capacity is still the product above rather than the physical process count.
 
 ## `[providers.claude]`
 

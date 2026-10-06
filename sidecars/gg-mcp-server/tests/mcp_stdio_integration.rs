@@ -14,7 +14,7 @@ mod support;
 
 use support::{
     capabilities_stub, extract_json_payload, invoke_non_json_stub, invoke_stub, mcp_server_command,
-    stub_gateway_state,
+    mcp_server_dev_launcher_command, stub_gateway_state,
 };
 
 #[tokio::test]
@@ -31,6 +31,39 @@ async fn stdio_server_lists_tools_and_calls_gg_ping() -> Result<(), Box<dyn std:
         tool_names.contains(&"gg_ping".to_string()),
         "gg_ping must be present in tools/list, got {:?}",
         tool_names
+    );
+
+    let result = service
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "gg_ping".into(),
+            arguments: None,
+            task: None,
+        })
+        .await?;
+    assert_eq!(result.is_error, Some(false));
+
+    let payload = extract_json_payload(&result.content)?;
+    assert_eq!(payload["ok"], json!(true));
+    assert_eq!(payload["result"]["name"], json!("gg-mcp-server"));
+
+    let _ = service.cancel().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn stdio_dev_launcher_lists_tools_and_calls_gg_ping() -> Result<(), Box<dyn std::error::Error>>
+{
+    let service = ().serve(TokioChildProcess::new(mcp_server_dev_launcher_command())?).await?;
+
+    let tools = service.peer().list_tools(None).await?;
+    assert!(
+        tools
+            .tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == "gg_ping"),
+        "gg_ping must be present when the development launcher is used"
     );
 
     let result = service

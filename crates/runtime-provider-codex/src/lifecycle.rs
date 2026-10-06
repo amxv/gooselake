@@ -17,6 +17,38 @@ use crate::state::{
 };
 use crate::transport::CodexTransport;
 
+fn merge_assistant_text_into_usage(
+    usage: Option<Value>,
+    assistant_text: Option<String>,
+) -> Option<Value> {
+    let Some(assistant_text) = assistant_text
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return usage;
+    };
+
+    match usage {
+        Some(Value::Object(mut usage_object)) => {
+            usage_object.insert(
+                "last_message".to_string(),
+                Value::String(assistant_text.clone()),
+            );
+            usage_object.insert("assistant_text".to_string(), Value::String(assistant_text));
+            Some(Value::Object(usage_object))
+        }
+        Some(existing) => Some(json!({
+            "last_message": assistant_text.clone(),
+            "assistant_text": assistant_text,
+            "raw_usage": existing,
+        })),
+        None => Some(json!({
+            "last_message": assistant_text.clone(),
+            "assistant_text": assistant_text,
+        })),
+    }
+}
+
 fn merge_staged_config(
     base_config: Option<&str>,
     gg_mcp_config: Option<&str>,
@@ -513,7 +545,10 @@ impl CodexProvider {
         let Some(session) = sessions.get_mut(runtime_session_id) else {
             return;
         };
-        let usage = session.usage_by_native_turn.get(native_turn_id).cloned();
+        let usage = merge_assistant_text_into_usage(
+            session.usage_by_native_turn.get(native_turn_id).cloned(),
+            session.last_messages.get(native_turn_id).cloned(),
+        );
         let Some(logical_turn_id) = session.native_to_logical_turns.get(native_turn_id).cloned()
         else {
             if let Some(existing) = session.pending_terminal_by_native.get(native_turn_id) {

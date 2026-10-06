@@ -33,6 +33,11 @@ if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
   fi
 fi
 
+LOCAL_TARGET_BIN="${MCP_ROOT}/target/debug/gg-mcp-server"
+if [[ -x "${LOCAL_TARGET_BIN}" ]]; then
+  exec "${LOCAL_TARGET_BIN}" "$@"
+fi
+
 WORKSPACE_TARGET_BIN="${MCP_ROOT}/../../target/debug/gg-mcp-server"
 if [[ -x "${WORKSPACE_TARGET_BIN}" ]]; then
   exec "${WORKSPACE_TARGET_BIN}" "$@"

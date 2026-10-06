@@ -39,6 +39,11 @@ API-signal files:
 - `crates/runtime-server/src/openapi.rs`
 - `openapi/runtime-server-openapi.yaml`
 
+The guard is intentionally path-based and conservative. Test-only changes under
+`crates/runtime-server/src/http/tests/` also count as API signals. For those
+changes, regenerate OpenAPI and confirm the artifact is unchanged; document the
+verification without implying that a public route or schema changed.
+
 Docs-signal files:
 
 - `README.md`

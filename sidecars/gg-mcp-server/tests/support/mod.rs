@@ -23,6 +23,14 @@ pub fn mcp_server_command() -> Command {
     Command::new(mcp_server_binary_path())
 }
 
+pub fn mcp_server_dev_launcher_command() -> Command {
+    Command::new(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("bin")
+            .join("gg-mcp-server-dev"),
+    )
+}
+
 pub fn stub_gateway_state(auth_token: &str, model_presets: Vec<String>) -> StubGatewayState {
     StubGatewayState {
         expected_auth_header: format!("Bearer {auth_token}"),

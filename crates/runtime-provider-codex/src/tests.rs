@@ -423,7 +423,8 @@ fn read_log(path: &std::path::Path) -> Vec<Value> {
         .collect()
 }
 
-mod phase9_failures;
+mod failure_contracts;
+mod live_acceptance;
 
 fn legacy_create(runtime_session_id: &str) -> ProviderCreateSessionPolicyRequest {
     ProviderCreateSessionPolicyRequest::legacy_compatible(
@@ -540,6 +541,14 @@ async fn fake_app_server_proves_create_structured_turn_mapping_context_and_harne
         .expect("wait turn");
     assert_eq!(result.status, ProviderTurnStatus::Completed);
     assert_eq!(result.usage.as_ref().unwrap()["modelContextWindow"], 100);
+    assert_eq!(
+        result.usage.as_ref().unwrap()["last_message"],
+        "fake complete"
+    );
+    assert_eq!(
+        result.usage.as_ref().unwrap()["assistant_text"],
+        "fake complete"
+    );
 
     let context = provider
         .observe_context_limit("sess_core")

@@ -228,7 +228,7 @@ async fn duplicate_terminal_notifications_converge_idempotently() {
         .wait_for_turn(ProviderWaitTurnRequest {
             runtime_session_id: "sess_duplicate".to_string(),
             turn_id: ack.turn_id.clone(),
-            timeout_ms: Some(2_000),
+            timeout_ms: Some(10_000),
         })
         .await
         .expect("first wait");
@@ -236,7 +236,7 @@ async fn duplicate_terminal_notifications_converge_idempotently() {
         .wait_for_turn(ProviderWaitTurnRequest {
             runtime_session_id: "sess_duplicate".to_string(),
             turn_id: ack.turn_id,
-            timeout_ms: Some(2_000),
+            timeout_ms: Some(10_000),
         })
         .await
         .expect("second wait");

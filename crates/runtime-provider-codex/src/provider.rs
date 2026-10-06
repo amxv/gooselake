@@ -676,7 +676,7 @@ impl RuntimeProvider for CodexProvider {
         &self,
         req: ProviderWaitTurnRequest,
     ) -> Result<ProviderTurnResult, RuntimeError> {
-        let (transport, thread_id, native_turn_id) = {
+        let (transport, thread_id, native_turn_id, is_active) = {
             let sessions = self.inner.sessions.read().await;
             let session = sessions
                 .get(req.runtime_session_id.as_str())
@@ -710,52 +710,61 @@ impl RuntimeProvider for CodexProvider {
                 Arc::clone(&session.transport),
                 session.provider_session_ref.clone(),
                 native_turn_id,
+                session.active_turn_id.as_deref() == Some(req.turn_id.as_str()),
             )
         };
 
-        let observation = transport
-            .request(
-                "thread/read",
-                json!({"threadId": thread_id, "includeTurns": true}),
-            )
-            .await
-            .map_err(|error| {
-                if error.provider_dispatch_code().is_some() {
-                    error
-                } else {
-                    RuntimeError::provider_dispatch_unknown(
-                        "codex_turn_observation_failed",
-                        format!(
-                            "failed to reconcile dispatched Codex turn {} via thread/read: {error}",
-                            req.turn_id
-                        ),
-                    )
+        // Live owned turns converge from the app-server event stream. An eager
+        // thread/read immediately after turn/start can race Codex's rollout
+        // metadata flush and transiently report an empty rollout. Only use
+        // thread/read as recovery evidence when this provider instance no
+        // longer considers the logical turn active (for example after restart
+        // when the durable logical/native mapping has been restored).
+        if !is_active {
+            let observation = transport
+                .request(
+                    "thread/read",
+                    json!({"threadId": thread_id, "includeTurns": true}),
+                )
+                .await
+                .map_err(|error| {
+                    if error.provider_dispatch_code().is_some() {
+                        error
+                    } else {
+                        RuntimeError::provider_dispatch_unknown(
+                            "codex_turn_observation_failed",
+                            format!(
+                                "failed to reconcile dispatched Codex turn {} via thread/read: {error}",
+                                req.turn_id
+                            ),
+                        )
+                    }
+                })?;
+            if let Some((status, usage, error)) =
+                terminal_turn_from_thread_read(&observation, native_turn_id.as_str())
+            {
+                if let Some(usage) = usage {
+                    if let Some(session) = self
+                        .inner
+                        .sessions
+                        .write()
+                        .await
+                        .get_mut(req.runtime_session_id.as_str())
+                    {
+                        session
+                            .usage_by_native_turn
+                            .insert(native_turn_id.clone(), usage);
+                    }
                 }
-            })?;
-        if let Some((status, usage, error)) =
-            terminal_turn_from_thread_read(&observation, native_turn_id.as_str())
-        {
-            if let Some(usage) = usage {
-                if let Some(session) = self
-                    .inner
-                    .sessions
-                    .write()
-                    .await
-                    .get_mut(req.runtime_session_id.as_str())
-                {
-                    session
-                        .usage_by_native_turn
-                        .insert(native_turn_id.clone(), usage);
-                }
+                Self::complete_native_turn(
+                    &self.inner,
+                    req.runtime_session_id.as_str(),
+                    native_turn_id.as_str(),
+                    status,
+                    error,
+                )
+                .await;
             }
-            Self::complete_native_turn(
-                &self.inner,
-                req.runtime_session_id.as_str(),
-                native_turn_id.as_str(),
-                status,
-                error,
-            )
-            .await;
         }
 
         let (sender, receiver) = oneshot::channel();
@@ -842,10 +851,10 @@ impl RuntimeProvider for CodexProvider {
         &self,
         req: ProviderCompactSessionRequest,
     ) -> Result<ProviderCompactSessionOutcome, RuntimeError> {
-        let (transport, thread_id, receiver) = {
-            let mut sessions = self.inner.sessions.write().await;
+        let (transport, thread_id) = {
+            let sessions = self.inner.sessions.read().await;
             let session = sessions
-                .get_mut(req.runtime_session_id.as_str())
+                .get(req.runtime_session_id.as_str())
                 .ok_or_else(|| {
                     RuntimeError::NotFound(format!("codex session {}", req.runtime_session_id))
                 })?;
@@ -855,32 +864,20 @@ impl RuntimeProvider for CodexProvider {
                     req.runtime_session_id
                 )));
             }
-            let (sender, receiver) = oneshot::channel();
-            session.compaction_waiters.push(sender);
             (
                 Arc::clone(&session.transport),
                 session.provider_session_ref.clone(),
-                receiver,
             )
         };
         transport
             .request("thread/compact/start", json!({"threadId": thread_id}))
             .await?;
-        match tokio::time::timeout(
-            Duration::from_millis(self.inner.config.request_timeout_ms.max(1)),
-            receiver,
-        )
-        .await
-        {
-            Ok(Ok(())) => Ok(ProviderCompactSessionOutcome::Accepted),
-            Ok(Err(_)) => Err(RuntimeError::InvalidState(
-                "Codex compaction observation channel closed".to_string(),
-            )),
-            Err(_) => Err(RuntimeError::provider_dispatch_unknown(
-                "codex_compaction_timeout",
-                "Codex compaction request was accepted but no completion observation arrived",
-            )),
-        }
+        // `thread/compact/start` acknowledges admission, not completion. Current
+        // Codex may surface completion later through several notification/item
+        // shapes, so this provider primitive mirrors Golden Goose and reports
+        // acceptance once the request itself succeeds rather than turning an
+        // absent follow-up notification into a false dispatch failure.
+        Ok(ProviderCompactSessionOutcome::Accepted)
     }
 
     async fn hard_fork_edit_rerun(

@@ -17,6 +17,7 @@ export type SdkPermissionDeny = {
 export type SdkPermissionResult = SdkPermissionAllow | SdkPermissionDeny
 
 export type SdkQueryHandle = AsyncIterable<unknown> & {
+  close?: () => void
   interrupt?: () => Promise<void>
   reconnectMcpServer?: (serverName: string) => Promise<void>
   supportedCommands?: () => Promise<SdkSlashCommand[]>
@@ -114,7 +115,15 @@ export interface ClaudeInputItem {
   mediaType?: string
 }
 
+export type ClaudePermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk'
+export type ClaudePermissionIntent = { kind: 'inherit_provider_configuration' } | { kind: 'explicit'; mode: ClaudePermissionMode }
+export type ClaudeSettingSource = 'user' | 'project' | 'local'
+export type ClaudeSettingSourcesIntent = { kind: 'standard' } | { kind: 'isolated' } | { kind: 'explicit'; sources: ClaudeSettingSource[] }
+
 export interface ClaudeSessionOptions {
+  settingSourcesIntent: ClaudeSettingSourcesIntent
+  harnessInstructions?: string
+
   cwd?: string
   model?: string
   permissionMode?: string
@@ -186,9 +195,9 @@ export interface SessionState {
   sdkSessionRef: string | null
   options: ClaudeSessionOptions
   activeTurnId: string | null
-  ggTeamToolApprovalPending: boolean
-  ggTeamToolInFlight: boolean
-  ggTeamToolInvocationId: string | null
+  ggSerializedToolApprovalPending: boolean
+  ggSerializedToolInFlight: boolean
+  ggSerializedToolInvocationId: string | null
   interruptedTurns: Set<string>
   turnResults: Map<string, ClaudeTurnResult>
   turnOrder: string[]
@@ -202,5 +211,8 @@ export interface SessionState {
   turnAssistantMessageIds: Map<string, string[]>
   turnRollbackBoundaryIds: Map<string, string>
   userMessageTurnIds: Map<string, string>
+  bindingGeneration: number
+  rebinding: boolean
+  requiredInitCwd: string | null
   lastKnownUsage: ClaudeTurnUsage | null
 }

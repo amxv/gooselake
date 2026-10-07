@@ -177,6 +177,20 @@ pub trait RuntimeStore: Send + Sync {
         ))
     }
 
+    fn compare_and_set_workspace_agent_recreation_policy(
+        &self,
+        _session: &SessionRecord,
+        _agent_id: &str,
+        _expected_revision: u64,
+        _recreation_policy: &crate::WorkspaceAgentRecreationPolicy,
+        _changed_at: i64,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace agent recreation-policy mutation is not implemented by this runtime store"
+                .to_string(),
+        ))
+    }
+
     fn get_operation(&self, _operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "durable operation authority is not implemented by this runtime store".to_string(),

@@ -1,4 +1,10 @@
 #!/usr/bin/env bun
+import {
+  parseClaudePermissionIntent,
+  parseClaudeSessionBindingPolicy,
+  parseClaudeSettingSourcesPolicy,
+  validateClaudeSessionOptions,
+} from './claude-client/policy'
 
 import readline from 'node:readline'
 import { ClaudeClient } from './claude-client'
@@ -94,17 +100,17 @@ async function handleRequest(
         supportsStructuredOutput: true,
       }
     case 'session.create': {
-      const created = client.createSession({
+      const created = client.createSession(validateClaudeSessionOptions({
         cwd: asOptionalString(request.params.cwd),
         model: asOptionalString(request.params.model),
-        permissionMode: asOptionalString(request.params.permissionMode),
-        settingSources: asStringArray(request.params.settingSources),
+        ...parseClaudeSessionBindingPolicy(request.params, asOptionalString(request.params.cwd)),
+        harnessInstructions: asOptionalString(request.params.harnessInstructions),
         systemPrompt: asNullableString(request.params.systemPrompt),
         allowedTools: asStringArray(request.params.allowedTools),
         disallowedTools: asStringArray(request.params.disallowedTools),
         thinkingEffort: asOptionalThinkingEffort(request.params.thinkingEffort),
         ggMcpServer: asGgMcpServerConfig(request.params.ggMcpServer),
-      })
+      }))
       return created
     }
     case 'session.resume': {
@@ -117,16 +123,17 @@ async function handleRequest(
       )
       const resumed = client.resumeSession(
         providerSessionRef,
-        {
+        validateClaudeSessionOptions({
           cwd: asOptionalString(request.params.cwd),
           model: asOptionalString(request.params.model),
-          permissionMode: asOptionalString(request.params.permissionMode),
-          settingSources: asStringArray(request.params.settingSources),
+          ...parseClaudeSessionBindingPolicy(request.params, asOptionalString(request.params.cwd)),
+          harnessInstructions: asOptionalString(request.params.harnessInstructions),
+          thinkingEffort: asOptionalThinkingEffort(request.params.thinkingEffort),
           systemPrompt: asNullableString(request.params.systemPrompt),
           allowedTools: asStringArray(request.params.allowedTools),
           disallowedTools: asStringArray(request.params.disallowedTools),
           ggMcpServer: asGgMcpServerConfig(request.params.ggMcpServer),
-        },
+        }),
         providerSessionRef,
         claudeCanonicalSessionRef
       )
@@ -136,9 +143,13 @@ async function handleRequest(
       const sessionId = ensureString(request.params.sessionId, 'sessionId')
       const input = asInputItems(request.params.input)
       const expectedTurnId = asNullableString(request.params.expectedTurnId)
-      const ack = await client.sendInput(sessionId, input, expectedTurnId)
+      const ack = await client.sendInput(sessionId, input, expectedTurnId, parseClaudePermissionIntent(request.params.permissionIntent), asOptionalThinkingEffort(request.params.thinkingEffort))
       return ack
     }
+    case 'session.rebind':
+      return await client.rebindSession(ensureString(request.params.sessionId, 'sessionId'), ensureString(request.params.destinationCwd, 'destinationCwd'))
+    case 'session.compact':
+      return await client.compactSession(ensureString(request.params.sessionId, 'sessionId'))
     case 'session.hard_fork': {
       const sessionId = ensureString(request.params.sessionId, 'sessionId')
       const rollbackBoundaryId = ensureString(
@@ -178,8 +189,11 @@ async function handleRequest(
       const commands = await client.supportedCommands({
         cwd: asOptionalString(request.params.cwd),
         model: asOptionalString(request.params.model),
-        permissionMode: asOptionalString(request.params.permissionMode),
-        settingSources: asStringArray(request.params.settingSources),
+        settingSourcesIntent: parseClaudeSettingSourcesPolicy(
+          request.params,
+          asOptionalString(request.params.cwd)
+        ),
+        harnessInstructions: asOptionalString(request.params.harnessInstructions),
         systemPrompt: asNullableString(request.params.systemPrompt),
         allowedTools: asStringArray(request.params.allowedTools),
         disallowedTools: asStringArray(request.params.disallowedTools),

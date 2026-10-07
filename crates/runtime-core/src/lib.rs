@@ -59,10 +59,12 @@ pub use provider_contract::{
     ProviderCompactSessionOutcome, ProviderCompactSessionRequest, ProviderContextLimitObservation,
     ProviderDiscoveryMode, ProviderHardForkEditRerunRequest, ProviderModelCapabilities,
     ProviderModelDescriptor, ProviderModelDiscoveryRequest, ProviderModelDiscoveryResponse,
-    ProviderModelDiscoveryStartupMode, ProviderPermissionIntent, ProviderSessionLaunchPolicy,
-    ProviderSessionPreferences, ProviderSettingSource, ProviderSettingSourcesIntent,
-    ProviderSkillDescriptor, ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse,
-    ProviderThinkingEffort, ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest,
+    ProviderModelDiscoveryStartupMode, ProviderPermissionIntent, ProviderPermissionMutationRequest,
+    ProviderPermissionMutationResult, ProviderSessionLaunchPolicy, ProviderSessionPreferences,
+    ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
+    ProviderSettingSource, ProviderSettingSourcesIntent, ProviderSkillDescriptor,
+    ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse, ProviderThinkingEffort,
+    ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest,
 };
 pub use provider_registry::ProviderRegistry;
 pub use repository_identity::{resolve_repository_identity, RepositoryIdentity};

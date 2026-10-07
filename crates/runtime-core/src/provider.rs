@@ -7,9 +7,10 @@ use crate::provider_contract::{
     ProviderCapabilities, ProviderCapabilitySupport, ProviderCompactSessionOutcome,
     ProviderCompactSessionRequest, ProviderContextLimitObservation, ProviderDiscoveryMode,
     ProviderHardForkEditRerunRequest, ProviderModelDescriptor, ProviderModelDiscoveryRequest,
-    ProviderModelDiscoveryResponse, ProviderPermissionIntent, ProviderSessionLaunchPolicy,
-    ProviderSessionPreferences, ProviderSettingSourcesIntent, ProviderSkillDescriptor,
-    ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse, ProviderWorkspaceRebindEvidence,
+    ProviderModelDiscoveryResponse, ProviderPermissionIntent, ProviderPermissionMutationRequest,
+    ProviderPermissionMutationResult, ProviderSessionLaunchPolicy, ProviderSessionPreferences,
+    ProviderSettingSourcesIntent, ProviderSkillDescriptor, ProviderSkillDiscoveryRequest,
+    ProviderSkillDiscoveryResponse, ProviderWorkspaceRebindEvidence,
     ProviderWorkspaceRebindRequest,
 };
 use crate::RuntimeError;
@@ -319,12 +320,33 @@ pub struct ProviderTurnResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum ProviderRuntimeEvent {
+    SessionIdentityObserved {
+        runtime_session_id: String,
+        turn_id: String,
+        provider_session_ref: String,
+        canonical_provider_session_ref: String,
+    },
     ApprovalRequested {
         runtime_session_id: String,
         turn_id: String,
         provider_approval_ref: String,
         tool_call_id: Option<String>,
         request: Value,
+    },
+    PermissionObserved {
+        runtime_session_id: String,
+        turn_id: String,
+        permission_mode: String,
+        resolved_turn_selection: Option<String>,
+    },
+    ContextCompactionObserved {
+        runtime_session_id: String,
+        turn_id: Option<String>,
+        phase: String,
+        trigger: Option<String>,
+        pre_tokens: Option<u64>,
+        post_tokens: Option<u64>,
+        context_window_size: Option<u64>,
     },
     TurnOutcomeUnknown {
         runtime_session_id: String,
@@ -442,6 +464,34 @@ pub trait RuntimeProvider: Send + Sync {
     ) -> Result<ProviderContextLimitObservation, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "provider context-limit observation is not supported".to_string(),
+        ))
+    }
+
+    async fn mutate_session_permission(
+        &self,
+        _req: ProviderPermissionMutationRequest,
+    ) -> Result<ProviderPermissionMutationResult, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider permission mutation is not supported".to_string(),
+        ))
+    }
+
+    /// Return the provider's latest proven native session identity. Providers
+    /// that expose their native identity only after starting a turn may use
+    /// this to close the terminal/event-stream race during persistence.
+    async fn observe_session_identity(
+        &self,
+        _runtime_session_id: &str,
+    ) -> Result<Option<ProviderSession>, RuntimeError> {
+        Ok(None)
+    }
+
+    async fn mutate_session_preferences(
+        &self,
+        _req: crate::ProviderSessionPreferencesMutationRequest,
+    ) -> Result<crate::ProviderSessionPreferencesMutationResult, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider session preference mutation is not supported".to_string(),
         ))
     }
 

@@ -11,10 +11,10 @@ use runtime_core::{
     RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionRecord,
     TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
     TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
-    WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceInterruptAdmission,
-    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
-    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
-    WorkspaceRegisterResponse,
+    WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
+    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
+    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -220,6 +220,24 @@ impl RuntimeStore for SqliteRuntimeStore {
             archive_reason,
             changed_at,
         )
+    }
+
+    fn compare_and_set_workspace_agent_recreation_policy(
+        &self,
+        session: &SessionRecord,
+        agent_id: &str,
+        expected_revision: u64,
+        recreation_policy: &WorkspaceAgentRecreationPolicy,
+        changed_at: i64,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        self.repository
+            .compare_and_set_workspace_agent_recreation_policy(
+                session,
+                agent_id,
+                expected_revision,
+                recreation_policy,
+                changed_at,
+            )
     }
 
     fn get_operation(&self, operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {

@@ -27,6 +27,8 @@ use serde_json::Value;
 mod auth_tests;
 mod bridge_path_tests;
 mod contract_tests;
+mod identity_recovery_tests;
+mod policy_and_advanced_tests;
 
 const FAKE_BRIDGE_SCRIPT: &str = r#"#!/usr/bin/env python3
 import json
@@ -126,7 +128,7 @@ for raw_line in sys.stdin:
       {
         "sessionId": session_id,
         "providerSessionRef": f"provider-session-{session_index}",
-        "claudeCanonicalSessionRef": f"canonical-session-{session_index}",
+        "claudeCanonicalSessionRef": None if scenario == "late_identity" else f"canonical-session-{session_index}",
       },
     )
     continue
@@ -150,7 +152,7 @@ for raw_line in sys.stdin:
       {
         "sessionId": session_id,
         "providerSessionRef": provider_session_ref,
-        "claudeCanonicalSessionRef": canonical_ref or f"canonical-resume-{session_index}",
+        "claudeCanonicalSessionRef": "wrong-native" if scenario == "resume_mismatch" else canonical_ref or f"canonical-resume-{session_index}",
       },
     )
     continue
@@ -174,8 +176,20 @@ for raw_line in sys.stdin:
         "turnId": f"bridge-turn-{turn_index}",
       },
     )
+    if scenario == "late_identity":
+      emit({"event": "session.updated", "seq": 1, "sessionId": params["sessionId"], "turnId": f"bridge-turn-{turn_index}", "payload": {"providerSessionRef": "provider-session-1", "claudeCanonicalSessionRef": "canonical-late-1"}})
+    if scenario == "event_usage":
+      emit({"event": "turn.completed", "seq": 1, "sessionId": params["sessionId"], "turnId": f"bridge-turn-{turn_index}", "payload": {"status": "completed", "usage": {"inputTokens": 40, "outputTokens": 10, "contextWindowSize": 100}}})
+    if scenario == "permission_event":
+      emit({"event": "permission.observed", "seq": 1, "sessionId": params["sessionId"], "turnId": f"bridge-turn-{turn_index}", "payload": {"permissionMode": "plan", "resolvedTurnSelection": "plan"}})
+    if scenario == "compaction_event":
+      emit({"event": "context.compaction", "seq": 1, "sessionId": params["sessionId"], "turnId": f"bridge-turn-{turn_index}", "payload": {"phase": "started"}})
+      emit({"event": "context.compaction", "seq": 2, "sessionId": params["sessionId"], "turnId": f"bridge-turn-{turn_index}", "payload": {"phase": "completed", "trigger": "auto", "preTokens": 80, "postTokens": 25, "contextWindowSize": 100}})
     continue
 
+  if method == "session.supported_models":
+    emit_ok(rpc_id, {"models": [{"value": "claude-sonnet-5-5", "displayName": "Sonnet", "supportsEffort": True, "supportedEffortLevels": ["high", "max"]}]})
+    continue
   if method == "session.interrupt":
     emit_ok(rpc_id, {"ok": True})
     continue
@@ -199,11 +213,23 @@ for raw_line in sys.stdin:
       {
         "turnId": turn_id,
         "status": "completed",
-        "usage": {"output_tokens": 1},
+        "usage": {"output_tokens": 1, "inputTokens": 100, "outputTokens": 20, "cacheReadInputTokens": 30, "contextWindowSize": 1000},
       },
     )
     continue
 
+  if method == "session.supported_commands":
+    emit_ok(rpc_id, {"commands": [{"name": "review", "description": "Review code", "argumentHint": "<path>"}, {"name": "review"}]})
+    continue
+  if method == "session.rebind":
+    emit_ok(rpc_id, {"effectiveCwd": "/wrong" if scenario == "rebind_mismatch" else params["destinationCwd"], "bindingGeneration": 1, "providerSessionRef": "provider-session-1", "claudeCanonicalSessionRef": "canonical-session-1"})
+    continue
+  if method == "session.compact":
+    emit_ok(rpc_id, {"outcome": "not_performed" if scenario == "compact_noop" else "accepted"})
+    continue
+  if method == "session.hard_fork":
+    emit_ok(rpc_id, {"childProviderSessionRef": "child-provider", "childClaudeCanonicalSessionRef": None if scenario == "hard_fork_missing_identity" else "child-native", "rolledBackTurnIds": [params["rollbackBoundaryId"]]})
+    continue
   if method == "session.close":
     emit_ok(rpc_id, {"ok": True})
     continue
@@ -297,11 +323,16 @@ impl FakeClaudeBridgeHarness {
         ClaudeProvider::new(ClaudeProviderConfig {
             enabled: true,
             config_dir: self.config_dir.clone(),
-            bridge_command: "python3".to_string(),
+            // Resolve once before overriding HOME: version-manager launchers can
+            // contend or perform setup for every fake-sidecar process.
+            bridge_command: fake_bridge_python(),
             bridge_args: vec![self.script_path.display().to_string()],
             max_bridges: 1,
             max_sessions_per_bridge: 8,
-            request_timeout_ms: 2_000,
+            // The workspace test runner starts many subprocess-backed provider
+            // fixtures concurrently; keep the fake bridge timeout above normal
+            // scheduler contention so bridge startup does not flake under load.
+            request_timeout_ms: 10_000,
             default_wait_timeout_ms: 5_000,
             heartbeat_interval_ms: 120_000,
             heartbeat_failure_threshold: 3,
@@ -439,4 +470,23 @@ async fn wait_for_ready_session(manager: &Arc<RuntimeSessionManager>, session_id
         "session {session_id} did not become ready in time (status={}, active_turn_id={:?})",
         session.status, session.active_turn_id
     );
+}
+
+fn fake_bridge_python() -> String {
+    static PYTHON: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PYTHON
+        .get_or_init(|| {
+            let output = std::process::Command::new("python3")
+                .args(["-c", "import sys; print(sys.executable)"])
+                .output()
+                .expect("resolve fake bridge Python interpreter");
+            assert!(
+                output.status.success(),
+                "Python interpreter resolution failed"
+            );
+            let path = String::from_utf8(output.stdout).expect("Python executable path");
+            assert!(!path.trim().is_empty(), "Python executable path is empty");
+            path.trim().to_string()
+        })
+        .clone()
 }

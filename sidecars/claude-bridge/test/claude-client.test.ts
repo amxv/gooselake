@@ -579,6 +579,7 @@ describe('claude client bridge behavior', () => {
       event => event.event === 'session.updated'
     )
     expect(sessionUpdatedEvent).toBeDefined()
+    expect(sessionUpdatedEvent?.turnId).toBe(ack.turnId)
     expect(sessionUpdatedEvent?.payload.providerSessionRef).toBe(
       session.providerSessionRef
     )
@@ -793,6 +794,7 @@ describe('claude client bridge behavior', () => {
       phase: 'completed',
       trigger: 'manual',
       preTokens: 123_456,
+      postTokens: 6_971,
     })
   })
 
@@ -923,7 +925,7 @@ describe('claude client bridge behavior', () => {
     ).toBe('completed')
   })
 
-  test('sdk mode passes user config scope to sdk query options', async () => {
+  test('sdk mode does not override typed setting sources with config scope', async () => {
     const events: BridgeEvent[] = []
     let capturedOptions: Record<string, unknown> | undefined
     const client = new ClaudeClient(event => events.push(event), {
@@ -956,10 +958,10 @@ describe('claude client bridge behavior', () => {
 
     const result = await client.waitForTurn(session.sessionId, ack.turnId, 4000)
     expect(result.status).toBe('completed')
-    expect(capturedOptions?.configScope).toBe('user')
+    expect(capturedOptions?.configScope).toBeUndefined()
   })
 
-  test('sdk mode wires external gg MCP server and rewrites gg tool prefixes', async () => {
+  test('sdk mode wires external gg MCP server and rewrites final plus transitional gg tool names', async () => {
     const events: BridgeEvent[] = []
     let capturedOptions: Record<string, unknown> | undefined
     const client = new ClaudeClient(event => events.push(event), {
@@ -978,6 +980,9 @@ describe('claude client bridge behavior', () => {
         command: '/tmp/gg-mcp-server',
       },
       allowedTools: [
+        'mcp__gg_old__gg_message',
+        'mcp__gg_old__gg_team',
+        'mcp__gg_old__gg_process',
         'mcp__gg_team__gg_team_message',
         'mcp__gg_process__gg_process_run',
         'mcp__gg__gg_team_status',
@@ -1026,6 +1031,9 @@ describe('claude client bridge behavior', () => {
     )
 
     expect(capturedOptions?.allowedTools).toEqual([
+      'mcp__gg_runtime__gg_message',
+      'mcp__gg_runtime__gg_team',
+      'mcp__gg_runtime__gg_process',
       'mcp__gg_runtime__gg_team_message',
       'mcp__gg_runtime__gg_process_run',
       'mcp__gg_runtime__gg_team_status',
@@ -1039,13 +1047,13 @@ describe('claude client bridge behavior', () => {
     ])
   })
 
-  test('sdk mode injects caller id for namespaced gg MCP tools', async () => {
+  test('sdk mode injects caller id for the final semantic gg_message tool', async () => {
     const events: BridgeEvent[] = []
     let capturedPermission: Record<string, unknown> | undefined
     const client = new ClaudeClient(event => events.push(event), {
       mode: 'sdk',
       sdkQuery: createSdkQuerySinglePermissionCaptureStub({
-        toolName: 'mcp__gg__goldengoose.gg_team_status',
+        toolName: 'mcp__gg__gg_message',
         onPermission: permission => {
           capturedPermission = permission
         },
@@ -1462,9 +1470,11 @@ describe('claude client bridge behavior', () => {
     )
 
     expect(historyLookupCount).toBe(0)
-    expect(hardForkResult.childProviderSessionRef).toBe(
+    expect(hardForkResult.childProviderSessionRef).toBe(queryCalls[2]?.sessionId)
+    expect(hardForkResult.childClaudeCanonicalSessionRef).toBe(
       'sdk_session_child_from_capture'
     )
+    expect(hardForkResult.rolledBackTurnIds).toEqual([secondAck.turnId])
     expect(queryCalls).toHaveLength(3)
     expect(queryCalls[2]?.resume).toBe('sdk_session_root')
     expect(queryCalls[2]?.forkSession).toBe(true)
@@ -1475,7 +1485,7 @@ describe('claude client bridge behavior', () => {
       event => event.event === 'session.updated'
     )
     expect(sessionUpdatedEvents.at(-1)?.payload.providerSessionRef).toBe(
-      'sdk_session_child_from_capture'
+      queryCalls[2]?.sessionId
     )
     expect(sessionUpdatedEvents.at(-1)?.payload.claudeCanonicalSessionRef).toBe(
       'sdk_session_child_from_capture'
@@ -1604,7 +1614,8 @@ describe('claude client bridge behavior', () => {
       'history_user_turn_2'
     )
 
-    expect(hardForkResult.childProviderSessionRef).toBe(
+    expect(hardForkResult.childProviderSessionRef).toBe(queryCalls[2]?.sessionId)
+    expect(hardForkResult.childClaudeCanonicalSessionRef).toBe(
       'sdk_session_history_child'
     )
     expect(historyCalls).toEqual([
@@ -1642,7 +1653,7 @@ describe('claude client bridge behavior', () => {
       event => event.event === 'session.updated'
     )
     expect(sessionUpdatedEvents.at(-1)?.payload.providerSessionRef).toBe(
-      'sdk_session_history_child'
+      queryCalls[2]?.sessionId
     )
     expect(sessionUpdatedEvents.at(-1)?.payload.claudeCanonicalSessionRef).toBe(
       'sdk_session_history_child'
@@ -1861,7 +1872,8 @@ describe('claude client bridge behavior', () => {
       'first_turn_user_boundary'
     )
 
-    expect(hardForkResult.childProviderSessionRef).toBe(
+    expect(hardForkResult.childProviderSessionRef).toBe(queryCalls[1]?.sessionId)
+    expect(hardForkResult.childClaudeCanonicalSessionRef).toBe(
       'sdk_session_fresh_child'
     )
     expect(queryCalls).toHaveLength(2)
@@ -1972,6 +1984,7 @@ function createSdkQueryCompactionLifecycleStub(
         compact_metadata: {
           trigger: 'manual',
           pre_tokens: 123_456,
+          post_tokens: 6_971,
         },
       }
 

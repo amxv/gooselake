@@ -1,3 +1,5 @@
+import { rebindSession, compactSession } from './client/advanced'
+import type { ClaudePermissionIntent } from './types'
 import { randomUUID } from 'node:crypto'
 
 import { BridgeError } from '../errors'
@@ -21,6 +23,12 @@ import {
   ensureSdkExternalMcpSessionOptions,
 } from './client/session-state'
 import { runTurnWithSdk } from './client/sdk-turn'
+import {
+  GG_SERIALIZED_TOOL_IN_FLIGHT_DENY_MESSAGE,
+  isGgScopedMcpToolName,
+  isGgSerializedMcpToolName,
+  isStreamClosedToolResult,
+} from './client/tool-metadata'
 import type {
   ApprovalDecision,
   BridgeMode,
@@ -44,13 +52,6 @@ import type {
 
 const GG_CALLER_AGENT_ID_TOOL_INPUT_KEY = '__gg_caller_agent_id'
 const GG_TOOL_INVOCATION_ID_TOOL_INPUT_KEY = '__gg_tool_invocation_id'
-const GG_TEAM_TOOL_PREFIX = 'gg_team_'
-const GG_PROCESS_TOOL_PREFIX = 'gg_process_'
-const GG_MARKDOWN_TOOL_PREFIX = 'gg_markdown_'
-const MCP_TOOL_PREFIX = 'mcp__'
-const STREAM_CLOSED_TOOL_RESULT = 'Stream closed'
-const GG_TEAM_TOOL_IN_FLIGHT_DENY_MESSAGE =
-  'Another gg_team tool call is already in flight for this session. Retry this tool call after the current call completes.'
 
 
 function normalizeSupportedEffortLevels(
@@ -75,7 +76,7 @@ export class ClaudeClient {
   private nextSession = 1
   private nextTurn = 1
   private nextApproval = 1
-  private nextGgToolInvocation = 1
+  private nextGgSerializedToolInvocation = 1
   private readonly emit: ClaudeBridgeEventCallback
   private readonly mode: BridgeMode
   private readonly sdkQueryOverride?: SdkQueryFn
@@ -159,7 +160,10 @@ export class ClaudeClient {
       options
     )
     const sessionRef = providerSessionRef ?? sessionId
+    if (this.mode === 'sdk' && !claudeCanonicalSessionRef?.trim()) throw new BridgeError('BAD_REQUEST', 'Resume requires canonical SDK identity')
     const canonicalSessionRef = claudeCanonicalSessionRef ?? sessionRef
+    const existing = this.sessions.get(sessionId)
+    if (existing && (existing.activeTurnId || existing.activeSdkQuery || existing.rebinding)) throw new BridgeError('TURN_IN_PROGRESS', 'Claude session is busy')
     const state = this.sessions.get(sessionId)
     if (!state) {
       this.sessions.set(
@@ -180,9 +184,9 @@ export class ClaudeClient {
       state.providerSessionRef = sessionRef
       state.sdkSessionRef = canonicalSessionRef
       state.activeTurnId = null
-      state.ggTeamToolApprovalPending = false
-      state.ggTeamToolInFlight = false
-      state.ggTeamToolInvocationId = null
+      state.ggSerializedToolApprovalPending = false
+      state.ggSerializedToolInFlight = false
+      state.ggSerializedToolInvocationId = null
       state.interruptedTurns.clear()
       state.turnResults.clear()
       state.turnOrder = []
@@ -220,9 +224,13 @@ export class ClaudeClient {
   async sendInput(
     sessionId: string,
     input: ClaudeInputItem[],
-    expectedTurnId?: string | null
+    expectedTurnId?: string | null,
+    permissionIntent?: ClaudePermissionIntent,
+    thinkingEffort?: ClaudeSessionOptions['thinkingEffort']
   ): Promise<{ turnId: string; status: 'inProgress' }> {
     const session = this.requireSession(sessionId)
+    if (session.rebinding || (session.activeSdkQuery && !session.activeTurnId)) throw new BridgeError('TURN_IN_PROGRESS', 'Claude session is busy')
+    if (thinkingEffort !== undefined) session.options.thinkingEffort = thinkingEffort
     if (session.activeTurnId) {
       if (!expectedTurnId || expectedTurnId !== session.activeTurnId) {
         throw new BridgeError(
@@ -271,7 +279,7 @@ export class ClaudeClient {
       payload: { turnId },
     })
 
-    void this.runTurn(session, turnId, input)
+    void this.runTurn(session, turnId, input, permissionIntent)
 
     return { turnId, status: 'inProgress' }
   }
@@ -384,7 +392,11 @@ export class ClaudeClient {
   async hardForkSession(
     sessionId: string,
     rollbackBoundaryId: string
-  ): Promise<{ childProviderSessionRef: string }> {
+  ): Promise<{
+    childProviderSessionRef: string
+    childClaudeCanonicalSessionRef: string
+    rolledBackTurnIds: string[]
+  }> {
     const session = this.requireSession(sessionId)
     const normalizedRollbackBoundaryId = rollbackBoundaryId.trim()
     if (!normalizedRollbackBoundaryId) {
@@ -397,7 +409,7 @@ export class ClaudeClient {
         }
       )
     }
-    if (session.activeTurnId) {
+    if (session.activeTurnId || session.activeSdkQuery || session.rebinding) {
       throw new BridgeError(
         'TURN_IN_PROGRESS',
         `Cannot hard-fork while turn ${session.activeTurnId} is active`,
@@ -416,12 +428,14 @@ export class ClaudeClient {
         }
       )
     }
+    session.rebinding = true
+    try {
     if (this.sdkPrewarmPromise) {
       await this.sdkPrewarmPromise
     }
 
     const sourceSessionRef =
-      session.sdkSessionRef ?? session.providerSessionRef ?? session.sessionId
+      session.sdkSessionRef ?? ''
     if (!sourceSessionRef.trim()) {
       throw new BridgeError(
         'PROTOCOL_VIOLATION',
@@ -447,34 +461,53 @@ export class ClaudeClient {
         sourceSessionRef,
         effectiveBoundaryId
       ))
-    const requestedChildSessionRef = randomUUID()
-    const childProviderSessionRef = await this.executeSdkHardFork(session, {
+    const childProviderSessionRef = randomUUID()
+    let childStateCommitted = false
+    const commitObservedChild = (childClaudeCanonicalSessionRef: string) => {
+      if (childStateCommitted) {
+        return
+      }
+      childStateCommitted = true
+      session.sdkSessionRef = childClaudeCanonicalSessionRef
+      session.providerSessionRef = childProviderSessionRef
+      session.activeTurnId = null
+      session.ggSerializedToolApprovalPending = false
+      session.ggSerializedToolInFlight = false
+      session.ggSerializedToolInvocationId = null
+      this.resolveAllPendingApprovals(session, 'decline')
+      this.pruneTurnStateForHardFork(session, historyBoundary.rolledBackTurnIds)
+
+      this.emit({
+        event: 'session.updated',
+        sessionId,
+        payload: {
+          providerSessionRef: childProviderSessionRef,
+          claudeCanonicalSessionRef: childClaudeCanonicalSessionRef,
+          rolledBackTurnIds: [...historyBoundary.rolledBackTurnIds],
+        },
+      })
+    }
+    const childClaudeCanonicalSessionRef = await this.executeSdkHardFork(session, {
       sourceSessionRef,
-      requestedChildSessionRef,
+      requestedChildSessionRef: childProviderSessionRef,
       predecessorAssistantUuid: historyBoundary.predecessorAssistantUuid,
+      onChildObserved: commitObservedChild,
     })
-
-    session.sdkSessionRef = childProviderSessionRef
-    session.providerSessionRef = childProviderSessionRef
-    session.activeTurnId = null
-    session.ggTeamToolApprovalPending = false
-    session.ggTeamToolInFlight = false
-    session.ggTeamToolInvocationId = null
-    this.resolveAllPendingApprovals(session, 'decline')
-    this.pruneTurnStateForHardFork(session, historyBoundary.rolledBackTurnIds)
-
-    this.emit({
-      event: 'session.updated',
-      sessionId,
-      payload: {
-        providerSessionRef: childProviderSessionRef,
-        claudeCanonicalSessionRef: childProviderSessionRef,
-      },
-    })
+    commitObservedChild(childClaudeCanonicalSessionRef)
 
     return {
       childProviderSessionRef,
+      childClaudeCanonicalSessionRef,
+      rolledBackTurnIds: [...historyBoundary.rolledBackTurnIds],
     }
+    } finally { session.rebinding = false }
+  }
+
+  async rebindSession(sessionId: string, destination: string): Promise<Record<string, unknown>> {
+    return rebindSession(this.requireSession(sessionId), destination, this.mode, this.sdkQueryOverride)
+  }
+  async compactSession(sessionId: string): Promise<{ outcome: 'accepted' | 'not_performed' }> {
+    return compactSession(this.requireSession(sessionId), this.mode, this.emit, this.sdkQueryOverride)
   }
 
   async closeSession(sessionId: string, reason?: string): Promise<void> {
@@ -655,11 +688,12 @@ export class ClaudeClient {
   private async runTurn(
     session: SessionState,
     turnId: string,
-    input: ClaudeInputItem[]
+    input: ClaudeInputItem[],
+    permissionIntent: ClaudePermissionIntent
   ): Promise<void> {
     const promptText = extractPromptText(input)
     if (this.mode === 'sdk') {
-      await this.runTurnWithSdk(session, turnId, input)
+      await this.runTurnWithSdk(session, turnId, input, permissionIntent)
       return
     }
 
@@ -688,7 +722,8 @@ export class ClaudeClient {
   private async runTurnWithSdk(
     session: SessionState,
     turnId: string,
-    input: ClaudeInputItem[]
+    input: ClaudeInputItem[],
+    permissionIntent: ClaudePermissionIntent
   ): Promise<void> {
     await runTurnWithSdk(
       {
@@ -696,10 +731,10 @@ export class ClaudeClient {
         sdkPrewarmPromise: this.sdkPrewarmPromise,
         sdkQueryOverride: this.sdkQueryOverride,
         handleSdkToolApproval: this.handleSdkToolApproval.bind(this),
-        isGgTeamMcpToolName,
+        isGgSerializedMcpToolName,
         isStreamClosedToolResult,
-        resolveGgTeamMcpServerName,
-        reconnectGgTeamMcpServer: this.reconnectGgTeamMcpServer.bind(this),
+        resolveGgMcpServerName,
+        reconnectGgMcpServer: this.reconnectGgMcpServer.bind(this),
         resolveSdkTurnUsage: this.resolveSdkTurnUsage.bind(this),
         completeTurn: this.completeTurn.bind(this),
         recordTurnAssistantMessageUuid:
@@ -710,7 +745,8 @@ export class ClaudeClient {
       },
       session,
       turnId,
-      input
+      input,
+      permissionIntent
     )
   }
 
@@ -729,18 +765,21 @@ export class ClaudeClient {
       }
     }
 
-    const isGgTeamTool = isGgTeamMcpToolName(toolName)
-    if (isGgTeamTool) {
-      if (session.ggTeamToolApprovalPending || session.ggTeamToolInFlight) {
+    const isGgSerializedTool = isGgSerializedMcpToolName(toolName)
+    if (isGgSerializedTool) {
+      if (
+        session.ggSerializedToolApprovalPending ||
+        session.ggSerializedToolInFlight
+      ) {
         return {
           behavior: 'deny',
-          message: GG_TEAM_TOOL_IN_FLIGHT_DENY_MESSAGE,
+          message: GG_SERIALIZED_TOOL_IN_FLIGHT_DENY_MESSAGE,
         }
       }
-      session.ggTeamToolApprovalPending = true
+      session.ggSerializedToolApprovalPending = true
     }
 
-    let approvedGgTeamTool = false
+    let approvedGgSerializedTool = false
 
     try {
       const approvalId = `approval_${this.nextApproval++}`
@@ -769,12 +808,13 @@ export class ClaudeClient {
       )
 
       if (approvalResponse.decision === 'accept') {
-        if (isGgTeamTool) {
-          if (!session.ggTeamToolInvocationId) {
-            session.ggTeamToolInvocationId = `ggtool_${this.nextGgToolInvocation++}`
+        if (isGgSerializedTool) {
+          if (!session.ggSerializedToolInvocationId) {
+            session.ggSerializedToolInvocationId =
+              `ggtool_${this.nextGgSerializedToolInvocation++}`
           }
-          session.ggTeamToolInFlight = true
-          approvedGgTeamTool = true
+          session.ggSerializedToolInFlight = true
+          approvedGgSerializedTool = true
         }
         let updatedInput = coerceToolInput(
           approvalResponse.updatedInput ?? input
@@ -782,7 +822,9 @@ export class ClaudeClient {
         if (isGgScopedMcpToolName(toolName)) {
           updatedInput = injectGgToolMetadataIntoToolInput(updatedInput, {
             callerAgentId: session.options.ggMcpServer?.callerAgentId,
-            invocationId: isGgTeamTool ? session.ggTeamToolInvocationId : null,
+            invocationId: isGgSerializedTool
+              ? session.ggSerializedToolInvocationId
+              : null,
           })
         }
         return {
@@ -799,16 +841,16 @@ export class ClaudeClient {
         interrupt: true,
       }
     } finally {
-      if (isGgTeamTool) {
-        session.ggTeamToolApprovalPending = false
-        if (!approvedGgTeamTool) {
-          session.ggTeamToolInFlight = false
+      if (isGgSerializedTool) {
+        session.ggSerializedToolApprovalPending = false
+        if (!approvedGgSerializedTool) {
+          session.ggSerializedToolInFlight = false
         }
       }
     }
   }
 
-  private async reconnectGgTeamMcpServer(
+  private async reconnectGgMcpServer(
     query: SdkQueryHandle,
     sessionId: string,
     turnId: string,
@@ -1087,6 +1129,7 @@ export class ClaudeClient {
       sourceSessionRef: string
       requestedChildSessionRef: string
       predecessorAssistantUuid: string | null
+      onChildObserved: (canonicalSessionRef: string) => void
     }
   ): Promise<string> {
     let query: SdkQueryHandle | null = null
@@ -1121,11 +1164,24 @@ export class ClaudeClient {
         )
         if (messageSessionRef) {
           resolvedChildSessionRef = messageSessionRef
+          if (messageSessionRef !== options.sourceSessionRef) {
+            options.onChildObserved(messageSessionRef)
+          }
         }
       }
 
-      const canonicalChildSessionRef =
-        resolvedChildSessionRef ?? options.requestedChildSessionRef
+      if (!resolvedChildSessionRef) {
+        throw new BridgeError(
+          'PROTOCOL_VIOLATION',
+          'Claude hard-fork completed without provider-observed child session evidence',
+          {
+            sessionId: session.sessionId,
+            providerSessionRef: options.sourceSessionRef,
+            requestedChildSessionRef: options.requestedChildSessionRef,
+          }
+        )
+      }
+      const canonicalChildSessionRef = resolvedChildSessionRef
       if (
         options.predecessorAssistantUuid &&
         canonicalChildSessionRef === options.sourceSessionRef
@@ -1379,20 +1435,6 @@ function resolveRolledBackTurnIdsFromHistory(
   return session.turnOrder.slice(currentTurnIndex)
 }
 
-function isGgTeamMcpToolName(toolName: string): boolean {
-  const normalizedLeaf = normalizeToolNameLeaf(toolName)
-  return normalizedLeaf.startsWith(GG_TEAM_TOOL_PREFIX)
-}
-
-function isGgScopedMcpToolName(toolName: string): boolean {
-  const normalizedLeaf = normalizeToolNameLeaf(toolName)
-  return (
-    normalizedLeaf.startsWith(GG_TEAM_TOOL_PREFIX) ||
-    normalizedLeaf.startsWith(GG_PROCESS_TOOL_PREFIX) ||
-    normalizedLeaf.startsWith(GG_MARKDOWN_TOOL_PREFIX)
-  )
-}
-
 function injectGgToolMetadataIntoToolInput(
   input: unknown,
   metadata: {
@@ -1420,37 +1462,9 @@ function injectGgToolMetadataIntoToolInput(
   return nextRecord
 }
 
-function resolveGgTeamMcpServerName(session: SessionState): string {
+function resolveGgMcpServerName(session: SessionState): string {
   if (session.options.ggMcpServer) {
     return session.options.ggMcpServer.serverName?.trim() || 'gg'
   }
   return 'gg'
-}
-
-function normalizeToolNameLeaf(toolName: string): string {
-  const trimmed = toolName.trim()
-  if (!trimmed) {
-    return ''
-  }
-
-  const afterMcpServerPrefix = trimmed.startsWith(MCP_TOOL_PREFIX)
-    ? (() => {
-        const separatorIndex = trimmed.lastIndexOf('__')
-        if (separatorIndex < 0) {
-          return trimmed
-        }
-        return trimmed.slice(separatorIndex + 2)
-      })()
-    : trimmed
-
-  const namespaceDelimiter = afterMcpServerPrefix.lastIndexOf('.')
-  const leaf =
-    namespaceDelimiter >= 0
-      ? afterMcpServerPrefix.slice(namespaceDelimiter + 1)
-      : afterMcpServerPrefix
-  return leaf.trim().toLowerCase()
-}
-
-function isStreamClosedToolResult(output: unknown): boolean {
-  return output === STREAM_CLOSED_TOOL_RESULT
 }

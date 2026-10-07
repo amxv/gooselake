@@ -1,4 +1,6 @@
 import { getOptionalString } from '../guards'
+import { realpathSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { buildSdkPrompt } from '../prompt'
 import {
   contextWindowFromResultMessage,
@@ -25,6 +27,7 @@ import type {
   ApprovalDecision,
   ClaudeBridgeEventCallback,
   ClaudeInputItem,
+  ClaudePermissionIntent,
   ClaudeTurnResult,
   ClaudeTurnUsage,
   SessionState,
@@ -45,10 +48,10 @@ export interface SdkTurnDependencies {
     input: unknown,
     options: Record<string, unknown>
   ) => Promise<SdkPermissionResult>
-  isGgTeamMcpToolName: (toolName: string) => boolean
+  isGgSerializedMcpToolName: (toolName: string) => boolean
   isStreamClosedToolResult: (output: unknown) => boolean
-  resolveGgTeamMcpServerName: (session: SessionState) => string
-  reconnectGgTeamMcpServer: (
+  resolveGgMcpServerName: (session: SessionState) => string
+  reconnectGgMcpServer: (
     query: SdkQueryHandle,
     sessionId: string,
     turnId: string,
@@ -250,7 +253,8 @@ export async function runTurnWithSdk(
   deps: SdkTurnDependencies,
   session: SessionState,
   turnId: string,
-  input: ClaudeInputItem[]
+  input: ClaudeInputItem[],
+  permissionIntent: ClaudePermissionIntent
 ): Promise<void> {
   const messageItemId = `item_msg_${turnId}`
   let emittedMessageDelta = false
@@ -304,6 +308,8 @@ export async function runTurnWithSdk(
     }
   }
 
+  let terminalResult: ClaudeTurnResult | null = null
+  const recordTerminal = (_session: SessionState, result: ClaudeTurnResult) => { terminalResult = result }
   const emitToolUseSummaryFallbackIfNeeded = () => {
     if (
       emittedStreamReasoningDelta ||
@@ -349,12 +355,31 @@ export async function runTurnWithSdk(
       session,
       prompt,
       sdkQueryOverride: deps.sdkQueryOverride,
+      permissionIntent,
+      enableThinkingSummaries: true,
       canUseTool: (toolName, input, options) =>
         deps.handleSdkToolApproval(session, turnId, toolName, input, options),
     })
     session.activeSdkQuery = query
 
     for await (const message of query) {
+      if (session.requiredInitCwd) {
+        const record = message as Record<string, unknown>
+        const observedCwd =
+          record.type === 'system' && record.subtype === 'init'
+            ? getOptionalString(record.cwd)
+            : undefined
+        if (
+          !observedCwd ||
+          canonicalPath(observedCwd) !== canonicalPath(session.requiredInitCwd)
+        ) {
+          query.close?.()
+          throw new Error(
+            'Claude post-rebind turn did not initialize in the committed cwd'
+          )
+        }
+        session.requiredInitCwd = null
+      }
       const updatedClaudeCanonicalSessionRef = updateSessionSdkRef(
         session,
         message
@@ -363,6 +388,7 @@ export async function runTurnWithSdk(
         deps.emit({
           event: 'session.updated',
           sessionId: session.sessionId,
+          turnId,
           payload: {
             providerSessionRef: session.providerSessionRef,
             claudeCanonicalSessionRef: updatedClaudeCanonicalSessionRef,
@@ -482,23 +508,22 @@ export async function runTurnWithSdk(
               },
             })
 
-            if (deps.isGgTeamMcpToolName(toolName)) {
+            if (deps.isGgSerializedMcpToolName(toolName)) {
               const isStreamClosedResult = deps.isStreamClosedToolResult(
                 toolResult.output
               )
               if (isStreamClosedResult) {
-                const ggTeamServerName =
-                  deps.resolveGgTeamMcpServerName(session)
-                await deps.reconnectGgTeamMcpServer(
+                const ggServerName = deps.resolveGgMcpServerName(session)
+                await deps.reconnectGgMcpServer(
                   query,
                   session.sessionId,
                   turnId,
                   toolName,
-                  ggTeamServerName
+                  ggServerName
                 )
               } else if (toolResult.status !== 'in_progress') {
-                session.ggTeamToolInFlight = false
-                session.ggTeamToolInvocationId = null
+                session.ggSerializedToolInFlight = false
+                session.ggSerializedToolInvocationId = null
               }
             }
           }
@@ -507,6 +532,33 @@ export async function runTurnWithSdk(
       }
 
       if (messageType === 'system') {
+        const record = message as Record<string, unknown>
+        if (record.subtype === 'init') {
+          const observedPermissionMode = getOptionalString(record.permissionMode)
+          if (observedPermissionMode) {
+            if (
+              permissionIntent.kind === 'explicit' &&
+              observedPermissionMode !== permissionIntent.mode
+            ) {
+              query.close?.()
+              throw new Error(
+                `Claude SDK observed permission mode ${observedPermissionMode} after Rust requested ${permissionIntent.mode}`
+              )
+            }
+            deps.emit({
+              event: 'permission.observed',
+              sessionId: session.sessionId,
+              turnId,
+              payload: {
+                permissionMode: observedPermissionMode,
+                resolvedTurnSelection:
+                  permissionIntent.kind === 'explicit'
+                    ? permissionIntent.mode
+                    : 'inherit_user_settings',
+              },
+            })
+          }
+        }
         if (hasCompactionInProgressStatus(message)) {
           deps.emit({
             event: 'context.compaction',
@@ -528,6 +580,17 @@ export async function runTurnWithSdk(
               phase: 'completed',
               trigger: compactBoundary.trigger,
               preTokens: compactBoundary.preTokens,
+              ...(compactBoundary.postTokens === null
+                ? {}
+                : {
+                    postTokens: compactBoundary.postTokens,
+                    ...(session.lastKnownUsage?.contextWindowSize === undefined
+                      ? {}
+                      : {
+                          contextWindowSize:
+                            session.lastKnownUsage.contextWindowSize,
+                        }),
+                  }),
             },
           })
         }
@@ -627,7 +690,7 @@ export async function runTurnWithSdk(
           },
         })
 
-        deps.completeTurn(session, {
+        recordTerminal(session, {
           turnId,
           status,
           usage: deps.resolveSdkTurnUsage(session, {
@@ -659,7 +722,7 @@ export async function runTurnWithSdk(
           },
         },
       })
-      deps.completeTurn(session, {
+      recordTerminal(session, {
         turnId,
         status: 'interrupted',
         usage: deps.resolveSdkTurnUsage(session, {
@@ -681,7 +744,7 @@ export async function runTurnWithSdk(
           },
         },
       })
-      deps.completeTurn(session, {
+      recordTerminal(session, {
         turnId,
         status: 'completed',
         usage: deps.resolveSdkTurnUsage(session, {
@@ -706,7 +769,7 @@ export async function runTurnWithSdk(
           },
         },
       })
-      deps.completeTurn(session, {
+      recordTerminal(session, {
         turnId,
         status: 'interrupted',
         usage: deps.resolveSdkTurnUsage(session, {
@@ -741,7 +804,7 @@ export async function runTurnWithSdk(
         },
       },
     })
-    deps.completeTurn(session, {
+    recordTerminal(session, {
       turnId,
       status: 'failed',
       usage: deps.resolveSdkTurnUsage(session, {
@@ -752,9 +815,18 @@ export async function runTurnWithSdk(
   } finally {
     session.activeSdkQuery = null
     session.turnToolItems.delete(turnId)
-    session.ggTeamToolApprovalPending = false
-    session.ggTeamToolInFlight = false
-    session.ggTeamToolInvocationId = null
+    session.ggSerializedToolApprovalPending = false
+    session.ggSerializedToolInFlight = false
+    session.ggSerializedToolInvocationId = null
     deps.resolvePendingApprovalsForTurn(session, turnId, 'decline')
+    if (terminalResult) deps.completeTurn(session, terminalResult)
+  }
+}
+
+function canonicalPath(value: string): string {
+  try {
+    return realpathSync(value)
+  } catch {
+    return resolve(value)
   }
 }

@@ -3,7 +3,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use runtime_core::{ProviderRuntimeEvent, ProviderTurnResult, ProviderTurnStatus, RuntimeError};
+use runtime_core::{
+    ProviderContextLimitObservation, ProviderRuntimeEvent, ProviderTurnResult, ProviderTurnStatus,
+    RuntimeError,
+};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
@@ -508,13 +511,15 @@ async fn handle_bridge_event(
 
     match event_name.as_str() {
         "session.updated" => {
-            if let Some(provider_session_ref) = payload_body
+            let observed_provider_session_ref = payload_body
                 .get("providerSessionRef")
                 .and_then(Value::as_str)
-                .map(str::to_string)
-            {
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            if let Some(provider_session_ref) = observed_provider_session_ref.as_ref() {
                 let mut provider_session = session.provider_session_ref.write().await;
-                *provider_session = provider_session_ref;
+                *provider_session = provider_session_ref.clone();
             }
             let canonical = payload_body
                 .get("claudeCanonicalSessionRef")
@@ -522,9 +527,47 @@ async fn handle_bridge_event(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string);
-            if canonical.is_some() {
+            if let Some(canonical) = canonical.as_ref() {
                 let mut canonical_ref = session.canonical_provider_session_ref.write().await;
-                *canonical_ref = canonical;
+                *canonical_ref = Some(canonical.clone());
+                session.native_identity_ready.notify_waiters();
+            }
+            if let (
+                Some(turn_id),
+                Some(provider_session_ref),
+                Some(canonical_provider_session_ref),
+            ) = (
+                event_turn_id.as_ref(),
+                observed_provider_session_ref,
+                canonical,
+            ) {
+                let _ = inner
+                    .provider_events
+                    .send(ProviderRuntimeEvent::SessionIdentityObserved {
+                        runtime_session_id: session.runtime_session_id.clone(),
+                        turn_id: turn_id.clone(),
+                        provider_session_ref,
+                        canonical_provider_session_ref,
+                    });
+            }
+            if let Some(rolled_back_turn_ids) = payload_body
+                .get("rolledBackTurnIds")
+                .and_then(Value::as_array)
+            {
+                let rolled_back_turn_ids = rolled_back_turn_ids
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                if !rolled_back_turn_ids.is_empty() {
+                    crate::advanced::prune_hard_fork_turns(
+                        &session,
+                        rolled_back_turn_ids.as_slice(),
+                    )
+                    .await;
+                }
             }
         }
         "turn.started" => {
@@ -572,6 +615,103 @@ async fn handle_bridge_event(
                     request: payload_body.clone(),
                 });
         }
+        "permission.observed" => {
+            let Some(turn_id) = event_turn_id else {
+                fail_bridge(
+                    inner,
+                    bridge,
+                    format!("permission.observed event missing turn id: {payload_body}"),
+                )
+                .await;
+                return;
+            };
+            let Some(permission_mode) = payload_body
+                .get("permissionMode")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+            else {
+                fail_bridge(
+                    inner,
+                    bridge,
+                    format!("permission.observed event missing permissionMode: {payload_body}"),
+                )
+                .await;
+                return;
+            };
+            let resolved_turn_selection = payload_body
+                .get("resolvedTurnSelection")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let _ = inner
+                .provider_events
+                .send(ProviderRuntimeEvent::PermissionObserved {
+                    runtime_session_id: session.runtime_session_id.clone(),
+                    turn_id,
+                    permission_mode,
+                    resolved_turn_selection,
+                });
+        }
+        "context.compaction" => {
+            let Some(phase) = payload_body
+                .get("phase")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| matches!(*value, "started" | "completed"))
+                .map(str::to_string)
+            else {
+                fail_bridge(
+                    inner,
+                    bridge,
+                    format!("context.compaction event missing valid phase: {payload_body}"),
+                )
+                .await;
+                return;
+            };
+            let trigger = payload_body
+                .get("trigger")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| matches!(*value, "manual" | "auto"))
+                .map(str::to_string);
+            let pre_tokens = bridge_event_u64(&payload_body, "preTokens", "pre_tokens");
+            let post_tokens = bridge_event_u64(&payload_body, "postTokens", "post_tokens");
+            let context_window_size =
+                bridge_event_u64(&payload_body, "contextWindowSize", "context_window_size")
+                    .filter(|value| *value > 0);
+
+            if phase == "completed" {
+                if let (Some(post_tokens), Some(context_window_size)) =
+                    (post_tokens, context_window_size)
+                {
+                    *session.context_observation.write().await =
+                        Some(ProviderContextLimitObservation {
+                            model_context_window: context_window_size,
+                            last_total_tokens: post_tokens,
+                            remaining_percentage: ((u128::from(
+                                context_window_size.saturating_sub(post_tokens),
+                            ) * 100)
+                                / u128::from(context_window_size))
+                                as u8,
+                        });
+                }
+            }
+
+            let _ = inner
+                .provider_events
+                .send(ProviderRuntimeEvent::ContextCompactionObserved {
+                    runtime_session_id: session.runtime_session_id.clone(),
+                    turn_id: event_turn_id,
+                    phase,
+                    trigger,
+                    pre_tokens,
+                    post_tokens,
+                    context_window_size,
+                });
+        }
         "turn.completed" => {
             if let Some(turn_id) = event_turn_id {
                 let status = extract_turn_status(payload_body.get("status"));
@@ -587,6 +727,13 @@ async fn handle_bridge_event(
                     ),
                     error: payload_body.get("error").cloned(),
                 };
+                if let Some(observation) = turn_result
+                    .usage
+                    .as_ref()
+                    .and_then(crate::advanced::context_from_usage)
+                {
+                    *session.context_observation.write().await = Some(observation);
+                }
                 {
                     let mut completed = session.completed_turns.lock().await;
                     completed.insert(turn_id.clone(), turn_result);
@@ -595,17 +742,6 @@ async fn handle_bridge_event(
                     let mut active_turn_id = session.active_turn_id.write().await;
                     if active_turn_id.as_deref() == Some(turn_id.as_str()) {
                         *active_turn_id = None;
-                    }
-                }
-                {
-                    let mut bridge_turn_by_runtime_turn =
-                        session.bridge_turn_by_runtime_turn.lock().await;
-                    if let Some(bridge_turn_id) =
-                        bridge_turn_by_runtime_turn.remove(turn_id.as_str())
-                    {
-                        let mut runtime_turn_by_bridge_turn =
-                            session.runtime_turn_by_bridge_turn.lock().await;
-                        runtime_turn_by_bridge_turn.remove(bridge_turn_id.as_str());
                     }
                 }
             }
@@ -629,21 +765,20 @@ async fn handle_bridge_event(
                         *active_turn_id = None;
                     }
                 }
-                {
-                    let mut bridge_turn_by_runtime_turn =
-                        session.bridge_turn_by_runtime_turn.lock().await;
-                    if let Some(bridge_turn_id) =
-                        bridge_turn_by_runtime_turn.remove(turn_id.as_str())
-                    {
-                        let mut runtime_turn_by_bridge_turn =
-                            session.runtime_turn_by_bridge_turn.lock().await;
-                        runtime_turn_by_bridge_turn.remove(bridge_turn_id.as_str());
-                    }
-                }
             }
         }
         _ => {}
     }
+}
+
+fn bridge_event_u64(payload: &Value, camel_key: &str, snake_key: &str) -> Option<u64> {
+    [camel_key, snake_key].into_iter().find_map(|key| {
+        payload.get(key).and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().and_then(|number| u64::try_from(number).ok()))
+        })
+    })
 }
 
 pub(crate) async fn fail_bridge(

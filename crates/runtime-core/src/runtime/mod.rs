@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::{
     ApprovalRecord, PersistedUserInputSnapshot, ProviderKind, ProviderRegistry, RuntimeError,
@@ -98,6 +98,7 @@ pub struct RuntimeSessionManager {
     pub(super) turns: RwLock<HashMap<String, TurnRecord>>,
     pub(super) approvals: RwLock<HashMap<String, ApprovalRecord>>,
     pub(super) turn_admissions: RwLock<HashMap<String, TurnAdmissionRecord>>,
+    pub(super) session_policy_mutation_lock: Mutex<()>,
     next_id: AtomicU64,
     pub(super) event_tx: broadcast::Sender<RuntimeEventRecord>,
 }
@@ -138,6 +139,7 @@ impl RuntimeSessionManager {
             turns: RwLock::new(turns),
             approvals: RwLock::new(approvals),
             turn_admissions: RwLock::new(turn_admissions),
+            session_policy_mutation_lock: Mutex::new(()),
             next_id: AtomicU64::new(1),
             event_tx,
         })

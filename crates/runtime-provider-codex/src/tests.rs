@@ -633,6 +633,12 @@ async fn fake_app_server_proves_provider_approval_and_interrupt_lifecycle() {
         ProviderRuntimeEvent::TurnOutcomeUnknown { code, message, .. } => {
             panic!("unexpected unknown outcome while waiting for approval: {code}: {message}")
         }
+        ProviderRuntimeEvent::PermissionObserved { .. } => {
+            panic!("unexpected permission observation while waiting for approval")
+        }
+        ProviderRuntimeEvent::ContextCompactionObserved { .. } => {
+            panic!("unexpected compaction observation while waiting for approval")
+        }
     };
     assert_eq!(approval_ref, "approval-native-1");
 
@@ -689,6 +695,12 @@ async fn fake_app_server_proves_provider_approval_and_interrupt_lifecycle() {
             panic!(
                 "unexpected unknown outcome while waiting for permission approval: {code}: {message}"
             )
+        }
+        ProviderRuntimeEvent::PermissionObserved { .. } => {
+            panic!("unexpected permission observation while waiting for permission approval")
+        }
+        ProviderRuntimeEvent::ContextCompactionObserved { .. } => {
+            panic!("unexpected compaction observation while waiting for permission approval")
         }
     };
     assert_eq!(permission_approval_ref, "permission-native-2");

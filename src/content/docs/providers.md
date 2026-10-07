@@ -154,6 +154,16 @@ curl "$BASE_URL/v1/providers/claude/auth/status" "${AUTH[@]}"
 
 Claude sessions can receive GG MCP tool configuration through the bridge path. This allows provider-side tool calls to call back into the runtime gateway when enabled.
 
+### Session policy, skills, and recovery
+
+Claude's bundled bridge uses the Claude Agent SDK. Regular sessions preserve the Claude Code system preset while appending the caller's system instructions and the versioned GG harness once. Create and resume carry the same model, working directory, setting-source intent, tool allow/deny policy, harness version, and current thinking preference. Standard setting sources resolve to `user`, `project`, and `local` when a working directory exists; explicit and isolated sources are also supported.
+
+Permission intent remains part of the durable recreation policy, but the bridge applies its effective mode to each SDK turn, where provider permission decisions actually occur. The manager supports revision-protected Claude permission and thinking-preference mutations for workspace-owned agents; these internal controls are not yet public `/v2` mutation endpoints. Provider-origin approvals, observed permission selection, and context-compaction signals are correlated to the admitted runtime turn rather than creating a second turn identity.
+
+The Claude SDK usually supplies its canonical native session ID during the first turn, not at session creation. Gooselake persists that observed identity against the runtime session (including workspace-owned agents) before allowing the turn to become terminal. A final provider-identity read closes the event/wait race. Restart and resume use the durable canonical ID rather than the bridge's temporary session handle; missing or unverified identity requires recovery rather than guessing a replacement.
+
+Claude model discovery is catalog-backed, and skill discovery asks the bridge for SDK-supported commands using the requested cwd and setting sources. Results reflect what the configured SDK installation discovers, not a hardcoded skill list. The bridge also supports evidence-backed workspace rebinding, context-window observations, manual compaction (`accepted` or `not_performed`), and native hard-fork/edit boundaries where the SDK supplies the required canonical session and history evidence. Operations that lack that evidence fail instead of guessing a new session identity or working directory. Live authentication and supported SDK behavior must be verified in each deployment environment.
+
 ## ACP
 
 ACP is configured as an external stdio agent process. It is useful when an agent implements the Agent Client Protocol and can be driven by Gooselake as another provider.

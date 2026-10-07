@@ -328,6 +328,34 @@ pub struct ProviderSessionPreferences {
     pub thinking_effort: Option<ProviderThinkingEffort>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderPermissionMutationRequest {
+    pub runtime_session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+    pub permission_intent: ProviderPermissionIntent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderPermissionMutationResult {
+    pub revision: u64,
+    pub permission_intent: ProviderPermissionIntent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderSessionPreferencesMutationRequest {
+    pub runtime_session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
+    pub current_preferences: ProviderSessionPreferences,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderSessionPreferencesMutationResult {
+    pub revision: u64,
+    pub current_preferences: ProviderSessionPreferences,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ProviderSessionLaunchPolicy {
     #[serde(default)]
@@ -462,6 +490,10 @@ pub struct ProviderWorkspaceRebindRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderWorkspaceRebindEvidence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_generation: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_provider_session_ref: Option<String>,
     pub runtime_session_id: String,
     pub cwd: String,
     pub provider_session_ref: Option<String>,

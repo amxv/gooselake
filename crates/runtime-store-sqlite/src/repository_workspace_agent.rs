@@ -255,6 +255,80 @@ impl SqliteRuntimeRepository {
         self.get_workspace_agent(workspace_id.as_str(), agent_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))
     }
+
+    pub fn compare_and_set_workspace_agent_recreation_policy(
+        &self,
+        session: &SessionRecord,
+        agent_id: &str,
+        expected_revision: u64,
+        recreation_policy: &WorkspaceAgentRecreationPolicy,
+        changed_at: i64,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        if session.id != agent_id
+            || session.provider != recreation_policy.provider.as_str()
+            || session.cwd.as_deref() != Some(recreation_policy.authoritative_cwd.as_str())
+            || session.model != recreation_policy.model
+        {
+            return Err(RuntimeError::ProtocolViolation(
+                "workspace agent session does not match updated recreation policy".to_string(),
+            ));
+        }
+        let expected_revision = i64::try_from(expected_revision).map_err(|_| {
+            RuntimeError::InvalidState("workspace agent revision overflow".to_string())
+        })?;
+        let mut connection = open_connection(&self.database_path)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| {
+                db_error(
+                    "failed starting workspace agent recreation-policy transaction",
+                    error,
+                )
+            })?;
+        let (workspace_id, current_revision) = tx
+            .query_row(
+                "SELECT workspace_id, revision FROM workspace_agents WHERE session_id = ?1",
+                params![agent_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading workspace agent recreation policy", error))?
+            .ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))?;
+        if current_revision != expected_revision {
+            return Err(RuntimeError::Conflict(format!(
+                "workspace agent {agent_id} revision conflict: expected {expected_revision}, current {current_revision}"
+            )));
+        }
+        update_session(&tx, session)?;
+        let policy_json = serde_json::to_string(recreation_policy).map_err(|error| {
+            RuntimeError::Bootstrap(format!(
+                "failed serializing workspace agent recreation policy: {error}"
+            ))
+        })?;
+        let changed = tx
+            .execute(
+                "UPDATE workspace_agents
+                 SET recreation_policy_json = ?3, revision = revision + 1, updated_at = ?4
+                 WHERE session_id = ?1 AND revision = ?2",
+                params![agent_id, expected_revision, policy_json, changed_at],
+            )
+            .map_err(|error| {
+                db_error("failed updating workspace agent recreation policy", error)
+            })?;
+        if changed != 1 {
+            return Err(RuntimeError::Conflict(format!(
+                "workspace agent {agent_id} recreation policy changed concurrently"
+            )));
+        }
+        tx.commit().map_err(|error| {
+            db_error(
+                "failed committing workspace agent recreation-policy mutation",
+                error,
+            )
+        })?;
+        self.get_workspace_agent(workspace_id.as_str(), agent_id)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))
+    }
 }
 
 fn insert_session(connection: &Connection, record: &SessionRecord) -> Result<(), RuntimeError> {

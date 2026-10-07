@@ -115,6 +115,67 @@ fn workspace_agent_fixture(
 }
 
 #[test]
+fn workspace_agent_recreation_policy_cas_is_durable_and_revision_protected() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let root = temp_dir.path().join("workspace");
+    std::fs::create_dir_all(&root).expect("workspace root");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("schema");
+    let workspace = registered_workspace(&repository, &root);
+    let (mut session, agent) =
+        workspace_agent_fixture(&workspace, "sess_policy_cas", "steady-otter-cas");
+    repository
+        .create_workspace_agent(&session, &agent)
+        .expect("create agent");
+
+    let mut updated_policy = agent.recreation_policy.clone();
+    updated_policy.permission_intent =
+        runtime_core::ProviderPermissionIntent::InheritProviderConfiguration;
+    updated_policy.current_preferences = runtime_core::ProviderSessionPreferences {
+        thinking_effort: Some(runtime_core::ProviderThinkingEffort::Max),
+    };
+    session.permission_mode = None;
+    session.updated_at = 200;
+
+    let updated = repository
+        .compare_and_set_workspace_agent_recreation_policy(
+            &session,
+            session.id.as_str(),
+            0,
+            &updated_policy,
+            200,
+        )
+        .expect("cas recreation policy");
+    assert_eq!(updated.revision, 1);
+    assert_eq!(updated.recreation_policy, updated_policy);
+    assert_eq!(updated.updated_at, 200);
+
+    let stale = repository.compare_and_set_workspace_agent_recreation_policy(
+        &session,
+        session.id.as_str(),
+        0,
+        &agent.recreation_policy,
+        201,
+    );
+    assert!(matches!(stale, Err(RuntimeError::Conflict(_))));
+
+    let hydrated = repository
+        .get_workspace_agent_by_id(session.id.as_str())
+        .expect("read persisted agent")
+        .expect("agent exists");
+    assert_eq!(hydrated.revision, 1);
+    assert_eq!(hydrated.recreation_policy, updated_policy);
+    let hydrated_session = repository
+        .hydrate_runtime_state()
+        .expect("hydrate state")
+        .sessions
+        .into_iter()
+        .find(|candidate| candidate.id == session.id)
+        .expect("hydrated session");
+    assert_eq!(hydrated_session.permission_mode, None);
+}
+
+#[test]
 fn workspace_agent_create_is_atomic_and_round_trips_exact_policy() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let root = temp_dir.path().join("workspace");

@@ -1,6 +1,5 @@
-use std::sync::Arc;
-
 use serde_json::Value;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::{
@@ -78,6 +77,7 @@ impl RuntimeSessionManager {
         session_id: &str,
         input: SendTurnInput,
     ) -> Result<SendTurnAccepted, RuntimeError> {
+        let policy_mutation_guard = self.session_policy_mutation_lock.lock().await;
         let session = self.get_session(session_id).await?;
         if session.status == "closed" || session.status == "failed" {
             return Err(RuntimeError::InvalidState(format!(
@@ -189,6 +189,7 @@ impl RuntimeSessionManager {
             .write()
             .await
             .insert(turn_id.clone(), admission);
+        drop(policy_mutation_guard);
         self.append_event(
             RuntimeEventScope::Session,
             session_id,
@@ -242,7 +243,6 @@ impl RuntimeSessionManager {
                 status: "waiting_for_approval".to_string(),
             });
         }
-
         self.update_turn_dispatch_authority(
             turn_id.as_str(),
             TurnDispatchState::Dispatching,
@@ -323,7 +323,6 @@ impl RuntimeSessionManager {
             session.updated_at = now_ms();
             self.store.upsert_session(session)?;
         }
-
         self.append_event(
             RuntimeEventScope::Session,
             session_id,
@@ -680,51 +679,33 @@ impl RuntimeSessionManager {
                     result = &mut wait => break result,
                     event = events.recv() => {
                         match event {
-                            Ok(ProviderRuntimeEvent::ApprovalRequested {
-                                runtime_session_id,
-                                turn_id: event_turn_id,
-                                provider_approval_ref,
-                                tool_call_id,
-                                request,
-                            }) if runtime_session_id == session_id && event_turn_id == turn_id => {
-                                if let Err(error) = manager
-                                    .record_provider_approval(
-                                        session_id.as_str(),
-                                        turn_id.as_str(),
-                                        provider_approval_ref.as_str(),
-                                        tool_call_id,
-                                        request,
-                                    )
-                                    .await
-                                {
+                            Ok(event) => match manager
+                                .record_provider_side_event(
+                                    session_id.as_str(),
+                                    turn_id.as_str(),
+                                    event,
+                                )
+                                .await
+                            {
+                                Ok(Some(ProviderRuntimeEvent::TurnOutcomeUnknown {
+                                    runtime_session_id,
+                                    turn_id: event_turn_id,
+                                    code,
+                                    message,
+                                })) if runtime_session_id == session_id && event_turn_id == turn_id => {
                                     let _ = manager
                                         .mark_provider_event_stream_unknown(
                                             session_id.as_str(),
                                             turn_id.as_str(),
-                                            "provider_approval_persistence_failed",
-                                            error.to_string(),
+                                            code.as_str(),
+                                            message,
                                         )
                                         .await;
                                     return;
                                 }
-                            }
-                            Ok(ProviderRuntimeEvent::TurnOutcomeUnknown {
-                                runtime_session_id,
-                                turn_id: event_turn_id,
-                                code,
-                                message,
-                            }) if runtime_session_id == session_id && event_turn_id == turn_id => {
-                                let _ = manager
-                                    .mark_provider_event_stream_unknown(
-                                        session_id.as_str(),
-                                        turn_id.as_str(),
-                                        code.as_str(),
-                                        message,
-                                    )
-                                    .await;
-                                return;
-                            }
-                            Ok(_) => {}
+                                Ok(_) => {}
+                                Err(_) => return,
+                            },
                             Err(broadcast::error::RecvError::Lagged(skipped)) => {
                                 let _ = manager
                                     .mark_provider_event_stream_unknown(
@@ -753,6 +734,28 @@ impl RuntimeSessionManager {
             };
             match result {
                 Ok(turn_result) => {
+                    // Some providers (Claude SDK) discover their canonical
+                    // session ID only during the first turn. Re-read it at
+                    // completion even if the bridge notification raced with
+                    // the wait response, before clearing the active turn.
+                    if let Err(error) = manager
+                        .verify_provider_session_identity(
+                            provider_adapter.as_ref(),
+                            session_id.as_str(),
+                            turn_id.as_str(),
+                        )
+                        .await
+                    {
+                        let _ = manager
+                            .mark_provider_event_stream_unknown(
+                                session_id.as_str(),
+                                turn_id.as_str(),
+                                "provider_session_identity_unverified",
+                                error.to_string(),
+                            )
+                            .await;
+                        return;
+                    }
                     if let Err(error) = manager.apply_terminal_result(turn_result).await {
                         if std::env::var("GG_CLAUDE_SMOKE_DEBUG")
                             .ok()
@@ -786,7 +789,7 @@ impl RuntimeSessionManager {
         });
     }
 
-    async fn mark_provider_event_stream_unknown(
+    pub(super) async fn mark_provider_event_stream_unknown(
         &self,
         session_id: &str,
         turn_id: &str,

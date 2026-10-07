@@ -40,7 +40,18 @@ pub(crate) struct ClaudeSessionHandle {
     pub(crate) bridge_session_id: String,
     pub(crate) provider_session_ref: RwLock<String>,
     pub(crate) canonical_provider_session_ref: RwLock<Option<String>>,
+    pub(crate) native_identity_ready: Notify,
     pub(crate) bridge: Arc<ClaudeBridgeHandle>,
+    pub(crate) operation_lock: Mutex<()>,
+    pub(crate) quarantined: AtomicBool,
+    pub(crate) effective_cwd: RwLock<Option<String>>,
+    pub(crate) binding_generation: RwLock<u64>,
+    pub(crate) model: Option<String>,
+    pub(crate) launch_policy: RwLock<runtime_core::ProviderSessionLaunchPolicy>,
+    pub(crate) permission_revision: RwLock<u64>,
+    pub(crate) current_preferences: RwLock<runtime_core::ProviderSessionPreferences>,
+    pub(crate) preferences_revision: RwLock<u64>,
+    pub(crate) context_observation: RwLock<Option<runtime_core::ProviderContextLimitObservation>>,
     pub(crate) active_turn_id: RwLock<Option<String>>,
     pub(crate) pending_runtime_turn_id: RwLock<Option<String>>,
     pub(crate) bridge_turn_by_runtime_turn: Mutex<BTreeMap<String, String>>,
@@ -480,6 +491,9 @@ impl ClaudeProvider {
         runtime_session_id: &str,
     ) -> Option<Arc<ClaudeSessionHandle>> {
         let mut sessions = self.inner.sessions.write().await;
+        if let Some(session) = sessions.get(runtime_session_id) {
+            session.quarantined.store(true, Ordering::SeqCst);
+        }
         let removed = sessions.remove(runtime_session_id);
         drop(sessions);
 

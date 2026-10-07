@@ -129,13 +129,17 @@ impl RuntimeSessionManager {
         })?;
         let now = now_ms();
         let session_id = self.allocate_id("sess", input.provider.as_str());
-        let create_request = ProviderCreateSessionPolicyRequest::legacy_compatible(
+        let mut create_request = ProviderCreateSessionPolicyRequest::legacy_compatible(
             session_id.clone(),
             input.model.clone(),
             input.cwd.clone(),
             input.permission_mode.clone(),
             input.metadata.clone(),
         )?;
+        if input.provider == ProviderKind::Claude && input.permission_mode.is_none() {
+            create_request.launch_policy.permission_intent =
+                crate::ProviderPermissionIntent::InheritProviderConfiguration;
+        }
         let created = provider.create_session_with_policy(create_request).await?;
 
         if created.runtime_session_id != session_id {

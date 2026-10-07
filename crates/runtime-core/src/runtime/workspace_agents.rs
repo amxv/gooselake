@@ -3,10 +3,12 @@ use std::sync::Arc;
 
 use crate::{
     ProviderCloseSessionRequest, ProviderCreateSessionPolicyRequest, ProviderKind,
-    ProviderPermissionIntent, ProviderResumeSessionPolicyRequest, ProviderSessionLaunchPolicy,
-    ProviderSessionPreferences, ProviderSettingSourcesIntent, RuntimeError, SessionRecord,
-    WorkspaceAgentCreateRequest, WorkspaceAgentLifecycleState, WorkspaceAgentProfile,
-    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState,
+    ProviderPermissionIntent, ProviderPermissionMutationRequest, ProviderPermissionMutationResult,
+    ProviderResumeSessionPolicyRequest, ProviderSessionLaunchPolicy, ProviderSessionPreferences,
+    ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
+    ProviderSettingSourcesIntent, RuntimeError, SessionRecord, WorkspaceAgentCreateRequest,
+    WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRecord,
+    WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState,
 };
 
 use super::helpers::now_ms;
@@ -39,6 +41,188 @@ impl RuntimeSessionManager {
         self.store
             .get_workspace_agent(workspace_id.trim(), agent_id.trim())?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))
+    }
+
+    pub async fn mutate_workspace_agent_permission(
+        self: &Arc<Self>,
+        request: ProviderPermissionMutationRequest,
+    ) -> Result<ProviderPermissionMutationResult, RuntimeError> {
+        let _mutation = self.session_policy_mutation_lock.lock().await;
+        let agent = self
+            .store
+            .get_workspace_agent_by_id(request.runtime_session_id.trim())?
+            .ok_or_else(|| {
+                RuntimeError::NotFound(format!("workspace agent {}", request.runtime_session_id))
+            })?;
+        if agent.lifecycle_state != WorkspaceAgentLifecycleState::Active {
+            return Err(RuntimeError::InvalidState(format!(
+                "workspace agent {} is archived",
+                agent.agent_id
+            )));
+        }
+        if agent.recreation_policy.provider != ProviderKind::Claude {
+            return Err(RuntimeError::Unsupported(
+                "durable mutable permission selection is currently Claude-specific".to_string(),
+            ));
+        }
+        if let Some(expected_revision) = request.expected_revision {
+            if expected_revision != agent.revision {
+                return Err(RuntimeError::Conflict(format!(
+                    "workspace agent {} permission revision conflict: expected {expected_revision}, current {}",
+                    agent.agent_id, agent.revision
+                )));
+            }
+        }
+        validate_claude_mutable_permission(&request.permission_intent)?;
+        let mut session = self.get_session(agent.agent_id.as_str()).await?;
+        if session.active_turn_id.is_some() {
+            return Err(RuntimeError::InvalidState(format!(
+                "workspace agent {} has an active turn",
+                agent.agent_id
+            )));
+        }
+        let provider = self
+            .providers
+            .get(ProviderKind::Claude)
+            .ok_or_else(|| RuntimeError::ProviderNotRegistered("claude".to_string()))?;
+        let previous_intent = agent.recreation_policy.permission_intent.clone();
+        provider
+            .mutate_session_permission(ProviderPermissionMutationRequest {
+                runtime_session_id: agent.agent_id.clone(),
+                expected_revision: None,
+                permission_intent: request.permission_intent.clone(),
+            })
+            .await?;
+
+        let changed_at = now_ms();
+        let mut recreation_policy = agent.recreation_policy.clone();
+        recreation_policy.permission_intent = request.permission_intent.clone();
+        session.permission_mode = request.permission_intent.resolved_mode();
+        session.updated_at = changed_at;
+        let persisted = match self
+            .store
+            .compare_and_set_workspace_agent_recreation_policy(
+                &session,
+                agent.agent_id.as_str(),
+                agent.revision,
+                &recreation_policy,
+                changed_at,
+            ) {
+            Ok(record) => record,
+            Err(error) => {
+                if let Err(rollback_error) = provider
+                    .mutate_session_permission(ProviderPermissionMutationRequest {
+                        runtime_session_id: agent.agent_id.clone(),
+                        expected_revision: None,
+                        permission_intent: previous_intent,
+                    })
+                    .await
+                {
+                    return Err(RuntimeError::InvalidState(format!(
+                        "failed persisting Claude permission mutation ({error}); live rollback also failed: {rollback_error}"
+                    )));
+                }
+                return Err(error);
+            }
+        };
+        self.sessions
+            .write()
+            .await
+            .insert(session.id.clone(), session);
+        Ok(ProviderPermissionMutationResult {
+            revision: persisted.revision,
+            permission_intent: persisted.recreation_policy.permission_intent,
+        })
+    }
+
+    pub async fn mutate_workspace_agent_preferences(
+        self: &Arc<Self>,
+        request: ProviderSessionPreferencesMutationRequest,
+    ) -> Result<ProviderSessionPreferencesMutationResult, RuntimeError> {
+        let _mutation = self.session_policy_mutation_lock.lock().await;
+        let agent = self
+            .store
+            .get_workspace_agent_by_id(request.runtime_session_id.trim())?
+            .ok_or_else(|| {
+                RuntimeError::NotFound(format!("workspace agent {}", request.runtime_session_id))
+            })?;
+        if agent.lifecycle_state != WorkspaceAgentLifecycleState::Active {
+            return Err(RuntimeError::InvalidState(format!(
+                "workspace agent {} is archived",
+                agent.agent_id
+            )));
+        }
+        if agent.recreation_policy.provider != ProviderKind::Claude {
+            return Err(RuntimeError::Unsupported(
+                "durable mutable session preferences are currently Claude-specific".to_string(),
+            ));
+        }
+        if let Some(expected_revision) = request.expected_revision {
+            if expected_revision != agent.revision {
+                return Err(RuntimeError::Conflict(format!(
+                    "workspace agent {} preference revision conflict: expected {expected_revision}, current {}",
+                    agent.agent_id, agent.revision
+                )));
+            }
+        }
+        let mut session = self.get_session(agent.agent_id.as_str()).await?;
+        if session.active_turn_id.is_some() {
+            return Err(RuntimeError::InvalidState(format!(
+                "workspace agent {} has an active turn",
+                agent.agent_id
+            )));
+        }
+        let provider = self
+            .providers
+            .get(ProviderKind::Claude)
+            .ok_or_else(|| RuntimeError::ProviderNotRegistered("claude".to_string()))?;
+        let previous_preferences = agent.recreation_policy.current_preferences.clone();
+        provider
+            .mutate_session_preferences(ProviderSessionPreferencesMutationRequest {
+                runtime_session_id: agent.agent_id.clone(),
+                expected_revision: None,
+                current_preferences: request.current_preferences.clone(),
+            })
+            .await?;
+
+        let changed_at = now_ms();
+        let mut recreation_policy = agent.recreation_policy.clone();
+        recreation_policy.current_preferences = request.current_preferences.clone();
+        session.updated_at = changed_at;
+        let persisted = match self
+            .store
+            .compare_and_set_workspace_agent_recreation_policy(
+                &session,
+                agent.agent_id.as_str(),
+                agent.revision,
+                &recreation_policy,
+                changed_at,
+            ) {
+            Ok(record) => record,
+            Err(error) => {
+                if let Err(rollback_error) = provider
+                    .mutate_session_preferences(ProviderSessionPreferencesMutationRequest {
+                        runtime_session_id: agent.agent_id.clone(),
+                        expected_revision: None,
+                        current_preferences: previous_preferences,
+                    })
+                    .await
+                {
+                    return Err(RuntimeError::InvalidState(format!(
+                        "failed persisting Claude session preferences ({error}); live rollback also failed: {rollback_error}"
+                    )));
+                }
+                return Err(error);
+            }
+        };
+        self.sessions
+            .write()
+            .await
+            .insert(session.id.clone(), session);
+        Ok(ProviderSessionPreferencesMutationResult {
+            revision: persisted.revision,
+            current_preferences: persisted.recreation_policy.current_preferences,
+        })
     }
 
     pub async fn create_workspace_agent(
@@ -289,6 +473,9 @@ impl RuntimeSessionManager {
         }
         let permission_intent = match session.permission_mode.clone() {
             Some(mode) => ProviderPermissionIntent::explicit(mode)?,
+            None if session.provider == ProviderKind::Claude.as_str() => {
+                ProviderPermissionIntent::InheritProviderConfiguration
+            }
             None => ProviderPermissionIntent::ProviderDefault,
         };
         Ok(ProviderResumeSessionPolicyRequest {
@@ -306,6 +493,29 @@ impl RuntimeSessionManager {
             current_preferences: ProviderSessionPreferences::default(),
             metadata: Some(session.metadata.clone()),
         })
+    }
+}
+
+fn validate_claude_mutable_permission(
+    permission_intent: &ProviderPermissionIntent,
+) -> Result<(), RuntimeError> {
+    match permission_intent {
+        ProviderPermissionIntent::InheritProviderConfiguration => Ok(()),
+        ProviderPermissionIntent::Explicit { mode } if mode == "dontAsk" => {
+            Err(RuntimeError::InvalidState(
+                "Claude dontAsk is not exposed as a mutable permission selection".to_string(),
+            ))
+        }
+        ProviderPermissionIntent::Explicit { mode } if mode.trim().is_empty() => {
+            Err(RuntimeError::InvalidState(
+                "Claude permission mode cannot be empty".to_string(),
+            ))
+        }
+        ProviderPermissionIntent::Explicit { .. } => Ok(()),
+        ProviderPermissionIntent::ProviderDefault => Err(RuntimeError::InvalidState(
+            "Claude permission mutation requires inherit_provider_configuration or an explicit mode"
+                .to_string(),
+        )),
     }
 }
 

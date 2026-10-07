@@ -151,7 +151,7 @@ async fn create_and_resume_forward_full_recreation_policy_and_gg_mcp_shape() {
             system_prompt: Some("create-system".to_string()),
             allowed_tools: vec!["Read".to_string(), "Grep".to_string()],
             disallowed_tools: vec!["Bash".to_string()],
-            harness_version_slot: Some("bridge-v1".to_string()),
+            harness_version_slot: Some(runtime_core::HARNESS_VERSION.to_string()),
             metadata: None,
         })
         .await
@@ -176,7 +176,7 @@ async fn create_and_resume_forward_full_recreation_policy_and_gg_mcp_shape() {
             system_prompt: Some("resume-system".to_string()),
             allowed_tools: vec!["Read".to_string()],
             disallowed_tools: vec!["Write".to_string()],
-            harness_version_slot: Some("bridge-v1".to_string()),
+            harness_version_slot: Some(runtime_core::HARNESS_VERSION.to_string()),
             metadata: None,
         })
         .await
@@ -197,16 +197,22 @@ async fn create_and_resume_forward_full_recreation_policy_and_gg_mcp_shape() {
 
     let create_params = create[0].get("params").expect("create params");
     assert_eq!(create_params["model"], "claude-create-model");
-    assert_eq!(create_params["permissionMode"], "default");
-    assert_eq!(create_params["settingSources"], json!(["user", "project"]));
+    assert!(create_params.get("permissionIntent").is_none());
+    assert_eq!(
+        create_params["settingSourcesIntent"],
+        json!({"kind":"explicit","sources":["user", "project"]})
+    );
     assert_eq!(create_params["systemPrompt"], "create-system");
     assert_eq!(create_params["allowedTools"], json!(["Read", "Grep"]));
     assert_eq!(create_params["disallowedTools"], json!(["Bash"]));
 
     let resume_params = resume[0].get("params").expect("resume params");
     assert_eq!(resume_params["model"], "claude-resume-model");
-    assert_eq!(resume_params["permissionMode"], "plan");
-    assert_eq!(resume_params["settingSources"], json!(["user", "local"]));
+    assert!(resume_params.get("permissionIntent").is_none());
+    assert_eq!(
+        resume_params["settingSourcesIntent"],
+        json!({"kind":"explicit","sources":["user", "local"]})
+    );
     assert_eq!(resume_params["systemPrompt"], "resume-system");
     assert_eq!(resume_params["allowedTools"], json!(["Read"]));
     assert_eq!(resume_params["disallowedTools"], json!(["Write"]));
@@ -428,6 +434,234 @@ async fn runtime_manager_recovers_send_turn_after_bridge_session_not_found() {
     let requests = harness.read_requests();
     assert_eq!(requests_for_method(&requests, "session.send").len(), 2);
     assert_eq!(requests_for_method(&requests, "session.resume").len(), 1);
+}
+
+#[tokio::test]
+async fn runtime_manager_persists_admitted_turn_compaction_observations() {
+    let harness = FakeClaudeBridgeHarness::new("compaction_event");
+    let provider = Arc::new(harness.provider(ClaudeGgMcpConfig::default()));
+    let mut registry = ProviderRegistry::new();
+    registry.register(provider).expect("register provider");
+
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp_dir.path().join("runtime.sqlite3"),
+    }));
+    store.initialize().await.expect("initialize sqlite store");
+    let manager = Arc::new(
+        RuntimeSessionManager::new(store.clone(), Arc::new(registry), 256)
+            .expect("construct runtime session manager"),
+    );
+
+    let session = manager
+        .create_session(CreateSessionInput {
+            provider: ProviderKind::Claude,
+            model: Some("claude-sonnet-5-5".to_string()),
+            cwd: Some("/tmp/runtime".to_string()),
+            permission_mode: None,
+            metadata: None,
+        })
+        .await
+        .expect("create runtime session");
+    manager
+        .send_turn(
+            session.id.as_str(),
+            SendTurnInput {
+                input: vec![json!({"type":"text","text":"compact automatically"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
+            },
+        )
+        .await
+        .expect("send turn");
+    wait_for_ready_session(&manager, session.id.as_str()).await;
+
+    let events = store
+        .list_runtime_events(
+            Some((
+                runtime_core::RuntimeEventScope::Session,
+                session.id.as_str(),
+            )),
+            None,
+            100,
+        )
+        .expect("list runtime events");
+    let compaction = events
+        .iter()
+        .filter(|event| event.kind == "provider.context_compaction_observed")
+        .collect::<Vec<_>>();
+    assert_eq!(compaction.len(), 2);
+    assert!(compaction.iter().all(|event| event.turn_id.is_some()));
+    assert_eq!(compaction[0].payload["phase"], "started");
+    assert_eq!(compaction[1].payload["phase"], "completed");
+    assert_eq!(compaction[1].payload["trigger"], "auto");
+    assert_eq!(compaction[1].payload["post_tokens"], 25);
+    assert_eq!(compaction[1].payload["context_window_size"], 100);
+}
+
+#[tokio::test]
+async fn durable_permission_and_thinking_mutations_survive_runtime_restart() {
+    let harness = FakeClaudeBridgeHarness::new("normal");
+    let provider = Arc::new(harness.provider(ClaudeGgMcpConfig::default()));
+    let mut registry = ProviderRegistry::new();
+    registry.register(provider).expect("register provider");
+
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let workspace_root = temp_dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace_root).expect("workspace root");
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp_dir.path().join("runtime.sqlite3"),
+    }));
+    store.initialize().await.expect("initialize sqlite store");
+    let workspace_command = runtime_core::prepare_workspace_registration(
+        runtime_core::WorkspaceRegisterRequest {
+            canonical_root: workspace_root.to_string_lossy().into_owned(),
+            display_name: Some("Claude durable policy".into()),
+        },
+        runtime_core::OperationActor::operator("claude-policy-test"),
+        None,
+    )
+    .expect("prepare workspace registration");
+    let workspace = store
+        .register_workspace(&workspace_command)
+        .expect("register workspace")
+        .workspace;
+    let manager = Arc::new(
+        RuntimeSessionManager::new(store.clone(), Arc::new(registry), 256)
+            .expect("construct manager"),
+    );
+    let agent = manager
+        .create_workspace_agent(
+            workspace.workspace_id.as_str(),
+            runtime_core::WorkspaceAgentCreateRequest {
+                provider: ProviderKind::Claude,
+                model: Some("claude-sonnet-5-5".into()),
+                permission_intent:
+                    runtime_core::ProviderPermissionIntent::InheritProviderConfiguration,
+                setting_sources_intent: runtime_core::ProviderSettingSourcesIntent::Isolated,
+                current_preferences: runtime_core::ProviderSessionPreferences {
+                    thinking_effort: Some(runtime_core::ProviderThinkingEffort::Max),
+                },
+                system_prompt: Some("caller-system".into()),
+                allowed_tools: vec!["Read".into()],
+                disallowed_tools: vec!["Bash".into()],
+                cwd: Some(workspace_root.to_string_lossy().into_owned()),
+                harness_version_slot: Some(runtime_core::HARNESS_VERSION.into()),
+                title: Some("Claude agent".into()),
+                metadata: Some(json!({"test":"claude-policy-restart"})),
+            },
+            "claude-policy-test",
+        )
+        .await
+        .expect("create workspace agent");
+
+    let permission = manager
+        .mutate_workspace_agent_permission(runtime_core::ProviderPermissionMutationRequest {
+            runtime_session_id: agent.agent_id.clone(),
+            expected_revision: Some(agent.revision),
+            permission_intent: runtime_core::ProviderPermissionIntent::Explicit {
+                mode: "acceptEdits".into(),
+            },
+        })
+        .await
+        .expect("mutate permission");
+    assert_eq!(permission.revision, 1);
+    let preferences = manager
+        .mutate_workspace_agent_preferences(
+            runtime_core::ProviderSessionPreferencesMutationRequest {
+                runtime_session_id: agent.agent_id.clone(),
+                expected_revision: Some(permission.revision),
+                current_preferences: runtime_core::ProviderSessionPreferences {
+                    thinking_effort: Some(runtime_core::ProviderThinkingEffort::High),
+                },
+            },
+        )
+        .await
+        .expect("mutate thinking preference");
+    assert_eq!(preferences.revision, 2);
+    assert!(matches!(
+        manager
+            .mutate_workspace_agent_permission(runtime_core::ProviderPermissionMutationRequest {
+                runtime_session_id: agent.agent_id.clone(),
+                expected_revision: Some(1),
+                permission_intent:
+                    runtime_core::ProviderPermissionIntent::InheritProviderConfiguration,
+            })
+            .await,
+        Err(RuntimeError::Conflict(_))
+    ));
+
+    let persisted = store
+        .get_workspace_agent_by_id(agent.agent_id.as_str())
+        .expect("read durable agent")
+        .expect("durable agent exists");
+    assert_eq!(persisted.revision, 2);
+    assert_eq!(
+        persisted.recreation_policy.permission_intent,
+        runtime_core::ProviderPermissionIntent::Explicit {
+            mode: "acceptEdits".into()
+        }
+    );
+    assert_eq!(
+        persisted
+            .recreation_policy
+            .current_preferences
+            .thinking_effort,
+        Some(runtime_core::ProviderThinkingEffort::High)
+    );
+    drop(manager);
+
+    let restarted_harness = FakeClaudeBridgeHarness::new("normal");
+    let restarted_provider = Arc::new(restarted_harness.provider(ClaudeGgMcpConfig::default()));
+    let mut restarted_registry = ProviderRegistry::new();
+    restarted_registry
+        .register(restarted_provider)
+        .expect("register restarted provider");
+    let restarted_manager = Arc::new(
+        RuntimeSessionManager::new(store, Arc::new(restarted_registry), 256)
+            .expect("construct restarted manager"),
+    );
+    restarted_manager
+        .resume_session(
+            agent.agent_id.as_str(),
+            runtime_core::ResumeSessionInput {
+                provider_session_ref: None,
+                canonical_provider_session_ref: None,
+            },
+        )
+        .await
+        .expect("resume after restart");
+    restarted_manager
+        .send_turn(
+            agent.agent_id.as_str(),
+            SendTurnInput {
+                input: vec![json!({"type":"text","text":"after restart"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
+            },
+        )
+        .await
+        .expect("send after restart");
+
+    let requests = restarted_harness.read_requests();
+    let resume = &requests_for_method(&requests, "session.resume")[0]["params"];
+    assert!(resume.get("permissionIntent").is_none());
+    assert_eq!(resume["thinkingEffort"], "high");
+    assert_eq!(resume["systemPrompt"], "caller-system");
+    assert_eq!(resume["allowedTools"], json!(["Read"]));
+    assert_eq!(resume["disallowedTools"], json!(["Bash"]));
+    let send = &requests_for_method(&requests, "session.send")[0]["params"];
+    assert_eq!(
+        send["permissionIntent"],
+        json!({"kind":"explicit","mode":"acceptEdits"})
+    );
+    assert_eq!(send["thinkingEffort"], "high");
 }
 
 #[tokio::test]

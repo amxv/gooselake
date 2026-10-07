@@ -113,6 +113,8 @@ impl CodexProvider {
         }
 
         Ok(ProviderWorkspaceRebindEvidence {
+            binding_generation: None,
+            canonical_provider_session_ref: None,
             runtime_session_id: req.runtime_session_id,
             cwd: effective_cwd,
             provider_session_ref: Some(thread_id),

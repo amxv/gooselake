@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,6 +12,7 @@ use runtime_core::{
     ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession, ProviderTurnAck,
     ProviderTurnResult, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
 };
+use runtime_core::{ProviderCreateSessionPolicyRequest, ProviderResumeSessionPolicyRequest};
 use serde_json::Value;
 use tokio::sync::{broadcast, Mutex, RwLock};
 
@@ -39,26 +41,64 @@ impl RuntimeProvider for ClaudeProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             model_discovery: ProviderDiscoveryMode::Catalog,
-            skill_discovery: ProviderDiscoveryMode::Unsupported,
+            skill_discovery: ProviderDiscoveryMode::Catalog,
             session_resume: ProviderCapabilitySupport::Supported,
             streaming: ProviderCapabilitySupport::Supported,
             approvals: ProviderCapabilitySupport::Supported,
-            permission_mutation: ProviderCapabilitySupport::Unsupported,
-            session_preferences: ProviderCapabilitySupport::Unsupported,
+            permission_mutation: ProviderCapabilitySupport::Supported,
+            session_preferences: ProviderCapabilitySupport::Supported,
             interrupt: ProviderCapabilitySupport::Supported,
             tools: ProviderCapabilitySupport::Supported,
             images: ProviderCapabilitySupport::Supported,
             structured_output: ProviderCapabilitySupport::Unsupported,
             setting_sources: ProviderCapabilitySupport::Supported,
-            context_limit_observation: ProviderCapabilitySupport::Unsupported,
-            workspace_rebind: ProviderCapabilitySupport::Unsupported,
-            manual_compact: ProviderCapabilitySupport::Unsupported,
-            hard_fork_edit_rerun: ProviderCapabilitySupport::Unsupported,
+            context_limit_observation: ProviderCapabilitySupport::Supported,
+            workspace_rebind: ProviderCapabilitySupport::Supported,
+            manual_compact: ProviderCapabilitySupport::Supported,
+            hard_fork_edit_rerun: ProviderCapabilitySupport::Supported,
         }
     }
 
     fn subscribe_events(&self) -> Option<broadcast::Receiver<ProviderRuntimeEvent>> {
         Some(self.inner.provider_events.subscribe())
+    }
+
+    async fn observe_session_identity(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Option<ProviderSession>, RuntimeError> {
+        let session = self.get_session(runtime_session_id).await?;
+        if session.quarantined.load(Ordering::SeqCst) {
+            return Err(RuntimeError::InvalidState(
+                "Claude session identity cannot be observed while quarantined".into(),
+            ));
+        }
+        // Session-updated events use a bridge worker lane, whereas the wait
+        // RPC response is resolved separately. Register before checking so a
+        // queued identity event cannot be missed by the final observation.
+        let ready = session.native_identity_ready.notified();
+        tokio::pin!(ready);
+        ready.as_mut().enable();
+        if session
+            .canonical_provider_session_ref
+            .read()
+            .await
+            .is_none()
+        {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(3), ready).await;
+        }
+        let canonical = session.canonical_provider_session_ref.read().await.clone();
+        if canonical.as_deref().is_none_or(str::is_empty) {
+            return Err(RuntimeError::ProtocolViolation(
+                "Claude turn did not establish a canonical SDK session identity".into(),
+            ));
+        }
+        let provider_session_ref = session.provider_session_ref.read().await.clone();
+        Ok(Some(ProviderSession {
+            runtime_session_id: runtime_session_id.to_string(),
+            provider_session_ref,
+            canonical_provider_session_ref: canonical,
+        }))
     }
 
     async fn healthcheck(&self) -> Result<(), RuntimeError> {
@@ -74,11 +114,62 @@ impl RuntimeProvider for ClaudeProvider {
 
     async fn discover_models(
         &self,
-        _req: ProviderModelDiscoveryRequest,
+        req: ProviderModelDiscoveryRequest,
     ) -> Result<ProviderModelDiscoveryResponse, RuntimeError> {
-        let models = self
-            .list_models()
-            .await?
+        let discovered = if req.startup_mode
+            == runtime_core::ProviderModelDiscoveryStartupMode::StartRuntime
+        {
+            req.setting_sources_intent
+                .resolved_wire_values(req.cwd.as_deref())?;
+            self.ensure_provider_enabled().await?;
+            let bridge = self.acquire_bridge_for_new_session().await?;
+            let response = send_bridge_request(
+                &self.inner,
+                &bridge,
+                "session.supported_models",
+                serde_json::json!({}),
+                self.inner.config.request_timeout_ms,
+            )
+            .await?;
+            let models = response
+                .get("models")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    RuntimeError::ProtocolViolation("supported_models missing models".into())
+                })?;
+            models
+                .iter()
+                .map(|model| {
+                    let id = model
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| {
+                            RuntimeError::ProtocolViolation("supported model missing value".into())
+                        })?;
+                    Ok(ProviderModel {
+                        id: id.into(),
+                        display_name: model
+                            .get("displayName")
+                            .and_then(Value::as_str)
+                            .unwrap_or(id)
+                            .into(),
+                        reasoning_levels: model
+                            .get("supportedEffortLevels")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                            .filter(|s| runtime_core::ProviderThinkingEffort::parse(s).is_ok())
+                            .map(str::to_string)
+                            .collect(),
+                    })
+                })
+                .collect::<Result<Vec<_>, RuntimeError>>()?
+        } else {
+            self.list_models().await?
+        };
+        let models = discovered
             .into_iter()
             .map(|model| {
                 let mut descriptor =
@@ -93,6 +184,73 @@ impl RuntimeProvider for ClaudeProvider {
             mode: ProviderDiscoveryMode::Catalog,
             models,
         })
+    }
+
+    async fn list_skills(
+        &self,
+        req: runtime_core::ProviderSkillDiscoveryRequest,
+    ) -> Result<Vec<runtime_core::ProviderSkillDescriptor>, RuntimeError> {
+        self.claude_skills(req).await
+    }
+    async fn observe_context_limit(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<runtime_core::ProviderContextLimitObservation, RuntimeError> {
+        self.claude_context(runtime_session_id).await
+    }
+
+    async fn mutate_session_permission(
+        &self,
+        req: runtime_core::ProviderPermissionMutationRequest,
+    ) -> Result<runtime_core::ProviderPermissionMutationResult, RuntimeError> {
+        self.claude_mutate_permission(req).await
+    }
+    async fn mutate_session_preferences(
+        &self,
+        req: runtime_core::ProviderSessionPreferencesMutationRequest,
+    ) -> Result<runtime_core::ProviderSessionPreferencesMutationResult, RuntimeError> {
+        self.claude_mutate_preferences(req).await
+    }
+    async fn rebind_workspace(
+        &self,
+        req: runtime_core::ProviderWorkspaceRebindRequest,
+    ) -> Result<runtime_core::ProviderWorkspaceRebindEvidence, RuntimeError> {
+        self.claude_rebind(req).await
+    }
+    async fn compact_session(
+        &self,
+        req: runtime_core::ProviderCompactSessionRequest,
+    ) -> Result<runtime_core::ProviderCompactSessionOutcome, RuntimeError> {
+        self.claude_compact(req).await
+    }
+
+    async fn hard_fork_edit_rerun(
+        &self,
+        req: runtime_core::ProviderHardForkEditRerunRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        if req.edited_input.is_empty() {
+            return Err(RuntimeError::ProtocolViolation(
+                "Claude edit-and-rerun input must not be empty".to_string(),
+            ));
+        }
+        let session = self.get_session(req.runtime_session_id.as_str()).await?;
+        let bridge_target_turn_id = session
+            .bridge_turn_by_runtime_turn
+            .lock()
+            .await
+            .get(req.target_turn_id.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                RuntimeError::NotFound(format!(
+                    "Claude provider turn for historical logical turn {}",
+                    req.target_turn_id
+                ))
+            })?;
+        self.hard_fork_at_boundary(
+            req.runtime_session_id.as_str(),
+            bridge_target_turn_id.as_str(),
+        )
+        .await
     }
 
     async fn auth_status(&self) -> Result<ProviderAuthStatus, RuntimeError> {
@@ -175,16 +333,70 @@ impl RuntimeProvider for ClaudeProvider {
         &self,
         req: ProviderCreateSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
+        let launch_policy = crate::policy::legacy_policy(
+            req.permission_mode,
+            req.setting_sources,
+            req.system_prompt,
+            req.allowed_tools,
+            req.disallowed_tools,
+            req.harness_version_slot,
+        )?;
+        self.create_session_with_policy(ProviderCreateSessionPolicyRequest {
+            runtime_session_id: req.runtime_session_id,
+            model: req.model,
+            cwd: req.cwd,
+            launch_policy,
+            current_preferences: Default::default(),
+            metadata: req.metadata,
+        })
+        .await
+    }
+    async fn resume_session(
+        &self,
+        req: ProviderResumeSessionRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        let launch_policy = crate::policy::legacy_policy(
+            req.permission_mode,
+            req.setting_sources,
+            req.system_prompt,
+            req.allowed_tools,
+            req.disallowed_tools,
+            req.harness_version_slot,
+        )?;
+        self.resume_session_with_policy(ProviderResumeSessionPolicyRequest {
+            runtime_session_id: req.runtime_session_id,
+            model: req.model,
+            cwd: req.cwd,
+            provider_session_ref: req.provider_session_ref,
+            canonical_provider_session_ref: req.canonical_provider_session_ref,
+            launch_policy,
+            current_preferences: Default::default(),
+            metadata: req.metadata,
+        })
+        .await
+    }
+    async fn create_session_with_policy(
+        &self,
+        req: ProviderCreateSessionPolicyRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
         self.ensure_provider_enabled().await?;
+        crate::policy::validate_policy(
+            &req.launch_policy,
+            req.cwd.as_deref(),
+            &req.current_preferences,
+            req.model.as_deref(),
+        )?;
         let bridge = self.acquire_bridge_for_new_session().await?;
         let mut create_params = serde_json::json!({
             "cwd": req.cwd,
             "model": req.model,
-            "permissionMode": req.permission_mode,
-            "settingSources": req.setting_sources,
-            "systemPrompt": req.system_prompt,
-            "allowedTools": req.allowed_tools,
-            "disallowedTools": req.disallowed_tools,
+            "settingSourcesIntent": req.launch_policy.setting_sources_intent,
+            "systemPrompt": req.launch_policy.system_prompt,
+            "harnessInstructions": runtime_core::provider_harness_text(ProviderKind::Claude)?,
+            "harnessVersion": runtime_core::HARNESS_VERSION,
+            "allowedTools": req.launch_policy.allowed_tools,
+            "disallowedTools": req.launch_policy.disallowed_tools,
+            "thinkingEffort": req.current_preferences.thinking_effort,
         });
         let configure_gg_mcp_server = self.inner.config.gg_mcp.enabled;
         if configure_gg_mcp_server {
@@ -233,7 +445,10 @@ impl RuntimeProvider for ClaudeProvider {
             .get("providerSessionRef")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .unwrap_or_else(|| bridge_session_id.clone());
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| {
+                RuntimeError::ProtocolViolation("missing Claude provider identity".into())
+            })?;
         let canonical_provider_session_ref = response
             .get("claudeCanonicalSessionRef")
             .and_then(Value::as_str)
@@ -246,7 +461,18 @@ impl RuntimeProvider for ClaudeProvider {
             bridge_session_id,
             provider_session_ref: RwLock::new(provider_session_ref.clone()),
             canonical_provider_session_ref: RwLock::new(canonical_provider_session_ref.clone()),
+            native_identity_ready: tokio::sync::Notify::new(),
             bridge,
+            operation_lock: Mutex::new(()),
+            quarantined: AtomicBool::new(false),
+            effective_cwd: RwLock::new(req.cwd.clone()),
+            binding_generation: RwLock::new(0),
+            model: req.model.clone(),
+            launch_policy: tokio::sync::RwLock::new(req.launch_policy.clone()),
+            permission_revision: tokio::sync::RwLock::new(0),
+            current_preferences: tokio::sync::RwLock::new(req.current_preferences.clone()),
+            preferences_revision: tokio::sync::RwLock::new(0),
+            context_observation: RwLock::new(None),
             active_turn_id: RwLock::new(None),
             pending_runtime_turn_id: RwLock::new(None),
             bridge_turn_by_runtime_turn: Mutex::new(BTreeMap::new()),
@@ -263,11 +489,34 @@ impl RuntimeProvider for ClaudeProvider {
         })
     }
 
-    async fn resume_session(
+    async fn resume_session_with_policy(
         &self,
-        req: ProviderResumeSessionRequest,
+        req: ProviderResumeSessionPolicyRequest,
     ) -> Result<ProviderSession, RuntimeError> {
         self.ensure_provider_enabled().await?;
+        crate::policy::validate_policy(
+            &req.launch_policy,
+            req.cwd.as_deref(),
+            &req.current_preferences,
+            req.model.as_deref(),
+        )?;
+        crate::policy::validate_resume_identity(
+            &req.provider_session_ref,
+            req.canonical_provider_session_ref.as_deref(),
+        )?;
+        let existing = self.get_session(&req.runtime_session_id).await.ok();
+        let _replacement_operation = if let Some(existing) = existing.as_ref() {
+            let operation = existing.operation_lock.try_lock().map_err(|_| {
+                RuntimeError::InvalidState(
+                    "Claude session cannot resume while an existing operation is in progress"
+                        .into(),
+                )
+            })?;
+            crate::advanced::ensure_idle(existing).await?;
+            Some(operation)
+        } else {
+            None
+        };
         let _ = self.remove_session(req.runtime_session_id.as_str()).await;
         let bridge = self.acquire_bridge_for_new_session().await?;
         let mut resume_params = serde_json::json!({
@@ -276,11 +525,13 @@ impl RuntimeProvider for ClaudeProvider {
             "claudeCanonicalSessionRef": req.canonical_provider_session_ref,
             "cwd": req.cwd,
             "model": req.model,
-            "permissionMode": req.permission_mode,
-            "settingSources": req.setting_sources,
-            "systemPrompt": req.system_prompt,
-            "allowedTools": req.allowed_tools,
-            "disallowedTools": req.disallowed_tools,
+            "settingSourcesIntent": req.launch_policy.setting_sources_intent,
+            "systemPrompt": req.launch_policy.system_prompt,
+            "harnessInstructions": runtime_core::provider_harness_text(ProviderKind::Claude)?,
+            "harnessVersion": runtime_core::HARNESS_VERSION,
+            "allowedTools": req.launch_policy.allowed_tools,
+            "disallowedTools": req.launch_policy.disallowed_tools,
+            "thinkingEffort": req.current_preferences.thinking_effort,
         });
         let configure_gg_mcp_server = self.inner.config.gg_mcp.enabled;
         if configure_gg_mcp_server {
@@ -337,21 +588,39 @@ impl RuntimeProvider for ClaudeProvider {
             .get("providerSessionRef")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .unwrap_or_else(|| bridge_session_id.clone());
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| {
+                RuntimeError::ProtocolViolation("missing Claude provider identity".into())
+            })?;
         let canonical_provider_session_ref = response
             .get("claudeCanonicalSessionRef")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .or(req.canonical_provider_session_ref);
+            .map(str::to_string);
+        if canonical_provider_session_ref != req.canonical_provider_session_ref {
+            return Err(RuntimeError::ProtocolViolation(
+                "Claude resume canonical identity mismatch".into(),
+            ));
+        }
 
         let session = Arc::new(ClaudeSessionHandle {
             runtime_session_id: req.runtime_session_id.clone(),
             bridge_session_id,
             provider_session_ref: RwLock::new(provider_session_ref.clone()),
             canonical_provider_session_ref: RwLock::new(canonical_provider_session_ref.clone()),
+            native_identity_ready: tokio::sync::Notify::new(),
             bridge,
+            operation_lock: Mutex::new(()),
+            quarantined: AtomicBool::new(false),
+            effective_cwd: RwLock::new(req.cwd.clone()),
+            binding_generation: RwLock::new(0),
+            model: req.model.clone(),
+            launch_policy: tokio::sync::RwLock::new(req.launch_policy.clone()),
+            permission_revision: tokio::sync::RwLock::new(0),
+            current_preferences: tokio::sync::RwLock::new(req.current_preferences.clone()),
+            preferences_revision: tokio::sync::RwLock::new(0),
+            context_observation: RwLock::new(None),
             active_turn_id: RwLock::new(None),
             pending_runtime_turn_id: RwLock::new(None),
             bridge_turn_by_runtime_turn: Mutex::new(BTreeMap::new()),
@@ -413,6 +682,24 @@ impl RuntimeProvider for ClaudeProvider {
                 }
                 other => other,
             })?;
+        let _operation = session.operation_lock.lock().await;
+        if session.quarantined.load(Ordering::SeqCst) {
+            return Err(RuntimeError::provider_not_dispatched(
+                "session_quarantined",
+                "Claude session was detached after an unverified provider operation",
+            ));
+        }
+        let mut send_policy = session.launch_policy.read().await.clone();
+        if let Some(mode) = req.permission_mode.as_ref() {
+            send_policy.permission_intent =
+                runtime_core::ProviderPermissionIntent::explicit(mode.clone())?;
+            crate::policy::validate_policy(
+                &send_policy,
+                session.effective_cwd.read().await.as_deref(),
+                &Default::default(),
+                None,
+            )?;
+        }
         let runtime_turn_id = req.turn_id.clone();
 
         {
@@ -428,6 +715,8 @@ impl RuntimeProvider for ClaudeProvider {
                 "sessionId": session.bridge_session_id,
                 "input": req.input,
                 "expectedTurnId": req.expected_turn_id,
+                "permissionIntent": send_policy.permission_intent,
+                "thinkingEffort": session.current_preferences.read().await.thinking_effort,
             }),
             self.inner.config.request_timeout_ms,
         )
@@ -466,7 +755,16 @@ impl RuntimeProvider for ClaudeProvider {
 
         {
             let mut active_turn_id = session.active_turn_id.write().await;
-            *active_turn_id = Some(runtime_turn_id.clone());
+            *active_turn_id = if session
+                .completed_turns
+                .lock()
+                .await
+                .contains_key(&runtime_turn_id)
+            {
+                None
+            } else {
+                Some(runtime_turn_id.clone())
+            };
         }
         {
             let mut pending_runtime_turn_id = session.pending_runtime_turn_id.write().await;
@@ -543,6 +841,7 @@ impl RuntimeProvider for ClaudeProvider {
         req: ProviderWaitTurnRequest,
     ) -> Result<ProviderTurnResult, RuntimeError> {
         let session = self.get_session(req.runtime_session_id.as_str()).await?;
+        let _operation = session.operation_lock.lock().await;
         let runtime_turn_id = req.turn_id.clone();
 
         if let Some(result) = {
@@ -621,6 +920,13 @@ impl RuntimeProvider for ClaudeProvider {
             error: result.get("error").cloned(),
         };
 
+        if let Some(observation) = turn_result
+            .usage
+            .as_ref()
+            .and_then(crate::advanced::context_from_usage)
+        {
+            *session.context_observation.write().await = Some(observation);
+        }
         {
             let mut completed_turns = session.completed_turns.lock().await;
             completed_turns.insert(turn_id.clone(), turn_result.clone());
@@ -631,15 +937,6 @@ impl RuntimeProvider for ClaudeProvider {
                 *active_turn_id = None;
             }
         }
-        {
-            let mut bridge_turn_by_runtime_turn = session.bridge_turn_by_runtime_turn.lock().await;
-            if let Some(bridge_turn_id) = bridge_turn_by_runtime_turn.remove(turn_id.as_str()) {
-                let mut runtime_turn_by_bridge_turn =
-                    session.runtime_turn_by_bridge_turn.lock().await;
-                runtime_turn_by_bridge_turn.remove(bridge_turn_id.as_str());
-            }
-        }
-
         Ok(turn_result)
     }
 

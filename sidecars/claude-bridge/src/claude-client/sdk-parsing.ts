@@ -427,6 +427,7 @@ export function hasCompactionInProgressStatus(message: unknown): boolean {
 export interface SdkCompactBoundaryMetadata {
   trigger: 'manual' | 'auto' | null
   preTokens: number | null
+  postTokens: number | null
 }
 
 function normalizeCompactBoundaryTrigger(
@@ -462,6 +463,10 @@ export function extractCompactBoundaryMetadata(
     preTokens:
       normalizeTokenCount(metadata?.pre_tokens) ??
       normalizeTokenCount(metadata?.preTokens) ??
+      null,
+    postTokens:
+      normalizeTokenCount(metadata?.post_tokens) ??
+      normalizeTokenCount(metadata?.postTokens) ??
       null,
   }
 }

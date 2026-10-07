@@ -277,6 +277,12 @@ async fn live_provider_approval_and_interrupt() {
         ProviderRuntimeEvent::TurnOutcomeUnknown { code, message, .. } => {
             panic!("unexpected unknown outcome before live approval: {code}: {message}")
         }
+        ProviderRuntimeEvent::PermissionObserved { .. } => {
+            panic!("unexpected permission observation before live approval")
+        }
+        ProviderRuntimeEvent::ContextCompactionObserved { .. } => {
+            panic!("unexpected compaction observation before live approval")
+        }
     };
     provider
         .respond_approval(ProviderApprovalResponseRequest {

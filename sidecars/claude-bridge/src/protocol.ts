@@ -1,3 +1,4 @@
+import type { ClaudePermissionIntent, ClaudeSettingSourcesIntent } from './claude-client/types'
 export const PROTOCOL_VERSION = '0.1.0'
 
 export type BridgeMethod =
@@ -5,6 +6,8 @@ export type BridgeMethod =
   | 'bridge.capabilities'
   | 'session.create'
   | 'session.resume'
+  | 'session.rebind'
+  | 'session.compact'
   | 'session.hard_fork'
   | 'session.send'
   | 'session.interrupt'
@@ -63,8 +66,8 @@ export interface BridgeEvent {
 export interface SessionCreateParams {
   cwd?: string
   model?: string
-  permissionMode?: string
-  settingSources?: string[]
+  settingSourcesIntent: ClaudeSettingSourcesIntent
+  harnessInstructions?: string
   systemPrompt?: string | null
   allowedTools?: string[]
   disallowedTools?: string[]
@@ -79,13 +82,14 @@ export interface SessionCreateParams {
 }
 
 export interface SessionResumeParams {
+  thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   sessionId: string
   providerSessionRef: string
   claudeCanonicalSessionRef?: string
   cwd?: string
   model?: string
-  permissionMode?: string
-  settingSources?: string[]
+  settingSourcesIntent: ClaudeSettingSourcesIntent
+  harnessInstructions?: string
   systemPrompt?: string | null
   allowedTools?: string[]
   disallowedTools?: string[]
@@ -99,6 +103,8 @@ export interface SessionResumeParams {
 }
 
 export interface SessionSendParams {
+  permissionIntent: ClaudePermissionIntent
+  thinkingEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   sessionId: string
   input: Array<{
     type: string
@@ -136,8 +142,7 @@ export interface SessionWaitParams {
 export interface SessionSupportedCommandsParams {
   cwd?: string
   model?: string
-  permissionMode?: string
-  settingSources?: string[]
+  settingSourcesIntent: ClaudeSettingSourcesIntent
   systemPrompt?: string | null
   allowedTools?: string[]
   disallowedTools?: string[]
@@ -192,4 +197,12 @@ export function parseBridgeRequest(line: string): BridgeRequest | null {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+export interface SessionRebindParams {
+  sessionId: string
+  destinationCwd: string
+}
+export interface SessionCompactParams {
+  sessionId: string
 }

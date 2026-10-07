@@ -1,3 +1,4 @@
+import { resolveClaudeSettingSources } from './policy'
 import {
   getSessionMessages as claudeAgentSdkGetSessionMessages,
   query as claudeAgentSdkQuery,
@@ -7,7 +8,9 @@ import { existsSync, statSync } from 'node:fs'
 import { delimiter, join, sep } from 'node:path'
 
 import { BridgeError } from '../errors'
+import { isGgScopedMcpToolName } from './client/tool-metadata'
 import type {
+  ClaudePermissionIntent,
   GgMcpServerConfig,
   SdkGetSessionMessagesFn,
   SdkSupportedModel,
@@ -24,7 +27,10 @@ interface CreateSdkQueryParams {
   prompt: string | AsyncIterable<SdkUserMessage>
   canUseTool: SdkCanUseToolFn
   sdkQueryOverride?: SdkQueryFn
+  permissionIntent?: ClaudePermissionIntent
+  enableThinkingSummaries?: boolean
   runtimeOptionOverrides?: {
+    disableBuiltInTools?: boolean
     forkSession?: boolean
     resume?: string | null
     resumeSessionAt?: string
@@ -51,13 +57,19 @@ export async function createSdkQuery(
     prompt,
     canUseTool,
     sdkQueryOverride,
+    permissionIntent,
+    enableThinkingSummaries = false,
     runtimeOptionOverrides,
   } = params
   const query = sdkQueryOverride ?? (await loadSdkQuery())
   const options: Record<string, unknown> = {
     includePartialMessages: true,
     canUseTool,
-    configScope: 'user',
+  }
+
+  if (enableThinkingSummaries) {
+    options.thinking = { type: 'adaptive', display: 'summarized' }
+    options.settings = { showThinkingSummaries: true }
   }
 
   if (session.options.cwd) {
@@ -66,17 +78,24 @@ export async function createSdkQuery(
   if (session.options.model) {
     options.model = session.options.model
   }
-  if (session.options.permissionMode) {
-    options.permissionMode = session.options.permissionMode
+  if (permissionIntent?.kind === 'explicit') {
+    options.permissionMode = permissionIntent.mode
+    if (permissionIntent.mode === 'bypassPermissions') {
+      options.allowDangerouslySkipPermissions = true
+    }
   }
-  if (
-    session.options.settingSources &&
-    session.options.settingSources.length > 0
-  ) {
-    options.settingSources = session.options.settingSources
-  }
-  if (session.options.systemPrompt) {
-    options.systemPrompt = session.options.systemPrompt
+  options.settingSources = session.options.settingSourcesIntent
+    ? resolveClaudeSettingSources(session.options.settingSourcesIntent, session.options.cwd)
+    : session.options.settingSources ?? []
+  const callerPrompt = session.options.systemPrompt ?? ''
+  const harness = session.options.harnessInstructions
+  if (harness) {
+    options.systemPrompt = {
+      type: 'preset', preset: 'claude_code',
+      append: callerPrompt.includes(harness) ? callerPrompt : [callerPrompt, harness].filter(Boolean).join('\n\n'),
+    }
+  } else if (callerPrompt) {
+    options.systemPrompt = callerPrompt
   }
   if (session.options.allowedTools && session.options.allowedTools.length > 0) {
     options.allowedTools = session.options.allowedTools
@@ -109,6 +128,8 @@ export async function createSdkQuery(
   if (runtimeOptionOverrides?.sessionId) {
     options.sessionId = runtimeOptionOverrides.sessionId
   }
+
+  if (runtimeOptionOverrides?.disableBuiltInTools) options.tools = []
 
   const pathToClaudeCodeExecutable = resolveClaudeCodeExecutablePath()
   if (pathToClaudeCodeExecutable) {
@@ -249,11 +270,7 @@ function rewriteGgMcpToolNameForServer(
   }
 
   const toolPart = afterPrefix.slice(serverSeparatorIndex + 2)
-  if (
-    toolPart.startsWith('gg_team_') ||
-    toolPart.startsWith('gg_process_') ||
-    toolPart.startsWith('gg_markdown_')
-  ) {
+  if (isGgScopedMcpToolName(toolPart)) {
     return `mcp__${serverName}__${toolPart}`
   }
   return toolName

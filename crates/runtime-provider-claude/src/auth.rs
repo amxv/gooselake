@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -396,6 +397,9 @@ impl ClaudeProvider {
         let sessions = {
             let mut sessions = self.inner.sessions.write().await;
             let mut by_bridge = self.inner.sessions_by_bridge_key.write().await;
+            for session in sessions.values() {
+                session.quarantined.store(true, Ordering::SeqCst);
+            }
             by_bridge.clear();
             std::mem::take(&mut *sessions)
         };

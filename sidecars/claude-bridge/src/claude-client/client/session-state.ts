@@ -21,9 +21,9 @@ export function createSessionState(params: {
     sdkSessionRef: params.sdkSessionRef,
     options: params.options,
     activeTurnId: null,
-    ggTeamToolApprovalPending: false,
-    ggTeamToolInFlight: false,
-    ggTeamToolInvocationId: null,
+    ggSerializedToolApprovalPending: false,
+    ggSerializedToolInFlight: false,
+    ggSerializedToolInvocationId: null,
     interruptedTurns: new Set<string>(),
     turnResults: new Map<string, ClaudeTurnResult>(),
     turnOrder: [],
@@ -37,6 +37,9 @@ export function createSessionState(params: {
     turnAssistantMessageIds: new Map<string, string[]>(),
     turnRollbackBoundaryIds: new Map<string, string>(),
     userMessageTurnIds: new Map<string, string>(),
+    bindingGeneration: 0,
+    rebinding: false,
+    requiredInitCwd: null,
     lastKnownUsage: null,
   }
 }

@@ -639,6 +639,9 @@ async fn fake_app_server_proves_provider_approval_and_interrupt_lifecycle() {
         ProviderRuntimeEvent::ContextCompactionObserved { .. } => {
             panic!("unexpected compaction observation while waiting for approval")
         }
+        ProviderRuntimeEvent::SessionIdentityObserved { .. } => {
+            panic!("unexpected native session identity observation while waiting for approval")
+        }
     };
     assert_eq!(approval_ref, "approval-native-1");
 
@@ -701,6 +704,9 @@ async fn fake_app_server_proves_provider_approval_and_interrupt_lifecycle() {
         }
         ProviderRuntimeEvent::ContextCompactionObserved { .. } => {
             panic!("unexpected compaction observation while waiting for permission approval")
+        }
+        ProviderRuntimeEvent::SessionIdentityObserved { .. } => {
+            panic!("unexpected native session identity observation while waiting for permission approval")
         }
     };
     assert_eq!(permission_approval_ref, "permission-native-2");

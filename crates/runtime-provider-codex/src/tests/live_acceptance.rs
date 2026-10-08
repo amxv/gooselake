@@ -283,6 +283,9 @@ async fn live_provider_approval_and_interrupt() {
         ProviderRuntimeEvent::ContextCompactionObserved { .. } => {
             panic!("unexpected compaction observation before live approval")
         }
+        ProviderRuntimeEvent::SessionIdentityObserved { .. } => {
+            panic!("unexpected native session identity observation before live approval")
+        }
     };
     provider
         .respond_approval(ProviderApprovalResponseRequest {

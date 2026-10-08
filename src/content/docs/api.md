@@ -431,9 +431,12 @@ Accepted decision values:
 - `rejected`
 
 For provider-originated approvals, the runtime durably records the decision as pending before
-forwarding it to the provider. If the provider decision outcome becomes ambiguous, the turn is
-left in a recovery-required state instead of assuming the decision succeeded or retrying it
-blindly.
+forwarding it to the provider. A provider can reject an invalid local selection before any
+native response is sent; the approval then stays pending so the caller can correct the choice.
+For ACP, an explicit `payload.optionId` must match an offered native permission option and agree
+with the `decision` (allow vs reject). If the provider decision outcome becomes ambiguous after
+the response might have been sent, the turn is left in a recovery-required state instead of
+assuming the decision succeeded or retrying it blindly.
 
 ## SSE and replay model
 
@@ -520,7 +523,8 @@ ACP v1 notes:
 - only `GET /v1/providers/acp/auth/status` exists for ACP auth
 - ACP auth is agent-managed
 - no ACP logout/API-key/import routes exist in v1
-- ACP permission requests fail the active turn clearly
+- ACP provider-origin permission requests are recorded against the admitted logical turn and answered using one of the agent's offered options; invalid requests fail closed
+- ACP image/audio/embedded context inputs require negotiated prompt capabilities; unsupported native/local file or skill inputs are rejected before dispatch instead of being flattened
 
 See [Provider Guide](/docs/providers) for full provider setup.
 

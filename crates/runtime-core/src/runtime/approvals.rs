@@ -265,6 +265,18 @@ impl RuntimeSessionManager {
             })
             .await
         {
+            // An adapter can reject an invalid native option *before* writing
+            // to the provider. Keep the durable approval pending in that case
+            // so the operator can correct it. Only ambiguous post-dispatch
+            // failures require approval/turn recovery quarantine.
+            if error.provider_dispatch_outcome() == ProviderDispatchOutcome::NotDispatched {
+                self.store.upsert_approval(&existing)?;
+                self.approvals
+                    .write()
+                    .await
+                    .insert(approval_id.to_string(), existing);
+                return Err(error);
+            }
             {
                 let mut turns = self.turns.write().await;
                 if let Some(turn) = turns.get_mut(&existing.turn_id) {

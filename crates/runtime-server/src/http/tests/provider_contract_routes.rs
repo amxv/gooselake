@@ -43,8 +43,9 @@ async fn v2_provider_contract_reports_capabilities_harness_and_discovery_modes()
         capabilities["capabilities"]["session_preferences"],
         "unsupported"
     );
-    assert_eq!(capabilities["capabilities"]["approvals"], "unsupported");
+    assert_eq!(capabilities["capabilities"]["approvals"], "supported");
     assert_eq!(capabilities["capabilities"]["tools"], "agent_managed");
+    assert_eq!(capabilities["capabilities"]["images"], "agent_managed");
     assert_eq!(capabilities["harness"]["version"], "gooselake-harness-v1");
     assert_eq!(capabilities["harness"]["injection_mode"], "scoped_mcp_only");
     assert!(capabilities["harness"]["content_hash"]

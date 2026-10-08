@@ -162,8 +162,8 @@ Claude auth mutations currently exist for Claude only:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | Register the ACP provider. |
-| `max_instances` | `4` | Maximum ACP agent processes. |
-| `max_sessions_per_instance` | `4` | Sessions per ACP agent process. |
+| `max_instances` | `4` | ACP logical-session admission-capacity multiplier (not a physical child-process pool in the current adapter). |
+| `max_sessions_per_instance` | `4` | ACP logical-session admission-capacity multiplier; the admission ceiling is their product. |
 | `command` | unset | Absolute path to an ACP-compatible agent command. Required when enabled. |
 | `args` | `[]` | Arguments for the ACP command, for example `['serve', '--stdio']`. |
 | `transport` | `stdio` | ACP v1 supports `stdio` only in this runtime. |
@@ -174,10 +174,12 @@ Claude auth mutations currently exist for Claude only:
 ACP v1 constraints:
 
 - no streamable HTTP transport
+- one shared stdio ACP child per active provider connection; `max_instances × max_sessions_per_instance` currently bounds logical session admission, not the number of launched children
 - no runtime-owned ACP login/import/logout flow
 - auth is negotiated by the configured ACP agent
 - `GET /v1/providers/acp/models` can validly return an empty list
-- ACP permission requests fail the active turn because runtime approval bridging is not implemented for ACP yet
+- ACP provider-origin permission requests use durable runtime approvals when they can be safely associated with the active logical turn; malformed or ambiguous requests fail closed
+- ACP native images/audio/embedded resources require explicitly advertised prompt capabilities; raw paths and unknown rich blocks are not flattened into text
 
 Example:
 

@@ -43,6 +43,30 @@ async fn close_session_shuts_down_idle_connection() {
 }
 
 #[tokio::test]
+async fn rejected_native_session_creation_releases_idle_subprocess() {
+    let harness = FakeAgentHarness::new("reject_session_new");
+    let provider = harness.provider();
+    let error = provider
+        .create_session(runtime_core::ProviderCreateSessionRequest {
+            runtime_session_id: "rejected-agent".into(),
+            model: None,
+            cwd: None,
+            permission_mode: None,
+            setting_sources: Vec::new(),
+            system_prompt: None,
+            allowed_tools: Vec::new(),
+            disallowed_tools: Vec::new(),
+            harness_version_slot: None,
+            metadata: None,
+        })
+        .await
+        .expect_err("agent must be allowed to reject native session/new");
+    assert!(error.to_string().contains("session creation rejected"));
+    assert!(provider.inner.sessions.read().await.is_empty());
+    assert!(provider.inner.connection.lock().await.is_none());
+}
+
+#[tokio::test]
 async fn close_session_succeeds_after_connection_death_without_respawn() {
     let harness = FakeAgentHarness::new("normal");
     let provider = harness.provider();
@@ -75,14 +99,18 @@ async fn close_session_succeeds_after_connection_death_without_respawn() {
         .await
         .expect("send");
 
-    let _ = provider
+    let error = provider
         .wait_for_turn(runtime_core::ProviderWaitTurnRequest {
             runtime_session_id: "sess_close_dead_connection".to_string(),
             turn_id: "turn_close_dead_connection".to_string(),
             timeout_ms: Some(5_000),
         })
         .await
-        .expect("wait after crash");
+        .expect_err("ACP prompt disconnect outcome must be unknown");
+    assert_eq!(
+        error.provider_dispatch_code(),
+        Some("acp_prompt_dispatch_unknown")
+    );
 
     provider
         .close_session(runtime_core::ProviderCloseSessionRequest {
@@ -297,21 +325,19 @@ async fn real_adapter_contract_handles_malformed_agent_output() {
         .await
         .expect("send");
 
-    let result = provider
+    let error = provider
         .wait_for_turn(runtime_core::ProviderWaitTurnRequest {
             runtime_session_id: "sess_malformed".to_string(),
             turn_id: "turn_malformed".to_string(),
             timeout_ms: Some(5_000),
         })
         .await
-        .expect("wait");
-    assert_eq!(result.status, runtime_core::ProviderTurnStatus::Failed);
-    assert!(result
-        .error
-        .as_ref()
-        .and_then(|value| value.get("message"))
-        .and_then(Value::as_str)
-        .is_some_and(|message| message.contains("malformed JSON-RPC")));
+        .expect_err("malformed transport cannot prove prompt failure");
+    assert_eq!(
+        error.provider_dispatch_code(),
+        Some("acp_prompt_dispatch_unknown")
+    );
+    assert!(error.to_string().contains("malformed JSON-RPC"));
 }
 
 #[tokio::test]
@@ -346,21 +372,19 @@ async fn real_adapter_contract_handles_process_death() {
         .await
         .expect("send");
 
-    let result = provider
+    let error = provider
         .wait_for_turn(runtime_core::ProviderWaitTurnRequest {
             runtime_session_id: "sess_crash".to_string(),
             turn_id: "turn_crash".to_string(),
             timeout_ms: Some(5_000),
         })
         .await
-        .expect("wait");
-    assert_eq!(result.status, runtime_core::ProviderTurnStatus::Failed);
-    assert!(result
-        .error
-        .as_ref()
-        .and_then(|value| value.get("message"))
-        .and_then(Value::as_str)
-        .is_some_and(|message| message.contains("connection closed")));
+        .expect_err("crashed agent might have executed prompt");
+    assert_eq!(
+        error.provider_dispatch_code(),
+        Some("acp_prompt_dispatch_unknown")
+    );
+    assert!(error.to_string().contains("connection closed"));
 }
 
 #[tokio::test]
@@ -429,6 +453,10 @@ async fn real_adapter_contract_preserves_ordered_updates_in_terminal_usage() {
     assert_eq!(
         tool_calls[0].get("sessionUpdate").and_then(Value::as_str),
         Some("tool_call_update")
+    );
+    assert_eq!(
+        tool_calls[0].get("toolName").and_then(Value::as_str),
+        Some("gg_ping")
     );
 }
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use runtime_core::{ProviderTurnResult, ProviderTurnStatus, RuntimeError};
 use serde_json::{json, Value};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::config::AcpProviderConfig;
 use crate::connection::AcpConnection;
@@ -17,6 +17,9 @@ use crate::state::{AcpActiveTurnState, AcpSessionState};
 pub(super) struct AcpProviderInner {
     pub(super) config: AcpProviderConfig,
     pub(super) connection: Mutex<Option<Arc<AcpConnection>>>,
+    pub(super) next_connection_id: std::sync::atomic::AtomicU64,
+    pub(super) provider_events: broadcast::Sender<runtime_core::ProviderRuntimeEvent>,
+    pub(super) permission_response_gate: Mutex<()>,
     pub(super) sessions: RwLock<HashMap<String, AcpSessionState>>,
 }
 
@@ -42,6 +45,7 @@ pub struct AcpProvider {
 
 impl AcpProvider {
     pub fn new(config: AcpProviderConfig) -> Self {
+        let (provider_events, _) = broadcast::channel(256);
         Self {
             inner: Arc::new(AcpProviderInner {
                 config: AcpProviderConfig {
@@ -49,6 +53,9 @@ impl AcpProvider {
                     ..config
                 },
                 connection: Mutex::new(None),
+                next_connection_id: std::sync::atomic::AtomicU64::new(1),
+                provider_events,
+                permission_response_gate: Mutex::new(()),
                 sessions: RwLock::new(HashMap::new()),
             }),
         }
@@ -160,7 +167,9 @@ impl AcpProvider {
     ) -> Result<(), RuntimeError> {
         let mut sessions = self.inner.sessions.write().await;
         if sessions.contains_key(runtime_session_id) {
-            return Ok(());
+            return Err(RuntimeError::Conflict(format!(
+                "ACP runtime session {runtime_session_id} is already reserved or active"
+            )));
         }
 
         let capacity = self.max_session_capacity();
@@ -178,14 +187,110 @@ impl AcpProvider {
     pub(super) async fn release_session_slot(&self, runtime_session_id: &str) {
         let mut sessions = self.inner.sessions.write().await;
         sessions.remove(runtime_session_id);
+        drop(sessions);
+        self.shutdown_connection_if_idle().await;
+    }
+
+    /// Reserve either a fresh runtime attachment or a provably idle stale
+    /// attachment. A restarted child never inherits ownership of native IDs
+    /// merely because it happens to reuse the same sessionId string.
+    pub(super) async fn prepare_resume_slot(
+        &self,
+        runtime_session_id: &str,
+        provider_session_ref: &str,
+        connection_id: u64,
+    ) -> Result<bool, RuntimeError> {
+        let mut sessions = self.inner.sessions.write().await;
+        if sessions.iter().any(|(id, session)| {
+            id != runtime_session_id
+                && session.provider_session_ref == provider_session_ref
+                && session.connection_id == Some(connection_id)
+        }) {
+            return Err(RuntimeError::Conflict(
+                "ACP native session is already bound to another runtime agent".into(),
+            ));
+        }
+        if let Some(session) = sessions.get_mut(runtime_session_id) {
+            if session.provider_session_ref != provider_session_ref {
+                return Err(RuntimeError::ProtocolViolation(
+                    "ACP resume native session identity differs from persisted attachment".into(),
+                ));
+            }
+            if session.resuming
+                || session.connection_id == Some(connection_id)
+                || session.active_turn.is_some()
+                || !session.pending_approvals.is_empty()
+                || !session.pending_native_permissions.is_empty()
+            {
+                return Err(RuntimeError::Conflict(
+                    "ACP session cannot be rebound while active or already attached".into(),
+                ));
+            }
+            if session.completed_turns.values().any(|result| {
+                result
+                    .error
+                    .as_ref()
+                    .and_then(|value| value.get("code"))
+                    .and_then(Value::as_str)
+                    == Some("acp_prompt_dispatch_unknown")
+            }) {
+                return Err(RuntimeError::InvalidState(
+                    "ACP dispatch outcome is unresolved; reconcile or close before resuming".into(),
+                ));
+            }
+            session.resuming = true;
+            return Ok(false);
+        }
+
+        let capacity = self.max_session_capacity();
+        if sessions.len() >= capacity {
+            return Err(RuntimeError::InvalidState(format!(
+                "acp session capacity exceeded ({capacity} total sessions from max_instances={} * max_sessions_per_instance={})",
+                self.inner.config.max_instances, self.inner.config.max_sessions_per_instance
+            )));
+        }
+        sessions.insert(
+            runtime_session_id.to_string(),
+            AcpSessionState {
+                resuming: true,
+                ..Default::default()
+            },
+        );
+        Ok(true)
+    }
+
+    pub(super) async fn abort_resume_slot(&self, runtime_session_id: &str, is_new: bool) {
+        let mut sessions = self.inner.sessions.write().await;
+        if is_new {
+            sessions.remove(runtime_session_id);
+        } else if let Some(session) = sessions.get_mut(runtime_session_id) {
+            session.resuming = false;
+        }
+        drop(sessions);
+        self.shutdown_connection_if_idle().await;
     }
 
     pub(super) async fn activate_reserved_session(
         &self,
         runtime_session_id: &str,
         provider_session_ref: String,
+        connection_id: u64,
     ) -> Result<(), RuntimeError> {
         let mut sessions = self.inner.sessions.write().await;
+        if provider_session_ref.trim().is_empty() {
+            return Err(RuntimeError::ProtocolViolation(
+                "ACP provider session identity is empty".into(),
+            ));
+        }
+        if sessions.iter().any(|(runtime_id, existing)| {
+            runtime_id != runtime_session_id
+                && existing.provider_session_ref == provider_session_ref
+                && existing.connection_id == Some(connection_id)
+        }) {
+            return Err(RuntimeError::Conflict(
+                "ACP provider session is already bound to another runtime agent".into(),
+            ));
+        }
         let session = sessions.get_mut(runtime_session_id).ok_or_else(|| {
             RuntimeError::InvalidState(format!(
                 "reserved acp session {} disappeared before activation",
@@ -193,26 +298,22 @@ impl AcpProvider {
             ))
         })?;
         session.provider_session_ref = provider_session_ref;
+        session.connection_id = Some(connection_id);
+        session.resuming = false;
         Ok(())
     }
 
-    pub(super) async fn shutdown_connection(&self, kill_if_running: bool) {
-        let connection = {
-            let mut slot = self.inner.connection.lock().await;
-            slot.take()
-        };
-        if let Some(connection) = connection {
-            connection.shutdown(kill_if_running).await;
-        }
-    }
-
     pub(super) async fn shutdown_connection_if_idle(&self) {
-        let is_idle = {
-            let sessions = self.inner.sessions.read().await;
-            sessions.is_empty()
-        };
-        if is_idle {
-            self.shutdown_connection(true).await;
+        // Keep the session read guard while detaching the child. An in-flight
+        // create must not reserve a slot between the idle check and shutdown.
+        let sessions = self.inner.sessions.read().await;
+        if !sessions.is_empty() {
+            return;
+        }
+        let connection = self.inner.connection.lock().await.take();
+        drop(sessions);
+        if let Some(connection) = connection {
+            connection.shutdown(true).await;
         }
     }
 
@@ -223,14 +324,20 @@ impl AcpProvider {
     }
 
     pub(super) async fn reap_connection_if_current_and_closed(&self, current: &Arc<AcpConnection>) {
-        let should_reap = {
-            let slot = self.inner.connection.lock().await;
-            slot.as_ref()
-                .is_some_and(|active| Arc::ptr_eq(active, current))
-                && current.closed.load(Ordering::SeqCst)
+        let connection = {
+            let mut slot = self.inner.connection.lock().await;
+            if slot.as_ref().is_some_and(|active| {
+                Arc::ptr_eq(active, current) && current.closed.load(Ordering::SeqCst)
+            }) {
+                slot.take()
+            } else {
+                None
+            }
         };
-        if should_reap {
-            self.shutdown_connection(false).await;
+        if let Some(connection) = connection {
+            // A protocol error can close our reader while the child is still
+            // running. Terminate that child instead of waiting on its stdin.
+            connection.shutdown(true).await;
         }
     }
 
@@ -331,55 +438,6 @@ impl AcpProvider {
         Ok(connection)
     }
 
-    pub(super) fn build_prompt_blocks(input: &[Value]) -> Vec<Value> {
-        let mut blocks = Vec::new();
-        for item in input {
-            if let Some(text) = item
-                .get("text")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                blocks.push(json!({
-                    "type": "text",
-                    "text": text,
-                }));
-                continue;
-            }
-            if let Some(raw) = item
-                .as_str()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                blocks.push(json!({
-                    "type": "text",
-                    "text": raw,
-                }));
-                continue;
-            }
-            if let Some(kind) = item.get("type").and_then(Value::as_str) {
-                blocks.push(json!({
-                    "type": "text",
-                    "text": format!("[{kind}] {item}"),
-                }));
-                continue;
-            }
-            blocks.push(json!({
-                "type": "text",
-                "text": item.to_string(),
-            }));
-        }
-
-        if blocks.is_empty() {
-            blocks.push(json!({
-                "type": "text",
-                "text": "Continue with the latest task context.",
-            }));
-        }
-
-        blocks
-    }
-
     pub(super) fn resolve_session_cwd(cwd: Option<&str>) -> Result<String, RuntimeError> {
         match cwd.map(str::trim).filter(|value| !value.is_empty()) {
             Some(value) => {
@@ -410,12 +468,36 @@ impl AcpProvider {
         turn_id: &str,
         input: Vec<Value>,
     ) -> Result<(), RuntimeError> {
+        let connection = self.current_connection().await.ok_or_else(|| {
+            RuntimeError::provider_not_dispatched(
+                "session_not_found",
+                "ACP session transport is unavailable; resume must prove the original session before another turn",
+            )
+        })?;
+        let caps = connection.capabilities.read().await.clone();
+        let prompt_blocks =
+            crate::prompt::build_prompt_blocks(input.as_slice(), &caps).map_err(|error| {
+                RuntimeError::provider_not_dispatched("unsupported_acp_input", error.to_string())
+            })?;
         let active_turn = AcpActiveTurnState::new(turn_id.to_string());
         let provider_session_ref = {
             let mut sessions = self.inner.sessions.write().await;
             let session = sessions.get_mut(runtime_session_id).ok_or_else(|| {
                 RuntimeError::NotFound(format!("acp session {runtime_session_id}"))
             })?;
+
+            if session.resuming {
+                return Err(RuntimeError::provider_not_dispatched(
+                    "acp_session_resuming",
+                    "ACP session resume/load is in progress",
+                ));
+            }
+            if session.connection_id != Some(connection.instance_id) {
+                return Err(RuntimeError::provider_not_dispatched(
+                    "session_not_found",
+                    "ACP native session belongs to a previous subprocess; resume must prove its native identity before dispatch",
+                ));
+            }
 
             if session.active_turn.is_some() || !session.pending_approvals.is_empty() {
                 return Err(RuntimeError::InvalidState(format!(
@@ -431,26 +513,8 @@ impl AcpProvider {
         let provider = self.clone();
         let runtime_session_id = runtime_session_id.to_string();
         let turn_id = turn_id.to_string();
-        let prompt_blocks = Self::build_prompt_blocks(input.as_slice());
 
         tokio::spawn(async move {
-            let connection = match provider.ensure_connection().await {
-                Ok(connection) => connection,
-                Err(error) => {
-                    let result = ProviderTurnResult {
-                        runtime_session_id: runtime_session_id.clone(),
-                        turn_id: turn_id.clone(),
-                        status: ProviderTurnStatus::Failed,
-                        usage: None,
-                        error: Some(json!({ "message": error.to_string() })),
-                    };
-                    provider
-                        .complete_turn(runtime_session_id.as_str(), turn_id.as_str(), result)
-                        .await;
-                    return;
-                }
-            };
-
             let response = connection
                 .send_request(
                     "session/prompt",
@@ -458,7 +522,7 @@ impl AcpProvider {
                         "sessionId": provider_session_ref,
                         "prompt": prompt_blocks,
                     }),
-                    None,
+                    Some(provider.wait_timeout(None)),
                 )
                 .await;
 
@@ -471,13 +535,15 @@ impl AcpProvider {
                 Err(error) => ProviderTurnResult {
                     runtime_session_id: runtime_session_id.clone(),
                     turn_id: turn_id.clone(),
-                    status: if active_turn.cancelled.load(Ordering::SeqCst) {
-                        ProviderTurnStatus::Interrupted
-                    } else {
-                        ProviderTurnStatus::Failed
-                    },
+                    status: ProviderTurnStatus::Failed,
                     usage: None,
-                    error: Some(json!({ "message": error.to_string() })),
+                    // Once session/prompt crosses the RPC send boundary, a
+                    // timeout/disconnect does not prove the agent did no work.
+                    // The manager must quarantine rather than blindly replay.
+                    error: Some(json!({
+                        "code": "acp_prompt_dispatch_unknown",
+                        "message": error.to_string(),
+                    })),
                 },
             };
 
@@ -523,8 +589,8 @@ impl AcpProvider {
                     .tool_calls
                     .lock()
                     .await
-                    .values()
-                    .cloned()
+                    .iter()
+                    .map(|(_, call)| call.clone())
                     .collect::<Vec<_>>();
                 (
                     assistant_text,
@@ -595,6 +661,15 @@ impl AcpProvider {
         turn_id: &str,
         result: ProviderTurnResult,
     ) {
+        // A terminal turn cannot race a native permission decision into a
+        // stale subprocess request after its approval state was discarded.
+        let _permission_guard = self.inner.permission_response_gate.lock().await;
+        let is_dispatch_unknown = result
+            .error
+            .as_ref()
+            .and_then(|error| error.get("code"))
+            .and_then(Value::as_str)
+            == Some("acp_prompt_dispatch_unknown");
         let waiters = {
             let mut sessions = self.inner.sessions.write().await;
             let Some(session) = sessions.get_mut(runtime_session_id) else {
@@ -619,6 +694,9 @@ impl AcpProvider {
                 .pending_approvals
                 .retain(|_, pending| pending.turn_id != turn_id);
             session
+                .pending_native_permissions
+                .retain(|_, pending| pending.turn_id != turn_id);
+            session
                 .completed_turns
                 .insert(turn_id.to_string(), result.clone());
             session.waiters.remove(turn_id).unwrap_or_default()
@@ -627,16 +705,35 @@ impl AcpProvider {
         for waiter in waiters {
             let _ = waiter.send(result.clone());
         }
+        if is_dispatch_unknown {
+            let _ = self.inner.provider_events.send(
+                runtime_core::ProviderRuntimeEvent::TurnOutcomeUnknown {
+                    runtime_session_id: runtime_session_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                    code: "acp_prompt_dispatch_unknown".into(),
+                    message: result
+                        .error
+                        .as_ref()
+                        .and_then(|error| error.get("message"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("ACP prompt outcome is unknown")
+                        .to_string(),
+                },
+            );
+        }
     }
 
     pub(super) async fn fail_permission_request(
         &self,
         provider_session_ref: &str,
+        connection_id: u64,
     ) -> Result<(), RuntimeError> {
         let target = {
             let sessions = self.inner.sessions.read().await;
             sessions.iter().find_map(|(runtime_session_id, session)| {
-                if session.provider_session_ref == provider_session_ref {
+                if session.provider_session_ref == provider_session_ref
+                    && session.connection_id == Some(connection_id)
+                {
                     session
                         .active_turn
                         .as_ref()
@@ -654,7 +751,7 @@ impl AcpProvider {
                 status: ProviderTurnStatus::Failed,
                 usage: None,
                 error: Some(json!({
-                    "message": "ACP session/request_permission is unsupported in v1",
+                    "message": "ACP session/request_permission could not be safely routed to an admitted turn",
                 })),
             };
             self.complete_turn(runtime_session_id.as_str(), turn_id.as_str(), result)
@@ -666,6 +763,7 @@ impl AcpProvider {
 
     pub(super) async fn apply_session_update(
         &self,
+        connection_id: u64,
         provider_session_ref: &str,
         update: Value,
     ) -> Result<(), RuntimeError> {
@@ -673,7 +771,10 @@ impl AcpProvider {
             let sessions = self.inner.sessions.read().await;
             sessions
                 .values()
-                .find(|session| session.provider_session_ref == provider_session_ref)
+                .find(|session| {
+                    session.provider_session_ref == provider_session_ref
+                        && session.connection_id == Some(connection_id)
+                })
                 .and_then(|session| session.active_turn.clone())
         };
 
@@ -715,11 +816,19 @@ impl AcpProvider {
             }
             Some("tool_call") | Some("tool_call_update") => {
                 if let Some(tool_call_id) = update.get("toolCallId").and_then(Value::as_str) {
-                    active_turn
-                        .tool_calls
-                        .lock()
-                        .await
-                        .insert(tool_call_id.to_string(), update);
+                    let mut calls = active_turn.tool_calls.lock().await;
+                    if let Some((_, existing)) = calls.iter_mut().find(|(id, _)| id == tool_call_id)
+                    {
+                        if let (Some(original), Some(delta)) =
+                            (existing.as_object_mut(), update.as_object())
+                        {
+                            for (key, value) in delta {
+                                original.insert(key.clone(), value.clone());
+                            }
+                        }
+                    } else {
+                        calls.push((tool_call_id.to_string(), update));
+                    }
                 }
             }
             _ => {}

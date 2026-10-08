@@ -635,6 +635,7 @@ version = "0.1.6"
 dependencies = [
  "async-trait",
  "runtime-core",
+ "runtime-store-sqlite",
  "serde",
  "serde_json",
  "tempfile",

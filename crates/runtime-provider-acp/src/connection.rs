@@ -19,6 +19,7 @@ const STDERR_TAIL_MAX_BYTES: usize = 8 * 1024;
 
 #[derive(Debug)]
 pub(super) struct AcpConnection {
+    pub(super) instance_id: u64,
     pub(super) child: Mutex<Child>,
     pub(super) stdin: Mutex<BufWriter<ChildStdin>>,
     pub(super) pending_requests:
@@ -59,6 +60,10 @@ impl AcpConnection {
             .ok_or_else(|| RuntimeError::Io("acp agent did not expose stderr".to_string()))?;
 
         let connection = Arc::new(Self {
+            instance_id: provider
+                .inner
+                .next_connection_id
+                .fetch_add(1, Ordering::SeqCst),
             child: Mutex::new(child),
             stdin: Mutex::new(BufWriter::new(stdin)),
             pending_requests: Mutex::new(HashMap::new()),
@@ -144,34 +149,18 @@ impl AcpConnection {
                                     .cloned();
                                 if let (Some(session_id), Some(update)) = (session_id, update) {
                                     let _ = provider
-                                        .apply_session_update(session_id.as_str(), update)
+                                        .apply_session_update(
+                                            connection.instance_id,
+                                            session_id.as_str(),
+                                            update,
+                                        )
                                         .await;
                                 }
                             }
                             Some("session/request_permission") => {
-                                let session_id = message
-                                    .get("params")
-                                    .and_then(|params| params.get("sessionId"))
-                                    .and_then(Value::as_str)
-                                    .map(str::to_string);
-                                let request_id = message.get("id").cloned();
-                                if let Some(request_id) = request_id {
-                                    let _ = connection
-                                        .write_message(&json!({
-                                            "jsonrpc": "2.0",
-                                            "id": request_id,
-                                            "result": {
-                                                "outcome": {
-                                                    "outcome": "cancelled"
-                                                }
-                                            }
-                                        }))
-                                        .await;
-                                }
-                                if let Some(session_id) = session_id {
-                                    let _ =
-                                        provider.fail_permission_request(session_id.as_str()).await;
-                                }
+                                provider
+                                    .handle_native_permission_request(&connection, &message)
+                                    .await;
                                 continue;
                             }
                             Some(_) => continue,
@@ -246,7 +235,7 @@ impl AcpConnection {
         });
     }
 
-    async fn write_message(&self, message: &Value) -> Result<(), RuntimeError> {
+    pub(super) async fn write_message(&self, message: &Value) -> Result<(), RuntimeError> {
         let mut stdin = self.stdin.lock().await;
         let bytes = serde_json::to_vec(message).map_err(|error| {
             RuntimeError::ProtocolViolation(format!(
@@ -296,7 +285,7 @@ impl AcpConnection {
         }
 
         let id = self.next_request_id.fetch_add(1, Ordering::SeqCst);
-        let id_key = id.to_string();
+        let id_key = message_id_key(&json!({"id": id})).expect("outgoing request ID is numeric");
         let (sender, receiver) = oneshot::channel();
         {
             let mut pending = self.pending_requests.lock().await;

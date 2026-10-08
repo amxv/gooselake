@@ -21,10 +21,49 @@ use crate::{
         envelope_to_call_tool_result,
     },
     gateway::{GatewayClientConfig, TeamModelPresetCapabilitySnapshot},
-    tool_params::GgTeamStatusRequest,
+    tool_params::{GgTeamStatusRequest, ToolCallMetadata},
 };
 
 use super::GgMcpServer;
+
+#[test]
+fn scoped_mcp_subprocess_rejects_forged_caller_metadata() {
+    let server = GgMcpServer {
+        tool_router: GgMcpServer::tool_router(),
+        gateway_client_config: Some(GatewayClientConfig {
+            base_url: "http://127.0.0.1:8787".into(),
+            auth_token: "fixture-token".into(),
+            default_caller_agent_id: Some("sess_bound".into()),
+            require_tool_caller_agent_id: true,
+        }),
+        gateway_client: Arc::new(tokio::sync::RwLock::new(None)),
+        process_tools_enabled: true,
+        team_call_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        team_model_presets_cache: Arc::new(tokio::sync::RwLock::new(None)),
+    };
+    let error = server
+        .resolve_caller_agent_id(&ToolCallMetadata {
+            caller_agent_id: Some("sess_other_agent".into()),
+            ..ToolCallMetadata::default()
+        })
+        .expect_err("a model-provided hidden argument cannot override its bound runtime agent");
+    assert_eq!(error["error"]["code"], "unauthorized");
+    assert_eq!(
+        server
+            .resolve_caller_agent_id(&ToolCallMetadata::default())
+            .unwrap(),
+        "sess_bound"
+    );
+    assert_eq!(
+        server
+            .resolve_caller_agent_id(&ToolCallMetadata {
+                caller_agent_id: Some("sess_bound".into()),
+                ..ToolCallMetadata::default()
+            })
+            .unwrap(),
+        "sess_bound"
+    );
+}
 
 #[test]
 fn gg_ping_payload_has_expected_envelope_shape() {

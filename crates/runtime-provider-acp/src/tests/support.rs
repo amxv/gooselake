@@ -124,7 +124,14 @@ for raw_line in sys.stdin:
         if permission is not None:
             session_id, value = permission
             PENDING_PERMISSIONS.pop(session_id, None)
-            finish_prompt(session_id, value["prompt_request_id"], "cancelled", ["Permission request was cancelled."])
+            outcome = (msg.get("result") or {{}}).get("outcome", {{}})
+            option_id = outcome.get("optionId") if outcome.get("outcome") == "selected" else None
+            if option_id == "allow-once":
+                finish_prompt(session_id, value["prompt_request_id"], "end_turn", ["Permission approved."])
+            elif option_id == "reject-once":
+                finish_prompt(session_id, value["prompt_request_id"], "end_turn", ["Permission rejected."])
+            else:
+                finish_prompt(session_id, value["prompt_request_id"], "cancelled", ["Permission request was cancelled."])
         continue
 
     method = msg.get("method")
@@ -145,8 +152,16 @@ for raw_line in sys.stdin:
             result["protocolVersion"] = 999
         if MODE != "load_only":
             result["agentCapabilities"]["sessionCapabilities"]["resume"] = {{}}
+        if MODE == "image_support":
+            result["agentCapabilities"]["promptCapabilities"] = {{"image": True}}
         send({{"jsonrpc": "2.0", "id": msg["id"], "result": result}})
     elif method == "session/new":
+        if MODE == "reject_session_new":
+            send({{
+                "jsonrpc": "2.0", "id": msg["id"],
+                "error": {{"code": -32002, "message": "session creation rejected"}}
+            }})
+            continue
         if MODE == "slow_create":
             time.sleep(0.2)
         session_id = f"sess_{{NEXT_SESSION_ID}}"
@@ -176,6 +191,12 @@ for raw_line in sys.stdin:
     elif method == "session/prompt":
         session_id = msg["params"]["sessionId"]
         request_id = msg["id"]
+        if MODE == "strict_native_session" and session_id not in SESSIONS:
+            send({{
+                "jsonrpc": "2.0", "id": request_id,
+                "error": {{"code": -32002, "message": "unknown native session"}}
+            }})
+            continue
         text = prompt_text(msg["params"].get("prompt", []))
         if "malformed" in text:
             sys.stdout.write("{{not-json\n")
@@ -189,7 +210,7 @@ for raw_line in sys.stdin:
                 "permission_id": permission_id,
                 "prompt_request_id": request_id
             }}
-            send({{
+            native_request = {{
                 "jsonrpc": "2.0",
                 "id": permission_id,
                 "method": "session/request_permission",
@@ -206,15 +227,16 @@ for raw_line in sys.stdin:
                         }}
                     ]
                 }}
-            }})
+            }}
+            send(native_request)
             continue
         if "permission" in text:
-            permission_id = request_id + 1000 if isinstance(request_id, int) else 1000
+            permission_id = 1000 if MODE == "reuse_permission_id" else (request_id + 1000 if isinstance(request_id, int) else 1000)
             PENDING_PERMISSIONS[session_id] = {{
                 "permission_id": permission_id,
                 "prompt_request_id": request_id
             }}
-            send({{
+            native_request = {{
                 "jsonrpc": "2.0",
                 "id": permission_id,
                 "method": "session/request_permission",
@@ -236,7 +258,12 @@ for raw_line in sys.stdin:
                         }}
                     ]
                 }}
-            }})
+            }}
+            if MODE == "malformed_permission":
+                native_request["params"]["options"] = []
+            send(native_request)
+            if MODE == "duplicate_permission":
+                send(native_request)
             continue
         if "sleep" in text:
             PENDING_PROMPTS[session_id] = {{

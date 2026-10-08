@@ -14,3 +14,4 @@ tokio = { workspace = true, features = ["fs", "io-util", "process", "sync", "tim
 
 [dev-dependencies]
 tempfile = "3.23"
+runtime-store-sqlite = { path = "../runtime-store-sqlite" }

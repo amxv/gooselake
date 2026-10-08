@@ -250,25 +250,42 @@ impl GgMcpServer {
         &self,
         tool_call_metadata: &ToolCallMetadata,
     ) -> Result<String, Value> {
-        if let Some(caller_agent_id) =
-            normalize_non_empty(tool_call_metadata.caller_agent_id.as_deref())
-        {
-            return Ok(caller_agent_id);
-        }
-
-        if let Some(default_caller_agent_id) = self
+        let supplied = normalize_non_empty(tool_call_metadata.caller_agent_id.as_deref());
+        let configured = self
             .gateway_client_config
             .as_ref()
-            .and_then(|config| normalize_non_empty(config.default_caller_agent_id.as_deref()))
-        {
-            return Ok(default_caller_agent_id);
-        }
-
+            .and_then(|config| normalize_non_empty(config.default_caller_agent_id.as_deref()));
         let caller_required = self
             .gateway_client_config
             .as_ref()
             .map(|config| config.require_tool_caller_agent_id)
             .unwrap_or(false);
+        // ACP, Codex and Claude launch one scoped MCP sidecar for each runtime
+        // agent. Its operator-provided caller binding outranks any hidden tool
+        // argument a model or external ACP agent could otherwise forge.
+        // A genuinely shared sidecar without a bound env caller can still use
+        // explicit per-call identity until credential scoping is available.
+        if caller_required {
+            if let Some(configured) = configured {
+                if supplied
+                    .as_deref()
+                    .is_some_and(|value| value != configured.as_str())
+                {
+                    return Err(json!({
+                        "ok": false,
+                        "error": {
+                            "code": "unauthorized",
+                            "message": "Tool caller does not match this MCP subprocess's bound runtime agent"
+                        }
+                    }));
+                }
+                return Ok(configured);
+            }
+        }
+        if let Some(caller_agent_id) = supplied.or(configured) {
+            return Ok(caller_agent_id);
+        }
+
         let code = if caller_required {
             "unauthorized"
         } else {

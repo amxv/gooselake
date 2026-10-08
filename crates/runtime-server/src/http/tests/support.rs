@@ -491,9 +491,11 @@ impl RuntimeProvider for TestAcpProvider {
             model_discovery: runtime_core::ProviderDiscoveryMode::AgentManaged,
             session_resume: runtime_core::ProviderCapabilitySupport::AgentManaged,
             streaming: runtime_core::ProviderCapabilitySupport::Supported,
+            approvals: runtime_core::ProviderCapabilitySupport::Supported,
             interrupt: runtime_core::ProviderCapabilitySupport::Supported,
             tools: runtime_core::ProviderCapabilitySupport::AgentManaged,
-            setting_sources: runtime_core::ProviderCapabilitySupport::AgentManaged,
+            images: runtime_core::ProviderCapabilitySupport::AgentManaged,
+            setting_sources: runtime_core::ProviderCapabilitySupport::Unsupported,
             ..Default::default()
         }
     }

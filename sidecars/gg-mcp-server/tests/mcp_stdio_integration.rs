@@ -523,6 +523,76 @@ async fn stdio_server_accepts_per_call_caller_metadata_when_required()
 }
 
 #[tokio::test]
+async fn stdio_agent_bound_caller_rejects_cross_agent_tool_spoofing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let auth_token = "integration_token";
+    let gateway_state = stub_gateway_state(auth_token, vec!["gpt-6".into()]);
+    let app = Router::new()
+        .route("/capabilities", get(capabilities_stub))
+        .route("/invoke", post(invoke_stub))
+        .with_state(gateway_state);
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let gateway_addr = listener.local_addr()?;
+    let gateway_handle = tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            panic!("Stub gateway exited unexpectedly: {error}");
+        }
+    });
+
+    let service = ()
+        .serve(TokioChildProcess::new(mcp_server_command().configure(
+            |command| {
+                command.env(
+                    "GG_MCP_GATEWAY_URL",
+                    format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port()),
+                );
+                command.env("GG_MCP_GATEWAY_TOKEN", auth_token);
+                command.env("GG_MCP_CALLER_AGENT_ID", "sess_bound");
+                command.env("GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID", "1");
+            },
+        ))?)
+        .await?;
+
+    let spoof = service
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "gg_team_status".into(),
+            arguments: json!({
+                "team_id": "team_spoofed",
+                "__gg_caller_agent_id": "sess_other",
+            })
+            .as_object()
+            .cloned(),
+            task: None,
+        })
+        .await?;
+    assert_eq!(spoof.is_error, Some(true));
+    let spoof_payload = extract_json_payload(&spoof.content)?;
+    assert_eq!(spoof_payload["error"]["code"], json!("unauthorized"));
+
+    let accepted = service
+        .peer()
+        .call_tool(CallToolRequestParams {
+            meta: None,
+            name: "gg_team_status".into(),
+            arguments: json!({"team_id": "team_bound"}).as_object().cloned(),
+            task: None,
+        })
+        .await?;
+    assert_eq!(accepted.is_error, Some(false));
+    let payload = extract_json_payload(&accepted.content)?;
+    assert_eq!(
+        payload["result"]["members"][0]["agent_id"],
+        json!("sess_bound")
+    );
+
+    let _ = service.cancel().await?;
+    gateway_handle.abort();
+    Ok(())
+}
+
+#[tokio::test]
 async fn stdio_server_rejects_missing_per_call_caller_metadata_when_required()
 -> Result<(), Box<dyn std::error::Error>> {
     let auth_token = "integration_token";

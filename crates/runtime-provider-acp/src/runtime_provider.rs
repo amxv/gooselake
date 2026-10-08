@@ -10,7 +10,7 @@ use runtime_core::{
     RuntimeProvider,
 };
 use serde_json::{json, Value};
-use tokio::sync::oneshot;
+use tokio::sync::{broadcast, oneshot};
 
 use crate::provider::AcpProvider;
 use crate::state::PendingApprovalTurn;
@@ -35,12 +35,12 @@ impl RuntimeProvider for AcpProvider {
             skill_discovery: ProviderDiscoveryMode::Unsupported,
             session_resume: ProviderCapabilitySupport::AgentManaged,
             streaming: ProviderCapabilitySupport::Supported,
-            approvals: ProviderCapabilitySupport::Unsupported,
+            approvals: ProviderCapabilitySupport::Supported,
             permission_mutation: ProviderCapabilitySupport::Unsupported,
             session_preferences: ProviderCapabilitySupport::Unsupported,
             interrupt: ProviderCapabilitySupport::Supported,
             tools: ProviderCapabilitySupport::AgentManaged,
-            images: ProviderCapabilitySupport::Unsupported,
+            images: ProviderCapabilitySupport::AgentManaged,
             structured_output: ProviderCapabilitySupport::Unsupported,
             setting_sources: ProviderCapabilitySupport::Unsupported,
             context_limit_observation: ProviderCapabilitySupport::Unsupported,
@@ -48,6 +48,10 @@ impl RuntimeProvider for AcpProvider {
             manual_compact: ProviderCapabilitySupport::Unsupported,
             hard_fork_edit_rerun: ProviderCapabilitySupport::Unsupported,
         }
+    }
+
+    fn subscribe_events(&self) -> Option<broadcast::Receiver<runtime_core::ProviderRuntimeEvent>> {
+        Some(self.inner.provider_events.subscribe())
     }
 
     async fn healthcheck(&self) -> Result<(), RuntimeError> {
@@ -102,6 +106,15 @@ impl RuntimeProvider for AcpProvider {
         &self,
         req: ProviderCreateSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
+        validate_agent_managed_policy(
+            &req.model,
+            &req.permission_mode,
+            &req.setting_sources,
+            &req.system_prompt,
+            &req.allowed_tools,
+            &req.disallowed_tools,
+            &req.harness_version_slot,
+        )?;
         self.reserve_session_slot(req.runtime_session_id.as_str())
             .await?;
         let connection = match self.ensure_connection().await {
@@ -141,6 +154,8 @@ impl RuntimeProvider for AcpProvider {
         let provider_session_ref = response
             .get("sessionId")
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
             .map(str::to_string)
             .ok_or_else(|| {
                 RuntimeError::ProtocolViolation(
@@ -159,6 +174,7 @@ impl RuntimeProvider for AcpProvider {
             .activate_reserved_session(
                 req.runtime_session_id.as_str(),
                 provider_session_ref.clone(),
+                connection.instance_id,
             )
             .await
         {
@@ -178,62 +194,68 @@ impl RuntimeProvider for AcpProvider {
         &self,
         req: ProviderResumeSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
-        self.reserve_session_slot(req.runtime_session_id.as_str())
-            .await?;
-        let connection = match self.ensure_connection().await {
-            Ok(connection) => connection,
-            Err(error) => {
-                self.release_session_slot(req.runtime_session_id.as_str())
-                    .await;
-                return Err(error);
-            }
-        };
+        validate_agent_managed_policy(
+            &req.model,
+            &req.permission_mode,
+            &req.setting_sources,
+            &req.system_prompt,
+            &req.allowed_tools,
+            &req.disallowed_tools,
+            &req.harness_version_slot,
+        )?;
+        if req.provider_session_ref.trim().is_empty()
+            || req
+                .canonical_provider_session_ref
+                .as_deref()
+                .is_some_and(|canonical| canonical != req.provider_session_ref)
+        {
+            return Err(RuntimeError::ProtocolViolation(
+                "ACP resume requires the same nonblank canonical provider session reference".into(),
+            ));
+        }
+        let connection = self.ensure_connection().await?;
         let capabilities = connection.capabilities.read().await.clone();
-        let cwd = match Self::resolve_session_cwd(req.cwd.as_deref()) {
-            Ok(cwd) => cwd,
-            Err(error) => {
-                self.release_session_slot(req.runtime_session_id.as_str())
-                    .await;
-                return Err(error);
-            }
-        };
+        let cwd = Self::resolve_session_cwd(req.cwd.as_deref())?;
         let method = if capabilities.resume_session {
             "session/resume"
         } else if capabilities.load_session {
             "session/load"
         } else {
-            self.release_session_slot(req.runtime_session_id.as_str())
-                .await;
             return Err(RuntimeError::Unsupported(
                 "acp agent does not advertise session resume or load support".to_string(),
             ));
         };
-        if let Err(error) = self
-            .activate_reserved_session(
+        let is_new = self
+            .prepare_resume_slot(
+                req.runtime_session_id.as_str(),
+                req.provider_session_ref.as_str(),
+                connection.instance_id,
+            )
+            .await?;
+        let resume = async {
+            connection
+                .send_request(
+                    method,
+                    json!({
+                        "sessionId": req.provider_session_ref,
+                        "cwd": cwd,
+                        "mcpServers": self.build_mcp_servers(req.runtime_session_id.as_str()),
+                    }),
+                    Some(self.request_timeout()),
+                )
+                .await?;
+            // Commit the new child binding only after the advertised RPC
+            // accepted this canonical native session identity.
+            self.activate_reserved_session(
                 req.runtime_session_id.as_str(),
                 req.provider_session_ref.clone(),
+                connection.instance_id,
             )
             .await
-        {
-            self.release_session_slot(req.runtime_session_id.as_str())
-                .await;
-            return Err(error);
         }
-
-        let response = connection
-            .send_request(
-                method,
-                json!({
-                    "sessionId": req.provider_session_ref,
-                    "cwd": cwd,
-                    "mcpServers": self.build_mcp_servers(req.runtime_session_id.as_str()),
-                }),
-                Some(self.request_timeout()),
-            )
-            .await;
-
-        if let Err(error) = response {
-            self.release_session_slot(req.runtime_session_id.as_str())
+        .await;
+        if let Err(error) = resume {
+            self.abort_resume_slot(req.runtime_session_id.as_str(), is_new)
                 .await;
             return Err(error);
         }
@@ -251,6 +273,16 @@ impl RuntimeProvider for AcpProvider {
         &self,
         req: ProviderSendTurnRequest,
     ) -> Result<ProviderTurnAck, RuntimeError> {
+        if req
+            .permission_mode
+            .as_deref()
+            .is_some_and(|value| value != "require_approval")
+        {
+            return Err(RuntimeError::provider_not_dispatched(
+                "unsupported_acp_permission_mode",
+                "ACP agent owns native turn permissions; only an explicit runtime approval gate is supported",
+            ));
+        }
         {
             let mut sessions = self.inner.sessions.write().await;
             let session = sessions
@@ -262,6 +294,12 @@ impl RuntimeProvider for AcpProvider {
                     )
                 })?;
 
+            if session.resuming {
+                return Err(RuntimeError::provider_not_dispatched(
+                    "acp_session_resuming",
+                    "ACP session resume/load is in progress",
+                ));
+            }
             if session.active_turn.is_some() || !session.pending_approvals.is_empty() {
                 return Err(RuntimeError::provider_not_dispatched(
                     "turn_in_progress",
@@ -302,6 +340,12 @@ impl RuntimeProvider for AcpProvider {
     }
 
     async fn interrupt_turn(&self, req: ProviderInterruptTurnRequest) -> Result<(), RuntimeError> {
+        let connection = self.current_connection().await.ok_or_else(|| {
+            RuntimeError::provider_dispatch_unknown(
+                "acp_interrupt_connection_lost",
+                "ACP interrupt cannot be proven after its stdio transport was lost",
+            )
+        })?;
         let provider_session_ref = {
             let sessions = self.inner.sessions.read().await;
             let session = sessions
@@ -309,6 +353,12 @@ impl RuntimeProvider for AcpProvider {
                 .ok_or_else(|| {
                     RuntimeError::NotFound(format!("acp session {}", req.runtime_session_id))
                 })?;
+            if session.resuming {
+                return Err(RuntimeError::Conflict(
+                    "ACP session cannot be interrupted while native resume/load is in progress"
+                        .into(),
+                ));
+            }
             let active_turn = session.active_turn.as_ref().ok_or_else(|| {
                 RuntimeError::InvalidState(format!(
                     "turn {} is not active for session {}",
@@ -321,11 +371,17 @@ impl RuntimeProvider for AcpProvider {
                     req.turn_id, req.runtime_session_id
                 )));
             }
+            if session.connection_id != Some(connection.instance_id) {
+                return Err(RuntimeError::provider_dispatch_unknown(
+                    "acp_interrupt_stale_session",
+                    "ACP native turn belongs to a previous subprocess; cannot signal an unverified replacement",
+                ));
+            }
             active_turn.cancelled.store(true, Ordering::SeqCst);
             session.provider_session_ref.clone()
         };
-
-        let connection = self.ensure_connection().await?;
+        self.cancel_native_permissions(req.runtime_session_id.as_str(), Some(req.turn_id.as_str()))
+            .await;
         connection
             .send_notification(
                 "session/cancel",
@@ -341,6 +397,9 @@ impl RuntimeProvider for AcpProvider {
         &self,
         req: ProviderApprovalResponseRequest,
     ) -> Result<(), RuntimeError> {
+        if self.resolve_native_permission(&req).await? {
+            return Ok(());
+        }
         let decision = ApprovalDecision::parse(req.decision.as_str())?;
         let pending = {
             let mut sessions = self.inner.sessions.write().await;
@@ -415,7 +474,7 @@ impl RuntimeProvider for AcpProvider {
                     RuntimeError::NotFound(format!("acp session {}", req.runtime_session_id))
                 })?;
             if let Some(result) = session.completed_turns.get(req.turn_id.as_str()) {
-                return Ok(result.clone());
+                return classify_turn_result(result.clone());
             }
             if session
                 .active_turn
@@ -442,7 +501,7 @@ impl RuntimeProvider for AcpProvider {
                     RuntimeError::NotFound(format!("acp session {}", req.runtime_session_id))
                 })?;
             if let Some(result) = session.completed_turns.get(req.turn_id.as_str()) {
-                return Ok(result.clone());
+                return classify_turn_result(result.clone());
             }
             session
                 .waiters
@@ -452,7 +511,7 @@ impl RuntimeProvider for AcpProvider {
         }
 
         match tokio::time::timeout(self.wait_timeout(req.timeout_ms), receiver).await {
-            Ok(Ok(result)) => Ok(result),
+            Ok(Ok(result)) => classify_turn_result(result),
             Ok(Err(_)) => Err(RuntimeError::InvalidState(format!(
                 "turn result channel closed for {}",
                 req.turn_id
@@ -465,19 +524,25 @@ impl RuntimeProvider for AcpProvider {
     }
 
     async fn close_session(&self, req: ProviderCloseSessionRequest) -> Result<(), RuntimeError> {
-        let (provider_session_ref, active_turn_id) = {
+        let (provider_session_ref, active_turn_id, connection_id) = {
             let sessions = self.inner.sessions.read().await;
             let session = sessions
                 .get(req.runtime_session_id.as_str())
                 .ok_or_else(|| {
                     RuntimeError::NotFound(format!("acp session {}", req.runtime_session_id))
                 })?;
+            if session.resuming {
+                return Err(RuntimeError::Conflict(
+                    "ACP session cannot be closed while native resume/load is in progress".into(),
+                ));
+            }
             (
                 session.provider_session_ref.clone(),
                 session
                     .active_turn
                     .as_ref()
                     .map(|turn| turn.runtime_turn_id.clone()),
+                session.connection_id,
             )
         };
 
@@ -506,13 +571,15 @@ impl RuntimeProvider for AcpProvider {
             .await;
         }
 
+        self.cancel_native_permissions(req.runtime_session_id.as_str(), None)
+            .await;
         let mut sessions = self.inner.sessions.write().await;
         sessions.remove(req.runtime_session_id.as_str());
         drop(sessions);
 
         if let Some(connection) = self.current_connection().await {
             let capabilities = connection.capabilities.read().await.clone();
-            if capabilities.close_session {
+            if connection_id == Some(connection.instance_id) && capabilities.close_session {
                 let _ = connection
                     .send_request(
                         "session/close",
@@ -528,4 +595,51 @@ impl RuntimeProvider for AcpProvider {
         self.shutdown_connection_if_idle().await;
         Ok(())
     }
+}
+
+fn classify_turn_result(result: ProviderTurnResult) -> Result<ProviderTurnResult, RuntimeError> {
+    if result
+        .error
+        .as_ref()
+        .and_then(|error| error.get("code"))
+        .and_then(Value::as_str)
+        == Some("acp_prompt_dispatch_unknown")
+    {
+        return Err(RuntimeError::provider_dispatch_unknown(
+            "acp_prompt_dispatch_unknown",
+            result
+                .error
+                .as_ref()
+                .and_then(|error| error.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("ACP prompt outcome is unknown"),
+        ));
+    }
+    Ok(result)
+}
+
+fn validate_agent_managed_policy(
+    model: &Option<String>,
+    permission: &Option<String>,
+    setting_sources: &[String],
+    system_prompt: &Option<String>,
+    allowed_tools: &[String],
+    disallowed_tools: &[String],
+    harness_version_slot: &Option<String>,
+) -> Result<(), RuntimeError> {
+    if model.is_some()
+        || permission
+            .as_deref()
+            .is_some_and(|mode| mode != "require_approval")
+        || !setting_sources.is_empty()
+        || system_prompt.as_deref().is_some_and(|s| !s.is_empty())
+        || !allowed_tools.is_empty()
+        || !disallowed_tools.is_empty()
+        || harness_version_slot.is_some()
+    {
+        return Err(RuntimeError::Unsupported(
+            "ACP owns model/system/tool/permission/setting-source/harness policy; Gooselake cannot silently apply these direct-provider settings".into(),
+        ));
+    }
+    Ok(())
 }

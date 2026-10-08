@@ -1,5 +1,7 @@
 mod config;
 mod connection;
+mod permissions;
+mod prompt;
 mod protocol;
 mod provider;
 mod runtime_provider;

@@ -177,6 +177,14 @@ async fn real_adapter_contract_create_send_wait_resume_and_close() {
         Some("Hello world")
     );
 
+    provider
+        .close_session(runtime_core::ProviderCloseSessionRequest {
+            runtime_session_id: "sess_real_1".into(),
+            reason: Some("native handoff".into()),
+        })
+        .await
+        .expect("release native attachment before resume");
+
     let resumed = provider
         .resume_session(runtime_core::ProviderResumeSessionRequest {
             runtime_session_id: "sess_real_2".to_string(),
@@ -238,6 +246,13 @@ async fn create_and_resume_include_expected_gg_mcp_server_shape() {
         })
         .await
         .expect("create");
+    provider
+        .close_session(runtime_core::ProviderCloseSessionRequest {
+            runtime_session_id: "sess_create".into(),
+            reason: Some("handoff".into()),
+        })
+        .await
+        .expect("release source attachment");
     provider
         .resume_session(runtime_core::ProviderResumeSessionRequest {
             runtime_session_id: "sess_resume".to_string(),
@@ -329,6 +344,13 @@ async fn real_adapter_contract_load_based_resume_is_supported() {
         })
         .await
         .expect("create");
+    provider
+        .close_session(runtime_core::ProviderCloseSessionRequest {
+            runtime_session_id: "sess_load_1".into(),
+            reason: Some("load handoff".into()),
+        })
+        .await
+        .expect("release native attachment");
 
     let resumed = provider
         .resume_session(runtime_core::ProviderResumeSessionRequest {

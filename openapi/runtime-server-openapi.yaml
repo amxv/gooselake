@@ -1441,9 +1441,82 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}:
+    get:
+      summary: Inspect durable worktree rebind operation
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup:
+    post:
+      summary: Retry safe cleanup after verified rebind
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/restore:
     post:
       summary: Restore workspace agent
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree:
+    post:
+      summary: Reassign agent using verified provider cwd evidence
       parameters:
         - name: workspace_id
           in: path
@@ -1503,6 +1576,37 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/worktrees:
+    get:
+      summary: List eligible and blocked managed worktrees
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+    post:
+      summary: Create or reuse managed worktree
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           description: JSON response

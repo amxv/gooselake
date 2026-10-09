@@ -94,22 +94,24 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
             updated_at: 104,
         })
         .expect("delivery");
-    repository
-        .upsert_managed_worktree(&ManagedWorktreeRecord {
-            id: "wt_legacy".to_string(),
-            repo_root: "/tmp/legacy-repo".to_string(),
-            worktree_root: "/tmp/legacy-worktrees".to_string(),
-            worktree_cwd: "/tmp/legacy-worktrees/feature".to_string(),
-            branch_name: "feature/legacy".to_string(),
-            worktree_name: "legacy".to_string(),
-            unified_workspace_path: "legacy_repo".to_string(),
-            deletion_policy: "retain_on_last_claim".to_string(),
-            created_by_session_id: Some(session.id.clone()),
-            created_by_operation_id: Some("legacy_op".to_string()),
-            created_at: 105,
-            updated_at: 105,
-        })
-        .expect("worktree");
+    // Seed the actual generation-one column shape. The current upsert writer
+    // requires the revision column introduced by migration 11, which must not
+    // exist yet in the historical fixture being tested here.
+    {
+        let connection = Connection::open(&db_path).expect("open legacy worktree schema");
+        connection
+            .execute(
+                "INSERT INTO managed_worktrees
+                 (id, repo_root, worktree_root, worktree_cwd, branch_name,
+                  worktree_name, unified_workspace_path, deletion_policy,
+                  created_by_session_id, created_by_operation_id, created_at, updated_at)
+                 VALUES ('wt_legacy', '/tmp/legacy-repo', '/tmp/legacy-worktrees',
+                         '/tmp/legacy-worktrees/feature', 'feature/legacy', 'legacy',
+                         'legacy_repo', 'retain_on_last_claim', ?1, 'legacy_op', 105, 105)",
+                [session.id.as_str()],
+            )
+            .expect("seed generation-one worktree");
+    }
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
             worktree_id: "wt_legacy".to_string(),
@@ -195,6 +197,11 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
         .expect("events before");
 
     repository.initialize_schema().expect("upgrade schema");
+    assert_eq!(
+        repository.managed_worktree_revision("wt_legacy").unwrap(),
+        1,
+        "migration 11 must backfill the legacy worktree revision"
+    );
 
     let mut after = repository.hydrate_runtime_state().expect("hydrate after");
     let agent_messages = std::mem::take(&mut after.agent_messages);
@@ -295,7 +302,7 @@ fn failed_migration_rolls_back_and_retry_resumes_cleanly() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 }
 
 fn registration_command(

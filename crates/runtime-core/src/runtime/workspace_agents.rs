@@ -7,8 +7,8 @@ use crate::{
     ProviderResumeSessionPolicyRequest, ProviderSessionLaunchPolicy, ProviderSessionPreferences,
     ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
     ProviderSettingSourcesIntent, RuntimeError, SessionRecord, WorkspaceAgentCreateRequest,
-    WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState,
+    WorkspaceAgentInitialRoute, WorkspaceAgentLifecycleState, WorkspaceAgentProfile,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState,
 };
 
 use super::helpers::now_ms;
@@ -244,7 +244,53 @@ impl RuntimeSessionManager {
         let added_by = normalize_optional(Some(added_by)).ok_or_else(|| {
             RuntimeError::InvalidState("workspace agent added_by is required".to_string())
         })?;
-        let policy = normalize_recreation_policy(&workspace.canonical_root, &request)?;
+        // Creating a provider session in an existing checkout must not race
+        // native cleanup before its durable ownership claim is admitted.
+        let repository_lock = if matches!(
+            request.worktree.as_ref(),
+            Some(WorkspaceAgentInitialRoute::Existing { .. })
+        ) {
+            Some(crate::repository_worktree_lock(&workspace.canonical_root).await)
+        } else {
+            None
+        };
+        let _repository_guard = if let Some(lock) = repository_lock.as_ref() {
+            Some(lock.lock().await)
+        } else {
+            None
+        };
+        let mut policy = normalize_recreation_policy(&workspace.canonical_root, &request)?;
+        let initial_worktree_id = match request.worktree.as_ref() {
+            None => None,
+            Some(WorkspaceAgentInitialRoute::Root) => {
+                if request.cwd.is_some() {
+                    return Err(RuntimeError::Conflict(
+                        "root worktree route cannot also specify an arbitrary cwd".into(),
+                    ));
+                }
+                policy.authoritative_cwd = workspace.canonical_root.clone();
+                None
+            }
+            Some(WorkspaceAgentInitialRoute::Existing { worktree_id }) => {
+                if request.cwd.is_some() {
+                    return Err(RuntimeError::Conflict(
+                        "managed worktree route cannot also specify an arbitrary cwd".into(),
+                    ));
+                }
+                policy.authoritative_cwd =
+                    self.eligible_workspace_worktree_cwd(&workspace, worktree_id)?;
+                Some(worktree_id.clone())
+            }
+            Some(WorkspaceAgentInitialRoute::New { .. }) => {
+                return Err(RuntimeError::Unsupported(
+                    "new named worktrees must first be created by the workspace worktree service"
+                        .into(),
+                ));
+            }
+        };
+        policy
+            .setting_sources_intent
+            .resolved_sources(Some(policy.authoritative_cwd.as_str()))?;
         let provider = self.providers.get(policy.provider).ok_or_else(|| {
             RuntimeError::ProviderNotRegistered(policy.provider.as_str().to_string())
         })?;
@@ -275,7 +321,7 @@ impl RuntimeSessionManager {
             provider_session_ref: Some(provider_session.provider_session_ref.clone()),
             canonical_provider_session_ref: provider_session.canonical_provider_session_ref.clone(),
             active_turn_id: None,
-            worktree_id: None,
+            worktree_id: initial_worktree_id,
             created_at,
             updated_at: created_at,
             closed_at: None,
@@ -329,6 +375,11 @@ impl RuntimeSessionManager {
         reason: Option<&str>,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
         let agent = self.get_workspace_agent(workspace_id, agent_id)?;
+        if self.store.unresolved_workspace_agent_rebind(agent_id)? {
+            return Err(RuntimeError::Conflict(
+                "agent has an unresolved worktree rebind and cannot be archived".into(),
+            ));
+        }
         if agent.lifecycle_state == WorkspaceAgentLifecycleState::Archived {
             return Ok(agent);
         }
@@ -375,6 +426,11 @@ impl RuntimeSessionManager {
         agent_id: &str,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
         let agent = self.get_workspace_agent(workspace_id, agent_id)?;
+        if self.store.unresolved_workspace_agent_rebind(agent_id)? {
+            return Err(RuntimeError::Conflict(
+                "agent has an unresolved worktree rebind and cannot be restored".into(),
+            ));
+        }
         if agent.lifecycle_state == WorkspaceAgentLifecycleState::Active {
             return Ok(agent);
         }
@@ -458,6 +514,15 @@ impl RuntimeSessionManager {
         provider_session_ref: String,
         canonical_provider_session_ref: Option<String>,
     ) -> Result<ProviderResumeSessionPolicyRequest, RuntimeError> {
+        if self
+            .store
+            .unresolved_workspace_agent_rebind(session.id.as_str())?
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "session {} has an unresolved provider workspace binding",
+                session.id
+            )));
+        }
         if let Some(agent) = self.store.get_workspace_agent_by_id(session.id.as_str())? {
             let policy = agent.recreation_policy;
             return Ok(ProviderResumeSessionPolicyRequest {

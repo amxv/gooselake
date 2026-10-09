@@ -79,6 +79,11 @@ impl RuntimeSessionManager {
     ) -> Result<SendTurnAccepted, RuntimeError> {
         let policy_mutation_guard = self.session_policy_mutation_lock.lock().await;
         let session = self.get_session(session_id).await?;
+        if self.store.unresolved_workspace_agent_rebind(session_id)? {
+            return Err(RuntimeError::Conflict(format!(
+                "session {session_id} has an unresolved workspace rebind; inspect its operation before submitting another turn"
+            )));
+        }
         if session.status == "closed" || session.status == "failed" {
             return Err(RuntimeError::InvalidState(format!(
                 "session {session_id} is not writable in status {}",

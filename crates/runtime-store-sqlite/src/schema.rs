@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 9;
+pub(crate) const SCHEMA_VERSION: i64 = 11;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -811,6 +811,33 @@ pub(crate) const MIGRATION_9_SQL: &str = r#"
 -- reuse the same provider-family migration policy as runtime creation/restoration.
 "#;
 
+const MIGRATION_10_SQL: &str = r#"
+-- Provider effects must never precede an admitted, durable worktree-route intent.
+-- Unresolved intents fence later turns and reassignments across runtime restarts.
+CREATE TABLE workspace_agent_rebinds (
+  operation_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  agent_id TEXT NOT NULL REFERENCES workspace_agents(session_id),
+  idempotency_key TEXT,
+  phase TEXT NOT NULL CHECK(phase IN ('intended','completed','rejected','manual_review')),
+  record_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_workspace_agent_rebind_pending
+  ON workspace_agent_rebinds(agent_id)
+  WHERE phase IN ('intended', 'manual_review');
+CREATE UNIQUE INDEX idx_workspace_agent_rebind_idempotency
+  ON workspace_agent_rebinds(workspace_id, agent_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+"#;
+
+const MIGRATION_11_SQL: &str = r#"
+-- V2 worktree inventory exposes a durable record revision, independent of
+-- Git HEAD and provider session revisions. Existing rows start at revision 1.
+ALTER TABLE managed_worktrees ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -847,5 +874,13 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 9,
         sql: MIGRATION_9_SQL,
+    },
+    Migration {
+        version: 10,
+        sql: MIGRATION_10_SQL,
+    },
+    Migration {
+        version: 11,
+        sql: MIGRATION_11_SQL,
     },
 ];

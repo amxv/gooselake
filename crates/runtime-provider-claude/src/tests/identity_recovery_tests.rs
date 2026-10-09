@@ -45,6 +45,7 @@ async fn late_sdk_identity_is_durable_before_restart_and_reused_for_resume() {
                 allowed_tools: Vec::new(),
                 disallowed_tools: Vec::new(),
                 cwd: Some(root.to_string_lossy().into_owned()),
+                worktree: None,
                 harness_version_slot: Some(HARNESS_VERSION.into()),
                 title: None,
                 metadata: None,

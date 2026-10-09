@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command as StdCommand;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -18,7 +18,6 @@ pub struct RuntimeWorktreeService {
     pub(super) runtime: Arc<RuntimeSessionManager>,
     pub(super) team_comms: Arc<dyn TeamCommsService>,
     pub(super) config: WorktreeServiceConfig,
-    pub(super) repo_locks: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     pub(super) next_worktree_id: AtomicU64,
     pub(super) next_operation_id: AtomicU64,
     pub(super) next_event_id: AtomicU64,
@@ -70,7 +69,6 @@ impl RuntimeWorktreeService {
             runtime,
             team_comms,
             config,
-            repo_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             next_worktree_id: AtomicU64::new(max_worktree_seq + 1),
             next_operation_id: AtomicU64::new(max_op_seq + 1),
             next_event_id: AtomicU64::new(1),
@@ -256,7 +254,19 @@ impl RuntimeWorktreeService {
                     .cmp(&right_created_at)
                     .then_with(|| left.worktree_id.cmp(&right.worktree_id))
             });
-            for losing in claims.iter().skip(1) {
+            // One authoritative previous route and one pending destination
+            // reservation legitimately coexist while a provider rebind is
+            // unresolved. Releasing the reservation here would make an
+            // in-flight/ambiguous native destination eligible for cleanup.
+            let mut saw_primary_claim = false;
+            for losing in claims.iter() {
+                if losing.claim_role == "rebind_reservation" {
+                    continue;
+                }
+                if !saw_primary_claim {
+                    saw_primary_claim = true;
+                    continue;
+                }
                 let key = (losing.worktree_id.clone(), losing.session_id.clone());
                 if let Some(existing) = claim_by_key.get_mut(&key) {
                     if existing.released_at.is_none() {
@@ -298,7 +308,9 @@ impl RuntimeWorktreeService {
     }
 
     fn merge_claim_role(left: &str, right: &str) -> String {
-        if left == "owner" || right == "owner" {
+        if left == "rebind_reservation" || right == "rebind_reservation" {
+            "rebind_reservation".to_string()
+        } else if left == "owner" || right == "owner" {
             "owner".to_string()
         } else {
             "consumer".to_string()

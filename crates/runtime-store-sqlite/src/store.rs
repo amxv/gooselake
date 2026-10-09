@@ -7,14 +7,15 @@ use runtime_core::{
     LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
     ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
     ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
-    ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings, RuntimeError,
-    RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionRecord,
-    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
-    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
-    WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
-    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
-    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
-    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
+    ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
+    RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
+    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission,
+    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
+    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -181,6 +182,75 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.create_workspace_agent(session, agent)
     }
 
+    fn begin_workspace_agent_rebind(
+        &self,
+        operation: &WorkspaceAgentRebindOperation,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        self.repository.begin_workspace_agent_rebind(operation)
+    }
+
+    fn finalize_workspace_agent_rebind(
+        &self,
+        operation_id: &str,
+        session: &SessionRecord,
+        policy: &WorkspaceAgentRecreationPolicy,
+        evidence: &ProviderWorkspaceRebindEvidence,
+        changed_at: i64,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        self.repository.finalize_workspace_agent_rebind(
+            operation_id,
+            session,
+            policy,
+            evidence,
+            changed_at,
+        )
+    }
+
+    fn classify_workspace_agent_rebind(
+        &self,
+        operation_id: &str,
+        phase: &str,
+        error_code: &str,
+        changed_at: i64,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        self.repository
+            .classify_workspace_agent_rebind(operation_id, phase, error_code, changed_at)
+    }
+
+    fn get_workspace_agent_rebind(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<WorkspaceAgentRebindOperation>, RuntimeError> {
+        self.repository.get_workspace_agent_rebind(operation_id)
+    }
+
+    fn record_workspace_agent_rebind_cleanup(
+        &self,
+        operation_id: &str,
+        observed_status: &str,
+        changed_at: i64,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        self.repository.record_workspace_agent_rebind_cleanup(
+            operation_id,
+            observed_status,
+            changed_at,
+        )
+    }
+
+    fn get_workspace_agent_rebind_by_key(
+        &self,
+        workspace_id: &str,
+        agent_id: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<WorkspaceAgentRebindOperation>, RuntimeError> {
+        self.repository
+            .get_workspace_agent_rebind_by_key(workspace_id, agent_id, idempotency_key)
+    }
+
+    fn unresolved_workspace_agent_rebind(&self, agent_id: &str) -> Result<bool, RuntimeError> {
+        self.repository.unresolved_workspace_agent_rebind(agent_id)
+    }
+
     fn list_workspace_agents(
         &self,
         workspace_id: &str,
@@ -335,6 +405,10 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_managed_worktree(record)
+    }
+
+    fn managed_worktree_revision(&self, worktree_id: &str) -> Result<u64, RuntimeError> {
+        self.repository.managed_worktree_revision(worktree_id)
     }
 
     fn upsert_managed_worktree_claim(

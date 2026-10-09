@@ -11,22 +11,36 @@ use crate::now_ms;
 use super::{PlannedWorktreePaths, RuntimeWorktreeService, StdCommand};
 
 impl RuntimeWorktreeService {
+    pub(super) fn validate_managed_worktree_name(name: &str) -> Result<(), RuntimeError> {
+        let name = name.trim();
+        if name.is_empty()
+            || name.len() > 64
+            || !name.as_bytes()[0].is_ascii_alphanumeric()
+            || !name.as_bytes()[name.len() - 1].is_ascii_alphanumeric()
+            || name.contains("..")
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        {
+            return Err(RuntimeError::InvalidState(
+                "managed worktree name/prefix must be a nonempty 1-64 character Git-safe slug"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) async fn lock_for_repo(
         &self,
         repo_root: &str,
     ) -> std::sync::Arc<tokio::sync::Mutex<()>> {
-        let mut locks = self.repo_locks.lock().await;
-        if let Some(existing) = locks.get(repo_root) {
-            return std::sync::Arc::clone(existing);
-        }
-        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
-        locks.insert(repo_root.to_string(), std::sync::Arc::clone(&lock));
-        lock
+        runtime_core::repository_worktree_lock(repo_root).await
     }
 
     pub(super) fn allocate_worktree_id(&self) -> String {
         format!(
-            "wt_{}",
+            "wt_{}_{}",
+            self.event_id_nonce,
             self.next_worktree_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         )

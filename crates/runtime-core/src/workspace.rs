@@ -322,7 +322,7 @@ pub(crate) fn normalize_idempotency_key(
     Ok(Some(normalized.to_string()))
 }
 
-pub(crate) fn normalized_json_hash(value: &Value) -> Result<String, RuntimeError> {
+pub fn normalized_json_hash(value: &Value) -> Result<String, RuntimeError> {
     let bytes = serde_json::to_vec(value).map_err(|error| {
         RuntimeError::Bootstrap(format!(
             "failed serializing normalized operation input: {error}"

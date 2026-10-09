@@ -102,6 +102,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         "legacy_workspace_migration_state",
         "turn_admissions",
         "workspace_agents",
+        "workspace_agent_rebinds",
     ] {
         assert!(table_names.contains(expected), "missing table {expected}");
     }
@@ -113,7 +114,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 }
 
 #[test]
@@ -441,6 +442,7 @@ fn managed_worktree_natural_key_retry_converges_with_different_id() {
             updated_at: 100,
         })
         .expect("insert worktree");
+    assert_eq!(repository.managed_worktree_revision("wt_1").unwrap(), 1);
     repository
         .upsert_managed_worktree(&ManagedWorktreeRecord {
             id: "wt_2".to_string(),
@@ -457,6 +459,11 @@ fn managed_worktree_natural_key_retry_converges_with_different_id() {
             updated_at: 101,
         })
         .expect("logical retry upsert");
+    assert_eq!(repository.managed_worktree_revision("wt_1").unwrap(), 2);
+    assert!(matches!(
+        repository.managed_worktree_revision("wt_2"),
+        Err(runtime_core::RuntimeError::NotFound(_))
+    ));
 
     let hydrated = repository.hydrate_runtime_state().expect("hydrate");
     assert_eq!(hydrated.managed_worktrees.len(), 1);

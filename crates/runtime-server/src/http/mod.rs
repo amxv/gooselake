@@ -191,6 +191,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/workspaces", post(register_workspace).get(list_workspaces))
         .route("/workspaces/{workspace_id}", get(get_workspace))
+        .route(
+            "/workspaces/{workspace_id}/worktrees",
+            get(list_workspace_worktree_inventory).post(create_workspace_worktree),
+        )
         .route("/workspaces/{workspace_id}/lead", post(set_workspace_lead))
         .route(
             "/workspaces/{workspace_id}/interrupt",
@@ -203,6 +207,18 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/workspaces/{workspace_id}/agents/{agent_id}",
             get(get_workspace_agent),
+        )
+        .route(
+            "/workspaces/{workspace_id}/agents/{agent_id}/worktree",
+            post(rebind_workspace_agent),
+        )
+        .route(
+            "/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}",
+            get(get_workspace_agent_rebind),
+        )
+        .route(
+            "/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup",
+            post(retry_workspace_agent_rebind_cleanup),
         )
         .route(
             "/workspaces/{workspace_id}/agents/{agent_id}/archive",

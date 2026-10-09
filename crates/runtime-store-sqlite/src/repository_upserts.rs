@@ -442,7 +442,8 @@ impl SqliteRuntimeRepository {
                          created_by_session_id = ?9,
                          created_by_operation_id = ?10,
                          created_at = ?11,
-                         updated_at = ?12
+                         updated_at = ?12,
+                         revision = revision + 1
                      WHERE id = ?1",
                     params![
                         existing_id,
@@ -486,7 +487,8 @@ impl SqliteRuntimeRepository {
                     created_by_session_id = excluded.created_by_session_id,
                     created_by_operation_id = excluded.created_by_operation_id,
                     created_at = excluded.created_at,
-                    updated_at = excluded.updated_at",
+                    updated_at = excluded.updated_at,
+                    revision = managed_worktrees.revision + 1",
                 params![
                     record.id,
                     record.repo_root,
@@ -507,6 +509,22 @@ impl SqliteRuntimeRepository {
             .commit()
             .map_err(|error| db_error("failed committing managed worktree upsert", error))?;
         Ok(())
+    }
+
+    pub fn managed_worktree_revision(&self, worktree_id: &str) -> Result<u64, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        let revision: i64 = connection
+            .query_row(
+                "SELECT revision FROM managed_worktrees WHERE id = ?1",
+                [worktree_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading managed worktree revision", error))?
+            .ok_or_else(|| RuntimeError::NotFound(format!("managed worktree {worktree_id}")))?;
+        u64::try_from(revision).map_err(|_| {
+            RuntimeError::ProtocolViolation("negative managed worktree revision".into())
+        })
     }
 
     pub fn upsert_managed_worktree_claim(

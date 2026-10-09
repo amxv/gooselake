@@ -29,11 +29,16 @@ Auth legend:
 - `POST /v2/workspaces` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/workspaces` (Bearer)
 - `GET /v2/workspaces/{workspace_id}` (Bearer)
+- `GET /v2/workspaces/{workspace_id}/worktrees` (Bearer, workspace-managed Git inventory and native eligibility)
+- `POST /v2/workspaces/{workspace_id}/worktrees` (Bearer, JSON; create/reuse a named workspace managed worktree)
 - `POST /v2/workspaces/{workspace_id}/lead` (Bearer, JSON; optional `Idempotency-Key` header)
 - `POST /v2/workspaces/{workspace_id}/interrupt` (Bearer; optional `Idempotency-Key` header)
 - `POST /v2/workspaces/{workspace_id}/agents` (Bearer, JSON)
 - `GET /v2/workspaces/{workspace_id}/agents` (Bearer; optional `lifecycle=active|archived|all`, defaults to `active`)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` (Bearer)
+- `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree` (Bearer, JSON; optional `Idempotency-Key`, revisioned provider-evidence-backed rebind)
+- `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}` (Bearer, durable provider-rebind status)
+- `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup` (Bearer; retry pending previous-worktree cleanup after verified rebind, without repeating provider dispatch)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/archive` (Bearer, JSON)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/restore` (Bearer)
 - `GET /v2/migrations/workspaces` (Bearer)
@@ -50,7 +55,7 @@ Workspace membership authorization is leadless-aware: an active member can manag
 
 `POST /v2/workspaces/{workspace_id}/interrupt` snapshots the authoritative active roster and active turn IDs, records durable per-agent effect intent before provider calls, and returns sorted `interrupted_agent_ids` and `skipped_agent_ids`. Idle members are skipped, agents outside the workspace are never touched, and exact `Idempotency-Key` retries replay the original result without redispatch. Durable effect/event evidence supports restart recovery without blindly duplicating an interrupt whose provider outcome may already have crossed the execution boundary.
 
-Workspace-agent creation is the canonical normal `/v2` agent path. The runtime reuses the opaque `sess_*` session ID as the public agent ID, assigns a globally unique durable friendly alias, and commits the session row, immutable workspace ownership, profile, active roster membership, and exact recreation policy in one SQLite transaction. The recreation policy contains provider, model, permission intent, setting-source intent, mutable current preferences, system prompt, allowed/disallowed tools, authoritative cwd, and harness-version slot. Provider-native session references remain separate from both the recreation policy and the public ID/alias.
+Workspace-agent creation is the canonical normal `/v2` agent path. The runtime reuses the opaque `sess_*` session ID as the public agent ID, assigns a globally unique durable friendly alias, and commits the session row, immutable workspace ownership, profile, active roster membership, exact recreation policy, and managed-worktree claim (when selected) in one SQLite transaction. The optional `worktree` selector accepts `root`, `existing` (managed worktree ID) or `new` (named worktree). The recreation policy contains provider, model, permission intent, setting-source intent, mutable current preferences, system prompt, allowed/disallowed tools, authoritative cwd, and harness-version slot. Provider-native session references remain separate from both the recreation policy and the public ID/alias.
 
 Archiving removes the agent from the default active roster and makes its runtime session non-writable while preserving history, alias, immutable workspace ownership, provider identity, and recreation policy. `restore` reuses the same opaque agent ID and alias and resumes the provider with the persisted recreation policy. Archived history is available with `lifecycle=archived`; `lifecycle=all` returns both active and archived records.
 

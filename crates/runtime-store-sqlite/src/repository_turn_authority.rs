@@ -23,6 +23,25 @@ impl SqliteRuntimeRepository {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting turn admission transaction", error))?;
+        let rebind_pending: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM workspace_agent_rebinds
+             WHERE agent_id = ?1 AND phase IN ('intended', 'manual_review')",
+                params![session.id],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                db_error(
+                    "failed checking provider route before turn admission",
+                    error,
+                )
+            })?;
+        if rebind_pending != 0 {
+            return Err(RuntimeError::Conflict(format!(
+                "session {} has an unresolved provider worktree binding",
+                session.id
+            )));
+        }
 
         let persisted = transaction
             .query_row(

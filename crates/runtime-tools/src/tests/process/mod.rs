@@ -164,6 +164,7 @@ fn workspace_agent_request(root: &std::path::Path, title: &str) -> WorkspaceAgen
         allowed_tools: Vec::new(),
         disallowed_tools: Vec::new(),
         cwd: Some(root.display().to_string()),
+        worktree: None,
         harness_version_slot: None,
         title: Some(title.to_string()),
         metadata: None,

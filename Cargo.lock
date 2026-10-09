@@ -684,6 +684,7 @@ dependencies = [
  "runtime-provider-codex",
  "runtime-store-sqlite",
  "runtime-tools",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

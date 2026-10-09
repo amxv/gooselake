@@ -30,5 +30,6 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }
 tempfile = "3.23"
 tower = { version = "0.5", features = ["util"] }

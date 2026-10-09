@@ -12,10 +12,11 @@ use crate::{
     LegacyWorkspaceMigrationStatus, ManagedProcessAdmission, ManagedProcessRecord,
     ManagedProcessTerminalUpdate, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
     NewRuntimeEvent, OperationDetails, ProcessCompletionUpdate, ProcessRecord,
-    ProcessSchedulerSettings, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
-    RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
-    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceInterruptAdmission,
+    ProcessSchedulerSettings, ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord,
+    RuntimeEventScope, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
+    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission,
     WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
     WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
     WorkspaceRegisterResponse,
@@ -164,6 +165,71 @@ pub trait RuntimeStore: Send + Sync {
         Ok(None)
     }
 
+    fn begin_workspace_agent_rebind(
+        &self,
+        _operation: &WorkspaceAgentRebindOperation,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable workspace rebind is not implemented".into(),
+        ))
+    }
+
+    fn finalize_workspace_agent_rebind(
+        &self,
+        _operation_id: &str,
+        _updated_session: &SessionRecord,
+        _updated_policy: &WorkspaceAgentRecreationPolicy,
+        _evidence: &ProviderWorkspaceRebindEvidence,
+        _changed_at: i64,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable workspace rebind is not implemented".into(),
+        ))
+    }
+
+    fn classify_workspace_agent_rebind(
+        &self,
+        _operation_id: &str,
+        _phase: &str,
+        _error_code: &str,
+        _changed_at: i64,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable workspace rebind is not implemented".into(),
+        ))
+    }
+
+    fn get_workspace_agent_rebind(
+        &self,
+        _operation_id: &str,
+    ) -> Result<Option<WorkspaceAgentRebindOperation>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn record_workspace_agent_rebind_cleanup(
+        &self,
+        _operation_id: &str,
+        _observed_status: &str,
+        _changed_at: i64,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable previous-worktree cleanup recording is not implemented".into(),
+        ))
+    }
+
+    fn get_workspace_agent_rebind_by_key(
+        &self,
+        _workspace_id: &str,
+        _agent_id: &str,
+        _idempotency_key: &str,
+    ) -> Result<Option<WorkspaceAgentRebindOperation>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn unresolved_workspace_agent_rebind(&self, _agent_id: &str) -> Result<bool, RuntimeError> {
+        Ok(false)
+    }
+
     fn set_workspace_agent_lifecycle(
         &self,
         _session: &SessionRecord,
@@ -283,14 +349,16 @@ pub trait RuntimeStore: Send + Sync {
     }
 
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError>;
-
+    fn managed_worktree_revision(&self, _worktree_id: &str) -> Result<u64, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "managed worktree revision unavailable".into(),
+        ))
+    }
     fn upsert_managed_worktree_claim(
         &self,
         record: &ManagedWorktreeClaimRecord,
     ) -> Result<(), RuntimeError>;
-
     fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError>;
-
     fn admit_managed_process(
         &self,
         _admission: &ManagedProcessAdmission,
@@ -768,6 +836,15 @@ pub trait WorktreeService: Send + Sync {
         request: WorktreeCreateRequest,
     ) -> Result<WorktreeCreateResponse, RuntimeError>;
 
+    async fn create_workspace_worktree(
+        &self,
+        _request: WorkspaceWorktreeCreateRequest,
+    ) -> Result<WorktreeCreateResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace-scoped worktree creation is not supported by this service".into(),
+        ))
+    }
+
     async fn claim_worktree(
         &self,
         request: WorktreeClaimRequest,
@@ -806,6 +883,17 @@ pub struct WorktreeCreateRequest {
     pub run_init_script: Option<bool>,
     pub created_by_session_id: Option<String>,
     pub operation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceWorktreeCreateRequest {
+    pub workspace_id: String,
+    pub worktree_name: String,
+    pub branch_prefix: Option<String>,
+    pub base_ref: Option<String>,
+    pub deletion_policy: Option<String>,
+    pub run_init_script: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

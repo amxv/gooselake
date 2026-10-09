@@ -1,6 +1,6 @@
 ---
 title: "Worktrees"
-description: "Create, claim, release, repair, and clean up managed Git worktrees for runtime sessions and spawned team members."
+description: "Manage workspace-owned Git worktrees, provider-verified agent routes, and safe cleanup."
 order: 33
 category: "Runtime Services"
 summary: "Managed Git workspaces with durable ownership and cleanup policy."
@@ -9,6 +9,26 @@ summary: "Managed Git workspaces with durable ownership and cleanup policy."
 Worktrees give agents a safe room to work in. Claims are the keys to those rooms.
 
 That separation is the core idea: a worktree can exist independently, and one or more records can explain who currently owns or used it. Cleanup can then be based on durable claims rather than guesswork.
+
+## Workspace-owned worktrees (preferred `/v2` API)
+
+Normal agents belong to one workspace. Use `GET /v2/workspaces/{workspace_id}/worktrees` to inspect managed checkouts for that workspace's canonical Git repository, including native Git identity, attached agents, retention policy, revision, and any assignment blockers. Create or reuse a named checkout with `POST /v2/workspaces/{workspace_id}/worktrees`:
+
+```bash
+curl -X POST "$BASE_URL/v2/workspaces/$WORKSPACE_ID/worktrees" \
+  "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d '{"worktree_name":"agent-branch","run_init_script":false}'
+```
+
+On `POST /v2/workspaces/{workspace_id}/agents`, the `worktree` selector can choose the `root`, an `existing` managed worktree ID, or a `new` named checkout. The runtime commits the selected cwd and managed-worktree claim along with agent ownership. No separate manual claim is required for this flow.
+
+To move an **idle** agent, call `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree` with `worktree_id` (or `null` for the workspace root), the agent's `expected_revision`, and an `Idempotency-Key`. The provider must confirm the effective cwd and session identity before the runtime commits the changed route; unsupported providers cannot silently rebind. Inspect the durable rebind through `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}`. An ambiguous native outcome blocks further agent work until recovery rather than guessing its cwd or blindly repeating provider dispatch.
+
+Previous checkouts are preserved unless `cleanup_previous_worktree:true` was explicitly requested. After a verified rebind, cleanup refuses dirty, unmerged, foreign, or occupied paths. If cleanup remains pending, `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup` retries **only** native cleanup, never the provider rebind. See the [API guide](/docs/api#workspace-worktree-routes) for complete request examples and recovery semantics.
+
+## Legacy `/v1` worktree operations
+
+The endpoints below remain for existing clients during migration. Workspace-owned agent creation and reassignment should use the `/v2` authority above rather than manually manipulating claims or cwd.
 
 ## What the worktree service owns
 

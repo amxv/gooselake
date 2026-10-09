@@ -115,6 +115,28 @@ impl SqliteRuntimeRepository {
                 db_error("failed inserting workspace agent authority", error)
             }
         })?;
+        if let Some(worktree_id) = session.worktree_id.as_deref() {
+            let route_cwd: Option<String> = tx
+                .query_row(
+                    "SELECT worktree_cwd FROM managed_worktrees WHERE id = ?1",
+                    [worktree_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| db_error("failed verifying initial managed worktree", error))?;
+            if route_cwd.as_deref() != session.cwd.as_deref() {
+                return Err(RuntimeError::Conflict(
+                    "managed worktree destination changed before agent creation committed".into(),
+                ));
+            }
+            tx.execute(
+                "INSERT INTO managed_worktree_claims
+                 (worktree_id,session_id,claim_role,created_at,released_at)
+                 VALUES (?1,?2,'owner',?3,NULL)",
+                params![worktree_id, session.id, session.created_at],
+            )
+            .map_err(|error| db_error("failed claiming initial managed worktree", error))?;
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing workspace agent create", error))?;
         Ok(())
@@ -213,6 +235,7 @@ impl SqliteRuntimeRepository {
                     error,
                 )
             })?;
+        reject_unresolved_route(&tx, agent_id)?;
         let workspace_id = tx
             .query_row(
                 "SELECT workspace_id FROM workspace_agents WHERE session_id = ?1",
@@ -285,6 +308,7 @@ impl SqliteRuntimeRepository {
                     error,
                 )
             })?;
+        reject_unresolved_route(&tx, agent_id)?;
         let (workspace_id, current_revision) = tx
             .query_row(
                 "SELECT workspace_id, revision FROM workspace_agents WHERE session_id = ?1",
@@ -329,6 +353,23 @@ impl SqliteRuntimeRepository {
         self.get_workspace_agent(workspace_id.as_str(), agent_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))
     }
+}
+
+fn reject_unresolved_route(connection: &Connection, agent_id: &str) -> Result<(), RuntimeError> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM workspace_agent_rebinds
+         WHERE agent_id = ?1 AND phase IN ('intended', 'manual_review')",
+            [agent_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed checking workspace route lifecycle fence", error))?;
+    if count > 0 {
+        return Err(RuntimeError::Conflict(
+            "workspace agent provider worktree binding is unresolved".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn insert_session(connection: &Connection, record: &SessionRecord) -> Result<(), RuntimeError> {

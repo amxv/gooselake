@@ -45,5 +45,8 @@ mod workspace_agent_routes;
 mod workspace_control_routes;
 mod workspace_migration_routes;
 mod workspace_routes;
+mod workspace_worktree_creation;
+mod workspace_worktree_failures;
+mod workspace_worktree_routes;
 mod worktree_create_cleanup;
 mod worktree_existing_smoke;

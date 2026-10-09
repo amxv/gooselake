@@ -209,7 +209,8 @@ async fn phase6_spawn_member_with_created_worktree_and_cleanup_on_remove() {
         cleanup_json["status"].as_str() == Some("deleted")
             || cleanup_json["status"].as_str() == Some("cleanup_failed")
             || cleanup_json["status"].as_str() == Some("retained_by_policy")
-            || cleanup_json["status"].as_str() == Some("skipped_live_claims"),
+            || cleanup_json["status"].as_str() == Some("skipped_live_claims")
+            || cleanup_json["status"].as_str() == Some("skipped_live_binding"),
         "cleanup endpoint should report structured status"
     );
 }

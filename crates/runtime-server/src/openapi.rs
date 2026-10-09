@@ -204,6 +204,23 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/workspaces") => "Register workspace".to_string(),
         (HttpMethod::Get, "/v2/workspaces") => "List workspaces".to_string(),
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}") => "Get workspace".to_string(),
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/worktrees") => {
+            "List eligible and blocked managed worktrees".to_string()
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/worktrees") => {
+            "Create or reuse managed worktree".to_string()
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree") => {
+            "Reassign agent using verified provider cwd evidence".to_string()
+        }
+        (
+            HttpMethod::Get,
+            "/v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}",
+        ) => "Inspect durable worktree rebind operation".to_string(),
+        (
+            HttpMethod::Post,
+            "/v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup",
+        ) => "Retry safe cleanup after verified rebind".to_string(),
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/lead") => {
             "Set, reassign, or clear workspace lead".to_string()
         }

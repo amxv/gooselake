@@ -659,6 +659,7 @@ fn membership_agent_request(root: &Path, title: &str) -> runtime_core::Workspace
         allowed_tools: Vec::new(),
         disallowed_tools: Vec::new(),
         cwd: Some(root.to_string_lossy().into_owned()),
+        worktree: None,
         harness_version_slot: None,
         title: Some(title.to_string()),
         metadata: Some(serde_json::json!({})),

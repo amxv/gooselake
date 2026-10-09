@@ -20,6 +20,7 @@ mod sessions;
 mod turns;
 mod workspace_agents;
 mod workspace_control;
+mod worktree_routes;
 
 #[cfg(test)]
 mod test_support;

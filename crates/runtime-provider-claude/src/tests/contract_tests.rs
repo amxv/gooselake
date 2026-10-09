@@ -549,6 +549,7 @@ async fn durable_permission_and_thinking_mutations_survive_runtime_restart() {
                 allowed_tools: vec!["Read".into()],
                 disallowed_tools: vec!["Bash".into()],
                 cwd: Some(workspace_root.to_string_lossy().into_owned()),
+                worktree: None,
                 harness_version_slot: Some(runtime_core::HARNESS_VERSION.into()),
                 title: Some("Claude agent".into()),
                 metadata: Some(json!({"test":"claude-policy-restart"})),

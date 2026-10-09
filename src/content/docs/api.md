@@ -49,7 +49,7 @@ See [Endpoint Catalog](/docs/endpoint-catalog) for the full route list.
 
 Top-level groups:
 
-- Workspace authority: durable workspace registration, nullable/revisioned lead authority, workspace-wide turn interruption, workspace-owned agent create/list/get/archive/restore, legacy-authority migration, and operation inspection under `/v2`
+- Workspace authority: durable workspace registration, nullable/revisioned lead authority, workspace-wide turn interruption, workspace-owned agent create/list/get/archive/restore, managed-worktree inventory and guarded reassignment, legacy-authority migration, and operation inspection under `/v2`
 - Agent messaging: agent-first direct messages across workspaces plus workspace-local broadcasts, delivery inspection, retry, and cancellation under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
 - Providers/auth: legacy provider list/models/auth plus v2 capability, model-discovery, and skill-discovery endpoints
@@ -156,6 +156,59 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 ```
 
 The list defaults to active agents. Use `?lifecycle=archived` for archived history or `?lifecycle=all` for both states.
+
+### Workspace worktree routes
+
+`GET /v2/workspaces/{workspace_id}/worktrees` lists persisted managed worktrees for the workspace's canonical Git repository. Each item includes its logical ID, monotonically increasing persisted-record `revision`, name, branch, path, retention policy, active attached agent IDs, and `eligible_for_assignment` plus explicit `eligibility_blockers`. The response includes the canonical repository root, Git common directory, and repository fingerprint. A stale/missing path, mismatched native branch/repository, or conflicting claim is **not** considered eligible. The worktree revision changes on persisted record updates; it is independent of the workspace-agent revision and Git commit.
+
+To create or reuse a named managed Git checkout without needing an existing source agent, use the workspace-scoped endpoint:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"worktree_name":"feature-search","branch_prefix":"gg","run_init_script":false}' \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/worktrees"
+```
+
+Its response includes a durable worktree ID, `created`, and init-script status. Repeating the same repository, name and branch selection converges on the existing managed worktree. Worktree names must be Git-safe slugs. Managed worktrees are kept when their retention policy says to retain; no external/unmanaged checkout is implicitly deleted. If an init script fails after creating local files, cleanup will not force-delete them. A later request can recover that exact verified Git checkout without repeating the failed initialization.
+
+When creating an agent, choose one of these `worktree` selectors in the `POST /v2/workspaces/{workspace_id}/agents` JSON request:
+
+```json
+{"provider":"codex","worktree":{"mode":"root"}}
+{"provider":"codex","worktree":{"mode":"existing","worktree_id":"wt_existing"}}
+{"provider":"codex","worktree":{"mode":"new","worktree_name":"feature-search","run_init_script":false}}
+```
+
+The `new` selector creates or reuses the managed checkout before creating the provider session. The provider cwd, workspace-agent recreation policy, session worktree ID, and owned managed-worktree claim are persisted consistently. `cwd` must not also be supplied with an explicit worktree selector. An agent-create failure may leave an unclaimed, retained checkout for later inspection and reuse rather than destructively rolling it back.
+
+Operators can rebind an **idle**, active workspace agent to an already registered eligible managed worktree, or back to the workspace root (null worktree ID):
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: move-builder-linked" \
+  -d '{"worktree_id":"wt_existing","expected_revision":0}' \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/worktree"
+```
+
+`expected_revision` is the current workspace-agent revision, not the workspace revision. The agent's public identity and provider session identity remain stable. The runtime persists a worktree-rebind intent **before** calling a provider, and only after provider-native cwd/session evidence is verified does one SQLite transaction update the session cwd, workspace-agent recreation policy/revision, and managed-worktree associations. A repeat with the same `Idempotency-Key` and identical input returns the original completed operation without calling the provider again; conflicting input or revision fails with HTTP `409`.
+
+Response fields include `operation` (ID, source/destination routes, `phase`, native evidence) and the updated `agent`. Inspect a durable in-flight or recovery-required operation with `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}`, or inspect its shared operation journal, resource claim, and transitions through `GET /v2/operations/{operation_id}`. If native dispatch or binding is ambiguous, its phase becomes `manual_review`: new turns, restores, archival, and further reassignments are blocked rather than replaying unknown provider work. An explicitly unsupported provider (including current ACP rebind) cannot finalize a changed cwd.
+
+Previous managed checkouts are **preserved by default**. To request cleanup *after* verified native rebinding, add `"cleanup_previous_worktree":true` alongside `worktree_id` and `expected_revision`. This choice is part of the idempotency identity: reusing a key with a changed cleanup policy returns a conflict. The provider route changes first; cleanup can never roll back a verified cwd. The durable operation exposes `previous_cleanup_status` (`preserved`, `pending`, `deleted`, `retained_by_policy`, or `skipped_live_claims`) and an optional `previous_cleanup_diagnostic`. A dirty, unmerged, externally managed or unverifiable worktree remains intact and `pending`, never force-deleted. If cleanup is pending after a restart, or after resolving the safety issue, the operator can retry without re-dispatching provider work:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/rebinds/$OPERATION_ID/cleanup"
+```
+
+Only checkout paths under the configured managed root with verified Git identity/branch, no uncommitted changes, and no unmerged branch commits are eligible for automatic deletion. This retry is a separate cleanup action, not a retry of provider rebinding: replaying the original `Idempotency-Key` does not implicitly retry pending native cleanup, even if the checkout has since become clean. Recovery from an ambiguous provider rebind still requires operator investigation and is not implicitly resolved by this endpoint.
+
+Older agent creation requests without a `worktree` selector still accept a `cwd` inside the registered root. The legacy `/v1/worktrees` endpoints remain temporarily available to existing clients; the workspace-scoped endpoint is the preferred creation path. Unresolved provider rebinds still require explicit operator recovery rather than automatic guessing or replay.
 
 Archive and restore without changing identity or policy:
 

@@ -18,6 +18,7 @@ pub mod workspace;
 pub mod workspace_agent;
 pub mod workspace_control;
 pub mod workspace_migration;
+pub mod worktree_lock;
 
 pub use agent_comms::{
     AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
@@ -79,10 +80,10 @@ pub use services::{
     TeamMemberSpawnResponse, TeamMemberSpawnWorktreeInput, TeamMessageAck, TeamRemoveMemberRequest,
     TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest,
     TeamViewSnapshotResponse, TeamWithMembers, ToolGateway, ToolInvokeRequest,
-    WorktreeClaimRequest, WorktreeClaimResponse, WorktreeCleanupRequest, WorktreeCleanupResponse,
-    WorktreeCreateRequest, WorktreeCreateResponse, WorktreeMemberRemovedRequest,
-    WorktreeMemberRemovedResponse, WorktreeReleaseRequest, WorktreeReleaseResponse,
-    WorktreeService,
+    WorkspaceWorktreeCreateRequest, WorktreeClaimRequest, WorktreeClaimResponse,
+    WorktreeCleanupRequest, WorktreeCleanupResponse, WorktreeCreateRequest, WorktreeCreateResponse,
+    WorktreeMemberRemovedRequest, WorktreeMemberRemovedResponse, WorktreeReleaseRequest,
+    WorktreeReleaseResponse, WorktreeService,
 };
 pub use state::{
     ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
@@ -97,15 +98,17 @@ pub use turn_authority::{
     TurnDispatchPolicySnapshot, TurnDispatchState, TurnInputProjectionSource,
 };
 pub use workspace::{
-    prepare_workspace_registration, OperationActor, OperationActorKind, OperationDetails,
-    OperationEffectRecord, OperationOutboxReceiptRecord, OperationOutboxRecord, OperationPhase,
-    OperationRecord, OperationResourceClaimRecord, OperationTransitionRecord,
+    normalized_json_hash, prepare_workspace_registration, OperationActor, OperationActorKind,
+    OperationDetails, OperationEffectRecord, OperationOutboxReceiptRecord, OperationOutboxRecord,
+    OperationPhase, OperationRecord, OperationResourceClaimRecord, OperationTransitionRecord,
     WorkspaceLifecycleState, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterRequest,
     WorkspaceRegisterResponse,
 };
 pub use workspace_agent::{
-    WorkspaceAgentArchiveRequest, WorkspaceAgentCreateRequest, WorkspaceAgentLifecycleState,
-    WorkspaceAgentProfile, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+    WorkspaceAgentArchiveRequest, WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute,
+    WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRebindOperation,
+    WorkspaceAgentRebindRequest, WorkspaceAgentRebindResponse, WorkspaceAgentRecord,
+    WorkspaceAgentRecreationPolicy, WorkspaceWorktreeInventory, WorkspaceWorktreeInventoryEntry,
 };
 pub use workspace_control::{
     authorize_workspace_membership_mutation, prepare_workspace_interrupt,
@@ -123,3 +126,4 @@ pub use workspace_migration::{
     LegacyWorkspaceMigrationResolutionSource, LegacyWorkspaceMigrationStatus,
     LegacyWorkspaceMigrationSubject, LegacyWorkspaceMigrationSubjectKind,
 };
+pub use worktree_lock::repository_worktree_lock;

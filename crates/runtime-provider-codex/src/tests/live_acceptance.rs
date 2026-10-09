@@ -66,6 +66,7 @@ async fn send_and_wait(
             expected_turn_id: None,
             permission_mode: permission_mode.map(str::to_string),
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("live Codex turn dispatch");
@@ -255,6 +256,7 @@ async fn live_provider_approval_and_interrupt() {
             expected_turn_id: None,
             permission_mode: Some("require_approval".to_string()),
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("dispatch live approval turn");
@@ -323,6 +325,7 @@ async fn live_provider_approval_and_interrupt() {
             expected_turn_id: None,
             permission_mode: Some("danger_full_access".to_string()),
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("dispatch live interrupt turn");

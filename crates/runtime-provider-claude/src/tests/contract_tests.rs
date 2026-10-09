@@ -35,6 +35,7 @@ async fn real_adapter_contract_covers_create_resume_send_interrupt_approval_wait
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send turn");
@@ -423,6 +424,7 @@ async fn runtime_manager_recovers_send_turn_after_bridge_session_not_found() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -473,6 +475,7 @@ async fn runtime_manager_persists_admitted_turn_compaction_observations() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -645,6 +648,7 @@ async fn durable_permission_and_thinking_mutations_survive_runtime_restart() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -771,6 +775,7 @@ async fn ignored_real_claude_smoke_with_standalone_bridge() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send real Claude turn");

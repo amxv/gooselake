@@ -106,10 +106,11 @@ export async function createSdkQuery(
   ) {
     options.disallowedTools = session.options.disallowedTools
   }
-  if (session.options.thinkingEffort) {
+  const thinkingEffort = session.activeTurnThinkingEffort ?? session.options.thinkingEffort
+  if (thinkingEffort) {
     options.env = {
       ...process.env,
-      CLAUDE_CODE_EFFORT_LEVEL: session.options.thinkingEffort,
+      CLAUDE_CODE_EFFORT_LEVEL: thinkingEffort,
     }
   }
   if (runtimeOptionOverrides?.resume !== null) {

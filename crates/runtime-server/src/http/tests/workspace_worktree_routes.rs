@@ -417,6 +417,7 @@ async fn ambiguous_or_unverified_rebind_is_durably_fenced_and_cannot_run_another
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await

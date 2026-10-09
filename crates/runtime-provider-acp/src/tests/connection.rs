@@ -95,6 +95,7 @@ async fn close_session_succeeds_after_connection_death_without_respawn() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");
@@ -220,7 +221,9 @@ async fn create_session_failure_during_initialize_cleans_up_connection_and_child
         provider_dir: harness.provider_dir.clone(),
         command: Some("python3".to_string()),
         args: vec![harness.script_path.display().to_string()],
-        request_timeout_secs: 1,
+        // Give the fake Python process time to write its PID under busy CI I/O.
+        // The initialize response still intentionally never arrives.
+        request_timeout_secs: 10,
         ..AcpProviderConfig::default()
     });
 
@@ -321,6 +324,7 @@ async fn real_adapter_contract_handles_malformed_agent_output() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");
@@ -368,6 +372,7 @@ async fn real_adapter_contract_handles_process_death() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");
@@ -415,6 +420,7 @@ async fn real_adapter_contract_preserves_ordered_updates_in_terminal_usage() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");
@@ -488,6 +494,7 @@ async fn real_adapter_contract_stages_runtime_approval_before_execution() {
             expected_turn_id: None,
             permission_mode: Some("require_approval".to_string()),
             approval_id: Some("apr_1".to_string()),
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");
@@ -542,6 +549,7 @@ async fn real_adapter_contract_declined_runtime_approval_interrupts_turn() {
             expected_turn_id: None,
             permission_mode: Some("require_approval".to_string()),
             approval_id: Some("apr_decline".to_string()),
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");

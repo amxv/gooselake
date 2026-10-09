@@ -39,6 +39,36 @@ pub enum ProviderThinkingEffort {
     Max,
 }
 
+/// Codex collaboration is selected on a logical turn, not persisted as a
+/// session permission or silently inferred from the current model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexCollaborationMode {
+    Default,
+    Plan,
+}
+
+impl CodexCollaborationMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Plan => "plan",
+        }
+    }
+}
+
+/// Turn selection. Explicit thinking effort updates the revisioned current
+/// session preference before logical admission; omission inherits the current
+/// preference. Codex collaboration stays specific to this one turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderTurnSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_effort: Option<ProviderThinkingEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_collaboration_mode: Option<CodexCollaborationMode>,
+}
+
 impl ProviderThinkingEffort {
     pub const fn as_str(self) -> &'static str {
         match self {

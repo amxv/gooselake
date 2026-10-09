@@ -86,6 +86,7 @@ impl RuntimeProcessManager {
                     projection_source: Some(TurnInputProjectionSource::AutomationContext),
                     user_input_snapshot: None,
                     correlation_id: Some(correlation.clone()),
+                    turn_settings: Default::default(),
                 },
             )
             .await;

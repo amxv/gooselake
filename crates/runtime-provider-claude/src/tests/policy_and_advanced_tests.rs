@@ -25,6 +25,49 @@ fn request(id: &str) -> ProviderCreateSessionPolicyRequest {
 }
 
 #[tokio::test]
+async fn per_turn_claude_thinking_override_does_not_replace_current_preference() {
+    let harness = FakeClaudeBridgeHarness::new("normal");
+    let provider = harness.provider(ClaudeGgMcpConfig::default());
+    provider
+        .create_session_with_policy(request("claude-turn-thinking"))
+        .await
+        .expect("create Claude session");
+    for (turn_id, thinking_effort) in [
+        ("override", Some(ProviderThinkingEffort::Low)),
+        ("inherited", None),
+    ] {
+        provider
+            .send_turn(ProviderSendTurnRequest {
+                runtime_session_id: "claude-turn-thinking".into(),
+                turn_id: turn_id.into(),
+                input: vec![json!({"type":"text","text":"hello"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                approval_id: None,
+                turn_settings: ProviderTurnSettings {
+                    thinking_effort,
+                    ..Default::default()
+                },
+            })
+            .await
+            .expect("send Claude turn");
+        provider
+            .wait_for_turn(ProviderWaitTurnRequest {
+                runtime_session_id: "claude-turn-thinking".into(),
+                turn_id: turn_id.into(),
+                timeout_ms: Some(3_000),
+            })
+            .await
+            .expect("Claude turn result");
+    }
+    let requests = harness.read_requests();
+    let sends = requests_for_method(&requests, "session.send");
+    assert_eq!(sends.len(), 2);
+    assert_eq!(sends[0]["params"]["thinkingEffort"], "low");
+    assert_eq!(sends[1]["params"]["thinkingEffort"], "max");
+}
+
+#[tokio::test]
 async fn typed_recreation_send_and_skills_preserve_policy_and_current_preferences() {
     let harness = FakeClaudeBridgeHarness::new("normal");
     let provider = harness.provider(ClaudeGgMcpConfig::default());
@@ -64,6 +107,7 @@ async fn typed_recreation_send_and_skills_preserve_policy_and_current_preference
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();
@@ -145,6 +189,7 @@ async fn advanced_primitives_have_evidence_and_busy_guards() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();
@@ -275,6 +320,7 @@ async fn queued_send_cannot_dispatch_from_a_quarantined_session_handle() {
                 expected_turn_id: None,
                 permission_mode: None,
                 approval_id: None,
+                turn_settings: Default::default(),
             })
             .await
     });
@@ -341,6 +387,7 @@ async fn fail_closed_policy_identity_and_rebind_evidence() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .is_err());
@@ -386,6 +433,7 @@ async fn unverified_hard_fork_quarantines_native_identity_before_followup_turn()
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .is_err());
@@ -423,6 +471,7 @@ async fn bridge_terminal_event_observes_context_without_wait() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();
@@ -457,6 +506,7 @@ async fn bridge_compaction_event_preserves_logical_turn_and_updates_context() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();
@@ -559,6 +609,7 @@ async fn permission_mutation_is_revisioned_busy_safe_and_authoritative_for_futur
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();
@@ -622,6 +673,7 @@ async fn thinking_preference_mutation_is_revisioned_busy_safe_and_authoritative_
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();
@@ -658,6 +710,7 @@ async fn provider_observed_permission_event_is_preserved_with_runtime_turn_ident
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();

@@ -104,6 +104,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         "workspace_agents",
         "workspace_agent_rebinds",
         "session_context_limit_snapshots",
+        "session_compaction_runs",
     ] {
         assert!(table_names.contains(expected), "missing table {expected}");
     }
@@ -115,7 +116,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 }
 
 #[test]

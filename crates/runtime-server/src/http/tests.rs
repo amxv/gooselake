@@ -36,6 +36,7 @@ mod codex_runtime_smoke;
 use codex_runtime_smoke::{codex_test_model, create_test_session};
 mod agent_message_routes;
 mod agent_session_controls;
+mod agent_session_controls_compaction;
 mod mcp_core;
 mod mcp_policy_process;
 mod process_more;

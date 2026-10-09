@@ -45,6 +45,7 @@ async fn crashed_acp_prompt_quarantines_admitted_turn_without_replaying() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -88,6 +89,7 @@ async fn crashed_acp_prompt_quarantines_admitted_turn_without_replaying() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await;
@@ -126,6 +128,7 @@ async fn approval_from_crashed_child_cannot_be_sent_to_replacement_agent() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();
@@ -175,6 +178,7 @@ async fn approval_from_crashed_child_cannot_be_sent_to_replacement_agent() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();

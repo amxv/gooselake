@@ -239,6 +239,7 @@ impl RuntimeTeamCommsService {
                     ),
                     user_input_snapshot: None,
                     correlation_id: Some(message.id.clone()),
+                    turn_settings: Default::default(),
                 },
             )
             .await;

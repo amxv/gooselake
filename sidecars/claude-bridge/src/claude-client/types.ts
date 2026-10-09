@@ -195,6 +195,7 @@ export interface SessionState {
   sdkSessionRef: string | null
   options: ClaudeSessionOptions
   activeTurnId: string | null
+  activeTurnThinkingEffort: ClaudeSessionOptions['thinkingEffort'] | null
   ggSerializedToolApprovalPending: boolean
   ggSerializedToolInFlight: boolean
   ggSerializedToolInvocationId: string | null

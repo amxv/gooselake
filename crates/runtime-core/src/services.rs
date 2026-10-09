@@ -17,10 +17,10 @@ use crate::{
     ManagedProcessTerminalUpdate, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
     NewRuntimeEvent, OperationDetails, ProcessCompletionUpdate, ProcessRecord,
     ProcessSchedulerSettings, ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord,
-    RuntimeEventScope, RuntimeHydratedState, SessionContextLimitSnapshot, SessionRecord,
-    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
-    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
-    WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
+    RuntimeEventScope, RuntimeHydratedState, SessionCompactionRun, SessionContextLimitSnapshot,
+    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
+    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
     WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
     WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
     WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
@@ -28,6 +28,66 @@ use crate::{
 
 #[async_trait]
 pub trait RuntimeStore: Send + Sync {
+    fn begin_session_compaction(
+        &self,
+        _run: &SessionCompactionRun,
+    ) -> Result<SessionCompactionRun, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "session compaction persistence unavailable".into(),
+        ))
+    }
+
+    fn transition_session_compaction(
+        &self,
+        _run_id: &str,
+        _phase: &str,
+        _outcome: Option<crate::ProviderCompactSessionOutcome>,
+        _error_code: Option<&str>,
+        _updated_at_ms: i64,
+    ) -> Result<SessionCompactionRun, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "session compaction persistence unavailable".into(),
+        ))
+    }
+
+    fn get_session_compaction(
+        &self,
+        _run_id: &str,
+    ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn get_session_compaction_by_key(
+        &self,
+        _agent_id: &str,
+        _key: &str,
+    ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn unresolved_session_compaction(&self, _agent_id: &str) -> Result<bool, RuntimeError> {
+        Ok(false)
+    }
+
+    fn recover_session_compactions(
+        &self,
+        _now_ms: i64,
+    ) -> Result<Vec<SessionCompactionRun>, RuntimeError> {
+        Ok(Vec::new())
+    }
+
+    fn resolve_session_compaction_review(
+        &self,
+        _run_id: &str,
+        _phase: &str,
+        _evidence: &str,
+        _now_ms: i64,
+    ) -> Result<SessionCompactionRun, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "compaction manual review unavailable".into(),
+        ))
+    }
+
     async fn initialize(&self) -> Result<(), RuntimeError>;
 
     async fn healthcheck(&self) -> Result<(), RuntimeError>;

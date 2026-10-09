@@ -7,17 +7,20 @@ use serde_json::Value;
 use tokio::sync::{broadcast, Mutex, RwLock};
 
 use crate::{
-    ApprovalRecord, PersistedUserInputSnapshot, ProviderKind, ProviderRegistry, RuntimeError,
-    RuntimeEventRecord, RuntimeStore, SessionRecord, TurnAdmissionRecord,
-    TurnInputProjectionSource, TurnRecord,
+    ApprovalRecord, PersistedUserInputSnapshot, ProviderKind, ProviderRegistry,
+    ProviderTurnSettings, RuntimeError, RuntimeEventRecord, RuntimeStore, SessionRecord,
+    TurnAdmissionRecord, TurnInputProjectionSource, TurnRecord,
 };
 
 mod approvals;
+mod compaction;
 mod context_limit;
 mod events;
 mod helpers;
 mod recovery;
 mod sessions;
+mod turn_dispatch_transitions;
+mod turn_settings;
 mod turns;
 mod workspace_agents;
 mod workspace_control;
@@ -48,6 +51,8 @@ pub struct SendTurnInput {
     pub user_input_snapshot: Option<PersistedUserInputSnapshot>,
     #[serde(default)]
     pub correlation_id: Option<String>,
+    #[serde(default)]
+    pub turn_settings: ProviderTurnSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

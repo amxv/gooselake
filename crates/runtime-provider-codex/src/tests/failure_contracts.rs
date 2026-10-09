@@ -9,6 +9,7 @@ fn turn_request(session: &str, turn: &str, text: &str) -> ProviderSendTurnReques
         expected_turn_id: None,
         permission_mode: None,
         approval_id: None,
+        turn_settings: Default::default(),
     }
 }
 

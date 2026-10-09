@@ -74,6 +74,7 @@ async fn one_active_turn_per_session_is_enforced() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -89,6 +90,7 @@ async fn one_active_turn_per_session_is_enforced() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await;
@@ -118,6 +120,7 @@ async fn duplicate_terminal_event_is_idempotent_and_conflict_fails_closed() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -179,6 +182,7 @@ async fn provider_turn_ownership_mismatch_is_rejected() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -223,6 +227,7 @@ async fn send_turn_inherits_session_permission_mode_when_turn_omits_it() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -260,6 +265,7 @@ async fn approval_requested_and_resolution_transitions_turn() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -340,6 +346,7 @@ async fn approval_accept_is_case_insensitive_and_advances_turn() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -403,6 +410,7 @@ async fn approval_invalid_decision_is_rejected() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await

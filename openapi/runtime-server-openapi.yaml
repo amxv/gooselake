@@ -1066,6 +1066,75 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/agents/{agent_id}/compact:
+    post:
+      summary: Durably admit manual context compaction before provider dispatch
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/agents/{agent_id}/compactions/{run_id}:
+    get:
+      summary: Get current manager compaction status and native outcome
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/agents/{agent_id}/compactions/{run_id}/resolve:
+    post:
+      summary: Resolve ambiguous native compaction with explicit operator evidence
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/agents/{agent_id}/context-limit:
     get:
       summary: Get current provider-verified context snapshot
@@ -1123,6 +1192,28 @@ paths:
   /v2/agents/{agent_id}/preferences:
     post:
       summary: Update durable current thinking preference using expected revision
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/agents/{agent_id}/turns:
+    post:
+      summary: Admit a workspace agent turn with optional typed turn-scoped settings
       parameters:
         - name: agent_id
           in: path

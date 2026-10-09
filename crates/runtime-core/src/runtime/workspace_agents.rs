@@ -24,6 +24,22 @@ const ALIAS_ANIMALS: &[&str] = &[
 ];
 
 impl RuntimeSessionManager {
+    pub fn get_active_workspace_agent_by_id(
+        &self,
+        agent_id: &str,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        let agent = self
+            .store
+            .get_workspace_agent_by_id(agent_id)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))?;
+        if agent.lifecycle_state != WorkspaceAgentLifecycleState::Active {
+            return Err(RuntimeError::Conflict(format!(
+                "workspace agent {agent_id} is archived"
+            )));
+        }
+        Ok(agent)
+    }
+
     pub fn list_workspace_agents(
         &self,
         workspace_id: &str,
@@ -48,6 +64,14 @@ impl RuntimeSessionManager {
         request: ProviderPermissionMutationRequest,
     ) -> Result<ProviderPermissionMutationResult, RuntimeError> {
         let _mutation = self.session_policy_mutation_lock.lock().await;
+        if self
+            .store
+            .unresolved_session_compaction(&request.runtime_session_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "cannot change permissions while provider compaction is unresolved".into(),
+            ));
+        }
         let agent = self
             .store
             .get_workspace_agent_by_id(request.runtime_session_id.trim())?
@@ -140,6 +164,33 @@ impl RuntimeSessionManager {
         request: ProviderSessionPreferencesMutationRequest,
     ) -> Result<ProviderSessionPreferencesMutationResult, RuntimeError> {
         let _mutation = self.session_policy_mutation_lock.lock().await;
+        self.mutate_workspace_agent_preferences_locked(request)
+            .await
+    }
+
+    /// The caller must hold `session_policy_mutation_lock`. A turn's selected
+    /// thinking level is a new durable current preference (not merely a
+    /// transport override) and must be committed before logical admission.
+    pub(super) async fn mutate_workspace_agent_preferences_locked(
+        &self,
+        request: ProviderSessionPreferencesMutationRequest,
+    ) -> Result<ProviderSessionPreferencesMutationResult, RuntimeError> {
+        if self
+            .store
+            .unresolved_workspace_agent_rebind(&request.runtime_session_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "cannot change preferences during unresolved workspace rebind".into(),
+            ));
+        }
+        if self
+            .store
+            .unresolved_session_compaction(&request.runtime_session_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "cannot change preferences while provider compaction is unresolved".into(),
+            ));
+        }
         let agent = self
             .store
             .get_workspace_agent_by_id(request.runtime_session_id.trim())?

@@ -27,6 +27,8 @@ struct TestProviderSession {
     provider_session_ref: String,
     cwd: Option<String>,
     history: Vec<String>,
+    current_preferences: runtime_core::ProviderSessionPreferences,
+    seen_thinking_efforts: Vec<Option<runtime_core::ProviderThinkingEffort>>,
     completed: HashMap<String, ProviderTurnResult>,
     pending: HashMap<String, ProviderSendTurnRequest>,
 }
@@ -37,6 +39,12 @@ pub(super) struct TestProvider {
     resumed_requests: Mutex<Vec<ProviderResumeSessionRequest>>,
     rebind_mode: Mutex<Option<String>>,
     rebind_calls: Mutex<Vec<runtime_core::ProviderWorkspaceRebindRequest>>,
+    compaction_mode: std::sync::atomic::AtomicU8,
+    compaction_calls: std::sync::atomic::AtomicUsize,
+    supports_thinking: std::sync::atomic::AtomicBool,
+    compaction_events: std::sync::Mutex<
+        Option<tokio::sync::broadcast::Sender<runtime_core::ProviderRuntimeEvent>>,
+    >,
 }
 
 #[derive(Default)]
@@ -60,6 +68,24 @@ pub(super) struct TestAcpProvider {
 }
 
 impl TestProvider {
+    pub(super) fn enable_thinking_mutation(&self) {
+        self.supports_thinking
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(super) async fn observed_thinking_efforts(
+        &self,
+        session_id: &str,
+    ) -> Vec<Option<runtime_core::ProviderThinkingEffort>> {
+        self.state
+            .lock()
+            .await
+            .sessions
+            .get(session_id)
+            .map(|session| session.seen_thinking_efforts.clone())
+            .unwrap_or_default()
+    }
+
     pub(super) async fn set_rebind_mode(&self, mode: Option<&str>) {
         *self.rebind_mode.lock().await = mode.map(str::to_string);
     }
@@ -107,17 +133,71 @@ impl RuntimeProvider for TestProvider {
 
     fn capabilities(&self) -> runtime_core::ProviderCapabilities {
         runtime_core::ProviderCapabilities {
+            manual_compact: if self
+                .compaction_mode
+                .load(std::sync::atomic::Ordering::SeqCst)
+                == 0
+            {
+                runtime_core::ProviderCapabilitySupport::Unsupported
+            } else {
+                runtime_core::ProviderCapabilitySupport::Supported
+            },
             model_discovery: runtime_core::ProviderDiscoveryMode::Catalog,
             session_resume: runtime_core::ProviderCapabilitySupport::Supported,
             workspace_rebind: runtime_core::ProviderCapabilitySupport::Supported,
             interrupt: runtime_core::ProviderCapabilitySupport::Supported,
             tools: runtime_core::ProviderCapabilitySupport::Supported,
+            session_preferences: if self
+                .supports_thinking
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                runtime_core::ProviderCapabilitySupport::Supported
+            } else {
+                runtime_core::ProviderCapabilitySupport::Unsupported
+            },
             ..Default::default()
         }
     }
 
+    async fn mutate_session_preferences(
+        &self,
+        req: runtime_core::ProviderSessionPreferencesMutationRequest,
+    ) -> Result<runtime_core::ProviderSessionPreferencesMutationResult, RuntimeError> {
+        if !self
+            .supports_thinking
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(RuntimeError::Unsupported(
+                "thinking mutation disabled".into(),
+            ));
+        }
+        let mut state = self.state.lock().await;
+        let session = state
+            .sessions
+            .get_mut(&req.runtime_session_id)
+            .ok_or_else(|| RuntimeError::NotFound(format!("session {}", req.runtime_session_id)))?;
+        session.current_preferences = req.current_preferences.clone();
+        Ok(runtime_core::ProviderSessionPreferencesMutationResult {
+            revision: 0,
+            current_preferences: req.current_preferences,
+        })
+    }
+
     async fn healthcheck(&self) -> Result<(), RuntimeError> {
         Ok(())
+    }
+
+    fn subscribe_events(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<runtime_core::ProviderRuntimeEvent>> {
+        Some(self.compaction_event_receiver())
+    }
+
+    async fn compact_session(
+        &self,
+        req: runtime_core::ProviderCompactSessionRequest,
+    ) -> Result<runtime_core::ProviderCompactSessionOutcome, RuntimeError> {
+        self.run_test_compaction(req)
     }
 
     async fn list_models(&self) -> Result<Vec<ProviderModel>, RuntimeError> {
@@ -225,6 +305,12 @@ impl RuntimeProvider for TestProvider {
             .ok_or_else(|| {
                 RuntimeError::NotFound(format!("test session {}", req.runtime_session_id))
             })?;
+
+        session.seen_thinking_efforts.push(
+            req.turn_settings
+                .thinking_effort
+                .or(session.current_preferences.thinking_effort),
+        );
 
         if let Some(approval_id) = req.approval_id.clone() {
             session.pending.insert(approval_id, req.clone());
@@ -526,6 +612,8 @@ impl RuntimeProvider for TestClaudeProvider {
 }
 
 mod acp_provider;
+#[path = "support_compaction.rs"]
+mod support_compaction;
 
 pub(super) async fn build_test_router() -> (Router, String, tempfile::TempDir) {
     build_test_router_with_team_policy(TeamMcpPolicy::default()).await

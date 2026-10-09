@@ -382,7 +382,9 @@ for raw in sys.stdin:
 "#;
 
 fn fake_provider(temp: &tempfile::TempDir, gg_mcp_enabled: bool) -> (CodexProvider, PathBuf) {
-    fake_provider_with_timeout(temp, gg_mcp_enabled, 10_000)
+    // Allow a cold Python fake app-server to initialize under contended CI I/O.
+    // Timeout-specific tests select their own short window explicitly.
+    fake_provider_with_timeout(temp, gg_mcp_enabled, 30_000)
 }
 
 fn fake_provider_with_timeout(
@@ -525,6 +527,7 @@ async fn fake_app_server_proves_create_structured_turn_mapping_context_and_harne
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send turn");
@@ -611,6 +614,7 @@ async fn fake_app_server_proves_provider_approval_and_interrupt_lifecycle() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send approval turn");
@@ -675,6 +679,7 @@ async fn fake_app_server_proves_provider_approval_and_interrupt_lifecycle() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send permission approval turn");
@@ -750,6 +755,7 @@ async fn fake_app_server_proves_provider_approval_and_interrupt_lifecycle() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send interrupt turn");
@@ -799,6 +805,7 @@ async fn fake_app_server_buffers_out_of_order_terminal_notification_until_native
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send turn");
@@ -833,6 +840,7 @@ async fn fake_app_server_proves_compaction_rebind_hard_fork_and_restart_resume()
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send historical turn");

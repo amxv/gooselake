@@ -184,6 +184,7 @@ export class ClaudeClient {
       state.providerSessionRef = sessionRef
       state.sdkSessionRef = canonicalSessionRef
       state.activeTurnId = null
+      state.activeTurnThinkingEffort = null
       state.ggSerializedToolApprovalPending = false
       state.ggSerializedToolInFlight = false
       state.ggSerializedToolInvocationId = null
@@ -230,7 +231,6 @@ export class ClaudeClient {
   ): Promise<{ turnId: string; status: 'inProgress' }> {
     const session = this.requireSession(sessionId)
     if (session.rebinding || (session.activeSdkQuery && !session.activeTurnId)) throw new BridgeError('TURN_IN_PROGRESS', 'Claude session is busy')
-    if (thinkingEffort !== undefined) session.options.thinkingEffort = thinkingEffort
     if (session.activeTurnId) {
       if (!expectedTurnId || expectedTurnId !== session.activeTurnId) {
         throw new BridgeError(
@@ -264,6 +264,7 @@ export class ClaudeClient {
 
     const turnId = expectedTurnId ?? `turn_${this.nextTurn++}`
     session.activeTurnId = turnId
+    session.activeTurnThinkingEffort = thinkingEffort ?? null
     setTurnPromptText(session, turnId, input)
     if (this.mode === 'sdk') {
       session.turnPromptStreams.set(
@@ -471,6 +472,7 @@ export class ClaudeClient {
       session.sdkSessionRef = childClaudeCanonicalSessionRef
       session.providerSessionRef = childProviderSessionRef
       session.activeTurnId = null
+      session.activeTurnThinkingEffort = null
       session.ggSerializedToolApprovalPending = false
       session.ggSerializedToolInFlight = false
       session.ggSerializedToolInvocationId = null
@@ -538,6 +540,7 @@ export class ClaudeClient {
     session.turnWaiters.clear()
     session.turnOrder = []
     session.activeTurnId = null
+    session.activeTurnThinkingEffort = null
     this.sessions.delete(sessionId)
 
     this.emit({
@@ -1273,6 +1276,7 @@ export class ClaudeClient {
     session.turnPromptTexts.delete(normalizedResult.turnId)
     if (session.activeTurnId === normalizedResult.turnId) {
       session.activeTurnId = null
+      session.activeTurnThinkingEffort = null
     }
 
     const waiters = session.turnWaiters.get(normalizedResult.turnId) ?? []

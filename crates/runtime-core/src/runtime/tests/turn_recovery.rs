@@ -32,6 +32,7 @@ async fn startup_recovery_keeps_dispatched_turn_unresolved_when_provider_session
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await

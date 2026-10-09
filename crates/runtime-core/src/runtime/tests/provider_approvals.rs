@@ -39,6 +39,7 @@ async fn duplicate_provider_approval_event_converges_on_one_durable_record() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -102,6 +103,7 @@ async fn provider_approval_emitted_before_ack_is_durable_and_deduplicated() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -212,6 +214,7 @@ async fn startup_recovery_restores_provider_approval_turn_without_resending() {
             dispatch_policy: TurnDispatchPolicySnapshot {
                 permission_mode: None,
                 pre_dispatch_approval_required: false,
+                turn_settings: Default::default(),
             },
             correlation: TurnCorrelationState::default(),
             dispatch_state: TurnDispatchState::Dispatched,

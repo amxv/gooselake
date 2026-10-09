@@ -39,6 +39,7 @@ async fn send_turn_failure_does_not_leave_session_bricked() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await;
@@ -68,6 +69,7 @@ async fn send_turn_failure_does_not_leave_session_bricked() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await;
@@ -120,6 +122,7 @@ async fn turn_admission_is_durable_before_provider_dispatch_and_preserves_proven
                 projection_source: Some(TurnInputProjectionSource::AutomationContext),
                 user_input_snapshot: Some(snapshot.clone()),
                 correlation_id: Some("job-123".to_string()),
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -187,6 +190,7 @@ async fn failed_durable_admission_never_calls_provider() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await;
@@ -233,6 +237,7 @@ async fn pre_dispatch_policy_approval_blocks_provider_until_acceptance() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -311,6 +316,7 @@ async fn declining_pre_dispatch_policy_approval_never_calls_provider() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -380,6 +386,7 @@ async fn unknown_provider_dispatch_is_quarantined_and_not_blindly_retried() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await;
@@ -421,6 +428,7 @@ async fn unknown_provider_dispatch_is_quarantined_and_not_blindly_retried() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await;
@@ -452,6 +460,7 @@ async fn startup_recovery_replays_committed_pending_turn_once_after_approval_was
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: Some("restart-pending".to_string()),
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -524,6 +533,7 @@ async fn startup_recovery_quarantines_dispatching_turn_without_resending() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: Some("dispatching-restart".to_string()),
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -591,6 +601,7 @@ async fn startup_recovery_preserves_native_mapping_without_resending_dispatched_
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -657,6 +668,7 @@ async fn durable_native_turn_mapping_cannot_be_rewritten_or_regressed() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -710,6 +722,7 @@ async fn startup_recovery_keeps_pending_pre_dispatch_approval_undispatched() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -773,6 +786,7 @@ async fn startup_recovery_refuses_replay_when_persisted_input_attachment_is_miss
                     invocation: None,
                 }),
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await

@@ -673,6 +673,12 @@ impl RuntimeProvider for ClaudeProvider {
         &self,
         req: ProviderSendTurnRequest,
     ) -> Result<ProviderTurnAck, RuntimeError> {
+        if req.turn_settings.codex_collaboration_mode.is_some() {
+            return Err(RuntimeError::provider_not_dispatched(
+                "codex_collaboration_unsupported",
+                "Claude does not support Codex collaboration modes",
+            ));
+        }
         let session = self
             .get_session(req.runtime_session_id.as_str())
             .await
@@ -700,6 +706,17 @@ impl RuntimeProvider for ClaudeProvider {
                 None,
             )?;
         }
+        let thinking_effort = req.turn_settings.thinking_effort.or(session
+            .current_preferences
+            .read()
+            .await
+            .thinking_effort);
+        crate::policy::validate_policy(
+            &send_policy,
+            session.effective_cwd.read().await.as_deref(),
+            &runtime_core::ProviderSessionPreferences { thinking_effort },
+            session.model.as_deref(),
+        )?;
         let runtime_turn_id = req.turn_id.clone();
 
         {
@@ -716,7 +733,7 @@ impl RuntimeProvider for ClaudeProvider {
                 "input": req.input,
                 "expectedTurnId": req.expected_turn_id,
                 "permissionIntent": send_policy.permission_intent,
-                "thinkingEffort": session.current_preferences.read().await.thinking_effort,
+                "thinkingEffort": thinking_effort,
             }),
             self.inner.config.request_timeout_ms,
         )

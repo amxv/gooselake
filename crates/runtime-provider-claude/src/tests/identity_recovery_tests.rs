@@ -65,6 +65,7 @@ async fn late_sdk_identity_is_durable_before_restart_and_reused_for_resume() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await

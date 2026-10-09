@@ -280,6 +280,18 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/agents/{agent_id}/permission") => {
             "Update Claude permission selection using expected revision".to_string()
         }
+        (HttpMethod::Post, "/v2/agents/{agent_id}/turns") => {
+            "Admit a workspace agent turn with optional typed turn-scoped settings".to_string()
+        }
+        (HttpMethod::Post, "/v2/agents/{agent_id}/compact") => {
+            "Durably admit manual context compaction before provider dispatch".to_string()
+        }
+        (HttpMethod::Get, "/v2/agents/{agent_id}/compactions/{run_id}") => {
+            "Get current manager compaction status and native outcome".to_string()
+        }
+        (HttpMethod::Post, "/v2/agents/{agent_id}/compactions/{run_id}/resolve") => {
+            "Resolve ambiguous native compaction with explicit operator evidence".to_string()
+        }
         (HttpMethod::Get, "/v1/mcp/capabilities") => "Runtime MCP capabilities".to_string(),
         (HttpMethod::Post, "/v1/mcp/invoke") => "Invoke runtime MCP tool".to_string(),
         _ => format!("{} {}", method.as_str().to_uppercase(), path),
@@ -306,6 +318,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         && matches!(
             path,
             "/v2/workspaces"
+                | "/v2/agents/{agent_id}/compact"
                 | "/v2/workspaces/{workspace_id}/lead"
                 | "/v2/workspaces/{workspace_id}/interrupt"
                 | "/v2/messages"
@@ -403,6 +416,8 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/workspaces"
             | "/v2/agents/{agent_id}/preferences"
             | "/v2/agents/{agent_id}/permission"
+            | "/v2/agents/{agent_id}/turns"
+            | "/v2/agents/{agent_id}/compactions/{run_id}/resolve"
             | "/v2/workspaces/{workspace_id}/lead"
             | "/v2/workspaces/{workspace_id}/agents"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"

@@ -42,6 +42,23 @@ impl SqliteRuntimeRepository {
                 session.id
             )));
         }
+        // The manager also serializes these operations in-memory, but the
+        // SQLite fence must hold when more than one runtime instance (or a
+        // direct store caller) races a native compaction admission.
+        let compaction_pending: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM session_compaction_runs
+                 WHERE session_id = ?1 AND phase IN ('intended','accepted','manual_review')",
+                params![session.id],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed checking compaction before turn admission", error))?;
+        if compaction_pending != 0 {
+            return Err(RuntimeError::Conflict(format!(
+                "session {} has an unresolved provider compaction",
+                session.id
+            )));
+        }
 
         let persisted = transaction
             .query_row(

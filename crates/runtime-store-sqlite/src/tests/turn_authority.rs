@@ -192,6 +192,10 @@ fn admission_record() -> TurnAdmissionRecord {
         dispatch_policy: TurnDispatchPolicySnapshot {
             permission_mode: None,
             pre_dispatch_approval_required: false,
+            turn_settings: runtime_core::ProviderTurnSettings {
+                thinking_effort: Some(runtime_core::ProviderThinkingEffort::High),
+                codex_collaboration_mode: Some(runtime_core::CodexCollaborationMode::Plan),
+            },
         },
         correlation: TurnCorrelationState::default(),
         dispatch_state: TurnDispatchState::Pending,

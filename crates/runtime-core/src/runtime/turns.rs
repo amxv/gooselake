@@ -15,23 +15,8 @@ use super::helpers::{
     append_session_transcript, extract_assistant_text_from_usage, extract_turn_user_text,
     is_terminal_turn_status, now_ms,
 };
+use super::turn_dispatch_transitions::is_valid_dispatch_transition;
 use super::{RuntimeSessionManager, SendTurnAccepted, SendTurnInput};
-
-fn is_valid_dispatch_transition(from: TurnDispatchState, to: TurnDispatchState) -> bool {
-    use TurnDispatchState::{Dispatched, Dispatching, NotDispatched, Pending, Unknown};
-
-    matches!(
-        (from, to),
-        (Pending, Pending | Dispatching | NotDispatched)
-            | (
-                Dispatching,
-                Dispatching | Dispatched | NotDispatched | Unknown
-            )
-            | (Dispatched, Dispatched)
-            | (NotDispatched, NotDispatched)
-            | (Unknown, Unknown | Dispatched | NotDispatched)
-    )
-}
 
 impl RuntimeSessionManager {
     pub async fn admitted_turn_for_correlation(
@@ -84,6 +69,11 @@ impl RuntimeSessionManager {
                 "session {session_id} has an unresolved workspace rebind; inspect its operation before submitting another turn"
             )));
         }
+        if self.store.unresolved_session_compaction(session_id)? {
+            return Err(RuntimeError::Conflict(format!(
+                "session {session_id} has unresolved provider compaction; inspect the compaction operation before sending another turn"
+            )));
+        }
         if session.status == "closed" || session.status == "failed" {
             return Err(RuntimeError::InvalidState(format!(
                 "session {session_id} is not writable in status {}",
@@ -98,6 +88,11 @@ impl RuntimeSessionManager {
         let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
             RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
         })?;
+        let turn_settings = input.turn_settings.clone();
+        self.validate_turn_settings(provider_kind, &turn_settings)?;
+        let session = self
+            .persist_selected_turn_thinking(session_id, turn_settings.thinking_effort, session)
+            .await?;
         let turn_id = self.allocate_id("turn", provider_kind.as_str());
         let now = now_ms();
         let effective_permission_mode = input
@@ -162,6 +157,7 @@ impl RuntimeSessionManager {
             dispatch_policy: TurnDispatchPolicySnapshot {
                 permission_mode: effective_permission_mode.clone(),
                 pre_dispatch_approval_required: requires_approval,
+                turn_settings: turn_settings.clone(),
             },
             correlation: TurnCorrelationState {
                 expected_turn_id: input.expected_turn_id.clone(),
@@ -263,6 +259,7 @@ impl RuntimeSessionManager {
             expected_turn_id: input.expected_turn_id,
             permission_mode: effective_permission_mode,
             approval_id: approval_id.clone(),
+            turn_settings,
         };
         let (ack, provider_events) = match self
             .dispatch_send_turn_with_resume_fallback(provider_kind, provider_send_input, &session)

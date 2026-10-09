@@ -15,6 +15,15 @@ impl RuntimeSessionManager {
             started_at,
             ..Default::default()
         };
+        // Never redispatch a native compact request whose response or native
+        // terminal observation could have been lost across restart.
+        let ambiguous_compactions = self.store.recover_session_compactions(started_at)?;
+        for run in ambiguous_compactions {
+            summary.notes.push(format!(
+                "manual compaction {} for {} requires explicit provider outcome review",
+                run.run_id, run.agent_id
+            ));
+        }
         let turns_snapshot = self.turns.read().await.clone();
         let approvals_snapshot = self.approvals.read().await.clone();
         let admissions_snapshot = self.turn_admissions.read().await.clone();
@@ -363,6 +372,7 @@ impl RuntimeSessionManager {
                                 expected_turn_id: admission.correlation.expected_turn_id.clone(),
                                 permission_mode: admission.dispatch_policy.permission_mode.clone(),
                                 approval_id: None,
+                                turn_settings: admission.dispatch_policy.turn_settings.clone(),
                             };
                             match self
                                 .dispatch_send_turn_with_resume_fallback(

@@ -1,3 +1,4 @@
+use crate::ProviderTurnSettings;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -66,7 +67,10 @@ impl PersistedUserInputSnapshot {
             {
                 prompt_parts.push(text.to_string());
             }
-            let is_image = item.get("type").and_then(Value::as_str) == Some("image");
+            let is_image = matches!(
+                item.get("type").and_then(Value::as_str),
+                Some("image" | "local_image")
+            );
             if is_image {
                 let path = item
                     .get("path")
@@ -92,10 +96,24 @@ impl PersistedUserInputSnapshot {
                 }
             }
         }
+        let invocation = input.iter().find_map(|item| {
+            if item.get("type").and_then(Value::as_str) != Some("skill") {
+                return None;
+            }
+            Some(PersistedUserInputSnapshotInvocation {
+                provider: "codex".to_string(),
+                name: item.get("name").and_then(Value::as_str)?.to_string(),
+                display_name: item
+                    .get("display_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                path: item.get("path").and_then(Value::as_str).map(str::to_string),
+            })
+        });
         Self {
             prompt_text: prompt_parts.join("\n\n"),
             image_refs,
-            invocation: None,
+            invocation,
         }
     }
 
@@ -122,6 +140,8 @@ impl PersistedUserInputSnapshot {
 pub struct TurnDispatchPolicySnapshot {
     pub permission_mode: Option<String>,
     pub pre_dispatch_approval_required: bool,
+    #[serde(default)]
+    pub turn_settings: ProviderTurnSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -177,4 +197,32 @@ pub struct TurnAdmissionRecord {
     pub dispatch_error: Option<Value>,
     pub admitted_at: i64,
     pub updated_at: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_preserves_native_image_order_and_skill_invocation() {
+        let snapshot = PersistedUserInputSnapshot::from_input(&[
+            serde_json::json!({"type":"text","text":"Revise the design"}),
+            serde_json::json!({"type":"local_image","path":"/tmp/first.png","media_type":"image/png"}),
+            serde_json::json!({"type":"image","path":"/tmp/second.webp","media_type":"image/webp"}),
+            serde_json::json!({"type":"skill","name":"review","path":"/tmp/review/SKILL.md"}),
+        ]);
+        assert_eq!(snapshot.prompt_text, "Revise the design");
+        assert_eq!(snapshot.image_refs.len(), 2);
+        assert_eq!(
+            snapshot.image_refs[0].persisted_absolute_path.as_deref(),
+            Some("/tmp/first.png")
+        );
+        assert_eq!(
+            snapshot.image_refs[1].persisted_absolute_path.as_deref(),
+            Some("/tmp/second.webp")
+        );
+        let invocation = snapshot.invocation.expect("native skill must be preserved");
+        assert_eq!(invocation.name, "review");
+        assert_eq!(invocation.path.as_deref(), Some("/tmp/review/SKILL.md"));
+    }
 }

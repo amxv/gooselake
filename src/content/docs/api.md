@@ -178,7 +178,18 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/agents/$AGENT_ID/permission"
 ```
 
-The permission endpoint is Claude-only. These controls do not rewrite earlier turns. Manual compaction and edit-and-rerun remain lower-level provider primitives until durable operator-side workflows are implemented; they are not exposed as `/v2` routes yet.
+The permission endpoint is Claude-only. These controls do not rewrite earlier turns.
+
+`POST /v2/agents/{agent_id}/turns` admits a new user-visible turn, preserving its typed `turn_settings` in the durable dispatch-policy snapshot even if the runtime has to recover an admitted-but-not-dispatched turn after restart. Explicit `thinking_effort` selects and durably updates the agent's revisioned current thinking preference **before turn admission**; subsequent turns inherit that preference until it is changed again. Omit it to use the existing preference without a revision change. Codex also accepts `codex_collaboration_mode: "default" | "plan"` on a specific turn, without turning that selection into permission or a persistent session default. Claude accepts thinking changes without Codex collaboration. Unsupported ACP preferences or cross-provider collaboration modes fail before turn admission.
+
+```bash
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"input":[{"type":"text","text":"Review this change"}],"turn_settings":{"thinking_effort":"high","codex_collaboration_mode":"plan"}}' \
+  "$BASE_URL/v2/agents/$AGENT_ID/turns"
+```
+
+`POST /v2/agents/{agent_id}/compact` requires a ready, active workspace-owned Codex or Claude agent. It durably admits a manager-owned `cmp_*` run before invoking the native provider, with optional `Idempotency-Key`. The result distinguishes `accepted` (native request accepted, **not yet confirmed complete**) from `not_performed`; an unknown provider outcome becomes `manual_review` and is never automatically resubmitted. `GET /v2/agents/{agent_id}/compactions/{run_id}` reports the exact durable operation. Provider completion events settle accepted runs to `completed`/`failed`. Until an outstanding or ambiguous run is settled, new turns, permission updates, and worktree rebinds are fenced. A crash does not erase or replay unresolved compaction. If evidence is lost, an operator can independently inspect native provider state and settle an ambiguous `manual_review` via `POST /v2/agents/{agent_id}/compactions/{run_id}/resolve` with JSON `{"phase":"failed","evidence":"..."}` or a verified `completed` result. This records external review evidence and never repeats native compaction; confirming completion requires the same native attachment/revision. The broader automatic/provider compaction and notice/hook unification remains a separate lifecycle expansion; edit-and-rerun is not yet exposed as a manager route.
 
 ### Workspace worktree routes
 

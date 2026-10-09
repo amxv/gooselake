@@ -21,6 +21,7 @@ export function createSessionState(params: {
     sdkSessionRef: params.sdkSessionRef,
     options: params.options,
     activeTurnId: null,
+    activeTurnThinkingEffort: null,
     ggSerializedToolApprovalPending: false,
     ggSerializedToolInFlight: false,
     ggSerializedToolInvocationId: null,

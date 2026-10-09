@@ -443,6 +443,18 @@ impl CodexProvider {
                         let _ = waiter.send(());
                     }
                 }
+                drop(sessions);
+                let _ = inner
+                    .events
+                    .send(ProviderRuntimeEvent::ContextCompactionObserved {
+                        runtime_session_id: runtime_session_id.to_string(),
+                        turn_id: None,
+                        phase: "completed".into(),
+                        trigger: Some("provider".into()),
+                        pre_tokens: None,
+                        post_tokens: None,
+                        context_window_size: None,
+                    });
             }
             "turn/completed" => {
                 let Some(turn) = message.get("params").and_then(|params| params.get("turn")) else {

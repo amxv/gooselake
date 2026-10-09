@@ -153,6 +153,7 @@ impl RuntimeSessionManager {
                 expected_turn_id: admission.correlation.expected_turn_id.clone(),
                 permission_mode: admission.dispatch_policy.permission_mode.clone(),
                 approval_id: None,
+                turn_settings: admission.dispatch_policy.turn_settings.clone(),
             };
             let (ack, provider_events) = match self
                 .dispatch_send_turn_with_resume_fallback(provider_kind, request, &session)

@@ -85,6 +85,8 @@ Each current Codex model supports the curated `low`, `medium`, `high`,
 these values as typed model capabilities. Clients should use the returned values
 instead of inventing aliases.
 
+`POST /v2/agents/{agent_id}/turns` accepts an explicit thinking effort selection, which updates the revisioned current session preference before admitting the turn and is inherited by subsequent turns and provider resumes. Codex `default`/`plan` collaboration is strictly turn-scoped and does not mutate session preference or permission authority. Manual compaction is exposed through the manager `/v2/agents/{agent_id}/compact` route and remains in durable `accepted` state until a native completion event is observed; do not treat provider request acceptance as compaction completion. Claude accepts thinking selections and native manual compaction but not Codex collaboration; ACP owns these settings and currently advertises manual compaction unsupported.
+
 ### Auth
 
 Codex auth is staged from host credentials into the runtime's provider data area. This keeps runtime execution isolated from the normal host config path while still using the logged-in host as the source.

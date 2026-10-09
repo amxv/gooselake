@@ -74,6 +74,8 @@ pub(super) struct PublicSendTurnInput {
     input: Vec<Value>,
     expected_turn_id: Option<String>,
     permission_mode: Option<String>,
+    #[serde(default)]
+    turn_settings: runtime_core::ProviderTurnSettings,
 }
 
 impl From<PublicSendTurnInput> for SendTurnInput {
@@ -85,6 +87,7 @@ impl From<PublicSendTurnInput> for SendTurnInput {
             projection_source: Some(runtime_core::TurnInputProjectionSource::UserVisible),
             user_input_snapshot: None,
             correlation_id: None,
+            turn_settings: input.turn_settings,
         }
     }
 }
@@ -133,6 +136,30 @@ mod tests {
         );
         assert!(internal.user_input_snapshot.is_none());
         assert!(internal.correlation_id.is_none());
+    }
+
+    #[test]
+    fn public_send_turn_accepts_typed_per_turn_overrides_only() {
+        let input: PublicSendTurnInput = serde_json::from_value(serde_json::json!({
+            "input":[{"type":"text","text":"hello"}],
+            "turn_settings":{"thinking_effort":"high","codex_collaboration_mode":"plan"}
+        }))
+        .expect("typed per-turn options");
+        let internal: SendTurnInput = input.into();
+        assert_eq!(
+            internal.turn_settings.thinking_effort,
+            Some(runtime_core::ProviderThinkingEffort::High)
+        );
+        assert_eq!(
+            internal.turn_settings.codex_collaboration_mode,
+            Some(runtime_core::CodexCollaborationMode::Plan)
+        );
+        assert!(
+            serde_json::from_value::<PublicSendTurnInput>(serde_json::json!({
+                "input":[], "turn_settings":{"permission_mode":"bypass"}
+            }))
+            .is_err()
+        );
     }
 }
 

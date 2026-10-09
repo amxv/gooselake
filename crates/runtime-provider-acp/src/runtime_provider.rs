@@ -273,6 +273,12 @@ impl RuntimeProvider for AcpProvider {
         &self,
         req: ProviderSendTurnRequest,
     ) -> Result<ProviderTurnAck, RuntimeError> {
+        if req.turn_settings != Default::default() {
+            return Err(RuntimeError::provider_not_dispatched(
+                "turn_settings_agent_managed",
+                "ACP agent owns its turn thinking and collaboration settings",
+            ));
+        }
         if req
             .permission_mode
             .as_deref()

@@ -11,6 +11,7 @@ pub mod provider_registry;
 pub mod repository_identity;
 pub mod runtime;
 pub mod services;
+pub mod session_compaction;
 pub mod state;
 pub mod team_comms;
 pub mod turn_authority;
@@ -56,16 +57,18 @@ pub use provider::{
     ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeProvider,
 };
 pub use provider_contract::{
-    semantic_tool_contract_manifest, ProviderCapabilities, ProviderCapabilitySupport,
-    ProviderCompactSessionOutcome, ProviderCompactSessionRequest, ProviderContextLimitObservation,
-    ProviderDiscoveryMode, ProviderHardForkEditRerunRequest, ProviderModelCapabilities,
-    ProviderModelDescriptor, ProviderModelDiscoveryRequest, ProviderModelDiscoveryResponse,
-    ProviderModelDiscoveryStartupMode, ProviderPermissionIntent, ProviderPermissionMutationRequest,
-    ProviderPermissionMutationResult, ProviderSessionLaunchPolicy, ProviderSessionPreferences,
+    semantic_tool_contract_manifest, CodexCollaborationMode, ProviderCapabilities,
+    ProviderCapabilitySupport, ProviderCompactSessionOutcome, ProviderCompactSessionRequest,
+    ProviderContextLimitObservation, ProviderDiscoveryMode, ProviderHardForkEditRerunRequest,
+    ProviderModelCapabilities, ProviderModelDescriptor, ProviderModelDiscoveryRequest,
+    ProviderModelDiscoveryResponse, ProviderModelDiscoveryStartupMode, ProviderPermissionIntent,
+    ProviderPermissionMutationRequest, ProviderPermissionMutationResult,
+    ProviderSessionLaunchPolicy, ProviderSessionPreferences,
     ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
     ProviderSettingSource, ProviderSettingSourcesIntent, ProviderSkillDescriptor,
     ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse, ProviderThinkingEffort,
-    ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest, SessionContextLimitSnapshot,
+    ProviderTurnSettings, ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest,
+    SessionContextLimitSnapshot,
 };
 pub use provider_registry::ProviderRegistry;
 pub use repository_identity::{resolve_repository_identity, RepositoryIdentity};
@@ -85,6 +88,7 @@ pub use services::{
     WorktreeMemberRemovedRequest, WorktreeMemberRemovedResponse, WorktreeReleaseRequest,
     WorktreeReleaseResponse, WorktreeService,
 };
+pub use session_compaction::SessionCompactionRun;
 pub use state::{
     ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
     NewRuntimeEvent, ProcessRecord, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,

@@ -9,10 +9,10 @@ use runtime_core::{
     ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
     ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
     ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
-    RuntimeHydratedState, RuntimeStore, SessionContextLimitSnapshot, SessionRecord,
-    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
-    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
-    WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
+    RuntimeHydratedState, RuntimeStore, SessionCompactionRun, SessionContextLimitSnapshot,
+    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
+    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
     WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
     WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
     WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
@@ -56,6 +56,66 @@ impl SqliteRuntimeStore {
 
 #[async_trait]
 impl RuntimeStore for SqliteRuntimeStore {
+    fn begin_session_compaction(
+        &self,
+        run: &SessionCompactionRun,
+    ) -> Result<SessionCompactionRun, RuntimeError> {
+        self.repository.begin_session_compaction(run)
+    }
+
+    fn transition_session_compaction(
+        &self,
+        run_id: &str,
+        phase: &str,
+        outcome: Option<runtime_core::ProviderCompactSessionOutcome>,
+        error_code: Option<&str>,
+        updated_at_ms: i64,
+    ) -> Result<SessionCompactionRun, RuntimeError> {
+        self.repository.transition_session_compaction(
+            run_id,
+            phase,
+            outcome,
+            error_code,
+            updated_at_ms,
+        )
+    }
+
+    fn get_session_compaction(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
+        self.repository.get_session_compaction(run_id)
+    }
+
+    fn get_session_compaction_by_key(
+        &self,
+        agent_id: &str,
+        key: &str,
+    ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
+        self.repository.get_session_compaction_by_key(agent_id, key)
+    }
+
+    fn unresolved_session_compaction(&self, agent_id: &str) -> Result<bool, RuntimeError> {
+        self.repository.unresolved_session_compaction(agent_id)
+    }
+
+    fn recover_session_compactions(
+        &self,
+        now_ms: i64,
+    ) -> Result<Vec<SessionCompactionRun>, RuntimeError> {
+        self.repository.recover_session_compactions(now_ms)
+    }
+
+    fn resolve_session_compaction_review(
+        &self,
+        run_id: &str,
+        phase: &str,
+        evidence: &str,
+        now_ms: i64,
+    ) -> Result<SessionCompactionRun, RuntimeError> {
+        self.repository
+            .resolve_session_compaction_review(run_id, phase, evidence, now_ms)
+    }
     fn record_session_context_limit(
         &self,
         snapshot: &SessionContextLimitSnapshot,

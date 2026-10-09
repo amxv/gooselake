@@ -16,6 +16,7 @@ async fn team_status_gateway_invoke_returns_member_rows() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await

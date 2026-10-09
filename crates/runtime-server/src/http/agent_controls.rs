@@ -2,8 +2,75 @@ use super::*;
 use runtime_core::{
     ProviderPermissionIntent, ProviderPermissionMutationRequest, ProviderPermissionMutationResult,
     ProviderSessionPreferences, ProviderSessionPreferencesMutationRequest,
-    ProviderSessionPreferencesMutationResult, SessionContextLimitSnapshot,
+    ProviderSessionPreferencesMutationResult, SessionCompactionRun, SessionContextLimitSnapshot,
 };
+
+pub(super) async fn compact_agent_session(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<SessionCompactionRun>, ApiError> {
+    let key = headers
+        .get("Idempotency-Key")
+        .map(|value| value.to_str().map(str::to_string))
+        .transpose()
+        .map_err(|_| {
+            ApiError::from(runtime_core::RuntimeError::InvalidState(
+                "Idempotency-Key must be valid header text".into(),
+            ))
+        })?;
+    Ok(Json(
+        state
+            .runtime
+            .compact_workspace_agent(&agent_id, key)
+            .await?,
+    ))
+}
+
+pub(super) async fn get_agent_compaction_run(
+    State(state): State<AppState>,
+    Path((agent_id, run_id)): Path<(String, String)>,
+) -> Result<Json<SessionCompactionRun>, ApiError> {
+    Ok(Json(
+        state.runtime.session_compaction_run(&agent_id, &run_id)?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ManualCompactionReviewInput {
+    phase: String,
+    evidence: String,
+}
+
+pub(super) async fn resolve_agent_compaction_review(
+    State(state): State<AppState>,
+    Path((agent_id, run_id)): Path<(String, String)>,
+    Json(input): Json<ManualCompactionReviewInput>,
+) -> Result<Json<SessionCompactionRun>, ApiError> {
+    Ok(Json(state.runtime.resolve_compaction_review(
+        &agent_id,
+        &run_id,
+        &input.phase,
+        &input.evidence,
+    )?))
+}
+
+pub(super) async fn send_agent_turn_v2(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Json(input): Json<PublicSendTurnInput>,
+) -> Result<Json<SendTurnAccepted>, ApiError> {
+    state
+        .runtime
+        .get_active_workspace_agent_by_id(agent_id.as_str())?;
+    Ok(Json(
+        state
+            .runtime
+            .send_turn(agent_id.as_str(), input.into())
+            .await?,
+    ))
+}
 
 /// A missing snapshot is represented as null, not a guessed percentage.
 pub(super) async fn get_agent_context_limit(

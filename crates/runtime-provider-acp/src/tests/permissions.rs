@@ -32,6 +32,7 @@ fn send(session: &str, turn: &str, text: &str) -> ProviderSendTurnRequest {
         expected_turn_id: None,
         permission_mode: None,
         approval_id: None,
+        turn_settings: Default::default(),
     }
 }
 
@@ -339,6 +340,7 @@ async fn negotiated_native_images_and_unsupported_input_are_truthful() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .unwrap();
@@ -364,6 +366,7 @@ async fn negotiated_native_images_and_unsupported_input_are_truthful() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect_err("must not flatten native file");
@@ -419,6 +422,7 @@ async fn runtime_manager_durably_admits_provider_permission_before_reply() {
                 projection_source: None,
                 user_input_snapshot: None,
                 correlation_id: None,
+                turn_settings: Default::default(),
             },
         )
         .await
@@ -769,6 +773,7 @@ async fn runtime_manager_lazily_resumes_idle_agent_after_acp_child_replacement()
                     projection_source: None,
                     user_input_snapshot: None,
                     correlation_id: None,
+                    turn_settings: Default::default(),
                 },
             )
             .await

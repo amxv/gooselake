@@ -10,7 +10,7 @@ use crate::provider_contract::{
     ProviderModelDiscoveryResponse, ProviderPermissionIntent, ProviderPermissionMutationRequest,
     ProviderPermissionMutationResult, ProviderSessionLaunchPolicy, ProviderSessionPreferences,
     ProviderSettingSourcesIntent, ProviderSkillDescriptor, ProviderSkillDiscoveryRequest,
-    ProviderSkillDiscoveryResponse, ProviderWorkspaceRebindEvidence,
+    ProviderSkillDiscoveryResponse, ProviderTurnSettings, ProviderWorkspaceRebindEvidence,
     ProviderWorkspaceRebindRequest,
 };
 use crate::RuntimeError;
@@ -244,6 +244,8 @@ pub struct ProviderSendTurnRequest {
     pub expected_turn_id: Option<String>,
     pub permission_mode: Option<String>,
     pub approval_id: Option<String>,
+    #[serde(default)]
+    pub turn_settings: ProviderTurnSettings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

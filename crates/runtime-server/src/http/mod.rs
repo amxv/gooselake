@@ -179,6 +179,16 @@ pub fn build_router(state: AppState) -> Router {
         ));
 
     let protected_v2 = Router::new()
+        .route("/agents/{agent_id}/compact", post(compact_agent_session))
+        .route(
+            "/agents/{agent_id}/compactions/{run_id}",
+            get(get_agent_compaction_run),
+        )
+        .route(
+            "/agents/{agent_id}/compactions/{run_id}/resolve",
+            post(resolve_agent_compaction_review),
+        )
+        .route("/agents/{agent_id}/turns", post(send_agent_turn_v2))
         .route(
             "/agents/{agent_id}/context-limit",
             get(get_agent_context_limit),

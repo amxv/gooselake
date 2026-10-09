@@ -34,6 +34,24 @@ function sdk(messages: Record<string, unknown>[], captured: Record<string, unkno
 }
 
 describe('typed Claude session policy and advanced primitives', () => {
+  test('turn-scoped thinking does not persist into the next Claude SDK turn', async () => {
+    const captured: Record<string, unknown>[] = []
+    const client = new ClaudeClient(() => {}, { mode: 'sdk',
+      sdkQuery: sdk([
+        { type: 'system', subtype: 'init', session_id: 'native', permissionMode: 'plan' },
+        { type: 'result', subtype: 'success', session_id: 'native', result: 'done' },
+      ], captured),
+    })
+    client.resumeSession('turn-effort', { ...options }, 'provider', 'native')
+    const first = await client.sendInput('turn-effort', [{ type: 'text', text: 'first' }], undefined, turnPermission, 'low')
+    expect((await client.waitForTurn('turn-effort', first.turnId, 1000)).status).toBe('completed')
+    const second = await client.sendInput('turn-effort', [{ type: 'text', text: 'second' }], undefined, turnPermission)
+    expect((await client.waitForTurn('turn-effort', second.turnId, 1000)).status).toBe('completed')
+    expect(captured.length).toBe(2)
+    expect((captured[0].env as Record<string, string>).CLAUDE_CODE_EFFORT_LEVEL).toBe('low')
+    expect((captured[1].env as Record<string, string>).CLAUDE_CODE_EFFORT_LEVEL).toBe('max')
+  })
+
   test('SDK policy appends harness once, preserves caller and isolated sources', async () => {
     const captured: Record<string, unknown>[] = []
     for (const prompt of ['Caller prompt', 'Caller prompt\n\nHarness instructions']) {

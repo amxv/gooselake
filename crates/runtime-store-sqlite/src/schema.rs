@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 12;
+pub(crate) const SCHEMA_VERSION: i64 = 13;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -855,6 +855,27 @@ CREATE TABLE session_context_limit_snapshots (
 );
 "#;
 
+const MIGRATION_13_SQL: &str = r#"
+-- Admitted manual compaction must predate any native compact request. A
+-- pending or ambiguous request fences replacement work until observed or
+-- operator-reconciled, including after process restart.
+CREATE TABLE session_compaction_runs (
+  run_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES workspace_agents(session_id),
+  idempotency_key TEXT,
+  phase TEXT NOT NULL CHECK(phase IN ('intended','accepted','not_performed','completed','failed','manual_review')),
+  record_json TEXT NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_session_compaction_unresolved
+  ON session_compaction_runs(session_id)
+  WHERE phase IN ('intended','accepted','manual_review');
+CREATE UNIQUE INDEX idx_session_compaction_idempotency
+  ON session_compaction_runs(session_id,idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -903,5 +924,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 12,
         sql: MIGRATION_12_SQL,
+    },
+    Migration {
+        version: 13,
+        sql: MIGRATION_13_SQL,
     },
 ];

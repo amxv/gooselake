@@ -456,6 +456,18 @@ impl RuntimeProvider for CodexProvider {
         req: ProviderSendTurnRequest,
     ) -> Result<ProviderTurnAck, RuntimeError> {
         let native_input = build_native_input(req.input.as_slice())?;
+        if let Some(effort) = req.turn_settings.thinking_effort {
+            if !runtime_core::codex_model_policy()
+                .thinking_efforts
+                .iter()
+                .any(|supported| supported == effort.as_str())
+            {
+                return Err(RuntimeError::provider_not_dispatched(
+                    "unsupported_turn_thinking_effort",
+                    format!("Codex does not support thinking effort {}", effort.as_str()),
+                ));
+            }
+        }
         let (transport, thread_id, model, cwd, thinking_effort, permission_mode) = {
             let mut sessions = self.inner.sessions.write().await;
             let session = sessions
@@ -475,13 +487,26 @@ impl RuntimeProvider for CodexProvider {
                     ),
                 ));
             }
+            if req.turn_settings.codex_collaboration_mode.is_some()
+                && session
+                    .model
+                    .as_deref()
+                    .is_none_or(|model| model.trim().is_empty())
+            {
+                return Err(RuntimeError::provider_not_dispatched(
+                    "collaboration_requires_model",
+                    "Codex turn-scoped collaboration requires an explicit model",
+                ));
+            }
             session.active_turn_id = Some(req.turn_id.clone());
             (
                 Arc::clone(&session.transport),
                 session.provider_session_ref.clone(),
                 session.model.clone(),
                 session.cwd.clone(),
-                session.current_preferences.thinking_effort,
+                req.turn_settings
+                    .thinking_effort
+                    .or(session.current_preferences.thinking_effort),
                 req.permission_mode
                     .clone()
                     .or_else(|| session.permission_mode.clone()),
@@ -509,6 +534,17 @@ impl RuntimeProvider for CodexProvider {
         }
         if let Some(effort) = thinking_effort {
             params["effort"] = json!(effort.as_str());
+        }
+        if let Some(mode) = req.turn_settings.codex_collaboration_mode {
+            let selected_model = model.as_deref().expect("collaboration model prevalidated");
+            params["collaborationMode"] = json!({
+                "mode": mode.as_str(),
+                "settings": {
+                    "model": selected_model,
+                    "reasoning_effort": thinking_effort.map(|value| value.as_str()),
+                    "developer_instructions": Value::Null,
+                }
+            });
         }
         apply_turn_permission_mode(&mut params, permission_mode.as_deref());
 

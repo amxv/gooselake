@@ -277,6 +277,22 @@ impl SqliteRuntimeRepository {
                     .into(),
             ));
         }
+        // The manager lock protects a single process. Native compaction and
+        // workspace reassignment also need an atomic cross-process admission
+        // fence because both mutate the effective provider attachment.
+        let unresolved_compaction: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM session_compaction_runs
+                 WHERE session_id = ?1 AND phase IN ('intended','accepted','manual_review')",
+                params![operation.agent_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed checking compaction before rebind", error))?;
+        if unresolved_compaction != 0 {
+            return Err(RuntimeError::Conflict(
+                "cannot rebind an agent with unresolved native compaction".into(),
+            ));
+        }
         let normalized_request = json!({
             "workspace_id": operation.workspace_id,
             "agent_id": operation.agent_id,

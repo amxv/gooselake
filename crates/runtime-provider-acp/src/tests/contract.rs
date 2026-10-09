@@ -157,6 +157,7 @@ async fn real_adapter_contract_create_send_wait_resume_and_close() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");
@@ -400,6 +401,7 @@ async fn real_adapter_contract_interrupts_active_prompt() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");
@@ -453,6 +455,7 @@ async fn real_adapter_contract_fails_permission_requests_clearly() {
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");
@@ -502,6 +505,7 @@ async fn real_adapter_contract_fails_permission_request_id_collisions_clearly() 
             expected_turn_id: None,
             permission_mode: None,
             approval_id: None,
+            turn_settings: Default::default(),
         })
         .await
         .expect("send");
@@ -556,6 +560,7 @@ async fn real_adapter_contract_maps_non_happy_stop_reasons_to_failed() {
                 expected_turn_id: None,
                 permission_mode: None,
                 approval_id: None,
+                turn_settings: Default::default(),
             })
             .await
             .expect("send");

@@ -302,7 +302,7 @@ fn failed_migration_rolls_back_and_retry_resumes_cleanly() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 }
 
 fn registration_command(

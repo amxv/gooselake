@@ -151,6 +151,7 @@ impl CodexProvider {
         session.provider_session_ref = child_thread_id.clone();
         session.canonical_provider_session_ref = Some(child_thread_id.clone());
         session.active_turn_id = None;
+        session.model_context_window = None;
         session.last_total_tokens = None;
 
         Ok(ProviderSession {

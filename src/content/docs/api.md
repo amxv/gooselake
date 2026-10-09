@@ -157,6 +157,29 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 
 The list defaults to active agents. Use `?lifecycle=archived` for archived history or `?lifecycle=all` for both states.
 
+### Provider observations and mutable session controls
+
+After provider turns, Gooselake attempts to persist the provider-reported context window, token usage and remaining percentage. `GET /v2/agents/{agent_id}/context-limit` returns the current observation or JSON `null` if none exists for the current native attachment. Snapshots carry the provider native reference, optional canonical reference, agent revision, observation time, and source turn. A late observation cannot overwrite newer evidence or survive a rebind, reattachment, or revisioned policy update. `POST /v2/agents/{agent_id}/context-limit/refresh` requests fresh evidence; it never estimates usage from transcript text.
+
+Use the current agent `revision` from `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` when updating thinking preference or Claude permission intent. Both public mutations require `expected_revision`, return the new revision, and reject stale revisions with HTTP `409`. Changes are rejected during an active turn. Codex and Claude thinking preferences carry into later turns/resume; ACP retains its own preferences and does not support these mutations.
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/agents/$AGENT_ID/context-limit"
+
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"expected_revision":0,"current_preferences":{"thinking_effort":"high"}}' \
+  "$BASE_URL/v2/agents/$AGENT_ID/preferences"
+
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"expected_revision":1,"permission_intent":{"kind":"inherit_provider_configuration"}}' \
+  "$BASE_URL/v2/agents/$AGENT_ID/permission"
+```
+
+The permission endpoint is Claude-only. These controls do not rewrite earlier turns. Manual compaction and edit-and-rerun remain lower-level provider primitives until durable operator-side workflows are implemented; they are not exposed as `/v2` routes yet.
+
 ### Workspace worktree routes
 
 `GET /v2/workspaces/{workspace_id}/worktrees` lists persisted managed worktrees for the workspace's canonical Git repository. Each item includes its logical ID, monotonically increasing persisted-record `revision`, name, branch, path, retention policy, active attached agent IDs, and `eligible_for_assignment` plus explicit `eligibility_blockers`. The response includes the canonical repository root, Git common directory, and repository fingerprint. A stale/missing path, mismatched native branch/repository, or conflicting claim is **not** considered eligible. The worktree revision changes on persisted record updates; it is independent of the workspace-agent revision and Git commit.

@@ -268,6 +268,18 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
             "Resolve legacy workspace migration subject".to_string()
         }
         (HttpMethod::Get, "/v2/operations/{operation_id}") => "Get durable operation".to_string(),
+        (HttpMethod::Get, "/v2/agents/{agent_id}/context-limit") => {
+            "Get current provider-verified context snapshot".to_string()
+        }
+        (HttpMethod::Post, "/v2/agents/{agent_id}/context-limit/refresh") => {
+            "Refresh context snapshot with provider attachment validation".to_string()
+        }
+        (HttpMethod::Post, "/v2/agents/{agent_id}/preferences") => {
+            "Update durable current thinking preference using expected revision".to_string()
+        }
+        (HttpMethod::Post, "/v2/agents/{agent_id}/permission") => {
+            "Update Claude permission selection using expected revision".to_string()
+        }
         (HttpMethod::Get, "/v1/mcp/capabilities") => "Runtime MCP capabilities".to_string(),
         (HttpMethod::Post, "/v1/mcp/invoke") => "Invoke runtime MCP tool".to_string(),
         _ => format!("{} {}", method.as_str().to_uppercase(), path),
@@ -389,6 +401,8 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v1/teams/{team_id}/messages/{message_id}/cancel"
             | "/v1/teams/{team_id}/interrupt-all"
             | "/v2/workspaces"
+            | "/v2/agents/{agent_id}/preferences"
+            | "/v2/agents/{agent_id}/permission"
             | "/v2/workspaces/{workspace_id}/lead"
             | "/v2/workspaces/{workspace_id}/agents"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
@@ -607,6 +621,10 @@ mod tests {
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}/archive:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}/restore:"));
+        assert!(yaml.contains("  /v2/agents/{agent_id}/context-limit:"));
+        assert!(yaml.contains("  /v2/agents/{agent_id}/context-limit/refresh:"));
+        assert!(yaml.contains("  /v2/agents/{agent_id}/preferences:"));
+        assert!(yaml.contains("  /v2/agents/{agent_id}/permission:"));
         assert!(yaml.contains("  /v2/messages:"));
         assert!(yaml.contains("  /v2/messages/{message_id}/deliveries:"));
         assert!(yaml.contains("  /v2/messages/{message_id}/cancel:"));

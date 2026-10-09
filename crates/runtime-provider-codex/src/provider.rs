@@ -11,6 +11,7 @@ use runtime_core::{
     ProviderDispatchOutcome, ProviderHardForkEditRerunRequest, ProviderInterruptTurnRequest,
     ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionPolicyRequest,
     ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
+    ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
     ProviderSkillDescriptor, ProviderSkillDiscoveryRequest, ProviderTurnAck, ProviderTurnResult,
     ProviderWaitTurnRequest, ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest,
     RuntimeError, RuntimeProvider,
@@ -70,7 +71,7 @@ impl RuntimeProvider for CodexProvider {
             session_resume: ProviderCapabilitySupport::Supported,
             streaming: ProviderCapabilitySupport::Unsupported,
             approvals: ProviderCapabilitySupport::Supported,
-            permission_mutation: ProviderCapabilitySupport::Supported,
+            permission_mutation: ProviderCapabilitySupport::Unsupported,
             session_preferences: ProviderCapabilitySupport::Supported,
             interrupt: ProviderCapabilitySupport::Supported,
             tools: ProviderCapabilitySupport::Supported,
@@ -826,7 +827,11 @@ impl RuntimeProvider for CodexProvider {
                 "Codex session {runtime_session_id} has no context-limit observation yet"
             ))
         })?;
-        let last_total_tokens = session.last_total_tokens.unwrap_or(0);
+        let last_total_tokens = session.last_total_tokens.ok_or_else(|| {
+            RuntimeError::InvalidState(format!(
+                "Codex session {runtime_session_id} has no token-usage observation yet"
+            ))
+        })?;
         let remaining = model_context_window.saturating_sub(last_total_tokens);
         let remaining_percentage = if model_context_window == 0 {
             0
@@ -837,6 +842,53 @@ impl RuntimeProvider for CodexProvider {
             model_context_window,
             last_total_tokens,
             remaining_percentage,
+        })
+    }
+
+    async fn mutate_session_preferences(
+        &self,
+        req: ProviderSessionPreferencesMutationRequest,
+    ) -> Result<ProviderSessionPreferencesMutationResult, RuntimeError> {
+        if let Some(effort) = req.current_preferences.thinking_effort {
+            if !runtime_core::codex_model_policy()
+                .thinking_efforts
+                .iter()
+                .any(|supported| supported == effort.as_str())
+            {
+                return Err(RuntimeError::Unsupported(format!(
+                    "Codex does not support current thinking effort {}",
+                    effort.as_str()
+                )));
+            }
+        }
+        let mut sessions = self.inner.sessions.write().await;
+        let session = sessions
+            .get_mut(req.runtime_session_id.as_str())
+            .ok_or_else(|| {
+                RuntimeError::NotFound(format!("Codex session {}", req.runtime_session_id))
+            })?;
+        if session.active_turn_id.is_some() || !session.pending_approvals.is_empty() {
+            return Err(RuntimeError::Conflict(format!(
+                "cannot change thinking preference during active Codex work for {}",
+                req.runtime_session_id
+            )));
+        }
+        if req
+            .expected_revision
+            .is_some_and(|expected| expected != session.preferences_revision)
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "Codex preference revision conflict for {}",
+                req.runtime_session_id
+            )));
+        }
+        if session.current_preferences != req.current_preferences {
+            session.current_preferences = req.current_preferences.clone();
+            session.preferences_revision = session.preferences_revision.saturating_add(1);
+        }
+        Ok(ProviderSessionPreferencesMutationResult {
+            revision: session.preferences_revision,
+            current_preferences: session.current_preferences.clone(),
         })
     }
 

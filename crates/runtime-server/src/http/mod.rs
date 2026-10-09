@@ -29,6 +29,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 use tokio_stream::StreamExt;
 
+mod agent_controls;
 mod auth;
 mod diagnostics;
 mod events;
@@ -42,6 +43,7 @@ mod workspace_migrations;
 mod workspaces;
 mod worktrees;
 
+use agent_controls::*;
 use auth::*;
 use diagnostics::*;
 use events::*;
@@ -177,6 +179,22 @@ pub fn build_router(state: AppState) -> Router {
         ));
 
     let protected_v2 = Router::new()
+        .route(
+            "/agents/{agent_id}/context-limit",
+            get(get_agent_context_limit),
+        )
+        .route(
+            "/agents/{agent_id}/context-limit/refresh",
+            post(refresh_agent_context_limit),
+        )
+        .route(
+            "/agents/{agent_id}/preferences",
+            post(update_agent_preferences),
+        )
+        .route(
+            "/agents/{agent_id}/permission",
+            post(update_agent_permission),
+        )
         .route(
             "/providers/{provider}/capabilities",
             get(provider_capabilities_v2),

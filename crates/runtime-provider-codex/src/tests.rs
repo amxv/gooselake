@@ -7,8 +7,9 @@ use runtime_core::{
     ProviderCreateSessionPolicyRequest, ProviderHardForkEditRerunRequest,
     ProviderInterruptTurnRequest, ProviderKind, ProviderResumeSessionPolicyRequest,
     ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSessionPreferences,
-    ProviderSkillDiscoveryRequest, ProviderThinkingEffort, ProviderTurnStatus,
-    ProviderWaitTurnRequest, ProviderWorkspaceRebindRequest, RuntimeError, RuntimeProvider,
+    ProviderSessionPreferencesMutationRequest, ProviderSkillDiscoveryRequest,
+    ProviderThinkingEffort, ProviderTurnStatus, ProviderWaitTurnRequest,
+    ProviderWorkspaceRebindRequest, RuntimeError, RuntimeProvider,
 };
 use serde_json::{json, Value};
 
@@ -423,6 +424,7 @@ fn read_log(path: &std::path::Path) -> Vec<Value> {
         .collect()
 }
 
+mod current_thinking;
 mod failure_contracts;
 mod live_acceptance;
 
@@ -877,6 +879,10 @@ async fn fake_app_server_proves_compaction_rebind_hard_fork_and_restart_resume()
         forked.canonical_provider_session_ref.as_deref(),
         Some("thread-fork-1")
     );
+    assert!(matches!(
+        provider.observe_context_limit("sess_controls").await,
+        Err(RuntimeError::InvalidState(_))
+    ));
 
     provider
         .close_session(runtime_core::ProviderCloseSessionRequest {

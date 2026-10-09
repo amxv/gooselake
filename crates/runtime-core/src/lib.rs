@@ -65,7 +65,7 @@ pub use provider_contract::{
     ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
     ProviderSettingSource, ProviderSettingSourcesIntent, ProviderSkillDescriptor,
     ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse, ProviderThinkingEffort,
-    ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest,
+    ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest, SessionContextLimitSnapshot,
 };
 pub use provider_registry::ProviderRegistry;
 pub use repository_identity::{resolve_repository_identity, RepositoryIdentity};

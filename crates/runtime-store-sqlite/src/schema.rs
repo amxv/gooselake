@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 11;
+pub(crate) const SCHEMA_VERSION: i64 = 12;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -838,6 +838,23 @@ const MIGRATION_11_SQL: &str = r#"
 ALTER TABLE managed_worktrees ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
 "#;
 
+const MIGRATION_12_SQL: &str = r#"
+-- Context usage is provider evidence for one exact active agent attachment.
+-- The provider attachment and agent revision are validated at every write/read.
+CREATE TABLE session_context_limit_snapshots (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+  provider TEXT NOT NULL,
+  provider_session_ref TEXT NOT NULL,
+  canonical_provider_session_ref TEXT,
+  agent_revision INTEGER NOT NULL CHECK(agent_revision >= 0),
+  model_context_window INTEGER NOT NULL CHECK(model_context_window > 0),
+  last_total_tokens INTEGER NOT NULL CHECK(last_total_tokens >= 0),
+  remaining_percentage INTEGER NOT NULL CHECK(remaining_percentage BETWEEN 0 AND 100),
+  observed_at_ms INTEGER NOT NULL CHECK(observed_at_ms >= 0),
+  observed_turn_id TEXT
+);
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -882,5 +899,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 11,
         sql: MIGRATION_11_SQL,
+    },
+    Migration {
+        version: 12,
+        sql: MIGRATION_12_SQL,
     },
 ];

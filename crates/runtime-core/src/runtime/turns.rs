@@ -761,6 +761,10 @@ impl RuntimeSessionManager {
                             .await;
                         return;
                     }
+                    let has_provider_usage = matches!(
+                        turn_result.status,
+                        ProviderTurnStatus::Completed | ProviderTurnStatus::Interrupted
+                    ) && turn_result.usage.is_some();
                     if let Err(error) = manager.apply_terminal_result(turn_result).await {
                         if std::env::var("GG_CLAUDE_SMOKE_DEBUG")
                             .ok()
@@ -772,6 +776,10 @@ impl RuntimeSessionManager {
                                 session_id, turn_id, error
                             );
                         }
+                    } else if has_provider_usage {
+                        manager
+                            .record_terminal_context_limit(session_id.as_str(), turn_id.as_str())
+                            .await;
                     }
                 }
                 Err(error) => {

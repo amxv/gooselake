@@ -115,6 +115,138 @@ fn workspace_agent_fixture(
 }
 
 #[test]
+fn provider_context_snapshot_rejects_late_identity_revision_and_observation_replays() {
+    use runtime_core::{ProviderContextLimitObservation, SessionContextLimitSnapshot};
+
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let root = temp_dir.path().join("workspace");
+    std::fs::create_dir_all(&root).expect("workspace root");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("schema");
+    let workspace = registered_workspace(&repository, &root);
+    let (mut session, agent) =
+        workspace_agent_fixture(&workspace, "sess_context", "steady-heron-context");
+    repository
+        .create_workspace_agent(&session, &agent)
+        .expect("create workspace agent");
+
+    let mut snapshot = SessionContextLimitSnapshot {
+        agent_id: session.id.clone(),
+        provider: ProviderKind::Codex,
+        provider_session_ref: session.provider_session_ref.clone().unwrap(),
+        canonical_provider_session_ref: None,
+        agent_revision: 0,
+        observation: ProviderContextLimitObservation {
+            model_context_window: 200_000,
+            last_total_tokens: 20_000,
+            remaining_percentage: 90,
+        },
+        observed_at_ms: 200,
+        observed_turn_id: Some("turn_1".into()),
+    };
+    assert!(repository
+        .record_session_context_limit(&snapshot, session.updated_at)
+        .expect("initial observation"));
+    assert_eq!(
+        repository.get_session_context_limit(&session.id).unwrap(),
+        Some(snapshot.clone())
+    );
+
+    let mut equal_timestamp = snapshot.clone();
+    equal_timestamp.observation.last_total_tokens += 1;
+    assert!(!repository
+        .record_session_context_limit(&equal_timestamp, session.updated_at)
+        .expect("same-timestamp conflicting observation is ignored"));
+    assert_eq!(
+        repository.get_session_context_limit(&session.id).unwrap(),
+        Some(snapshot.clone())
+    );
+
+    let mut out_of_order = snapshot.clone();
+    out_of_order.observed_at_ms = 199;
+    out_of_order.observation.last_total_tokens = 10_000;
+    assert!(!repository
+        .record_session_context_limit(&out_of_order, session.updated_at)
+        .expect("stale observation is ignored"));
+    assert_eq!(
+        repository.get_session_context_limit(&session.id).unwrap(),
+        Some(snapshot.clone())
+    );
+    assert!(!repository
+        .record_session_context_limit(&snapshot, session.updated_at + 1)
+        .expect("stale session update rejected"));
+
+    snapshot.observation.remaining_percentage = 101;
+    assert!(repository
+        .record_session_context_limit(&snapshot, session.updated_at)
+        .is_err());
+    snapshot.observation.remaining_percentage = 90;
+
+    // Re-attaching the same logical agent with a different native identity
+    // invalidates the projection even if the old observation remains on disk.
+    session.provider_session_ref = Some("fresh-native-provider-thread".into());
+    session.canonical_provider_session_ref = Some("fresh-native-provider-thread".into());
+    session.updated_at += 1;
+    repository
+        .upsert_session(&session)
+        .expect("native reattach");
+    assert!(repository
+        .get_session_context_limit(&session.id)
+        .unwrap()
+        .is_none());
+    assert!(!repository
+        .record_session_context_limit(&snapshot, 100)
+        .unwrap());
+
+    let mut fresh = snapshot;
+    fresh.provider_session_ref = session.provider_session_ref.clone().unwrap();
+    fresh.canonical_provider_session_ref = session.canonical_provider_session_ref.clone();
+    fresh.observed_at_ms += 1;
+    fresh.observation.last_total_tokens = 30_000;
+    fresh.observation.remaining_percentage = 85;
+    assert!(repository
+        .record_session_context_limit(&fresh, session.updated_at)
+        .unwrap());
+
+    // Recreating the repository proves the evidence, not an in-memory cache,
+    // survives restarts while retaining the exact current provider attachment.
+    let restarted = SqliteRuntimeRepository::new(temp_dir.path().join("runtime.sqlite3"));
+    assert_eq!(
+        restarted.get_session_context_limit(&session.id).unwrap(),
+        Some(fresh.clone())
+    );
+
+    // A revisioned policy mutation invalidates the old projection without
+    // changing the native provider reference.
+    session.updated_at += 1;
+    restarted
+        .compare_and_set_workspace_agent_recreation_policy(
+            &session,
+            &session.id,
+            0,
+            &agent.recreation_policy,
+            session.updated_at,
+        )
+        .expect("policy revision mutation");
+    assert!(restarted
+        .get_session_context_limit(&session.id)
+        .unwrap()
+        .is_none());
+    assert!(!restarted
+        .record_session_context_limit(&fresh, session.updated_at)
+        .unwrap());
+    fresh.agent_revision = 1;
+    fresh.observed_at_ms += 1;
+    assert!(restarted
+        .record_session_context_limit(&fresh, session.updated_at)
+        .unwrap());
+    assert_eq!(
+        restarted.get_session_context_limit(&session.id).unwrap(),
+        Some(fresh)
+    );
+}
+
+#[test]
 fn workspace_agent_recreation_policy_cas_is_durable_and_revision_protected() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let root = temp_dir.path().join("workspace");

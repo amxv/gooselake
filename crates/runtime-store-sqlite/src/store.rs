@@ -9,13 +9,13 @@ use runtime_core::{
     ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
     ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
     ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
-    RuntimeHydratedState, RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation,
-    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission,
-    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
-    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
-    WorkspaceRegisterResponse,
+    RuntimeHydratedState, RuntimeStore, SessionContextLimitSnapshot, SessionRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
+    WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
+    WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
+    WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
+    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -56,6 +56,22 @@ impl SqliteRuntimeStore {
 
 #[async_trait]
 impl RuntimeStore for SqliteRuntimeStore {
+    fn record_session_context_limit(
+        &self,
+        snapshot: &SessionContextLimitSnapshot,
+        expected_session_updated_at: i64,
+    ) -> Result<bool, RuntimeError> {
+        self.repository
+            .record_session_context_limit(snapshot, expected_session_updated_at)
+    }
+
+    fn get_session_context_limit(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<SessionContextLimitSnapshot>, RuntimeError> {
+        self.repository.get_session_context_limit(agent_id)
+    }
+
     async fn initialize(&self) -> Result<(), RuntimeError> {
         Self::ensure_parent_dir(self.database_path()).await?;
         self.repository.initialize_schema()

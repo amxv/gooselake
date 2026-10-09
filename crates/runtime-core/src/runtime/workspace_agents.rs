@@ -152,9 +152,12 @@ impl RuntimeSessionManager {
                 agent.agent_id
             )));
         }
-        if agent.recreation_policy.provider != ProviderKind::Claude {
+        if !matches!(
+            agent.recreation_policy.provider,
+            ProviderKind::Claude | ProviderKind::Codex
+        ) {
             return Err(RuntimeError::Unsupported(
-                "durable mutable session preferences are currently Claude-specific".to_string(),
+                "this provider does not support mutable thinking preferences".to_string(),
             ));
         }
         if let Some(expected_revision) = request.expected_revision {
@@ -172,10 +175,10 @@ impl RuntimeSessionManager {
                 agent.agent_id
             )));
         }
-        let provider = self
-            .providers
-            .get(ProviderKind::Claude)
-            .ok_or_else(|| RuntimeError::ProviderNotRegistered("claude".to_string()))?;
+        let provider_kind = agent.recreation_policy.provider;
+        let provider = self.providers.get(provider_kind).ok_or_else(|| {
+            RuntimeError::ProviderNotRegistered(provider_kind.as_str().to_string())
+        })?;
         let previous_preferences = agent.recreation_policy.current_preferences.clone();
         provider
             .mutate_session_preferences(ProviderSessionPreferencesMutationRequest {
@@ -209,7 +212,8 @@ impl RuntimeSessionManager {
                     .await
                 {
                     return Err(RuntimeError::InvalidState(format!(
-                        "failed persisting Claude session preferences ({error}); live rollback also failed: {rollback_error}"
+                        "failed persisting {} session preferences ({error}); live rollback also failed: {rollback_error}",
+                        provider_kind.as_str()
                     )));
                 }
                 return Err(error);

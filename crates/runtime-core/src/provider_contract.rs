@@ -482,6 +482,37 @@ pub struct ProviderContextLimitObservation {
     pub remaining_percentage: u8,
 }
 
+/// Provider-reported context usage for the exact active agent attachment.
+/// No percentage is inferred from display history or retained turn messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionContextLimitSnapshot {
+    pub agent_id: String,
+    pub provider: ProviderKind,
+    pub provider_session_ref: String,
+    pub canonical_provider_session_ref: Option<String>,
+    pub agent_revision: u64,
+    pub observed_at_ms: i64,
+    pub observed_turn_id: Option<String>,
+    #[serde(flatten)]
+    pub observation: ProviderContextLimitObservation,
+}
+
+impl SessionContextLimitSnapshot {
+    pub fn validate(&self) -> Result<(), RuntimeError> {
+        if self.agent_id.trim().is_empty()
+            || self.provider_session_ref.trim().is_empty()
+            || self.observation.model_context_window == 0
+            || self.observation.remaining_percentage > 100
+            || self.observed_at_ms < 0
+        {
+            return Err(RuntimeError::InvalidState(
+                "invalid provider context-limit observation or attachment identity".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderWorkspaceRebindRequest {
     pub runtime_session_id: String,

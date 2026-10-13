@@ -25,7 +25,7 @@ fn apply_schema_through(database_path: &std::path::Path, version: i64) {
     }
 }
 
-fn registered_workspace(
+pub(super) fn registered_workspace(
     repository: &SqliteRuntimeRepository,
     root: &std::path::Path,
 ) -> runtime_core::WorkspaceRecord {
@@ -44,7 +44,7 @@ fn registered_workspace(
         .workspace
 }
 
-fn workspace_agent_fixture(
+pub(super) fn workspace_agent_fixture(
     workspace: &runtime_core::WorkspaceRecord,
     session_id: &str,
     alias: &str,

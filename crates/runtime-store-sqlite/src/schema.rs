@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 13;
+pub(crate) const SCHEMA_VERSION: i64 = 14;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -876,6 +876,33 @@ CREATE UNIQUE INDEX idx_session_compaction_idempotency
   WHERE idempotency_key IS NOT NULL;
 "#;
 
+const MIGRATION_14_SQL: &str = r#"
+-- Historical edits are separate durable operations, not rewrites of admitted
+-- turns. The unresolved index fences native forks that might have happened.
+CREATE TABLE session_edit_reruns (
+  operation_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES workspace_agents(session_id),
+  target_turn_id TEXT NOT NULL REFERENCES turn_admissions(turn_id),
+  idempotency_key TEXT,
+  request_hash TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK(phase IN ('intended','native_started','fork_observed','completed','failed','manual_review')),
+  record_json TEXT NOT NULL CHECK(json_valid(record_json)),
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX idx_session_edit_rerun_unresolved
+  ON session_edit_reruns(session_id)
+  WHERE phase IN ('intended','native_started','fork_observed','manual_review');
+CREATE UNIQUE INDEX idx_session_edit_rerun_key
+  ON session_edit_reruns(session_id,idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+CREATE TABLE session_edit_rerun_superseded_turns (
+  operation_id TEXT NOT NULL REFERENCES session_edit_reruns(operation_id),
+  turn_id TEXT NOT NULL REFERENCES turn_admissions(turn_id),
+  PRIMARY KEY(operation_id,turn_id)
+);
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -928,5 +955,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 13,
         sql: MIGRATION_13_SQL,
+    },
+    Migration {
+        version: 14,
+        sql: MIGRATION_14_SQL,
     },
 ];

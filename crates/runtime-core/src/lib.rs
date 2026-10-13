@@ -1,5 +1,6 @@
 pub mod agent_comms;
 pub mod app;
+pub mod edit_rerun;
 pub mod error;
 pub mod harness;
 pub mod model_policy;
@@ -28,6 +29,7 @@ pub use agent_comms::{
     AgentRetryDeliveryRequest,
 };
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
+pub use edit_rerun::{EditAndRerunRequest, SessionEditRerunOperation};
 pub use error::{ProviderDispatchOutcome, RuntimeError};
 pub use harness::{
     harness_contract_metadata, harness_sections, provider_harness_text, HarnessContractMetadata,

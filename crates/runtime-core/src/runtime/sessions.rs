@@ -193,6 +193,12 @@ impl RuntimeSessionManager {
         session_id: &str,
         reason: Option<String>,
     ) -> Result<SessionRecord, RuntimeError> {
+        let _guard = self.session_policy_mutation_lock.lock().await;
+        if self.store.unresolved_session_edit_rerun(session_id)? {
+            return Err(RuntimeError::Conflict(
+                "cannot close a session with unresolved native edit-and-rerun".into(),
+            ));
+        }
         let session = self.get_session(session_id).await?;
         let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
             RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
@@ -232,6 +238,12 @@ impl RuntimeSessionManager {
         session_id: &str,
         input: ResumeSessionInput,
     ) -> Result<SessionRecord, RuntimeError> {
+        let _guard = self.session_policy_mutation_lock.lock().await;
+        if self.store.unresolved_session_edit_rerun(session_id)? {
+            return Err(RuntimeError::Conflict(
+                "cannot resume a session with unresolved native edit-and-rerun".into(),
+            ));
+        }
         let session = self.get_session(session_id).await?;
         let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
             RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))

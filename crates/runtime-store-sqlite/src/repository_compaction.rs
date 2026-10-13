@@ -263,6 +263,19 @@ impl SqliteRuntimeRepository {
                 "compaction refused during unresolved workspace rebind".into(),
             ));
         }
+        let pending_edit: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM session_edit_reruns WHERE session_id=?1
+             AND phase IN ('intended','native_started','fork_observed','manual_review')",
+                [&run.agent_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed checking pending edit before compaction", error))?;
+        if pending_edit != 0 {
+            return Err(RuntimeError::Conflict(
+                "compaction refused during unresolved native edit-and-rerun".into(),
+            ));
+        }
         let pending: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM session_compaction_runs

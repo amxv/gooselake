@@ -283,6 +283,15 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/agents/{agent_id}/turns") => {
             "Admit a workspace agent turn with optional typed turn-scoped settings".to_string()
         }
+        (HttpMethod::Post, "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun") => {
+            "Durably fork a historical user turn and admit an edited replacement".to_string()
+        }
+        (HttpMethod::Get, "/v2/agents/{agent_id}/edits/{operation_id}") => {
+            "Get historical edit operation and native fork/replacement status".to_string()
+        }
+        (HttpMethod::Post, "/v2/agents/{agent_id}/edits/{operation_id}/resolve") => {
+            "Record explicit verified native edit outcome without replaying a fork".to_string()
+        }
         (HttpMethod::Post, "/v2/agents/{agent_id}/compact") => {
             "Durably admit manual context compaction before provider dispatch".to_string()
         }
@@ -417,6 +426,8 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/agents/{agent_id}/preferences"
             | "/v2/agents/{agent_id}/permission"
             | "/v2/agents/{agent_id}/turns"
+            | "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun"
+            | "/v2/agents/{agent_id}/edits/{operation_id}/resolve"
             | "/v2/agents/{agent_id}/compactions/{run_id}/resolve"
             | "/v2/workspaces/{workspace_id}/lead"
             | "/v2/workspaces/{workspace_id}/agents"

@@ -24,6 +24,13 @@ impl RuntimeSessionManager {
                 run.run_id, run.agent_id
             ));
         }
+        let ambiguous_edits = self.store.recover_session_edit_reruns(started_at)?;
+        for operation in ambiguous_edits {
+            summary.notes.push(format!(
+                "edit-and-rerun {} for {} requires provider outcome review (state {})",
+                operation.operation_id, operation.agent_id, operation.phase
+            ));
+        }
         let turns_snapshot = self.turns.read().await.clone();
         let approvals_snapshot = self.approvals.read().await.clone();
         let admissions_snapshot = self.turn_admissions.read().await.clone();
@@ -62,6 +69,15 @@ impl RuntimeSessionManager {
         }
 
         for session_id in session_ids {
+            if self.store.unresolved_session_edit_rerun(&session_id)? {
+                // Native fork might have happened before the child identity
+                // reached SQLite. Never silently resume/recreate a guessed
+                // old provider attachment across this ambiguity.
+                summary.notes.push(format!(
+                    "session {session_id} provider resume withheld due to unresolved historical edit"
+                ));
+                continue;
+            }
             let session = match self.get_session(session_id.as_str()).await {
                 Ok(session) => session,
                 Err(_) => continue,

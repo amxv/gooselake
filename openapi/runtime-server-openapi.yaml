@@ -1167,6 +1167,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/agents/{agent_id}/edits/{operation_id}:
+    get:
+      summary: Get historical edit operation and native fork/replacement status
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/agents/{agent_id}/edits/{operation_id}/resolve:
+    post:
+      summary: Record explicit verified native edit outcome without replaying a fork
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/agents/{agent_id}/permission:
     post:
       summary: Update Claude permission selection using expected revision
@@ -1216,6 +1264,33 @@ paths:
       summary: Admit a workspace agent turn with optional typed turn-scoped settings
       parameters:
         - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/agents/{agent_id}/turns/{turn_id}/edit-rerun:
+    post:
+      summary: Durably fork a historical user turn and admit an edited replacement
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: turn_id
           in: path
           required: true
           schema:

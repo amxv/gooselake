@@ -293,6 +293,19 @@ impl SqliteRuntimeRepository {
                 "cannot rebind an agent with unresolved native compaction".into(),
             ));
         }
+        let unresolved_edit: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM session_edit_reruns WHERE session_id=?1
+             AND phase IN ('intended','native_started','fork_observed','manual_review')",
+                params![operation.agent_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed checking edit before rebind", error))?;
+        if unresolved_edit != 0 {
+            return Err(RuntimeError::Conflict(
+                "cannot rebind an agent with unresolved native edit-and-rerun".into(),
+            ));
+        }
         let normalized_request = json!({
             "workspace_id": operation.workspace_id,
             "agent_id": operation.agent_id,

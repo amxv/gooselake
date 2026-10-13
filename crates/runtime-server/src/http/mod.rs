@@ -179,6 +179,18 @@ pub fn build_router(state: AppState) -> Router {
         ));
 
     let protected_v2 = Router::new()
+        .route(
+            "/agents/{agent_id}/turns/{turn_id}/edit-rerun",
+            post(edit_agent_turn_and_rerun),
+        )
+        .route(
+            "/agents/{agent_id}/edits/{operation_id}",
+            get(get_agent_edit_operation),
+        )
+        .route(
+            "/agents/{agent_id}/edits/{operation_id}/resolve",
+            post(resolve_agent_edit_operation),
+        )
         .route("/agents/{agent_id}/compact", post(compact_agent_session))
         .route(
             "/agents/{agent_id}/compactions/{run_id}",

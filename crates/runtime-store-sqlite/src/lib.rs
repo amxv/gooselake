@@ -8,6 +8,7 @@ mod repository;
 mod repository_agent_comms;
 mod repository_compaction;
 mod repository_context_limit;
+mod repository_edit_rerun;
 mod repository_hydration;
 mod repository_process;
 mod repository_turn_authority;

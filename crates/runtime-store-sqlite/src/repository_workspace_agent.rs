@@ -369,6 +369,19 @@ fn reject_unresolved_route(connection: &Connection, agent_id: &str) -> Result<()
             "workspace agent provider worktree binding is unresolved".into(),
         ));
     }
+    let edited: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM session_edit_reruns WHERE session_id=?1
+         AND phase IN ('intended','native_started','fork_observed','manual_review')",
+            [agent_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| db_error("failed checking native edit policy fence", e))?;
+    if edited > 0 {
+        return Err(RuntimeError::Conflict(
+            "workspace agent has unresolved native edit-and-rerun".into(),
+        ));
+    }
     Ok(())
 }
 

@@ -15,11 +15,13 @@ use crate::{
 mod approvals;
 mod compaction;
 mod context_limit;
+mod edit_rerun;
 mod events;
 mod helpers;
 mod recovery;
 mod sessions;
 mod turn_dispatch_transitions;
+mod turn_queries;
 mod turn_settings;
 mod turns;
 mod workspace_agents;

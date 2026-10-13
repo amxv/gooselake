@@ -144,6 +144,11 @@ impl RuntimeSessionManager {
         // send_turn and policy mutations use this same guard. The provider
         // cannot accept new work between the durable intent and final CAS.
         let _guard = self.session_policy_mutation_lock.lock().await;
+        if self.store.unresolved_session_edit_rerun(agent_id)? {
+            return Err(RuntimeError::Conflict(
+                "cannot change worktree while native edit-and-rerun remains unresolved".into(),
+            ));
+        }
         if self.store.unresolved_session_compaction(agent_id)? {
             return Err(RuntimeError::Conflict(
                 "cannot rebind a workspace agent during unresolved provider compaction".into(),

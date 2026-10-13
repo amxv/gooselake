@@ -41,6 +41,9 @@ pub(super) struct TestProvider {
     rebind_calls: Mutex<Vec<runtime_core::ProviderWorkspaceRebindRequest>>,
     compaction_mode: std::sync::atomic::AtomicU8,
     compaction_calls: std::sync::atomic::AtomicUsize,
+    edit_mode: std::sync::atomic::AtomicU8,
+    edit_calls: std::sync::atomic::AtomicUsize,
+    edit_inputs: Mutex<Vec<Vec<serde_json::Value>>>,
     supports_thinking: std::sync::atomic::AtomicBool,
     compaction_events: std::sync::Mutex<
         Option<tokio::sync::broadcast::Sender<runtime_core::ProviderRuntimeEvent>>,
@@ -67,50 +70,6 @@ pub(super) struct TestAcpProvider {
     resumed_sessions: Mutex<Vec<CapturedProviderSessionOpen>>,
 }
 
-impl TestProvider {
-    pub(super) fn enable_thinking_mutation(&self) {
-        self.supports_thinking
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    pub(super) async fn observed_thinking_efforts(
-        &self,
-        session_id: &str,
-    ) -> Vec<Option<runtime_core::ProviderThinkingEffort>> {
-        self.state
-            .lock()
-            .await
-            .sessions
-            .get(session_id)
-            .map(|session| session.seen_thinking_efforts.clone())
-            .unwrap_or_default()
-    }
-
-    pub(super) async fn set_rebind_mode(&self, mode: Option<&str>) {
-        *self.rebind_mode.lock().await = mode.map(str::to_string);
-    }
-
-    pub(super) async fn rebind_calls(&self) -> usize {
-        self.rebind_calls.lock().await.len()
-    }
-
-    pub(super) fn extract_text(input: &[serde_json::Value]) -> String {
-        for item in input {
-            if let Some(text) = item.get("text").and_then(serde_json::Value::as_str) {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
-            }
-        }
-        "empty".to_string()
-    }
-
-    pub(super) async fn resumed_requests(&self) -> Vec<ProviderResumeSessionRequest> {
-        self.resumed_requests.lock().await.clone()
-    }
-}
-
 impl TestAcpProvider {
     pub(super) async fn created_sessions(&self) -> Vec<CapturedProviderSessionOpen> {
         self.created_sessions.lock().await.clone()
@@ -133,6 +92,16 @@ impl RuntimeProvider for TestProvider {
 
     fn capabilities(&self) -> runtime_core::ProviderCapabilities {
         runtime_core::ProviderCapabilities {
+            hard_fork_edit_rerun: if self.edit_mode.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                runtime_core::ProviderCapabilitySupport::Unsupported
+            } else {
+                runtime_core::ProviderCapabilitySupport::Supported
+            },
+            images: if self.edit_mode.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                runtime_core::ProviderCapabilitySupport::Unsupported
+            } else {
+                runtime_core::ProviderCapabilitySupport::Supported
+            },
             manual_compact: if self
                 .compaction_mode
                 .load(std::sync::atomic::Ordering::SeqCst)
@@ -220,19 +189,22 @@ impl RuntimeProvider for TestProvider {
         &self,
         req: ProviderCreateSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
+        let native_ref = format!("test-thread-{}", req.runtime_session_id);
+        let canonical_ref = (self.edit_mode.load(std::sync::atomic::Ordering::SeqCst) != 0)
+            .then(|| native_ref.clone());
         let mut state = self.state.lock().await;
         state.sessions.insert(
             req.runtime_session_id.clone(),
             TestProviderSession {
-                provider_session_ref: format!("test-thread-{}", req.runtime_session_id),
+                provider_session_ref: native_ref.clone(),
                 cwd: req.cwd,
                 ..Default::default()
             },
         );
         Ok(ProviderSession {
             runtime_session_id: req.runtime_session_id.clone(),
-            provider_session_ref: format!("test-thread-{}", req.runtime_session_id),
-            canonical_provider_session_ref: None,
+            provider_session_ref: native_ref,
+            canonical_provider_session_ref: canonical_ref,
         })
     }
 
@@ -344,11 +316,37 @@ impl RuntimeProvider for TestProvider {
             },
         );
 
+        let native_turn = (self.edit_mode.load(std::sync::atomic::Ordering::SeqCst) != 0)
+            .then(|| format!("native-{}", req.turn_id));
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: req.turn_id,
-            provider_native_turn_id: None,
+            provider_native_turn_id: native_turn,
         })
+    }
+
+    async fn hard_fork_edit_rerun(
+        &self,
+        req: runtime_core::ProviderHardForkEditRerunRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        self.fake_hard_fork(req).await
+    }
+
+    async fn restore_turn_identity_mapping(
+        &self,
+        agent_id: &str,
+        logical_turn_id: &str,
+        native_turn_id: &str,
+    ) -> Result<(), RuntimeError> {
+        self.fake_restore_mapping(agent_id, logical_turn_id, native_turn_id)
+            .await
+    }
+
+    async fn observe_session_identity(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<ProviderSession>, RuntimeError> {
+        self.fake_observe_session(agent_id).await
     }
 
     async fn interrupt_turn(&self, _req: ProviderInterruptTurnRequest) -> Result<(), RuntimeError> {
@@ -614,6 +612,8 @@ impl RuntimeProvider for TestClaudeProvider {
 mod acp_provider;
 #[path = "support_compaction.rs"]
 mod support_compaction;
+#[path = "support_edit_rerun.rs"]
+mod support_edit_rerun;
 
 pub(super) async fn build_test_router() -> (Router, String, tempfile::TempDir) {
     build_test_router_with_team_policy(TeamMcpPolicy::default()).await

@@ -59,6 +59,30 @@ impl SqliteRuntimeRepository {
                 session.id
             )));
         }
+        // Only the replacement belonging to the durably verified child fork
+        // may enter while an edit operation owns this session. Callers cannot
+        // bypass this fence by issuing ordinary API send requests.
+        let pending_edit: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT operation_id,phase FROM session_edit_reruns WHERE session_id=?1
+                 AND phase IN ('intended','native_started','fork_observed','manual_review')",
+                params![session.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| {
+                db_error("failed checking native edit before turn admission", error)
+            })?;
+        if let Some((operation_id, phase)) = pending_edit {
+            if phase != "fork_observed"
+                || admission.correlation.correlation_id.as_deref() != Some(operation_id.as_str())
+            {
+                return Err(RuntimeError::Conflict(format!(
+                    "session {} has an unresolved edit-and-rerun; inspect operation {}",
+                    session.id, operation_id
+                )));
+            }
+        }
 
         let persisted = transaction
             .query_row(

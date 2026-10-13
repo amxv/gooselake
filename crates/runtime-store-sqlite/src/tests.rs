@@ -105,6 +105,8 @@ fn initialize_schema_creates_all_runtime_tables() {
         "workspace_agent_rebinds",
         "session_context_limit_snapshots",
         "session_compaction_runs",
+        "session_edit_reruns",
+        "session_edit_rerun_superseded_turns",
     ] {
         assert!(table_names.contains(expected), "missing table {expected}");
     }
@@ -116,7 +118,10 @@ fn initialize_schema_creates_all_runtime_tables() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    assert_eq!(
+        versions,
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    );
 }
 
 #[test]
@@ -177,6 +182,7 @@ fn initialize_schema_migrates_partially_populated_database_without_reset() {
 }
 
 mod agent_comms;
+mod edit_rerun;
 mod turn_authority;
 mod workspace_agent;
 mod workspace_authority;

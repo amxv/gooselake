@@ -10,12 +10,13 @@ use runtime_core::{
     ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
     ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
     RuntimeHydratedState, RuntimeStore, SessionCompactionRun, SessionContextLimitSnapshot,
-    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
-    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
-    WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
-    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
+    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission,
+    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
+    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -56,6 +57,68 @@ impl SqliteRuntimeStore {
 
 #[async_trait]
 impl RuntimeStore for SqliteRuntimeStore {
+    fn begin_session_edit_rerun(
+        &self,
+        operation: &SessionEditRerunOperation,
+    ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        self.repository.begin_session_edit_rerun(operation)
+    }
+
+    fn get_session_edit_rerun(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<SessionEditRerunOperation>, RuntimeError> {
+        self.repository.get_session_edit_rerun(operation_id)
+    }
+
+    fn get_session_edit_rerun_by_key(
+        &self,
+        agent_id: &str,
+        key: &str,
+    ) -> Result<Option<SessionEditRerunOperation>, RuntimeError> {
+        self.repository.get_session_edit_rerun_by_key(agent_id, key)
+    }
+
+    fn unresolved_session_edit_rerun(&self, agent_id: &str) -> Result<bool, RuntimeError> {
+        self.repository.unresolved_session_edit_rerun(agent_id)
+    }
+
+    fn advance_session_edit_rerun(
+        &self,
+        operation_id: &str,
+        phase: &str,
+        child: Option<&runtime_core::ProviderSession>,
+        replacement_turn_id: Option<&str>,
+        error_code: Option<&str>,
+        now: i64,
+    ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        self.repository.advance_session_edit_rerun(
+            operation_id,
+            phase,
+            child,
+            replacement_turn_id,
+            error_code,
+            now,
+        )
+    }
+
+    fn recover_session_edit_reruns(
+        &self,
+        now: i64,
+    ) -> Result<Vec<SessionEditRerunOperation>, RuntimeError> {
+        self.repository.recover_session_edit_reruns(now)
+    }
+
+    fn resolve_session_edit_rerun_review(
+        &self,
+        operation_id: &str,
+        evidence: &str,
+        now: i64,
+    ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        self.repository
+            .resolve_session_edit_rerun_review(operation_id, evidence, now)
+    }
+
     fn begin_session_compaction(
         &self,
         run: &SessionCompactionRun,

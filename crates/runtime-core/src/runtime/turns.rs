@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use tokio::sync::MutexGuard;
 
 use crate::{
     ApprovalRecord, PersistedUserInputSnapshot, ProviderDispatchOutcome,
@@ -19,50 +20,28 @@ use super::turn_dispatch_transitions::is_valid_dispatch_transition;
 use super::{RuntimeSessionManager, SendTurnAccepted, SendTurnInput};
 
 impl RuntimeSessionManager {
-    pub async fn admitted_turn_for_correlation(
-        &self,
-        session_id: &str,
-        correlation_id: &str,
-    ) -> Option<String> {
-        self.turn_admissions
-            .read()
-            .await
-            .values()
-            .find(|admission| {
-                admission.session_id == session_id
-                    && admission.correlation.correlation_id.as_deref() == Some(correlation_id)
-            })
-            .map(|admission| admission.turn_id.clone())
-    }
-
-    pub async fn latest_turn_admission_for_correlation(
-        &self,
-        session_id: &str,
-        correlation_id: &str,
-    ) -> Option<TurnAdmissionRecord> {
-        self.turn_admissions
-            .read()
-            .await
-            .values()
-            .filter(|admission| {
-                admission.session_id == session_id
-                    && admission.correlation.correlation_id.as_deref() == Some(correlation_id)
-            })
-            .max_by(|left, right| {
-                left.admitted_at
-                    .cmp(&right.admitted_at)
-                    .then(left.updated_at.cmp(&right.updated_at))
-                    .then(left.turn_id.cmp(&right.turn_id))
-            })
-            .cloned()
-    }
-
     pub async fn send_turn(
         self: &Arc<Self>,
         session_id: &str,
         input: SendTurnInput,
     ) -> Result<SendTurnAccepted, RuntimeError> {
         let policy_mutation_guard = self.session_policy_mutation_lock.lock().await;
+        self.send_turn_under_policy_guard(session_id, input, None, policy_mutation_guard)
+            .await
+    }
+
+    pub(super) async fn send_turn_under_policy_guard(
+        self: &Arc<Self>,
+        session_id: &str,
+        input: SendTurnInput,
+        authorized_edit_id: Option<&str>,
+        policy_mutation_guard: MutexGuard<'_, ()>,
+    ) -> Result<SendTurnAccepted, RuntimeError> {
+        if authorized_edit_id.is_some_and(|id| input.correlation_id.as_deref() != Some(id)) {
+            return Err(RuntimeError::ProtocolViolation(
+                "edit replacement input correlation does not match durable edit operation".into(),
+            ));
+        }
         let session = self.get_session(session_id).await?;
         if self.store.unresolved_workspace_agent_rebind(session_id)? {
             return Err(RuntimeError::Conflict(format!(
@@ -72,6 +51,11 @@ impl RuntimeSessionManager {
         if self.store.unresolved_session_compaction(session_id)? {
             return Err(RuntimeError::Conflict(format!(
                 "session {session_id} has unresolved provider compaction; inspect the compaction operation before sending another turn"
+            )));
+        }
+        if authorized_edit_id.is_none() && self.store.unresolved_session_edit_rerun(session_id)? {
+            return Err(RuntimeError::Conflict(format!(
+                "session {session_id} has unresolved native edit-and-rerun; inspect its operation"
             )));
         }
         if session.status == "closed" || session.status == "failed" {

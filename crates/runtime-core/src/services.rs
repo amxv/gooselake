@@ -1,11 +1,12 @@
+#[path = "services_team_models.rs"]
+mod team_models;
 #[path = "services_worktree_models.rs"]
 mod worktree_models;
+pub use team_models::*;
 pub use worktree_models::*;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
 
 use crate::{
     AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
@@ -18,16 +19,77 @@ use crate::{
     NewRuntimeEvent, OperationDetails, ProcessCompletionUpdate, ProcessRecord,
     ProcessSchedulerSettings, ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord,
     RuntimeEventScope, RuntimeHydratedState, SessionCompactionRun, SessionContextLimitSnapshot,
-    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
-    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
-    WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
-    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
+    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission,
+    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
+    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse,
 };
 
 #[async_trait]
 pub trait RuntimeStore: Send + Sync {
+    fn begin_session_edit_rerun(
+        &self,
+        _operation: &SessionEditRerunOperation,
+    ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "edit-and-rerun persistence unavailable".into(),
+        ))
+    }
+
+    fn get_session_edit_rerun(
+        &self,
+        _operation_id: &str,
+    ) -> Result<Option<SessionEditRerunOperation>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn get_session_edit_rerun_by_key(
+        &self,
+        _agent_id: &str,
+        _idempotency_key: &str,
+    ) -> Result<Option<SessionEditRerunOperation>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn unresolved_session_edit_rerun(&self, _agent_id: &str) -> Result<bool, RuntimeError> {
+        Ok(false)
+    }
+
+    fn advance_session_edit_rerun(
+        &self,
+        _operation_id: &str,
+        _phase: &str,
+        _child: Option<&crate::ProviderSession>,
+        _replacement_turn_id: Option<&str>,
+        _error_code: Option<&str>,
+        _now: i64,
+    ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "edit-and-rerun transition unavailable".into(),
+        ))
+    }
+
+    fn recover_session_edit_reruns(
+        &self,
+        _now: i64,
+    ) -> Result<Vec<SessionEditRerunOperation>, RuntimeError> {
+        Ok(Vec::new())
+    }
+
+    fn resolve_session_edit_rerun_review(
+        &self,
+        _operation_id: &str,
+        _evidence: &str,
+        _now: i64,
+    ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "edit-and-rerun review unavailable".into(),
+        ))
+    }
+
     fn begin_session_compaction(
         &self,
         _run: &SessionCompactionRun,
@@ -619,151 +681,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<Vec<TeamOperationDiagnosticRecord>, RuntimeError>;
 
     fn hydrate_runtime_state(&self) -> Result<RuntimeHydratedState, RuntimeError>;
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolInvokeRequest {
-    pub namespace: Option<String>,
-    pub tool_name: String,
-    pub caller_session_id: String,
-    pub invocation_id: Option<String>,
-    pub args: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamWithMembers {
-    pub team: TeamRecord,
-    pub members: Vec<TeamMemberRecord>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamCreateRequest {
-    pub name: String,
-    pub lead_agent_id: String,
-    #[serde(default)]
-    pub member_agent_ids: Vec<String>,
-    pub created_by: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamJoinRequest {
-    pub team_id: String,
-    pub agent_id: String,
-    pub title: Option<String>,
-    pub added_by: Option<String>,
-    pub creator_agent_id: Option<String>,
-    pub creator_compaction_subscription: Option<String>,
-    pub worktree_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamSetLeadRequest {
-    pub team_id: String,
-    pub lead_agent_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamRemoveMemberRequest {
-    pub team_id: String,
-    pub agent_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamInterruptAllRequest {
-    pub team_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamInterruptAllResponse {
-    pub team_id: String,
-    pub interrupted_session_ids: Vec<String>,
-    pub skipped_session_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamSendDirectRequest {
-    pub team_id: String,
-    pub sender_agent_id: String,
-    pub recipient_agent_id: String,
-    pub input: Value,
-    #[serde(default)]
-    pub image_paths: Vec<String>,
-    pub priority: String,
-    pub policy: String,
-    pub correlation_id: Option<String>,
-    pub reply_to_message_id: Option<String>,
-    pub idempotency_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamBroadcastRequest {
-    pub team_id: String,
-    pub sender_agent_id: String,
-    pub input: Value,
-    #[serde(default)]
-    pub image_paths: Vec<String>,
-    pub priority: String,
-    pub policy: String,
-    pub include_sender: bool,
-    pub correlation_id: Option<String>,
-    pub idempotency_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamMessageAck {
-    pub message: TeamMessageRecord,
-    pub deliveries: Vec<TeamDeliveryRecord>,
-    pub disposition: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamListMessagesRequest {
-    pub team_id: String,
-    pub cursor: Option<String>,
-    pub limit: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamListMessagesResponse {
-    pub messages: Vec<TeamMessageRecord>,
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamGetDeliveriesRequest {
-    pub team_id: String,
-    pub message_id: Option<String>,
-    pub recipient_agent_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamRetryDeliveryRequest {
-    pub team_id: String,
-    pub delivery_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamCancelMessageRequest {
-    pub team_id: String,
-    pub message_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamViewSnapshotRequest {
-    pub team_id: String,
-    pub message_cursor: Option<String>,
-    pub message_limit: Option<usize>,
-    pub include_delivery_map: Option<bool>,
-    pub delivery_recipient_filter: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamViewSnapshotResponse {
-    pub team: TeamWithMembers,
-    pub messages: Vec<TeamMessageRecord>,
-    pub deliveries_by_message_id: BTreeMap<String, Vec<TeamDeliveryRecord>>,
-    pub next_message_cursor: Option<String>,
-    pub snapshot_at: i64,
 }
 
 #[async_trait]

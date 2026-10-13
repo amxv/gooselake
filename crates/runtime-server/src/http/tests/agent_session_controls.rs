@@ -31,6 +31,28 @@ async fn public_agent_session_controls_are_authenticated_revisioned_and_capabili
     let revision = agent["revision"].as_u64().expect("agent revision");
     let prefix = format!("/v2/agents/{agent_id}");
 
+    let (status, _) = call(
+        &router, &token, "POST",
+        &format!("{prefix}/turns/nonexistent/edit-rerun"),
+        Some(serde_json::json!({"edited_snapshot":{"prompt_text":"new request","image_refs":[],"invocation":null}})),
+        None,
+    ).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unsupported native fork is capability-gated"
+    );
+    let (status, _) = call(
+        &router,
+        &token,
+        "GET",
+        &format!("{prefix}/edits/nonexistent"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
     let (status, empty_context) = call(
         &router,
         &token,

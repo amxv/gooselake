@@ -1,9 +1,62 @@
 use super::*;
 use runtime_core::{
-    ProviderPermissionIntent, ProviderPermissionMutationRequest, ProviderPermissionMutationResult,
-    ProviderSessionPreferences, ProviderSessionPreferencesMutationRequest,
-    ProviderSessionPreferencesMutationResult, SessionCompactionRun, SessionContextLimitSnapshot,
+    EditAndRerunRequest, ProviderPermissionIntent, ProviderPermissionMutationRequest,
+    ProviderPermissionMutationResult, ProviderSessionPreferences,
+    ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
+    SessionCompactionRun, SessionContextLimitSnapshot, SessionEditRerunOperation,
 };
+
+pub(super) async fn edit_agent_turn_and_rerun(
+    State(state): State<AppState>,
+    Path((agent_id, turn_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<EditAndRerunRequest>,
+) -> Result<Json<SessionEditRerunOperation>, ApiError> {
+    let key = headers
+        .get("Idempotency-Key")
+        .map(|value| value.to_str().map(str::to_string))
+        .transpose()
+        .map_err(|_| {
+            ApiError::from(RuntimeError::InvalidState(
+                "Idempotency-Key must be valid header text".into(),
+            ))
+        })?;
+    Ok(Json(
+        state
+            .runtime
+            .edit_workspace_agent_turn(&agent_id, &turn_id, input.edited_snapshot, key)
+            .await?,
+    ))
+}
+
+pub(super) async fn get_agent_edit_operation(
+    State(state): State<AppState>,
+    Path((agent_id, operation_id)): Path<(String, String)>,
+) -> Result<Json<SessionEditRerunOperation>, ApiError> {
+    Ok(Json(
+        state
+            .runtime
+            .session_edit_rerun_operation(&agent_id, &operation_id)?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct EditReviewInput {
+    evidence: String,
+}
+
+pub(super) async fn resolve_agent_edit_operation(
+    State(state): State<AppState>,
+    Path((agent_id, operation_id)): Path<(String, String)>,
+    Json(input): Json<EditReviewInput>,
+) -> Result<Json<SessionEditRerunOperation>, ApiError> {
+    Ok(Json(state.runtime.resolve_edit_rerun_review(
+        &agent_id,
+        &operation_id,
+        &input.evidence,
+    )?))
+}
 
 pub(super) async fn compact_agent_session(
     State(state): State<AppState>,

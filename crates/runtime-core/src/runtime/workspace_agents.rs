@@ -66,6 +66,14 @@ impl RuntimeSessionManager {
         let _mutation = self.session_policy_mutation_lock.lock().await;
         if self
             .store
+            .unresolved_session_edit_rerun(&request.runtime_session_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "cannot change permissions during unresolved native edit-and-rerun".into(),
+            ));
+        }
+        if self
+            .store
             .unresolved_session_compaction(&request.runtime_session_id)?
         {
             return Err(RuntimeError::Conflict(
@@ -189,6 +197,14 @@ impl RuntimeSessionManager {
         {
             return Err(RuntimeError::Conflict(
                 "cannot change preferences while provider compaction is unresolved".into(),
+            ));
+        }
+        if self
+            .store
+            .unresolved_session_edit_rerun(&request.runtime_session_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "cannot change preferences during unresolved native edit-and-rerun".into(),
             ));
         }
         let agent = self
@@ -429,6 +445,14 @@ impl RuntimeSessionManager {
         agent_id: &str,
         reason: Option<&str>,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        let _guard = self.session_policy_mutation_lock.lock().await;
+        if self.store.unresolved_session_edit_rerun(agent_id)?
+            || self.store.unresolved_session_compaction(agent_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "agent has unresolved native edit or compaction and cannot be archived".into(),
+            ));
+        }
         let agent = self.get_workspace_agent(workspace_id, agent_id)?;
         if self.store.unresolved_workspace_agent_rebind(agent_id)? {
             return Err(RuntimeError::Conflict(
@@ -480,6 +504,12 @@ impl RuntimeSessionManager {
         workspace_id: &str,
         agent_id: &str,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        let _guard = self.session_policy_mutation_lock.lock().await;
+        if self.store.unresolved_session_edit_rerun(agent_id)? {
+            return Err(RuntimeError::Conflict(
+                "agent has an unresolved native edit-and-rerun and cannot be restored".into(),
+            ));
+        }
         let agent = self.get_workspace_agent(workspace_id, agent_id)?;
         if self.store.unresolved_workspace_agent_rebind(agent_id)? {
             return Err(RuntimeError::Conflict(

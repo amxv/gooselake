@@ -219,9 +219,17 @@ async fn create_session_failure_during_initialize_cleans_up_connection_and_child
     let provider = AcpProvider::new(AcpProviderConfig {
         enabled: true,
         provider_dir: harness.provider_dir.clone(),
-        command: Some("python3".to_string()),
-        args: vec![harness.script_path.display().to_string()],
-        // Give the fake Python process time to write its PID under busy CI I/O.
+        command: Some("sh".to_string()),
+        args: vec![
+            "-c".to_string(),
+            // Record the child PID before the Python interpreter loads. Under
+            // heavy filesystem I/O, Python may not reach its own PID write
+            // before initialize times out. `exec` preserves the shell PID.
+            "printf '%s' \"$$\" > \"$1\"; exec python3 \"$2\"".to_string(),
+            "acp-initialize-timeout".to_string(),
+            harness.pid_path.display().to_string(),
+            harness.script_path.display().to_string(),
+        ],
         // The initialize response still intentionally never arrives.
         request_timeout_secs: 10,
         ..AcpProviderConfig::default()

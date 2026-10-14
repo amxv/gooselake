@@ -78,6 +78,17 @@ async fn live_workspace_historical_edit_rerun_forks_resends_and_resumes_exact_ch
     config.providers.claude.enabled = false;
     config.providers.codex.enabled = true;
 
+    // Codex starts the GG MCP sidecar during thread/start. Give it a real,
+    // isolated gateway instead of the default localhost:8080, which may
+    // belong to another process and must never be required by this test.
+    let gateway_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind disposable GG gateway");
+    config.server.public_base_url = format!(
+        "http://{}",
+        gateway_listener.local_addr().expect("GG gateway address")
+    );
+
     let bootstrapped = bootstrap_runtime(config.clone())
         .await
         .expect("Codex runtime bootstrap");
@@ -93,6 +104,14 @@ async fn live_workspace_historical_edit_rerun_forks_resends_and_resumes_exact_ch
         bearer_token: token.clone(),
         public_base_url: bootstrapped.public_base_url,
         startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
+    });
+    let gateway_task = tokio::spawn({
+        let gateway_router = router.clone();
+        async move {
+            axum::serve(gateway_listener, gateway_router)
+                .await
+                .expect("serve disposable GG gateway");
+        }
     });
     let (status, workspace) = call(
         &router,
@@ -223,6 +242,18 @@ async fn live_workspace_historical_edit_rerun_forks_resends_and_resumes_exact_ch
         .expect("detach before restart");
     drop(codex_provider);
     drop(router);
+    gateway_task.abort();
+    let _ = gateway_task.await;
+
+    let restarted_gateway_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind resumed GG gateway");
+    config.server.public_base_url = format!(
+        "http://{}",
+        restarted_gateway_listener
+            .local_addr()
+            .expect("resumed GG gateway address")
+    );
     let restarted = bootstrap_runtime(config)
         .await
         .expect("restart with edited child");
@@ -233,6 +264,14 @@ async fn live_workspace_historical_edit_rerun_forks_resends_and_resumes_exact_ch
         bearer_token: restarted_token.clone(),
         public_base_url: restarted.public_base_url,
         startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
+    });
+    let _restarted_gateway_task = tokio::spawn({
+        let gateway_router = restarted_router.clone();
+        async move {
+            axum::serve(restarted_gateway_listener, gateway_router)
+                .await
+                .expect("serve resumed GG gateway");
+        }
     });
     let (status, resumed) = call(
         &restarted_router,

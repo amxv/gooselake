@@ -44,6 +44,15 @@ The guard is intentionally path-based and conservative. Test-only changes under
 changes, regenerate OpenAPI and confirm the artifact is unchanged; document the
 verification without implying that a public route or schema changed.
 
+Authenticated runtime HTTP smoke tests that launch Codex with the GG MCP
+sidecar must also serve their test router on an isolated loopback listener.
+Bind `127.0.0.1:0`, set `config.server.public_base_url` to the assigned port
+before bootstrapping, and keep the gateway alive for provider session creation.
+Codex can request GG MCP tools during `thread/start`; pointing it at the
+non-serving default URL (or an unrelated service on that port) causes
+misleading provider startup timeouts. Restart tests must bind a fresh gateway
+for the restarted runtime and update the URL before bootstrapping again.
+
 Docs-signal files:
 
 - `README.md`

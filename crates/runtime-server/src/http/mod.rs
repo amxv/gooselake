@@ -74,6 +74,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/invoke", post(mcp_invoke))
         .layer(DefaultBodyLimit::max(MCP_MAX_REQUEST_BODY_BYTES));
 
+    // Agent-scoped MCP is a separate principal from the operator API. This
+    // route intentionally does not inherit bearer_auth's operator credential.
+    let scoped_mcp = Router::new()
+        .route("/capabilities", get(scoped_mcp_capabilities))
+        .route("/invoke", post(scoped_mcp_invoke))
+        .layer(DefaultBodyLimit::max(MCP_MAX_REQUEST_BODY_BYTES));
+
     let protected = Router::new()
         .route("/health", get(protected_health))
         .route("/providers", get(list_providers))
@@ -308,6 +315,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/openapi.yaml", get(openapi_yaml))
         .nest("/v1", protected)
         .nest("/v2", protected_v2)
+        .nest("/v2/mcp", scoped_mcp)
         .with_state(state)
 }
 

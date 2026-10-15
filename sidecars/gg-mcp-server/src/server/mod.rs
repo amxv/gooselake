@@ -1,3 +1,7 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, sync::Arc};
 
 use rmcp::{
@@ -19,9 +23,9 @@ use crate::{
         gateway_not_configured_envelope, normalize_non_empty, process_tools_enabled_from_env,
     },
     tool_params::{
-        GgMarkdownOpenRequest, GgProcessKillRequest, GgProcessLogsRequest, GgProcessRunRequest,
-        GgProcessStatusRequest, GgTeamManageRequest, GgTeamMessageRequest, GgTeamStatusRequest,
-        ToolCallMetadata,
+        GgMarkdownOpenRequest, GgMessageToolRequest, GgProcessKillRequest, GgProcessLogsRequest,
+        GgProcessRunRequest, GgProcessStatusRequest, GgProcessToolRequest, GgTeamManageRequest,
+        GgTeamMessageRequest, GgTeamStatusRequest, GgTeamToolRequest, ToolCallMetadata,
     },
 };
 
@@ -35,6 +39,32 @@ pub(crate) struct GgMcpServer {
     team_model_presets_cache: Arc<tokio::sync::RwLock<Option<TeamModelPresetCapabilitySnapshot>>>,
 }
 
+static TOOL_INVOCATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static TOOL_HOST_BOOT_NONCE: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(trusted_invocation_id);
+tokio::task_local! {
+    static TRUSTED_HOST_TOOL_CALL_ID: String;
+}
+
+fn trusted_invocation_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = TOOL_INVOCATION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("mcp_{:x}_{:x}_{sequence:x}", std::process::id(), nanos)
+}
+
+fn trusted_host_request_id(request: &rmcp::model::RequestId) -> String {
+    let mut hasher = DefaultHasher::new();
+    format!("{request:?}").hash(&mut hasher);
+    format!(
+        "{}_request_{:016x}",
+        TOOL_HOST_BOOT_NONCE.as_str(),
+        hasher.finish()
+    )
+}
+
 #[tool_router]
 impl GgMcpServer {
     pub(crate) fn new() -> Self {
@@ -46,6 +76,52 @@ impl GgMcpServer {
             team_call_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             team_model_presets_cache: Arc::new(tokio::sync::RwLock::new(None)),
         }
+    }
+
+    #[tool(
+        description = "Inspect or manage the caller's workspace members. Use mode=status, add, remove, or assign_worktree; caller identity, lead authority and workspace are trusted runtime bindings. Status reports members and a bounded available-worktree catalog."
+    )]
+    async fn gg_team(
+        &self,
+        params: Parameters<GgTeamToolRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self
+            .invoke_backend_tool_with_metadata(
+                "gg_team",
+                "gg_team",
+                &params.0,
+                &ToolCallMetadata::default(),
+            )
+            .await)
+    }
+
+    #[tool(
+        description = "Send a message using explicit mode=direct or mode=broadcast. Direct requires agent_id and message and can cross workspace boundaries; broadcast addresses active members in the caller's workspace. Optional ordered image_paths attach native image files."
+    )]
+    async fn gg_message(
+        &self,
+        params: Parameters<GgMessageToolRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self
+            .invoke_backend_tool_with_metadata(
+                "gg_message",
+                "gg_message",
+                &params.0,
+                &ToolCallMetadata::default(),
+            )
+            .await)
+    }
+
+    #[tool(
+        description = "Manage durable background processes with mode=run, list, status or cancel. Run returns a stable process_id immediately; terminal completion is pushed automatically. Do not poll for completion. Cancel is submitting-agent-only."
+    )]
+    async fn gg_process(
+        &self,
+        params: Parameters<GgProcessToolRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self
+            .invoke_backend_process_tool("gg_process", &params.0, &ToolCallMetadata::default())
+            .await)
     }
 
     #[tool(description = "Return GG MCP server health and runtime metadata.")]
@@ -178,8 +254,31 @@ impl GgMcpServer {
     async fn tools_with_runtime_metadata(&self) -> Vec<Tool> {
         let mut tools = self.tool_router.list_all();
 
+        // Provider model sessions exclusively use the scoped route. Legacy
+        // operator MCP integrations still have their split-tool surface while
+        // transitioning to the canonical three-tool contract.
+        let scoped = self
+            .gateway_client_config
+            .as_ref()
+            .is_some_and(|config| config.base_url.ends_with("/v2/mcp"));
+        if scoped {
+            tools.retain(|tool| {
+                matches!(tool.name.as_ref(), "gg_team" | "gg_message" | "gg_process")
+            });
+        } else {
+            tools.retain(|tool| {
+                !matches!(tool.name.as_ref(), "gg_team" | "gg_message" | "gg_process")
+            });
+        }
+
         if !self.process_tools_enabled {
-            tools.retain(|tool| !tool.name.as_ref().starts_with("gg_process_"));
+            tools.retain(|tool| {
+                if scoped {
+                    tool.name.as_ref() != "gg_process"
+                } else {
+                    !tool.name.as_ref().starts_with("gg_process_")
+                }
+            });
         }
 
         self.refresh_team_capabilities_cache_for_list().await;
@@ -188,9 +287,30 @@ impl GgMcpServer {
             .read()
             .await
             .as_ref()
+            .is_some_and(|snapshot| !snapshot.process_tools_enabled)
+        {
+            tools.retain(|tool| {
+                if scoped {
+                    tool.name.as_ref() != "gg_process"
+                } else {
+                    !tool.name.as_ref().starts_with("gg_process_")
+                }
+            });
+        }
+        if self
+            .team_model_presets_cache
+            .read()
+            .await
+            .as_ref()
             .is_some_and(|snapshot| !snapshot.team_tools_enabled)
         {
-            tools.retain(|tool| !tool.name.as_ref().starts_with("gg_team_"));
+            tools.retain(|tool| {
+                if scoped {
+                    !matches!(tool.name.as_ref(), "gg_team" | "gg_message")
+                } else {
+                    !tool.name.as_ref().starts_with("gg_team_")
+                }
+            });
             return tools;
         }
         let model_presets = self.resolve_team_model_presets().await;
@@ -343,7 +463,22 @@ impl GgMcpServer {
             Ok(caller_agent_id) => caller_agent_id,
             Err(envelope) => return envelope_to_call_tool_result(envelope),
         };
-        let invocation_id = normalize_non_empty(tool_call_metadata.invocation_id.as_deref());
+        // The model's JSON cannot nominate mutation identity. A distinct host
+        // invocation ID is minted once per tool call and reused on transport
+        // retries; legacy operator-only calls retain their recorded metadata.
+        let scoped = self
+            .gateway_client_config
+            .as_ref()
+            .is_some_and(|config| config.base_url.ends_with("/v2/mcp"));
+        let invocation_id = if scoped {
+            Some(
+                TRUSTED_HOST_TOOL_CALL_ID
+                    .try_with(Clone::clone)
+                    .unwrap_or_else(|_| trusted_invocation_id()),
+            )
+        } else {
+            normalize_non_empty(tool_call_metadata.invocation_id.as_deref())
+        };
 
         self.invoke_backend_tool(
             namespace,
@@ -383,7 +518,7 @@ impl GgMcpServer {
         caller_agent_id: &str,
         invocation_id: Option<&str>,
     ) -> CallToolResult {
-        let _team_call_guard = if namespace == "gg_team" {
+        let _team_call_guard = if matches!(namespace, "gg_team" | "gg_message") {
             Some(self.acquire_team_call_guard(caller_agent_id).await)
         } else {
             None
@@ -395,6 +530,13 @@ impl GgMcpServer {
                 "__serialization_error__": error.to_string(),
             })
         });
+        let mutating = match tool_name {
+            "gg_team" => args["mode"] != "status",
+            "gg_message" => true,
+            "gg_process" => matches!(args["mode"].as_str(), Some("run" | "cancel")),
+            "gg_team_manage" | "gg_team_message" | "gg_process_run" | "gg_process_kill" => true,
+            _ => false,
+        };
         let envelope = match self.get_or_init_gateway_client().await {
             Some(gateway_client) => {
                 match gateway_client
@@ -402,23 +544,36 @@ impl GgMcpServer {
                     .await
                 {
                     Ok(envelope) => envelope,
-                    Err(error_message) => json!({
-                        "ok": false,
-                        "error": {
-                            "code": "backend_unavailable",
-                            "message": "GG MCP tool gateway invocation failed",
-                            "details": {
-                                "tool_name": tool_name,
-                                "namespace": namespace,
-                                "reason": error_message,
+                    Err(error_message) => {
+                        json!({
+                            "ok": false,
+                            "error": {
+                                "code": if mutating {"outcome_unresolved"} else {"backend_unavailable"},
+                                "message": if mutating {
+                                    "Tool gateway transport failed after the mutation may have been accepted. Do not resubmit this action; inspect authoritative status after recovery."
+                                } else { "GG MCP tool gateway invocation failed" },
+                                "retryable": !mutating,
+                                "details": {
+                                    "tool_name": tool_name,
+                                    "namespace": namespace,
+                                    "reason": error_message,
+                                }
                             }
-                        }
-                    }),
+                        })
+                    }
                 }
             }
             None => gateway_not_configured_envelope(),
         };
-        let envelope = annotate_envelope_with_caller_agent_id(envelope, Some(caller_agent_id));
+        let is_scoped = self
+            .gateway_client_config
+            .as_ref()
+            .is_some_and(|config| config.base_url.ends_with("/v2/mcp"));
+        let envelope = if is_scoped {
+            envelope
+        } else {
+            annotate_envelope_with_caller_agent_id(envelope, Some(caller_agent_id))
+        };
 
         envelope_to_call_tool_result(envelope)
     }
@@ -467,9 +622,21 @@ impl ServerHandler for GgMcpServer {
         request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        if self.get_tool(request.name.as_ref()).is_none() {
+            let disabled_process = !self.process_tools_enabled
+                && (request.name == "gg_process" || request.name.starts_with("gg_process_"));
+            return Ok(envelope_to_call_tool_result(json!({"ok":false,"error":{
+                "code": if disabled_process {"feature_disabled"} else {"bad_request"},
+                "message": if disabled_process {"gg_process tools are disabled"} else {"unknown or unavailable model tool"},
+                "retryable":false
+            }})));
+        }
         let tool_call_context =
             rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        self.tool_router.call(tool_call_context).await
+        let trusted_id = trusted_host_request_id(&tool_call_context.request_context.id);
+        TRUSTED_HOST_TOOL_CALL_ID
+            .scope(trusted_id, self.tool_router.call(tool_call_context))
+            .await
     }
 
     async fn list_tools(
@@ -485,7 +652,15 @@ impl ServerHandler for GgMcpServer {
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        if !self.process_tools_enabled && name.starts_with("gg_process_") {
+        let scoped = self
+            .gateway_client_config
+            .as_ref()
+            .is_some_and(|config| config.base_url.ends_with("/v2/mcp"));
+        if scoped && !matches!(name, "gg_team" | "gg_message" | "gg_process") {
+            return None;
+        }
+        if !self.process_tools_enabled && (name == "gg_process" || name.starts_with("gg_process_"))
+        {
             return None;
         }
 

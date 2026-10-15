@@ -1,5 +1,67 @@
 use serde::Deserialize;
 
+/// The three public GG tools have explicit, strictly-discriminated modes.
+/// Caller/workspace identity is never part of the model-authored schema.
+#[derive(Debug, Clone, Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum GgTeamToolRequest {
+    Status {},
+    Add {
+        title: Option<String>,
+        prompt: Option<String>,
+        image_paths: Option<Vec<String>>,
+        model_preset: Option<String>,
+        worktree_name: Option<String>,
+        creator_compaction_subscription: Option<String>,
+    },
+    Remove {
+        remove_agent_ids: Vec<String>,
+        preserve_worktrees: Option<bool>,
+    },
+    AssignWorktree {
+        assign_worktree: GgWorktreeAssignment,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct GgWorktreeAssignment {
+    pub(crate) agent_id: String,
+    pub(crate) worktree_name: String,
+    pub(crate) preserve_previous_worktree: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum GgMessageToolRequest {
+    Direct {
+        agent_id: String,
+        message: String,
+        image_paths: Option<Vec<String>>,
+    },
+    Broadcast {
+        message: String,
+        image_paths: Option<Vec<String>>,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum GgProcessToolRequest {
+    Run {
+        command: String,
+        cwd: Option<String>,
+        timeout_ms: Option<u64>,
+    },
+    List {},
+    Status {
+        process_id: String,
+    },
+    Cancel {
+        process_id: String,
+    },
+}
+
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ToolCallMetadata {
     #[serde(default, rename = "__gg_caller_agent_id", skip_serializing)]

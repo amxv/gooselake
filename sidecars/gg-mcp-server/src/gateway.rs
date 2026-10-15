@@ -14,6 +14,7 @@ pub(crate) struct TeamModelPresetCapabilitySnapshot {
     pub(crate) revision: u64,
     pub(crate) presets: Vec<String>,
     pub(crate) team_tools_enabled: bool,
+    pub(crate) process_tools_enabled: bool,
 }
 
 #[derive(Clone)]
@@ -111,11 +112,16 @@ impl GatewayClient {
                     .any(|namespace| namespace.as_str() == Some("gg_team"))
             })
             .unwrap_or(false);
+        let process_tools_enabled = parsed
+            .pointer("/result/ggProcessEnabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
 
         Ok(TeamModelPresetCapabilitySnapshot {
             revision,
             presets,
             team_tools_enabled,
+            process_tools_enabled,
         })
     }
 
@@ -127,20 +133,28 @@ impl GatewayClient {
         caller_agent_id: &str,
         invocation_id: Option<&str>,
     ) -> Result<Value, String> {
-        let request_payload = json!({
+        let mut request_payload = json!({
             "namespace": namespace,
             "tool_name": tool_name,
-            "caller_agent_id": caller_agent_id,
-            "invocation_id": invocation_id,
             "args": args,
         });
-        let response = self
+        if !self.base_url.ends_with("/v2/mcp") {
+            request_payload["caller_agent_id"] = json!(caller_agent_id);
+            request_payload["invocation_id"] = json!(invocation_id);
+        }
+        let mut request = self
             .http_client
             .post(format!("{}/invoke", self.base_url))
             .header(
                 reqwest::header::AUTHORIZATION,
                 format!("Bearer {}", self.auth_token),
-            )
+            );
+        if self.base_url.ends_with("/v2/mcp") {
+            if let Some(invocation_id) = invocation_id.filter(|value| !value.is_empty()) {
+                request = request.header("x-gg-tool-invocation-id", invocation_id);
+            }
+        }
+        let response = request
             .json(&request_payload)
             .send()
             .await
@@ -154,12 +168,25 @@ impl GatewayClient {
             format!("Failed to parse gateway /invoke response as JSON: {error}")
         })?;
 
-        if status.is_success() {
+        if (status.is_success() && parsed.get("ok").and_then(Value::as_bool).is_some())
+            || (!status.is_success() && parsed.get("ok") == Some(&Value::Bool(false)))
+        {
             return Ok(parsed);
         }
 
         if parsed.is_object() {
-            return Ok(parsed);
+            let code = if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+            {
+                "unauthorized"
+            } else {
+                "backend_error"
+            };
+            return Ok(json!({"ok":false,"error":{
+                "code":code,
+                "message":parsed.get("error").and_then(Value::as_str).unwrap_or("GG tool gateway rejected the request"),
+                "retryable":false
+            }}));
         }
 
         Err(format!(

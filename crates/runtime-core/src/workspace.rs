@@ -131,6 +131,28 @@ pub struct OperationRecord {
     pub updated_at: i64,
 }
 
+/// Host-admitted, exact-input receipt for a model's effectful workspace tool.
+/// The agent and workspace are derived from authenticated runtime authority,
+/// never from model-authored arguments.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentToolMutationCommand {
+    pub operation_id: String,
+    pub workspace_id: String,
+    pub caller_agent_id: String,
+    pub idempotency_key: String,
+    pub tool_name: String,
+    pub normalized_request_hash: String,
+    pub normalized_request: Value,
+    pub admitted_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AgentToolMutationAdmission {
+    Execute { operation_id: String },
+    Replay { exact_result: Value },
+    Unresolved { operation_id: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperationResourceClaimRecord {
     pub resource_kind: String,

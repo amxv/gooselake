@@ -47,80 +47,39 @@ The Claude provider communicates with the Claude bridge sidecar. The bridge expo
 
 The runtime provider adapter converts runtime session/turn operations into bridge requests and maps bridge responses back into runtime records and events.
 
-## GG MCP server
+## Model-facing GG tools and MCP server
 
-The MCP sidecar lets provider sessions call runtime-backed tools. The high-level path is:
+The same three canonical tools are exposed through provider-native transports. **Codex** receives native dynamic-tool definitions at `thread/start`/`thread/resume`; its app-server's `item/tool/call` RPC is handled by the trusted adapter and dispatched directly to the runtime tool gateway. The adapter supplies the runtime session as caller and derives a stable invocation ID from the native tool call. Its staged configuration removes the legacy GG MCP server registration so tools cannot appear twice. Disabled tool families are omitted from native discovery using canonical gateway capabilities.
+
+**Claude and ACP** use a per-session `gg-mcp-server` sidecar. Their model-facing path is:
 
 ```text
-provider session
-  -> gg-mcp-server tool call
-  -> POST /v1/mcp/invoke
-  -> runtime tool gateway
-  -> runtime service
+provider session -> gg-mcp-server -> POST /v2/mcp/invoke -> canonical runtime services
 ```
 
-The runtime gateway requires a caller session identity. Tool calls should be attributable to an active runtime session.
+For MCP-backed providers, the provider adapter derives a **per-agent scoped MCP credential** from the runtime operator secret. The sidecar receives only that agent's credential and runtime session identity. The agent API derives the caller from the authenticated credential; callers cannot nominate another session, team or workspace in JSON. Archived agents, retired workspaces, closed sessions, and operator API bearer tokens cannot use this endpoint. Even if a custom/legacy gateway URL is configured, provider sessions never receive the raw operator credential: that misconfiguration fails authorization instead of falling back to operator access. Codex does not receive that bearer token: its in-process native bridge binds caller identity out-of-band and uses the same runtime authority.
 
-## Current gateway scope
+`GET /v2/mcp/capabilities` and `POST /v2/mcp/invoke` require the scoped bearer token. The older `/v1/mcp` endpoints remain operator-authenticated compatibility interfaces; they are **not** used for provider sessions. The `v2` model-facing tool discovery contains **exactly these three tools when enabled**:
 
-The runtime MCP gateway is intentionally narrower than the full HTTP API. It exposes provider-safe control namespaces that are backed by the same runtime services used by HTTP:
+- **`gg_team`**: `mode=status` lists the caller's active workspace members and eligible managed worktrees; `add` creates an active workspace agent (optional `title`, `prompt`, `image_paths`, `model_preset`, and `worktree_name`) and delivers the supplied onboarding prompt or images through the canonical agent-message service; `remove` archives named workspace agents using `remove_agent_ids`; `assign_worktree` rebinds an existing member through the durable provider rebind path. Existing worktrees are preserved during removal and assignment; explicit cleanup requests (`preserve_worktrees=false` or `preserve_previous_worktree=false`) are rejected until safe cleanup is available.
+- **`gg_message`**: `mode=direct` requires `agent_id` and `message` and delivers through the global agent-first direct-message service. `agent_id` accepts either the opaque session ID or the recipient's durable friendly alias (resolved through indexed authority, including across workspaces). `mode=broadcast` requires only `message` and broadcasts to active members of the caller's workspace (excluding the sender). Optional ordered `image_paths` are supported for eligible Codex and Claude recipients; the runtime rejects unsupported ACP image delivery rather than dropping files.
+- **`gg_process`**: `mode=run` schedules a command and returns a durable `process_id`; `list` returns active workspace-visible processes; `status` inspects a specific `process_id`; `cancel` is limited to processes owned by the caller. Terminal completion is pushed to the agent automatically, so completion polling is prohibited. stdout/stderr log paths are available in process details after launch.
 
-- `gg_process`: durably schedule a process, inspect status, read logs, and cancel it by stable `process_id`
-- `gg_team`: inspect team status, send direct/broadcast team messages, and add/remove team members
+Mode-discriminated schemas reject unknown fields and combinations. The MCP sidecar mints a unique trusted invocation ID for each model tool call and carries it in a transport header, not model JSON; the native Codex bridge derives it from provider-native RPC call identity. Effectful HTTP gateway calls without a valid host invocation ID are rejected before mutation with `missing_invocation_id`. For `gg_team` mutations, the runtime journals an exact-input operation **before** native/provider changes and durably receipts successful results. Repeating the same host invocation and arguments returns the exact receipt without adding or removing another agent; reusing an ID with different arguments returns `conflict`. An interrupted operation without a confirmed receipt fails closed as `outcome_unresolved` and requires status inspection/operator reconciliation instead of redispatch. `gg_process` `run` likewise deduplicates durable process admissions by caller and invocation ID across restarts: replays return the original `process_id` and changed arguments conflict, without launching a second command.
 
-Use `/v1/mcp/capabilities` to inspect what the running server supports:
+Ambiguous mutating transport failures likewise return `outcome_unresolved` with `retryable=false`: **inspect authoritative status, do not blindly retry**. Tool responses use `{"ok":true,"result":...}` or `{"ok":false,"error":{"code":"...","message":"...","retryable":false}}`, with MCP `is_error` matching the envelope; Codex receives the same serialized envelope inside its native `contentItems` response.
 
-```bash
-curl "$BASE_URL/v1/mcp/capabilities" "${AUTH[@]}"
-```
+The existing `[teams]` configuration determines whether team and message tools are enabled and the lead/non-lead member management permissions. Process tools are separately disabled with process configuration or `GG_MCP_ENABLE_PROCESS_TOOLS=0`. Disabled tools do not appear in model discovery.
 
-Capabilities include `supportedNamespaces`, `tools`, `ggProcessEnabled`, `ggTeamEnabled`, `ggTeamManagePermissions`, and `ggTeamModelPresets`. Team tools are listed only when team MCP is enabled. If disabled, `gg_team_*` calls return an `ok:false` envelope with `feature_disabled`.
-
-The process MCP surface is:
-
-- `gg_process_run`: durably admits a command and returns promptly with a stable `process_id`; execution may remain queued under scheduler capacity.
-- `gg_process_status`: explicitly inspect one process by `process_id`, or list active visible processes when the ID is omitted.
-- `gg_process_logs`: read captured stdout/stderr by `process_id` with optional stream/head/tail bounds.
-- `gg_process_kill`: cancel a process submitted by the caller. Queued cancellation prevents launch and is intentionally silent.
-
-For session-owned work, terminal completion is pushed automatically through the runtime's canonical durable turn path. Models should not poll `gg_process_status` waiting for a command to finish. PID remains diagnostic metadata; the model-facing control handle is always `process_id`.
-
-The team MCP surface is:
-
-- `gg_team_status`: returns lead/member status for teams where the caller is an active member, including context-window remaining percentage when provider usage exposes enough data.
-- `gg_team_message`: sends direct messages or broadcasts. Use `recipient_agent_id: "broadcast"` for broadcast fanout; the sender is excluded by default. Optional `image_paths` are stored and delivered as image input items for supported providers.
-- `gg_team_manage`: add one member when `remove_agent_ids` is absent, or remove one or more members when `remove_agent_ids` is present. Add mode accepts configured `model_preset` names and optional `image_paths` for the spawned member onboarding message when the selected provider supports image attachments.
-
-`gg_team` calls share the same underlying team services as HTTP routes. Messages create normal team message, delivery, and event records. Member add/remove operations use the runtime spawn, join, remove, worktree assignment, and cleanup services.
-
-Agent-initiated membership management is governed by runtime team policy:
-
-```toml
-[teams]
-enabled = true
-non_lead_can_add_members = false
-non_lead_can_remove_members = false
-
-[[teams.model_presets]]
-name = "deep"
-provider = "claude"
-model = "claude-opus-5-5"
-thinking_effort = "high"
-```
-
-The team lead can add and remove members by default. Non-lead members can use `gg_team_manage` add/remove only when the matching policy flag is enabled. This policy applies to MCP-initiated membership control; authenticated HTTP team administration remains the client/human control plane. Context-window percentage is derived from persisted turn usage; Codex and Claude can report it after completed turns, while ACP reports `null` unless its configured agent emits compatible context-window usage.
-
-Codex and Claude sessions can receive team image attachments through the runtime input path. ACP image attachments are not modeled by this runtime yet, so `gg_team_message` and `gg_team_manage` calls that include `image_paths` for ACP recipients or spawned ACP sessions return `unsupported_provider_images`.
-
-Codex, Claude, and ACP sessions all use the bundled `gg-mcp-server` path when MCP is enabled, so `gg_process` and `gg_team` behavior is provider-agnostic. Providers inject caller identity into the sidecar environment or per-call metadata; the model-authored tool arguments are not trusted for caller identity.
+The live runtime manages workspace member and messaging authority; the legacy `TeamRecord` endpoints remain available to the operator API for migration but are not the source of model workspace authority.
 
 ## MCP environment
 
 The MCP sidecar uses environment values such as:
 
 ```bash
-GG_MCP_GATEWAY_URL="http://127.0.0.1:8080/v1/mcp"
-GG_MCP_GATEWAY_TOKEN="..."
+GG_MCP_GATEWAY_URL="http://127.0.0.1:8080/v2/mcp"
+GG_MCP_GATEWAY_TOKEN="<per-agent-scoped-credential>"
 GG_MCP_CALLER_AGENT_ID="sess_codex_..."
 GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID="1"
 GG_MCP_ENABLE_PROCESS_TOOLS="1"
@@ -128,7 +87,7 @@ GG_MCP_ENABLE_PROCESS_TOOLS="1"
 
 The exact environment is assembled by provider integration code when MCP tools are injected into a session.
 
-When `GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID=1`, the sidecar requires caller identity per tool call. This lets a shared MCP server process safely serve different runtime sessions. `GG_MCP_ENABLE_PROCESS_TOOLS=0` hides `gg_process` tools without disabling the unified server or the team tool path.
+The model never sets `GG_MCP_CALLER_AGENT_ID` or the credential; both come from its owning provider adapter, including on resume. `GG_MCP_ENABLE_PROCESS_TOOLS=0` hides `gg_process` without disabling workspace tools. The `v2` route derives identity exclusively from the signed scoped credential.
 
 ## Failure modes
 
@@ -141,8 +100,8 @@ Common MCP failures:
 - process ownership does not match caller session
 - process tools are disabled in config
 - team MCP tools are disabled in config
-- caller is not a team member
-- non-lead caller is denied by `gg_team_manage` policy
+- caller is not an active workspace member
+- non-lead caller is denied by the `gg_team` membership policy
 - sidecar binary is missing from the release/source layout
 
 Start with:
@@ -154,4 +113,4 @@ curl "$BASE_URL/v1/diagnostics/providers" "${AUTH[@]}"
 
 ## Design boundary
 
-Sidecars should not become alternate runtimes. They can translate, adapt, and bridge, but durable truth belongs in the core runtime and SQLite store.
+Sidecars translate between provider tool transport and the runtime. Durable workspace membership, agent messages, worktrees and process state remain in canonical core services and SQLite. The provider-facing MCP tools do not create independent team state.

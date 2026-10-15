@@ -110,7 +110,7 @@ A runtime process can finish as:
 
 The exact state depends on exit code, timeout, cancellation, and restart reconciliation. Terminal process state and model completion delivery are separate durable facts: a process can already be terminal while its completion turn is still pending delivery.
 
-For a session-owned process, every terminal outcome is delivered back to the owning model through the normal durable turn-admission path. The completion includes status/reason, exit or signal data, bounded stdout/stderr previews, truncation flags, and authoritative log paths. Models should not poll status waiting for completion; `gg_process_run` completion is pushed automatically.
+For a session-owned process, every terminal outcome is delivered back to the owning model through the normal durable turn-admission path. The completion includes status/reason, exit or signal data, bounded stdout/stderr previews, truncation flags, and authoritative log paths. Models should not poll status waiting for completion; `gg_process` with `mode=run` pushes completion automatically.
 
 ## Kill a process
 
@@ -153,11 +153,13 @@ curl "$BASE_URL/v1/diagnostics/recovery" "${AUTH[@]}"
 
 ## MCP process tools
 
-The runtime MCP gateway exposes `gg_process_run`, `gg_process_status`, `gg_process_logs`, and `gg_process_kill`. All model-facing process operations use the stable `process_id`; PID is runtime/diagnostic metadata, not the control handle.
+The model-facing runtime exposes one **`gg_process`** tool with explicit `mode=run|list|status|cancel`. `run` returns a durable process ID, `list` shows active workspace-visible processes, `status` inspects an individual ID, and `cancel` is restricted to the submitting agent. All model-facing process operations use the stable `process_id`; PID is runtime/diagnostic metadata, not the control handle.
 
-`gg_process_status` is for explicit inspection, not completion polling. `gg_process_logs` reads captured output when the model specifically needs it. Terminal completion is pushed automatically to the owning session.
+`mode=run` is idempotent for a trusted tool-call identity: retries with the same arguments return the previously admitted process ID, including after a runtime restart. Reusing that identity with a different command or arguments returns `conflict` instead of starting a second process.
 
-Use `/v1/mcp/capabilities` to see the active gateway surface:
+`mode=status` is for explicit inspection, not completion polling. The process details and operator HTTP log routes expose captured stdout/stderr. Terminal completion is pushed automatically to the owning session.
+
+Use `/v2/mcp/capabilities` with a per-agent scoped bearer credential to see the current model-facing tools. The `/v1/mcp/capabilities` endpoint below uses the **operator bearer** and advertises the legacy split process tools (`gg_process_run`, `gg_process_status`, `gg_process_logs`, `gg_process_kill`) only for compatibility:
 
 ```bash
 curl "$BASE_URL/v1/mcp/capabilities" "${AUTH[@]}"

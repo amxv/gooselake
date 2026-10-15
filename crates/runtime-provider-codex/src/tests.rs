@@ -27,6 +27,7 @@ log_path = sys.argv[1]
 state_path = sys.argv[2]
 pending_approvals = {}
 pending_interrupts = {}
+pending_native_tools = {}
 fail_next_rollback = False
 
 try:
@@ -139,6 +140,10 @@ for raw in sys.stdin:
 
     if method is None:
         key = str(request_id)
+        native_pending = pending_native_tools.pop(key, None)
+        if native_pending is not None:
+            finish(native_pending[0], native_pending[1])
+            continue
         pending = pending_approvals.pop(key, None)
         if pending is not None:
             finish(pending[0], pending[1])
@@ -290,6 +295,19 @@ for raw in sys.stdin:
                     "startedAtMs": 1
                 }
             })
+        elif "native-gg-tool" in text:
+            emit(response)
+            tool_rpc_id = "native-gg-rpc-" + str(turn_counter)
+            pending_native_tools[tool_rpc_id] = (thread_id, turn_id)
+            emit({
+                "id":tool_rpc_id,"method":"item/tool/call",
+                "params":{
+                    "threadId":thread_id,"turnId":turn_id,
+                    "itemId":"native-gg-item-"+str(turn_counter),
+                    "tool":"gg_message",
+                    "arguments":{"mode":"broadcast","message":"native greeting"}
+                }
+            })
         elif "approval" in text:
             emit(response)
             rpc_id = "approval-rpc-" + str(turn_counter)
@@ -429,6 +447,8 @@ fn read_log(path: &std::path::Path) -> Vec<Value> {
 mod current_thinking;
 mod failure_contracts;
 mod live_acceptance;
+
+mod native_dynamic_tools;
 
 fn legacy_create(runtime_session_id: &str) -> ProviderCreateSessionPolicyRequest {
     ProviderCreateSessionPolicyRequest::legacy_compatible(

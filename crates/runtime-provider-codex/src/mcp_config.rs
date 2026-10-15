@@ -55,8 +55,12 @@ pub(crate) fn format_codex_gg_mcp_config(
         .map(str::trim)
         .filter(|v| !v.is_empty())
     {
+        // Never stage an operator bearer into a model-controlled session,
+        // even when a custom/legacy gateway URL was configured. Such a URL
+        // will fail closed instead of silently accepting operator authority.
+        let scoped_token = runtime_core::mint_scoped_mcp_token(gateway_token, runtime_session_id);
         output
-            .push_str(format!("GG_MCP_GATEWAY_TOKEN = {}\n", toml_string(gateway_token)).as_str());
+            .push_str(format!("GG_MCP_GATEWAY_TOKEN = {}\n", toml_string(&scoped_token)).as_str());
     }
     output
 }

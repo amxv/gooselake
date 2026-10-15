@@ -254,6 +254,28 @@ async fn create_and_resume_forward_full_recreation_policy_and_gg_mcp_shape() {
 }
 
 #[test]
+fn claude_scoped_mcp_separates_operator_secret_from_agent_credential() {
+    let harness = FakeClaudeBridgeHarness::new("normal");
+    let provider = harness.provider(ClaudeGgMcpConfig {
+        enabled: true,
+        server_name: "gg".into(),
+        command: "gg-mcp-server".into(),
+        args: Vec::new(),
+        enable_process_tools: true,
+        gateway_url: Some("http://127.0.0.1:8787/v2/mcp".into()),
+        gateway_token: Some("long-lived-operator-secret".into()),
+    });
+    let value = provider.build_gg_mcp_server_session_config("sess_claude_alpha");
+    let expected =
+        runtime_core::mint_scoped_mcp_token("long-lived-operator-secret", "sess_claude_alpha");
+    assert_eq!(value["env"]["GG_MCP_GATEWAY_TOKEN"], expected);
+    assert_ne!(
+        value["env"]["GG_MCP_GATEWAY_TOKEN"],
+        "long-lived-operator-secret"
+    );
+}
+
+#[test]
 fn gg_mcp_server_config_can_disable_process_tools_without_disabling_team_tools() {
     let harness = FakeClaudeBridgeHarness::new("normal");
     let provider = harness.provider(ClaudeGgMcpConfig {

@@ -682,7 +682,7 @@ curl -fsS -X POST \
   "$BASE_URL/v1/processes/$PROCESS_ID/kill"
 ```
 
-Session-owned terminal processes deliver a completion turn back to the owning model through durable turn admission. Completion delivery is tracked separately from terminal process state and survives restart. MCP callers should not poll `gg_process_status` waiting for completion; completion is pushed automatically. Queued cancellation atomically prevents launch and intentionally does not create a model completion turn.
+Session-owned terminal processes deliver a completion turn back to the owning model through durable turn admission. Completion delivery is tracked separately from terminal process state and survives restart. Models should not poll `gg_process` with `mode=status` waiting for completion; completion is pushed automatically. Queued cancellation atomically prevents launch and intentionally does not create a model completion turn.
 
 ## Worktrees
 
@@ -769,78 +769,36 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 
 Team delivery fields make multi-agent coordination inspectable: `pending`, `deferred`, `injecting`, `injected`, `failed`, or `cancelled` states are stored as records and replayed through team events.
 
-HTTP routes and MCP team tools use the same underlying team services. A team created through `POST /v1/teams` is immediately visible to `gg_team_status`; messages sent through `gg_team_message` create the same message, delivery, and event records as `POST /v1/teams/{team_id}/messages` and `POST /v1/teams/{team_id}/broadcasts`; members added or removed through `gg_team_manage` use the same spawn, join, remove, worktree assignment, and cleanup paths as the HTTP team/member endpoints.
+The `/v1/teams` HTTP routes and historical split MCP tools (`gg_team_status`, `gg_team_message`, `gg_team_manage`) are **operator-only compatibility surfaces** backed by the legacy team services. They remain available during migration but are not advertised to provider models. Current model agents instead use workspace-authoritative `gg_team` and `gg_message` operations through the scoped `/v2/mcp` endpoint or native Codex tools; the canonical workspace agent/message records are separate from legacy `TeamRecord` membership.
 
 ## MCP gateway
 
-Routes:
+The **model-facing** scoped MCP API is separate from operator authentication:
 
-- `GET /v1/mcp/capabilities`
-- `POST /v1/mcp/invoke`
+- `GET /v2/mcp/capabilities`: authenticated with a per-agent bearer token derived by the runtime; returns active tool names and policy.
+- `POST /v2/mcp/invoke`: authenticated with the same agent token. JSON contains `namespace` (optional), `tool_name` (required) and `args` (mode-discriminated JSON). `caller_agent_id`, `workspace_id`, `team_id`, and `invocation_id` are **not accepted** in the request body. Internal call correlation is supplied by the host via `x-gg-tool-invocation-id`.
 
-Important constraints:
+The runtime resolves the trusted caller from the credential and rejects archived agents, retired workspaces, and closed sessions. The operator bearer token cannot be substituted. Requests are limited to **64 KiB**. The three model tools are `gg_team`, `gg_message`, and `gg_process`, omitted when their corresponding features are disabled. Native Codex sessions invoke these same tools through in-process `item/tool/call` RPCs with host-bound caller and invocation identity; Codex does not use the scoped MCP HTTP endpoint.
 
-- MCP request body limit is `64 KiB`.
-- `tool_name` is required, also accepts camelCase `toolName`.
-- `caller_agent_id` is required, also accepts camelCase `callerAgentId`.
-- `invocation_id` is optional, also accepts camelCase `invocationId`.
-- closed/failed caller sessions are rejected with `400`.
-- `namespace`, when present, must match the tool prefix. `gg_process` accepts `gg_process_*`; `gg_team` accepts `gg_team_*`.
-
-`GET /v1/mcp/capabilities` reports the enabled GG tool namespaces and tool names:
-
-- `gg_process`: `gg_process_run`, `gg_process_status`, `gg_process_logs`, `gg_process_kill`
-- `gg_team`: `gg_team_status`, `gg_team_message`, `gg_team_manage`
-
-Team MCP tools advertise under `gg_team` when the runtime team MCP policy is enabled. The same response includes `ggTeamManagePermissions` so agents can see whether non-lead members may add or remove team members through MCP, and `ggTeamModelPresets` so agents can discover user-friendly `model_preset` names for `gg_team_manage` add mode. If team MCP is disabled, team tools are omitted from capabilities and direct `gg_team_*` invocations return an `ok:false` envelope with `feature_disabled`.
-
-`gg_team_status` returns a team/member snapshot for an active team member. Member rows include activity state, last team-message context, managed-worktree metadata, `added_by`, and `context_window_remaining_percentage`. The percentage is derived from persisted provider usage when usage includes a context-window size and token counts. Codex and Claude sessions can report it after completed turns with usage; ACP remains `null` unless the configured ACP agent emits compatible usage data.
-
-`gg_team_message` sends direct messages or broadcasts by setting `recipient_agent_id` to a member id or `"broadcast"`. Optional `image_paths` are stored with the message and delivered as image input items for supported providers. `gg_team_manage` adds one member when `remove_agent_ids` is absent, and removes one or more members when `remove_agent_ids` is present. Add mode accepts optional `model_preset` and `image_paths`; selected presets set the spawned session provider/model and metadata, and add-mode images are attached to the canonical onboarding message. ACP image attachments are not modeled by this runtime yet; team MCP calls that would send `image_paths` to ACP sessions return an `unsupported_provider_images` error instead of dropping the attachment.
-
-Agent-initiated membership management is configurable in runtime config:
-
-```toml
-[teams]
-enabled = true
-non_lead_can_add_members = false
-non_lead_can_remove_members = false
-
-[[teams.model_presets]]
-name = "fast"
-provider = "codex"
-model = "gpt-6-luna"
-thinking_effort = "low"
+```json
+{"namespace":"gg_message","tool_name":"gg_message","args":{"mode":"direct","agent_id":"sess_recipient","message":"Hello"}}
 ```
 
-The lead can add and remove members by default. Non-lead members can use `gg_team_manage` add/remove only when the matching flag is enabled. This policy gates MCP-initiated membership control; authenticated HTTP team administration remains the human/client control plane.
+`gg_team` accepts `status`, `add`, `remove`, `assign_worktree`; `gg_message` accepts `direct` and `broadcast`; `gg_process` accepts `run`, `list`, `status`, `cancel`. Each mode validates its own fields and rejects unrelated/unknown fields. A `gg_team` add creates the canonical agent and delivers the optional onboarding prompt or images through canonical direct messaging. Worktree cleanup on removal is not enabled via model tools yet. Processes notify their owner of terminal completion automatically.
 
-Codex, Claude, and ACP provider sessions all receive the bundled `gg-mcp-server` configuration when enabled. The sidecar forwards provider tool calls to this gateway, so `gg_process` and `gg_team` behavior is provider-agnostic and uses the same success/error envelope across providers:
+The legacy **operator-authenticated** `GET /v1/mcp/capabilities` and `POST /v1/mcp/invoke` remain temporarily for existing automation. Their previous request format includes `caller_agent_id` and optional `invocation_id`; provider sessions no longer receive operator bearer credentials and use `v2` exclusively.
+
+Tool envelopes are compact and consistent:
 
 ```json
 {"ok":true,"result":{}}
 ```
 
 ```json
-{"ok":false,"error":{"code":"unauthorized","message":"..."}}
+{"ok":false,"error":{"code":"bad_request","message":"...","retryable":false}}
 ```
 
-Example:
-
-```bash
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "namespace":"gg_process",
-    "tool_name":"gg_process_run",
-    "caller_agent_id":"'"$SESSION_ID"'",
-    "args":{"command":"echo from mcp"}
-  }' \
-  "$BASE_URL/v1/mcp/invoke"
-```
-
-See [MCP and Sidecars](/docs/mcp-and-sidecars) for sidecar details.
+`gg_team` mutations first record a durable intent keyed to the trusted caller and invocation ID, then persist the exact successful response. Exact replays return the receipt; conflicting payloads return `conflict`. After a crash or ambiguous failure, an unreceipted operation returns non-retryable `outcome_unresolved` rather than silently applying the change twice. All ambiguous mutation transport failures use `outcome_unresolved` and must not be blindly retried. See [MCP and Sidecars](/docs/mcp-and-sidecars) for the provider wiring.
 
 ## Error mapping
 

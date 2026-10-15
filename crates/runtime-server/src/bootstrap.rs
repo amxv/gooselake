@@ -65,7 +65,7 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
             args: Vec::new(),
             enable_process_tools: config.processes.enabled,
             gateway_url: Some(format!(
-                "{}/v1/mcp",
+                "{}/v2/mcp",
                 config.server.public_base_url.trim_end_matches('/')
             )),
             gateway_token: Some(auth.bearer_token.clone()),
@@ -107,7 +107,7 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         .unwrap_or_else(|| config.providers.claude_auth_mode.clone());
     claude_bridge_env.insert("GG_CLAUDE_AUTH_MODE".to_string(), claude_auth_mode);
     let mcp_gateway_url = format!(
-        "{}/v1/mcp",
+        "{}/v2/mcp",
         config.server.public_base_url.trim_end_matches('/')
     );
     let claude_provider = Arc::new(ClaudeProvider::new(ClaudeProviderConfig {
@@ -164,7 +164,7 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
     let mut provider_registry = ProviderRegistry::new();
     if config.providers.codex.enabled {
         provider_registry
-            .register(codex_provider)
+            .register(codex_provider.clone())
             .context("failed to register codex provider")?;
     }
     if config.providers.claude.enabled {
@@ -187,11 +187,6 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         )
         .context("failed to initialize runtime session manager")?,
     );
-    let mut startup_recovery = runtime
-        .recover_startup()
-        .await
-        .context("failed running startup recovery for session runtime")?;
-
     let process_manager = RuntimeProcessManager::new_with_runtime(
         store.clone(),
         runtime.clone(),
@@ -211,13 +206,6 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
     .await
     .context("failed to initialize process manager")?;
     let recovered_processes = process_manager.startup_recovered_processes().await;
-    if !recovered_processes.is_empty() {
-        startup_recovery.notes.push(format!(
-            "startup process recovery reconciled {} durable process records: {}",
-            recovered_processes.len(),
-            recovered_processes.join(", ")
-        ));
-    }
     let team_comms = RuntimeTeamCommsService::new(
         store.clone(),
         runtime.clone(),
@@ -262,6 +250,25 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
             })
             .collect(),
     }));
+    if config.providers.codex.enabled {
+        let bound: Arc<dyn runtime_core::ToolGateway> = tool_gateway.clone();
+        codex_provider
+            .attach_native_gg_gateway(&bound)
+            .context("failed to bind Codex native GG tool authority")?;
+    }
+    // Attach provider-native tools before recovery can resume a Codex session.
+    // Otherwise recovered threads may receive stale/duplicate MCP tools.
+    let mut startup_recovery = runtime
+        .recover_startup()
+        .await
+        .context("failed running startup recovery for session runtime")?;
+    if !recovered_processes.is_empty() {
+        startup_recovery.notes.push(format!(
+            "startup process recovery reconciled {} durable process records: {}",
+            recovered_processes.len(),
+            recovered_processes.join(", ")
+        ));
+    }
     let retried_deferred_deliveries = team_comms
         .recover_startup_deferred_deliveries()
         .await

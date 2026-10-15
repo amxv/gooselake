@@ -43,6 +43,7 @@ mod mcp_core;
 mod mcp_policy_process;
 mod process_more;
 mod provider_contract_routes;
+mod scoped_mcp;
 mod session_basics;
 mod team_routes;
 mod workspace_agent_routes;

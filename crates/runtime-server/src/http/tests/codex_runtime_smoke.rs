@@ -508,13 +508,6 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
         source_auth.display()
     );
 
-    let gg_mcp_command_path = standalone_gg_mcp_server_command_path();
-    assert!(
-        gg_mcp_command_path.exists(),
-        "branch-owned gg-mcp-server launcher is missing at {}",
-        gg_mcp_command_path.display()
-    );
-
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -542,20 +535,54 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
         let _ = axum::serve(listener, smoke_server_router).await;
     });
 
+    let workspace_root = temp_dir.path().join("native-gg-workspace");
+    std::fs::create_dir_all(&workspace_root).expect("create Codex GG workspace root");
+    let register_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v2/workspaces")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header("Idempotency-Key", "codex-native-gg-smoke-workspace")
+                .body(Body::from(
+                    serde_json::json!({
+                        "canonical_root": workspace_root,
+                        "display_name": "Native Codex GG smoke"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("register Codex GG workspace");
+    assert_eq!(register_response.status(), StatusCode::OK);
+    let registered: runtime_core::WorkspaceRegisterResponse = serde_json::from_slice(
+        &to_bytes(register_response.into_body(), usize::MAX)
+            .await
+            .expect("Codex GG workspace response"),
+    )
+    .expect("Codex GG workspace JSON");
+
     let create_response = router
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/sessions")
+                .uri(format!(
+                    "/v2/workspaces/{}/agents",
+                    registered.workspace.workspace_id
+                ))
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::from(
                     serde_json::json!({
                         "provider": "codex",
                         "model": codex_test_model(),
-                        "cwd": temp_dir.path().display().to_string(),
-                        "permission_mode": "danger_full_access",
+                        "cwd": workspace_root,
+                        "permission_intent": "danger_full_access",
+                        "title": "Native GG live smoke agent",
                         "metadata": {"smoke": "real_codex_gg_process_tool"}
                     })
                     .to_string(),
@@ -563,15 +590,15 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
                 .unwrap(),
         )
         .await
-        .expect("create Codex GG MCP smoke session");
+        .expect("create canonical Codex GG smoke agent");
     assert_eq!(create_response.status(), StatusCode::OK);
-    let create_json: serde_json::Value = serde_json::from_slice(
+    let created: runtime_core::WorkspaceAgentRecord = serde_json::from_slice(
         &to_bytes(create_response.into_body(), usize::MAX)
             .await
             .expect("create Codex GG MCP body"),
     )
     .expect("create Codex GG MCP json");
-    let session_id = create_json["id"].as_str().expect("session id").to_string();
+    let session_id = created.agent_id;
 
     let session_config = config
         .resolve_provider_dir("codex")
@@ -581,16 +608,14 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
         .join("config.toml");
     let rendered_session_config =
         std::fs::read_to_string(&session_config).expect("session-specific Codex config");
+    // Codex uses native dynamic GG tools; it must not receive a redundant GG
+    // MCP registration, caller identity metadata, or any gateway credential.
     assert!(
-        rendered_session_config
-            .contains(format!("GG_MCP_CALLER_AGENT_ID = \"{session_id}\"").as_str()),
-        "session-specific Codex config must carry the exact caller identity; config={}",
+        !rendered_session_config.contains("mcp_servers.gg")
+            && !rendered_session_config.contains("GG_MCP_GATEWAY_TOKEN")
+            && !rendered_session_config.contains("GG_MCP_CALLER_AGENT_ID"),
+        "session-specific Codex config must not expose the legacy GG MCP bridge; config={}",
         session_config.display()
-    );
-    assert!(
-        rendered_session_config
-            .contains(format!("GG_MCP_GATEWAY_URL = \"http://{listen_addr}/v1/mcp\"").as_str()),
-        "session-specific Codex config must point at the live runtime GG MCP gateway"
     );
 
     let marker_path = temp_dir.path().join("codex-gg-process-marker.txt");
@@ -598,7 +623,7 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     let completion_token = "CODEX_GG_PROCESS_OK_63851";
     let tool_command = format!("printf '{marker_token}\\n' > '{}'", marker_path.display());
     let prompt = format!(
-        "Use the MCP server named gg and invoke its gg_process_run tool exactly once to run this exact command: {tool_command}. The model-facing tool may be namespaced by the MCP server; select the gg server's gg_process_run tool. Do not use shell or command execution directly. After the MCP tool completes, reply with exactly: {completion_token}"
+        "Use the native gg_process tool exactly once with mode=run and command exactly: {tool_command}. Do not use shell or command execution directly. After the GG tool returns, reply with exactly: {completion_token}"
     );
 
     let send_response = router
@@ -708,43 +733,58 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
         "Codex GG MCP terminal text missing completion token; text={terminal_text}"
     );
 
-    assert_eq!(
-        std::fs::read_to_string(&marker_path)
-            .expect("GG process marker")
-            .trim(),
-        marker_token,
-        "GG process tool must create the expected marker"
-    );
-
-    let processes_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!(
-                    "/v1/processes?session_id={session_id}&include_completed=true"
-                ))
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .expect("list Codex-owned processes");
-    assert_eq!(processes_response.status(), StatusCode::OK);
-    let processes: Vec<runtime_core::ProcessSummary> = serde_json::from_slice(
-        &to_bytes(processes_response.into_body(), usize::MAX)
+    // `run` admits work asynchronously. The model can complete its initial
+    // turn before the scheduler launches the process, so poll the *operator*
+    // process view (not another model/tool turn) until the durable record is
+    // terminal. This also proves an actual native tool invocation happened.
+    let process_deadline = std::time::Instant::now() + Duration::from_secs(40);
+    let tool_process = loop {
+        let processes_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v1/processes?session_id={session_id}&include_completed=true"
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
-            .expect("Codex process list body"),
-    )
-    .expect("Codex process list json");
-    let tool_process = processes
-        .iter()
-        .find(|process| process.command.to_string().contains(marker_token))
-        .expect("expected gg_process_run-owned process record");
+            .expect("list Codex-owned processes");
+        assert_eq!(processes_response.status(), StatusCode::OK);
+        let observed_processes = serde_json::from_slice::<Vec<runtime_core::ProcessSummary>>(
+            &to_bytes(processes_response.into_body(), usize::MAX)
+                .await
+                .expect("Codex process list body"),
+        )
+        .expect("Codex process list json");
+        if let Some(process) = observed_processes
+            .iter()
+            .find(|process| process.command.to_string().contains(marker_token))
+        {
+            if runtime_core::process_status_is_terminal(&process.status) {
+                break process.clone();
+            }
+        }
+        assert!(
+            std::time::Instant::now() < process_deadline,
+            "native gg_process never reached terminal state; observed={observed_processes:?}, turn={terminal_event}"
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
     assert_eq!(
         tool_process.session_id.as_deref(),
         Some(session_id.as_str())
     );
     assert_eq!(tool_process.status, "completed");
+    assert_eq!(
+        std::fs::read_to_string(&marker_path)
+            .expect("GG process marker")
+            .trim(),
+        marker_token,
+        "native GG process tool must create the expected marker"
+    );
 
     let close_response = router
         .clone()

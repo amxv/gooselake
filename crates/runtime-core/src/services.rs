@@ -11,7 +11,8 @@ use serde_json::Value;
 use crate::{
     AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
     AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageListRequest,
-    AgentMessageListResponse, AgentMessageRecord, AgentRetryDeliveryRequest, ApprovalRecord,
+    AgentMessageListResponse, AgentMessageRecord, AgentRetryDeliveryRequest,
+    AgentToolMutationAdmission, AgentToolMutationCommand, ApprovalRecord,
     LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
     LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
     LegacyWorkspaceMigrationStatus, ManagedProcessAdmission, ManagedProcessRecord,
@@ -30,6 +31,28 @@ use crate::{
 
 #[async_trait]
 pub trait RuntimeStore: Send + Sync {
+    /// Admission is committed before any native spawn, archive, or worktree
+    /// mutation. A previously admitted but unreceipted call fails closed.
+    fn begin_agent_tool_mutation(
+        &self,
+        _command: &AgentToolMutationCommand,
+    ) -> Result<AgentToolMutationAdmission, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable model-tool mutation admission unavailable".into(),
+        ))
+    }
+
+    fn finish_agent_tool_mutation(
+        &self,
+        _operation_id: &str,
+        _exact_result: &Value,
+        _finished_at: i64,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable model-tool mutation receipt unavailable".into(),
+        ))
+    }
+
     fn begin_session_edit_rerun(
         &self,
         _operation: &SessionEditRerunOperation,
@@ -287,6 +310,13 @@ pub trait RuntimeStore: Send + Sync {
     fn get_workspace_agent_by_id(
         &self,
         _agent_id: &str,
+    ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn get_workspace_agent_by_alias(
+        &self,
+        _alias: &str,
     ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
         Ok(None)
     }

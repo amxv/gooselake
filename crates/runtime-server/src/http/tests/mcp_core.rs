@@ -526,9 +526,11 @@ async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
         assert_eq!(env.get("GG_MCP_CALLER_AGENT_ID"), Some(&session_id));
         assert_eq!(
             env.get("GG_MCP_GATEWAY_URL"),
-            Some(&"http://127.0.0.1:8787/v1/mcp".to_string())
+            Some(&"http://127.0.0.1:8787/v2/mcp".to_string())
         );
-        assert_eq!(env.get("GG_MCP_GATEWAY_TOKEN"), Some(&token));
+        let scoped = runtime_core::mint_scoped_mcp_token(&token, &session_id);
+        assert_eq!(env.get("GG_MCP_GATEWAY_TOKEN"), Some(&scoped));
+        assert_ne!(env.get("GG_MCP_GATEWAY_TOKEN"), Some(&token));
         assert_eq!(
             env.get("GG_MCP_ENABLE_PROCESS_TOOLS"),
             Some(&"1".to_string())

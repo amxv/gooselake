@@ -13,6 +13,7 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
+use rmcp::ServerHandler;
 use serde_json::{Value, json};
 
 use crate::{
@@ -90,6 +91,12 @@ fn tool_result_marks_error_when_envelope_is_not_ok() {
     }));
 
     assert_eq!(result.is_error, Some(true));
+    let text = result.content[0]
+        .raw
+        .as_text()
+        .expect("MCP tool errors are serialized as text");
+    let payload: Value = serde_json::from_str(&text.text).expect("MCP error envelope");
+    assert_eq!(payload["error"]["retryable"], false);
 }
 
 #[test]
@@ -415,6 +422,7 @@ async fn team_manage_tool_schema_injects_model_preset_enum_from_cached_capabilit
                 revision: 5,
                 presets: vec!["planner".to_string(), "designer".to_string()],
                 team_tools_enabled: true,
+                process_tools_enabled: true,
             },
         ))),
     };
@@ -484,6 +492,7 @@ async fn tools_list_hides_team_tools_when_cached_capabilities_disable_team_names
                 revision: 1,
                 presets: Vec::new(),
                 team_tools_enabled: false,
+                process_tools_enabled: true,
             },
         ))),
     };
@@ -500,6 +509,104 @@ async fn tools_list_hides_team_tools_when_cached_capabilities_disable_team_names
             .iter()
             .any(|tool| tool.name.as_ref() == "gg_process_status"),
         "non-team tools should remain listed"
+    );
+}
+
+#[tokio::test]
+async fn scoped_provider_mcp_discovery_is_exactly_three_and_honors_capability_switches() {
+    let mut server = GgMcpServer {
+        tool_router: GgMcpServer::tool_router(),
+        gateway_client_config: Some(GatewayClientConfig {
+            base_url: "http://127.0.0.1:1/v2/mcp".into(),
+            auth_token: "scoped-fake-token".into(),
+            default_caller_agent_id: Some("sess_test".into()),
+            require_tool_caller_agent_id: true,
+        }),
+        gateway_client: Arc::new(tokio::sync::RwLock::new(None)),
+        process_tools_enabled: true,
+        team_call_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        team_model_presets_cache: Arc::new(tokio::sync::RwLock::new(Some(
+            TeamModelPresetCapabilitySnapshot {
+                revision: 1,
+                presets: vec!["fast".into()],
+                team_tools_enabled: true,
+                process_tools_enabled: true,
+            },
+        ))),
+    };
+    let mut names = server
+        .tools_with_runtime_metadata()
+        .await
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, vec!["gg_message", "gg_process", "gg_team"]);
+    assert!(server.get_tool("gg_team_status").is_none());
+    assert!(server.get_tool("gg_process_run").is_none());
+    assert!(server.get_tool("gg_ping").is_none());
+
+    server.process_tools_enabled = false;
+    let mut names = server
+        .tools_with_runtime_metadata()
+        .await
+        .into_iter()
+        .map(|tool| tool.name.into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, vec!["gg_message", "gg_team"]);
+    *server.team_model_presets_cache.write().await = Some(TeamModelPresetCapabilitySnapshot {
+        revision: 2,
+        presets: Vec::new(),
+        team_tools_enabled: false,
+        process_tools_enabled: false,
+    });
+    assert!(server.tools_with_runtime_metadata().await.is_empty());
+}
+
+#[test]
+fn scoped_modes_reject_body_supplied_identity_and_irrelevant_fields() {
+    use crate::tool_params::{GgMessageToolRequest, GgProcessToolRequest, GgTeamToolRequest};
+    assert!(serde_json::from_value::<GgTeamToolRequest>(json!({"mode":"status"})).is_ok());
+    assert!(
+        serde_json::from_value::<GgTeamToolRequest>(
+            json!({"mode":"status","workspace_id":"forged"})
+        )
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<GgMessageToolRequest>(
+            json!({"mode":"direct","agent_id":"sess_a","message":"hey"})
+        )
+        .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<GgMessageToolRequest>(
+            json!({"mode":"direct","recipient_agent_id":"sess_a","message":"hey"})
+        )
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<GgMessageToolRequest>(
+            json!({"mode":"broadcast","message":"hey","caller_agent_id":"sess_other"})
+        )
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<GgProcessToolRequest>(json!({"mode":"run","command":"true"}))
+            .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<GgProcessToolRequest>(
+            json!({"mode":"run","command":"true","session_id":"sess_other"})
+        )
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<GgProcessToolRequest>(
+            json!({"mode":"list","caller_agent_id":"sess_other"})
+        )
+        .is_err()
     );
 }
 

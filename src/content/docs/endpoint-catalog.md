@@ -217,17 +217,16 @@ Process scheduler mutations are durable. `POST /v1/processes/scheduler` accepts 
 Diagnostics query parameters:
 - team operations: `team_id`, `operation_id`
 
-## MCP Gateway
+## MCP gateway
 
-- `GET /v1/mcp/capabilities` (Bearer)
-- `POST /v1/mcp/invoke` (Bearer)
+- `GET /v2/mcp/capabilities` (per-agent scoped Bearer credential)
+- `POST /v2/mcp/invoke` (per-agent scoped Bearer credential)
+- `GET /v1/mcp/capabilities` (operator Bearer; legacy compatibility)
+- `POST /v1/mcp/invoke` (operator Bearer; legacy compatibility)
 
-`POST /v1/mcp/invoke` request fields accepted by server handler:
-- `namespace` (optional)
-- `tool_name` (required, accepts alias `toolName`)
-- `caller_agent_id` (required, accepts alias `callerAgentId`)
-- `invocation_id` (optional, accepts alias `invocationId`)
-- `args` (optional JSON value, defaults to `{}`)
+The `v2` model-facing invoke body accepts optional `namespace`, required `tool_name` and mode-discriminated `args`. It rejects body-supplied agent or workspace identity. Trusted `x-gg-tool-invocation-id` request metadata is supplied by the sidecar host. The three current model tools are `gg_team` (`status|add|remove|assign_worktree`), `gg_message` (`direct|broadcast`) and `gg_process` (`run|list|status|cancel`). Both the scoped credential and the active canonical workspace agent record are checked on every call. The `v1` operator-only body still accepts historical `caller_agent_id` and split-tool names as a migration surface; providers do not use it.
+
+Codex registers those same three canonical tools as provider-native dynamic tools, with capability-gated mode-specific JSON schemas and trusted in-process caller derivation. It does not use MCP for GG tools. Claude and ACP continue to use the scoped MCP endpoint above.
 
 ## Notes on Contract Precision
 

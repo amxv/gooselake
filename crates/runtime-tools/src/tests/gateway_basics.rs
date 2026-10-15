@@ -58,9 +58,9 @@ async fn gateway_capabilities_include_team_tools_when_enabled() {
         .get("tools")
         .and_then(Value::as_array)
         .expect("tools");
-    assert!(tools.iter().any(|value| value == GG_TEAM_STATUS));
-    assert!(tools.iter().any(|value| value == GG_TEAM_MESSAGE));
-    assert!(tools.iter().any(|value| value == GG_TEAM_MANAGE));
+    assert!(tools.iter().any(|value| value == "gg_team"));
+    assert!(tools.iter().any(|value| value == "gg_message"));
+    assert!(!tools.iter().any(|value| value == GG_TEAM_STATUS));
 }
 
 #[tokio::test]

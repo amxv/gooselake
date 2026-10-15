@@ -1,8 +1,10 @@
 mod auth;
 mod config;
+mod dynamic_tools;
 mod hard_fork;
 mod lifecycle;
 mod mcp_config;
+mod preferences;
 mod protocol;
 mod provider;
 mod rebind;

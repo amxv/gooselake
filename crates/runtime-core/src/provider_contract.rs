@@ -604,11 +604,11 @@ pub struct ProviderCapabilities {
 pub fn semantic_tool_contract_manifest() -> Value {
     json!({
         "version": "gooselake-tools-v1",
-        "activation": "defined_not_live",
+        "activation": "scoped_mcp_live",
         "identity": {
             "caller": "trusted_runtime",
             "workspace": "trusted_runtime",
-            "invocation": "trusted_runtime"
+            "invocation": "trusted_sidecar_header"
         },
         "validation": {
             "mode_discriminator": "mode",
@@ -619,7 +619,7 @@ pub fn semantic_tool_contract_manifest() -> Value {
                 "name": "gg_team",
                 "semantic_modes": ["status", "add", "remove", "assign_worktree"],
                 "scope": "workspace",
-                "lead_authority": "operator_only"
+                "lead_authority": "workspace_lead_or_authorized_nonlead"
             },
             {
                 "name": "gg_message",
@@ -744,7 +744,7 @@ mod tests {
         let first = semantic_tool_contract_manifest();
         let second = semantic_tool_contract_manifest();
         assert_eq!(first, second);
-        assert_eq!(first["activation"], "defined_not_live");
+        assert_eq!(first["activation"], "scoped_mcp_live");
         assert_eq!(first["identity"]["caller"], "trusted_runtime");
         assert_eq!(first["validation"]["additional_properties"], false);
 
@@ -755,7 +755,10 @@ mod tests {
             tools[0]["semantic_modes"],
             json!(["status", "add", "remove", "assign_worktree"])
         );
-        assert_eq!(tools[0]["lead_authority"], "operator_only");
+        assert_eq!(
+            tools[0]["lead_authority"],
+            "workspace_lead_or_authorized_nonlead"
+        );
         assert_eq!(tools[1]["name"], "gg_message");
         assert_eq!(
             tools[1]["direct_fields"],

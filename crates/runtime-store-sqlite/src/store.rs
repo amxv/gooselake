@@ -2,21 +2,21 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use runtime_core::{
-    AgentDeliveryRecord, AgentMessageRecord, ApprovalRecord, LegacyWorkspaceMigrationApplyCommand,
-    LegacyWorkspaceMigrationApplyResponse, LegacyWorkspaceMigrationResolutionCommand,
-    LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
-    ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
-    ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
-    ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
-    ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
-    RuntimeHydratedState, RuntimeStore, SessionCompactionRun, SessionContextLimitSnapshot,
-    SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation,
-    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission,
-    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
-    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
-    WorkspaceRegisterResponse,
+    AgentDeliveryRecord, AgentMessageRecord, AgentToolMutationAdmission, AgentToolMutationCommand,
+    ApprovalRecord, LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
+    LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
+    LegacyWorkspaceMigrationStatus, ManagedProcessAdmission, ManagedProcessRecord,
+    ManagedProcessTerminalUpdate, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
+    NewRuntimeEvent, OperationDetails, ProcessCompletionUpdate, ProcessRecord,
+    ProcessSchedulerSettings, ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord,
+    RuntimeEventScope, RuntimeHydratedState, RuntimeStore, SessionCompactionRun,
+    SessionContextLimitSnapshot, SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord,
+    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
+    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState,
+    WorkspaceAgentRebindOperation, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
+    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
+    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use serde_json::Value;
 
@@ -57,6 +57,23 @@ impl SqliteRuntimeStore {
 
 #[async_trait]
 impl RuntimeStore for SqliteRuntimeStore {
+    fn begin_agent_tool_mutation(
+        &self,
+        command: &AgentToolMutationCommand,
+    ) -> Result<AgentToolMutationAdmission, RuntimeError> {
+        self.repository.begin_agent_tool_mutation(command)
+    }
+
+    fn finish_agent_tool_mutation(
+        &self,
+        operation_id: &str,
+        exact_result: &Value,
+        finished_at: i64,
+    ) -> Result<(), RuntimeError> {
+        self.repository
+            .finish_agent_tool_mutation(operation_id, exact_result, finished_at)
+    }
+
     fn begin_session_edit_rerun(
         &self,
         operation: &SessionEditRerunOperation,
@@ -412,6 +429,13 @@ impl RuntimeStore for SqliteRuntimeStore {
         agent_id: &str,
     ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
         self.repository.get_workspace_agent_by_id(agent_id)
+    }
+
+    fn get_workspace_agent_by_alias(
+        &self,
+        alias: &str,
+    ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
+        self.repository.get_workspace_agent_by_alias(alias)
     }
 
     fn set_workspace_agent_lifecycle(

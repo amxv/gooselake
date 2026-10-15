@@ -12,10 +12,10 @@ use tokio::sync::Mutex;
 
 use crate::{
     RuntimeProcessManager, TeamCommsConfig, WorktreeServiceConfig, GG_PROCESS_KILL,
-    GG_PROCESS_LOGS, GG_PROCESS_RUN, GG_PROCESS_STATUS, GG_TEAM_MANAGE, GG_TEAM_MESSAGE,
-    GG_TEAM_STATUS,
+    GG_PROCESS_LOGS, GG_PROCESS_RUN, GG_PROCESS_STATUS,
 };
 
+mod canonical;
 mod presets;
 mod stubs;
 mod team;
@@ -36,6 +36,7 @@ pub struct RuntimeToolGateway {
     team_policy: TeamMcpPolicy,
     team_model_presets: ModelPresetCatalog,
     team_manage_add_idempotency: Arc<Mutex<HashMap<String, ManageAddIdempotencyEntry>>>,
+    canonical_coordination_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
 pub struct RuntimeToolGatewayDeps {
@@ -57,6 +58,7 @@ impl RuntimeToolGateway {
             team_policy: deps.team_policy,
             team_model_presets: ModelPresetCatalog::from_presets(deps.team_model_presets),
             team_manage_add_idempotency: Arc::new(Mutex::new(HashMap::new())),
+            canonical_coordination_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -239,6 +241,13 @@ impl ToolGateway for RuntimeToolGateway {
             }
         }
 
+        if matches!(
+            request.tool_name.as_str(),
+            "gg_team" | "gg_message" | "gg_process"
+        ) {
+            return Ok(self.invoke_canonical_tool(request).await);
+        }
+
         if request.tool_name.starts_with("gg_process_") {
             return Ok(self.invoke_process_tool(request).await);
         }
@@ -256,16 +265,15 @@ impl ToolGateway for RuntimeToolGateway {
     }
 
     async fn capabilities(&self) -> Result<Value, RuntimeError> {
-        let mut supported_namespaces = vec!["gg_process"];
-        let mut tools = vec![
-            GG_PROCESS_RUN,
-            GG_PROCESS_STATUS,
-            GG_PROCESS_LOGS,
-            GG_PROCESS_KILL,
-        ];
+        let mut supported_namespaces = Vec::new();
+        let mut tools = Vec::new();
+        if self.process_manager.config.enabled {
+            supported_namespaces.push("gg_process");
+            tools.push("gg_process");
+        }
         if self.team_policy.enabled {
-            supported_namespaces.push("gg_team");
-            tools.extend([GG_TEAM_STATUS, GG_TEAM_MESSAGE, GG_TEAM_MANAGE]);
+            supported_namespaces.extend(["gg_team", "gg_message"]);
+            tools.extend(["gg_team", "gg_message"]);
         }
         Ok(json!({
             "ok": true,
@@ -286,8 +294,9 @@ impl ToolGateway for RuntimeToolGateway {
 
 pub(crate) fn namespace_matches_tool(namespace: &str, tool_name: &str) -> bool {
     match namespace.trim() {
-        "gg_process" => tool_name.starts_with("gg_process_"),
-        "gg_team" => tool_name.starts_with("gg_team_"),
+        "gg_process" => tool_name == "gg_process" || tool_name.starts_with("gg_process_"),
+        "gg_team" => tool_name == "gg_team" || tool_name.starts_with("gg_team_"),
+        "gg_message" => tool_name == "gg_message",
         _ => false,
     }
 }

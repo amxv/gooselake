@@ -14,7 +14,7 @@ use runtime_core::{
     ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
     ProviderSkillDescriptor, ProviderSkillDiscoveryRequest, ProviderTurnAck, ProviderTurnResult,
     ProviderWaitTurnRequest, ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest,
-    RuntimeError, RuntimeProvider,
+    RuntimeError, RuntimeProvider, ToolGateway,
 };
 use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, oneshot};
@@ -24,7 +24,7 @@ use crate::protocol::{
     extract_turn_id, terminal_turn_from_thread_read,
 };
 use crate::rebind::canonical_paths_equal;
-use crate::state::{CodexProviderInner, CodexSessionState};
+use crate::state::{CodexProviderInner, CodexSessionState, WeakToolGateway};
 use crate::CodexProviderConfig;
 
 #[derive(Clone, Debug)]
@@ -45,8 +45,29 @@ impl CodexProvider {
                 sessions: tokio::sync::RwLock::new(std::collections::HashMap::new()),
                 events,
                 admission_lock: tokio::sync::Mutex::new(()),
+                native_tool_gateway: std::sync::RwLock::new(None),
+                native_turn_binding_notify: tokio::sync::Notify::new(),
             }),
         }
+    }
+
+    /// Bind the local runtime tool authority before startup recovery. Codex
+    /// receives native dynamic tools; Claude/ACP keep their scoped MCP path.
+    /// A weak pointer avoids a provider/runtime/gateway ownership cycle.
+    pub fn attach_native_gg_gateway(
+        &self,
+        gateway: &Arc<dyn ToolGateway>,
+    ) -> Result<(), RuntimeError> {
+        let mut bound = self.inner.native_tool_gateway.write().map_err(|_| {
+            RuntimeError::InvalidState("Codex native tool gateway lock poisoned".into())
+        })?;
+        if bound.is_some() {
+            return Err(RuntimeError::Conflict(
+                "Codex native tool gateway already bound".into(),
+            ));
+        }
+        *bound = Some(WeakToolGateway(Arc::downgrade(gateway)));
+        Ok(())
     }
 }
 
@@ -269,7 +290,10 @@ impl RuntimeProvider for CodexProvider {
                 "Codex provider is disabled",
             ));
         }
-        let thread_start_params = Self::thread_start_params(&req)?;
+        let mut thread_start_params = Self::thread_start_params(&req)?;
+        if let Some(specs) = self.native_gg_dynamic_specs().await? {
+            thread_start_params["dynamicTools"] = json!(specs);
+        }
         let developer_instructions =
             Self::developer_instructions(req.launch_policy.system_prompt.as_deref())?;
         let _admission = self.inner.admission_lock.lock().await;
@@ -328,7 +352,10 @@ impl RuntimeProvider for CodexProvider {
                 )));
             }
         }
-        let thread_resume_params = Self::thread_resume_params(&req)?;
+        let mut thread_resume_params = Self::thread_resume_params(&req)?;
+        if let Some(specs) = self.native_gg_dynamic_specs().await? {
+            thread_resume_params["dynamicTools"] = json!(specs);
+        }
         let developer_instructions =
             Self::developer_instructions(req.launch_policy.system_prompt.as_deref())?;
         let _admission = self.inner.admission_lock.lock().await;
@@ -885,47 +912,7 @@ impl RuntimeProvider for CodexProvider {
         &self,
         req: ProviderSessionPreferencesMutationRequest,
     ) -> Result<ProviderSessionPreferencesMutationResult, RuntimeError> {
-        if let Some(effort) = req.current_preferences.thinking_effort {
-            if !runtime_core::codex_model_policy()
-                .thinking_efforts
-                .iter()
-                .any(|supported| supported == effort.as_str())
-            {
-                return Err(RuntimeError::Unsupported(format!(
-                    "Codex does not support current thinking effort {}",
-                    effort.as_str()
-                )));
-            }
-        }
-        let mut sessions = self.inner.sessions.write().await;
-        let session = sessions
-            .get_mut(req.runtime_session_id.as_str())
-            .ok_or_else(|| {
-                RuntimeError::NotFound(format!("Codex session {}", req.runtime_session_id))
-            })?;
-        if session.active_turn_id.is_some() || !session.pending_approvals.is_empty() {
-            return Err(RuntimeError::Conflict(format!(
-                "cannot change thinking preference during active Codex work for {}",
-                req.runtime_session_id
-            )));
-        }
-        if req
-            .expected_revision
-            .is_some_and(|expected| expected != session.preferences_revision)
-        {
-            return Err(RuntimeError::Conflict(format!(
-                "Codex preference revision conflict for {}",
-                req.runtime_session_id
-            )));
-        }
-        if session.current_preferences != req.current_preferences {
-            session.current_preferences = req.current_preferences.clone();
-            session.preferences_revision = session.preferences_revision.saturating_add(1);
-        }
-        Ok(ProviderSessionPreferencesMutationResult {
-            revision: session.preferences_revision,
-            current_preferences: session.current_preferences.clone(),
-        })
+        self.mutate_preferences(req).await
     }
 
     async fn rebind_workspace(

@@ -470,7 +470,7 @@ async fn real_adapter_contract_preserves_ordered_updates_in_terminal_usage() {
     );
     assert_eq!(
         tool_calls[0].get("toolName").and_then(Value::as_str),
-        Some("gg_ping")
+        Some("gg_team")
     );
 }
 

@@ -213,6 +213,18 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed reading workspace agent by id", error))
     }
 
+    pub fn get_workspace_agent_by_alias(
+        &self,
+        alias: &str,
+    ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        let query = format!("{AGENT_SELECT} WHERE a.identity_alias = ?1");
+        connection
+            .query_row(query.as_str(), params![alias], workspace_agent_from_row)
+            .optional()
+            .map_err(|error| db_error("failed reading workspace agent by alias", error))
+    }
+
     pub fn set_workspace_agent_lifecycle(
         &self,
         session: &SessionRecord,

@@ -207,7 +207,7 @@ pub(crate) fn operation_by_idempotency(
         .map_err(|error| db_error("failed querying operation by idempotency identity", error))
 }
 
-fn operation_by_id(
+pub(crate) fn operation_by_id(
     connection: &Connection,
     operation_id: &str,
 ) -> Result<Option<OperationRecord>, RuntimeError> {

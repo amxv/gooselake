@@ -411,7 +411,10 @@ fn expected_gg_mcp_config(
     if let Some(token) = gateway_token {
         env.insert(
             "GG_MCP_GATEWAY_TOKEN".to_string(),
-            Value::String(token.to_string()),
+            Value::String(runtime_core::mint_scoped_mcp_token(
+                token,
+                runtime_session_id,
+            )),
         );
     }
     if let Some(home) = std::env::var_os("HOME")

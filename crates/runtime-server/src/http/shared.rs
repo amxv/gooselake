@@ -58,6 +58,12 @@ pub(super) struct ApiError {
 }
 
 impl ApiError {
+    pub(super) fn unauthorized(message: String) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message,
+        }
+    }
     pub(super) fn bad_request(message: String) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,

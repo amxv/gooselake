@@ -303,6 +303,8 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         }
         (HttpMethod::Get, "/v1/mcp/capabilities") => "Runtime MCP capabilities".to_string(),
         (HttpMethod::Post, "/v1/mcp/invoke") => "Invoke runtime MCP tool".to_string(),
+        (HttpMethod::Get, "/v2/mcp/capabilities") => "Agent-scoped MCP capabilities".to_string(),
+        (HttpMethod::Post, "/v2/mcp/invoke") => "Invoke agent-scoped MCP tool".to_string(),
         _ => format!("{} {}", method.as_str().to_uppercase(), path),
     }
 }
@@ -401,6 +403,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
     let expects_json = matches!(
         path,
         "/v1/mcp/invoke"
+            | "/v2/mcp/invoke"
             | "/v1/providers/claude/auth/api-key"
             | "/v1/providers/claude/auth/import-json"
             | "/v1/sessions"
@@ -497,9 +500,14 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
 fn collect_routes() -> BTreeMap<String, RouteSpec> {
     let source = include_str!("http/mod.rs");
     let mcp_start = source.find("let mcp = Router::new()").unwrap_or(0);
+    let scoped_mcp_marker = "let scoped_mcp = Router::new()";
     let protected_start = source
         .find("let protected = Router::new()")
         .unwrap_or(mcp_start);
+    let scoped_mcp_start = source[mcp_start..protected_start]
+        .find(scoped_mcp_marker)
+        .map(|offset| mcp_start + offset)
+        .unwrap_or(protected_start);
     let protected_marker = "let protected = Router::new()";
     let protected_body_start = protected_start + protected_marker.len();
     let protected_v2_start = source[protected_body_start..]
@@ -520,11 +528,18 @@ fn collect_routes() -> BTreeMap<String, RouteSpec> {
         .unwrap_or(source.len());
 
     let mcp_body_start = mcp_start + "let mcp = Router::new()".len();
-    let mcp_block = if mcp_body_start <= protected_start && protected_start <= source.len() {
-        source[mcp_body_start..protected_start].to_string()
+    let mcp_block = if mcp_body_start <= scoped_mcp_start && scoped_mcp_start <= source.len() {
+        source[mcp_body_start..scoped_mcp_start].to_string()
     } else {
         String::new()
     };
+    let scoped_mcp_body_start = scoped_mcp_start + scoped_mcp_marker.len();
+    let scoped_mcp_block =
+        if scoped_mcp_body_start <= protected_start && protected_start <= source.len() {
+            source[scoped_mcp_body_start..protected_start].to_string()
+        } else {
+            String::new()
+        };
     let protected_block =
         if protected_body_start <= protected_v2_start && protected_v2_start <= source.len() {
             source[protected_body_start..protected_v2_start].to_string()
@@ -546,6 +561,7 @@ fn collect_routes() -> BTreeMap<String, RouteSpec> {
 
     let mut routes = BTreeMap::<String, RouteSpec>::new();
     collect_block_routes(&mut routes, &mcp_block, "/v1/mcp", true);
+    collect_block_routes(&mut routes, &scoped_mcp_block, "/v2/mcp", true);
     collect_block_routes(&mut routes, &protected_block, "/v1", true);
     collect_block_routes(&mut routes, &protected_v2_block, "/v2", true);
     collect_block_routes(&mut routes, &root_block, "", false);
@@ -639,6 +655,7 @@ mod tests {
         assert!(yaml.contains("  /v1/sessions/{session_id}/events/stream:"));
         assert!(yaml.contains("  /v1/teams/{team_id}/messages:"));
         assert!(yaml.contains("  /v1/mcp/invoke:"));
+        assert!(yaml.contains("  /v2/mcp/invoke:"));
         assert!(yaml.contains("  /v1/providers/acp/auth/status:"));
         assert!(yaml.contains("  /v2/workspaces:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/lead:"));

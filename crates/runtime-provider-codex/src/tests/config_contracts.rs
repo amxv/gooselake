@@ -156,7 +156,25 @@ fn codex_gg_mcp_config_includes_gateway_and_caller_identity() {
     assert!(rendered.contains("GG_MCP_REQUIRE_TOOL_CALLER_AGENT_ID = \"1\""));
     assert!(rendered.contains("GG_MCP_CALLER_AGENT_ID = \"sess_codex\""));
     assert!(rendered.contains("GG_MCP_GATEWAY_URL = \"http://127.0.0.1:8787/v1/mcp\""));
-    assert!(rendered.contains("GG_MCP_GATEWAY_TOKEN = \"codex-token\""));
+    let scoped = runtime_core::mint_scoped_mcp_token("codex-token", "sess_codex");
+    assert!(rendered.contains(&format!("GG_MCP_GATEWAY_TOKEN = \"{scoped}\"")));
+    assert!(!rendered.contains("GG_MCP_GATEWAY_TOKEN = \"codex-token\""));
+}
+
+#[test]
+fn codex_scoped_mcp_does_not_expose_operator_bearer_token() {
+    let config = CodexGgMcpConfig {
+        enabled: true,
+        gateway_url: Some("http://127.0.0.1:8787/v2/mcp".into()),
+        gateway_token: Some("long-lived-operator-secret".into()),
+        ..CodexGgMcpConfig::default()
+    };
+    let agent_id = "sess_codex_alpha";
+    let rendered = format_codex_gg_mcp_config(&config, agent_id);
+    let expected = runtime_core::mint_scoped_mcp_token("long-lived-operator-secret", agent_id);
+    assert!(rendered.contains(&format!("GG_MCP_GATEWAY_TOKEN = \"{expected}\"")));
+    assert!(!rendered.contains("GG_MCP_GATEWAY_TOKEN = \"long-lived-operator-secret\""));
+    assert!(rendered.contains("/v2/mcp"));
 }
 
 #[test]

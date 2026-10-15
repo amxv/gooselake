@@ -89,6 +89,15 @@ impl ProcessManager for RuntimeProcessManager {
                 }
             };
 
+            if record.process_id != process_id {
+                // This exact owner/tool-call pair was durably admitted by an
+                // earlier attempt. Do not create a second live handle or a
+                // duplicate queued event, and discard only this attempt's
+                // fresh unreferenced log files.
+                remove_log_bundle(&stdout_path, &stderr_path);
+                return Ok(self.details_from_record(record).await);
+            }
+
             self.live_processes.write().await.insert(
                 process_id.clone(),
                 Arc::new(LiveProcess::from_record(&record)),

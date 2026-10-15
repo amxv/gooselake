@@ -154,9 +154,13 @@ impl ClaudeProvider {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
+            // Provider sessions never receive the operator credential, even
+            // if an old/custom gateway address is still configured.
+            let scoped_token =
+                runtime_core::mint_scoped_mcp_token(gateway_token, runtime_session_id);
             env.insert(
                 "GG_MCP_GATEWAY_TOKEN".to_string(),
-                Value::String(gateway_token.to_string()),
+                Value::String(scoped_token),
             );
         }
         if let Some(home) = std::env::var_os("HOME")

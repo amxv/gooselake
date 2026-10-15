@@ -1,9 +1,11 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
-use runtime_core::{ProviderRuntimeEvent, ProviderSessionPreferences, ProviderTurnResult};
+use runtime_core::{
+    ProviderRuntimeEvent, ProviderSessionPreferences, ProviderTurnResult, ToolGateway,
+};
 use serde_json::Value;
-use tokio::sync::{broadcast, oneshot, Mutex, RwLock};
+use tokio::sync::{broadcast, oneshot, Mutex, Notify, RwLock};
 
 use crate::transport::CodexTransport;
 use crate::CodexProviderConfig;
@@ -92,4 +94,20 @@ pub(super) struct CodexProviderInner {
     pub(super) sessions: RwLock<HashMap<String, CodexSessionState>>,
     pub(super) events: broadcast::Sender<ProviderRuntimeEvent>,
     pub(super) admission_lock: Mutex<()>,
+    /// The native Codex tool bridge holds only a weak pointer: the gateway
+    /// already owns the runtime, whose provider registry owns this provider.
+    pub(super) native_tool_gateway: std::sync::RwLock<Option<WeakToolGateway>>,
+    /// Native tool RPCs can arrive before the turn/start response has bound
+    /// Codex's turn ID to the durable logical turn. Wake gated tool calls as
+    /// soon as that mapping is authoritative.
+    pub(super) native_turn_binding_notify: Notify,
+}
+
+#[derive(Clone)]
+pub(super) struct WeakToolGateway(pub(super) Weak<dyn ToolGateway>);
+
+impl std::fmt::Debug for WeakToolGateway {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("WeakToolGateway(..)")
+    }
 }

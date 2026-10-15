@@ -325,6 +325,31 @@ fn gg_mcp_server_config_can_disable_process_tools_without_disabling_team_tools()
     }));
 }
 
+#[test]
+fn acp_scoped_mcp_does_not_pass_operator_bearer_to_external_agent() {
+    let provider = AcpProvider::new(AcpProviderConfig {
+        enabled: true,
+        gg_mcp_enabled: true,
+        gg_mcp_gateway_url: Some("http://127.0.0.1:8787/v2/mcp".into()),
+        gg_mcp_gateway_token: Some("long-lived-operator-secret".into()),
+        ..AcpProviderConfig::default()
+    });
+    let value = provider
+        .build_gg_mcp_server_config("sess_acp_alpha")
+        .expect("scoped mcp");
+    let env = value["env"].as_array().expect("env array");
+    let token = env
+        .iter()
+        .find(|item| item["name"] == "GG_MCP_GATEWAY_TOKEN")
+        .and_then(|item| item["value"].as_str())
+        .expect("scoped token");
+    assert_eq!(
+        token,
+        runtime_core::mint_scoped_mcp_token("long-lived-operator-secret", "sess_acp_alpha")
+    );
+    assert_ne!(token, "long-lived-operator-secret");
+}
+
 #[tokio::test]
 async fn real_adapter_contract_load_based_resume_is_supported() {
     let harness = FakeAgentHarness::new("load_only");

@@ -28,6 +28,37 @@ impl SqliteRuntimeRepository {
     ) -> Result<ManagedProcessRecord, RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         let transaction = immediate(&mut connection, "managed-process admission")?;
+        // A model tool invocation is one durable process launch, even if the
+        // caller's transport retries after losing its first response. SQLite
+        // IMMEDIATE serializes the lookup and insert across runtime workers.
+        // Historical rows need no migration/unique-index rewrite to receive
+        // the same guarantee for all subsequent admissions.
+        if let (Some(owner), Some(call_id)) = (
+            admission.owner_session_id.as_deref(),
+            admission.tool_call_id.as_deref(),
+        ) {
+            let sql = format!(
+                "SELECT {PROCESS_COLUMNS} FROM managed_processes \
+                 WHERE owner_session_id = ?1 AND tool_call_id = ?2 \
+                 ORDER BY admission_order ASC LIMIT 1"
+            );
+            let existing = transaction
+                .query_row(&sql, params![owner, call_id], managed_process_from_row)
+                .optional()
+                .map_err(|error| db_error("failed checking process tool-call replay", error))?;
+            if let Some(existing) = existing {
+                if existing.workspace_id != admission.workspace_id
+                    || existing.command != admission.command
+                    || existing.cwd != admission.cwd
+                    || existing.timeout_ms != admission.timeout_ms
+                {
+                    return Err(RuntimeError::Conflict(
+                        "process invocation ID was already used with different arguments".into(),
+                    ));
+                }
+                return Ok(existing);
+            }
+        }
         let admission_order = transaction
             .query_row(
                 "SELECT COALESCE(MAX(admission_order), 0) + 1 FROM managed_processes",
@@ -689,6 +720,60 @@ fn managed_process_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Managed
         admitted_at: row.get(34)?,
         updated_at: row.get(35)?,
     })
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn process_tool_call_replays_across_restart_and_rejects_changed_arguments() {
+        let temp = tempfile::tempdir().expect("temp");
+        let database = temp.path().join("runtime.sqlite");
+        let repo = SqliteRuntimeRepository::new(database.clone());
+        repo.initialize_schema().expect("schema");
+        let first = ManagedProcessAdmission {
+            process_id: "proc_first".into(),
+            owner_session_id: Some("sess_owner".into()),
+            workspace_id: Some("ws_a".into()),
+            tool_call_id: Some("mcp_call_one".into()),
+            command: json!({"command":"echo once"}),
+            cwd: None,
+            timeout_ms: Some(10_000),
+            stdout_path: "/tmp/proc_first.stdout".into(),
+            stderr_path: "/tmp/proc_first.stderr".into(),
+            capture_limit_bytes: 10_000,
+            admitted_at: 100,
+        };
+        assert_eq!(
+            repo.admit_managed_process(&first).unwrap().process_id,
+            "proc_first"
+        );
+        drop(repo);
+
+        let reopened = SqliteRuntimeRepository::new(database);
+        let mut replay = first.clone();
+        replay.process_id = "proc_second".into();
+        replay.stdout_path = "/tmp/proc_second.stdout".into();
+        replay.stderr_path = "/tmp/proc_second.stderr".into();
+        replay.admitted_at = 200;
+        assert_eq!(
+            reopened.admit_managed_process(&replay).unwrap().process_id,
+            "proc_first",
+        );
+        assert_eq!(reopened.list_managed_processes().unwrap().len(), 1);
+        replay.command = json!({"command":"echo different"});
+        assert!(matches!(
+            reopened.admit_managed_process(&replay),
+            Err(RuntimeError::Conflict(_))
+        ));
+        replay.owner_session_id = Some("sess_other".into());
+        assert_eq!(
+            reopened.admit_managed_process(&replay).unwrap().process_id,
+            "proc_second",
+        );
+    }
 }
 
 fn scheduler_settings(connection: &Connection) -> Result<ProcessSchedulerSettings, RuntimeError> {

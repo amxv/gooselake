@@ -222,10 +222,10 @@ Process records, queue order, scheduler settings, lifecycle events, capture meta
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `true` | Enables the MCP `gg_team` namespace. HTTP team administration remains available to authenticated clients. |
-| `non_lead_can_add_members` | `false` | Allows non-lead team members to add teammates through `gg_team_manage`. |
-| `non_lead_can_remove_members` | `false` | Allows non-lead team members to remove teammates through `gg_team_manage`. |
-| `model_presets` | built-in presets | User-friendly model shortcuts advertised through `ggTeamModelPresets` and accepted by `gg_team_manage` add mode. |
+| `enabled` | `true` | Enables the model-facing `gg_team` and `gg_message` tools. Historical operator team administration remains available to authenticated clients. |
+| `non_lead_can_add_members` | `false` | Allows non-lead workspace agents to use `gg_team` with `mode=add` when a lead exists. |
+| `non_lead_can_remove_members` | `false` | Allows non-lead workspace agents to use `gg_team` with `mode=remove` when a lead exists. |
+| `model_presets` | built-in presets | User-friendly model shortcuts advertised through `ggTeamModelPresets` and accepted by `gg_team` with `mode=add`. |
 
 Model presets are configured as repeated `[[teams.model_presets]]` tables. `name` is what agents pass as `model_preset`; `model` is the provider model id; `provider` is optional and is inferred for common Codex `gpt-*` and Claude `claude-*` model ids; `thinking_effort` is optional and is passed to the spawned session metadata.
 

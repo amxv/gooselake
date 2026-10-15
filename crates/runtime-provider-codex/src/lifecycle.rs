@@ -9,6 +9,8 @@ use runtime_core::{
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
+use crate::dynamic_tools::dispatch_native_tool_call;
+use crate::dynamic_tools::specs_for_gateway_capabilities;
 use crate::mcp_config::format_codex_gg_mcp_config;
 use crate::protocol::{apply_thread_permission_mode, parse_turn_status, path_component};
 use crate::provider::CodexProvider;
@@ -52,8 +54,9 @@ fn merge_assistant_text_into_usage(
 fn merge_staged_config(
     base_config: Option<&str>,
     gg_mcp_config: Option<&str>,
+    omit_native_gg_server: Option<&str>,
 ) -> Result<Option<String>, RuntimeError> {
-    if base_config.is_none() && gg_mcp_config.is_none() {
+    if base_config.is_none() && gg_mcp_config.is_none() && omit_native_gg_server.is_none() {
         return Ok(None);
     }
 
@@ -65,6 +68,17 @@ fn merge_staged_config(
         })?,
         None => toml::Table::new(),
     };
+
+    // A Codex session must not see the same GG tools twice: native dynamic
+    // tools supersede any historical GG MCP stanza in its staged config.
+    if let Some(server_name) = omit_native_gg_server {
+        if let Some(servers) = base
+            .get_mut("mcp_servers")
+            .and_then(toml::Value::as_table_mut)
+        {
+            servers.remove(server_name);
+        }
+    }
 
     if let Some(gg_mcp_config) = gg_mcp_config {
         let mut overlay = toml::from_str::<toml::Table>(gg_mcp_config).map_err(|error| {
@@ -102,6 +116,37 @@ fn merge_staged_config(
 use crate::CodexProviderConfig;
 
 impl CodexProvider {
+    fn native_gg_enabled(&self) -> bool {
+        self.inner.config.gg_mcp.enabled
+            && self
+                .inner
+                .native_tool_gateway
+                .read()
+                .ok()
+                .and_then(|bound| bound.as_ref().and_then(|weak| weak.0.upgrade()))
+                .is_some()
+    }
+
+    pub(super) async fn native_gg_dynamic_specs(&self) -> Result<Option<Vec<Value>>, RuntimeError> {
+        if !self.inner.config.gg_mcp.enabled {
+            return Ok(None);
+        }
+        let gateway = self
+            .inner
+            .native_tool_gateway
+            .read()
+            .map_err(|_| RuntimeError::InvalidState("native GG gateway lock poisoned".into()))?
+            .as_ref()
+            .and_then(|weak| weak.0.upgrade());
+        let Some(gateway) = gateway else {
+            return Ok(None);
+        };
+        let capabilities = gateway.capabilities().await?;
+        let specs = specs_for_gateway_capabilities(&capabilities)
+            .map_err(RuntimeError::ProtocolViolation)?;
+        Ok(Some(specs))
+    }
+
     pub(super) fn codex_auth_path(&self) -> PathBuf {
         self.inner.config.home_dir.join("auth.json")
     }
@@ -184,11 +229,14 @@ impl CodexProvider {
                 None
             };
             let gg_mcp = runtime_session_id
-                .filter(|_| self.inner.config.gg_mcp.enabled)
+                .filter(|_| self.inner.config.gg_mcp.enabled && !self.native_gg_enabled())
                 .map(|runtime_session_id| {
                     format_codex_gg_mcp_config(&self.inner.config.gg_mcp, runtime_session_id)
                 });
-            match merge_staged_config(base_config.as_deref(), gg_mcp.as_deref())? {
+            let reserved_server = self
+                .native_gg_enabled()
+                .then_some(self.inner.config.gg_mcp.server_name.trim());
+            match merge_staged_config(base_config.as_deref(), gg_mcp.as_deref(), reserved_server)? {
                 Some(rendered) => {
                     std::fs::write(&staged_config_path, rendered).map_err(|error| {
                         RuntimeError::Io(format!(
@@ -386,6 +434,9 @@ impl CodexProvider {
         };
 
         match method {
+            "item/tool/call" => {
+                dispatch_native_tool_call(inner, runtime_session_id, &message).await;
+            }
             "item/completed" => {
                 let Some(params) = message.get("params") else {
                     return;
@@ -663,6 +714,8 @@ impl CodexProvider {
             }
             session.pending_terminal_by_native.remove(native_turn_id)
         };
+
+        self.inner.native_turn_binding_notify.notify_waiters();
 
         if let Some(pending_terminal) = pending_terminal {
             Self::complete_native_turn(

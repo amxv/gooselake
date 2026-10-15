@@ -1324,6 +1324,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/mcp/capabilities:
+    get:
+      summary: Agent-scoped MCP capabilities
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/mcp/invoke:
+    post:
+      summary: Invoke agent-scoped MCP tool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/messages:
     get:
       summary: List canonical agent messages

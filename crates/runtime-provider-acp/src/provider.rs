@@ -384,9 +384,13 @@ impl AcpProvider {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
+            // Never pass the operator bearer through the ACP agent's own
+            // MCP configuration, regardless of the configured gateway URL.
+            let scoped_token =
+                runtime_core::mint_scoped_mcp_token(gateway_token, runtime_session_id);
             env.push(json!({
                 "name": "GG_MCP_GATEWAY_TOKEN",
-                "value": gateway_token,
+                "value": scoped_token,
             }));
         }
         if let Some(home) = std::env::var_os("HOME")

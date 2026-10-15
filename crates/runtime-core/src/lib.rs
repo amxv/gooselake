@@ -11,6 +11,7 @@ pub mod provider_contract;
 pub mod provider_registry;
 pub mod repository_identity;
 pub mod runtime;
+pub mod scoped_mcp;
 pub mod services;
 pub mod session_compaction;
 pub mod state;
@@ -78,6 +79,7 @@ pub use runtime::{
     ApprovalResponseInput, CreateSessionInput, ResumeSessionInput, RuntimeSessionManager,
     SendTurnAccepted, SendTurnInput, StartupRecoveryProviderStatus, StartupRecoverySummary,
 };
+pub use scoped_mcp::{agent_from_scoped_mcp_token, mint_scoped_mcp_token};
 pub use services::{
     RuntimeStore, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCommsService,
     TeamCreateRequest, TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamInterruptAllResponse,
@@ -104,9 +106,10 @@ pub use turn_authority::{
     TurnDispatchPolicySnapshot, TurnDispatchState, TurnInputProjectionSource,
 };
 pub use workspace::{
-    normalized_json_hash, prepare_workspace_registration, OperationActor, OperationActorKind,
-    OperationDetails, OperationEffectRecord, OperationOutboxReceiptRecord, OperationOutboxRecord,
-    OperationPhase, OperationRecord, OperationResourceClaimRecord, OperationTransitionRecord,
+    normalized_json_hash, prepare_workspace_registration, AgentToolMutationAdmission,
+    AgentToolMutationCommand, OperationActor, OperationActorKind, OperationDetails,
+    OperationEffectRecord, OperationOutboxReceiptRecord, OperationOutboxRecord, OperationPhase,
+    OperationRecord, OperationResourceClaimRecord, OperationTransitionRecord,
     WorkspaceLifecycleState, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterRequest,
     WorkspaceRegisterResponse,
 };

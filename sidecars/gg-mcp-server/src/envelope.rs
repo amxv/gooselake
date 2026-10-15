@@ -29,11 +29,19 @@ pub(crate) fn build_team_manage_description(model_presets: &[String]) -> String 
     }
 }
 
-pub(crate) fn envelope_to_call_tool_result(envelope: Value) -> CallToolResult {
+pub(crate) fn envelope_to_call_tool_result(mut envelope: Value) -> CallToolResult {
     let is_ok = envelope
         .get("ok")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+
+    // Every model-visible rejection uses the same retryability contract,
+    // including early sidecar failures before the HTTP gateway is reached.
+    if !is_ok {
+        if let Some(error) = envelope.get_mut("error").and_then(Value::as_object_mut) {
+            error.entry("retryable".to_string()).or_insert(json!(false));
+        }
+    }
 
     let serialized = serde_json::to_string(&envelope).unwrap_or_else(|error| {
         format!(

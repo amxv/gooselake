@@ -321,7 +321,7 @@ for raw_line in sys.stdin:
                     "update": {{
                         "sessionUpdate": "tool_call",
                         "toolCallId": "tool_1",
-                        "toolName": "gg_ping"
+                        "toolName": "gg_team"
                     }}
                 }}
             }})
@@ -433,7 +433,7 @@ pub(super) fn expected_gg_mcp_server(
     if let Some(token) = gateway_token {
         env.push(json!({
             "name": "GG_MCP_GATEWAY_TOKEN",
-            "value": token,
+            "value": runtime_core::mint_scoped_mcp_token(token, runtime_session_id),
         }));
     }
     if let Some(home) = std::env::var_os("HOME")

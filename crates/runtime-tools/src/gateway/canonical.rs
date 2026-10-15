@@ -9,13 +9,35 @@ use runtime_core::{
     ProcessListRequest, ProcessManager, ProcessRunRequest, ProviderThinkingEffort, RuntimeError,
     ToolInvokeRequest, WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute,
     WorkspaceAgentLifecycleState, WorkspaceAgentRebindRequest, WorkspaceMembershipPolicy,
-    WorkspaceWorktreeCreateRequest,
+    WorkspaceWorktreeCreateRequest, WorkspaceWorktreeInventoryEntry,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::team_helpers::status_state_for_session;
 use super::RuntimeToolGateway;
+
+const STATUS_MEMBER_LIMIT: usize = 100;
+const STATUS_AVAILABLE_WORKTREE_LIMIT: usize = 20;
+
+fn bounded_available_worktrees(
+    inventory: &[WorkspaceWorktreeInventoryEntry],
+) -> (Vec<WorkspaceWorktreeInventoryEntry>, usize, bool) {
+    let mut eligible = inventory
+        .iter()
+        .filter(|entry| entry.eligible_for_assignment)
+        .cloned()
+        .collect::<Vec<_>>();
+    eligible.sort_by(|one, two| {
+        one.normalized_name
+            .cmp(&two.normalized_name)
+            .then(one.branch_name.cmp(&two.branch_name))
+            .then(one.worktree_id.cmp(&two.worktree_id))
+    });
+    let total = eligible.len();
+    eligible.truncate(STATUS_AVAILABLE_WORKTREE_LIMIT);
+    (eligible, total, total > STATUS_AVAILABLE_WORKTREE_LIMIT)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
@@ -80,6 +102,35 @@ enum ProcessMode {
 #[cfg(test)]
 mod schema_tests {
     use super::*;
+
+    #[test]
+    fn worktree_status_is_stably_sorted_bounded_and_reports_full_eligible_count() {
+        let inventory = (0..27)
+            .rev()
+            .map(|index| WorkspaceWorktreeInventoryEntry {
+                worktree_id: format!("worktree_{index:02}"),
+                revision: 1,
+                normalized_name: format!("feature-{index:02}"),
+                branch_name: format!("gg/feature-{index:02}"),
+                worktree_path: format!("/repo/worktrees/feature-{index:02}"),
+                retention_policy: "preserve".into(),
+                lifecycle_state: "active".into(),
+                routing_state: "available".into(),
+                attached_agent_ids: Vec::new(),
+                eligible_for_assignment: index != 4 && index != 9,
+                eligibility_blockers: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let (items, count, truncated) = bounded_available_worktrees(&inventory);
+        assert_eq!(count, 25);
+        assert!(truncated);
+        assert_eq!(items.len(), 20);
+        assert_eq!(items[0].normalized_name, "feature-00");
+        assert_eq!(items[4].normalized_name, "feature-05");
+        assert_eq!(items[19].normalized_name, "feature-21");
+        let (repeat, _, _) = bounded_available_worktrees(&inventory);
+        assert_eq!(repeat, items);
+    }
 
     #[test]
     fn status_and_list_modes_reject_forged_or_irrelevant_fields() {
@@ -392,8 +443,24 @@ impl RuntimeToolGateway {
                         .then(one.agent_id.cmp(&two.agent_id))
                 });
                 let member_count = members.len();
-                let mut rows = Vec::with_capacity(member_count.min(100));
-                for member in members.iter().take(100) {
+                // Status uses the current provider-bound context observation;
+                // missing or stale observations remain explicitly unknown.
+                // Optional Git inventory must not make roster status fail.
+                let (inventory, inventory_error) =
+                    match runtime.list_workspace_worktree_inventory(workspace_id) {
+                        Ok(inventory) => (inventory.worktrees, None),
+                        Err(error) => (Vec::new(), Some(error.to_string())),
+                    };
+                let (eligible, eligible_total, eligible_truncated) =
+                    bounded_available_worktrees(&inventory);
+                let lead_alias = workspace.lead_agent_id.as_ref().and_then(|id| {
+                    members
+                        .iter()
+                        .find(|member| &member.agent_id == id)
+                        .map(|member| member.alias.clone())
+                });
+                let mut rows = Vec::with_capacity(member_count.min(STATUS_MEMBER_LIMIT));
+                for member in members.iter().take(STATUS_MEMBER_LIMIT) {
                     let session = runtime.get_session(&member.agent_id).await.ok();
                     let latest_context = store.get_session_context_limit(&member.agent_id)?;
                     let remaining = latest_context
@@ -404,42 +471,56 @@ impl RuntimeToolGateway {
                                 && snapshot.agent_revision == member.revision
                         })
                         .map(|snapshot| snapshot.observation.remaining_percentage);
+                    let is_lead =
+                        workspace.lead_agent_id.as_deref() == Some(member.agent_id.as_str());
+                    let worktree = inventory
+                        .iter()
+                        .find(|entry| {
+                            entry.worktree_path == member.recreation_policy.authoritative_cwd
+                                && entry.attached_agent_ids.contains(&member.agent_id)
+                        })
+                        .map(|entry| {
+                            json!({
+                                "name": entry.normalized_name,
+                                "branch": entry.branch_name,
+                                "state": entry.routing_state,
+                            })
+                        });
+                    let added_by_alias = if member.profile.added_by == "runtime_operator" {
+                        Some("user")
+                    } else {
+                        members
+                            .iter()
+                            .find(|creator| creator.agent_id == member.profile.added_by)
+                            .map(|creator| creator.alias.as_str())
+                    };
                     rows.push(json!({
                         "agent_id": member.agent_id, "alias":member.alias,
                         "title":member.profile.title,
-                        "is_lead":workspace.lead_agent_id.as_deref() == Some(member.agent_id.as_str()),
+                        "title_provenance":member.profile.title_provenance,
+                        "is_lead":is_lead,
+                        "role":if is_lead {"lead"} else {"member"},
                         "state":status_state_for_session(session.as_ref()),
                         "last_activity_at_ms":member.updated_at.max(session.as_ref().map_or(0, |s| s.updated_at)),
                         "context_window_remaining_percentage":remaining,
+                        "context_remaining_pct":remaining,
                         "worktree_cwd":member.recreation_policy.authoritative_cwd,
+                        "worktree":worktree,
                         "added_by":member.profile.added_by,
+                        "added_by_alias":added_by_alias,
                     }));
                 }
-                // Basic roster status must remain available even when the
-                // workspace's optional Git worktree inventory is unavailable.
-                let (eligible, inventory_error) =
-                    match runtime.list_workspace_worktree_inventory(workspace_id) {
-                        Ok(inventory) => (
-                            inventory
-                                .worktrees
-                                .into_iter()
-                                .filter(|item| item.eligible_for_assignment)
-                                .collect::<Vec<_>>(),
-                            None,
-                        ),
-                        Err(error) => (Vec::new(), Some(error.to_string())),
-                    };
-                let count = eligible.len();
                 Ok(json!({
                     "workspace_id":workspace_id,
                     "lead_agent_id":workspace.lead_agent_id,
+                    "lead_alias":lead_alias,
                     "leadless":workspace.lead_agent_id.is_none(),
                     "members":rows,
                     "members_total":member_count,
-                    "members_truncated":member_count > 100,
-                    "available_worktrees":eligible.into_iter().take(20).collect::<Vec<_>>(),
-                    "available_worktrees_total":count,
-                    "available_worktrees_truncated":count > 20,
+                    "members_truncated":member_count > STATUS_MEMBER_LIMIT,
+                    "available_worktrees":eligible,
+                    "available_worktrees_total":eligible_total,
+                    "available_worktrees_truncated":eligible_truncated,
                     "available_worktrees_error":inventory_error,
                 }))
             }

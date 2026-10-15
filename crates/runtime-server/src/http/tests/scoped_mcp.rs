@@ -118,6 +118,14 @@ async fn scoped_team_mutations_replay_exact_receipts_without_duplicating_agents(
     )
     .await;
     assert_eq!(status["result"]["members_total"], 3);
+    assert_eq!(status["result"]["lead_alias"], serde_json::Value::Null);
+    assert_eq!(status["result"]["leadless"], true);
+    let active_members = status["result"]["members"].as_array().expect("roster");
+    assert!(active_members.iter().all(|row| row["role"] == "member"));
+    assert!(active_members.iter().all(|row| row["alias"].is_string()));
+    assert!(active_members
+        .iter()
+        .all(|row| row["context_remaining_pct"].is_null()));
     let new_agent = first["result"]["agent_id"].as_str().unwrap();
     let remove = serde_json::json!({"tool_name":"gg_team","args":{
         "mode":"remove","remove_agent_ids":[new_agent]

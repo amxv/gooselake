@@ -66,10 +66,15 @@ async fn agent_first_direct_routes_cross_workspace_without_legacy_team_ownership
         item.get("text")
             .and_then(Value::as_str)
             .is_some_and(|text| {
-                text.contains("<agent_msg kind=\"direct\"")
+                text.contains("<agent_msg kind=\"dm\"")
                     && text.contains("sender=\"Alpha\"")
-                    && text.contains("context=\"global\"")
+                    && text.contains("context=\"global_direct\"")
             })
+    }));
+    assert!(!items.iter().any(|item| {
+        item.get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.contains("<team_msg") || text.contains("team_id="))
     }));
 }
 
@@ -137,6 +142,25 @@ async fn workspace_broadcast_snapshots_active_roster_and_excludes_sender() {
         .deliveries
         .iter()
         .all(|delivery| delivery.recipient_agent_id != archived));
+    let injected_turns = runtime
+        .list_session_turns(&first)
+        .await
+        .expect("broadcast recipient turns");
+    let injected = injected_turns.last().expect("broadcast injected turn");
+    assert_eq!(
+        injected.source.as_deref(),
+        Some("agent_message_delivery_transport")
+    );
+    let input = injected
+        .input
+        .as_array()
+        .expect("structured broadcast input");
+    let prefix = input[0]["text"].as_str().expect("envelope prefix");
+    assert!(prefix.starts_with("<agent_msg kind=\"broadcast\""));
+    assert!(prefix.contains("sender=\"Leadless Sender\""));
+    assert!(prefix.contains("context=\"workspace_team\""));
+    assert!(prefix.contains("attachments=\"0\""));
+    assert!(!prefix.contains("team_id="));
 
     let late = create_test_session(&runtime).await;
     add_workspace_agent(

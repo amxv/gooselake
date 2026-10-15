@@ -1,8 +1,6 @@
 use serde_json::Value;
 
-use crate::{
-    AgentDeliveryRecord, AgentMessageContextKind, AgentMessageRecord, RuntimeError, SendTurnInput,
-};
+use crate::{AgentDeliveryRecord, AgentMessageRecord, RuntimeError, SendTurnInput};
 
 use super::{
     is_terminal_status, is_valid_transition, normalize_policy, now_ms, DeliveryAttemptTrigger,
@@ -435,13 +433,9 @@ fn build_agent_injected_input(message: &AgentMessageRecord, sender_alias: &str) 
     let kind = if message.scope == "broadcast" {
         "broadcast"
     } else {
-        "direct"
+        "dm"
     };
-    let context = match message.context_kind {
-        AgentMessageContextKind::WorkspaceTeam => "workspace",
-        AgentMessageContextKind::GlobalDirect => "global",
-        AgentMessageContextKind::LegacyTeam => "legacy",
-    };
+    let context = message.context_kind.as_str();
     let prefix = format!(
         "<agent_msg kind=\"{}\" sender=\"{}\" context=\"{}\" attachments=\"{}\">",
         kind,
@@ -472,4 +466,43 @@ fn escape_xml_attr(value: &str) -> String {
         .replace('"', "&quot;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod compact_envelope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn message_context_uses_friendly_identity_and_preserves_image_order() {
+        let message = AgentMessageRecord {
+            id: "msg_1".into(),
+            scope: "direct".into(),
+            context_kind: crate::AgentMessageContextKind::WorkspaceTeam,
+            workspace_id: Some("workspace_internal".into()),
+            legacy_team_id: None,
+            sender_agent_id: "sess_hidden".into(),
+            recipient_agent_ids: vec!["sess_recipient".into()],
+            input: json!([{"type":"text","text":"Review this"}]),
+            image_paths: vec!["/tmp/first.png".into(), "/tmp/second.jpg".into()],
+            priority: "normal".into(),
+            policy: "non_interrupting".into(),
+            correlation_id: None,
+            reply_to_message_id: None,
+            idempotency_key: None,
+            created_at: 10,
+        };
+        let items = build_agent_injected_input(&message, "Alice & \"Bob\" <Lead>");
+        let prefix = items[0]["text"].as_str().unwrap();
+        assert!(prefix.contains("kind=\"dm\""));
+        assert!(prefix.contains("context=\"workspace_team\""));
+        assert!(prefix.contains("sender=\"Alice &amp; &quot;Bob&quot; &lt;Lead&gt;\""));
+        assert!(prefix.contains("attachments=\"2\""));
+        assert!(!prefix.contains("workspace_internal"));
+        assert!(!prefix.contains("sess_hidden"));
+        assert_eq!(items[1]["text"], "Review this");
+        assert_eq!(items[2]["path"], "/tmp/first.png");
+        assert_eq!(items[3]["path"], "/tmp/second.jpg");
+        assert_eq!(items[4]["text"], "</agent_msg>");
+    }
 }

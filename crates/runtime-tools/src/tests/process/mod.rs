@@ -168,6 +168,7 @@ fn workspace_agent_request(root: &std::path::Path, title: &str) -> WorkspaceAgen
         harness_version_slot: None,
         title: Some(title.to_string()),
         metadata: None,
+        onboarding: None,
     }
 }
 

@@ -9,7 +9,7 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use crate::{
     ApprovalRecord, PersistedUserInputSnapshot, ProviderKind, ProviderRegistry,
     ProviderTurnSettings, RuntimeError, RuntimeEventRecord, RuntimeStore, SessionRecord,
-    TurnAdmissionRecord, TurnInputProjectionSource, TurnRecord,
+    TurnAdmissionRecord, TurnInputProjectionSource, TurnRecord, WorkspaceSystemNoticeRecord,
 };
 
 mod approvals;
@@ -26,6 +26,7 @@ mod turn_settings;
 mod turns;
 mod workspace_agents;
 mod workspace_control;
+mod workspace_notices;
 mod worktree_routes;
 
 #[cfg(test)]
@@ -108,6 +109,9 @@ pub struct RuntimeSessionManager {
     pub(super) approvals: RwLock<HashMap<String, ApprovalRecord>>,
     pub(super) turn_admissions: RwLock<HashMap<String, TurnAdmissionRecord>>,
     pub(super) session_policy_mutation_lock: Mutex<()>,
+    // Also holds the keyset cursor so older undeliverable notices cannot
+    // permanently starve later notices in a large workspace.
+    pub(super) system_notice_dispatch_lock: Mutex<Option<WorkspaceSystemNoticeRecord>>,
     next_id: AtomicU64,
     pub(super) event_tx: broadcast::Sender<RuntimeEventRecord>,
 }
@@ -149,6 +153,7 @@ impl RuntimeSessionManager {
             approvals: RwLock::new(approvals),
             turn_admissions: RwLock::new(turn_admissions),
             session_policy_mutation_lock: Mutex::new(()),
+            system_notice_dispatch_lock: Mutex::new(None),
             next_id: AtomicU64::new(1),
             event_tx,
         })

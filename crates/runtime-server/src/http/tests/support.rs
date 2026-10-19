@@ -629,6 +629,31 @@ pub(super) async fn build_test_router_with_team_policy(
 pub(super) async fn build_test_router_with_provider(
     team_policy: TeamMcpPolicy,
 ) -> (Router, String, tempfile::TempDir, Arc<TestProvider>) {
+    let (router, token, temp, provider, _) =
+        build_test_router_with_provider_and_runtime(team_policy).await;
+    (router, token, temp, provider)
+}
+
+pub(super) async fn build_test_router_with_runtime() -> (
+    Router,
+    String,
+    tempfile::TempDir,
+    Arc<RuntimeSessionManager>,
+) {
+    let (router, token, temp, _, runtime) =
+        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
+    (router, token, temp, runtime)
+}
+
+pub(super) async fn build_test_router_with_provider_and_runtime(
+    team_policy: TeamMcpPolicy,
+) -> (
+    Router,
+    String,
+    tempfile::TempDir,
+    Arc<TestProvider>,
+    Arc<RuntimeSessionManager>,
+) {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp_dir.path().join("runtime.sqlite3"),
@@ -724,17 +749,28 @@ pub(super) async fn build_test_router_with_provider(
 
     let router = build_router(AppState {
         app: Arc::new(app),
-        runtime,
+        runtime: runtime.clone(),
         bearer_token: bearer_token.clone(),
         public_base_url: "http://localhost:8080".to_string(),
         startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
     });
 
-    (router, bearer_token, temp_dir, test_provider)
+    (router, bearer_token, temp_dir, test_provider, runtime)
 }
 
 pub(super) async fn build_mixed_provider_test_router(
 ) -> (Router, String, tempfile::TempDir, Arc<TestAcpProvider>) {
+    let (router, token, temp, provider, _) = build_mixed_provider_test_router_with_runtime().await;
+    (router, token, temp, provider)
+}
+
+pub(super) async fn build_mixed_provider_test_router_with_runtime() -> (
+    Router,
+    String,
+    tempfile::TempDir,
+    Arc<TestAcpProvider>,
+    Arc<RuntimeSessionManager>,
+) {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp_dir.path().join("runtime.sqlite3"),
@@ -835,148 +871,44 @@ pub(super) async fn build_mixed_provider_test_router(
 
     let router = build_router(AppState {
         app: Arc::new(app),
-        runtime,
+        runtime: runtime.clone(),
         bearer_token: bearer_token.clone(),
         public_base_url: "http://localhost:8080".to_string(),
         startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
     });
 
-    (router, bearer_token, temp_dir, acp_provider)
+    (router, bearer_token, temp_dir, acp_provider, runtime)
 }
 
-pub(super) struct FakeAcpAgentScript {
-    _temp_dir: tempfile::TempDir,
-    pub(super) script_path: PathBuf,
-    pub(super) log_path: PathBuf,
-}
-
-pub(super) fn fake_acp_agent_with_request_log() -> FakeAcpAgentScript {
-    let temp_dir = tempfile::tempdir().expect("temp dir");
-    let script_path = temp_dir.path().join("fake_acp_http_agent.py");
-    let log_path = temp_dir.path().join("acp-agent-requests.jsonl");
-    fs::write(
-        script_path.as_path(),
-        format!(
-            r#"#!/usr/bin/env python3
-import json
-import os
-import sys
-
-LOG_PATH = {log_path:?}
-NEXT_SESSION_ID = 1
-
-def write_log(obj):
-    with open(LOG_PATH, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(obj) + "\n")
-
-def send(obj):
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
-
-for raw_line in sys.stdin:
-    line = raw_line.strip()
-    if not line:
-        continue
-    msg = json.loads(line)
-    write_log(msg)
-    method = msg.get("method")
-    if method == "initialize":
-        send({{
-            "jsonrpc": "2.0",
-            "id": msg["id"],
-            "result": {{
-                "protocolVersion": 1,
-                "agentCapabilities": {{
-                    "loadSession": True,
-                    "sessionCapabilities": {{
-                        "close": {{}},
-                        "resume": {{}}
-                    }}
-                }},
-                "authMethods": []
-            }}
-        }})
-    elif method == "session/new":
-        session_id = f"sess_{{NEXT_SESSION_ID}}"
-        NEXT_SESSION_ID += 1
-        send({{"jsonrpc": "2.0", "id": msg["id"], "result": {{"sessionId": session_id}}}})
-    elif method == "session/resume":
-        send({{"jsonrpc": "2.0", "id": msg["id"], "result": {{}}}})
-    elif method == "session/prompt":
-        session_id = msg["params"]["sessionId"]
-        prompt = msg["params"].get("prompt", [])
-        prompt_text = " ".join(
-            block.get("text", "")
-            for block in prompt
-            if isinstance(block, dict) and block.get("type") == "text"
-        ).strip()
-        send({{
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {{
-                "sessionId": session_id,
-                "update": {{
-                    "sessionUpdate": "agent_message_chunk",
-                    "messageId": "msg_http_1",
-                    "content": {{
-                        "type": "text",
-                        "text": "Echo: "
-                    }}
-                }}
-            }}
-        }})
-        send({{
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {{
-                "sessionId": session_id,
-                "update": {{
-                    "sessionUpdate": "agent_message_chunk",
-                    "messageId": "msg_http_1",
-                    "content": {{
-                        "type": "text",
-                        "text": prompt_text
-                    }}
-                }}
-            }}
-        }})
-        send({{
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {{
-                "sessionId": session_id,
-                "update": {{
-                    "sessionUpdate": "usage_update",
-                    "used": 3,
-                    "size": 16
-                }}
-            }}
-        }})
-        send({{
-            "jsonrpc": "2.0",
-            "id": msg["id"],
-            "result": {{
-                "stopReason": "end_turn"
-            }}
-        }})
-    elif method == "session/close":
-        send({{"jsonrpc": "2.0", "id": msg["id"], "result": {{}}}})
-"#
-        ),
-    )
-    .expect("write fake acp agent");
-    FakeAcpAgentScript {
-        _temp_dir: temp_dir,
-        script_path,
-        log_path,
-    }
-}
-
-pub(super) fn read_logged_jsonl(path: &Path) -> Vec<serde_json::Value> {
-    let contents = fs::read_to_string(path).expect("read jsonl");
-    contents
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("jsonl line"))
-        .collect()
+/// Test fixtures do not start a background worker, by design: some tests need
+/// to inspect pending notice authority. Tests exercising ordinary user turns
+/// must explicitly establish the required first provider turn via this helper.
+pub(super) async fn finish_test_onboarding(
+    runtime: &Arc<RuntimeSessionManager>,
+    workspace_id: &str,
+    agent_id: &str,
+) {
+    runtime
+        .dispatch_workspace_system_notices()
+        .await
+        .expect("deliver pending system onboarding");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let notice = runtime
+                .get_workspace_onboarding_notice(workspace_id, agent_id)
+                .expect("read onboarding notice")
+                .expect("onboarding intent exists");
+            let session = runtime.get_session(agent_id).await.expect("test session");
+            if notice.state == "delivered" && session.active_turn_id.is_none() {
+                break;
+            }
+            assert!(
+                matches!(notice.state.as_str(), "pending" | "injecting" | "delivered"),
+                "onboarding cannot safely finish: {notice:?}"
+            );
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("mandatory onboarding must finish before user turns");
 }

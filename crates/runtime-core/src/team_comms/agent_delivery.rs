@@ -256,7 +256,12 @@ impl RuntimeTeamCommsService {
                 self.transition_agent_delivery_with_turn_id(&injected.id, ack.turn_id)
                     .await
             }
-            Err(error) if matches!(error, RuntimeError::InvalidState(_)) => {
+            Err(error)
+                if matches!(
+                    error,
+                    RuntimeError::InvalidState(_) | RuntimeError::OnboardingPending(_)
+                ) =>
+            {
                 self.transition_agent_delivery_status(
                     &injecting,
                     DELIVERY_STATUS_DEFERRED,

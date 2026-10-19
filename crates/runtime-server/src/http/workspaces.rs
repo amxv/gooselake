@@ -206,6 +206,33 @@ pub(super) async fn set_workspace_lead(
     ))
 }
 
+pub(super) async fn get_workspace_notice_policy(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<runtime_core::WorkspaceNoticePolicyRecord>, ApiError> {
+    Ok(Json(
+        state
+            .app
+            .services
+            .store
+            .get_workspace_notice_policy(workspace_id.trim())?,
+    ))
+}
+
+pub(super) async fn update_workspace_notice_policy(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+    Json(update): Json<runtime_core::WorkspaceNoticePolicyUpdate>,
+) -> Result<Json<runtime_core::WorkspaceNoticePolicyRecord>, ApiError> {
+    Ok(Json(
+        state
+            .app
+            .services
+            .store
+            .update_workspace_notice_policy(workspace_id.trim(), &update)?,
+    ))
+}
+
 pub(super) async fn interrupt_workspace_turns(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
@@ -311,6 +338,19 @@ pub(super) async fn get_workspace_agent(
         workspace_id.trim(),
         agent_id.trim(),
     )?))
+}
+
+pub(super) async fn get_workspace_agent_onboarding(
+    State(state): State<AppState>,
+    Path((workspace_id, agent_id)): Path<(String, String)>,
+) -> Result<Json<runtime_core::WorkspaceSystemNoticeRecord>, ApiError> {
+    let notice = state
+        .runtime
+        .get_workspace_onboarding_notice(workspace_id.trim(), agent_id.trim())?
+        .ok_or_else(|| {
+            ApiError::not_found(format!("workspace agent {agent_id} onboarding notice"))
+        })?;
+    Ok(Json(notice))
 }
 
 pub(super) async fn archive_workspace_agent(

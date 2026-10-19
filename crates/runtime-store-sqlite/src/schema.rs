@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 14;
+pub(crate) const SCHEMA_VERSION: i64 = 15;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -903,6 +903,36 @@ CREATE TABLE session_edit_rerun_superseded_turns (
 );
 "#;
 
+const MIGRATION_15_SQL: &str = r#"
+-- Immutable automation context is persisted in the same transaction as its
+-- recipient's authority. A dispatch claim is not a provider receipt.
+CREATE TABLE workspace_system_notices (
+  notice_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  recipient_agent_id TEXT NOT NULL REFERENCES workspace_agents(session_id),
+  kind TEXT NOT NULL,
+  correlation_id TEXT NOT NULL UNIQUE,
+  input_json TEXT NOT NULL CHECK(json_valid(input_json)),
+  state TEXT NOT NULL CHECK(state IN ('pending','injecting','delivered','manual_review','cancelled')),
+  turn_id TEXT REFERENCES turns(id),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+  last_error TEXT,
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL
+);
+CREATE INDEX idx_workspace_system_notices_dispatch
+ ON workspace_system_notices(state,created_at_ms,notice_id);
+CREATE INDEX idx_workspace_system_notices_recipient_queue
+ ON workspace_system_notices(recipient_agent_id,state,created_at_ms,notice_id);
+-- A missing row represents the defaults, allowing existing workspaces to
+-- migrate without any speculative per-workspace policy writes.
+CREATE TABLE workspace_notice_policies (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(workspace_id),
+  revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0),
+  policy_json TEXT NOT NULL CHECK(json_valid(policy_json))
+);
+"#;
+
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -959,5 +989,9 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 14,
         sql: MIGRATION_14_SQL,
+    },
+    Migration {
+        version: 15,
+        sql: MIGRATION_15_SQL,
     },
 ];

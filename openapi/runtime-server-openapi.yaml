@@ -1709,6 +1709,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding:
+    get:
+      summary: Inspect durable workspace agent onboarding
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}:
     get:
       summary: Inspect durable worktree rebind operation
@@ -1836,6 +1857,43 @@ paths:
         - name: Idempotency-Key
           in: header
           required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/notice-policy:
+    get:
+      summary: Get workspace lifecycle notification policy
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+    put:
+      summary: Compare-and-set workspace lifecycle notification policy
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
           schema:
             type: string
       requestBody:

@@ -8,6 +8,9 @@ use serde_json::json;
 
 use crate::db::{db_error, open_connection};
 use crate::operation_tx::OperationAuthorityTransaction;
+use crate::repository_workspace_notice::{
+    queue_workspace_lifecycle_notice_tx, workspace_notice_policy_tx,
+};
 use crate::SqliteRuntimeRepository;
 
 const REBIND_CLAIM_KIND: &str = "workspace_agent_rebind";
@@ -675,6 +678,42 @@ impl SqliteRuntimeRepository {
             created_at: changed_at,
         })?;
         release_route_claim(&tx, operation_id, &operation.agent_id)?;
+        if workspace_notice_policy_tx(&tx, &operation.workspace_id)?
+            .policy
+            .worktree_reassignment
+        {
+            let (agent_alias, workspace_name): (String, String) = tx
+                .query_row(
+                    "SELECT a.identity_alias, w.display_name
+                     FROM workspace_agents a JOIN workspaces w ON w.workspace_id = a.workspace_id
+                     WHERE a.session_id = ?1 AND a.workspace_id = ?2",
+                    params![operation.agent_id, operation.workspace_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .map_err(|error| db_error("failed snapshotting rebind notice identity", error))?;
+            let destination_label = match operation.destination_worktree_id.as_deref() {
+                Some(id) => tx
+                    .query_row(
+                        "SELECT worktree_name FROM managed_worktrees WHERE id = ?1",
+                        [id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(|error| db_error("failed snapshotting rebind worktree name", error))?,
+                None => "workspace root".into(),
+            };
+            queue_workspace_lifecycle_notice_tx(
+                &tx,
+                &operation.workspace_id,
+                &operation.agent_id,
+                operation_id,
+                "worktree_route_changed",
+                format!(
+                    "{agent_alias}, your execution route in workspace team \"{workspace_name}\" was changed to {destination_label} ({}). The provider confirmed the new working directory.",
+                    operation.destination_cwd,
+                ),
+                changed_at,
+            )?;
+        }
         tx.commit().map_err(|error| {
             db_error("failed committing verified workspace worktree route", error)
         })?;

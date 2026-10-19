@@ -714,6 +714,7 @@ pub(crate) fn is_missing_gg_mcp_server_bad_request(error: &RuntimeError) -> bool
         | RuntimeError::Configuration(message)
         | RuntimeError::Bootstrap(message)
         | RuntimeError::Conflict(message)
+        | RuntimeError::OnboardingPending(message)
         | RuntimeError::Unsupported(message)
         | RuntimeError::ProviderAlreadyRegistered(message)
         | RuntimeError::ProviderNotRegistered(message)

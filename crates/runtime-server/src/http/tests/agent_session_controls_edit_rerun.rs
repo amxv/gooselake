@@ -11,8 +11,8 @@ async fn ready_edit_agent(
     String,
     String,
 ) {
-    let (router, token, temp, provider) =
-        build_test_router_with_provider(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, runtime) =
+        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
     provider.set_edit_mode(mode);
     let root = temp.path().join("edit-root");
     std::fs::create_dir_all(&root).expect("workspace root");
@@ -38,6 +38,7 @@ async fn ready_edit_agent(
     .await;
     assert_eq!(status, StatusCode::OK);
     let agent_id = agent["agent_id"].as_str().unwrap().to_string();
+    finish_test_onboarding(&runtime, workspace_id, &agent_id).await;
     let (status, accepted) = call(
         &router,
         &token,

@@ -77,6 +77,7 @@ The recovery path scans sessions, turns, approvals, and providers. It can:
 - preserve queued process admission and safely re-queue interrupted launch claims
 - reconcile previously running process groups only after matching persisted PID + OS start identity, then mark them `interrupted`
 - resume pending terminal-process completion delivery without duplicating already-dispatched completion turns
+- recover pre-admission system-notice claims and resume pending member onboarding and lifecycle notifications without duplicating ambiguous provider dispatch
 
 A failed recovery note is usually a real operational signal: inspect provider status, runtime logs, and the durable session/turn records before retrying work.
 

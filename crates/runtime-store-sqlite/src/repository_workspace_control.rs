@@ -5,10 +5,14 @@ use runtime_core::{
     WorkspaceLeadTransitionResponse, WorkspaceLifecycleState,
 };
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
+use std::path::Path;
 
 use crate::db::{collect_rows, db_error, json_to_string, open_connection, string_to_json};
 use crate::operation_tx::OperationAuthorityTransaction;
 use crate::repository_workspace::{operation_by_idempotency, workspace_by_id};
+use crate::repository_workspace_notice::{
+    queue_workspace_lifecycle_notice_tx, workspace_notice_policy_tx,
+};
 use crate::SqliteRuntimeRepository;
 
 const WORKSPACE_LEAD_KIND: &str = "workspace_lead_transition";
@@ -102,7 +106,8 @@ impl SqliteRuntimeRepository {
             require_active_workspace_member(&tx, &command.workspace_id, lead_agent_id)?;
         }
 
-        if workspace.lead_agent_id != command.lead_agent_id {
+        let previous_lead = workspace.lead_agent_id.clone();
+        if previous_lead != command.lead_agent_id {
             let changed = tx
                 .execute(
                     "UPDATE workspaces
@@ -129,6 +134,66 @@ impl SqliteRuntimeRepository {
         let workspace = workspace_by_id(&tx, &command.workspace_id)?.ok_or_else(|| {
             RuntimeError::Bootstrap("workspace disappeared during lead transition".to_string())
         })?;
+        if previous_lead != workspace.lead_agent_id
+            && workspace_notice_policy_tx(&tx, &command.workspace_id)?
+                .policy
+                .lead_transitions
+        {
+            let next_lead_alias = workspace
+                .lead_agent_id
+                .as_deref()
+                .map(|id| {
+                    tx.query_row(
+                        "SELECT identity_alias FROM workspace_agents WHERE session_id = ?1",
+                        [id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .map_err(|error| db_error("failed resolving new lead alias", error))
+                })
+                .transpose()?;
+            if let Some(old_id) = previous_lead.as_deref() {
+                let text = match next_lead_alias.as_deref() {
+                    Some(next) => format!(
+                        "You are no longer the lead of workspace team \"{}\". The new lead is {next}. You remain a team member.",
+                        workspace.display_name
+                    ),
+                    None => format!(
+                        "You are no longer the lead of workspace team \"{}\". The team is now leadless. You remain a team member.",
+                        workspace.display_name
+                    ),
+                };
+                queue_workspace_lifecycle_notice_tx(
+                    &tx,
+                    &command.workspace_id,
+                    old_id,
+                    &command.operation_id,
+                    "lead_demoted",
+                    text,
+                    command.requested_at,
+                )?;
+            }
+            if let Some(new_id) = workspace.lead_agent_id.as_deref() {
+                let lead_instructions = snapshot_lead_instructions(&workspace.canonical_root);
+                let mut introduction = format!(
+                    "Your name is {}. You are now the lead of workspace team \"{}\".",
+                    next_lead_alias.as_deref().unwrap_or("<unknown>"),
+                    workspace.display_name
+                );
+                if !lead_instructions.is_empty() {
+                    introduction.push_str("\n\nPlease follow these lead instructions:\n\n");
+                    introduction.push_str(&lead_instructions.join("\n\n---\n\n"));
+                }
+                queue_workspace_lifecycle_notice_tx(
+                    &tx,
+                    &command.workspace_id,
+                    new_id,
+                    &command.operation_id,
+                    "lead_promoted",
+                    introduction,
+                    command.requested_at,
+                )?;
+            }
+        }
         let response = WorkspaceLeadTransitionResponse {
             operation_id: command.operation_id.clone(),
             workspace: workspace.clone(),
@@ -511,10 +576,56 @@ impl SqliteRuntimeRepository {
             ))
         })?;
         authority.release_claim(&claim)?;
+        if workspace_notice_policy_tx(&tx, &workspace_id)?
+            .policy
+            .workspace_interrupt
+        {
+            for agent_id in &response.interrupted_agent_ids {
+                queue_workspace_lifecycle_notice_tx(
+                    &tx,
+                    &workspace_id,
+                    agent_id,
+                    operation_id,
+                    "workspace_turn_interrupted",
+                    "The operator interrupted your active turn as part of a workspace-wide interruption. Review your work before continuing.".into(),
+                    completed_at,
+                )?;
+            }
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing workspace interrupt completion", error))?;
         Ok(response)
     }
+}
+
+/// Read trusted operator/workspace lead instructions once before committing the
+/// notice. Recovery replays this snapshot, not whatever happens to be on disk
+/// at a later time. Missing or oversized files are optional, not failures.
+fn snapshot_lead_instructions(workspace_root: &str) -> Vec<String> {
+    const RELATIVE: &str = ".agents/gg/lead-readme.md";
+    let sources = [
+        (
+            "Global Lead Instructions",
+            std::env::var_os("HOME").map(|home| Path::new(&home).join(RELATIVE)),
+        ),
+        (
+            "Workspace Lead Instructions",
+            Some(Path::new(workspace_root).join(RELATIVE)),
+        ),
+    ];
+    sources
+        .into_iter()
+        .filter_map(|(label, path)| {
+            let path = path?;
+            if std::fs::metadata(&path).ok()?.len() > 64 * 1024 {
+                return None;
+            }
+            let markdown = std::fs::read_to_string(&path).ok()?;
+            let markdown = markdown.trim();
+            (!markdown.is_empty())
+                .then(|| format!("### {label} (`{}`)\n\n{markdown}", path.display()))
+        })
+        .collect()
 }
 
 fn ensure_operation_replay_matches(

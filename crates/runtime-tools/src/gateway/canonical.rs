@@ -8,8 +8,8 @@ use runtime_core::{
     AgentToolMutationAdmission, AgentToolMutationCommand, ProcessGetRequest, ProcessKillRequest,
     ProcessListRequest, ProcessManager, ProcessRunRequest, ProviderThinkingEffort, RuntimeError,
     ToolInvokeRequest, WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute,
-    WorkspaceAgentLifecycleState, WorkspaceAgentRebindRequest, WorkspaceMembershipPolicy,
-    WorkspaceWorktreeCreateRequest, WorkspaceWorktreeInventoryEntry,
+    WorkspaceAgentLifecycleState, WorkspaceAgentOnboardingRequest, WorkspaceAgentRebindRequest,
+    WorkspaceMembershipPolicy, WorkspaceWorktreeCreateRequest, WorkspaceWorktreeInventoryEntry,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -252,6 +252,7 @@ fn error_envelope(error: RuntimeError) -> Value {
         RuntimeError::NotFound(_) => "not_found",
         RuntimeError::InvalidState(_) => "bad_request",
         RuntimeError::Conflict(_) => "conflict",
+        RuntimeError::OnboardingPending(_) => "onboarding_pending",
         RuntimeError::Unsupported(_) => "unsupported",
         RuntimeError::ProviderDispatch { outcome, .. } if *outcome == "unknown" => {
             "outcome_unresolved"
@@ -612,51 +613,50 @@ impl RuntimeToolGateway {
                 if let Some(preset) = preset.as_ref().and_then(|p| p.thinking_effort.as_deref()) {
                     preferences.thinking_effort = Some(ProviderThinkingEffort::parse(preset)?);
                 }
-                let onboarding_prompt = prompt.clone();
-                let onboarding_images = images.clone();
-                let new_agent = runtime.create_workspace_agent_as_member(workspace_id,
-                    WorkspaceAgentCreateRequest {
-                        provider,model:preset.as_ref().map(|p|p.model.clone()).or_else(||agent.recreation_policy.model.clone()),
-                        permission_intent:agent.recreation_policy.permission_intent.clone(),
-                        setting_sources_intent:agent.recreation_policy.setting_sources_intent.clone(),
-                        current_preferences:preferences,
-                        system_prompt:agent.recreation_policy.system_prompt.clone(),
-                        allowed_tools:agent.recreation_policy.allowed_tools.clone(),
-                        disallowed_tools:agent.recreation_policy.disallowed_tools.clone(),
-                        cwd:None,worktree:route,harness_version_slot:agent.recreation_policy.harness_version_slot.clone(),
-                        title,
-                        metadata:Some(json!({"onboarding":{"prompt":prompt,"image_paths":images,"creator_compaction_subscription":creator_compaction_subscription.unwrap_or_else(||"auto".into())}})),
-                    },caller,self.membership_policy()).await?;
-                let onboarding = if onboarding_prompt.is_some() || !onboarding_images.is_empty() {
-                    let text = onboarding_prompt.unwrap_or_else(|| {
-                        format!(
-                            "You have joined workspace {} as {}.",
-                            workspace_id, new_agent.alias
-                        )
-                    });
-                    let message = self.team_comms.send_agent_direct(AgentDirectMessageRequest {
-                        sender_agent_id:caller.to_string(),
-                        recipient_agent_id:new_agent.agent_id.clone(),
-                        input:json!([{"type":"text","text":text}]),
-                        image_paths:onboarding_images,
-                        priority:"normal".into(),
-                        policy:"non_interrupting".into(),
-                        correlation_id:None,
-                        reply_to_message_id:None,
-                        idempotency_key:None,
-                    }).await.map_err(|error| RuntimeError::provider_dispatch_unknown(
-                        "onboarding_outcome_unresolved",
-                        format!("workspace agent {} was created, but its onboarding delivery could not be confirmed: {error}; inspect workspace status, do not retry add",new_agent.agent_id),
-                    ))?;
-                    Some(
-                        json!({"message_id":message.message.id,"disposition":message.disposition,"deliveries":message.deliveries}),
+                let new_agent = runtime
+                    .create_workspace_agent_as_member(
+                        workspace_id,
+                        WorkspaceAgentCreateRequest {
+                            provider,
+                            model: preset
+                                .as_ref()
+                                .map(|p| p.model.clone())
+                                .or_else(|| agent.recreation_policy.model.clone()),
+                            permission_intent: agent.recreation_policy.permission_intent.clone(),
+                            setting_sources_intent: agent
+                                .recreation_policy
+                                .setting_sources_intent
+                                .clone(),
+                            current_preferences: preferences,
+                            system_prompt: agent.recreation_policy.system_prompt.clone(),
+                            allowed_tools: agent.recreation_policy.allowed_tools.clone(),
+                            disallowed_tools: agent.recreation_policy.disallowed_tools.clone(),
+                            cwd: None,
+                            worktree: route,
+                            harness_version_slot: agent
+                                .recreation_policy
+                                .harness_version_slot
+                                .clone(),
+                            title,
+                            metadata: None,
+                            onboarding: Some(WorkspaceAgentOnboardingRequest {
+                                prompt,
+                                image_paths: images,
+                                skill: None,
+                                creator_compaction_subscription,
+                            }),
+                        },
+                        caller,
+                        self.membership_policy(),
                     )
-                } else {
-                    None
-                };
+                    .await?;
+                let onboarding =
+                    runtime.get_workspace_onboarding_notice(workspace_id, &new_agent.agent_id)?;
                 Ok(
                     json!({"operation":"add","agent_id":new_agent.agent_id,"alias":new_agent.alias,
-                    "workspace_id":new_agent.workspace_id,"onboarding":onboarding}),
+                    "workspace_id":new_agent.workspace_id,"onboarding":onboarding.map(|notice| json!({
+                        "notice_id":notice.notice_id,"state":notice.state
+                    }))}),
                 )
             }
             TeamMode::Remove {

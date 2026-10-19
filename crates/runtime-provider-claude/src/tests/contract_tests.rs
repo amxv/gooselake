@@ -578,6 +578,7 @@ async fn durable_permission_and_thinking_mutations_survive_runtime_restart() {
                 harness_version_slot: Some(runtime_core::HARNESS_VERSION.into()),
                 title: Some("Claude agent".into()),
                 metadata: Some(json!({"test":"claude-policy-restart"})),
+                onboarding: None,
             },
             "claude-policy-test",
         )
@@ -660,21 +661,13 @@ async fn durable_permission_and_thinking_mutations_survive_runtime_restart() {
         )
         .await
         .expect("resume after restart");
-    restarted_manager
-        .send_turn(
-            agent.agent_id.as_str(),
-            SendTurnInput {
-                input: vec![json!({"type":"text","text":"after restart"})],
-                expected_turn_id: None,
-                permission_mode: None,
-                projection_source: None,
-                user_input_snapshot: None,
-                correlation_id: None,
-                turn_settings: Default::default(),
-            },
-        )
-        .await
-        .expect("send after restart");
+    assert_eq!(
+        restarted_manager
+            .dispatch_workspace_system_notices()
+            .await
+            .expect("dispatch mandatory onboarding after restart"),
+        1
+    );
 
     let requests = restarted_harness.read_requests();
     let resume = &requests_for_method(&requests, "session.resume")[0]["params"];

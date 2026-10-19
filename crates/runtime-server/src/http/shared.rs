@@ -89,7 +89,7 @@ impl From<RuntimeError> for ApiError {
             | RuntimeError::InvalidState(message)
             | RuntimeError::ProtocolViolation(message)
             | RuntimeError::Unsupported(message) => Self::bad_request(message),
-            RuntimeError::Conflict(message) => Self {
+            RuntimeError::Conflict(message) | RuntimeError::OnboardingPending(message) => Self {
                 status: StatusCode::CONFLICT,
                 message,
             },

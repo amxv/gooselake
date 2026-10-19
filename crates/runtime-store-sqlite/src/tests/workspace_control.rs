@@ -127,6 +127,9 @@ fn workspace_lead_set_reassign_clear_archive_restore_preserves_titles_and_never_
     let root = temp_dir.path().join("workspace");
     std::fs::create_dir_all(&root).expect("root");
     let workspace = registered_workspace(&repository, &root, "Lead Test");
+    let instructions = root.join(".agents/gg/lead-readme.md");
+    std::fs::create_dir_all(instructions.parent().unwrap()).unwrap();
+    std::fs::write(&instructions, "Keep teammates informed about changes.").unwrap();
     let (mut first_session, first) = create_agent(
         &repository,
         &workspace,
@@ -155,6 +158,23 @@ fn workspace_lead_set_reassign_clear_archive_restore_preserves_titles_and_never_
         .expect("set lead");
     assert_eq!(set.workspace.lead_agent_id.as_deref(), Some("sess_first"));
     assert_eq!(set.workspace.revision, 1);
+    let intro_id = format!(
+        "workspace-lifecycle:{}:lead_promoted:sess_first",
+        set.operation_id
+    );
+    let intro = repository
+        .get_workspace_system_notice(&intro_id)
+        .unwrap()
+        .expect("lead onboarding committed with authority");
+    assert_eq!(intro.state, "pending");
+    assert!(intro.input[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("first-agent"));
+    assert!(intro.input[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Keep teammates informed about changes."));
 
     let reassigned = repository
         .transition_workspace_lead(&lead_command(
@@ -169,6 +189,25 @@ fn workspace_lead_set_reassign_clear_archive_restore_preserves_titles_and_never_
         Some("sess_second")
     );
     assert_eq!(reassigned.workspace.revision, 2);
+    let demotion = repository
+        .get_workspace_system_notice(&format!(
+            "workspace-lifecycle:{}:lead_demoted:sess_first",
+            reassigned.operation_id
+        ))
+        .unwrap()
+        .expect("prior lead demotion is a durable notice");
+    assert!(demotion.input[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("second-agent"));
+    let promotion = repository
+        .get_workspace_system_notice(&format!(
+            "workspace-lifecycle:{}:lead_promoted:sess_second",
+            reassigned.operation_id
+        ))
+        .unwrap()
+        .expect("new lead promotion is durable");
+    assert_eq!(promotion.recipient_agent_id, second.agent_id);
 
     let cleared = repository
         .transition_workspace_lead(&lead_command(
@@ -180,6 +219,13 @@ fn workspace_lead_set_reassign_clear_archive_restore_preserves_titles_and_never_
         .expect("clear lead");
     assert_eq!(cleared.workspace.lead_agent_id, None);
     assert_eq!(cleared.workspace.revision, 3);
+    assert!(repository
+        .get_workspace_system_notice(&format!(
+            "workspace-lifecycle:{}:lead_demoted:sess_second",
+            cleared.operation_id
+        ))
+        .unwrap()
+        .is_some());
 
     let first_after_roles = repository
         .get_workspace_agent(&workspace.workspace_id, &first.agent_id)
@@ -426,6 +472,25 @@ fn workspace_interrupt_snapshots_roster_and_replays_exact_terminal_result() {
         .expect("complete interrupt");
     assert_eq!(completed.interrupted_agent_ids, vec![active.agent_id]);
     assert_eq!(completed.skipped_agent_ids, vec![idle.agent_id]);
+    let notice_id = format!(
+        "workspace-lifecycle:{}:workspace_turn_interrupted:sess_active",
+        plan.operation_id
+    );
+    assert_eq!(
+        repository
+            .get_workspace_system_notice(&notice_id)
+            .unwrap()
+            .expect("interrupt notice committed with completion")
+            .state,
+        "pending"
+    );
+    assert!(repository
+        .get_workspace_system_notice(&format!(
+            "workspace-lifecycle:{}:workspace_turn_interrupted:sess_idle",
+            plan.operation_id
+        ))
+        .unwrap()
+        .is_none());
 
     let restarted = SqliteRuntimeRepository::new(repository.database_path.clone());
     let replay_command = prepare_workspace_interrupt(

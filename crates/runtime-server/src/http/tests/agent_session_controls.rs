@@ -3,7 +3,7 @@ use super::*;
 
 #[tokio::test]
 async fn public_agent_session_controls_are_authenticated_revisioned_and_capability_gated() {
-    let (router, token, temp) = build_test_router().await;
+    let (router, token, temp, runtime) = build_test_router_with_runtime().await;
     let root = temp.path().join("agent-session-controls");
     std::fs::create_dir(&root).expect("workspace root");
     let (status, workspace) = call(
@@ -28,6 +28,7 @@ async fn public_agent_session_controls_are_authenticated_revisioned_and_capabili
     .await;
     assert_eq!(status, StatusCode::OK);
     let agent_id = agent["agent_id"].as_str().expect("agent id");
+    finish_test_onboarding(&runtime, workspace_id, agent_id).await;
     let revision = agent["revision"].as_u64().expect("agent revision");
     let prefix = format!("/v2/agents/{agent_id}");
 
@@ -213,8 +214,8 @@ async fn public_agent_session_controls_are_authenticated_revisioned_and_capabili
 
 #[tokio::test]
 async fn thinking_selected_on_a_turn_is_revisioned_and_inherited_on_later_turns() {
-    let (router, token, temp, provider) =
-        build_test_router_with_provider(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, runtime) =
+        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
     provider.enable_thinking_mutation();
     let root = temp.path().join("turn-thinking-current");
     std::fs::create_dir(&root).expect("workspace root");
@@ -240,6 +241,7 @@ async fn thinking_selected_on_a_turn_is_revisioned_and_inherited_on_later_turns(
     .await;
     assert_eq!(status, StatusCode::OK);
     let agent_id = agent["agent_id"].as_str().unwrap();
+    finish_test_onboarding(&runtime, workspace_id, agent_id).await;
     let initial_revision = agent["revision"].as_u64().unwrap();
     let turns_uri = format!("/v2/agents/{agent_id}/turns");
 
@@ -306,7 +308,12 @@ async fn thinking_selected_on_a_turn_is_revisioned_and_inherited_on_later_turns(
     assert_eq!(status, StatusCode::OK);
     assert!(inherited["turn_id"].is_string());
     assert_eq!(
-        provider.observed_thinking_efforts(agent_id).await,
+        provider
+            .observed_thinking_efforts(agent_id)
+            .await
+            .into_iter()
+            .skip(1)
+            .collect::<Vec<_>>(),
         vec![
             Some(runtime_core::ProviderThinkingEffort::High),
             Some(runtime_core::ProviderThinkingEffort::High),

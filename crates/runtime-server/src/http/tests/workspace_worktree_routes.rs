@@ -222,6 +222,22 @@ async fn workspace_inventory_and_verified_rebind_update_session_policy_and_claim
         .get_operation(op_id)
         .expect("canonical operation")
         .expect("canonical worktree rebind operation");
+    let persisted_notice = store
+        .get_workspace_system_notice(&format!(
+            "workspace-lifecycle:{op_id}:worktree_route_changed:{}",
+            agent.agent_id
+        ))
+        .expect("notice lookup")
+        .expect("verified route and notice commit atomically");
+    assert_eq!(persisted_notice.state, "pending");
+    assert!(persisted_notice.input[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("linked"));
+    assert!(persisted_notice.input[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains(linked.as_str()));
     assert_eq!(
         canonical.operation.phase,
         runtime_core::OperationPhase::Completed

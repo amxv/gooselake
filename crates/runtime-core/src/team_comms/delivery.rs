@@ -231,7 +231,10 @@ impl RuntimeTeamCommsService {
                 Ok(injected)
             }
             Err(error) => {
-                if matches!(error, RuntimeError::InvalidState(_)) {
+                if matches!(
+                    error,
+                    RuntimeError::InvalidState(_) | RuntimeError::OnboardingPending(_)
+                ) {
                     return self
                         .transition_delivery_status(
                             &injecting,

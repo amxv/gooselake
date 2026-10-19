@@ -18,6 +18,7 @@ use runtime_core::{
     WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
     WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
+use runtime_core::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 use serde_json::Value;
 
 use crate::db::{db_error, open_connection};
@@ -338,6 +339,76 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.create_workspace_agent(session, agent)
     }
 
+    fn create_workspace_agent_with_onboarding(
+        &self,
+        session: &SessionRecord,
+        agent: &WorkspaceAgentRecord,
+        onboarding: &WorkspaceAgentOnboardingRequest,
+    ) -> Result<(), RuntimeError> {
+        self.repository
+            .create_workspace_agent_with_onboarding(session, agent, onboarding)
+    }
+
+    fn list_workspace_system_notices(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<WorkspaceSystemNoticeRecord>, RuntimeError> {
+        self.repository.list_workspace_system_notices(limit)
+    }
+
+    fn list_workspace_system_notices_after(
+        &self,
+        after: Option<&WorkspaceSystemNoticeRecord>,
+        limit: usize,
+    ) -> Result<Vec<WorkspaceSystemNoticeRecord>, RuntimeError> {
+        self.repository
+            .list_workspace_system_notices_after(after, limit)
+    }
+
+    fn is_workspace_system_notice_head(
+        &self,
+        notice: &WorkspaceSystemNoticeRecord,
+    ) -> Result<bool, RuntimeError> {
+        self.repository.is_workspace_system_notice_head(notice)
+    }
+
+    fn get_workspace_system_notice(
+        &self,
+        notice_id: &str,
+    ) -> Result<Option<WorkspaceSystemNoticeRecord>, RuntimeError> {
+        self.repository.get_workspace_system_notice(notice_id)
+    }
+
+    fn get_workspace_notice_policy(
+        &self,
+        workspace_id: &str,
+    ) -> Result<runtime_core::WorkspaceNoticePolicyRecord, RuntimeError> {
+        self.repository.get_workspace_notice_policy(workspace_id)
+    }
+
+    fn update_workspace_notice_policy(
+        &self,
+        workspace_id: &str,
+        update: &runtime_core::WorkspaceNoticePolicyUpdate,
+    ) -> Result<runtime_core::WorkspaceNoticePolicyRecord, RuntimeError> {
+        self.repository
+            .update_workspace_notice_policy(workspace_id, update)
+    }
+
+    fn transition_workspace_system_notice(
+        &self,
+        notice_id: &str,
+        from_state: &str,
+        to_state: &str,
+        turn_id: Option<&str>,
+        error: Option<&str>,
+        now: i64,
+    ) -> Result<bool, RuntimeError> {
+        self.repository.transition_workspace_system_notice(
+            notice_id, from_state, to_state, turn_id, error, now,
+        )
+    }
+
     fn begin_workspace_agent_rebind(
         &self,
         operation: &WorkspaceAgentRebindOperation,
@@ -453,6 +524,26 @@ impl RuntimeStore for SqliteRuntimeStore {
             archive_reason,
             changed_at,
         )
+    }
+
+    fn set_workspace_agent_lifecycle_with_initiator(
+        &self,
+        session: &SessionRecord,
+        agent_id: &str,
+        lifecycle: WorkspaceAgentLifecycleState,
+        archive_reason: Option<&str>,
+        changed_at: i64,
+        initiator_agent_id: Option<&str>,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        self.repository
+            .set_workspace_agent_lifecycle_with_initiator(
+                session,
+                agent_id,
+                lifecycle,
+                archive_reason,
+                changed_at,
+                initiator_agent_id,
+            )
     }
 
     fn compare_and_set_workspace_agent_recreation_policy(

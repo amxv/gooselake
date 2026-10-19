@@ -35,6 +35,11 @@ pub enum RuntimeError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// A mandatory workspace onboarding notice must reach native turn
+    /// admission before any unrelated input; transient transport inputs defer.
+    #[error("onboarding pending: {0}")]
+    OnboardingPending(String),
+
     #[error("protocol violation: {0}")]
     ProtocolViolation(String),
 

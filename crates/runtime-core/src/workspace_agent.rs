@@ -111,6 +111,8 @@ pub struct WorkspaceAgentCreateRequest {
     pub harness_version_slot: Option<String>,
     pub title: Option<String>,
     pub metadata: Option<Value>,
+    #[serde(default)]
+    pub onboarding: Option<crate::WorkspaceAgentOnboardingRequest>,
 }
 
 /// The initial provider cwd is selected from trusted workspace/repository

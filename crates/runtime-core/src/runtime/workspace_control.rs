@@ -66,8 +66,13 @@ impl RuntimeSessionManager {
             WorkspaceMembershipAction::Remove,
             policy,
         )?;
-        self.archive_workspace_agent(workspace_id, agent_id, reason)
-            .await
+        self.archive_workspace_agent_with_initiator(
+            workspace_id,
+            agent_id,
+            reason,
+            Some(caller_agent_id),
+        )
+        .await
     }
 
     pub async fn interrupt_workspace(

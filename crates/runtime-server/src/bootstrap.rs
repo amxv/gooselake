@@ -262,6 +262,16 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         .recover_startup()
         .await
         .context("failed running startup recovery for session runtime")?;
+    let resumed_onboarding = runtime
+        .recover_workspace_system_notices()
+        .await
+        .context("failed recovering workspace system notices")?;
+    if resumed_onboarding > 0 {
+        startup_recovery.notes.push(format!(
+            "restored {resumed_onboarding} pre-admission workspace notice claims"
+        ));
+    }
+    runtime.start_workspace_system_notice_worker();
     if !recovered_processes.is_empty() {
         startup_recovery.notes.push(format!(
             "startup process recovery reconciled {} durable process records: {}",

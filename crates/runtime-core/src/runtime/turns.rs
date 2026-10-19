@@ -26,7 +26,7 @@ impl RuntimeSessionManager {
         input: SendTurnInput,
     ) -> Result<SendTurnAccepted, RuntimeError> {
         let policy_mutation_guard = self.session_policy_mutation_lock.lock().await;
-        self.send_turn_under_policy_guard(session_id, input, None, policy_mutation_guard)
+        self.send_turn_under_policy_guard(session_id, input, None, None, policy_mutation_guard)
             .await
     }
 
@@ -35,6 +35,7 @@ impl RuntimeSessionManager {
         session_id: &str,
         input: SendTurnInput,
         authorized_edit_id: Option<&str>,
+        authorized_notice_id: Option<&str>,
         policy_mutation_guard: MutexGuard<'_, ()>,
     ) -> Result<SendTurnAccepted, RuntimeError> {
         if authorized_edit_id.is_some_and(|id| input.correlation_id.as_deref() != Some(id)) {
@@ -69,6 +70,7 @@ impl RuntimeSessionManager {
                 "session {session_id} already has an active turn"
             )));
         }
+        self.ensure_workspace_onboarding_before_turn(session_id, &input, authorized_notice_id)?;
         let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
             RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
         })?;

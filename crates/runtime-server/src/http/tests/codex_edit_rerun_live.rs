@@ -138,6 +138,35 @@ async fn live_workspace_historical_edit_rerun_forks_resends_and_resumes_exact_ch
     assert_eq!(status, StatusCode::OK, "{agent}");
     let agent_id = agent["agent_id"].as_str().expect("agent ID").to_string();
 
+    // Onboarding must be the initial native turn for a workspace agent.
+    // Wait for its durable delivery and completion before editing user turns.
+    timeout(Duration::from_secs(150), async {
+        loop {
+            let (status, notice) = call(
+                &router,
+                &token,
+                "GET",
+                &format!("/v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding"),
+                None,
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{notice}");
+            if notice["state"] == "delivered" {
+                assert!(notice["turn_id"].is_string(), "{notice}");
+                break;
+            }
+            assert!(
+                matches!(notice["state"].as_str(), Some("pending" | "injecting")),
+                "{notice}"
+            );
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    })
+    .await
+    .expect("native onboarding did not dispatch");
+    await_idle(&router, &token, &agent_id).await;
+
     let original = send_and_finish(
         &router,
         &token,

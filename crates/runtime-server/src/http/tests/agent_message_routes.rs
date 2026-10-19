@@ -206,7 +206,8 @@ async fn agent_messages_route_cross_workspace_direct_and_snapshot_workspace_broa
 
 #[tokio::test]
 async fn agent_message_images_are_validated_ordered_and_acp_fails_truthfully() {
-    let (router, token, temp_dir, _) = build_mixed_provider_test_router().await;
+    let (router, token, temp_dir, _, runtime) =
+        build_mixed_provider_test_router_with_runtime().await;
     let root = temp_dir.path().join("images-workspace");
     std::fs::create_dir_all(&root).expect("root");
     let workspace = register_workspace(&router, &token, &root, "Images").await;
@@ -236,6 +237,7 @@ async fn agent_message_images_are_validated_ordered_and_acp_fails_truthfully() {
         "acp",
     )
     .await;
+    finish_test_onboarding(&runtime, &workspace.workspace_id, &recipient.agent_id).await;
     let png = temp_dir.path().join("first.png");
     let jpeg = temp_dir.path().join("second.jpg");
     std::fs::write(&png, [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]).expect("png");
@@ -351,7 +353,7 @@ async fn agent_message_images_are_validated_ordered_and_acp_fails_truthfully() {
 
 #[tokio::test]
 async fn deferred_agent_delivery_can_be_queried_and_cancelled_durably() {
-    let (router, token, temp_dir) = build_test_router().await;
+    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
     let root = temp_dir.path().join("deferred-workspace");
     std::fs::create_dir_all(&root).expect("root");
     let workspace = register_workspace(&router, &token, &root, "Deferred").await;
@@ -365,7 +367,13 @@ async fn deferred_agent_delivery_can_be_queried_and_cancelled_durably() {
         "require_approval",
     )
     .await;
-    let busy = send_turn(&router, &token, &recipient.agent_id).await;
+    // Approval of the system onboarding is itself a busy recipient; another
+    // user turn may not overtake it just to establish this fixture.
+    runtime
+        .dispatch_workspace_system_notices()
+        .await
+        .expect("dispatch onboarding under require-approval policy");
+    let busy = runtime.get_session(&recipient.agent_id).await.unwrap();
     assert_eq!(busy.status, "waiting_for_approval");
 
     let message = create_message(
@@ -625,28 +633,6 @@ async fn list_deliveries(
                 .uri(format!("/v2/messages/{message_id}/deliveries"))
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
-}
-
-async fn send_turn(
-    router: &Router,
-    token: &str,
-    session_id: &str,
-) -> runtime_core::SendTurnAccepted {
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/sessions/{session_id}/turns"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(r#"{"input":[{"type":"text","text":"busy"}]}"#))
                 .unwrap(),
         )
         .await

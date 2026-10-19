@@ -28,6 +28,7 @@ use crate::{
     WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
     WorkspaceRegisterResponse,
 };
+use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 
 #[async_trait]
 pub trait RuntimeStore: Send + Sync {
@@ -287,6 +288,90 @@ pub trait RuntimeStore: Send + Sync {
         ))
     }
 
+    fn create_workspace_agent_with_onboarding(
+        &self,
+        _session: &SessionRecord,
+        _agent: &WorkspaceAgentRecord,
+        _onboarding: &WorkspaceAgentOnboardingRequest,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "atomic workspace onboarding admission unavailable".into(),
+        ))
+    }
+
+    fn list_workspace_system_notices(
+        &self,
+        _limit: usize,
+    ) -> Result<Vec<WorkspaceSystemNoticeRecord>, RuntimeError> {
+        Ok(Vec::new())
+    }
+
+    /// Page in immutable creation order, including notices whose recipients
+    /// are busy or whose admitted provider turn is awaiting reconciliation.
+    fn list_workspace_system_notices_after(
+        &self,
+        after: Option<&WorkspaceSystemNoticeRecord>,
+        limit: usize,
+    ) -> Result<Vec<WorkspaceSystemNoticeRecord>, RuntimeError> {
+        if after.is_some() {
+            return Err(RuntimeError::Unsupported(
+                "workspace system notice cursor pagination unavailable".into(),
+            ));
+        }
+        self.list_workspace_system_notices(limit)
+    }
+
+    /// Only the oldest open notice for a recipient may be newly admitted.
+    /// Keyset fairness must not reorder one agent's lifecycle context.
+    fn is_workspace_system_notice_head(
+        &self,
+        _notice: &WorkspaceSystemNoticeRecord,
+    ) -> Result<bool, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace system notice recipient ordering unavailable".into(),
+        ))
+    }
+
+    fn get_workspace_system_notice(
+        &self,
+        _notice_id: &str,
+    ) -> Result<Option<WorkspaceSystemNoticeRecord>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn get_workspace_notice_policy(
+        &self,
+        _workspace_id: &str,
+    ) -> Result<crate::WorkspaceNoticePolicyRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace notice policy unavailable".into(),
+        ))
+    }
+
+    fn update_workspace_notice_policy(
+        &self,
+        _workspace_id: &str,
+        _update: &crate::WorkspaceNoticePolicyUpdate,
+    ) -> Result<crate::WorkspaceNoticePolicyRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace notice policy unavailable".into(),
+        ))
+    }
+
+    fn transition_workspace_system_notice(
+        &self,
+        _notice_id: &str,
+        _from_state: &str,
+        _to_state: &str,
+        _turn_id: Option<&str>,
+        _error: Option<&str>,
+        _now: i64,
+    ) -> Result<bool, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable workspace notice transitions unavailable".into(),
+        ))
+    }
+
     fn list_workspace_agents(
         &self,
         _workspace_id: &str,
@@ -414,6 +499,18 @@ pub trait RuntimeStore: Send + Sync {
         Err(RuntimeError::Unsupported(
             "workspace agent authority is not implemented by this runtime store".to_string(),
         ))
+    }
+
+    fn set_workspace_agent_lifecycle_with_initiator(
+        &self,
+        session: &SessionRecord,
+        agent_id: &str,
+        lifecycle: WorkspaceAgentLifecycleState,
+        archive_reason: Option<&str>,
+        changed_at: i64,
+        _initiator_agent_id: Option<&str>,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        self.set_workspace_agent_lifecycle(session, agent_id, lifecycle, archive_reason, changed_at)
     }
 
     fn compare_and_set_workspace_agent_recreation_policy(

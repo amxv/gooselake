@@ -148,7 +148,7 @@ pub(super) fn prospective_agent_idempotency_key(
     )
 }
 
-pub(super) fn validate_message_image_paths(
+pub(crate) fn validate_message_image_paths(
     image_paths: Vec<String>,
 ) -> Result<Vec<String>, RuntimeError> {
     if image_paths.len() > MAX_MESSAGE_IMAGE_COUNT {
@@ -193,7 +193,7 @@ pub(super) fn validate_message_image_paths(
     Ok(validated)
 }
 
-pub(super) fn ensure_message_images_supported(
+pub(crate) fn ensure_message_images_supported(
     provider: &str,
     has_images: bool,
 ) -> Result<(), RuntimeError> {

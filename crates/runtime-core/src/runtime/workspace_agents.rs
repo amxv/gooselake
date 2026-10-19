@@ -315,6 +315,53 @@ impl RuntimeSessionManager {
         let added_by = normalize_optional(Some(added_by)).ok_or_else(|| {
             RuntimeError::InvalidState("workspace agent added_by is required".to_string())
         })?;
+        let mut onboarding = request.onboarding.clone().unwrap_or_default();
+        onboarding.image_paths =
+            crate::team_comms::validate_message_image_paths(onboarding.image_paths)?;
+        crate::team_comms::ensure_message_images_supported(
+            request.provider.as_str(),
+            !onboarding.image_paths.is_empty(),
+        )?;
+        if onboarding
+            .prompt
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(RuntimeError::InvalidState(
+                "onboarding prompt cannot be blank".into(),
+            ));
+        }
+        if let Some(skill) = onboarding.skill.as_ref() {
+            if request.provider != ProviderKind::Codex
+                || skill.provider != "codex"
+                || skill.name.trim().is_empty()
+                || !skill
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| Path::new(path).is_file())
+            {
+                return Err(RuntimeError::Unsupported(
+                    "onboarding skills require a readable native Codex skill file".into(),
+                ));
+            }
+        }
+        let subscription = onboarding
+            .creator_compaction_subscription
+            .as_deref()
+            .unwrap_or("auto");
+        if !matches!(subscription, "auto" | "unsubscribed") {
+            return Err(RuntimeError::InvalidState(
+                "creator_compaction_subscription must be auto or unsubscribed".into(),
+            ));
+        }
+        let creator_agent_id = self
+            .store
+            .get_workspace_agent_by_id(&added_by)?
+            .filter(|creator| {
+                creator.workspace_id == workspace_id
+                    && creator.lifecycle_state == WorkspaceAgentLifecycleState::Active
+            })
+            .map(|creator| creator.agent_id);
         // Creating a provider session in an existing checkout must not race
         // native cleanup before its durable ownership claim is admitted.
         let repository_lock = if matches!(
@@ -406,10 +453,18 @@ impl RuntimeSessionManager {
             lifecycle_state: WorkspaceAgentLifecycleState::Active,
             profile: WorkspaceAgentProfile {
                 title: normalize_optional(request.title.as_deref()),
-                title_provenance: "v2_create_request".to_string(),
+                title_provenance: if request
+                    .title
+                    .as_deref()
+                    .is_some_and(|value| !value.trim().is_empty())
+                {
+                    "v2_create_request".to_string()
+                } else {
+                    "unspecified".to_string()
+                },
                 added_by,
-                creator_session_id: None,
-                creator_compaction_subscription: "auto".to_string(),
+                creator_session_id: creator_agent_id,
+                creator_compaction_subscription: subscription.to_string(),
                 joined_at: created_at,
             },
             recreation_policy: policy,
@@ -423,7 +478,10 @@ impl RuntimeSessionManager {
             updated_at: created_at,
         };
 
-        if let Err(error) = self.store.create_workspace_agent(&session, &record) {
+        if let Err(error) =
+            self.store
+                .create_workspace_agent_with_onboarding(&session, &record, &onboarding)
+        {
             let _ = provider
                 .close_session(ProviderCloseSessionRequest {
                     runtime_session_id: session_id,
@@ -444,6 +502,17 @@ impl RuntimeSessionManager {
         workspace_id: &str,
         agent_id: &str,
         reason: Option<&str>,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        self.archive_workspace_agent_with_initiator(workspace_id, agent_id, reason, None)
+            .await
+    }
+
+    pub async fn archive_workspace_agent_with_initiator(
+        self: &Arc<Self>,
+        workspace_id: &str,
+        agent_id: &str,
+        reason: Option<&str>,
+        initiator_agent_id: Option<&str>,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
         let _guard = self.session_policy_mutation_lock.lock().await;
         if self.store.unresolved_session_edit_rerun(agent_id)?
@@ -473,12 +542,13 @@ impl RuntimeSessionManager {
         session.status = "closed".to_string();
         session.closed_at = Some(changed_at);
         session.updated_at = changed_at;
-        let archived = self.store.set_workspace_agent_lifecycle(
+        let archived = self.store.set_workspace_agent_lifecycle_with_initiator(
             &session,
             agent.agent_id.as_str(),
             WorkspaceAgentLifecycleState::Archived,
             normalize_optional(reason).as_deref(),
             changed_at,
+            initiator_agent_id,
         )?;
         self.sessions
             .write()

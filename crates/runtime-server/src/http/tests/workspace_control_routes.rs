@@ -1,6 +1,89 @@
 use super::*;
 
 #[tokio::test]
+async fn workspace_notice_policy_routes_enforce_revision_and_operator_authority() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("notice-policy-workspace");
+    std::fs::create_dir_all(&root).expect("root");
+    let workspace = register_control_workspace(&router, &token, &root, "Notice Policy").await;
+    let uri = format!("/v2/workspaces/{}/notice-policy", workspace.workspace_id);
+
+    let no_auth = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(&uri)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_auth.status(), StatusCode::UNAUTHORIZED);
+
+    let get = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+    let policy: runtime_core::WorkspaceNoticePolicyRecord =
+        serde_json::from_slice(&to_bytes(get.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(policy.revision, 0);
+    assert!(policy.policy.membership_to_lead);
+
+    let input = serde_json::json!({
+        "expected_revision":0,
+        "policy":{
+            "lead_transitions":false,
+            "membership_to_lead":true,
+            "worktree_reassignment":false,
+            "workspace_interrupt":true
+        }
+    });
+    let put = |body: serde_json::Value| {
+        Request::builder()
+            .method("PUT")
+            .uri(&uri)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request")
+    };
+    let updated = router.clone().oneshot(put(input.clone())).await.unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    let saved: runtime_core::WorkspaceNoticePolicyRecord =
+        serde_json::from_slice(&to_bytes(updated.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(saved.revision, 1);
+    assert!(!saved.policy.worktree_reassignment);
+    let stale = router.clone().oneshot(put(input)).await.unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let read_back = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .unwrap();
+    let current: runtime_core::WorkspaceNoticePolicyRecord =
+        serde_json::from_slice(&to_bytes(read_back.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert_eq!(current, saved);
+}
+
+#[tokio::test]
 async fn workspace_membership_mutations_follow_leadless_and_configured_non_lead_policy() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let root = temp_dir.path().join("membership-workspace");
@@ -298,7 +381,7 @@ async fn workspace_lead_routes_are_revisioned_operator_authority_and_archive_cle
 
 #[tokio::test]
 async fn workspace_interrupt_targets_only_active_turns_in_authoritative_roster_and_replays_once() {
-    let (router, token, temp_dir) = build_test_router().await;
+    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
     let root = temp_dir.path().join("interrupt-workspace");
     let outside_root = temp_dir.path().join("outside-workspace");
     std::fs::create_dir_all(&root).expect("workspace root");
@@ -327,10 +410,31 @@ async fn workspace_interrupt_targets_only_active_turns_in_authoritative_roster_a
     )
     .await;
 
-    let active_turn = send_waiting_turn(&router, &token, &active.agent_id).await;
-    let outside_turn = send_waiting_turn(&router, &token, &outside_active.agent_id).await;
-    assert_eq!(active_turn.status, "waiting_for_approval");
-    assert_eq!(outside_turn.status, "waiting_for_approval");
+    // Each approval-requiring onboarding is the mandatory initial turn; it
+    // establishes real active native work for the workspace interrupt test.
+    runtime
+        .dispatch_workspace_system_notices()
+        .await
+        .expect("dispatch onboarding for all three agents");
+    assert_eq!(
+        runtime.get_session(&active.agent_id).await.unwrap().status,
+        "waiting_for_approval"
+    );
+    assert_eq!(
+        runtime
+            .get_session(&outside_active.agent_id)
+            .await
+            .unwrap()
+            .status,
+        "waiting_for_approval"
+    );
+    let outside_turn_id = runtime
+        .get_session(&outside_active.agent_id)
+        .await
+        .unwrap()
+        .active_turn_id
+        .expect("outside onboarding is still waiting for approval");
+    finish_test_onboarding(&runtime, &workspace.workspace_id, &idle.agent_id).await;
 
     let first = interrupt_workspace(
         &router,
@@ -398,7 +502,7 @@ async fn workspace_interrupt_targets_only_active_turns_in_authoritative_roster_a
         .expect("outside session");
     assert_eq!(
         outside_session.active_turn_id.as_deref(),
-        Some(outside_turn.turn_id.as_str())
+        Some(outside_turn_id.as_str())
     );
 
     let operation = store
@@ -589,35 +693,6 @@ async fn set_lead(
     .expect("lead json")
 }
 
-async fn send_waiting_turn(
-    router: &Router,
-    token: &str,
-    agent_id: &str,
-) -> runtime_core::SendTurnAccepted {
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/sessions/{agent_id}/turns"))
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(
-                    r#"{"input":[{"type":"text","text":"hold for approval"}]}"#,
-                ))
-                .expect("turn request"),
-        )
-        .await
-        .expect("turn response");
-    assert_eq!(response.status(), StatusCode::OK);
-    serde_json::from_slice(
-        &to_bytes(response.into_body(), usize::MAX)
-            .await
-            .expect("turn body"),
-    )
-    .expect("turn json")
-}
-
 async fn interrupt_workspace(
     router: &Router,
     token: &str,
@@ -663,5 +738,6 @@ fn membership_agent_request(root: &Path, title: &str) -> runtime_core::Workspace
         harness_version_slot: None,
         title: Some(title.to_string()),
         metadata: Some(serde_json::json!({})),
+        onboarding: None,
     }
 }

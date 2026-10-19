@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 enum HttpMethod {
     Get,
     Post,
+    Put,
     Delete,
 }
 
@@ -14,6 +15,7 @@ impl HttpMethod {
         match self {
             Self::Get => "get",
             Self::Post => "post",
+            Self::Put => "put",
             Self::Delete => "delete",
         }
     }
@@ -224,6 +226,12 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/lead") => {
             "Set, reassign, or clear workspace lead".to_string()
         }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/notice-policy") => {
+            "Get workspace lifecycle notification policy".to_string()
+        }
+        (HttpMethod::Put, "/v2/workspaces/{workspace_id}/notice-policy") => {
+            "Compare-and-set workspace lifecycle notification policy".to_string()
+        }
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/interrupt") => {
             "Interrupt active workspace turns".to_string()
         }
@@ -235,6 +243,9 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         }
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}/agents/{agent_id}") => {
             "Get workspace agent".to_string()
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding") => {
+            "Inspect durable workspace agent onboarding".to_string()
         }
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive") => {
             "Archive workspace agent".to_string()
@@ -396,7 +407,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
 }
 
 fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
-    if method != HttpMethod::Post {
+    if !matches!(method, HttpMethod::Post | HttpMethod::Put) {
         return;
     }
     let expects_multipart = path == "/v1/providers/claude/auth/import-file";
@@ -433,6 +444,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/agents/{agent_id}/edits/{operation_id}/resolve"
             | "/v2/agents/{agent_id}/compactions/{run_id}/resolve"
             | "/v2/workspaces/{workspace_id}/lead"
+            | "/v2/workspaces/{workspace_id}/notice-policy"
             | "/v2/workspaces/{workspace_id}/agents"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
             | "/v2/messages"
@@ -630,6 +642,9 @@ fn parse_route_call(block: &str, route_start: usize) -> Option<(String, Vec<Http
                     if args.contains("post(") {
                         methods.push(HttpMethod::Post);
                     }
+                    if args.contains("put(") {
+                        methods.push(HttpMethod::Put);
+                    }
                     if args.contains("delete(") {
                         methods.push(HttpMethod::Delete);
                     }
@@ -659,6 +674,7 @@ mod tests {
         assert!(yaml.contains("  /v1/providers/acp/auth/status:"));
         assert!(yaml.contains("  /v2/workspaces:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/lead:"));
+        assert!(yaml.contains("  /v2/workspaces/{workspace_id}/notice-policy:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/interrupt:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}:"));

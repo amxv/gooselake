@@ -244,6 +244,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/workspaces/{workspace_id}/lead", post(set_workspace_lead))
         .route(
+            "/workspaces/{workspace_id}/notice-policy",
+            get(get_workspace_notice_policy).put(update_workspace_notice_policy),
+        )
+        .route(
             "/workspaces/{workspace_id}/interrupt",
             post(interrupt_workspace_turns),
         )
@@ -254,6 +258,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/workspaces/{workspace_id}/agents/{agent_id}",
             get(get_workspace_agent),
+        )
+        .route(
+            "/workspaces/{workspace_id}/agents/{agent_id}/onboarding",
+            get(get_workspace_agent_onboarding),
         )
         .route(
             "/workspaces/{workspace_id}/agents/{agent_id}/worktree",

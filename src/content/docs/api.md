@@ -134,14 +134,17 @@ AGENT_RESULT=$(curl -fsS -X POST \
     "allowed_tools":["Read","Grep"],
     "disallowed_tools":["WebFetch"],
     "harness_version_slot":"default",
-    "title":"Builder"
+    "title":"Builder",
+    "onboarding":{"prompt":"Implement the API endpoint","image_paths":[]}
   }' \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents")
 
 AGENT_ID=$(echo "$AGENT_RESULT" | jq -r '.agent_id')
 ```
 
-The runtime uses the opaque `sess_*` value as the durable public agent ID and allocates a separate friendly alias for display and human references. The alias does **not** replace provider-native session references. Creation commits the session, immutable workspace ownership, workspace profile, active roster membership, and the recreation policy atomically; there is no normal `/v2/agents` unowned-creation route and no separate join step.
+The runtime uses the opaque `sess_*` value as the durable public agent ID and allocates a separate friendly alias for display and human references. The alias does **not** replace provider-native session references. Creation commits the session, immutable workspace ownership, workspace profile, active roster membership, recreation policy, **and a deterministic system onboarding notice** atomically; there is no normal `/v2/agents` unowned-creation route and no separate join step. The notice is created even without `onboarding` input. It includes the workspace name, new agent alias/title, and either the current lead alias or an explicit leadless statement, followed by any optional task prompt, native ordered images, and supported Codex skill invocation. The notice is an `automation_context` turn, never a forged user message or a lead-authored DM. ACP image attachments and unsupported skill formats are rejected before creation.
+
+The creation response confirms the **queued intent**, not delivery. The runtime injects when the recipient is idle; busy recipients remain pending. A direct user turn before mandatory onboarding has reached the provider returns `409 Conflict`. Pending message deliveries are **deferred**, and pending process completions remain queued, rather than being marked as terminal provider failures; neither may overtake onboarding. Only the worker's exact claimed onboarding automation input may pass this admission fence. Dispatch outcomes are tracked against a stable correlation ID. Unknown provider outcomes require review, never automatic redelivery. Inspect with `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding`; `state` is `pending`, `injecting`, `delivered`, `manual_review`, or `cancelled`, and `turn_id` is present only after admission/observation. The runtime retries safe pending work after restart. A notice cancelled before any turn admission because its recipient was archived is safely requeued with its original identity on restore; ambiguous or already-delivered onboarding is never resubmitted.
 
 The recreation policy is durable and is reused for startup recovery, lazy provider resume, and explicit restore. It currently includes provider, selected model, immutable launch policy (permission intent, setting-source intent, system prompt, allowed/disallowed tools, authoritative cwd, and harness-version slot), plus mutable current preferences such as thinking effort. Provider-native session identity is persisted separately from that recreation policy.
 
@@ -153,6 +156,9 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 
 curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID"
+
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/onboarding"
 ```
 
 The list defaults to active agents. Use `?lifecycle=archived` for archived history or `?lifecycle=all` for both states.
@@ -293,6 +299,27 @@ curl -fsS -X POST \
 `lead_agent_id`, when non-null, must name an active agent in the same workspace. SQLite enforces that invariant at commit time. A successful change increments the workspace revision; a stale `expected_revision` returns HTTP `409`. Exact retries under the same `Idempotency-Key` replay the original terminal result. Archiving the current lead clears leadership atomically and increments the workspace revision; restoring that agent leaves it as an ordinary active member. There is no oldest-member or other automatic lead election.
 
 The runtime membership authority follows the same workspace policy as Golden Goose: while a workspace is leadless, any active member may add or remove members. Once a lead exists, the lead may manage membership and non-leads are governed independently by the configured `non_lead_can_add_members` and `non_lead_can_remove_members` policy flags. Lead assignment itself remains an operator-only control rather than a model/member action.
+
+### Durable workspace system notices
+
+The runtime inserts lifecycle notifications in the same SQLite transaction that commits the corresponding authority: a newly assigned lead receives a lead-onboarding notice (including optional global then workspace `.agents/gg/lead-readme.md` instructions snapshotted at assignment); a former lead receives demotion/leadless context; the active lead can receive member additions, removals and restorations; a member receives a route-change notice only **after** their provider has proved the new working directory; and each actually interrupted agent can receive a workspace interruption notice when the operation is durably complete. A lead is not notified of their own membership changes or member changes they initiated. Leadless workspaces emit no lead-membership notifications. A no-op or idempotently replayed lead assignment does not create a second notice.
+
+These notifications use the same stable `automation_context` turn admission and replay-safe dispatcher as the mandatory new-member onboarding. They are **not** messages impersonating a human user, and a provider dispatch with an unknown outcome is never blindly retried. Archiving a recipient cancels their pending notice; busy or unavailable recipients are deferred rather than force-dispatched. System notice policy changes affect newly admitted notices, not already-queued snapshots.
+
+Operators can inspect and change the per-workspace policy with independent optimistic revision protection:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/notice-policy"
+
+curl -fsS -X PUT \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"expected_revision":0,"policy":{"lead_transitions":true,"membership_to_lead":true,"worktree_reassignment":true,"workspace_interrupt":true}}' \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/notice-policy"
+```
+
+All four lifecycle flags default to `true`; mandatory onboarding is not suppressible through this policy. The policy revision starts at `0`, increments after each successful change, and mismatched `expected_revision` returns HTTP `409`. It is independent of the workspace lead/roster revision. These operator endpoints require the ordinary `/v2` bearer token; models have no notice-policy mutation tool.
 
 Interrupt every currently active turn owned by the workspace roster:
 
@@ -784,7 +811,7 @@ The runtime resolves the trusted caller from the credential and rejects archived
 {"namespace":"gg_message","tool_name":"gg_message","args":{"mode":"direct","agent_id":"sess_recipient","message":"Hello"}}
 ```
 
-`gg_team` accepts `status`, `add`, `remove`, `assign_worktree`; `gg_message` accepts `direct` and `broadcast`; `gg_process` accepts `run`, `list`, `status`, `cancel`. Each mode validates its own fields and rejects unrelated/unknown fields. A `gg_team` add creates the canonical agent and delivers the optional onboarding prompt or images through canonical direct messaging. Worktree cleanup on removal is not enabled via model tools yet. Processes notify their owner of terminal completion automatically.
+`gg_team` accepts `status`, `add`, `remove`, `assign_worktree`; `gg_message` accepts `direct` and `broadcast`; `gg_process` accepts `run`, `list`, `status`, `cancel`. Each mode validates its own fields and rejects unrelated/unknown fields. A `gg_team` add commits mandatory system onboarding with an optional prompt and ordered image attachments. The returned `onboarding.state` reports queue/dispatch status, not successful model delivery. Worktree cleanup on removal is not enabled via model tools yet. Processes notify their owner of terminal completion automatically.
 
 The `gg_team` status response includes the optional friendly `lead_alias`, each active member's `alias`, `role`, `title_provenance`, creator provenance, activity and `context_remaining_pct`. The context field is `null` without a current provider-session-bound observation; it is never reconstructed from transcript estimates. Attached worktree name, branch and routing state are included where inventory can prove them. Eligible available worktrees are sorted deterministically and capped at 20, with `available_worktrees_total` and `available_worktrees_truncated` describing the full eligible set. The roster remains queryable when Git inventory is unavailable. Agent-message delivery context uses compact `<agent_msg>` envelopes (`dm|broadcast`, `workspace_team|global_direct`, attachment count), not a raw team-ID-bearing model prompt.
 

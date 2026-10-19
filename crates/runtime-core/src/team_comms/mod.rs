@@ -16,6 +16,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 
 use helpers::*;
+pub(crate) use helpers::{ensure_message_images_supported, validate_message_image_paths};
 use state::{DeliveryAttemptTrigger, TeamCommsState};
 
 use crate::{

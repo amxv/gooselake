@@ -18,6 +18,7 @@ mod repository_workspace;
 mod repository_workspace_agent;
 mod repository_workspace_control;
 mod repository_workspace_migration;
+mod repository_workspace_notice;
 mod repository_workspace_rebind;
 mod schema;
 mod store;

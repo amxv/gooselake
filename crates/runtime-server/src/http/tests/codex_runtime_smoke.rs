@@ -565,6 +565,14 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     )
     .expect("Codex GG workspace JSON");
 
+    let marker_path = temp_dir.path().join("codex-gg-process-marker.txt");
+    let marker_token = "CODEX_GG_PROCESS_MARKER_71423";
+    let completion_token = "CODEX_GG_PROCESS_OK_63851";
+    let tool_command = format!("printf '{marker_token}\\n' > '{}'", marker_path.display());
+    let prompt = format!(
+        "Use the native gg_process tool exactly once with mode=run and command exactly: {tool_command}. Do not use shell or command execution directly. After the GG tool returns, reply with exactly: {completion_token}"
+    );
+
     let create_response = router
         .clone()
         .oneshot(
@@ -583,7 +591,8 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
                         "cwd": workspace_root,
                         "permission_intent": "danger_full_access",
                         "title": "Native GG live smoke agent",
-                        "metadata": {"smoke": "real_codex_gg_process_tool"}
+                        "metadata": {"smoke": "real_codex_gg_process_tool"},
+                        "onboarding": {"prompt": prompt}
                     })
                     .to_string(),
                 ))
@@ -618,45 +627,41 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
         session_config.display()
     );
 
-    let marker_path = temp_dir.path().join("codex-gg-process-marker.txt");
-    let marker_token = "CODEX_GG_PROCESS_MARKER_71423";
-    let completion_token = "CODEX_GG_PROCESS_OK_63851";
-    let tool_command = format!("printf '{marker_token}\\n' > '{}'", marker_path.display());
-    let prompt = format!(
-        "Use the native gg_process tool exactly once with mode=run and command exactly: {tool_command}. Do not use shell or command execution directly. After the GG tool returns, reply with exactly: {completion_token}"
-    );
-
-    let send_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/sessions/{session_id}/turns"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "input": [{"type": "text", "text": prompt}],
-                        "expected_turn_id": null,
-                        "permission_mode": null
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("send Codex GG MCP smoke turn");
-    assert_eq!(send_response.status(), StatusCode::OK);
-    let send_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(send_response.into_body(), usize::MAX)
+    // The first native model turn is the system-owned onboarding task. A
+    // direct user turn before that notice would correctly be rejected.
+    let notice_deadline = std::time::Instant::now() + Duration::from_secs(120);
+    let turn_id = loop {
+        let notice_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/v2/workspaces/{}/agents/{session_id}/onboarding",
+                        registered.workspace.workspace_id
+                    ))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
-            .expect("Codex GG MCP send body"),
-    )
-    .expect("Codex GG MCP send json");
-    let turn_id = send_json["turn_id"]
-        .as_str()
-        .expect("Codex GG MCP turn id")
-        .to_string();
+            .expect("Codex onboarding notice read");
+        assert_eq!(notice_response.status(), StatusCode::OK);
+        let notice: runtime_core::WorkspaceSystemNoticeRecord = serde_json::from_slice(
+            &to_bytes(notice_response.into_body(), usize::MAX)
+                .await
+                .expect("Codex onboarding notice body"),
+        )
+        .expect("Codex onboarding notice json");
+        if notice.state == "delivered" {
+            break notice.turn_id.expect("native onboarding turn identity");
+        }
+        assert!(
+            matches!(notice.state.as_str(), "pending" | "injecting")
+                && std::time::Instant::now() < notice_deadline,
+            "Codex onboarding did not reach native admission: {notice:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
 
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     let mut event_cursor = 0_i64;

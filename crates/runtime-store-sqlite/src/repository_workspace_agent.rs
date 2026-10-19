@@ -1,10 +1,12 @@
 use runtime_core::{
-    ProviderKind, RuntimeError, SessionRecord, WorkspaceAgentLifecycleState, WorkspaceAgentProfile,
-    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+    ProviderKind, RuntimeError, SessionRecord, WorkspaceAgentLifecycleState,
+    WorkspaceAgentOnboardingRequest, WorkspaceAgentProfile, WorkspaceAgentRecord,
+    WorkspaceAgentRecreationPolicy, WorkspaceSystemNoticeRecord,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 
 use crate::db::{db_error, json_to_string, open_connection, string_to_json};
+use crate::repository_workspace_notice::queue_membership_lead_notice_tx;
 use crate::SqliteRuntimeRepository;
 
 const AGENT_SELECT: &str = "SELECT
@@ -22,6 +24,24 @@ impl SqliteRuntimeRepository {
         &self,
         session: &SessionRecord,
         agent: &WorkspaceAgentRecord,
+    ) -> Result<(), RuntimeError> {
+        self.create_workspace_agent_with_optional_onboarding(session, agent, None)
+    }
+
+    pub fn create_workspace_agent_with_onboarding(
+        &self,
+        session: &SessionRecord,
+        agent: &WorkspaceAgentRecord,
+        onboarding: &WorkspaceAgentOnboardingRequest,
+    ) -> Result<(), RuntimeError> {
+        self.create_workspace_agent_with_optional_onboarding(session, agent, Some(onboarding))
+    }
+
+    fn create_workspace_agent_with_optional_onboarding(
+        &self,
+        session: &SessionRecord,
+        agent: &WorkspaceAgentRecord,
+        onboarding: Option<&WorkspaceAgentOnboardingRequest>,
     ) -> Result<(), RuntimeError> {
         if session.id != agent.agent_id
             || session.provider != agent.recreation_policy.provider.as_str()
@@ -137,6 +157,32 @@ impl SqliteRuntimeRepository {
             )
             .map_err(|error| db_error("failed claiming initial managed worktree", error))?;
         }
+        if let Some(onboarding) = onboarding {
+            let (display_name, lead_alias): (String, Option<String>) = tx.query_row(
+                "SELECT w.display_name, lead.identity_alias
+                 FROM workspaces w LEFT JOIN workspace_agents lead ON lead.session_id = w.lead_agent_id
+                 WHERE w.workspace_id = ?1",
+                params![agent.workspace_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).map_err(|error| db_error("failed snapshotting onboarding workspace authority", error))?;
+            let notice = WorkspaceSystemNoticeRecord::onboarding(
+                agent,
+                &display_name,
+                lead_alias.as_deref(),
+                onboarding,
+            )?;
+            Self::insert_workspace_system_notice_tx(&tx, &notice)?;
+            queue_membership_lead_notice_tx(
+                &tx,
+                &agent.workspace_id,
+                &agent.agent_id,
+                &agent.alias,
+                Some(&agent.profile.added_by),
+                &format!("workspace-agent-created:{}", agent.agent_id),
+                "joined",
+                agent.created_at,
+            )?;
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing workspace agent create", error))?;
         Ok(())
@@ -233,6 +279,25 @@ impl SqliteRuntimeRepository {
         archive_reason: Option<&str>,
         changed_at: i64,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
+        self.set_workspace_agent_lifecycle_with_initiator(
+            session,
+            agent_id,
+            lifecycle,
+            archive_reason,
+            changed_at,
+            None,
+        )
+    }
+
+    pub fn set_workspace_agent_lifecycle_with_initiator(
+        &self,
+        session: &SessionRecord,
+        agent_id: &str,
+        lifecycle: WorkspaceAgentLifecycleState,
+        archive_reason: Option<&str>,
+        changed_at: i64,
+        initiator_agent_id: Option<&str>,
+    ) -> Result<WorkspaceAgentRecord, RuntimeError> {
         if session.id != agent_id {
             return Err(RuntimeError::ProtocolViolation(
                 "workspace agent lifecycle session mismatch".to_string(),
@@ -248,11 +313,11 @@ impl SqliteRuntimeRepository {
                 )
             })?;
         reject_unresolved_route(&tx, agent_id)?;
-        let workspace_id = tx
+        let (workspace_id, prior_lifecycle, prior_revision): (String, String, i64) = tx
             .query_row(
-                "SELECT workspace_id FROM workspace_agents WHERE session_id = ?1",
+                "SELECT workspace_id, lifecycle_state, revision FROM workspace_agents WHERE session_id = ?1",
                 params![agent_id],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(|error| db_error("failed reading workspace agent lifecycle", error))?
@@ -285,6 +350,52 @@ impl SqliteRuntimeRepository {
             ],
         )
         .map_err(|error| db_error("failed updating workspace agent lifecycle", error))?;
+        if lifecycle == WorkspaceAgentLifecycleState::Active
+            && prior_lifecycle == WorkspaceAgentLifecycleState::Archived.as_str()
+        {
+            // The notice worker cancels pending onboarding when it observes
+            // an archived agent. On restore, requeue that *same* never-admitted
+            // snapshot. A dispatched/ambiguous/manual-review notice must not
+            // be retried or replaced with a new onboarding identity.
+            tx.execute(
+                "UPDATE workspace_system_notices
+                 SET state = 'pending', last_error = NULL, updated_at_ms = ?2
+                 WHERE notice_id = ?1 AND state = 'cancelled' AND turn_id IS NULL
+                   AND last_error = 'recipient_archived'",
+                params![format!("workspace-onboarding:{agent_id}"), changed_at],
+            )
+            .map_err(|error| db_error("failed requeueing safe onboarding on restore", error))?;
+        }
+        if prior_lifecycle != lifecycle.as_str() {
+            let alias: String = tx
+                .query_row(
+                    "SELECT identity_alias FROM workspace_agents WHERE session_id = ?1",
+                    [agent_id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| db_error("failed reading lifecycle notice alias", error))?;
+            let action = match lifecycle {
+                WorkspaceAgentLifecycleState::Active => "restored",
+                WorkspaceAgentLifecycleState::Archived => "removed",
+            };
+            queue_membership_lead_notice_tx(
+                &tx,
+                &workspace_id,
+                agent_id,
+                &alias,
+                initiator_agent_id,
+                &format!(
+                    "workspace-agent-lifecycle:{agent_id}:revision-{}",
+                    prior_revision
+                        .checked_add(1)
+                        .ok_or_else(|| RuntimeError::InvalidState(
+                            "workspace agent lifecycle revision overflow".into()
+                        ))?
+                ),
+                action,
+                changed_at,
+            )?;
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing workspace agent lifecycle", error))?;
         self.get_workspace_agent(workspace_id.as_str(), agent_id)?

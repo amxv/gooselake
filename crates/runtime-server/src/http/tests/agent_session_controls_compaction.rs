@@ -3,8 +3,8 @@ use super::*;
 
 #[tokio::test]
 async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguously() {
-    let (router, token, temp, provider) =
-        build_test_router_with_provider(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, runtime) =
+        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
     provider.set_compaction_mode(1);
     let root = temp.path().join("manual-compaction");
     std::fs::create_dir(&root).expect("workspace root");
@@ -30,6 +30,7 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
     .await;
     assert_eq!(status, StatusCode::OK);
     let agent_id = agent["agent_id"].as_str().unwrap();
+    finish_test_onboarding(&runtime, workspace_id, agent_id).await;
     let compact_uri = format!("/v2/agents/{agent_id}/compact");
 
     let (status, accepted) = call(

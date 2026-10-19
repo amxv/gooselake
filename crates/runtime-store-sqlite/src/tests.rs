@@ -107,6 +107,8 @@ fn initialize_schema_creates_all_runtime_tables() {
         "session_compaction_runs",
         "session_edit_reruns",
         "session_edit_rerun_superseded_turns",
+        "workspace_system_notices",
+        "workspace_notice_policies",
     ] {
         assert!(table_names.contains(expected), "missing table {expected}");
     }
@@ -120,7 +122,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         .expect("collect versions");
     assert_eq!(
         versions,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     );
 }
 
@@ -762,3 +764,5 @@ async fn store_initialize_and_healthcheck_use_schema() {
     let hydrated = store.hydrate_runtime_state().expect("hydrate");
     assert!(hydrated.sessions.is_empty());
 }
+
+mod workspace_notice;

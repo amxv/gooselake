@@ -21,6 +21,7 @@ pub mod workspace;
 pub mod workspace_agent;
 pub mod workspace_control;
 pub mod workspace_migration;
+pub mod workspace_notice;
 pub mod worktree_lock;
 
 pub use agent_comms::{
@@ -134,5 +135,9 @@ pub use workspace_migration::{
     LegacyWorkspaceMigrationResolutionRequest, LegacyWorkspaceMigrationResolutionResponse,
     LegacyWorkspaceMigrationResolutionSource, LegacyWorkspaceMigrationStatus,
     LegacyWorkspaceMigrationSubject, LegacyWorkspaceMigrationSubjectKind,
+};
+pub use workspace_notice::{
+    WorkspaceAgentOnboardingRequest, WorkspaceNoticePolicy, WorkspaceNoticePolicyRecord,
+    WorkspaceNoticePolicyUpdate, WorkspaceSystemNoticeRecord,
 };
 pub use worktree_lock::repository_worktree_lock;

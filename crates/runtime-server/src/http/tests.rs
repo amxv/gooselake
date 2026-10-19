@@ -30,6 +30,8 @@ use crate::config::RuntimeServerConfig;
 
 mod support;
 use support::*;
+mod support_acp_http;
+use support_acp_http::*;
 
 mod claude_acp_smoke;
 mod codex_edit_rerun_live;

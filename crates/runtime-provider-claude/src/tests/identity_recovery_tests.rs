@@ -1,6 +1,5 @@
 use super::*;
 use runtime_core::*;
-use serde_json::json;
 
 #[tokio::test]
 async fn late_sdk_identity_is_durable_before_restart_and_reused_for_resume() {
@@ -49,27 +48,21 @@ async fn late_sdk_identity_is_durable_before_restart_and_reused_for_resume() {
                 harness_version_slot: Some(HARNESS_VERSION.into()),
                 title: None,
                 metadata: None,
+                onboarding: None,
             },
             "claude-identity-test",
         )
         .await
         .expect("create agent");
     assert!(agent.canonical_provider_session_ref.is_none());
-    manager
-        .send_turn(
-            agent.agent_id.as_str(),
-            SendTurnInput {
-                input: vec![json!({"type":"text","text":"first SDK turn"})],
-                expected_turn_id: None,
-                permission_mode: None,
-                projection_source: None,
-                user_input_snapshot: None,
-                correlation_id: None,
-                turn_settings: Default::default(),
-            },
-        )
-        .await
-        .expect("send first turn");
+    assert_eq!(
+        manager
+            .dispatch_workspace_system_notices()
+            .await
+            .expect("dispatch first system onboarding turn"),
+        1,
+        "the canonical SDK identity must be established by onboarding, not a premature user turn"
+    );
 
     tokio::time::timeout(Duration::from_secs(8), async {
         loop {

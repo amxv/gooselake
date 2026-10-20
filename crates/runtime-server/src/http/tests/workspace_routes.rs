@@ -1,6 +1,105 @@
 use super::*;
 
 #[tokio::test]
+async fn effective_workspace_hooks_are_operator_only_filtered_and_never_executed() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("hook-workspace");
+    std::fs::create_dir(&root).unwrap();
+    let registered = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v2/workspaces")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::from(
+                    serde_json::json!({"canonical_root":root,"display_name":"Hook workspace"})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(registered.status(), StatusCode::OK);
+    let workspace: runtime_core::WorkspaceRegisterResponse =
+        serde_json::from_slice(&to_bytes(registered.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    let config_path = root.join(runtime_core::TEAM_HOOK_CONFIG_RELATIVE_PATH);
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    let marker = root.join("hook-must-not-run");
+    let payload = serde_json::json!({
+        "version":1,
+        "hooks":{
+            "pre_teammate_add":[{
+                "name":"Project Setup",
+                "command":format!("touch {}",marker.display()),
+                "timeout_ms":250
+            }],
+            "post_compaction":[{"name":"summary","command":"echo summary"}]
+        }
+    });
+    std::fs::write(&config_path, payload.to_string()).unwrap();
+    let url = format!("/v2/workspaces/{}/hooks", workspace.workspace.workspace_id);
+    let get = |path: &str, authorized: bool| {
+        let mut req = Request::builder().uri(path);
+        if authorized {
+            req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        req.body(Body::empty()).unwrap()
+    };
+    let unauthenticated = router.clone().oneshot(get(&url, false)).await.unwrap();
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    let all = router.clone().oneshot(get(&url, true)).await.unwrap();
+    assert_eq!(all.status(), StatusCode::OK);
+    let full: serde_json::Value =
+        serde_json::from_slice(&to_bytes(all.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(full["execution_enabled"], false);
+    assert_eq!(full["config_version"], 1);
+    assert_eq!(full["hooks"].as_array().unwrap().len(), 2);
+    assert_eq!(full["hooks"][0]["scope"], "project");
+    assert_eq!(full["hooks"][0]["name"], "project_setup");
+    assert_eq!(full["hooks"][0]["timeout_ms"], 250);
+    assert!(
+        !marker.exists(),
+        "config discovery cannot execute hook commands"
+    );
+
+    let one = router
+        .clone()
+        .oneshot(get(&format!("{url}?event=post_compaction"), true))
+        .await
+        .unwrap();
+    assert_eq!(one.status(), StatusCode::OK);
+    let filtered: serde_json::Value =
+        serde_json::from_slice(&to_bytes(one.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(filtered["hooks"].as_array().unwrap().len(), 1);
+    assert_eq!(filtered["hooks"][0]["name"], "summary");
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(get(&format!("{url}?event=not_a_hook"), true))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(get("/v2/workspaces/no_such_workspace/hooks", true))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    std::fs::write(&config_path, r#"{"version":1,"hooks":{"unknown":[]}}"#).unwrap();
+    let invalid = router.clone().oneshot(get(&url, true)).await.unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert!(!marker.exists());
+}
+
+#[tokio::test]
 async fn workspace_routes_are_durable_idempotent_and_leave_v1_available() {
     let (router, token, temp_dir) = build_test_router().await;
     let workspace_root = temp_dir.path().join("registered-workspace");

@@ -29,6 +29,7 @@ Auth legend:
 - `POST /v2/workspaces` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/workspaces` (Bearer)
 - `GET /v2/workspaces/{workspace_id}` (Bearer)
+- `GET /v2/workspaces/{workspace_id}/hooks` (Bearer; optional `event` filter, read-only effective hook configuration; no hook execution)
 - `GET /v2/workspaces/{workspace_id}/worktrees` (Bearer, workspace-managed Git inventory and native eligibility)
 - `POST /v2/workspaces/{workspace_id}/worktrees` (Bearer, JSON; create/reuse a named workspace managed worktree)
 - `POST /v2/workspaces/{workspace_id}/lead` (Bearer, JSON; optional `Idempotency-Key` header)
@@ -66,6 +67,12 @@ Workspace registration canonicalizes the requested filesystem root and uses that
 Workspace leadership is nullable and revisioned. `POST /v2/workspaces/{workspace_id}/lead` accepts `lead_agent_id` (`string` or `null`) plus `expected_revision`. Non-null leads must be active members of that exact workspace, enforced by both service validation and SQLite triggers. Set/reassign/clear operations use compare-and-swap revision authority and durable operation identity. Archiving the current lead atomically clears leadership; restore never promotes it again. No workspace or legacy-team code path auto-elects a replacement lead.
 
 Workspace membership authorization is leadless-aware: an active member can manage membership when no lead exists; once a lead is set, non-lead add/remove authority follows the configured add/remove flags. Lead assignment itself is reserved for the operator surface.
+
+Team hook configuration discovery merges strict version-1 user and project files
+by event and normalized hook name, with project overrides. The endpoint reports
+`execution_enabled: false` while durable hook admission, receipts, and
+automation-context delivery are not implemented. Inspecting a hook does not
+run its shell command or grant agents any execution authority.
 
 Lifecycle notices are durable system/automation-context turns, not user messages. A lead promotion/demotion, eligible non-self lead-membership change, verified worktree reassignment or completed interruption queues its notice in the same transaction as the authoritative change; no-op/idempotent replay does not duplicate. The revisioned notice policy has four default-enabled toggles: `lead_transitions`, `membership_to_lead`, `worktree_reassignment` and `workspace_interrupt`. It does not suppress mandatory onboarding. Stale policy revisions return `409`. Pending notices are injected only when safe, with an unknown provider outcome held for manual review rather than blindly retried.
 

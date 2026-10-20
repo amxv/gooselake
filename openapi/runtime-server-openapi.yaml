@@ -1824,6 +1824,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/hooks:
+    get:
+      summary: Inspect effective user/project team hooks (execution disabled)
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: event
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pre_teammate_add, post_teammate_add, post_teammate_remove, post_direct_message_send, post_broadcast_message_send, post_compaction]
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/workspaces/{workspace_id}/interrupt:
     post:
       summary: Interrupt active workspace turns

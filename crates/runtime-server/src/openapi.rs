@@ -89,6 +89,9 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
             "Generated OpenAPI schema (authenticated)".to_string()
         }
         (HttpMethod::Get, "/v1/health") => "Authenticated health check".to_string(),
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/hooks") => {
+            "Inspect effective user/project team hooks (execution disabled)".to_string()
+        }
         (HttpMethod::Get, "/v1/version") => "Runtime version".to_string(),
         (HttpMethod::Get, "/v1/providers") => "List providers".to_string(),
         (HttpMethod::Get, "/v1/providers/{provider}/models") => {
@@ -351,6 +354,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         && matches!(
             path,
             "/v2/workspaces/{workspace_id}/agents"
+                | "/v2/workspaces/{workspace_id}/hooks"
                 | "/v2/messages"
                 | "/v2/messages/{message_id}/deliveries"
         );
@@ -374,6 +378,14 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
         out.push_str("            enum: [active, archived, all]\n");
+    }
+    if method == HttpMethod::Get && path == "/v2/workspaces/{workspace_id}/hooks" {
+        out.push_str("        - name: event\n");
+        out.push_str("          in: query\n");
+        out.push_str("          required: false\n");
+        out.push_str("          schema:\n");
+        out.push_str("            type: string\n");
+        out.push_str("            enum: [pre_teammate_add, post_teammate_add, post_teammate_remove, post_direct_message_send, post_broadcast_message_send, post_compaction]\n");
     }
     if method == HttpMethod::Get && path == "/v2/messages" {
         for name in ["workspace_id", "sender_agent_id", "cursor", "limit"] {

@@ -42,6 +42,49 @@ pub(super) async fn get_workspace(
     Ok(Json(workspace))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkspaceHooksQuery {
+    event: Option<runtime_core::TeamHookEventName>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct WorkspaceHooksResponse {
+    workspace_id: String,
+    config_version: u32,
+    execution_enabled: bool,
+    hooks: Vec<runtime_core::TeamHookResolvedEntry>,
+}
+
+/// Operator-only introspection. Resolving a configuration must never launch a
+/// shell process, inject an agent turn, or grant permission to execute hooks.
+pub(super) async fn get_workspace_hooks(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+    Query(query): Query<WorkspaceHooksQuery>,
+) -> Result<Json<WorkspaceHooksResponse>, ApiError> {
+    let workspace = state
+        .app
+        .services
+        .store
+        .get_workspace(workspace_id.trim())?
+        .ok_or_else(|| ApiError::not_found(format!("workspace {workspace_id}")))?;
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from);
+    let hooks = runtime_core::resolve_effective_team_hooks(
+        std::path::Path::new(&workspace.canonical_root),
+        home.as_deref(),
+        query.event,
+    )?;
+    Ok(Json(WorkspaceHooksResponse {
+        workspace_id: workspace.workspace_id,
+        config_version: runtime_core::TEAM_HOOK_CONFIG_VERSION,
+        execution_enabled: false,
+        hooks,
+    }))
+}
+
 pub(super) async fn list_workspace_worktree_inventory(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,

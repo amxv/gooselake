@@ -118,6 +118,28 @@ Existing session/team/process/worktree APIs remain under `/v1`; `/v2` is introdu
 
 ### Workspace-owned agents
 
+#### Read-only team hook configuration
+
+`GET /v2/workspaces/{workspace_id}/hooks` is an **operator-authenticated,
+read-only** view of versioned user/project hook configuration. An optional
+`?event=pre_teammate_add` (or any of the five `post_*` event names) filters the
+result. The JSON response includes `config_version`, `execution_enabled`, and
+effective entries (`event_name`, normalized `name`, `command`, `timeout_ms`,
+`scope`). **`execution_enabled` is currently `false`: hooks are not invoked by
+workspace operations yet.** This is discovery only, not a feature switch or a
+way for agents to run commands.
+
+Configuration files live at `~/.agents/gg/team-hooks.json` for the runtime
+operator and `<workspace-root>/.agents/gg/team-hooks.json` for the project.
+Both use strict JSON `{ "version": 1, "hooks": { "pre_teammate_add":
+[{ "name": "setup", "command": "./scripts/setup.sh", "timeout_ms": 15000 }]
+} }` (`version` defaults to 1 if omitted). Missing files mean no hooks; invalid files fail closed. Supported events
+are `pre_teammate_add`, `post_teammate_add`, `post_teammate_remove`,
+`post_direct_message_send`, `post_broadcast_message_send`, and
+`post_compaction`. Project entries override user entries of the same normalized
+name *within the same event*; order is deterministic. This configuration does
+not grant model tools any shell-execution or caller-identity capability.
+
 Normal `/v2` agent creation is always scoped to a registered workspace:
 
 ```bash

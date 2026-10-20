@@ -19,6 +19,7 @@ async fn smoke_real_codex_runtime_slice_with_staged_auth_copy() {
     config.data.root_dir = temp_dir.path().to_path_buf();
     config.providers.claude.enabled = false;
     config.providers.codex.enabled = true;
+    prepare_codex_smoke_config(&config);
 
     let bootstrapped = bootstrap_runtime(config.clone()).await.expect("bootstrap");
     let codex_provider = bootstrapped
@@ -520,6 +521,7 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     config.providers.codex.enabled = true;
     config.processes.enabled = true;
     config.server.public_base_url = format!("http://{listen_addr}");
+    prepare_codex_smoke_config(&config);
 
     let bootstrapped = bootstrap_runtime(config.clone()).await.expect("bootstrap");
     let token = bootstrapped.auth.bearer_token.clone();
@@ -565,10 +567,12 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     )
     .expect("Codex GG workspace JSON");
 
-    let marker_path = temp_dir.path().join("codex-gg-process-marker.txt");
     let marker_token = "CODEX_GG_PROCESS_MARKER_71423";
+    let marker_path = temp_dir.path().join(format!("{marker_token}.txt"));
     let completion_token = "CODEX_GG_PROCESS_OK_63851";
-    let tool_command = format!("printf '{marker_token}\\n' > '{}'", marker_path.display());
+    // A simple native command proves actual process execution without relying
+    // on the provider rewriting shell quoting/redirection faithfully.
+    let tool_command = format!("touch {}", marker_path.display());
     let prompt = format!(
         "Use the native gg_process tool exactly once with mode=run and command exactly: {tool_command}. Do not use shell or command execution directly. After the GG tool returns, reply with exactly: {completion_token}"
     );
@@ -588,6 +592,7 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
                     serde_json::json!({
                         "provider": "codex",
                         "model": codex_test_model(),
+                        "current_preferences": {"thinking_effort": "low"},
                         "cwd": workspace_root,
                         "permission_intent": "danger_full_access",
                         "title": "Native GG live smoke agent",
@@ -600,13 +605,18 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
         )
         .await
         .expect("create canonical Codex GG smoke agent");
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let created: runtime_core::WorkspaceAgentRecord = serde_json::from_slice(
-        &to_bytes(create_response.into_body(), usize::MAX)
-            .await
-            .expect("create Codex GG MCP body"),
-    )
-    .expect("create Codex GG MCP json");
+    let create_status = create_response.status();
+    let create_body = to_bytes(create_response.into_body(), usize::MAX)
+        .await
+        .expect("create Codex GG MCP body");
+    assert_eq!(
+        create_status,
+        StatusCode::OK,
+        "native Codex agent creation failed: {}",
+        String::from_utf8_lossy(&create_body)
+    );
+    let created: runtime_core::WorkspaceAgentRecord =
+        serde_json::from_slice(&create_body).expect("create Codex GG MCP json");
     let session_id = created.agent_id;
 
     let session_config = config
@@ -617,6 +627,13 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
         .join("config.toml");
     let rendered_session_config =
         std::fs::read_to_string(&session_config).expect("session-specific Codex config");
+    let native_config: toml::Value =
+        toml::from_str(&rendered_session_config).expect("native Codex session TOML");
+    assert_eq!(native_config["model"].as_str(), Some("gpt-6-luna"));
+    assert_eq!(
+        native_config["model_reasoning_effort"].as_str(),
+        Some("low")
+    );
     // Codex uses native dynamic GG tools; it must not receive a redundant GG
     // MCP registration, caller identity metadata, or any gateway credential.
     assert!(
@@ -784,11 +801,17 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     );
     assert_eq!(tool_process.status, "completed");
     assert_eq!(
-        std::fs::read_to_string(&marker_path)
-            .expect("GG process marker")
-            .trim(),
-        marker_token,
-        "native GG process tool must create the expected marker"
+        tool_process
+            .command
+            .get("command")
+            .and_then(serde_json::Value::as_str),
+        Some(tool_command.as_str()),
+        "native GG process must execute the exact requested command"
+    );
+    assert!(
+        marker_path.is_file(),
+        "native GG process did not create its marker at {}; process={tool_process:?}",
+        marker_path.display()
     );
 
     let close_response = router
@@ -836,9 +859,40 @@ pub(super) async fn create_test_session(router: Router, token: &str, suite: &str
 }
 
 pub(super) fn codex_test_model() -> String {
-    std::env::var("GG_CODEX_SMOKE_MODEL")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "gpt-6-astra".to_string())
+    "gpt-6-luna".to_string()
+}
+
+// Keep the legacy /v1 and automation-driven live turns on the same model
+// and effort as the workspace-owned /v2 smokes. The legacy create API does
+// not accept session preferences, so the disposable Codex home supplies
+// native defaults inherited by each per-session app-server home.
+pub(super) fn prepare_codex_smoke_config(config: &RuntimeServerConfig) {
+    let home = config.resolve_provider_dir("codex").join("home");
+    std::fs::create_dir_all(&home).expect("create disposable Codex smoke home");
+    std::fs::write(
+        home.join("config.toml"),
+        "model = \"gpt-6-luna\"\nmodel_reasoning_effort = \"low\"\n",
+    )
+    .expect("write Codex Luna/low smoke config");
+}
+
+#[test]
+fn codex_live_smoke_defaults_are_luna_low() {
+    assert_eq!(codex_test_model(), "gpt-6-luna");
+    let temp = tempfile::tempdir().expect("smoke fixture temp dir");
+    let mut config = RuntimeServerConfig::default();
+    config.data.root_dir = temp.path().to_path_buf();
+    prepare_codex_smoke_config(&config);
+    let rendered = std::fs::read_to_string(
+        config
+            .resolve_provider_dir("codex")
+            .join("home/config.toml"),
+    )
+    .expect("disposable native config");
+    let native_config: toml::Value = toml::from_str(&rendered).expect("native config TOML");
+    assert_eq!(native_config["model"].as_str(), Some("gpt-6-luna"));
+    assert_eq!(
+        native_config["model_reasoning_effort"].as_str(),
+        Some("low")
+    );
 }

@@ -30,7 +30,7 @@ fn real_codex_provider(temp: &tempfile::TempDir) -> CodexProvider {
 }
 
 fn live_model() -> String {
-    std::env::var("GG_CODEX_SMOKE_MODEL").unwrap_or_else(|_| "gpt-6-astra".to_string())
+    "gpt-6-luna".to_string()
 }
 
 fn live_create(
@@ -46,7 +46,7 @@ fn live_create(
     )
     .expect("live create policy");
     request.current_preferences = ProviderSessionPreferences {
-        thinking_effort: Some(ProviderThinkingEffort::High),
+        thinking_effort: Some(ProviderThinkingEffort::Low),
     };
     request
 }

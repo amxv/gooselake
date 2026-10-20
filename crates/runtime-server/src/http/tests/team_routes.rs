@@ -745,6 +745,7 @@ async fn smoke_real_codex_phase5_team_comms_slice() {
     config.data.root_dir = temp_dir.path().to_path_buf();
     config.providers.claude.enabled = false;
     config.providers.codex.enabled = true;
+    prepare_codex_smoke_config(&config);
 
     let bootstrapped = bootstrap_runtime(config.clone()).await.expect("bootstrap");
     let token = bootstrapped.auth.bearer_token.clone();

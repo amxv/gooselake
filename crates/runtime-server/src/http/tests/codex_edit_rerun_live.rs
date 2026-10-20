@@ -77,6 +77,7 @@ async fn live_workspace_historical_edit_rerun_forks_resends_and_resumes_exact_ch
     config.data.root_dir = temp.path().to_path_buf();
     config.providers.claude.enabled = false;
     config.providers.codex.enabled = true;
+    prepare_codex_smoke_config(&config);
 
     // Codex starts the GG MCP sidecar during thread/start. Give it a real,
     // isolated gateway instead of the default localhost:8080, which may
@@ -131,7 +132,7 @@ async fn live_workspace_historical_edit_rerun_forks_resends_and_resumes_exact_ch
         &token,
         "POST",
         &format!("/v2/workspaces/{workspace_id}/agents"),
-        Some(serde_json::json!({"provider":"codex","model":codex_test_model()})),
+        Some(serde_json::json!({"provider":"codex","model":codex_test_model(),"current_preferences":{"thinking_effort":"low"}})),
         None,
     )
     .await;

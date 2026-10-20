@@ -44,6 +44,16 @@ The guard is intentionally path-based and conservative. Test-only changes under
 changes, regenerate OpenAPI and confirm the artifact is unchanged; document the
 verification without implying that a public route or schema changed.
 
+Authenticated Codex live smoke tests use a fixed `gpt-6-luna` model at `low`
+reasoning effort, independent of the operator's normal model defaults or
+environment model overrides. HTTP smoke tests use the shared `codex_test_model`
+and `prepare_codex_smoke_config` helpers to stage disposable provider homes;
+workspace-agent smokes also set typed `current_preferences`, and native provider
+smokes carry the same preference in their creation policy. The tracked
+model-catalog and reasoning-policy tests still intentionally exercise the other
+supported values. This changes test fixtures only, not public API behavior or
+production model selection.
+
 Authenticated runtime HTTP smoke tests that launch Codex with the GG MCP
 sidecar must also serve their test router on an isolated loopback listener.
 Bind `127.0.0.1:0`, set `config.server.public_base_url` to the assigned port

@@ -475,6 +475,7 @@ async fn smoke_real_codex_mcp_process_run_with_staged_auth_copy() {
     config.data.root_dir = temp_dir.path().to_path_buf();
     config.providers.claude.enabled = false;
     config.providers.codex.enabled = true;
+    prepare_codex_smoke_config(&config);
 
     let bootstrapped = bootstrap_runtime(config.clone()).await.expect("bootstrap");
     let staged_auth = config

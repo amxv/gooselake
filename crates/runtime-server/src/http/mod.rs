@@ -240,6 +240,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/workspaces/{workspace_id}", get(get_workspace))
         .route("/workspaces/{workspace_id}/hooks", get(get_workspace_hooks))
         .route(
+            "/workspaces/{workspace_id}/hooks/approval",
+            get(get_workspace_hook_approval).put(update_workspace_hook_approval),
+        )
+        .route(
+            "/workspaces/{workspace_id}/hooks/effects",
+            get(list_workspace_hook_effects),
+        )
+        .route(
             "/workspaces/{workspace_id}/worktrees",
             get(list_workspace_worktree_inventory).post(create_workspace_worktree),
         )

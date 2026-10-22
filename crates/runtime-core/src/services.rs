@@ -1,19 +1,22 @@
+#[path = "services_team_comms_trait.rs"]
+mod team_comms_trait;
 #[path = "services_team_models.rs"]
 mod team_models;
 #[path = "services_worktree_models.rs"]
 mod worktree_models;
+#[path = "services_worktree_trait.rs"]
+mod worktree_trait;
+pub use team_comms_trait::*;
 pub use team_models::*;
 pub use worktree_models::*;
+pub use worktree_trait::*;
 
 use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{
-    AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
-    AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageListRequest,
-    AgentMessageListResponse, AgentMessageRecord, AgentRetryDeliveryRequest,
-    AgentToolMutationAdmission, AgentToolMutationCommand, ApprovalRecord,
-    LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
+    AgentDeliveryRecord, AgentMessageRecord, AgentToolMutationAdmission, AgentToolMutationCommand,
+    ApprovalRecord, LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
     LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
     LegacyWorkspaceMigrationStatus, ManagedProcessAdmission, ManagedProcessRecord,
     ManagedProcessTerminalUpdate, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
@@ -28,10 +31,95 @@ use crate::{
     WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
     WorkspaceRegisterResponse,
 };
+use crate::{
+    TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
+    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEventName,
+};
 use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 
 #[async_trait]
 pub trait RuntimeStore: Send + Sync {
+    /// Operator-only execution capability. No project file can grant itself
+    /// shell authority, and a missing grant means disabled.
+    fn get_team_hook_approval(
+        &self,
+        _workspace_id: &str,
+    ) -> Result<TeamHookApproval, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "team-hook approval store unavailable".into(),
+        ))
+    }
+
+    fn update_team_hook_approval(
+        &self,
+        _update: &TeamHookApprovalUpdate,
+    ) -> Result<TeamHookApproval, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "team-hook approval store unavailable".into(),
+        ))
+    }
+
+    fn list_team_hook_effects(
+        &self,
+        _workspace_id: &str,
+        _limit: usize,
+    ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
+        Ok(Vec::new())
+    }
+
+    fn admit_team_hook_effect(
+        &self,
+        _admission: &TeamHookEffectAdmission,
+    ) -> Result<TeamHookEffectRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "team-hook effect admission unavailable".into(),
+        ))
+    }
+
+    fn get_team_hook_effect(
+        &self,
+        _workspace_id: &str,
+        _parent_event_id: &str,
+        _event: TeamHookEventName,
+        _hook_name: &str,
+    ) -> Result<Option<TeamHookEffectRecord>, RuntimeError> {
+        Ok(None)
+    }
+
+    fn claim_team_hook_effect(
+        &self,
+        _workspace_id: &str,
+        _parent_event_id: &str,
+        _event: TeamHookEventName,
+        _hook_name: &str,
+        _at_ms: i64,
+    ) -> Result<TeamHookEffectRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "team-hook effect claim unavailable".into(),
+        ))
+    }
+
+    fn finish_team_hook_effect(
+        &self,
+        _workspace_id: &str,
+        _parent_event_id: &str,
+        _event: TeamHookEventName,
+        _hook_name: &str,
+        _outcome: TeamHookEffectPhase,
+        _receipt: TeamHookEffectReceipt,
+        _at_ms: i64,
+    ) -> Result<TeamHookEffectRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "team-hook effect receipt unavailable".into(),
+        ))
+    }
+
+    /// Reconcile ambiguous shell dispatch at startup. A started hook is never
+    /// blindly retried because the child might already have modified state.
+    fn quarantine_started_team_hook_effects(&self, _at_ms: i64) -> Result<usize, RuntimeError> {
+        Ok(0)
+    }
+
     /// Admission is committed before any native spawn, archive, or worktree
     /// mutation. A previously admitted but unreceipted call fails closed.
     fn begin_agent_tool_mutation(
@@ -817,181 +905,4 @@ pub trait ToolGateway: Send + Sync {
     async fn invoke_tool(&self, request: ToolInvokeRequest) -> Result<Value, RuntimeError>;
 
     async fn capabilities(&self) -> Result<Value, RuntimeError>;
-}
-
-#[async_trait]
-pub trait TeamCommsService: Send + Sync {
-    async fn healthcheck(&self) -> Result<(), RuntimeError>;
-
-    async fn create_team(
-        &self,
-        request: TeamCreateRequest,
-    ) -> Result<TeamWithMembers, RuntimeError>;
-
-    async fn list_teams(&self) -> Result<Vec<TeamWithMembers>, RuntimeError>;
-
-    async fn get_team(&self, team_id: &str) -> Result<TeamWithMembers, RuntimeError>;
-
-    async fn join_team(&self, request: TeamJoinRequest) -> Result<TeamWithMembers, RuntimeError>;
-
-    async fn remove_team_member(
-        &self,
-        request: TeamRemoveMemberRequest,
-    ) -> Result<TeamWithMembers, RuntimeError>;
-
-    async fn set_team_lead(
-        &self,
-        request: TeamSetLeadRequest,
-    ) -> Result<TeamWithMembers, RuntimeError>;
-
-    async fn delete_team(&self, team_id: &str) -> Result<(), RuntimeError>;
-
-    async fn interrupt_all_team_turns(
-        &self,
-        request: TeamInterruptAllRequest,
-    ) -> Result<TeamInterruptAllResponse, RuntimeError>;
-
-    async fn send_direct(
-        &self,
-        request: TeamSendDirectRequest,
-    ) -> Result<TeamMessageAck, RuntimeError>;
-
-    async fn broadcast(
-        &self,
-        request: TeamBroadcastRequest,
-    ) -> Result<TeamMessageAck, RuntimeError>;
-
-    async fn send_agent_direct(
-        &self,
-        _request: AgentDirectMessageRequest,
-    ) -> Result<AgentMessageAck, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "agent-first direct messaging is not implemented by this comms service".to_string(),
-        ))
-    }
-
-    async fn broadcast_workspace(
-        &self,
-        _request: AgentBroadcastMessageRequest,
-    ) -> Result<AgentMessageAck, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "agent-first broadcast messaging is not implemented by this comms service".to_string(),
-        ))
-    }
-
-    async fn list_agent_messages(
-        &self,
-        _request: AgentMessageListRequest,
-    ) -> Result<AgentMessageListResponse, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "agent-first message listing is not implemented by this comms service".to_string(),
-        ))
-    }
-
-    async fn get_agent_deliveries(
-        &self,
-        _request: AgentDeliveryListRequest,
-    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "agent-first delivery listing is not implemented by this comms service".to_string(),
-        ))
-    }
-
-    async fn retry_agent_delivery(
-        &self,
-        _request: AgentRetryDeliveryRequest,
-    ) -> Result<AgentDeliveryRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "agent-first delivery retry is not implemented by this comms service".to_string(),
-        ))
-    }
-
-    async fn cancel_agent_message(
-        &self,
-        _request: AgentCancelMessageRequest,
-    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "agent-first message cancellation is not implemented by this comms service".to_string(),
-        ))
-    }
-
-    async fn list_messages(
-        &self,
-        request: TeamListMessagesRequest,
-    ) -> Result<TeamListMessagesResponse, RuntimeError>;
-
-    async fn get_deliveries(
-        &self,
-        request: TeamGetDeliveriesRequest,
-    ) -> Result<Vec<TeamDeliveryRecord>, RuntimeError>;
-
-    async fn retry_delivery(
-        &self,
-        request: TeamRetryDeliveryRequest,
-    ) -> Result<TeamDeliveryRecord, RuntimeError>;
-
-    async fn cancel_message(
-        &self,
-        request: TeamCancelMessageRequest,
-    ) -> Result<Vec<TeamDeliveryRecord>, RuntimeError>;
-
-    async fn get_view_snapshot(
-        &self,
-        request: TeamViewSnapshotRequest,
-    ) -> Result<TeamViewSnapshotResponse, RuntimeError>;
-
-    fn replay_team_events(
-        &self,
-        team_id: &str,
-        after_seq: Option<i64>,
-        limit: usize,
-    ) -> Result<Vec<RuntimeEventRecord>, RuntimeError>;
-}
-
-#[async_trait]
-pub trait WorktreeService: Send + Sync {
-    async fn healthcheck(&self) -> Result<(), RuntimeError>;
-
-    async fn list_worktrees(&self) -> Result<Vec<ManagedWorktreeRecord>, RuntimeError>;
-
-    async fn get_worktree(&self, worktree_id: &str) -> Result<ManagedWorktreeRecord, RuntimeError>;
-
-    async fn create_worktree(
-        &self,
-        request: WorktreeCreateRequest,
-    ) -> Result<WorktreeCreateResponse, RuntimeError>;
-
-    async fn create_workspace_worktree(
-        &self,
-        _request: WorkspaceWorktreeCreateRequest,
-    ) -> Result<WorktreeCreateResponse, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace-scoped worktree creation is not supported by this service".into(),
-        ))
-    }
-
-    async fn claim_worktree(
-        &self,
-        request: WorktreeClaimRequest,
-    ) -> Result<WorktreeClaimResponse, RuntimeError>;
-
-    async fn release_worktree(
-        &self,
-        request: WorktreeReleaseRequest,
-    ) -> Result<WorktreeReleaseResponse, RuntimeError>;
-
-    async fn cleanup_worktree(
-        &self,
-        request: WorktreeCleanupRequest,
-    ) -> Result<WorktreeCleanupResponse, RuntimeError>;
-
-    async fn spawn_team_member(
-        &self,
-        request: TeamMemberSpawnRequest,
-    ) -> Result<TeamMemberSpawnResponse, RuntimeError>;
-
-    async fn on_member_removed(
-        &self,
-        request: WorktreeMemberRemovedRequest,
-    ) -> Result<WorktreeMemberRemovedResponse, RuntimeError>;
 }

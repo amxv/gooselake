@@ -53,7 +53,14 @@ pub(super) struct WorkspaceHooksResponse {
     workspace_id: String,
     config_version: u32,
     execution_enabled: bool,
-    hooks: Vec<runtime_core::TeamHookResolvedEntry>,
+    hooks: Vec<WorkspaceHookDisplayEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct WorkspaceHookDisplayEntry {
+    #[serde(flatten)]
+    hook: runtime_core::TeamHookResolvedEntry,
+    fingerprint: String,
 }
 
 /// Operator-only introspection. Resolving a configuration must never launch a
@@ -81,8 +88,122 @@ pub(super) async fn get_workspace_hooks(
         workspace_id: workspace.workspace_id,
         config_version: runtime_core::TEAM_HOOK_CONFIG_VERSION,
         execution_enabled: false,
-        hooks,
+        hooks: hooks
+            .into_iter()
+            .map(|hook| WorkspaceHookDisplayEntry {
+                fingerprint: runtime_core::team_hook_fingerprint(&hook),
+                hook,
+            })
+            .collect(),
     }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkspaceHookApprovalInput {
+    expected_revision: u64,
+    hooks: Vec<runtime_core::TeamHookSelection>,
+}
+
+/// This is an operator-only, revisioned approval of existing resolved hook
+/// entries. Request JSON can never name or replace a shell command.
+pub(super) async fn update_workspace_hook_approval(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+    Json(input): Json<WorkspaceHookApprovalInput>,
+) -> Result<Json<runtime_core::TeamHookApproval>, ApiError> {
+    let workspace = state
+        .app
+        .services
+        .store
+        .get_workspace(workspace_id.trim())?
+        .ok_or_else(|| ApiError::not_found(format!("workspace {workspace_id}")))?;
+    let mut approved = Vec::new();
+    if !input.hooks.is_empty() {
+        let home = std::env::var_os("HOME")
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from);
+        let effective = runtime_core::resolve_effective_team_hooks(
+            std::path::Path::new(&workspace.canonical_root),
+            home.as_deref(),
+            None,
+        )?;
+        let mut seen = std::collections::HashSet::new();
+        for selection in input.hooks {
+            if !seen.insert((selection.event_name, selection.name.clone())) {
+                return Err(RuntimeError::InvalidState("duplicate hook selection".into()).into());
+            }
+            let entry = effective
+                .iter()
+                .find(|hook| hook.event_name == selection.event_name && hook.name == selection.name)
+                .ok_or_else(|| {
+                    RuntimeError::InvalidState(format!(
+                        "hook selection {} for {} is not in effective config",
+                        selection.name,
+                        selection.event_name.as_str()
+                    ))
+                })?;
+            if runtime_core::team_hook_fingerprint(entry) != selection.fingerprint {
+                return Err(RuntimeError::Conflict(format!(
+                    "hook {} changed since operator inspection; refresh effective hooks",
+                    selection.name
+                ))
+                .into());
+            }
+            approved.push(entry.clone());
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| {
+            RuntimeError::Bootstrap(format!("invalid clock for hook approval: {error}"))
+        })?;
+    let result = state.app.services.store.update_team_hook_approval(
+        &runtime_core::TeamHookApprovalUpdate {
+            workspace_id: workspace.workspace_id,
+            expected_revision: input.expected_revision,
+            hooks: approved,
+            approved_at_ms: i64::try_from(now.as_millis())
+                .map_err(|_| RuntimeError::Bootstrap("hook approval timestamp overflow".into()))?,
+        },
+    )?;
+    Ok(Json(result))
+}
+
+pub(super) async fn get_workspace_hook_approval(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<runtime_core::TeamHookApproval>, ApiError> {
+    Ok(Json(
+        state
+            .app
+            .services
+            .store
+            .get_team_hook_approval(workspace_id.trim())?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkspaceHookEffectsQuery {
+    limit: Option<usize>,
+}
+
+pub(super) async fn list_workspace_hook_effects(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+    Query(query): Query<WorkspaceHookEffectsQuery>,
+) -> Result<Json<Vec<runtime_core::TeamHookEffectRecord>>, ApiError> {
+    state
+        .app
+        .services
+        .store
+        .get_workspace(workspace_id.trim())?
+        .ok_or_else(|| ApiError::not_found(format!("workspace {workspace_id}")))?;
+    Ok(Json(state.app.services.store.list_team_hook_effects(
+        workspace_id.trim(),
+        query.limit.unwrap_or(50).clamp(1, 100),
+    )?))
 }
 
 pub(super) async fn list_workspace_worktree_inventory(

@@ -15,6 +15,14 @@ impl RuntimeSessionManager {
             started_at,
             ..Default::default()
         };
+        let ambiguous_hooks = self
+            .store
+            .quarantine_started_team_hook_effects(started_at)?;
+        if ambiguous_hooks > 0 {
+            summary.notes.push(format!(
+                "{ambiguous_hooks} native hook effect(s) require explicit operator review before any replay"
+            ));
+        }
         // Never redispatch a native compact request whose response or native
         // terminal observation could have been lost across restart.
         let ambiguous_compactions = self.store.recover_session_compactions(started_at)?;

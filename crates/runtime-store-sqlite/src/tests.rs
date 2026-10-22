@@ -109,6 +109,8 @@ fn initialize_schema_creates_all_runtime_tables() {
         "session_edit_rerun_superseded_turns",
         "workspace_system_notices",
         "workspace_notice_policies",
+        "workspace_hook_approvals",
+        "workspace_hook_effects",
     ] {
         assert!(table_names.contains(expected), "missing table {expected}");
     }
@@ -122,7 +124,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         .expect("collect versions");
     assert_eq!(
         versions,
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        (1..=super::schema::SCHEMA_VERSION).collect::<Vec<_>>()
     );
 }
 

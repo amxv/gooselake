@@ -12,6 +12,7 @@ mod repository_context_limit;
 mod repository_edit_rerun;
 mod repository_hydration;
 mod repository_process;
+mod repository_team_hooks;
 mod repository_turn_authority;
 mod repository_upserts;
 mod repository_workspace;

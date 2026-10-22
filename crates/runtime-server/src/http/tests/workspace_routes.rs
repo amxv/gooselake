@@ -1,6 +1,188 @@
 use super::*;
 
 #[tokio::test]
+async fn hook_grants_are_operator_only_and_cannot_become_unreviewed_shell_commands() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("hook-grant-workspace");
+    std::fs::create_dir_all(&root).unwrap();
+    let registered = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v2/workspaces")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::from(
+                    serde_json::json!({"canonical_root":root,"display_name":"Approval"})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(registered.status(), StatusCode::OK);
+    let registered: runtime_core::WorkspaceRegisterResponse =
+        serde_json::from_slice(&to_bytes(registered.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    let workspace_id = registered.workspace.workspace_id;
+    let config_path = root.join(runtime_core::TEAM_HOOK_CONFIG_RELATIVE_PATH);
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    let marker = root.join("unapproved-shell-marker");
+    let command = format!("touch {}", marker.display());
+    std::fs::write(
+        &config_path,
+        serde_json::json!({"version":1,"hooks":{
+            "pre_teammate_add":[{"name":"Project Hook","command":command,"timeout_ms":250}]
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let url = format!("/v2/workspaces/{workspace_id}/hooks/approval");
+    let put = |body: serde_json::Value, authorized: bool| {
+        let mut request = Request::builder()
+            .method("PUT")
+            .uri(&url)
+            .header(header::CONTENT_TYPE, "application/json");
+        if authorized {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        request.body(Body::from(body.to_string())).unwrap()
+    };
+    let discovered = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v2/workspaces/{workspace_id}/hooks"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(discovered.status(), StatusCode::OK);
+    let discovered: serde_json::Value =
+        serde_json::from_slice(&to_bytes(discovered.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    let fingerprint = discovered["hooks"][0]["fingerprint"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(fingerprint.starts_with("sha256:"));
+    let selection = serde_json::json!({
+        "expected_revision":0,
+        "hooks":[{"event_name":"pre_teammate_add","name":"project_hook","fingerprint":fingerprint}]
+    });
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(put(selection.clone(), false))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(router.clone().oneshot(put(serde_json::json!({
+        "expected_revision":0,"hooks":[{"event_name":"pre_teammate_add","name":"project_hook","fingerprint":fingerprint,"command":"evil"}]
+    }),true)).await.unwrap().status(),StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(router.clone().oneshot(put(serde_json::json!({
+        "expected_revision":0,"hooks":[{"event_name":"pre_teammate_add","name":"not_existing","fingerprint":fingerprint}]
+    }),true)).await.unwrap().status(),StatusCode::BAD_REQUEST);
+    // A model may edit the project config after discovery. The stale
+    // fingerprint must not approve the swapped command under the same name.
+    std::fs::write(&config_path,serde_json::json!({"version":1,"hooks":{
+        "pre_teammate_add":[{"name":"Project Hook","command":format!("{command} --swapped"),"timeout_ms":250}]
+    }}).to_string()).unwrap();
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(put(selection.clone(), true))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+    std::fs::write(
+        &config_path,
+        serde_json::json!({"version":1,"hooks":{
+            "pre_teammate_add":[{"name":"Project Hook","command":command,"timeout_ms":250}]
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let granted = router
+        .clone()
+        .oneshot(put(selection.clone(), true))
+        .await
+        .unwrap();
+    assert_eq!(granted.status(), StatusCode::OK);
+    let value: serde_json::Value =
+        serde_json::from_slice(&to_bytes(granted.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(value["revision"], 1);
+    assert_eq!(value["hooks"][0]["command"], command);
+    assert!(!marker.exists());
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(put(selection, true))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+
+    // Project changes cannot silently replace an operator-granted snapshot.
+    std::fs::write(&config_path, r#"{"version":1,"hooks":{"unknown":[]}}"#).unwrap();
+    let read = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(&url)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read.status(), StatusCode::OK);
+    let value: serde_json::Value =
+        serde_json::from_slice(&to_bytes(read.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(value["hooks"][0]["command"], command);
+    // Revocation is always available, even when the project config is invalid.
+    let revoked = router
+        .clone()
+        .oneshot(put(
+            serde_json::json!({"expected_revision":1,"hooks":[]}),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::OK);
+    let revoked: serde_json::Value =
+        serde_json::from_slice(&to_bytes(revoked.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(revoked["revision"], 2);
+    assert_eq!(revoked["hooks"].as_array().unwrap().len(), 0);
+    assert!(!marker.exists());
+    let effects = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v2/workspaces/{workspace_id}/hooks/effects?limit=10"
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(effects.status(), StatusCode::OK);
+    let effects: serde_json::Value =
+        serde_json::from_slice(&to_bytes(effects.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(effects.as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn effective_workspace_hooks_are_operator_only_filtered_and_never_executed() {
     let (router, token, temp) = build_test_router().await;
     let root = temp.path().join("hook-workspace");

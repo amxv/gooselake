@@ -19,6 +19,7 @@ use crate::*;
 
 mod gateway_basics;
 mod process;
+mod team_hook_execution;
 mod team_manage;
 mod worktree;
 

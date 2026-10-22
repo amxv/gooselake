@@ -1,4 +1,8 @@
-pub(crate) const SCHEMA_VERSION: i64 = 15;
+pub(crate) const SCHEMA_VERSION: i64 = 16;
+
+#[path = "schema_chain.rs"]
+mod schema_chain;
+pub(crate) use schema_chain::MIGRATIONS;
 
 pub(crate) struct Migration {
     pub version: i64,
@@ -933,65 +937,32 @@ CREATE TABLE workspace_notice_policies (
 );
 "#;
 
-pub(crate) const MIGRATIONS: &[Migration] = &[
-    Migration {
-        version: 1,
-        sql: MIGRATION_1_SQL,
-    },
-    Migration {
-        version: 2,
-        sql: MIGRATION_2_SQL,
-    },
-    Migration {
-        version: 3,
-        sql: MIGRATION_3_SQL,
-    },
-    Migration {
-        version: 4,
-        sql: MIGRATION_4_SQL,
-    },
-    Migration {
-        version: 5,
-        sql: MIGRATION_5_SQL,
-    },
-    Migration {
-        version: 6,
-        sql: MIGRATION_6_SQL,
-    },
-    Migration {
-        version: 7,
-        sql: MIGRATION_7_SQL,
-    },
-    Migration {
-        version: 8,
-        sql: MIGRATION_8_SQL,
-    },
-    Migration {
-        version: 9,
-        sql: MIGRATION_9_SQL,
-    },
-    Migration {
-        version: 10,
-        sql: MIGRATION_10_SQL,
-    },
-    Migration {
-        version: 11,
-        sql: MIGRATION_11_SQL,
-    },
-    Migration {
-        version: 12,
-        sql: MIGRATION_12_SQL,
-    },
-    Migration {
-        version: 13,
-        sql: MIGRATION_13_SQL,
-    },
-    Migration {
-        version: 14,
-        sql: MIGRATION_14_SQL,
-    },
-    Migration {
-        version: 15,
-        sql: MIGRATION_15_SQL,
-    },
-];
+const MIGRATION_16_SQL: &str = r#"
+-- The operator approves an immutable snapshot of the resolved commands.
+-- Model-writable project configuration cannot authorize its own execution.
+CREATE TABLE workspace_hook_approvals (
+  workspace_id TEXT PRIMARY KEY REFERENCES workspaces(workspace_id),
+  revision INTEGER NOT NULL CHECK(revision >= 1),
+  approved_hooks_json TEXT NOT NULL CHECK(json_valid(approved_hooks_json)),
+  approved_at_ms INTEGER NOT NULL
+);
+-- The canonical parent workspace event is the stable, unique effect key.
+-- An interrupted shell cannot safely be re-run without native idempotency
+-- proof, so started effects are quarantined after restart.
+CREATE TABLE workspace_hook_effects (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  parent_event_id TEXT NOT NULL REFERENCES runtime_events(event_id),
+  event_name TEXT NOT NULL,
+  hook_name TEXT NOT NULL,
+  hook_json TEXT NOT NULL CHECK(json_valid(hook_json)),
+  input_json TEXT NOT NULL CHECK(json_valid(input_json)),
+  phase TEXT NOT NULL CHECK(phase IN ('intended','started','succeeded','failed','timed_out','manual_review')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+  receipt_json TEXT CHECK(receipt_json IS NULL OR json_valid(receipt_json)),
+  created_at_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  PRIMARY KEY(workspace_id,parent_event_id,event_name,hook_name)
+);
+CREATE INDEX idx_workspace_hook_effects_phase
+  ON workspace_hook_effects(phase,created_at_ms,workspace_id,parent_event_id);
+"#;

@@ -18,6 +18,10 @@ use runtime_core::{
     WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
     WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
+use runtime_core::{
+    TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
+    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEventName,
+};
 use runtime_core::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 use serde_json::Value;
 
@@ -58,6 +62,85 @@ impl SqliteRuntimeStore {
 
 #[async_trait]
 impl RuntimeStore for SqliteRuntimeStore {
+    fn get_team_hook_approval(&self, workspace_id: &str) -> Result<TeamHookApproval, RuntimeError> {
+        self.repository.get_team_hook_approval(workspace_id)
+    }
+
+    fn update_team_hook_approval(
+        &self,
+        update: &TeamHookApprovalUpdate,
+    ) -> Result<TeamHookApproval, RuntimeError> {
+        self.repository.update_team_hook_approval(update)
+    }
+
+    fn list_team_hook_effects(
+        &self,
+        workspace_id: &str,
+        limit: usize,
+    ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
+        self.repository.list_team_hook_effects(workspace_id, limit)
+    }
+
+    fn admit_team_hook_effect(
+        &self,
+        admission: &TeamHookEffectAdmission,
+    ) -> Result<TeamHookEffectRecord, RuntimeError> {
+        self.repository.admit_team_hook_effect(admission)
+    }
+
+    fn get_team_hook_effect(
+        &self,
+        workspace_id: &str,
+        parent_event_id: &str,
+        event: TeamHookEventName,
+        hook_name: &str,
+    ) -> Result<Option<TeamHookEffectRecord>, RuntimeError> {
+        self.repository
+            .get_team_hook_effect(workspace_id, parent_event_id, event, hook_name)
+    }
+
+    fn claim_team_hook_effect(
+        &self,
+        workspace_id: &str,
+        parent_event_id: &str,
+        event: TeamHookEventName,
+        hook_name: &str,
+        at_ms: i64,
+    ) -> Result<TeamHookEffectRecord, RuntimeError> {
+        self.repository.claim_team_hook_effect(
+            workspace_id,
+            parent_event_id,
+            event,
+            hook_name,
+            at_ms,
+        )
+    }
+
+    fn finish_team_hook_effect(
+        &self,
+        workspace_id: &str,
+        parent_event_id: &str,
+        event: TeamHookEventName,
+        hook_name: &str,
+        outcome: TeamHookEffectPhase,
+        receipt: TeamHookEffectReceipt,
+        at_ms: i64,
+    ) -> Result<TeamHookEffectRecord, RuntimeError> {
+        self.repository.finish_team_hook_effect(
+            workspace_id,
+            parent_event_id,
+            event,
+            hook_name,
+            outcome,
+            receipt,
+            at_ms,
+        )
+    }
+
+    fn quarantine_started_team_hook_effects(&self, at_ms: i64) -> Result<usize, RuntimeError> {
+        self.repository.quarantine_started_team_hook_effects(at_ms)
+    }
+
     fn begin_agent_tool_mutation(
         &self,
         command: &AgentToolMutationCommand,

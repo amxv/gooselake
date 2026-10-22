@@ -125,7 +125,7 @@ read-only** view of versioned user/project hook configuration. An optional
 `?event=pre_teammate_add` (or any of the five `post_*` event names) filters the
 result. The JSON response includes `config_version`, `execution_enabled`, and
 effective entries (`event_name`, normalized `name`, `command`, `timeout_ms`,
-`scope`). **`execution_enabled` is currently `false`: hooks are not invoked by
+`scope`, `fingerprint`). **`execution_enabled` is currently `false`: hooks are not invoked by
 workspace operations yet.** This is discovery only, not a feature switch or a
 way for agents to run commands.
 
@@ -139,6 +139,26 @@ are `pre_teammate_add`, `post_teammate_add`, `post_teammate_remove`,
 `post_compaction`. Project entries override user entries of the same normalized
 name *within the same event*; order is deterministic. This configuration does
 not grant model tools any shell-execution or caller-identity capability.
+
+To grant an exact resolved hook, the authenticated runtime operator can send
+`PUT /v2/workspaces/{workspace_id}/hooks/approval` with
+`{"expected_revision":0,"hooks":[{"event_name":"pre_teammate_add","name":"setup","fingerprint":"sha256:<exact hash from GET /hooks>"}]}`.
+The current revision and approved command snapshot are returned by
+`GET /v2/workspaces/{workspace_id}/hooks/approval`. A stale revision fails with
+`409`. Submitting `"hooks":[]` revokes every grant, even when a project config
+has since become invalid. Commands and timeouts come from the effective
+configuration and cannot be supplied directly in the approval request. The
+fingerprint binds the observed command, timeout, event, name, and origin scope;
+an edit between discovery and approval is rejected with `409`.
+An agent editing its project's configuration therefore cannot add approved
+commands. Grants are workspace-local, and an admitted but unclaimed effect
+cannot begin once its grant is revoked.
+
+Hook effect intents, single-execution claims, exact terminal receipts, and
+ambiguous-start `manual_review` classifications are persisted separately.
+`GET /v2/workspaces/{workspace_id}/hooks/effects?limit=50` returns bounded
+operator diagnostics (maximum 100 records). **Hook invocation and model context
+injection are not yet active, even when an operator approves hooks.**
 
 Normal `/v2` agent creation is always scoped to a registered workspace:
 

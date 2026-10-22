@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::RuntimeError;
 
+mod effects;
+pub use effects::*;
+
 pub const TEAM_HOOK_CONFIG_RELATIVE_PATH: &str = ".agents/gg/team-hooks.json";
 pub const TEAM_HOOK_CONFIG_VERSION: u32 = 1;
 const fn default_config_version() -> u32 {
@@ -62,7 +65,7 @@ pub enum TeamHookScope {
     Project,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamHookResolvedEntry {
     pub event_name: TeamHookEventName,
     pub name: String,

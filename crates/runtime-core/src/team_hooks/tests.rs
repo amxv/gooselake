@@ -16,6 +16,45 @@ fn named(name: &str, command: &str) -> Value {
 }
 
 #[test]
+fn fingerprint_binds_command_timeout_scope_and_identity() {
+    let original = TeamHookResolvedEntry {
+        event_name: TeamHookEventName::PreTeammateAdd,
+        name: "bootstrap".into(),
+        command: "./setup.sh".into(),
+        timeout_ms: 4_000,
+        scope: TeamHookScope::Project,
+    };
+    let fingerprint = team_hook_fingerprint(&original);
+    assert!(fingerprint.starts_with("sha256:"));
+    assert_eq!(fingerprint.len(), 71);
+    assert_eq!(fingerprint, team_hook_fingerprint(&original));
+    for changed in [
+        TeamHookResolvedEntry {
+            command: "./other.sh".into(),
+            ..original.clone()
+        },
+        TeamHookResolvedEntry {
+            timeout_ms: 4_001,
+            ..original.clone()
+        },
+        TeamHookResolvedEntry {
+            scope: TeamHookScope::User,
+            ..original.clone()
+        },
+        TeamHookResolvedEntry {
+            name: "setup".into(),
+            ..original.clone()
+        },
+        TeamHookResolvedEntry {
+            event_name: TeamHookEventName::PostTeammateAdd,
+            ..original.clone()
+        },
+    ] {
+        assert_ne!(fingerprint, team_hook_fingerprint(&changed));
+    }
+}
+
+#[test]
 fn no_configuration_means_no_effective_hooks() {
     let temp = tempfile::tempdir().unwrap();
     assert!(resolve_effective_team_hooks(temp.path(), None, None)
@@ -153,4 +192,45 @@ fn preserves_distinct_events_and_does_not_guess_defaults() {
     assert_eq!(hooks.len(), 2);
     assert_eq!(hooks[0].timeout_ms, 100);
     assert_eq!(hooks[1].timeout_ms, 120000);
+}
+
+#[test]
+fn script_output_accepts_only_versioned_semantic_fields() {
+    assert_eq!(
+        validate_team_hook_script_output(TeamHookEventName::PostTeammateAdd, b"{}").unwrap(),
+        TeamHookScriptOutput::default()
+    );
+    let valid = br#"{"inject":{"caller":{"text":"review complete"},"targets":[{"agent_id":"sess_one","text":"ready"}]}}"#;
+    let parsed =
+        validate_team_hook_script_output(TeamHookEventName::PostDirectMessageSend, valid).unwrap();
+    assert_eq!(parsed.inject.unwrap().targets.len(), 1);
+    for malicious in [
+        br#"{"workspace_id":"ws_other"}"#.as_slice(),
+        br#"{"inject":{"caller_agent_id":"sess_other"}}"#,
+        br#"{"inject":{"targets":[{"agent_id":"sess_one","text":"ok","provider":"other"}]}}"#,
+        br#"{"inject":{"targets":[{"agent_id":"sess_one","text":"ok"},{"agent_id":"sess_one","text":"again"}]}}"#,
+        br#"{"pre_teammate_add":{"onboarding_context_append_text":"oops"}}"#,
+    ] {
+        assert!(
+            validate_team_hook_script_output(TeamHookEventName::PostTeammateAdd, malicious)
+                .is_err(),
+            "unexpectedly accepted output {}",
+            String::from_utf8_lossy(malicious)
+        );
+    }
+}
+
+#[test]
+fn pre_add_script_cannot_mutate_provider_or_relative_cwd() {
+    let valid = br#"{"pre_teammate_add":{"spawn_template_mutation":{"cwd":"/tmp/project-worktree"},"onboarding_context_append_text":"Prepare workspace"}}"#;
+    assert!(validate_team_hook_script_output(TeamHookEventName::PreTeammateAdd, valid).is_ok());
+    for invalid in [
+        br#"{"pre_teammate_add":{"spawn_template_mutation":{"cwd":"relative/path"}}}"#.as_slice(),
+        br#"{"pre_teammate_add":{"spawn_template_mutation":{"cwd":"/tmp/ok","provider":"codex"}}}"#,
+        br#"{"pre_teammate_add":{"onboarding_context_append_text":""}}"#,
+    ] {
+        assert!(
+            validate_team_hook_script_output(TeamHookEventName::PreTeammateAdd, invalid).is_err()
+        );
+    }
 }

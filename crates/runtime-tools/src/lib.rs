@@ -9,6 +9,7 @@ mod process_completion;
 mod process_execution;
 mod process_helpers;
 mod process_service;
+mod team_hook_execution;
 #[cfg(test)]
 mod tests;
 mod worktree;
@@ -18,6 +19,7 @@ pub use gateway::{
     TeamMcpPolicy, TeamModelPreset,
 };
 pub use process::RuntimeProcessManager;
+pub use team_hook_execution::execute_team_hook_effect;
 pub use worktree::RuntimeWorktreeService;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

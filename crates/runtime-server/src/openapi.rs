@@ -92,6 +92,15 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}/hooks") => {
             "Inspect effective user/project team hooks (execution disabled)".to_string()
         }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/hooks/approval") => {
+            "Inspect operator-approved hook command snapshot and revision".to_string()
+        }
+        (HttpMethod::Put, "/v2/workspaces/{workspace_id}/hooks/approval") => {
+            "Approve or revoke resolved hooks using revisioned operator authority".to_string()
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/hooks/effects") => {
+            "Inspect durable workspace hook effect and recovery diagnostics".to_string()
+        }
         (HttpMethod::Get, "/v1/version") => "Runtime version".to_string(),
         (HttpMethod::Get, "/v1/providers") => "List providers".to_string(),
         (HttpMethod::Get, "/v1/providers/{provider}/models") => {
@@ -355,6 +364,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
             path,
             "/v2/workspaces/{workspace_id}/agents"
                 | "/v2/workspaces/{workspace_id}/hooks"
+                | "/v2/workspaces/{workspace_id}/hooks/effects"
                 | "/v2/messages"
                 | "/v2/messages/{message_id}/deliveries"
         );
@@ -386,6 +396,15 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
         out.push_str("            enum: [pre_teammate_add, post_teammate_add, post_teammate_remove, post_direct_message_send, post_broadcast_message_send, post_compaction]\n");
+    }
+    if method == HttpMethod::Get && path == "/v2/workspaces/{workspace_id}/hooks/effects" {
+        out.push_str("        - name: limit\n");
+        out.push_str("          in: query\n");
+        out.push_str("          required: false\n");
+        out.push_str("          schema:\n");
+        out.push_str("            type: integer\n");
+        out.push_str("            minimum: 1\n");
+        out.push_str("            maximum: 100\n");
     }
     if method == HttpMethod::Get && path == "/v2/messages" {
         for name in ["workspace_id", "sender_agent_id", "cursor", "limit"] {
@@ -457,6 +476,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/agents/{agent_id}/compactions/{run_id}/resolve"
             | "/v2/workspaces/{workspace_id}/lead"
             | "/v2/workspaces/{workspace_id}/notice-policy"
+            | "/v2/workspaces/{workspace_id}/hooks/approval"
             | "/v2/workspaces/{workspace_id}/agents"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
             | "/v2/messages"

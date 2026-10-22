@@ -103,7 +103,9 @@ pub use state::{
 };
 pub use team_comms::{RuntimeTeamCommsConfig, RuntimeTeamCommsService};
 pub use team_hooks::{
-    resolve_effective_team_hooks, TeamHookEventName, TeamHookResolvedEntry, TeamHookScope,
+    resolve_effective_team_hooks, team_hook_fingerprint, TeamHookApproval, TeamHookApprovalUpdate,
+    TeamHookEffectAdmission, TeamHookEffectPhase, TeamHookEffectReceipt, TeamHookEffectRecord,
+    TeamHookEventName, TeamHookResolvedEntry, TeamHookScope, TeamHookSelection,
     TEAM_HOOK_CONFIG_RELATIVE_PATH, TEAM_HOOK_CONFIG_VERSION,
 };
 pub use turn_authority::{

@@ -382,6 +382,170 @@ fn claimed_effect_receipt_is_exact_and_never_replayed() {
 }
 
 #[test]
+fn message_hook_waits_for_delivery_and_terminal_script_before_context_application() {
+    let (_temp, repo) = fixture();
+    let mut direct_hook = hook();
+    direct_hook.event_name = TeamHookEventName::PostDirectMessageSend;
+    approve(&repo, 0, vec![direct_hook.clone()]);
+    let input = json!({
+        "schema_version": 1,
+        "workspace_id": "ws_one",
+        "event_id": "evt_pending_direct",
+        "hook_event": "post_direct_message_send",
+        "actor_agent_id": "sess_sender",
+        "subject": {
+            "kind": "message",
+            "message_id": "msg_pending",
+            "sender_agent_id": "sess_sender",
+            "scope": "direct",
+            "recipient_agent_ids": ["sess_target"],
+            "recipient_count": 1,
+            "recipients_truncated": false
+        },
+        "eligible_target_agent_ids": [],
+        "eligible_targets_truncated": false
+    });
+    {
+        let connection = open_connection(&repo.database_path).unwrap();
+        connection.execute(
+            "INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at)
+             VALUES('evt_pending_direct','workspace','ws_one',1,'workspace.hook_parent',0,?1,12)",
+            [input.to_string()],
+        ).unwrap();
+        connection.execute_batch(
+            "INSERT INTO agent_messages(id,scope,context_kind,workspace_id,sender_agent_id,
+             recipient_agent_ids_json,input_json,priority,policy,created_at)
+             VALUES('msg_pending','direct','workspace_team','ws_one','sess_sender',
+             '[\"sess_target\"]','{}','normal','immediate',12);
+             INSERT INTO agent_deliveries(id,message_id,recipient_agent_id,provider,status,created_at,updated_at)
+             VALUES('delivery_pending','msg_pending','sess_target','codex','pending',12,12);",
+        ).unwrap();
+    }
+    let admission = TeamHookEffectAdmission {
+        workspace_id: "ws_one".into(),
+        parent_event_id: "evt_pending_direct".into(),
+        hook: direct_hook,
+        input,
+        created_at_ms: 12,
+    };
+    let intended = repo.admit_team_hook_effect(&admission).unwrap();
+    assert_eq!(intended.phase, TeamHookEffectPhase::Intended);
+    // Canonical admission deliberately starts as not_ready; the successful
+    // terminal receipt is responsible for enabling application.
+    assert_eq!(intended.application_state, "not_ready");
+    assert!(repo
+        .list_dispatchable_team_hook_effects(10)
+        .unwrap()
+        .is_empty());
+    assert!(repo
+        .list_unapplied_team_hook_effects(10)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        repo.apply_team_hook_effect_output(&intended, 13).unwrap(),
+        intended
+    );
+
+    // If an older or corrupted writer ever prematurely marks an intended
+    // script as pending, the application boundary must fail closed instead
+    // of consuming the receipt before the script runs.
+    {
+        let conn = open_connection(&repo.database_path).unwrap();
+        conn.execute(
+            "UPDATE workspace_hook_effects SET application_state='pending'
+             WHERE parent_event_id='evt_pending_direct'",
+            [],
+        )
+        .unwrap();
+        assert!(matches!(
+            repo.apply_team_hook_effect_output(&intended, 13),
+            Err(RuntimeError::Conflict(_))
+        ));
+        conn.execute(
+            "UPDATE workspace_hook_effects SET application_state='not_ready'
+             WHERE parent_event_id='evt_pending_direct'",
+            [],
+        )
+        .unwrap();
+    }
+
+    // Restart while the original message is pending. No worker can consume
+    // the output before the script even becomes dispatchable.
+    let reopened = SqliteRuntimeRepository::new(repo.database_path.clone());
+    reopened.initialize_schema().unwrap();
+    assert!(reopened
+        .list_unapplied_team_hook_effects(10)
+        .unwrap()
+        .is_empty());
+    open_connection(&repo.database_path)
+        .unwrap()
+        .execute(
+            "UPDATE agent_deliveries SET status='delivered' WHERE id='delivery_pending'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        reopened
+            .list_dispatchable_team_hook_effects(10)
+            .unwrap()
+            .len(),
+        1
+    );
+    let started = reopened
+        .claim_team_hook_effect(
+            "ws_one",
+            "evt_pending_direct",
+            TeamHookEventName::PostDirectMessageSend,
+            "bootstrap",
+            14,
+        )
+        .unwrap();
+    assert_eq!(started.phase, TeamHookEffectPhase::Started);
+    assert!(reopened
+        .list_unapplied_team_hook_effects(10)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        reopened
+            .apply_team_hook_effect_output(&started, 14)
+            .unwrap(),
+        started
+    );
+    let finished = reopened
+        .finish_team_hook_effect(
+            "ws_one",
+            "evt_pending_direct",
+            TeamHookEventName::PostDirectMessageSend,
+            "bootstrap",
+            TeamHookEffectPhase::Succeeded,
+            TeamHookEffectReceipt {
+                validated_output: Some(json!({})),
+                error_code: None,
+            },
+            15,
+        )
+        .unwrap();
+    assert_eq!(
+        reopened.list_unapplied_team_hook_effects(10).unwrap().len(),
+        1
+    );
+    let applied = reopened
+        .apply_team_hook_effect_output(&finished, 16)
+        .unwrap();
+    assert_eq!(applied.application_state, "applied");
+    assert!(reopened
+        .list_unapplied_team_hook_effects(10)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        reopened
+            .apply_team_hook_effect_output(&finished, 17)
+            .unwrap(),
+        applied
+    );
+}
+
+#[test]
 fn restart_quarantines_started_shell_without_redispatching() {
     let (_temp, repo) = fixture();
     approve(&repo, 0, vec![hook()]);

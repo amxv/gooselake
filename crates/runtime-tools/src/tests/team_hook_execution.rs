@@ -282,6 +282,158 @@ async fn pre_add_cannot_rebind_explicit_root_route_to_another_directory() {
     assert!(provider.state.lock().await.sessions.is_empty());
 }
 
+#[tokio::test]
+async fn conflicting_pre_add_scripts_fail_closed_without_creating_a_provider_or_member() {
+    let (_fixture, store, workspace, manager, provider) = pre_add_fixture("printf '{}'".into());
+    let root = std::path::PathBuf::from(&workspace.canonical_root);
+    let first = root.join("first-route");
+    let second = root.join("second-route");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    let mut hooks = Vec::new();
+    let mut markers = Vec::new();
+    for (name, cwd) in [("alpha", &first), ("beta", &second)] {
+        let response = root.join(format!("{name}.json"));
+        let marker = root.join(format!("{name}.marker"));
+        std::fs::write(
+            &response,
+            json!({"pre_teammate_add":{"spawn_template_mutation":{"cwd":cwd}}}).to_string(),
+        )
+        .unwrap();
+        hooks.push(TeamHookResolvedEntry {
+            event_name: TeamHookEventName::PreTeammateAdd,
+            name: name.into(),
+            command: format!(
+                "printf x >> '{}'; cat '{}'",
+                marker.display(),
+                response.display()
+            ),
+            timeout_ms: 5_000,
+            scope: TeamHookScope::Project,
+        });
+        markers.push(marker);
+    }
+    store
+        .update_team_hook_approval(&TeamHookApprovalUpdate {
+            workspace_id: workspace.workspace_id.clone(),
+            expected_revision: 1,
+            hooks,
+            approved_at_ms: 2,
+        })
+        .unwrap();
+    manager
+        .install_pre_add_hook_executor(Arc::new(NativeTeamHookExecutor::new(store.clone())))
+        .await;
+
+    let result = manager
+        .create_workspace_agent(
+            &workspace.workspace_id,
+            pre_add_request(&root),
+            "runtime_operator",
+        )
+        .await;
+    assert!(matches!(result, Err(RuntimeError::Conflict(_))));
+    assert!(provider.state.lock().await.sessions.is_empty());
+    assert!(store
+        .list_workspace_agents(&workspace.workspace_id, None)
+        .unwrap()
+        .is_empty());
+    let effects = store
+        .list_team_hook_effects(&workspace.workspace_id, 10)
+        .unwrap();
+    assert_eq!(effects.len(), 2);
+    assert!(effects.iter().all(|effect| {
+        effect.phase == TeamHookEffectPhase::Succeeded
+            && effect.application_state == "pending"
+            && effect.attempt_count == 1
+    }));
+    for marker in markers {
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "x");
+    }
+    // The script's external effects happened; restart classifies their
+    // unattached outputs as rejected/unknown without creating the member.
+    let restarted = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: store.database_path().to_path_buf(),
+    });
+    assert_eq!(
+        restarted.quarantine_started_team_hook_effects(100).unwrap(),
+        0
+    );
+    assert!(restarted
+        .list_team_hook_effects(&workspace.workspace_id, 10)
+        .unwrap()
+        .iter()
+        .all(|effect| effect.application_state == "rejected"
+            && effect.application_error_code.as_deref()
+                == Some("pre_add_provider_outcome_unknown")));
+}
+
+struct RevokingPreAddExecutor {
+    store: Arc<SqliteRuntimeStore>,
+}
+
+#[async_trait::async_trait]
+impl runtime_core::RuntimeTeamHookExecutor for RevokingPreAddExecutor {
+    async fn execute(
+        &self,
+        admission: &TeamHookEffectAdmission,
+    ) -> Result<runtime_core::TeamHookEffectRecord, RuntimeError> {
+        let finished = execute_team_hook_effect(self.store.as_ref(), admission).await?;
+        // Simulate operator revocation after the native script succeeded but
+        // before the runtime can finish creating the provider and agent.
+        self.store
+            .update_team_hook_approval(&TeamHookApprovalUpdate {
+                workspace_id: admission.workspace_id.clone(),
+                expected_revision: 1,
+                hooks: Vec::new(),
+                approved_at_ms: 99,
+            })?;
+        Ok(finished)
+    }
+}
+
+#[tokio::test]
+async fn pre_add_revocation_during_provider_creation_cannot_commit_agent_or_context() {
+    let (_fixture, store, workspace, manager, provider) = pre_add_fixture("printf '{}'".into());
+    manager
+        .install_pre_add_hook_executor(Arc::new(RevokingPreAddExecutor {
+            store: Arc::clone(&store),
+        }))
+        .await;
+
+    let result = manager
+        .create_workspace_agent(
+            &workspace.workspace_id,
+            pre_add_request(std::path::Path::new(&workspace.canonical_root)),
+            "runtime_operator",
+        )
+        .await;
+    assert!(matches!(result, Err(RuntimeError::Conflict(_))));
+    assert!(store
+        .list_workspace_agents(&workspace.workspace_id, None)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        store
+            .get_team_hook_approval(&workspace.workspace_id)
+            .unwrap()
+            .revision,
+        2
+    );
+    assert!(store
+        .get_team_hook_approval(&workspace.workspace_id)
+        .unwrap()
+        .hooks
+        .is_empty());
+    assert!(provider.state.lock().await.sessions.is_empty());
+    let effects = store
+        .list_team_hook_effects(&workspace.workspace_id, 10)
+        .unwrap();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0].phase, TeamHookEffectPhase::Succeeded);
+    assert_eq!(effects[0].application_state, "pending");
+}
+
 fn fixture(
     command: String,
     timeout_ms: u64,

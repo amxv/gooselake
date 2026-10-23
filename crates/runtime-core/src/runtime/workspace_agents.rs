@@ -432,6 +432,9 @@ impl RuntimeSessionManager {
                 .setting_sources_intent
                 .resolved_sources(Some(policy.authoritative_cwd.as_str()))?;
         }
+        if let Some(context) = pre_add_context.as_ref() {
+            self.verify_pre_add_grants_before_provider(workspace_id, context)?;
+        }
         let metadata = request.metadata.unwrap_or_else(|| serde_json::json!({}));
         let permission_mode = policy.permission_intent.resolved_mode();
         let provider_session = provider

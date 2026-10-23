@@ -175,12 +175,18 @@ separate scoped notice in the **same transaction** as member creation. Other
 injection recipients and authorization/policy mutations are rejected. Crashed
 or orphaned pre-add executions retain reviewable receipts and are never
 automatically retried.
+If multiple approved hooks propose conflicting working directories, member
+creation fails rather than silently choosing one. Revoking an approval after
+the script has run but before agent admission also prevents the provider
+session and onboarding context from being committed as a workspace member.
 
 An approved post hook is admitted *atomically* with its canonical workspace
 membership or message mutation. A worker runs its bounded script once and
 commits a terminal receipt before separately validating any optional output.
 Message hooks wait until the message's durable delivery attempts have settled,
 so their context cannot race ahead of a still-pending or deferred message.
+Only a successful terminal script receipt makes context eligible for application;
+a nonterminal effect cannot consume a prematurely marked context receipt.
 Only active, authorized recipients named by the immutable event snapshot can
 receive resulting automation-context notices. A transactionally receipted
 notice prevents duplicate context on restart; a forged target rejects the

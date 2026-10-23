@@ -567,6 +567,82 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     )
     .expect("Codex GG workspace JSON");
 
+    // A real native provider turn must see approved script-supplied onboarding
+    // context, not merely a notice stored by the runtime or echoed in the
+    // human-authored prompt. The token below occurs only in the script output.
+    let hook_token = "CODEX_NATIVE_HOOK_CONTEXT_82736";
+    let hook_output = workspace_root.join("pre-add-hook-output.json");
+    std::fs::write(
+        &hook_output,
+        serde_json::json!({
+            "pre_teammate_add": {
+                "onboarding_context_append_text": format!(
+                    "In your final response, include the exact onboarding marker {hook_token}."
+                )
+            }
+        })
+        .to_string(),
+    )
+    .expect("write hook response fixture");
+    let hook_command = format!("cat '{}'", hook_output.display());
+    let hook_config = workspace_root.join(runtime_core::TEAM_HOOK_CONFIG_RELATIVE_PATH);
+    std::fs::create_dir_all(hook_config.parent().unwrap()).expect("create hook config directory");
+    std::fs::write(
+        &hook_config,
+        serde_json::json!({"version":1,"hooks":{"pre_teammate_add":[{
+            "name":"native_onboarding_context", "command":hook_command, "timeout_ms":5000
+        }]}})
+        .to_string(),
+    )
+    .expect("write approved-hook candidate");
+    let hooks_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v2/workspaces/{}/hooks",
+                    registered.workspace.workspace_id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("discover native hook candidate");
+    assert_eq!(hooks_response.status(), StatusCode::OK);
+    let hooks: serde_json::Value = serde_json::from_slice(
+        &to_bytes(hooks_response.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let fingerprint = hooks["hooks"][0]["fingerprint"].as_str().unwrap();
+    let approved_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!(
+                    "/v2/workspaces/{}/hooks/approval",
+                    registered.workspace.workspace_id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "expected_revision":0,"hooks":[{
+                            "event_name":"pre_teammate_add",
+                            "name":"native_onboarding_context", "fingerprint":fingerprint
+                        }]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("approve native hook candidate");
+    assert_eq!(approved_response.status(), StatusCode::OK);
+
     let marker_token = "CODEX_GG_PROCESS_MARKER_71423";
     let marker_path = temp_dir.path().join(format!("{marker_token}.txt"));
     let completion_token = "CODEX_GG_PROCESS_OK_63851";
@@ -574,7 +650,7 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     // on the provider rewriting shell quoting/redirection faithfully.
     let tool_command = format!("touch {}", marker_path.display());
     let prompt = format!(
-        "Use the native gg_process tool exactly once with mode=run and command exactly: {tool_command}. Do not use shell or command execution directly. After the GG tool returns, reply with exactly: {completion_token}"
+        "Use the native gg_process tool exactly once with mode=run and command exactly: {tool_command}. Do not use shell or command execution directly. After the GG tool returns, include {completion_token} in your final reply and follow the separate onboarding context instructions."
     );
 
     let create_response = router
@@ -753,6 +829,10 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     assert!(
         terminal_text.contains(completion_token),
         "Codex GG MCP terminal text missing completion token; text={terminal_text}"
+    );
+    assert!(
+        terminal_text.contains(hook_token),
+        "native Codex model did not receive approved pre-add hook onboarding context; text={terminal_text}"
     );
 
     // `run` admits work asynchronously. The model can complete its initial

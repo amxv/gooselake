@@ -49,7 +49,13 @@ impl SqliteRuntimeRepository {
         limit: usize,
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         self.list_hook_effects_by_state(
-            "e.application_state='pending' AND e.event_name IN
+            // The script worker may be waiting for the original message
+            // delivery, or its earlier batch may be at capacity. Never
+            // consume an output receipt before its native effect terminates.
+            // STARTED/MANUAL_REVIEW are ambiguous, not failed effects.
+            "e.application_state='pending'
+             AND e.phase IN ('succeeded','failed','timed_out')
+             AND e.event_name IN
              ('post_teammate_add','post_teammate_remove',
               'post_direct_message_send','post_broadcast_message_send')",
             limit,
@@ -115,6 +121,16 @@ impl SqliteRuntimeRepository {
         .ok_or_else(|| RuntimeError::NotFound("hook effect no longer exists".into()))?;
         if record.application_state != "pending" {
             return Ok(record);
+        }
+        if !matches!(
+            record.phase,
+            runtime_core::TeamHookEffectPhase::Succeeded
+                | runtime_core::TeamHookEffectPhase::Failed
+                | runtime_core::TeamHookEffectPhase::TimedOut
+        ) {
+            return Err(RuntimeError::Conflict(
+                "hook output cannot be applied before the native effect is terminal".into(),
+            ));
         }
 
         let prepared = prepare_scoped_notices(&tx, &record, now)?;

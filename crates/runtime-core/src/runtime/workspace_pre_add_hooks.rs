@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::{
     team_hooks::{validate_team_hook_script_output, TeamHookScriptOutput},
     RuntimeError, RuntimeTeamHookExecutor, TeamHookEffectAdmission, TeamHookEffectPhase,
-    TeamHookPreAddAdmission, TeamHookPreAddContext, WorkspaceRecord,
+    TeamHookEventName, TeamHookPreAddAdmission, TeamHookPreAddContext, WorkspaceRecord,
 };
 
 use super::helpers::now_ms;
@@ -20,6 +20,37 @@ const MAX_TOTAL_ONBOARDING_HOOK_TEXT: usize = 32 * 1024;
 const MAX_TOTAL_CALLER_HOOK_TEXT: usize = 16 * 1024;
 
 impl RuntimeSessionManager {
+    /// Avoid opening a provider session when the operator revoked a hook while
+    /// its shell command was running. Final admission rechecks grants inside
+    /// the SQLite transaction to close the remaining provider-create race.
+    pub(super) fn verify_pre_add_grants_before_provider(
+        &self,
+        workspace_id: &str,
+        context: &TeamHookPreAddContext,
+    ) -> Result<(), RuntimeError> {
+        let approval = self.store.get_team_hook_approval(workspace_id)?;
+        for name in &context.completed_hook_names {
+            let effect = self
+                .store
+                .get_team_hook_effect(
+                    workspace_id,
+                    &context.parent_event_id,
+                    TeamHookEventName::PreTeammateAdd,
+                    name,
+                )?
+                .ok_or_else(|| RuntimeError::Conflict("pre-add hook effect disappeared".into()))?;
+            if effect.phase != TeamHookEffectPhase::Succeeded
+                || effect.application_state != "pending"
+                || !approval.hooks.contains(&effect.hook)
+            {
+                return Err(RuntimeError::Conflict(
+                    "pre-add hook approval changed before provider creation".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub async fn pre_add_hook_executor_enabled(&self) -> bool {
         self.pre_add_hook_executor.read().await.is_some()
     }

@@ -1,7 +1,8 @@
 use super::*;
+use crate::team_hook_execution::{MAX_DURABLE_RECEIPT_BYTES, MAX_SCRIPT_STDOUT};
 use runtime_core::{
-    TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase, TeamHookEventName,
-    TeamHookResolvedEntry, TeamHookScope,
+    TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase, TeamHookEffectReceipt,
+    TeamHookEventName, TeamHookResolvedEntry, TeamHookScope,
 };
 
 fn fixture(
@@ -121,10 +122,17 @@ async fn timeouts_and_invalid_output_never_leak_script_stdout() {
         Some("timeout")
     );
 
-    let (_temp, store, admission) = fixture(
-        "printf '{\"caller_agent_id\":\"forged\",\"secret\":\"not_stored\"}'".into(),
-        5_000,
-    );
+    // Keep the secret bytes outside the approved command snapshot. A grant is
+    // intentionally auditable (including its command), but neither a failed
+    // receipt nor the effect history may retain the *script's output*.
+    let secret_dir = tempfile::tempdir().unwrap();
+    let secret_file = secret_dir.path().join("invalid-output.json");
+    std::fs::write(
+        &secret_file,
+        br#"{"caller_agent_id":"forged","secret":"not_stored"}"#,
+    )
+    .unwrap();
+    let (_temp, store, admission) = fixture(format!("cat '{}'", secret_file.display()), 5_000);
     let invalid = execute_team_hook_effect(&store, &admission).await.unwrap();
     assert_eq!(invalid.phase, TeamHookEffectPhase::Failed);
     assert_eq!(
@@ -135,6 +143,63 @@ async fn timeouts_and_invalid_output_never_leak_script_stdout() {
     let encoded = serde_json::to_string(&durable).unwrap();
     assert!(!encoded.contains("not_stored"));
     assert!(!encoded.contains("forged"));
+}
+
+#[tokio::test]
+async fn near_limit_valid_stdout_cannot_leave_an_unpersistable_started_receipt() {
+    let secret_dir = tempfile::tempdir().unwrap();
+    let output_file = secret_dir.path().join("bounded-output.json");
+    let mut near_limit = None;
+    for second_len in (7_900..=8_192).rev() {
+        let payload = serde_json::to_vec(&json!({
+            "inject": {
+                "caller": {"text": "x".repeat(8_192)},
+                "targets": [{"agent_id": "sess_other", "text": "y".repeat(second_len)}]
+            }
+        }))
+        .unwrap();
+        if payload.len() > MAX_SCRIPT_STDOUT {
+            continue;
+        }
+        let validated = runtime_core::team_hooks::validate_team_hook_script_output(
+            TeamHookEventName::PostTeammateAdd,
+            &payload,
+        )
+        .unwrap();
+        let receipt = TeamHookEffectReceipt {
+            validated_output: Some(serde_json::to_value(validated).unwrap()),
+            error_code: None,
+        };
+        if serde_json::to_vec(&receipt).unwrap().len() > MAX_DURABLE_RECEIPT_BYTES {
+            near_limit = Some(payload);
+            break;
+        }
+    }
+    let near_limit = near_limit.expect("valid stdout whose durable receipt exceeds 16 KiB");
+    std::fs::write(&output_file, near_limit).unwrap();
+    let (temp, store, admission) = fixture(format!("cat '{}'", output_file.display()), 5_000);
+    let effect = execute_team_hook_effect(&store, &admission).await.unwrap();
+    assert_eq!(effect.phase, TeamHookEffectPhase::Failed);
+    assert_eq!(
+        effect.receipt.unwrap().error_code.as_deref(),
+        Some("output_too_large")
+    );
+
+    let reopened = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite"),
+    });
+    let recovered = execute_team_hook_effect(&reopened, &admission)
+        .await
+        .unwrap();
+    assert_eq!(recovered.phase, TeamHookEffectPhase::Failed);
+    assert_eq!(recovered.attempt_count, 1);
+    assert_eq!(
+        reopened
+            .repository()
+            .quarantine_started_team_hook_effects(9)
+            .unwrap(),
+        0
+    );
 }
 
 #[tokio::test]

@@ -15,8 +15,9 @@ use tokio::process::Command;
 
 use crate::now_ms;
 
-const MAX_SCRIPT_STDOUT: usize = 16 * 1024;
+pub(crate) const MAX_SCRIPT_STDOUT: usize = 16 * 1024;
 const MAX_SCRIPT_STDERR: usize = 4 * 1024;
+pub(crate) const MAX_DURABLE_RECEIPT_BYTES: usize = 16 * 1024;
 
 enum ScriptResult {
     Success(Vec<u8>),
@@ -78,15 +79,35 @@ pub async fn execute_team_hook_effect(
     let (phase, receipt) = match result {
         ScriptResult::Success(stdout) => {
             match validate_team_hook_script_output(claimed.hook.event_name, &stdout) {
-                Ok(output) => (
-                    TeamHookEffectPhase::Succeeded,
-                    TeamHookEffectReceipt {
+                Ok(output) => {
+                    let receipt = TeamHookEffectReceipt {
                         validated_output: Some(serde_json::to_value(output).map_err(|_| {
                             RuntimeError::Bootstrap("validated hook output cannot serialize".into())
                         })?),
                         error_code: None,
-                    },
-                ),
+                    };
+                    // The persisted receipt has a stricter size bound than
+                    // script stdout: JSON re-encoding and envelope overhead
+                    // can make a valid 16 KiB output impossible to commit.
+                    // Never leave an already-run effect stuck in `started`.
+                    if serde_json::to_vec(&receipt)
+                        .map_err(|_| {
+                            RuntimeError::Bootstrap("hook receipt cannot serialize".into())
+                        })?
+                        .len()
+                        > MAX_DURABLE_RECEIPT_BYTES
+                    {
+                        (
+                            TeamHookEffectPhase::Failed,
+                            TeamHookEffectReceipt {
+                                validated_output: None,
+                                error_code: Some("output_too_large".into()),
+                            },
+                        )
+                    } else {
+                        (TeamHookEffectPhase::Succeeded, receipt)
+                    }
+                }
                 Err(_) => (
                     TeamHookEffectPhase::Failed,
                     TeamHookEffectReceipt {

@@ -5,6 +5,7 @@ mod approval;
 mod effects;
 mod trigger;
 
+pub(crate) use effects::hook_is_approved as effect_grant_is_current;
 pub(crate) use trigger::{active_workspace_hook_targets_tx, queue_team_hook_trigger_tx};
 
 #[cfg(test)]

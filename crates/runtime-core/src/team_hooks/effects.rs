@@ -1,6 +1,7 @@
 //! Hook approval and external-effect evidence are separate from mutable
 //! project configuration. An admitted effect never re-reads a shell command.
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -96,6 +97,40 @@ pub struct TeamHookEffectAdmission {
     /// Canonical, bounded input prepared by trusted event code, not tool JSON.
     pub input: Value,
     pub created_at_ms: i64,
+}
+
+/// Prepared solely from trusted manager state. The reserved agent ID keeps
+/// the pre-add effect stable while no provider or workspace agent exists.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamHookPreAddAdmission {
+    pub workspace_id: String,
+    pub reserved_agent_id: String,
+    pub actor_agent_id: Option<String>,
+    pub provider: String,
+    pub model: Option<String>,
+    pub planned_cwd: String,
+    pub member_title: Option<String>,
+    pub onboarding_prompt: Option<String>,
+    pub created_at_ms: i64,
+}
+
+/// Private output applied with agent/session/onboarding persistence. Public
+/// HTTP JSON cannot fabricate either the internal caller or the model notice.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TeamHookPreAddContext {
+    pub parent_event_id: String,
+    pub completed_hook_names: Vec<String>,
+    pub onboarding_context_append_text: Option<String>,
+    pub caller_context_text: Option<String>,
+}
+
+#[async_trait]
+pub trait RuntimeTeamHookExecutor: Send + Sync {
+    async fn execute(
+        &self,
+        admission: &TeamHookEffectAdmission,
+    ) -> Result<TeamHookEffectRecord, RuntimeError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

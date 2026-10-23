@@ -79,9 +79,12 @@ events (`post_teammate_add`, `post_teammate_remove`, `post_direct_message_send`,
 `post_broadcast_message_send`) now create immutable effect intents in their
 canonical transaction. An approved worker executes each script at most once
 and applies validated, recipient-scoped automation context with a separate
-durable receipt. `execution_enabled: true` advertises the dispatcher and
-`executable_events` enumerates exactly these four live events. Pre-add and
-post-compaction remain discovery-only. Neither discovery nor approval alone
+durable receipt. Approved `pre_teammate_add` scripts are admitted before
+provider creation and may modify only validated workspace-local cwd and
+onboarding/caller context, with a fail-closed, durable recovery boundary.
+`execution_enabled: true` advertises active hooks and `executable_events`
+enumerates exactly these five live events. Post-compaction remains
+discovery-only until its canonical compaction lifecycle. Neither discovery nor approval alone
 launches commands.
 
 Lifecycle notices are durable system/automation-context turns, not user messages. A lead promotion/demotion, eligible non-self lead-membership change, verified worktree reassignment or completed interruption queues its notice in the same transaction as the authoritative change; no-op/idempotent replay does not duplicate. The revisioned notice policy has four default-enabled toggles: `lead_transitions`, `membership_to_lead`, `worktree_reassignment` and `workspace_interrupt`. It does not suppress mandatory onboarding. Stale policy revisions return `409`. Pending notices are injected only when safe, with an unknown provider outcome held for manual review rather than blindly retried.

@@ -109,6 +109,87 @@ fn admission() -> TeamHookEffectAdmission {
 }
 
 #[test]
+fn pre_add_reservation_and_restart_never_replay_an_unattached_script() {
+    let (_temp, repo) = fixture();
+    let mut pre_add_hook = hook();
+    pre_add_hook.event_name = TeamHookEventName::PreTeammateAdd;
+    approve(&repo, 0, vec![pre_add_hook.clone()]);
+    let admission = runtime_core::TeamHookPreAddAdmission {
+        workspace_id: "ws_one".into(),
+        reserved_agent_id: "sess_planned_one".into(),
+        actor_agent_id: None,
+        provider: "codex".into(),
+        model: Some("gpt-test".into()),
+        planned_cwd: "/tmp/ws_one".into(),
+        member_title: Some("Writer".into()),
+        onboarding_prompt: Some("Draft paper".into()),
+        created_at_ms: 42,
+    };
+    let effects = repo.admit_pre_add_team_hooks(&admission).unwrap();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(repo.admit_pre_add_team_hooks(&admission).unwrap(), effects);
+    let mut conflicting = admission.clone();
+    conflicting.planned_cwd = "/some/other/root".into();
+    assert!(matches!(
+        repo.admit_pre_add_team_hooks(&conflicting),
+        Err(RuntimeError::Conflict(_))
+    ));
+    assert_eq!(effects[0].phase, TeamHookEffectPhase::Intended);
+    assert_eq!(
+        effects[0].input["subject"]["member_agent_id"],
+        "sess_planned_one"
+    );
+    let effect = &effects[0];
+    let claimed = repo
+        .claim_team_hook_effect(
+            "ws_one",
+            &effect.parent_event_id,
+            TeamHookEventName::PreTeammateAdd,
+            &pre_add_hook.name,
+            43,
+        )
+        .unwrap();
+    assert_eq!(claimed.phase, TeamHookEffectPhase::Started);
+    repo.finish_team_hook_effect(
+        "ws_one",
+        &effect.parent_event_id,
+        TeamHookEventName::PreTeammateAdd,
+        &pre_add_hook.name,
+        TeamHookEffectPhase::Succeeded,
+        TeamHookEffectReceipt {
+            validated_output: Some(json!({})),
+            error_code: None,
+        },
+        44,
+    )
+    .unwrap();
+    repo.quarantine_started_team_hook_effects(45).unwrap();
+    let after = repo
+        .get_team_hook_effect(
+            "ws_one",
+            &effect.parent_event_id,
+            TeamHookEventName::PreTeammateAdd,
+            &pre_add_hook.name,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.phase, TeamHookEffectPhase::Succeeded);
+    assert_eq!(after.application_state, "rejected");
+    assert_eq!(
+        after.application_error_code.as_deref(),
+        Some("pre_add_provider_outcome_unknown")
+    );
+    assert!(repo
+        .list_dispatchable_team_hook_effects(10)
+        .unwrap()
+        .is_empty());
+    assert!(repo
+        .list_unapplied_team_hook_effects(10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn approved_hooks_are_revisioned_workspace_local_and_revoke_cleanly() {
     let (_temp, repo) = fixture();
     let initial = repo.get_team_hook_approval("ws_one").unwrap();

@@ -85,18 +85,22 @@ pub(super) async fn get_workspace_hooks(
         home.as_deref(),
         query.event,
     )?;
+    let mut executable_events = vec![
+        runtime_core::TeamHookEventName::PostTeammateAdd,
+        runtime_core::TeamHookEventName::PostTeammateRemove,
+        runtime_core::TeamHookEventName::PostDirectMessageSend,
+        runtime_core::TeamHookEventName::PostBroadcastMessageSend,
+    ];
+    if state.runtime.pre_add_hook_executor_enabled().await {
+        executable_events.insert(0, runtime_core::TeamHookEventName::PreTeammateAdd);
+    }
     Ok(Json(WorkspaceHooksResponse {
         workspace_id: workspace.workspace_id,
         config_version: runtime_core::TEAM_HOOK_CONFIG_VERSION,
         // Pre-add has a distinct blocking mutation contract; compaction has a
         // separate canonical lifecycle. Neither may be advertised early.
         execution_enabled: true,
-        executable_events: vec![
-            runtime_core::TeamHookEventName::PostTeammateAdd,
-            runtime_core::TeamHookEventName::PostTeammateRemove,
-            runtime_core::TeamHookEventName::PostDirectMessageSend,
-            runtime_core::TeamHookEventName::PostBroadcastMessageSend,
-        ],
+        executable_events,
         hooks: hooks
             .into_iter()
             .map(|hook| WorkspaceHookDisplayEntry {

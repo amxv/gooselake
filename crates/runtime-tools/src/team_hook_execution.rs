@@ -6,10 +6,11 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use runtime_core::team_hooks::validate_team_hook_script_output;
 use runtime_core::{
-    RuntimeError, RuntimeStore, TeamHookEffectAdmission, TeamHookEffectPhase,
-    TeamHookEffectReceipt, TeamHookEffectRecord,
+    RuntimeError, RuntimeStore, RuntimeTeamHookExecutor, TeamHookEffectAdmission,
+    TeamHookEffectPhase, TeamHookEffectReceipt, TeamHookEffectRecord,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
@@ -24,6 +25,26 @@ enum ScriptResult {
     Success(Vec<u8>),
     Failed(&'static str),
     TimedOut,
+}
+
+pub struct NativeTeamHookExecutor {
+    store: Arc<dyn RuntimeStore>,
+}
+
+impl NativeTeamHookExecutor {
+    pub fn new(store: Arc<dyn RuntimeStore>) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl RuntimeTeamHookExecutor for NativeTeamHookExecutor {
+    async fn execute(
+        &self,
+        admission: &TeamHookEffectAdmission,
+    ) -> Result<TeamHookEffectRecord, RuntimeError> {
+        execute_team_hook_effect(self.store.as_ref(), admission).await
+    }
 }
 
 /// Admit the exact approved command against a real persisted parent event,

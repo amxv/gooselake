@@ -5,6 +5,283 @@ use runtime_core::{
     TeamHookEventName, TeamHookResolvedEntry, TeamHookScope,
 };
 
+fn pre_add_request(root: &std::path::Path) -> runtime_core::WorkspaceAgentCreateRequest {
+    runtime_core::WorkspaceAgentCreateRequest {
+        provider: runtime_core::ProviderKind::Codex,
+        model: Some("test-model".into()),
+        permission_intent: runtime_core::ProviderPermissionIntent::ProviderDefault,
+        setting_sources_intent: runtime_core::ProviderSettingSourcesIntent::Isolated,
+        current_preferences: runtime_core::ProviderSessionPreferences::default(),
+        system_prompt: None,
+        allowed_tools: Vec::new(),
+        disallowed_tools: Vec::new(),
+        cwd: Some(root.to_string_lossy().into_owned()),
+        worktree: None,
+        harness_version_slot: None,
+        title: Some("Member".into()),
+        metadata: None,
+        onboarding: Some(runtime_core::WorkspaceAgentOnboardingRequest {
+            prompt: Some("Inspect tests".into()),
+            ..Default::default()
+        }),
+    }
+}
+
+fn pre_add_fixture(
+    command: String,
+) -> (
+    tempfile::TempDir,
+    Arc<SqliteRuntimeStore>,
+    runtime_core::WorkspaceRecord,
+    Arc<RuntimeSessionManager>,
+    Arc<super::WorktreeTestProvider>,
+) {
+    use runtime_core::{prepare_workspace_registration, OperationActor, WorkspaceRegisterRequest};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("workspace");
+    std::fs::create_dir(&root).unwrap();
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite"),
+    }));
+    store.repository().initialize_schema().unwrap();
+    let workspace = store
+        .register_workspace(
+            &prepare_workspace_registration(
+                WorkspaceRegisterRequest {
+                    canonical_root: root.to_string_lossy().into_owned(),
+                    display_name: Some("Hook workspace".into()),
+                },
+                OperationActor::operator("pre-add-test"),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .workspace;
+    store
+        .update_team_hook_approval(&TeamHookApprovalUpdate {
+            workspace_id: workspace.workspace_id.clone(),
+            expected_revision: 0,
+            approved_at_ms: 1,
+            hooks: vec![TeamHookResolvedEntry {
+                event_name: TeamHookEventName::PreTeammateAdd,
+                name: "prepare_member".into(),
+                command,
+                timeout_ms: 5_000,
+                scope: TeamHookScope::Project,
+            }],
+        })
+        .unwrap();
+    let provider = Arc::new(super::WorktreeTestProvider::default());
+    let mut registry = runtime_core::ProviderRegistry::new();
+    registry.register(provider.clone()).unwrap();
+    let manager =
+        Arc::new(RuntimeSessionManager::new(store.clone(), Arc::new(registry), 128).unwrap());
+    (temp, store, workspace, manager, provider)
+}
+
+#[tokio::test]
+async fn approved_pre_add_changes_only_eligible_route_and_commits_hook_onboarding() {
+    // The hook's concrete working-directory path is rooted in the registered
+    // workspace, so build the actual disposable fixture first and approve an
+    // exact changed command under the same test store.
+    let (_fixture, store, workspace, manager, provider) = pre_add_fixture("printf '{}'".into());
+    let root = std::path::PathBuf::from(&workspace.canonical_root);
+    let child = root.join("eligible");
+    std::fs::create_dir(&child).unwrap();
+    let output = root.join("output.json");
+    std::fs::write(
+        &output,
+        json!({
+            "pre_teammate_add": {
+                "spawn_template_mutation":{"cwd":child},
+                "onboarding_context_append_text":"Use local fixture context"
+            },
+            "inject":{"targets":[
+                {"agent_id":"__new_member__","text":"Scoped new member notice"}
+            ]}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let marker = root.join("runs");
+    let hook = TeamHookResolvedEntry {
+        event_name: TeamHookEventName::PreTeammateAdd,
+        name: "prepare_member".into(),
+        command: format!(
+            "printf x >> '{}'; cat '{}'",
+            marker.display(),
+            output.display()
+        ),
+        timeout_ms: 5_000,
+        scope: TeamHookScope::Project,
+    };
+    store
+        .update_team_hook_approval(&TeamHookApprovalUpdate {
+            workspace_id: workspace.workspace_id.clone(),
+            expected_revision: 1,
+            hooks: vec![hook],
+            approved_at_ms: 2,
+        })
+        .unwrap();
+    manager
+        .install_pre_add_hook_executor(Arc::new(NativeTeamHookExecutor::new(store.clone())))
+        .await;
+
+    let agent = manager
+        .create_workspace_agent(
+            &workspace.workspace_id,
+            pre_add_request(&root),
+            "runtime_operator",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        agent.recreation_policy.authoritative_cwd,
+        child.to_string_lossy()
+    );
+    let notice = store
+        .get_workspace_system_notice(&format!("workspace-onboarding:{}", agent.agent_id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(notice.state, "pending");
+    let intro = notice.input[0]["text"].as_str().unwrap();
+    assert!(intro.contains("Inspect tests"));
+    assert!(intro.contains("Context from operator-approved workspace setup hooks"));
+    assert!(intro.contains("Use local fixture context"));
+    assert!(intro.contains("Scoped new member notice"));
+    let effects = store
+        .list_team_hook_effects(&workspace.workspace_id, 50)
+        .unwrap();
+    let pre = effects
+        .iter()
+        .find(|row| row.hook.event_name == TeamHookEventName::PreTeammateAdd)
+        .unwrap();
+    assert_eq!(pre.phase, TeamHookEffectPhase::Succeeded);
+    assert_eq!(pre.application_state, "applied");
+    assert_eq!(pre.attempt_count, 1);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "x");
+    let reopened = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: store.database_path().to_path_buf(),
+    });
+    assert!(reopened
+        .list_unapplied_team_hook_effects(10)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        reopened
+            .get_workspace_system_notice(&notice.notice_id)
+            .unwrap()
+            .unwrap()
+            .input,
+        notice.input
+    );
+    assert_eq!(provider.state.lock().await.sessions.len(), 1);
+}
+
+#[tokio::test]
+async fn pre_add_rejects_outside_root_without_dispatching_provider() {
+    let outside = tempfile::tempdir().unwrap();
+    let output = outside.path().join("output.json");
+    std::fs::write(
+        &output,
+        json!({
+            "pre_teammate_add": {
+                "spawn_template_mutation":{"cwd":outside.path()}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let (temp, store, workspace, manager, provider) =
+        pre_add_fixture(format!("cat '{}'", output.display()));
+    manager
+        .install_pre_add_hook_executor(Arc::new(NativeTeamHookExecutor::new(store.clone())))
+        .await;
+    let result = manager
+        .create_workspace_agent(
+            &workspace.workspace_id,
+            pre_add_request(&temp.path().join("workspace")),
+            "runtime_operator",
+        )
+        .await;
+    assert!(matches!(result, Err(RuntimeError::InvalidState(_))));
+    assert!(provider.state.lock().await.sessions.is_empty());
+    assert!(store
+        .list_workspace_agents(&workspace.workspace_id, None)
+        .unwrap()
+        .is_empty());
+    let effect = store
+        .list_team_hook_effects(&workspace.workspace_id, 10)
+        .unwrap()
+        .remove(0);
+    assert_eq!(effect.phase, TeamHookEffectPhase::Succeeded);
+    assert_eq!(effect.application_state, "pending");
+}
+
+#[tokio::test]
+async fn pre_add_cannot_inject_into_unrelated_agents_or_impersonate_caller() {
+    let outside = tempfile::tempdir().unwrap();
+    let output = outside.path().join("output.json");
+    std::fs::write(
+        &output,
+        json!({
+            "inject":{"caller":{"text":"not an operator"},
+                "targets":[{"agent_id":"sess_unrelated","text":"forged"}]}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let (temp, store, workspace, manager, provider) =
+        pre_add_fixture(format!("cat '{}'", output.display()));
+    manager
+        .install_pre_add_hook_executor(Arc::new(NativeTeamHookExecutor::new(store.clone())))
+        .await;
+    let result = manager
+        .create_workspace_agent(
+            &workspace.workspace_id,
+            pre_add_request(&temp.path().join("workspace")),
+            "runtime_operator",
+        )
+        .await;
+    assert!(matches!(result, Err(RuntimeError::Conflict(_))));
+    assert!(provider.state.lock().await.sessions.is_empty());
+    assert!(store
+        .list_workspace_agents(&workspace.workspace_id, None)
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn pre_add_cannot_rebind_explicit_root_route_to_another_directory() {
+    let outside = tempfile::tempdir().unwrap();
+    let output = outside.path().join("output.json");
+    let (_fixture, store, workspace, manager, provider) =
+        pre_add_fixture(format!("cat '{}'", output.display()));
+    let root = std::path::PathBuf::from(&workspace.canonical_root);
+    let child = root.join("explicit-route-denied");
+    std::fs::create_dir(&child).unwrap();
+    std::fs::write(
+        &output,
+        json!({
+            "pre_teammate_add":{"spawn_template_mutation":{"cwd":child}}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    manager
+        .install_pre_add_hook_executor(Arc::new(NativeTeamHookExecutor::new(store.clone())))
+        .await;
+    let mut request = pre_add_request(&root);
+    request.cwd = None;
+    request.worktree = Some(runtime_core::WorkspaceAgentInitialRoute::Root);
+    let result = manager
+        .create_workspace_agent(&workspace.workspace_id, request, "runtime_operator")
+        .await;
+    assert!(matches!(result, Err(RuntimeError::Conflict(_))));
+    assert!(provider.state.lock().await.sessions.is_empty());
+}
+
 fn fixture(
     command: String,
     timeout_ms: u64,

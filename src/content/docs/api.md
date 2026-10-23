@@ -125,11 +125,12 @@ read-only** view of versioned user/project hook configuration. An optional
 `?event=pre_teammate_add` (or any of the five `post_*` event names) filters the
 result. The JSON response includes `config_version`, `execution_enabled`, `executable_events`, and
 effective entries (`event_name`, normalized `name`, `command`, `timeout_ms`,
-`scope`, `fingerprint`). `execution_enabled: true` means the post-operation
-dispatcher is available, and `executable_events` lists the **four live events**:
-`post_teammate_add`, `post_teammate_remove`, `post_direct_message_send`, and
-`post_broadcast_message_send`. `pre_teammate_add` and `post_compaction` are
-discoverable but not yet executable. Discovery never grants permission to run
+`scope`, `fingerprint`). `execution_enabled: true` means approved hooks can
+execute, and `executable_events` lists **five live events**:
+`pre_teammate_add`, `post_teammate_add`, `post_teammate_remove`,
+`post_direct_message_send`, and `post_broadcast_message_send`.
+`post_compaction` remains discoverable but is activated by the later unified
+compaction lifecycle. Discovery never grants permission to run
 commands or enables a new model-facing tool.
 
 Configuration files live at `~/.agents/gg/team-hooks.json` for the runtime
@@ -156,6 +157,24 @@ an edit between discovery and approval is rejected with `409`.
 An agent editing its project's configuration therefore cannot add approved
 commands. Grants are workspace-local, and an admitted but unclaimed effect
 cannot begin once its grant is revoked.
+
+**Hook commands execute as the runtime OS user, not inside a security sandbox.**
+Operator approval pins the command text and hook settings, not the contents of
+scripts or other files that command subsequently reads. In particular, do not
+approve a command that executes an agent-writable workspace script unless you
+intend to trust changes to that script too. Revoking the approval prevents
+future unclaimed executions; it cannot undo an already-started shell process.
+
+An approved **pre-add hook** is admitted durably against a reserved member ID
+before any provider session can launch. It blocks creation on failure or
+invalid output. It can select only an existing canonical directory within the
+workspace root, and cannot override an explicitly selected worktree route.
+Operator-approved onboarding text is included in the new member's first,
+system-provenance onboarding notice; optional caller text is admitted as a
+separate scoped notice in the **same transaction** as member creation. Other
+injection recipients and authorization/policy mutations are rejected. Crashed
+or orphaned pre-add executions retain reviewable receipts and are never
+automatically retried.
 
 An approved post hook is admitted *atomically* with its canonical workspace
 membership or message mutation. A worker runs its bounded script once and
@@ -184,8 +203,8 @@ Hook effect intents, single-execution claims, terminal script and context
 application receipts, and ambiguous-start `manual_review` classifications
 are persisted separately.
 `GET /v2/workspaces/{workspace_id}/hooks/effects?limit=50` returns bounded
-operator diagnostics (maximum 100 records). Pre-add spawn-template mutation and
-post-compaction lifecycle hooks are not yet activated.
+operator diagnostics (maximum 100 records). Post-compaction hooks await the
+canonical provider-compaction lifecycle.
 
 Normal `/v2` agent creation is always scoped to a registered workspace:
 

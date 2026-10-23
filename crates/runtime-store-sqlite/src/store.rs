@@ -62,6 +62,12 @@ impl SqliteRuntimeStore {
 
 #[async_trait]
 impl RuntimeStore for SqliteRuntimeStore {
+    fn admit_pre_add_team_hooks(
+        &self,
+        request: &runtime_core::TeamHookPreAddAdmission,
+    ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
+        self.repository.admit_pre_add_team_hooks(request)
+    }
     fn get_team_hook_approval(&self, workspace_id: &str) -> Result<TeamHookApproval, RuntimeError> {
         self.repository.get_team_hook_approval(workspace_id)
     }
@@ -452,6 +458,17 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<(), RuntimeError> {
         self.repository
             .create_workspace_agent_with_onboarding(session, agent, onboarding)
+    }
+
+    fn create_workspace_agent_with_hook_context(
+        &self,
+        session: &SessionRecord,
+        agent: &WorkspaceAgentRecord,
+        onboarding: &WorkspaceAgentOnboardingRequest,
+        hooks: Option<&runtime_core::TeamHookPreAddContext>,
+    ) -> Result<(), RuntimeError> {
+        self.repository
+            .create_workspace_agent_with_hook_context(session, agent, onboarding, hooks)
     }
 
     fn list_workspace_system_notices(

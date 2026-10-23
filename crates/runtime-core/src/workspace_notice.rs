@@ -104,6 +104,16 @@ impl WorkspaceSystemNoticeRecord {
         lead_alias: Option<&str>,
         request: &WorkspaceAgentOnboardingRequest,
     ) -> Result<Self, RuntimeError> {
+        Self::onboarding_with_hook_context(agent, workspace_name, lead_alias, request, None)
+    }
+
+    pub fn onboarding_with_hook_context(
+        agent: &WorkspaceAgentRecord,
+        workspace_name: &str,
+        lead_alias: Option<&str>,
+        request: &WorkspaceAgentOnboardingRequest,
+        hook_context: Option<&str>,
+    ) -> Result<Self, RuntimeError> {
         let mut message = format!(
             "You were added to the workspace team \"{}\".\n",
             workspace_name.trim()
@@ -124,6 +134,10 @@ impl WorkspaceSystemNoticeRecord {
         if let Some(prompt) = request.prompt.as_deref() {
             message.push_str("\nYour initial task:\n");
             message.push_str(prompt.trim());
+        }
+        if let Some(context) = hook_context {
+            message.push_str("\n\nContext from operator-approved workspace setup hooks:\n");
+            message.push_str(context);
         }
         let mut input = vec![json!({"type":"text","text":message})];
         input.extend(

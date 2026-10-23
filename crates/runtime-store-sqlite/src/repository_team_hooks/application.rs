@@ -48,7 +48,12 @@ impl SqliteRuntimeRepository {
         &self,
         limit: usize,
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
-        self.list_hook_effects_by_state("e.application_state='pending'", limit)
+        self.list_hook_effects_by_state(
+            "e.application_state='pending' AND e.event_name IN
+             ('post_teammate_add','post_teammate_remove',
+              'post_direct_message_send','post_broadcast_message_send')",
+            limit,
+        )
     }
 
     fn list_hook_effects_by_state(

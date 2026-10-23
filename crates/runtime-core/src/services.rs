@@ -33,12 +33,21 @@ use crate::{
 };
 use crate::{
     TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
-    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEventName,
+    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEventName, TeamHookPreAddAdmission,
+    TeamHookPreAddContext,
 };
 use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 
 #[async_trait]
 pub trait RuntimeStore: Send + Sync {
+    /// Transactionally snapshot approved pre-add hooks against a trusted
+    /// reserved agent identity before any shell or provider work can start.
+    fn admit_pre_add_team_hooks(
+        &self,
+        _request: &TeamHookPreAddAdmission,
+    ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
+        Ok(Vec::new())
+    }
     /// Operator-only execution capability. No project file can grant itself
     /// shell authority, and a missing grant means disabled.
     fn get_team_hook_approval(
@@ -411,6 +420,21 @@ pub trait RuntimeStore: Send + Sync {
         Err(RuntimeError::Unsupported(
             "atomic workspace onboarding admission unavailable".into(),
         ))
+    }
+
+    fn create_workspace_agent_with_hook_context(
+        &self,
+        session: &SessionRecord,
+        agent: &WorkspaceAgentRecord,
+        onboarding: &WorkspaceAgentOnboardingRequest,
+        hooks: Option<&TeamHookPreAddContext>,
+    ) -> Result<(), RuntimeError> {
+        if hooks.is_some() {
+            return Err(RuntimeError::Unsupported(
+                "atomic pre-add hook context admission unavailable".into(),
+            ));
+        }
+        self.create_workspace_agent_with_onboarding(session, agent, onboarding)
     }
 
     fn list_workspace_system_notices(

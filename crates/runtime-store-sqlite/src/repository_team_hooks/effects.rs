@@ -328,14 +328,39 @@ impl SqliteRuntimeRepository {
     /// Run only at a single-runtime restart boundary, before new hook work.
     /// A shell may have run, so never transition this state back to intended.
     pub fn quarantine_started_team_hook_effects(&self, at_ms: i64) -> Result<usize, RuntimeError> {
-        let connection = open_connection(&self.database_path)?;
-        connection
+        let mut connection = open_connection(&self.database_path)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| db_error("failed opening hook recovery transaction", error))?;
+        let quarantined = tx
             .execute(
                 "UPDATE workspace_hook_effects SET phase='manual_review',updated_at_ms=?1
                  WHERE phase='started'",
                 [at_ms],
             )
-            .map_err(|error| db_error("failed quarantining ambiguous hook execution", error))
+            .map_err(|error| db_error("failed quarantining ambiguous hook execution", error))?;
+        // Pre-add is blocking: it has no background dispatcher or agent yet.
+        // After a crash we cannot infer whether native creation happened from
+        // the shell receipt. Preserve evidence and require operator review.
+        tx.execute(
+            "UPDATE workspace_hook_effects SET phase='manual_review',
+               application_state='rejected',
+               application_error_code='pre_add_orphaned_before_execution',
+               updated_at_ms=?1
+             WHERE event_name='pre_teammate_add' AND phase='intended'",
+            [at_ms],
+        )
+        .map_err(|error| db_error("failed classifying abandoned pre-add intents", error))?;
+        tx.execute(
+            "UPDATE workspace_hook_effects SET application_state='rejected',
+               application_error_code='pre_add_provider_outcome_unknown',updated_at_ms=?1
+             WHERE event_name='pre_teammate_add' AND application_state='pending'",
+            [at_ms],
+        )
+        .map_err(|error| db_error("failed classifying unapplied pre-add outputs", error))?;
+        tx.commit()
+            .map_err(|error| db_error("failed committing hook restart review", error))?;
+        Ok(quarantined)
     }
 
     pub fn list_team_hook_effects(
@@ -376,7 +401,7 @@ impl SqliteRuntimeRepository {
     }
 }
 
-pub(super) fn hook_is_approved(
+pub(crate) fn hook_is_approved(
     connection: &Connection,
     workspace_id: &str,
     hook: &TeamHookResolvedEntry,

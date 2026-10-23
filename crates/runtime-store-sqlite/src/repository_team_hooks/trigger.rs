@@ -4,11 +4,16 @@
 
 use std::collections::HashSet;
 
-use runtime_core::{RuntimeError, TeamHookEventName, TeamHookResolvedEntry};
-use rusqlite::{params, OptionalExtension, Transaction};
+use runtime_core::{
+    RuntimeError, TeamHookEffectRecord, TeamHookEventName, TeamHookPreAddAdmission,
+    TeamHookResolvedEntry,
+};
+use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{json, Value};
 
-use crate::db::{db_error, json_to_string};
+use super::effects::read_effect;
+use crate::db::{db_error, json_to_string, open_connection};
+use crate::SqliteRuntimeRepository;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn queue_team_hook_trigger_tx(
@@ -20,7 +25,7 @@ pub(crate) fn queue_team_hook_trigger_tx(
     subject: Value,
     eligible_targets: &[String],
     created_at: i64,
-) -> Result<(), RuntimeError> {
+) -> Result<Vec<TeamHookResolvedEntry>, RuntimeError> {
     // Generation-1 migration fixtures may legitimately create workspace
     // agents while the schema is only at v8. Hook storage was introduced in
     // v16, so post-hooks are inert until that migration is committed.
@@ -32,7 +37,7 @@ pub(crate) fn queue_team_hook_trigger_tx(
         )
         .map_err(|error| db_error("failed checking hook schema readiness", error))?;
     if !hook_schema_ready {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let approved_json: Option<String> = tx
         .query_row(
@@ -43,7 +48,7 @@ pub(crate) fn queue_team_hook_trigger_tx(
         .optional()
         .map_err(|error| db_error("failed snapshotting approved team hooks", error))?;
     let Some(approved_json) = approved_json else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let approved: Vec<TeamHookResolvedEntry> = serde_json::from_str(&approved_json)
         .map_err(|error| RuntimeError::Bootstrap(format!("corrupt approved hooks: {error}")))?;
@@ -52,7 +57,7 @@ pub(crate) fn queue_team_hook_trigger_tx(
         .filter(|hook| hook.event_name == event)
         .collect();
     if active_hooks.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     // Only a presently active workspace member can receive `inject.caller`.
@@ -100,7 +105,7 @@ pub(crate) fn queue_team_hook_trigger_tx(
     )
     .map_err(|error| db_error("failed atomically admitting hook parent event", error))?;
 
-    for hook in active_hooks {
+    for hook in &active_hooks {
         let hook_json = json_to_string(&json!(hook))?;
         tx.execute(
             "INSERT INTO workspace_hook_effects
@@ -119,7 +124,139 @@ pub(crate) fn queue_team_hook_trigger_tx(
         )
         .map_err(|error| db_error("failed atomically admitting approved hook intent", error))?;
     }
-    Ok(())
+    Ok(active_hooks.into_iter().map(Clone::clone).collect())
+}
+
+impl SqliteRuntimeRepository {
+    pub fn admit_pre_add_team_hooks(
+        &self,
+        request: &TeamHookPreAddAdmission,
+    ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
+        if !request.reserved_agent_id.starts_with("sess_")
+            || request.reserved_agent_id.len() > 128
+            || request.planned_cwd.len() > 4096
+        {
+            return Err(RuntimeError::InvalidState(
+                "invalid reserved pre-add identity or route".into(),
+            ));
+        }
+        let mut connection = open_connection(&self.database_path)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| db_error("failed starting pre-add hook admission", error))?;
+        let active: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id=?1 AND lifecycle_state='active')",
+            [&request.workspace_id],
+            |row| row.get(0),
+        ).map_err(|error| db_error("failed validating pre-add workspace", error))?;
+        if !active {
+            return Err(RuntimeError::Conflict(
+                "cannot add member to inactive workspace".into(),
+            ));
+        }
+        if let Some(actor) = &request.actor_agent_id {
+            if !is_active_workspace_agent(&tx, &request.workspace_id, actor)? {
+                return Err(RuntimeError::Conflict(
+                    "pre-add actor is not an active member".into(),
+                ));
+            }
+        }
+        let event_id = format!("workspace-hook:pre-add:{}", request.reserved_agent_id);
+        let subject = json!({
+            "kind":"member", "action":"preparing",
+            "member_agent_id": request.reserved_agent_id,
+            "provider":request.provider, "model":request.model,
+            "planned_cwd":request.planned_cwd,
+            "member_title":request.member_title,
+            "onboarding_prompt":request.onboarding_prompt,
+        });
+        let existing: Option<(String, String, String, String)> = tx
+            .query_row(
+                "SELECT scope,scope_id,kind,payload_json FROM runtime_events WHERE event_id=?1",
+                [&event_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking duplicate pre-add parent", error))?;
+        if let Some((scope, owner, kind, payload_json)) = existing {
+            let payload: Value = serde_json::from_str(&payload_json).map_err(|error| {
+                RuntimeError::Bootstrap(format!("corrupt pre-add event snapshot: {error}"))
+            })?;
+            if scope != "workspace"
+                || owner != request.workspace_id
+                || kind != "workspace.hook_parent"
+                || payload["subject"] != subject
+                || payload["actor_agent_id"].as_str() != request.actor_agent_id.as_deref()
+                || payload["hook_event"] != "pre_teammate_add"
+            {
+                return Err(RuntimeError::Conflict(
+                    "reserved pre-add identity was used for a different operation".into(),
+                ));
+            }
+            let mut stmt = tx
+                .prepare(
+                    "SELECT hook_name FROM workspace_hook_effects WHERE workspace_id=?1
+                 AND parent_event_id=?2 AND event_name='pre_teammate_add' ORDER BY hook_name",
+                )
+                .map_err(|error| db_error("failed listing replayed pre-add effects", error))?;
+            let names = stmt
+                .query_map(params![request.workspace_id, event_id], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(|error| db_error("failed reading replayed pre-add effects", error))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| {
+                    db_error("failed decoding replayed pre-add effect names", error)
+                })?;
+            if names.is_empty() {
+                return Err(RuntimeError::Bootstrap(
+                    "pre-add parent has no durable effect rows".into(),
+                ));
+            }
+            let mut effects = Vec::with_capacity(names.len());
+            for name in names {
+                effects.push(
+                    read_effect(
+                        &tx,
+                        &request.workspace_id,
+                        &event_id,
+                        TeamHookEventName::PreTeammateAdd,
+                        &name,
+                    )?
+                    .ok_or_else(|| {
+                        RuntimeError::Bootstrap("pre-add replay effect missing".into())
+                    })?,
+                );
+            }
+            return Ok(effects);
+        }
+        let targets = request.actor_agent_id.iter().cloned().collect::<Vec<_>>();
+        let hooks = queue_team_hook_trigger_tx(
+            &tx,
+            &request.workspace_id,
+            TeamHookEventName::PreTeammateAdd,
+            &event_id,
+            request.actor_agent_id.as_deref(),
+            subject,
+            &targets,
+            request.created_at_ms,
+        )?;
+        let mut effects = Vec::with_capacity(hooks.len());
+        for hook in hooks {
+            let effect = read_effect(
+                &tx,
+                &request.workspace_id,
+                &event_id,
+                hook.event_name,
+                &hook.name,
+            )?
+            .ok_or_else(|| RuntimeError::Bootstrap("pre-add admitted effect missing".into()))?;
+            effects.push(effect);
+        }
+        tx.commit()
+            .map_err(|error| db_error("failed committing pre-add effects", error))?;
+        Ok(effects)
+    }
 }
 
 /// A lifecycle hook may address only current members of its own workspace.

@@ -1,6 +1,178 @@
 use super::*;
 
 #[tokio::test]
+async fn approved_pre_add_hook_runs_before_http_agent_creation_and_persists_context() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("pre-add-http-workspace");
+    std::fs::create_dir(&root).unwrap();
+    let registered = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v2/workspaces")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"canonical_root":root,"display_name":"Pre-add hooks"})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(registered.status(), StatusCode::OK);
+    let registered: runtime_core::WorkspaceRegisterResponse =
+        serde_json::from_slice(&to_bytes(registered.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    let workspace = registered.workspace;
+    let child = root.join("review");
+    std::fs::create_dir(&child).unwrap();
+    let output = root.join("output.json");
+    std::fs::write(
+        &output,
+        serde_json::json!({
+            "pre_teammate_add": {
+                "spawn_template_mutation":{"cwd":child},
+                "onboarding_context_append_text":"Use the scoped review directory"
+            },
+            "inject":{"targets":[{"agent_id":"__new_member__","text":"Review source carefully"}]}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let marker = root.join("invoked-once");
+    let command = format!(
+        "printf x >> '{}'; cat '{}'",
+        marker.display(),
+        output.display()
+    );
+    let config_path = root.join(runtime_core::TEAM_HOOK_CONFIG_RELATIVE_PATH);
+    std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config_path,
+        serde_json::json!({
+            "version":1,"hooks":{"pre_teammate_add":[
+                {"name":"review_setup","command":command,"timeout_ms":5000}
+            ]}
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let discovered = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v2/workspaces/{}/hooks", workspace.workspace_id))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(discovered.status(), StatusCode::OK);
+    let discovered: serde_json::Value =
+        serde_json::from_slice(&to_bytes(discovered.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert!(discovered["executable_events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "pre_teammate_add"));
+    assert!(!marker.exists(), "discovery cannot execute a hook");
+    let fingerprint = discovered["hooks"][0]["fingerprint"].as_str().unwrap();
+    let approve = router.clone().oneshot(Request::builder()
+        .method("PUT")
+        .uri(format!("/v2/workspaces/{}/hooks/approval",workspace.workspace_id))
+        .header(header::AUTHORIZATION,format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE,"application/json")
+        .body(Body::from(serde_json::json!({
+            "expected_revision":0,"hooks":[{
+                "event_name":"pre_teammate_add","name":"review_setup","fingerprint":fingerprint
+            }]
+        }).to_string())).unwrap()).await.unwrap();
+    assert_eq!(approve.status(), StatusCode::OK);
+    assert!(!marker.exists(), "approval cannot execute a hook");
+
+    let create = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v2/workspaces/{}/agents", workspace.workspace_id))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "provider":"codex","model":"test-model",
+                        "onboarding":{"prompt":"Check test contracts"}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::OK);
+    let agent: runtime_core::WorkspaceAgentRecord =
+        serde_json::from_slice(&to_bytes(create.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+        agent.recreation_policy.authoritative_cwd,
+        child.to_string_lossy()
+    );
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "x");
+
+    let onboarding = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v2/workspaces/{}/agents/{}/onboarding",
+                    workspace.workspace_id, agent.agent_id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(onboarding.status(), StatusCode::OK);
+    let notice: serde_json::Value =
+        serde_json::from_slice(&to_bytes(onboarding.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    let intro = notice["input"][0]["text"].as_str().unwrap();
+    assert!(intro.contains("Check test contracts"));
+    assert!(intro.contains("Use the scoped review directory"));
+    assert!(intro.contains("Review source carefully"));
+    let effects = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v2/workspaces/{}/hooks/effects",
+                    workspace.workspace_id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let effects: serde_json::Value =
+        serde_json::from_slice(&to_bytes(effects.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let pre = effects
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["hook"]["event_name"] == "pre_teammate_add")
+        .unwrap();
+    assert_eq!(pre["phase"], "succeeded");
+    assert_eq!(pre["application_state"], "applied");
+    assert_eq!(pre["attempt_count"], 1);
+}
+
+#[tokio::test]
 async fn hook_grants_are_operator_only_and_cannot_become_unreviewed_shell_commands() {
     let (router, token, temp) = build_test_router().await;
     let root = temp.path().join("hook-grant-workspace");
@@ -237,7 +409,7 @@ async fn effective_workspace_hooks_are_operator_only_filtered_and_never_executed
     let full: serde_json::Value =
         serde_json::from_slice(&to_bytes(all.into_body(), usize::MAX).await.unwrap()).unwrap();
     assert_eq!(full["execution_enabled"], true);
-    assert_eq!(full["executable_events"].as_array().unwrap().len(), 4);
+    assert_eq!(full["executable_events"].as_array().unwrap().len(), 5);
     assert_eq!(full["config_version"], 1);
     assert_eq!(full["hooks"].as_array().unwrap().len(), 2);
     assert_eq!(full["hooks"][0]["scope"], "project");

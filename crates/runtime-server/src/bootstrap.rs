@@ -187,6 +187,9 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         )
         .context("failed to initialize runtime session manager")?,
     );
+    let hook_executor: Arc<dyn runtime_core::RuntimeTeamHookExecutor> =
+        Arc::new(runtime_tools::NativeTeamHookExecutor::new(store.clone()));
+    runtime.install_pre_add_hook_executor(hook_executor).await;
     let process_manager = RuntimeProcessManager::new_with_runtime(
         store.clone(),
         runtime.clone(),

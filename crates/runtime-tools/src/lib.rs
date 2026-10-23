@@ -21,6 +21,7 @@ pub use gateway::{
 pub use process::RuntimeProcessManager;
 pub use team_hook_execution::{
     dispatch_team_hook_effects, execute_team_hook_effect, start_team_hook_worker,
+    NativeTeamHookExecutor,
 };
 pub use worktree::RuntimeWorktreeService;
 

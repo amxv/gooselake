@@ -1,9 +1,9 @@
 use super::workspace_agent::{registered_workspace, workspace_agent_fixture};
 use super::*;
 use runtime_core::{
-    AgentDeliveryRecord, AgentMessageContextKind, AgentMessageRecord, TeamHookApprovalUpdate,
-    TeamHookEffectPhase, TeamHookEffectReceipt, TeamHookEventName, TeamHookResolvedEntry,
-    TeamHookScope, WorkspaceAgentLifecycleState,
+    AgentDeliveryRecord, AgentMessageContextKind, AgentMessageRecord, RuntimeError,
+    TeamHookApprovalUpdate, TeamHookEffectPhase, TeamHookEffectReceipt, TeamHookEventName,
+    TeamHookResolvedEntry, TeamHookScope, WorkspaceAgentLifecycleState,
 };
 use serde_json::json;
 
@@ -338,4 +338,99 @@ fn cross_workspace_direct_hook_keeps_immutable_recipient_scope() {
         .as_str()
         .unwrap()
         .contains("sess_sender_hook"));
+}
+
+#[test]
+fn revoked_pre_add_output_cannot_be_applied_to_new_member_authority() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("workspace");
+    std::fs::create_dir_all(&root).unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let workspace = registered_workspace(&repository, &root);
+    let (session, agent) =
+        workspace_agent_fixture(&workspace, "sess_revoked_pre_add", "revoked-heron");
+    let hook = TeamHookResolvedEntry {
+        event_name: TeamHookEventName::PreTeammateAdd,
+        name: "setup".into(),
+        command: "printf '{}'".into(),
+        timeout_ms: 1000,
+        scope: TeamHookScope::Project,
+    };
+    repository
+        .update_team_hook_approval(&TeamHookApprovalUpdate {
+            workspace_id: workspace.workspace_id.clone(),
+            expected_revision: 0,
+            hooks: vec![hook.clone()],
+            approved_at_ms: 1,
+        })
+        .unwrap();
+    let effects = repository
+        .admit_pre_add_team_hooks(&runtime_core::TeamHookPreAddAdmission {
+            workspace_id: workspace.workspace_id.clone(),
+            reserved_agent_id: agent.agent_id.clone(),
+            actor_agent_id: None,
+            provider: "codex".into(),
+            model: Some("gpt-test".into()),
+            planned_cwd: workspace.canonical_root.clone(),
+            member_title: agent.profile.title.clone(),
+            onboarding_prompt: Some("setup".into()),
+            created_at_ms: 50,
+        })
+        .unwrap();
+    assert_eq!(effects.len(), 1);
+    repository
+        .claim_team_hook_effect(
+            &workspace.workspace_id,
+            &effects[0].parent_event_id,
+            TeamHookEventName::PreTeammateAdd,
+            "setup",
+            51,
+        )
+        .unwrap();
+    repository
+        .finish_team_hook_effect(
+            &workspace.workspace_id,
+            &effects[0].parent_event_id,
+            TeamHookEventName::PreTeammateAdd,
+            "setup",
+            TeamHookEffectPhase::Succeeded,
+            TeamHookEffectReceipt {
+                validated_output: Some(json!({})),
+                error_code: None,
+            },
+            52,
+        )
+        .unwrap();
+    repository
+        .update_team_hook_approval(&TeamHookApprovalUpdate {
+            workspace_id: workspace.workspace_id.clone(),
+            expected_revision: 1,
+            hooks: vec![],
+            approved_at_ms: 53,
+        })
+        .unwrap();
+    let context = runtime_core::TeamHookPreAddContext {
+        parent_event_id: effects[0].parent_event_id.clone(),
+        completed_hook_names: vec!["setup".into()],
+        onboarding_context_append_text: Some("must not appear".into()),
+        caller_context_text: None,
+    };
+    assert!(matches!(
+        repository.create_workspace_agent_with_hook_context(
+            &session,
+            &agent,
+            &Default::default(),
+            Some(&context),
+        ),
+        Err(RuntimeError::Conflict(_))
+    ));
+    assert!(repository
+        .get_workspace_agent_by_id(&agent.agent_id)
+        .unwrap()
+        .is_none());
+    assert!(repository
+        .get_workspace_system_notice(&format!("workspace-onboarding:{}", agent.agent_id),)
+        .unwrap()
+        .is_none());
 }

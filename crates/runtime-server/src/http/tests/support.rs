@@ -670,6 +670,11 @@ pub(super) async fn build_test_router_with_provider_and_runtime(
         RuntimeSessionManager::new(store.clone(), provider_registry.clone(), 512)
             .expect("build runtime"),
     );
+    runtime
+        .install_pre_add_hook_executor(Arc::new(runtime_tools::NativeTeamHookExecutor::new(
+            store.clone(),
+        )))
+        .await;
     let process_manager = RuntimeProcessManager::new_with_runtime(
         store.clone(),
         runtime.clone(),

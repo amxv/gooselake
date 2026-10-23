@@ -413,6 +413,25 @@ impl RuntimeSessionManager {
             RuntimeError::ProviderNotRegistered(policy.provider.as_str().to_string())
         })?;
         let session_id = self.allocate_id("sess", policy.provider.as_str());
+        let (hook_cwd, pre_add_context) = self
+            .prepare_pre_add_hooks(
+                &workspace,
+                &session_id,
+                creator_agent_id.as_deref(),
+                policy.provider.as_str(),
+                policy.model.as_deref(),
+                &policy.authoritative_cwd,
+                request.worktree.is_some(),
+                request.title.as_deref(),
+                onboarding.prompt.as_deref(),
+            )
+            .await?;
+        if let Some(cwd) = hook_cwd {
+            policy.authoritative_cwd = cwd;
+            policy
+                .setting_sources_intent
+                .resolved_sources(Some(policy.authoritative_cwd.as_str()))?;
+        }
         let metadata = request.metadata.unwrap_or_else(|| serde_json::json!({}));
         let permission_mode = policy.permission_intent.resolved_mode();
         let provider_session = provider
@@ -478,10 +497,12 @@ impl RuntimeSessionManager {
             updated_at: created_at,
         };
 
-        if let Err(error) =
-            self.store
-                .create_workspace_agent_with_onboarding(&session, &record, &onboarding)
-        {
+        if let Err(error) = self.store.create_workspace_agent_with_hook_context(
+            &session,
+            &record,
+            &onboarding,
+            pre_add_context.as_ref(),
+        ) {
             let _ = provider
                 .close_session(ProviderCloseSessionRequest {
                     runtime_session_id: session_id,
@@ -774,7 +795,7 @@ fn normalize_recreation_policy(
     })
 }
 
-fn canonical_agent_cwd(
+pub(super) fn canonical_agent_cwd(
     workspace_root: &str,
     requested: Option<&str>,
 ) -> Result<String, RuntimeError> {

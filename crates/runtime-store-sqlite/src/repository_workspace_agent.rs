@@ -1,11 +1,12 @@
 use runtime_core::{
-    ProviderKind, RuntimeError, SessionRecord, WorkspaceAgentLifecycleState,
-    WorkspaceAgentOnboardingRequest, WorkspaceAgentProfile, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceSystemNoticeRecord,
+    ProviderKind, RuntimeError, SessionRecord, TeamHookEffectPhase, TeamHookPreAddContext,
+    WorkspaceAgentLifecycleState, WorkspaceAgentOnboardingRequest, WorkspaceAgentProfile,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceSystemNoticeRecord,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 
 use crate::db::{db_error, json_to_string, open_connection, string_to_json};
+use crate::repository_team_hooks::effect_grant_is_current;
 use crate::repository_team_hooks::{active_workspace_hook_targets_tx, queue_team_hook_trigger_tx};
 use crate::repository_workspace_notice::queue_membership_lead_notice_tx;
 use crate::SqliteRuntimeRepository;
@@ -26,7 +27,7 @@ impl SqliteRuntimeRepository {
         session: &SessionRecord,
         agent: &WorkspaceAgentRecord,
     ) -> Result<(), RuntimeError> {
-        self.create_workspace_agent_with_optional_onboarding(session, agent, None)
+        self.create_workspace_agent_with_optional_onboarding(session, agent, None, None)
     }
 
     pub fn create_workspace_agent_with_onboarding(
@@ -35,7 +36,22 @@ impl SqliteRuntimeRepository {
         agent: &WorkspaceAgentRecord,
         onboarding: &WorkspaceAgentOnboardingRequest,
     ) -> Result<(), RuntimeError> {
-        self.create_workspace_agent_with_optional_onboarding(session, agent, Some(onboarding))
+        self.create_workspace_agent_with_optional_onboarding(session, agent, Some(onboarding), None)
+    }
+
+    pub fn create_workspace_agent_with_hook_context(
+        &self,
+        session: &SessionRecord,
+        agent: &WorkspaceAgentRecord,
+        onboarding: &WorkspaceAgentOnboardingRequest,
+        hooks: Option<&TeamHookPreAddContext>,
+    ) -> Result<(), RuntimeError> {
+        self.create_workspace_agent_with_optional_onboarding(
+            session,
+            agent,
+            Some(onboarding),
+            hooks,
+        )
     }
 
     fn create_workspace_agent_with_optional_onboarding(
@@ -43,6 +59,7 @@ impl SqliteRuntimeRepository {
         session: &SessionRecord,
         agent: &WorkspaceAgentRecord,
         onboarding: Option<&WorkspaceAgentOnboardingRequest>,
+        hooks: Option<&TeamHookPreAddContext>,
     ) -> Result<(), RuntimeError> {
         if session.id != agent.agent_id
             || session.provider != agent.recreation_policy.provider.as_str()
@@ -70,6 +87,121 @@ impl SqliteRuntimeRepository {
                 "workspace {} is not active",
                 agent.workspace_id
             )));
+        }
+
+        let verified_pre_add_actor = if let Some(hooks) = hooks {
+            if hooks.completed_hook_names.is_empty()
+                || hooks.completed_hook_names.len() > 32
+                || hooks
+                    .onboarding_context_append_text
+                    .as_ref()
+                    .is_some_and(|v| v.len() > 32 * 1024)
+                || hooks
+                    .caller_context_text
+                    .as_ref()
+                    .is_some_and(|v| v.len() > 16 * 1024)
+            {
+                return Err(RuntimeError::InvalidState(
+                    "invalid bounded pre-add context".into(),
+                ));
+            }
+            let mut statement = tx.prepare(
+                "SELECT hook_name,phase,application_state,input_json,hook_json FROM workspace_hook_effects
+                 WHERE workspace_id=?1 AND parent_event_id=?2 AND event_name='pre_teammate_add'
+                 ORDER BY hook_name",
+            ).map_err(|error| db_error("failed preparing pre-add effect verification", error))?;
+            let rows = statement
+                .query_map(params![agent.workspace_id, hooks.parent_event_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                })
+                .map_err(|error| db_error("failed querying pre-add effect verification", error))?;
+            let collected = rows
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| db_error("failed reading pre-add effects", error))?;
+            let mut names = hooks.completed_hook_names.clone();
+            names.sort();
+            let observed_names = collected
+                .iter()
+                .map(|row| row.0.clone())
+                .collect::<Vec<_>>();
+            if observed_names != names
+                || collected.iter().any(|row| {
+                    row.1 != TeamHookEffectPhase::Succeeded.as_str() || row.2 != "pending"
+                })
+            {
+                return Err(RuntimeError::Conflict(
+                    "pre-add effects have not all succeeded".into(),
+                ));
+            }
+            let mut observed_actor: Option<Option<String>> = None;
+            for (_, _, _, json, hook_json) in &collected {
+                let input: serde_json::Value = serde_json::from_str(json).map_err(|error| {
+                    RuntimeError::Bootstrap(format!("corrupt pre-add parent input: {error}"))
+                })?;
+                let exact_hook: runtime_core::TeamHookResolvedEntry =
+                    serde_json::from_str(hook_json).map_err(|error| {
+                        RuntimeError::Bootstrap(format!("corrupt approved pre-add hook: {error}"))
+                    })?;
+                if !effect_grant_is_current(&tx, &agent.workspace_id, &exact_hook)? {
+                    return Err(RuntimeError::Conflict(
+                        "pre-add hook approval was revoked before member creation".into(),
+                    ));
+                }
+                if input["subject"]["member_agent_id"] != agent.agent_id
+                    || input["hook_event"] != "pre_teammate_add"
+                    || input["event_id"] != hooks.parent_event_id
+                {
+                    return Err(RuntimeError::Conflict(
+                        "pre-add parent does not match agent".into(),
+                    ));
+                }
+                let candidate = input["actor_agent_id"].as_str().map(str::to_string);
+                if observed_actor
+                    .as_ref()
+                    .is_some_and(|actor| actor != &candidate)
+                {
+                    return Err(RuntimeError::Conflict("conflicting pre-add actors".into()));
+                }
+                observed_actor = Some(candidate);
+            }
+            let actor = observed_actor.flatten();
+            if actor
+                .as_deref()
+                .is_some_and(|id| id != agent.profile.added_by)
+            {
+                return Err(RuntimeError::Conflict(
+                    "pre-add actor no longer matches member creator".into(),
+                ));
+            }
+            if hooks.caller_context_text.is_some() && actor.is_none() {
+                return Err(RuntimeError::Conflict(
+                    "pre-add caller has no authenticated agent".into(),
+                ));
+            }
+            actor
+        } else {
+            None
+        };
+        if let Some(actor) = verified_pre_add_actor.as_deref() {
+            let actor_active: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspace_agents
+                 WHERE workspace_id=?1 AND session_id=?2 AND lifecycle_state='active')",
+                    params![agent.workspace_id, actor],
+                    |row| row.get(0),
+                )
+                .map_err(|error| db_error("failed checking pre-add creator authority", error))?;
+            if !actor_active {
+                return Err(RuntimeError::Conflict(
+                    "pre-add creator lost workspace membership before member creation".into(),
+                ));
+            }
         }
 
         insert_session(&tx, session)?;
@@ -166,13 +298,42 @@ impl SqliteRuntimeRepository {
                 params![agent.workspace_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             ).map_err(|error| db_error("failed snapshotting onboarding workspace authority", error))?;
-            let notice = WorkspaceSystemNoticeRecord::onboarding(
+            let notice = WorkspaceSystemNoticeRecord::onboarding_with_hook_context(
                 agent,
                 &display_name,
                 lead_alias.as_deref(),
                 onboarding,
+                hooks.and_then(|hooks| hooks.onboarding_context_append_text.as_deref()),
             )?;
             Self::insert_workspace_system_notice_tx(&tx, &notice)?;
+            if let (Some(hooks), Some(actor), Some(text)) = (
+                hooks,
+                verified_pre_add_actor.as_deref(),
+                hooks.and_then(|h| h.caller_context_text.as_deref()),
+            ) {
+                let caller_active: bool = tx
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM workspace_agents WHERE workspace_id=?1
+                     AND session_id=?2 AND lifecycle_state='active')",
+                        params![agent.workspace_id, actor],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| db_error("failed verifying pre-add caller", error))?;
+                if !caller_active {
+                    return Err(RuntimeError::Conflict(
+                        "pre-add caller was archived before creation".into(),
+                    ));
+                }
+                let caller_notice = WorkspaceSystemNoticeRecord::lifecycle(
+                    &agent.workspace_id,
+                    actor,
+                    &hooks.parent_event_id,
+                    "hook_pre_add",
+                    format!("Operator-approved pre-add hook context (not user-authored):\n{text}"),
+                    agent.created_at,
+                );
+                Self::insert_workspace_system_notice_tx(&tx, &caller_notice)?;
+            }
             queue_membership_lead_notice_tx(
                 &tx,
                 &agent.workspace_id,
@@ -197,6 +358,23 @@ impl SqliteRuntimeRepository {
             &active_workspace_hook_targets_tx(&tx, &agent.workspace_id)?,
             agent.created_at,
         )?;
+        if let Some(hooks) = hooks {
+            let changed = tx
+                .execute(
+                    "UPDATE workspace_hook_effects SET application_state='applied',
+                    applied_at_ms=?3
+                 WHERE workspace_id=?1 AND parent_event_id=?2
+                   AND event_name='pre_teammate_add' AND phase='succeeded'
+                   AND application_state='pending'",
+                    params![agent.workspace_id, hooks.parent_event_id, agent.created_at],
+                )
+                .map_err(|error| db_error("failed acknowledging applied pre-add hooks", error))?;
+            if changed != hooks.completed_hook_names.len() {
+                return Err(RuntimeError::Conflict(
+                    "pre-add hook application raced".into(),
+                ));
+            }
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing workspace agent create", error))?;
         Ok(())

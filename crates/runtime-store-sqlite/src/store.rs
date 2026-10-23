@@ -81,6 +81,28 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.list_team_hook_effects(workspace_id, limit)
     }
 
+    fn list_dispatchable_team_hook_effects(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
+        self.repository.list_dispatchable_team_hook_effects(limit)
+    }
+
+    fn list_unapplied_team_hook_effects(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
+        self.repository.list_unapplied_team_hook_effects(limit)
+    }
+
+    fn apply_team_hook_effect_output(
+        &self,
+        effect: &TeamHookEffectRecord,
+        at_ms: i64,
+    ) -> Result<TeamHookEffectRecord, RuntimeError> {
+        self.repository.apply_team_hook_effect_output(effect, at_ms)
+    }
+
     fn admit_team_hook_effect(
         &self,
         admission: &TeamHookEffectAdmission,

@@ -3,6 +3,7 @@
 
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use runtime_core::team_hooks::validate_team_hook_script_output;
@@ -141,6 +142,53 @@ pub async fn execute_team_hook_effect(
         receipt,
         now_ms(),
     )
+}
+
+/// Settle immutable post-event intents and apply validated context notices.
+/// Failed script effects never get a second native dispatch. The SQLite
+/// application transaction provides the separate exactly-once notice receipt.
+pub async fn dispatch_team_hook_effects(store: &dyn RuntimeStore) -> Result<usize, RuntimeError> {
+    let mut settled = 0;
+    for effect in store.list_dispatchable_team_hook_effects(64)? {
+        let admission = TeamHookEffectAdmission {
+            workspace_id: effect.workspace_id,
+            parent_event_id: effect.parent_event_id,
+            hook: effect.hook,
+            input: effect.input,
+            created_at_ms: effect.created_at_ms,
+        };
+        match execute_team_hook_effect(store, &admission).await {
+            Ok(_) => settled += 1,
+            // An approval or workspace can be revoked between admission and
+            // claim. Do not run the command through an alternate path.
+            Err(RuntimeError::Conflict(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    for effect in store.list_unapplied_team_hook_effects(64)? {
+        store.apply_team_hook_effect_output(&effect, now_ms())?;
+        settled += 1;
+    }
+    Ok(settled)
+}
+
+/// A weak store reference allows a disposable runtime to shut down naturally
+/// without an immortal background task holding its database open.
+pub fn start_team_hook_worker(store: &Arc<dyn RuntimeStore>) {
+    let weak = Arc::downgrade(store);
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(2));
+        loop {
+            ticker.tick().await;
+            let Some(store) = weak.upgrade() else { break };
+            if let Err(error) = dispatch_team_hook_effects(store.as_ref()).await {
+                // The script runner never returns raw script stdout/stderr.
+                // Surface storage/dispatch faults instead of silently making
+                // an approved hook appear to do nothing forever.
+                eprintln!("team-hook worker failed to reconcile effects: {error}");
+            }
+        }
+    });
 }
 
 async fn run_approved_script(

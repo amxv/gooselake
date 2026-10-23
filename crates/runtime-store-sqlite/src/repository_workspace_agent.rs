@@ -6,6 +6,7 @@ use runtime_core::{
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 
 use crate::db::{db_error, json_to_string, open_connection, string_to_json};
+use crate::repository_team_hooks::{active_workspace_hook_targets_tx, queue_team_hook_trigger_tx};
 use crate::repository_workspace_notice::queue_membership_lead_notice_tx;
 use crate::SqliteRuntimeRepository;
 
@@ -183,6 +184,19 @@ impl SqliteRuntimeRepository {
                 agent.created_at,
             )?;
         }
+        queue_team_hook_trigger_tx(
+            &tx,
+            &agent.workspace_id,
+            runtime_core::TeamHookEventName::PostTeammateAdd,
+            &format!("workspace-hook:joined:{}", agent.agent_id),
+            Some(&agent.profile.added_by),
+            serde_json::json!({
+                "kind": "member", "action": "joined", "member_agent_id": agent.agent_id,
+                "member_alias": agent.alias,
+            }),
+            &active_workspace_hook_targets_tx(&tx, &agent.workspace_id)?,
+            agent.created_at,
+        )?;
         tx.commit()
             .map_err(|error| db_error("failed committing workspace agent create", error))?;
         Ok(())
@@ -395,6 +409,24 @@ impl SqliteRuntimeRepository {
                 action,
                 changed_at,
             )?;
+            if lifecycle == WorkspaceAgentLifecycleState::Archived {
+                queue_team_hook_trigger_tx(
+                    &tx,
+                    &workspace_id,
+                    runtime_core::TeamHookEventName::PostTeammateRemove,
+                    &format!(
+                        "workspace-hook:removed:{agent_id}:rev-{}",
+                        prior_revision + 1
+                    ),
+                    initiator_agent_id,
+                    serde_json::json!({
+                        "kind":"member", "action":"removed", "member_agent_id":agent_id,
+                        "member_alias":alias,
+                    }),
+                    &active_workspace_hook_targets_tx(&tx, &workspace_id)?,
+                    changed_at,
+                )?;
+            }
         }
         tx.commit()
             .map_err(|error| db_error("failed committing workspace agent lifecycle", error))?;

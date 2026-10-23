@@ -123,11 +123,14 @@ Existing session/team/process/worktree APIs remain under `/v1`; `/v2` is introdu
 `GET /v2/workspaces/{workspace_id}/hooks` is an **operator-authenticated,
 read-only** view of versioned user/project hook configuration. An optional
 `?event=pre_teammate_add` (or any of the five `post_*` event names) filters the
-result. The JSON response includes `config_version`, `execution_enabled`, and
+result. The JSON response includes `config_version`, `execution_enabled`, `executable_events`, and
 effective entries (`event_name`, normalized `name`, `command`, `timeout_ms`,
-`scope`, `fingerprint`). **`execution_enabled` is currently `false`: hooks are not invoked by
-workspace operations yet.** This is discovery only, not a feature switch or a
-way for agents to run commands.
+`scope`, `fingerprint`). `execution_enabled: true` means the post-operation
+dispatcher is available, and `executable_events` lists the **four live events**:
+`post_teammate_add`, `post_teammate_remove`, `post_direct_message_send`, and
+`post_broadcast_message_send`. `pre_teammate_add` and `post_compaction` are
+discoverable but not yet executable. Discovery never grants permission to run
+commands or enables a new model-facing tool.
 
 Configuration files live at `~/.agents/gg/team-hooks.json` for the runtime
 operator and `<workspace-root>/.agents/gg/team-hooks.json` for the project.
@@ -154,11 +157,35 @@ An agent editing its project's configuration therefore cannot add approved
 commands. Grants are workspace-local, and an admitted but unclaimed effect
 cannot begin once its grant is revoked.
 
-Hook effect intents, single-execution claims, exact terminal receipts, and
-ambiguous-start `manual_review` classifications are persisted separately.
+An approved post hook is admitted *atomically* with its canonical workspace
+membership or message mutation. A worker runs its bounded script once and
+commits a terminal receipt before separately validating any optional output.
+Message hooks wait until the message's durable delivery attempts have settled,
+so their context cannot race ahead of a still-pending or deferred message.
+Only active, authorized recipients named by the immutable event snapshot can
+receive resulting automation-context notices. A transactionally receipted
+notice prevents duplicate context on restart; a forged target rejects the
+entire output. Operator revocation prevents still-unclaimed scripts from
+executing, and old or ambiguous effects are never blindly replayed.
+
+The hook command receives a bounded JSON object on stdin with `schema_version`,
+`event_id`, `hook_event`, `workspace_id`, `actor_agent_id` (when an active member
+initiated the event), `subject`, and `eligible_target_agent_ids`. It must exit
+successfully and write a **single JSON object** to stdout (at most 16 KiB).
+An empty `{}` means no context delivery. Optional output such as
+`{"inject":{"caller":{"text":"..."},"targets":[{"agent_id":"sess_...","text":"..."}]}}`
+is checked against the persisted actor, event recipients, current workspace
+membership, and notice delivery order before it enters an agent turn. A
+failed, timed-out, or invalid-output script never rolls back an already-committed
+message or membership mutation. The operator-facing effect history reports
+both script execution and the independently receipted output application.
+
+Hook effect intents, single-execution claims, terminal script and context
+application receipts, and ambiguous-start `manual_review` classifications
+are persisted separately.
 `GET /v2/workspaces/{workspace_id}/hooks/effects?limit=50` returns bounded
-operator diagnostics (maximum 100 records). **Hook invocation and model context
-injection are not yet active, even when an operator approves hooks.**
+operator diagnostics (maximum 100 records). Pre-add spawn-template mutation and
+post-compaction lifecycle hooks are not yet activated.
 
 Normal `/v2` agent creation is always scoped to a registered workspace:
 

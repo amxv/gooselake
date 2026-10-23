@@ -25,6 +25,57 @@ fn fixture() -> (tempfile::TempDir, SqliteRuntimeRepository) {
     (temp, repo)
 }
 
+#[test]
+fn schema_upgrade_never_retroactively_injects_old_terminal_script_output() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("upgrade.sqlite");
+    let mut connection = open_connection(&path).unwrap();
+    for migration in crate::schema::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version <= 16)
+    {
+        let tx = connection.transaction().unwrap();
+        tx.execute_batch(migration.sql).unwrap();
+        tx.execute(
+            "INSERT INTO schema_migrations(version,applied_at) VALUES(?1,1)",
+            [migration.version],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+    connection.execute_batch(
+        "INSERT INTO workspaces(workspace_id,canonical_root,display_name,lifecycle_state,revision,created_at,updated_at)
+         VALUES('ws_upgrade','/tmp/upgrade','Upgrade','active',0,1,1);
+         INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at)
+         VALUES('evt_upgrade','workspace','ws_upgrade',1,'workspace.hook_parent',0,'{}',1);
+         INSERT INTO workspace_hook_effects
+         (workspace_id,parent_event_id,event_name,hook_name,hook_json,input_json,
+          phase,attempt_count,receipt_json,created_at_ms,updated_at_ms)
+         VALUES('ws_upgrade','evt_upgrade','post_teammate_add','old','{}','{}',
+          'succeeded',1,'{\"validated_output\":{},\"error_code\":null}',1,2);",
+    ).unwrap();
+    drop(connection);
+
+    let repository = SqliteRuntimeRepository::new(path);
+    repository.initialize_schema().unwrap();
+    let upgraded = open_connection(&repository.database_path).unwrap();
+    let status: (String, Option<String>) = upgraded
+        .query_row(
+            "SELECT application_state,application_error_code FROM workspace_hook_effects",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        status,
+        ("rejected".into(), Some("pre_activation_effect".into()))
+    );
+    assert!(repository
+        .list_unapplied_team_hook_effects(10)
+        .unwrap()
+        .is_empty());
+}
+
 fn hook() -> TeamHookResolvedEntry {
     TeamHookResolvedEntry {
         event_name: TeamHookEventName::PostTeammateAdd,

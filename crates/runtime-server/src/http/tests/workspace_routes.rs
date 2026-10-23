@@ -236,7 +236,8 @@ async fn effective_workspace_hooks_are_operator_only_filtered_and_never_executed
     assert_eq!(all.status(), StatusCode::OK);
     let full: serde_json::Value =
         serde_json::from_slice(&to_bytes(all.into_body(), usize::MAX).await.unwrap()).unwrap();
-    assert_eq!(full["execution_enabled"], false);
+    assert_eq!(full["execution_enabled"], true);
+    assert_eq!(full["executable_events"].as_array().unwrap().len(), 4);
     assert_eq!(full["config_version"], 1);
     assert_eq!(full["hooks"].as_array().unwrap().len(), 2);
     assert_eq!(full["hooks"][0]["scope"], "project");

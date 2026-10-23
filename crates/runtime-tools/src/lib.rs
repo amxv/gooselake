@@ -19,7 +19,9 @@ pub use gateway::{
     TeamMcpPolicy, TeamModelPreset,
 };
 pub use process::RuntimeProcessManager;
-pub use team_hook_execution::execute_team_hook_effect;
+pub use team_hook_execution::{
+    dispatch_team_hook_effects, execute_team_hook_effect, start_team_hook_worker,
+};
 pub use worktree::RuntimeWorktreeService;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

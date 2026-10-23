@@ -13,17 +13,29 @@ fn decode_json<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, RuntimeE
 }
 
 const EFFECT_SELECT: &str = "SELECT hook_json, input_json, phase, attempt_count,
-    receipt_json, created_at_ms, updated_at_ms FROM workspace_hook_effects
+    receipt_json, created_at_ms, updated_at_ms, application_state,
+    application_error_code, applied_at_ms FROM workspace_hook_effects
     WHERE workspace_id = ?1 AND parent_event_id = ?2 AND event_name = ?3 AND hook_name = ?4";
 
-fn read_effect(
+pub(super) fn read_effect(
     connection: &Connection,
     workspace_id: &str,
     parent_event_id: &str,
     event_name: TeamHookEventName,
     hook_name: &str,
 ) -> Result<Option<TeamHookEffectRecord>, RuntimeError> {
-    let row: Option<(String, String, String, i64, Option<String>, i64, i64)> = connection
+    let row: Option<(
+        String,
+        String,
+        String,
+        i64,
+        Option<String>,
+        i64,
+        i64,
+        String,
+        Option<String>,
+        Option<i64>,
+    )> = connection
         .query_row(
             EFFECT_SELECT,
             params![
@@ -41,12 +53,27 @@ fn read_effect(
                     row.get(4)?,
                     row.get(5)?,
                     row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
                 ))
             },
         )
         .optional()
         .map_err(|error| db_error("failed reading team-hook effect", error))?;
-    let Some((hook_json, input_json, phase, count, receipt_json, created, updated)) = row else {
+    let Some((
+        hook_json,
+        input_json,
+        phase,
+        count,
+        receipt_json,
+        created,
+        updated,
+        application_state,
+        application_error_code,
+        applied_at_ms,
+    )) = row
+    else {
         return Ok(None);
     };
     Ok(Some(TeamHookEffectRecord {
@@ -65,6 +92,9 @@ fn read_effect(
             .transpose()?,
         created_at_ms: created,
         updated_at_ms: updated,
+        application_state,
+        application_error_code,
+        applied_at_ms,
     }))
 }
 
@@ -282,7 +312,8 @@ impl SqliteRuntimeRepository {
             ));
         }
         tx.execute(
-            "UPDATE workspace_hook_effects SET phase=?5,receipt_json=?6,updated_at_ms=?7
+            "UPDATE workspace_hook_effects SET phase=?5,receipt_json=?6,updated_at_ms=?7,
+             application_state=CASE WHEN ?5='succeeded' THEN 'pending' ELSE 'rejected' END
              WHERE workspace_id=?1 AND parent_event_id=?2 AND event_name=?3 AND hook_name=?4 AND phase='started'",
             params![workspace_id, parent_event_id, event.as_str(), hook_name, outcome.as_str(), receipt_json, at_ms],
         )

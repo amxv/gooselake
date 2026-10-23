@@ -53,6 +53,7 @@ pub(super) struct WorkspaceHooksResponse {
     workspace_id: String,
     config_version: u32,
     execution_enabled: bool,
+    executable_events: Vec<runtime_core::TeamHookEventName>,
     hooks: Vec<WorkspaceHookDisplayEntry>,
 }
 
@@ -87,7 +88,15 @@ pub(super) async fn get_workspace_hooks(
     Ok(Json(WorkspaceHooksResponse {
         workspace_id: workspace.workspace_id,
         config_version: runtime_core::TEAM_HOOK_CONFIG_VERSION,
-        execution_enabled: false,
+        // Pre-add has a distinct blocking mutation contract; compaction has a
+        // separate canonical lifecycle. Neither may be advertised early.
+        execution_enabled: true,
+        executable_events: vec![
+            runtime_core::TeamHookEventName::PostTeammateAdd,
+            runtime_core::TeamHookEventName::PostTeammateRemove,
+            runtime_core::TeamHookEventName::PostDirectMessageSend,
+            runtime_core::TeamHookEventName::PostBroadcastMessageSend,
+        ],
         hooks: hooks
             .into_iter()
             .map(|hook| WorkspaceHookDisplayEntry {

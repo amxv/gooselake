@@ -110,6 +110,10 @@ pub struct TeamHookEffectRecord {
     pub receipt: Option<TeamHookEffectReceipt>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    /// Separate durable receipt for application of scoped model context.
+    pub application_state: String,
+    pub application_error_code: Option<String>,
+    pub applied_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

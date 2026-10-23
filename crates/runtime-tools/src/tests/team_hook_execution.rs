@@ -58,6 +58,56 @@ fn fixture(
 }
 
 #[tokio::test]
+async fn persisted_workspace_parent_dispatches_once_and_reconciles_after_restart() {
+    let marker_dir = tempfile::tempdir().unwrap();
+    let marker = marker_dir.path().join("script-runs");
+    let (temp, store, original) = fixture(
+        format!("printf x >> '{}'; printf '{{}}'", marker.display()),
+        5_000,
+    );
+    let mut admitted = original;
+    admitted.parent_event_id = "evt_workspace_hook_dispatch".into();
+    admitted.input = json!({
+        "schema_version":1,
+        "workspace_id":"ws_hooks",
+        "event_id":admitted.parent_event_id,
+        "hook_event":"post_teammate_add",
+        "actor_agent_id":null,
+        "subject":{"kind":"member","member_agent_id":"sess_test"},
+        "eligible_target_agent_ids":[],
+    });
+    let sql = rusqlite::Connection::open(store.database_path()).unwrap();
+    sql.execute(
+        "INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at)
+         VALUES(?1,'workspace','ws_hooks',1,'workspace.hook_parent',0,?2,1)",
+        rusqlite::params![admitted.parent_event_id, admitted.input.to_string()],
+    ).unwrap();
+    store.admit_team_hook_effect(&admitted).unwrap();
+
+    assert_eq!(dispatch_team_hook_effects(&store).await.unwrap(), 2);
+    let complete = store
+        .get_team_hook_effect(
+            "ws_hooks",
+            &admitted.parent_event_id,
+            admitted.hook.event_name,
+            &admitted.hook.name,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(complete.phase, TeamHookEffectPhase::Succeeded);
+    assert_eq!(complete.application_state, "applied");
+    assert_eq!(complete.attempt_count, 1);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "x");
+
+    let restarted = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite"),
+    });
+    restarted.repository().initialize_schema().unwrap();
+    assert_eq!(dispatch_team_hook_effects(&restarted).await.unwrap(), 0);
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "x");
+}
+
+#[tokio::test]
 async fn operator_granted_hook_runs_once_with_durable_terminal_receipt() {
     let marker = tempfile::tempdir().unwrap();
     let marker_path = marker.path().join("executions");

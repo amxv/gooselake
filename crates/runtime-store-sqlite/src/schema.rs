@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 16;
+pub(crate) const SCHEMA_VERSION: i64 = 17;
 
 #[path = "schema_chain.rs"]
 mod schema_chain;
@@ -965,4 +965,20 @@ CREATE TABLE workspace_hook_effects (
 );
 CREATE INDEX idx_workspace_hook_effects_phase
   ON workspace_hook_effects(phase,created_at_ms,workspace_id,parent_event_id);
+"#;
+
+const MIGRATION_17_SQL: &str = r#"
+-- Applying the output is a second, transactionally receipted effect. A
+-- successfully executed script must not inject its context twice on restart.
+ALTER TABLE workspace_hook_effects ADD COLUMN application_state TEXT NOT NULL DEFAULT 'not_ready'
+  CHECK(application_state IN ('not_ready','pending','applied','rejected'));
+ALTER TABLE workspace_hook_effects ADD COLUMN application_error_code TEXT;
+ALTER TABLE workspace_hook_effects ADD COLUMN applied_at_ms INTEGER;
+CREATE INDEX idx_workspace_hook_effects_application
+  ON workspace_hook_effects(application_state,created_at_ms,workspace_id,parent_event_id);
+-- Existing receipts predate automatic output routing. Never retroactively
+-- inject their contents into a member's model context during migration.
+UPDATE workspace_hook_effects SET application_state = 'rejected',
+  application_error_code = 'pre_activation_effect'
+  WHERE phase IN ('succeeded','failed','timed_out','manual_review');
 "#;

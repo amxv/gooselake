@@ -272,6 +272,8 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         ));
     }
     runtime.start_workspace_system_notice_worker();
+    let hook_store: Arc<dyn RuntimeStore> = store.clone();
+    runtime_tools::start_team_hook_worker(&hook_store);
     if !recovered_processes.is_empty() {
         startup_recovery.notes.push(format!(
             "startup process recovery reconciled {} durable process records: {}",

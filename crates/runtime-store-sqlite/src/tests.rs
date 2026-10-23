@@ -187,6 +187,7 @@ fn initialize_schema_migrates_partially_populated_database_without_reset() {
 
 mod agent_comms;
 mod edit_rerun;
+mod hook_integration;
 mod turn_authority;
 mod workspace_agent;
 mod workspace_authority;

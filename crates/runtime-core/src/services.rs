@@ -67,6 +67,32 @@ pub trait RuntimeStore: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// Startup/retry work queues are derived from durable immutable intents,
+    /// not the current project configuration or in-memory event listeners.
+    fn list_dispatchable_team_hook_effects(
+        &self,
+        _limit: usize,
+    ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
+        Ok(Vec::new())
+    }
+
+    fn list_unapplied_team_hook_effects(
+        &self,
+        _limit: usize,
+    ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
+        Ok(Vec::new())
+    }
+
+    fn apply_team_hook_effect_output(
+        &self,
+        _effect: &TeamHookEffectRecord,
+        _at_ms: i64,
+    ) -> Result<TeamHookEffectRecord, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable hook context application is unavailable".into(),
+        ))
+    }
+
     fn admit_team_hook_effect(
         &self,
         _admission: &TeamHookEffectAdmission,

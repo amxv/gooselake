@@ -1,7 +1,8 @@
 use runtime_core::{AgentDeliveryRecord, AgentMessageRecord, RuntimeError};
-use rusqlite::{params, TransactionBehavior};
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 use crate::db::{db_error, json_to_string, open_connection};
+use crate::repository_team_hooks::queue_team_hook_trigger_tx;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
@@ -49,6 +50,46 @@ impl SqliteRuntimeRepository {
                 )));
             }
             insert_delivery(&tx, delivery)?;
+        }
+
+        // The sender's workspace, not a shared-team assumption, owns the
+        // event. A cross-workspace direct recipient remains eligible only
+        // because the immutable message recipient snapshot explicitly names it.
+        let sender_workspace: Option<String> = tx
+            .query_row(
+                "SELECT w.workspace_id FROM workspace_agents a JOIN workspaces w
+             ON w.workspace_id=a.workspace_id WHERE a.session_id=?1
+             AND a.lifecycle_state='active' AND w.lifecycle_state='active'",
+                [&message.sender_agent_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed identifying hook message sender workspace", error))?;
+        if let Some(workspace_id) = sender_workspace {
+            let event = match message.scope.as_str() {
+                "direct" => Some(runtime_core::TeamHookEventName::PostDirectMessageSend),
+                "broadcast" => Some(runtime_core::TeamHookEventName::PostBroadcastMessageSend),
+                _ => None,
+            };
+            if let Some(event) = event {
+                queue_team_hook_trigger_tx(
+                    &tx,
+                    &workspace_id,
+                    event,
+                    &format!("workspace-hook:message:{}", message.id),
+                    Some(&message.sender_agent_id),
+                    serde_json::json!({
+                        "kind":"message", "message_id":message.id,
+                        "sender_agent_id":message.sender_agent_id,
+                        "recipient_agent_ids":message.recipient_agent_ids.iter().take(128).collect::<Vec<_>>(),
+                        "recipient_count":message.recipient_agent_ids.len(),
+                        "recipients_truncated":message.recipient_agent_ids.len() > 128,
+                        "scope":message.scope,
+                    }),
+                    &message.recipient_agent_ids,
+                    message.created_at,
+                )?;
+            }
         }
 
         tx.commit()

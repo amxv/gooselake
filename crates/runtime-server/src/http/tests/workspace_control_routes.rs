@@ -1,6 +1,86 @@
 use super::*;
 
 #[tokio::test]
+async fn populated_retirement_api_admits_and_reports_only_verified_terminal_state() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("saga-http-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let workspace =
+        register_control_workspace(&router, &token, &root, "Retirement operation").await;
+    let uri = format!(
+        "/v2/workspaces/{}/retirement/advance",
+        workspace.workspace_id
+    );
+    let request = |auth: bool, key: &str, revision: u64| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri(&uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("Idempotency-Key", key);
+        if auth {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder
+            .body(Body::from(
+                serde_json::json!({"expected_revision":revision}).to_string(),
+            ))
+            .unwrap()
+    };
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(request(false, "saga-http", workspace.revision))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let response = router
+        .clone()
+        .oneshot(request(true, "saga-http", workspace.revision))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let details: runtime_core::OperationDetails =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+        details.operation.phase,
+        runtime_core::OperationPhase::Completed
+    );
+    assert!(details.claims.is_empty());
+    let retired = get_control_workspace(&router, &token, &workspace.workspace_id).await;
+    assert_eq!(
+        retired.lifecycle_state,
+        runtime_core::WorkspaceLifecycleState::Retired
+    );
+    let replay = router
+        .clone()
+        .oneshot(request(true, "saga-http", workspace.revision))
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replayed: runtime_core::OperationDetails =
+        serde_json::from_slice(&to_bytes(replay.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+        replayed.operation.operation_id,
+        details.operation.operation_id
+    );
+    assert_eq!(
+        replayed.operation.exact_terminal_result,
+        details.operation.exact_terminal_result
+    );
+
+    let reactivated =
+        register_control_workspace(&router, &token, &root, "Retirement operation").await;
+    assert_eq!(reactivated.workspace_id, workspace.workspace_id);
+    assert_eq!(
+        reactivated.lifecycle_state,
+        runtime_core::WorkspaceLifecycleState::Active
+    );
+    assert!(reactivated.lead_agent_id.is_none());
+}
+
+#[tokio::test]
 async fn retirement_preflight_http_is_operator_only_and_remains_advisory_after_retirement() {
     let (router, token, temp) = build_test_router().await;
     let root = temp.path().join("preflight-root");

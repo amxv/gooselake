@@ -10,11 +10,12 @@ use runtime_core::{
     ProviderCreateSessionPolicyRequest, ProviderCreateSessionRequest, ProviderDiscoveryMode,
     ProviderDispatchOutcome, ProviderHardForkEditRerunRequest, ProviderInterruptTurnRequest,
     ProviderKind, ProviderMetadata, ProviderModel, ProviderResumeSessionPolicyRequest,
-    ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
-    ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
-    ProviderSkillDescriptor, ProviderSkillDiscoveryRequest, ProviderTurnAck, ProviderTurnResult,
-    ProviderWaitTurnRequest, ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest,
-    RuntimeError, RuntimeProvider, ToolGateway,
+    ProviderResumeSessionRequest, ProviderRetirementCloseEvidence, ProviderRuntimeEvent,
+    ProviderSendTurnRequest, ProviderSession, ProviderSessionPreferencesMutationRequest,
+    ProviderSessionPreferencesMutationResult, ProviderSkillDescriptor,
+    ProviderSkillDiscoveryRequest, ProviderTurnAck, ProviderTurnResult, ProviderWaitTurnRequest,
+    ProviderWorkspaceRebindEvidence, ProviderWorkspaceRebindRequest, RuntimeError, RuntimeProvider,
+    ToolGateway,
 };
 use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, oneshot};
@@ -973,5 +974,12 @@ impl RuntimeProvider for CodexProvider {
             session.transport.shutdown().await;
         }
         Ok(())
+    }
+
+    async fn close_session_for_retirement(
+        &self,
+        req: ProviderCloseSessionRequest,
+    ) -> Result<ProviderRetirementCloseEvidence, RuntimeError> {
+        self.close_retiring_session(req).await
     }
 }

@@ -276,6 +276,23 @@ pub struct ProviderCloseSessionRequest {
     pub reason: Option<String>,
 }
 
+/// Strong retirement-specific evidence. Ordinary best-effort close_session is
+/// intentionally not sufficient to authorize workspace retirement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderRetirementCloseEvidence {
+    pub runtime_session_id: String,
+    pub provider_session_ref: String,
+    pub proof_kind: ProviderRetirementCloseProofKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderRetirementCloseProofKind {
+    NativeSessionCloseAcknowledged,
+    NativeProcessTerminated,
+    OperatorVerifiedClosed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderSession {
     pub runtime_session_id: String,
@@ -643,6 +660,18 @@ pub trait RuntimeProvider: Send + Sync {
     async fn close_session(&self, _req: ProviderCloseSessionRequest) -> Result<(), RuntimeError> {
         Err(RuntimeError::Unsupported(
             "provider close_session is not supported".to_string(),
+        ))
+    }
+
+    /// Implementations must fail closed on transport timeouts, missing native
+    /// identity and ambiguous close outcomes. Returning Ok proves a bounded
+    /// native acknowledgement or verified local native-process termination.
+    async fn close_session_for_retirement(
+        &self,
+        _req: ProviderCloseSessionRequest,
+    ) -> Result<ProviderRetirementCloseEvidence, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "native retirement close evidence is unsupported by this provider".into(),
         ))
     }
 }

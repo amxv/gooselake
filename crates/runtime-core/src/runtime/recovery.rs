@@ -77,6 +77,12 @@ impl RuntimeSessionManager {
         }
 
         for session_id in session_ids {
+            if let Some(operation_id) = self.store.retiring_operation_for_session(&session_id)? {
+                summary.notes.push(format!(
+                    "session {session_id} native resume/turn replay withheld by workspace retirement {operation_id}"
+                ));
+                continue;
+            }
             if self.store.unresolved_session_edit_rerun(&session_id)? {
                 // Native fork might have happened before the child identity
                 // reached SQLite. Never silently resume/recreate a guessed

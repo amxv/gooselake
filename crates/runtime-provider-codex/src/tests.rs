@@ -21,6 +21,7 @@ use crate::{copy_codex_auth_file, CodexGgMcpConfig, CodexProvider, CodexProvider
 
 const FAKE_APP_SERVER: &str = r#"
 import json
+import os
 import sys
 
 log_path = sys.argv[1]
@@ -151,7 +152,7 @@ for raw in sys.stdin:
 
     params = message.get("params") or {}
     if method == "initialize":
-        emit({"id": request_id, "result": {"userAgent": "fake-codex/1"}})
+        emit({"id": request_id, "result": {"userAgent": "fake-codex/1", "processId": os.getpid()}})
     elif method == "initialized":
         continue
     elif method == "thread/start":
@@ -449,6 +450,7 @@ mod failure_contracts;
 mod live_acceptance;
 
 mod native_dynamic_tools;
+mod retirement_close;
 
 fn legacy_create(runtime_session_id: &str) -> ProviderCreateSessionPolicyRequest {
     ProviderCreateSessionPolicyRequest::legacy_compatible(

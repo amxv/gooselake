@@ -150,6 +150,8 @@ for raw_line in sys.stdin:
         }}
         if MODE == "bad_protocol":
             result["protocolVersion"] = 999
+        if MODE == "no_close":
+            result["agentCapabilities"]["sessionCapabilities"].pop("close")
         if MODE != "load_only":
             result["agentCapabilities"]["sessionCapabilities"]["resume"] = {{}}
         if MODE == "image_support":
@@ -385,6 +387,9 @@ for raw_line in sys.stdin:
     elif method == "session/close":
         session_id = msg["params"]["sessionId"]
         if MODE == "hang_close":
+            continue
+        if MODE == "invalid_close":
+            send({{"jsonrpc": "2.0", "id": msg["id"], "result": None}})
             continue
         if MODE == "error_close":
             send({{

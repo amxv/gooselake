@@ -124,6 +124,73 @@ impl RuntimeSessionManager {
         &self,
         input: CreateSessionInput,
     ) -> Result<SessionRecord, RuntimeError> {
+        // Legacy /v1 still creates provider-native sessions before SQLite
+        // admission. Hold the same root lock as workspace retirement across
+        // that entire window; a later DB rejection must not orphan native
+        // activity outside the retired workspace's obligation inventory.
+        let matched_workspace = if let Some(cwd) = input.cwd.as_deref() {
+            let candidate =
+                std::fs::canonicalize(cwd).unwrap_or_else(|_| std::path::PathBuf::from(cwd));
+            let workspaces = match self.store.list_workspaces() {
+                Ok(workspaces) => workspaces,
+                Err(RuntimeError::Unsupported(_)) => Vec::new(),
+                Err(error) => return Err(error),
+            };
+            let repository_root = crate::resolve_repository_identity(&candidate)
+                .ok()
+                .map(|identity| identity.canonical_root);
+            let managed_worktrees = if workspaces.is_empty() {
+                Vec::new()
+            } else {
+                self.store.hydrate_runtime_state()?.managed_worktrees
+            };
+            workspaces
+                .into_iter()
+                .filter(|workspace| {
+                    candidate.starts_with(&workspace.canonical_root)
+                        || repository_root.as_deref() == Some(workspace.canonical_root.as_str())
+                        || managed_worktrees.iter().any(|worktree| {
+                            worktree.repo_root == workspace.canonical_root
+                                && std::path::Path::new(&worktree.worktree_cwd).is_absolute()
+                                && candidate.starts_with(&worktree.worktree_cwd)
+                        })
+                })
+                .max_by_key(|workspace| workspace.canonical_root.len())
+        } else {
+            None
+        };
+        let _legacy_workspace_guard = if let Some(workspace) = matched_workspace {
+            let lock = crate::repository_lifecycle_lock(&workspace.canonical_root).await;
+            let guard = lock.read_owned().await;
+            let current = self
+                .store
+                .get_workspace(&workspace.workspace_id)?
+                .ok_or_else(|| {
+                    RuntimeError::NotFound(format!("workspace {}", workspace.workspace_id))
+                })?;
+            if current.lifecycle_state != crate::WorkspaceLifecycleState::Active {
+                return Err(RuntimeError::Conflict(format!(
+                    "legacy provider create rejected for inactive workspace {}",
+                    workspace.workspace_id
+                )));
+            }
+            let preflight = self
+                .store
+                .workspace_retirement_preflight(&workspace.workspace_id)?;
+            if preflight
+                .blockers
+                .iter()
+                .any(|blocker| blocker.code == "retirement_in_progress")
+            {
+                return Err(RuntimeError::Conflict(format!(
+                    "legacy provider create rejected for retiring workspace {}",
+                    workspace.workspace_id
+                )));
+            }
+            Some(guard)
+        } else {
+            None
+        };
         let provider = self.providers.get(input.provider).ok_or_else(|| {
             RuntimeError::ProviderNotRegistered(input.provider.as_str().to_string())
         })?;
@@ -169,7 +236,19 @@ impl RuntimeSessionManager {
             failure_message: None,
         };
 
-        self.store.upsert_session(&record)?;
+        if let Err(error) = self.store.upsert_session(&record) {
+            if let Err(native_error) = provider
+                .close_session(ProviderCloseSessionRequest {
+                    runtime_session_id: session_id.clone(),
+                    reason: Some("legacy_session_admission_failed".into()),
+                })
+                .await
+            {
+                tracing::warn!(session_id,error=%native_error,
+                    "legacy session native cleanup could not be verified after failed durable admission");
+            }
+            return Err(error);
+        }
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(session_id.clone(), record.clone());
@@ -194,6 +273,11 @@ impl RuntimeSessionManager {
         reason: Option<String>,
     ) -> Result<SessionRecord, RuntimeError> {
         let _guard = self.session_policy_mutation_lock.lock().await;
+        if let Some(operation_id) = self.store.retiring_operation_for_session(session_id)? {
+            return Err(RuntimeError::Conflict(format!(
+                "native close is owned by workspace retirement {operation_id}"
+            )));
+        }
         if self.store.unresolved_session_edit_rerun(session_id)? {
             return Err(RuntimeError::Conflict(
                 "cannot close a session with unresolved native edit-and-rerun".into(),
@@ -239,6 +323,11 @@ impl RuntimeSessionManager {
         input: ResumeSessionInput,
     ) -> Result<SessionRecord, RuntimeError> {
         let _guard = self.session_policy_mutation_lock.lock().await;
+        if let Some(operation_id) = self.store.retiring_operation_for_session(session_id)? {
+            return Err(RuntimeError::Conflict(format!(
+                "native resume is frozen by workspace retirement {operation_id}"
+            )));
+        }
         if self.store.unresolved_session_edit_rerun(session_id)? {
             return Err(RuntimeError::Conflict(
                 "cannot resume a session with unresolved native edit-and-rerun".into(),

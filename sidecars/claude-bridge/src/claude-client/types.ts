@@ -191,6 +191,7 @@ export interface TurnPromptStreamHandle {
 
 export interface SessionState {
   sessionId: string
+  nativeProcessScope: object
   providerSessionRef: string
   sdkSessionRef: string | null
   options: ClaudeSessionOptions

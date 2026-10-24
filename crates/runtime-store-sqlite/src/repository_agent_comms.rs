@@ -1,7 +1,7 @@
 use runtime_core::{AgentDeliveryRecord, AgentMessageRecord, RuntimeError};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
-use crate::db::{db_error, json_to_string, open_connection};
+use crate::db::{collect_rows, db_error, json_to_string, open_connection};
 use crate::repository_team_hooks::queue_team_hook_trigger_tx;
 use crate::SqliteRuntimeRepository;
 
@@ -102,7 +102,7 @@ impl SqliteRuntimeRepository {
         delivery: &AgentDeliveryRecord,
     ) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
-        connection
+        let changed = connection
             .execute(
                 "INSERT INTO agent_deliveries (
                     id, message_id, recipient_agent_id, provider, status, effective_policy,
@@ -120,7 +120,9 @@ impl SqliteRuntimeRepository {
                     last_error_code = excluded.last_error_code,
                     last_error_message = excluded.last_error_message,
                     created_at = excluded.created_at,
-                    updated_at = excluded.updated_at",
+                    updated_at = excluded.updated_at
+                 WHERE NOT (agent_deliveries.status='cancelled'
+                    AND agent_deliveries.last_error_code IS 'workspace_retirement')",
                 params![
                     delivery.id,
                     delivery.message_id,
@@ -137,8 +139,80 @@ impl SqliteRuntimeRepository {
                 ],
             )
             .map_err(|error| db_error("failed upserting agent delivery", error))?;
+        if changed == 0 {
+            return Err(RuntimeError::Conflict(format!(
+                "delivery {} was cancelled by durable workspace retirement",
+                delivery.id
+            )));
+        }
         Ok(())
     }
+
+    pub fn get_agent_delivery(
+        &self,
+        id: &str,
+    ) -> Result<Option<AgentDeliveryRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        connection
+            .query_row(
+                &format!("SELECT {DELIVERY_COLUMNS} FROM agent_deliveries WHERE id=?1"),
+                [id],
+                decode_delivery,
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading authoritative agent delivery", error))
+    }
+
+    pub fn list_agent_delivery_records(
+        &self,
+        request: &runtime_core::AgentDeliveryListRequest,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        let mut clauses = Vec::new();
+        let mut values = Vec::new();
+        if let Some(id) = request.message_id.as_deref() {
+            clauses.push("message_id=?");
+            values.push(id);
+        }
+        if let Some(id) = request.recipient_agent_id.as_deref() {
+            clauses.push("recipient_agent_id=?");
+            values.push(id);
+        }
+        let filter = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", clauses.join(" AND "))
+        };
+        let mut statement = connection
+            .prepare(&format!(
+                "SELECT {DELIVERY_COLUMNS} FROM agent_deliveries{filter} ORDER BY created_at,id"
+            ))
+            .map_err(|error| db_error("failed preparing authoritative delivery list", error))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(values), decode_delivery)
+            .map_err(|error| db_error("failed listing authoritative agent deliveries", error))?;
+        collect_rows(rows)
+    }
+}
+
+const DELIVERY_COLUMNS: &str = "id,message_id,recipient_agent_id,provider,status,effective_policy,
+    injection_strategy,injected_turn_id,last_error_code,last_error_message,created_at,updated_at";
+
+fn decode_delivery(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentDeliveryRecord> {
+    Ok(AgentDeliveryRecord {
+        id: row.get(0)?,
+        message_id: row.get(1)?,
+        recipient_agent_id: row.get(2)?,
+        provider: row.get(3)?,
+        status: row.get(4)?,
+        effective_policy: row.get(5)?,
+        injection_strategy: row.get(6)?,
+        injected_turn_id: row.get(7)?,
+        last_error_code: row.get(8)?,
+        last_error_message: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
 }
 
 fn insert_delivery(

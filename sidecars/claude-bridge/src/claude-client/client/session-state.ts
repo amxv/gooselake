@@ -17,6 +17,7 @@ export function createSessionState(params: {
 }): SessionState {
   return {
     sessionId: params.sessionId,
+    nativeProcessScope: {},
     providerSessionRef: params.providerSessionRef,
     sdkSessionRef: params.sdkSessionRef,
     options: params.options,

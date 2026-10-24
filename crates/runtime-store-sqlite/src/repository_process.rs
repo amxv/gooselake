@@ -194,8 +194,16 @@ impl SqliteRuntimeRepository {
         let candidates = {
             let mut statement = transaction
                 .prepare(
-                    "SELECT process_id, workspace_id FROM managed_processes
+                    "SELECT process_id, workspace_id FROM managed_processes p
                      WHERE status = 'queued'
+                       AND NOT EXISTS(SELECT 1 FROM workspace_retirement_fences f
+                                      WHERE f.workspace_id=p.workspace_id)
+                       AND NOT EXISTS(SELECT 1 FROM workspace_retirement_fences f
+                         JOIN workspace_session_ownership o ON o.workspace_id=f.workspace_id
+                         WHERE o.session_id=p.owner_session_id)
+                       AND NOT EXISTS(SELECT 1 FROM workspace_retirement_routes r
+                         WHERE p.cwd=r.route OR
+                               substr(p.cwd,1,length(r.route)+1)=r.route||'/')
                      ORDER BY queue_order ASC, admission_order ASC, process_id ASC",
                 )
                 .map_err(|error| db_error("failed preparing process claim candidates", error))?;
@@ -548,9 +556,31 @@ impl SqliteRuntimeRepository {
             .execute(
                 "UPDATE managed_processes
                  SET completion_state = ?2, completion_turn_id = ?3,
-                     completion_attempt_count = ?4, completion_last_error = ?5,
+                     completion_attempt_count = MAX(completion_attempt_count,?4), completion_last_error = ?5,
                      completion_updated_at = ?6, updated_at = MAX(updated_at, ?6)
-                 WHERE process_id = ?1",
+                 WHERE process_id = ?1
+                   AND completion_state IN ('pending','injecting')
+                   AND ((?2='injecting' AND completion_state='pending'
+                         AND ?4=completion_attempt_count+1)
+                     OR (?2='pending' AND ?4=completion_attempt_count)
+                     OR (?2='delivered' AND ?3 IS NOT NULL AND ?4>=completion_attempt_count
+                         AND EXISTS(SELECT 1 FROM turn_admissions a
+                           WHERE a.turn_id=?3 AND a.session_id=managed_processes.owner_session_id
+                             AND a.dispatch_state='dispatched'
+                             AND a.projection_source='automation_context'
+                             AND json_extract(a.correlation_json,'$.correlation_id')=
+                               'process_completion:'||managed_processes.process_id)))
+                   AND (?2='delivered' OR (
+                     NOT EXISTS(SELECT 1 FROM workspace_retirement_fences f
+                       WHERE f.workspace_id=managed_processes.workspace_id)
+                     AND NOT EXISTS(SELECT 1 FROM workspace_retirement_fences f
+                       JOIN workspace_session_ownership o ON o.workspace_id=f.workspace_id
+                       WHERE o.session_id=managed_processes.owner_session_id)
+                     AND NOT EXISTS(SELECT 1 FROM workspace_retirement_routes r
+                       WHERE managed_processes.cwd=r.route OR
+                         substr(managed_processes.cwd,1,length(r.route)+1)=r.route||'/')))
+                   AND (?2<>'injecting' OR NOT EXISTS(SELECT 1 FROM workspace_agents a
+                     WHERE a.session_id=managed_processes.owner_session_id AND a.lifecycle_state<>'active'))",
                 params![
                     process_id,
                     update.state,

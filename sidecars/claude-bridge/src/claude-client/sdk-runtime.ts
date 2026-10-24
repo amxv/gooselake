@@ -8,6 +8,7 @@ import { existsSync, statSync } from 'node:fs'
 import { delimiter, join, sep } from 'node:path'
 
 import { BridgeError } from '../errors'
+import { nativeProcessesFor } from './native-processes'
 import { isGgScopedMcpToolName } from './client/tool-metadata'
 import type {
   ClaudePermissionIntent,
@@ -65,6 +66,7 @@ export async function createSdkQuery(
   const options: Record<string, unknown> = {
     includePartialMessages: true,
     canUseTool,
+    spawnClaudeCodeProcess: nativeProcessesFor(session).spawn,
   }
 
   if (enableThinkingSummaries) {

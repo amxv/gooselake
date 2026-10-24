@@ -16,6 +16,7 @@ export type BridgeMethod =
   | 'session.supported_commands'
   | 'session.supported_models'
   | 'session.close'
+  | 'session.close_for_retirement'
   | 'bridge.shutdown'
 
 export type BridgeErrorCode =

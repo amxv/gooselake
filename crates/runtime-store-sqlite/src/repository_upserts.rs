@@ -366,7 +366,7 @@ impl SqliteRuntimeRepository {
 
     pub fn upsert_team_delivery(&self, record: &TeamDeliveryRecord) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
-        connection
+        let changed = connection
             .execute(
                 "INSERT INTO team_deliveries (
                     id, message_id, team_id, recipient_agent_id, provider, status,
@@ -385,7 +385,9 @@ impl SqliteRuntimeRepository {
                     last_error_code = excluded.last_error_code,
                     last_error_message = excluded.last_error_message,
                     created_at = excluded.created_at,
-                    updated_at = excluded.updated_at",
+                    updated_at = excluded.updated_at
+                 WHERE NOT (team_deliveries.status='cancelled'
+                    AND team_deliveries.last_error_code IS 'workspace_retirement')",
                 params![
                     record.id,
                     record.message_id,
@@ -403,6 +405,12 @@ impl SqliteRuntimeRepository {
                 ],
             )
             .map_err(|error| db_error("failed upserting team delivery", error))?;
+        if changed == 0 {
+            return Err(RuntimeError::Conflict(format!(
+                "legacy delivery {} was cancelled by durable workspace retirement",
+                record.id
+            )));
+        }
         Ok(())
     }
 

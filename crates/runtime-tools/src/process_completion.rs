@@ -23,6 +23,20 @@ impl RuntimeProcessManager {
         let Some(owner_session_id) = record.owner_session_id.as_deref() else {
             return Ok(());
         };
+        if self
+            .store
+            .retiring_operation_for_session(owner_session_id)?
+            .is_some()
+            || self
+                .store
+                .get_workspace_agent_by_id(owner_session_id)?
+                .is_some_and(|agent| agent.lifecycle_state != WorkspaceAgentLifecycleState::Active)
+        {
+            // The durable terminal result remains pending until this identity
+            // is explicitly restored. Retirement must not discard it or let a
+            // stale completion worker reopen settled native authority.
+            return Ok(());
+        }
         let correlation = completion_correlation(&record.process_id);
         if let Some(admission) = runtime
             .latest_turn_admission_for_correlation(owner_session_id, &correlation)
@@ -66,7 +80,7 @@ impl RuntimeProcessManager {
         }
 
         let attempt_count = record.completion_attempt_count.saturating_add(1);
-        self.store.update_managed_process_completion(
+        let claimed = self.store.update_managed_process_completion(
             &record.process_id,
             &ProcessCompletionUpdate {
                 state: PROCESS_COMPLETION_INJECTING.to_string(),
@@ -76,6 +90,9 @@ impl RuntimeProcessManager {
                 updated_at: now_ms(),
             },
         )?;
+        if claimed.is_none() {
+            return Ok(());
+        }
         let result = runtime
             .send_turn(
                 owner_session_id,
@@ -91,62 +108,56 @@ impl RuntimeProcessManager {
             )
             .await;
 
-        match result {
-            Ok(ack) => {
+        let send_error = result.err().map(|error| error.to_string());
+        // An accepted pre-dispatch approval is not delivery. Only persisted
+        // dispatch authority proves the completion reached its native model.
+        match runtime
+            .latest_turn_admission_for_correlation(owner_session_id, &correlation)
+            .await
+        {
+            Some(admission)
+                if admission.dispatch_state == runtime_core::TurnDispatchState::Dispatched =>
+            {
                 self.store.update_managed_process_completion(
                     &record.process_id,
                     &ProcessCompletionUpdate {
                         state: PROCESS_COMPLETION_DELIVERED.to_string(),
-                        turn_id: Some(ack.turn_id),
+                        turn_id: Some(admission.turn_id),
                         attempt_count,
                         last_error: None,
                         updated_at: now_ms(),
                     },
                 )?;
             }
-            Err(error) => {
-                if let Some(admission) = runtime
-                    .latest_turn_admission_for_correlation(owner_session_id, &correlation)
-                    .await
-                {
-                    if admission.dispatch_state == runtime_core::TurnDispatchState::Dispatched {
-                        self.store.update_managed_process_completion(
-                            &record.process_id,
-                            &ProcessCompletionUpdate {
-                                state: PROCESS_COMPLETION_DELIVERED.to_string(),
-                                turn_id: Some(admission.turn_id),
-                                attempt_count,
-                                last_error: None,
-                                updated_at: now_ms(),
-                            },
-                        )?;
-                    } else if admission.dispatch_state
-                        == runtime_core::TurnDispatchState::NotDispatched
-                    {
-                        self.store.update_managed_process_completion(
-                            &record.process_id,
-                            &ProcessCompletionUpdate {
-                                state: PROCESS_COMPLETION_PENDING.to_string(),
-                                turn_id: None,
-                                attempt_count,
-                                last_error: Some(error.to_string()),
-                                updated_at: now_ms(),
-                            },
-                        )?;
-                    }
-                } else {
-                    self.store.update_managed_process_completion(
-                        &record.process_id,
-                        &ProcessCompletionUpdate {
-                            state: PROCESS_COMPLETION_PENDING.to_string(),
-                            turn_id: None,
-                            attempt_count,
-                            last_error: Some(error.to_string()),
-                            updated_at: now_ms(),
-                        },
-                    )?;
-                }
+            Some(admission)
+                if admission.dispatch_state == runtime_core::TurnDispatchState::NotDispatched =>
+            {
+                self.store.update_managed_process_completion(
+                    &record.process_id,
+                    &ProcessCompletionUpdate {
+                        state: PROCESS_COMPLETION_PENDING.to_string(),
+                        turn_id: None,
+                        attempt_count,
+                        last_error: send_error,
+                        updated_at: now_ms(),
+                    },
+                )?;
             }
+            None if send_error.is_some() => {
+                self.store.update_managed_process_completion(
+                    &record.process_id,
+                    &ProcessCompletionUpdate {
+                        state: PROCESS_COMPLETION_PENDING.to_string(),
+                        turn_id: None,
+                        attempt_count,
+                        last_error: send_error,
+                        updated_at: now_ms(),
+                    },
+                )?;
+            }
+            // Pending, dispatching, unknown, or a missing accepted receipt all
+            // retain the claim until authority can be reconciled safely.
+            _ => {}
         }
         Ok(())
     }

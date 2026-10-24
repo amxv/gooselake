@@ -5,6 +5,7 @@ mod config;
 mod paths;
 mod policy;
 mod provider;
+mod retirement_close;
 mod runtime_provider;
 
 #[cfg(test)]

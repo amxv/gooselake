@@ -5,9 +5,9 @@ use runtime_core::{
     ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus, ProviderCapabilities,
     ProviderCapabilitySupport, ProviderCloseSessionRequest, ProviderCreateSessionRequest,
     ProviderDiscoveryMode, ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata,
-    ProviderModel, ProviderResumeSessionRequest, ProviderSendTurnRequest, ProviderSession,
-    ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
-    RuntimeProvider,
+    ProviderModel, ProviderResumeSessionRequest, ProviderRetirementCloseEvidence,
+    ProviderRetirementCloseProofKind, ProviderSendTurnRequest, ProviderSession, ProviderTurnAck,
+    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
 };
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, oneshot};
@@ -600,6 +600,107 @@ impl RuntimeProvider for AcpProvider {
 
         self.shutdown_connection_if_idle().await;
         Ok(())
+    }
+
+    async fn close_session_for_retirement(
+        &self,
+        req: ProviderCloseSessionRequest,
+    ) -> Result<ProviderRetirementCloseEvidence, RuntimeError> {
+        let (native_ref, connection_id) = {
+            let sessions = self.inner.sessions.read().await;
+            let session = sessions
+                .get(req.runtime_session_id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::Conflict(
+                        "ACP native session attachment missing during retirement".into(),
+                    )
+                })?;
+            if session.resuming
+                || session.active_turn.is_some()
+                || !session.pending_native_permissions.is_empty()
+            {
+                return Err(RuntimeError::Conflict(
+                    "ACP native session is still busy and cannot be conclusively closed".into(),
+                ));
+            }
+            (session.provider_session_ref.clone(), session.connection_id)
+        };
+        let connection = self.current_connection().await.ok_or_else(|| {
+            RuntimeError::Conflict("ACP native connection disappeared before verified close".into())
+        })?;
+        if connection_id != Some(connection.instance_id) {
+            return Err(RuntimeError::Conflict(
+                "ACP native close connection identity changed".into(),
+            ));
+        }
+        if !connection.capabilities.read().await.close_session {
+            return Err(RuntimeError::Unsupported(
+                "ACP agent did not advertise session/close; retirement requires explicit reconciliation".into()
+            ));
+        }
+        if native_ref.trim().is_empty() {
+            return Err(RuntimeError::Conflict(
+                "ACP native attachment identity is missing during retirement".into(),
+            ));
+        }
+        {
+            let mut sessions = self.inner.sessions.write().await;
+            let session = sessions.get_mut(&req.runtime_session_id).ok_or_else(|| {
+                RuntimeError::Conflict("ACP native attachment disappeared before close".into())
+            })?;
+            if session.provider_session_ref != native_ref
+                || session.connection_id != connection_id
+                || session.resuming
+                || session.active_turn.is_some()
+                || !session.pending_native_permissions.is_empty()
+            {
+                return Err(RuntimeError::Conflict(
+                    "ACP native attachment changed before retirement close".into(),
+                ));
+            }
+            // Reserve the attachment without holding the session lock over
+            // RPC: ordered update events must still reach the response reader.
+            // Unknown native close leaves this quarantine in place.
+            session.resuming = true;
+        }
+        let response = connection
+            .send_request(
+                "session/close",
+                json!({"sessionId":native_ref}),
+                Some(self.request_timeout()),
+            )
+            .await?;
+        if !response.is_object() {
+            return Err(RuntimeError::ProtocolViolation(
+                "ACP native session/close acknowledgement must be an object".into(),
+            ));
+        }
+        // Remove only after the native JSON-RPC response arrives. An unknown
+        // timeout leaves the durable effect started and requires review.
+        {
+            let mut sessions = self.inner.sessions.write().await;
+            let same_attachment = sessions
+                .get(&req.runtime_session_id)
+                .is_some_and(|session| {
+                    session.provider_session_ref == native_ref
+                        && session.connection_id == connection_id
+                        && session.resuming
+                        && session.active_turn.is_none()
+                        && session.pending_native_permissions.is_empty()
+                });
+            if !same_attachment {
+                return Err(RuntimeError::Conflict(
+                    "ACP attachment changed during native retirement close".into(),
+                ));
+            }
+            sessions.remove(&req.runtime_session_id);
+        }
+        self.shutdown_connection_if_idle().await;
+        Ok(ProviderRetirementCloseEvidence {
+            runtime_session_id: req.runtime_session_id,
+            provider_session_ref: native_ref,
+            proof_kind: ProviderRetirementCloseProofKind::NativeSessionCloseAcknowledged,
+        })
     }
 }
 

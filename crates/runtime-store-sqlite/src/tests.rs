@@ -7,7 +7,16 @@ use runtime_core::{
 };
 use rusqlite::{params, Connection};
 
+mod process_completion_authority;
 mod workspace_retirement;
+mod workspace_retirement_deliveries;
+mod workspace_retirement_events;
+mod workspace_retirement_native;
+mod workspace_retirement_processes;
+mod workspace_retirement_review;
+mod workspace_retirement_review_recovery;
+mod workspace_retirement_review_turns;
+mod workspace_retirement_routes;
 
 fn repo(temp_dir: &tempfile::TempDir) -> SqliteRuntimeRepository {
     SqliteRuntimeRepository::new(temp_dir.path().join("runtime.sqlite3"))

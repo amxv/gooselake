@@ -64,6 +64,14 @@ impl RuntimeSessionManager {
         request: ProviderPermissionMutationRequest,
     ) -> Result<ProviderPermissionMutationResult, RuntimeError> {
         let _mutation = self.session_policy_mutation_lock.lock().await;
+        if let Some(operation_id) = self
+            .store
+            .retiring_operation_for_session(&request.runtime_session_id)?
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "permission policy is frozen by workspace retirement {operation_id}"
+            )));
+        }
         if self
             .store
             .unresolved_session_edit_rerun(&request.runtime_session_id)?
@@ -183,6 +191,14 @@ impl RuntimeSessionManager {
         &self,
         request: ProviderSessionPreferencesMutationRequest,
     ) -> Result<ProviderSessionPreferencesMutationResult, RuntimeError> {
+        if let Some(operation_id) = self
+            .store
+            .retiring_operation_for_session(&request.runtime_session_id)?
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "session preferences are frozen by workspace retirement {operation_id}"
+            )));
+        }
         if self
             .store
             .unresolved_workspace_agent_rebind(&request.runtime_session_id)?
@@ -320,6 +336,17 @@ impl RuntimeSessionManager {
         if workspace.lifecycle_state != WorkspaceLifecycleState::Active {
             return Err(RuntimeError::InvalidState(format!(
                 "workspace {workspace_id} is not active"
+            )));
+        }
+        if self
+            .store
+            .workspace_retirement_preflight(workspace_id)?
+            .blockers
+            .iter()
+            .any(|blocker| blocker.code == "retirement_in_progress")
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "workspace {workspace_id} is frozen for retirement"
             )));
         }
         let added_by = normalize_optional(Some(added_by)).ok_or_else(|| {
@@ -549,6 +576,17 @@ impl RuntimeSessionManager {
         initiator_agent_id: Option<&str>,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
         let _guard = self.session_policy_mutation_lock.lock().await;
+        if self
+            .store
+            .workspace_retirement_preflight(workspace_id)?
+            .blockers
+            .iter()
+            .any(|blocker| blocker.code == "retirement_in_progress")
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "workspace {workspace_id} retirement is reconciling native sessions"
+            )));
+        }
         if self.store.unresolved_session_edit_rerun(agent_id)?
             || self.store.unresolved_session_compaction(agent_id)?
         {
@@ -609,6 +647,22 @@ impl RuntimeSessionManager {
         agent_id: &str,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
         let _guard = self.session_policy_mutation_lock.lock().await;
+        if self
+            .store
+            .workspace_retirement_preflight(workspace_id)?
+            .blockers
+            .iter()
+            .any(|blocker| {
+                matches!(
+                    blocker.code.as_str(),
+                    "retirement_in_progress" | "workspace_not_active"
+                )
+            })
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "workspace {workspace_id} is inactive or frozen for retirement"
+            )));
+        }
         if self.store.unresolved_session_edit_rerun(agent_id)? {
             return Err(RuntimeError::Conflict(
                 "agent has an unresolved native edit-and-rerun and cannot be restored".into(),

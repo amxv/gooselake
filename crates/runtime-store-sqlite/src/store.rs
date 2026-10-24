@@ -18,7 +18,6 @@ use runtime_core::{
     WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
     WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
     WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
-    WorkspaceRetirementCommand, WorkspaceRetirementPreflight, WorkspaceRetirementResponse,
 };
 use runtime_core::{
     TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
@@ -374,18 +373,8 @@ impl RuntimeStore for SqliteRuntimeStore {
     fn get_workspace(&self, workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
         self.repository.get_workspace(workspace_id)
     }
-    fn retire_empty_workspace(
-        &self,
-        command: &WorkspaceRetirementCommand,
-    ) -> Result<WorkspaceRetirementResponse, RuntimeError> {
-        self.repository.retire_empty_workspace(command)
-    }
-    fn workspace_retirement_preflight(
-        &self,
-        workspace_id: &str,
-    ) -> Result<WorkspaceRetirementPreflight, RuntimeError> {
-        self.repository.workspace_retirement_preflight(workspace_id)
-    }
+    crate::store_retirement::delegate_workspace_retirement!();
+
     fn transition_workspace_lead(
         &self,
         command: &WorkspaceLeadTransitionCommand,
@@ -790,6 +779,17 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn upsert_agent_delivery(&self, record: &AgentDeliveryRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_agent_delivery(record)
+    }
+
+    fn get_agent_delivery(&self, id: &str) -> Result<Option<AgentDeliveryRecord>, RuntimeError> {
+        self.repository.get_agent_delivery(id)
+    }
+
+    fn list_agent_delivery_records(
+        &self,
+        request: &runtime_core::AgentDeliveryListRequest,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        self.repository.list_agent_delivery_records(request)
     }
 
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError> {

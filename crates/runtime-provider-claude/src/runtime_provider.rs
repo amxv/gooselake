@@ -9,8 +9,9 @@ use runtime_core::{
     ProviderCreateSessionRequest, ProviderDiscoveryMode, ProviderInterruptTurnRequest,
     ProviderKind, ProviderMetadata, ProviderModel, ProviderModelDescriptor,
     ProviderModelDiscoveryRequest, ProviderModelDiscoveryResponse, ProviderResumeSessionRequest,
-    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession, ProviderTurnAck,
-    ProviderTurnResult, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
+    ProviderRetirementCloseEvidence, ProviderRuntimeEvent, ProviderSendTurnRequest,
+    ProviderSession, ProviderTurnAck, ProviderTurnResult, ProviderWaitTurnRequest, RuntimeError,
+    RuntimeProvider,
 };
 use runtime_core::{ProviderCreateSessionPolicyRequest, ProviderResumeSessionPolicyRequest};
 use serde_json::Value;
@@ -977,5 +978,12 @@ impl RuntimeProvider for ClaudeProvider {
         self.shutdown_bridges_if_idle().await;
 
         Ok(())
+    }
+
+    async fn close_session_for_retirement(
+        &self,
+        req: ProviderCloseSessionRequest,
+    ) -> Result<ProviderRetirementCloseEvidence, RuntimeError> {
+        self.close_retiring_session(req).await
     }
 }

@@ -40,6 +40,7 @@ mod sessions;
 mod shared;
 mod teams;
 mod workspace_migrations;
+mod workspace_retirement_review;
 mod workspaces;
 mod worktrees;
 
@@ -54,6 +55,7 @@ use sessions::*;
 use shared::*;
 use teams::*;
 use workspace_migrations::*;
+use workspace_retirement_review::*;
 use workspaces::*;
 use worktrees::*;
 
@@ -239,6 +241,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/workspaces", post(register_workspace).get(list_workspaces))
         .route("/workspaces/{workspace_id}", get(get_workspace))
         .route("/workspaces/{workspace_id}/retire", post(retire_workspace))
+        .route(
+            "/workspaces/{workspace_id}/retirement/advance",
+            post(advance_workspace_retirement),
+        )
+        .route(
+            "/workspaces/{workspace_id}/retirement/{operation_id}/reconcile",
+            post(reconcile_workspace_retirement).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
         .route(
             "/workspaces/{workspace_id}/retirement-preflight",
             get(workspace_retirement_preflight),

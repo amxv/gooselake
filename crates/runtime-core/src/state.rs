@@ -5,6 +5,7 @@ use serde_json::Value;
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeEventScope {
     Session,
+    Workspace,
     Team,
     Process,
     Worktree,
@@ -15,6 +16,7 @@ impl RuntimeEventScope {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Session => "session",
+            Self::Workspace => "workspace",
             Self::Team => "team",
             Self::Process => "process",
             Self::Worktree => "worktree",
@@ -25,6 +27,7 @@ impl RuntimeEventScope {
     pub fn from_str(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "session" => Some(Self::Session),
+            "workspace" => Some(Self::Workspace),
             "team" => Some(Self::Team),
             "process" => Some(Self::Process),
             "worktree" => Some(Self::Worktree),

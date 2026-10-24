@@ -5,7 +5,7 @@ use runtime_core::{
 };
 use std::sync::{Arc, Barrier};
 
-fn setup() -> (
+pub(super) fn setup() -> (
     tempfile::TempDir,
     SqliteRuntimeRepository,
     runtime_core::WorkspaceRecord,
@@ -19,7 +19,7 @@ fn setup() -> (
     (temp, repository, record)
 }
 
-fn register(
+pub(super) fn register(
     repository: &SqliteRuntimeRepository,
     root: &std::path::Path,
     key: &str,
@@ -40,7 +40,7 @@ fn register(
         .workspace
 }
 
-fn retirement_command(
+pub(super) fn retirement_command(
     workspace: &runtime_core::WorkspaceRecord,
     key: &str,
 ) -> runtime_core::WorkspaceRetirementCommand {
@@ -231,16 +231,21 @@ fn reactivation_rechecks_resource_obligations_admitted_after_retirement() {
     )
     .unwrap();
 
-    // A legacy/runtime writer might still have produced new work after the
-    // terminal receipt. That receipt must never bypass current obligations.
-    db.execute(
-        "INSERT INTO managed_processes
+    // Current migration rejects new native work against a retired root.
+    let late_process_sql = "INSERT INTO managed_processes
           (process_id,workspace_id,command_json,status,admission_order,queue_order,
            capture_limit_bytes,stdout_path,stderr_path,admitted_at,updated_at)
-         VALUES ('late-process',?1,'{}','queued',1,1,1024,'out','err',1,1)",
-        [&original.workspace_id],
-    )
-    .unwrap();
+         VALUES ('late-process',?1,'{}','queued',1,1,1024,'out','err',1,1)";
+    assert!(db
+        .execute(late_process_sql, [&original.workspace_id])
+        .is_err());
+    // Simulate a restored/legacy database that predates the new admission
+    // trigger. Reactivation MUST still inspect live authority rather than
+    // trusting the historical terminal receipt.
+    db.execute_batch("DROP TRIGGER retirement_block_managed_process")
+        .unwrap();
+    db.execute(late_process_sql, [&original.workspace_id])
+        .unwrap();
     assert!(
         format!("{}", repo.register_workspace(&command).unwrap_err())
             .contains("unsettled managed processes")
@@ -256,6 +261,12 @@ fn reactivation_rechecks_resource_obligations_admitted_after_retirement() {
     legacy_session.active_turn_id = None;
     legacy_session.worktree_id = None;
     legacy_session.status = "closed".into();
+    assert!(repo.upsert_session(&legacy_session).is_err());
+    db.execute_batch(
+        "DROP TRIGGER retirement_block_session_create;
+                      DROP TRIGGER retirement_block_session_rebind;",
+    )
+    .unwrap();
     repo.upsert_session(&legacy_session).unwrap();
     assert!(
         format!("{}", repo.register_workspace(&command).unwrap_err())
@@ -428,7 +439,7 @@ fn running_process_pending_completion_and_messages_block_retirement_but_preserve
     )
     .contains("unfinished message deliveries"));
     db.execute(
-        "UPDATE agent_deliveries SET status='delivered' WHERE id='delivery'",
+        "UPDATE agent_deliveries SET status='injected' WHERE id='delivery'",
         [],
     )
     .unwrap();

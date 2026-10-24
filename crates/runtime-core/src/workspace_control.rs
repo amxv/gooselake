@@ -31,6 +31,45 @@ pub struct WorkspaceRetirementResponse {
     pub workspace: WorkspaceRecord,
 }
 
+/// Immutable affected-resource snapshot admitted under a single SQLite write
+/// transaction before any retirement effect is dispatched. The snapshot is
+/// durable so a new manager can recover without resampling a changing roster.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceRetirementPlan {
+    pub operation_id: String,
+    pub workspace_id: String,
+    pub agent_ids: Vec<String>,
+    pub turn_ids: Vec<String>,
+    pub managed_process_ids: Vec<String>,
+    pub delivery_ids: Vec<String>,
+    pub notice_ids: Vec<String>,
+    pub hook_effect_ids: Vec<String>,
+    pub preserved_worktree_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceRetirementAdmission {
+    New(WorkspaceRetirementPlan),
+    Resume(WorkspaceRetirementPlan),
+    Replay(WorkspaceRetirementResponse),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceRetirementCloseAttempt {
+    pub operation_id: String,
+    pub agent_id: String,
+    pub provider: String,
+    pub provider_session_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceRetirementTurnStep {
+    Interrupt { session_id: String, turn_id: String },
+    Waiting,
+    Finalized,
+    NeedsReview,
+}
+
 /// Operator-facing snapshot of obligations requiring settlement before
 /// retirement. This is advisory: retirement rechecks every invariant within
 /// its own write transaction and must never trust a prior preview.

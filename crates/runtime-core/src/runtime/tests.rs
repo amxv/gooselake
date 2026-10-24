@@ -16,6 +16,7 @@ use super::{ApprovalResponseInput, CreateSessionInput, ResumeSessionInput, SendT
 mod provider_approvals;
 mod turn_authority;
 mod turn_recovery;
+mod turn_terminal;
 
 #[test]
 fn assistant_text_extraction_supports_snake_and_camel_fields() {

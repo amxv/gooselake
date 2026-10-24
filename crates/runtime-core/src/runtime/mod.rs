@@ -22,13 +22,16 @@ mod helpers;
 mod recovery;
 mod sessions;
 mod turn_dispatch_transitions;
+mod turn_interrupt;
 mod turn_queries;
 mod turn_settings;
+mod turn_terminal;
 mod turns;
 mod workspace_agents;
 mod workspace_control;
 mod workspace_notices;
 mod workspace_pre_add_hooks;
+mod workspace_retirement_review;
 mod worktree_routes;
 
 #[cfg(test)]

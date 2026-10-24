@@ -222,6 +222,25 @@ impl RuntimeTeamCommsService {
         request: AgentDeliveryListRequest,
     ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
         self.ensure_enabled()?;
+        if let Some(message_id) = request.message_id.as_deref() {
+            if !self
+                .state
+                .read()
+                .await
+                .agent_messages
+                .contains_key(message_id)
+            {
+                return Err(RuntimeError::NotFound(format!("message {message_id}")));
+            }
+        }
+        match self.store.list_agent_delivery_records(&request) {
+            Ok(rows) => {
+                self.cache_agent_delivery_records(&rows).await;
+                return Ok(rows);
+            }
+            Err(RuntimeError::Unsupported(_)) => {}
+            Err(error) => return Err(error),
+        }
         let state = self.state.read().await;
         let mut rows = if let Some(message_id) = request.message_id.as_deref() {
             if !state.agent_messages.contains_key(message_id) {
@@ -255,6 +274,7 @@ impl RuntimeTeamCommsService {
     ) -> Result<AgentDeliveryRecord, RuntimeError> {
         self.ensure_enabled()?;
         let delivery_id = normalize_non_empty(&request.delivery_id, "delivery_id")?;
+        self.refresh_current_agent_delivery(&delivery_id).await?;
         let updated = {
             let mut state = self.state.write().await;
             let delivery = state
@@ -290,6 +310,11 @@ impl RuntimeTeamCommsService {
     ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
         self.ensure_enabled()?;
         let message_id = normalize_non_empty(&request.message_id, "message_id")?;
+        self.get_agent_deliveries_impl(AgentDeliveryListRequest {
+            message_id: Some(message_id.clone()),
+            recipient_agent_id: None,
+        })
+        .await?;
         let cancelled = {
             let mut state = self.state.write().await;
             if !state.agent_messages.contains_key(&message_id) {
@@ -512,13 +537,13 @@ impl RuntimeTeamCommsService {
             .get(message_id)
             .cloned()
             .ok_or_else(|| RuntimeError::NotFound(format!("message {}", message_id)))?;
-        let deliveries = state
-            .agent_message_delivery_ids
-            .get(message_id)
-            .into_iter()
-            .flat_map(|ids| ids.iter())
-            .filter_map(|delivery_id| state.agent_deliveries.get(delivery_id).cloned())
-            .collect::<Vec<_>>();
+        drop(state);
+        let deliveries = self
+            .get_agent_deliveries_impl(AgentDeliveryListRequest {
+                message_id: Some(message_id.to_string()),
+                recipient_agent_id: None,
+            })
+            .await?;
         Ok(AgentMessageAck {
             message,
             deliveries,

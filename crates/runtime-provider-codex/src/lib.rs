@@ -8,6 +8,7 @@ mod preferences;
 mod protocol;
 mod provider;
 mod rebind;
+mod retirement_close;
 mod state;
 mod transport;
 

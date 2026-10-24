@@ -28,6 +28,8 @@ pub(super) struct MockStore {
     pub(super) turn_admissions: Mutex<HashMap<String, TurnAdmissionRecord>>,
     pub(super) events: Mutex<Vec<RuntimeEventRecord>>,
     pub(super) fail_admission: Mutex<bool>,
+    pub(super) fail_turn_write: Mutex<bool>,
+    pub(super) fail_session_write: Mutex<bool>,
 }
 
 #[async_trait]
@@ -92,6 +94,13 @@ impl RuntimeStore for MockStore {
     }
 
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError> {
+        if *self
+            .fail_session_write
+            .lock()
+            .expect("fail session write mutex")
+        {
+            return Err(RuntimeError::Io("forced session write rejection".into()));
+        }
         self.sessions
             .lock()
             .expect("sessions mutex")
@@ -156,6 +165,9 @@ impl RuntimeStore for MockStore {
     }
 
     fn upsert_turn(&self, record: &TurnRecord) -> Result<(), RuntimeError> {
+        if *self.fail_turn_write.lock().expect("fail turn write mutex") {
+            return Err(RuntimeError::Io("forced turn write rejection".into()));
+        }
         self.turns
             .lock()
             .expect("turns mutex")

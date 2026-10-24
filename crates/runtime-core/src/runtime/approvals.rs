@@ -18,6 +18,12 @@ impl RuntimeSessionManager {
         approval_id: &str,
         input: ApprovalResponseInput,
     ) -> Result<ApprovalRecord, RuntimeError> {
+        let _guard = self.session_policy_mutation_lock.lock().await;
+        if let Some(operation_id) = self.store.retiring_operation_for_session(session_id)? {
+            return Err(RuntimeError::Conflict(format!(
+                "approval is frozen by workspace retirement {operation_id}"
+            )));
+        }
         let session = self.get_session(session_id).await?;
         let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
             RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
@@ -43,6 +49,21 @@ impl RuntimeSessionManager {
             return Err(RuntimeError::InvalidState(format!(
                 "approval {} is not pending",
                 approval_id
+            )));
+        }
+        let turn = self
+            .turns
+            .read()
+            .await
+            .get(&existing.turn_id)
+            .cloned()
+            .ok_or_else(|| RuntimeError::NotFound(format!("turn {}", existing.turn_id)))?;
+        if session.active_turn_id.as_deref() != Some(existing.turn_id.as_str())
+            || matches!(session.status.as_str(), "closed" | "failed")
+            || is_terminal_turn_status(&turn.status)
+        {
+            return Err(RuntimeError::InvalidState(format!(
+                "approval {approval_id} no longer targets an active turn"
             )));
         }
         let normalized_decision = ApprovalDecision::parse(input.decision.as_str())?;

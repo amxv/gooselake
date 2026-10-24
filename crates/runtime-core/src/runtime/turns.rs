@@ -4,18 +4,14 @@ use tokio::sync::broadcast;
 use tokio::sync::MutexGuard;
 
 use crate::{
-    ApprovalRecord, PersistedUserInputSnapshot, ProviderDispatchOutcome,
-    ProviderInterruptTurnRequest, ProviderKind, ProviderRuntimeEvent, ProviderSendTurnRequest,
-    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
-    RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, TurnAdmissionRecord,
-    TurnCorrelationState, TurnDispatchPolicySnapshot, TurnDispatchState, TurnInputProjectionSource,
-    TurnRecord,
+    ApprovalRecord, PersistedUserInputSnapshot, ProviderDispatchOutcome, ProviderKind,
+    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderTurnStatus, ProviderWaitTurnRequest,
+    RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,
+    TurnAdmissionRecord, TurnCorrelationState, TurnDispatchPolicySnapshot, TurnDispatchState,
+    TurnInputProjectionSource, TurnRecord,
 };
 
-use super::helpers::{
-    append_session_transcript, extract_assistant_text_from_usage, extract_turn_user_text,
-    is_terminal_turn_status, now_ms,
-};
+use super::helpers::now_ms;
 use super::turn_dispatch_transitions::is_valid_dispatch_transition;
 use super::{RuntimeSessionManager, SendTurnAccepted, SendTurnInput};
 
@@ -38,6 +34,11 @@ impl RuntimeSessionManager {
         authorized_notice_id: Option<&str>,
         policy_mutation_guard: MutexGuard<'_, ()>,
     ) -> Result<SendTurnAccepted, RuntimeError> {
+        if let Some(operation_id) = self.store.retiring_operation_for_session(session_id)? {
+            return Err(RuntimeError::Conflict(format!(
+                "session {session_id} is frozen by workspace retirement {operation_id}"
+            )));
+        }
         if authorized_edit_id.is_some_and(|id| input.correlation_id.as_deref() != Some(id)) {
             return Err(RuntimeError::ProtocolViolation(
                 "edit replacement input correlation does not match durable edit operation".into(),
@@ -333,43 +334,6 @@ impl RuntimeSessionManager {
             turn_id,
             status: "in_progress".to_string(),
         })
-    }
-
-    pub async fn interrupt_turn(
-        &self,
-        session_id: &str,
-        turn_id: &str,
-    ) -> Result<(), RuntimeError> {
-        let session = self.get_session(session_id).await?;
-        if session.active_turn_id.as_deref() != Some(turn_id) {
-            return Err(RuntimeError::InvalidState(format!(
-                "turn {turn_id} is not active for session {session_id}"
-            )));
-        }
-        let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
-            RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
-        })?;
-        let provider = self.providers.get(provider_kind).ok_or_else(|| {
-            RuntimeError::ProviderNotRegistered(provider_kind.as_str().to_string())
-        })?;
-        provider
-            .interrupt_turn(ProviderInterruptTurnRequest {
-                runtime_session_id: session_id.to_string(),
-                turn_id: turn_id.to_string(),
-            })
-            .await?;
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                session_id,
-                Some(session_id),
-                Some(turn_id),
-                "turn.interrupt_requested",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({}),
-            )
-            .await?;
-        Ok(())
     }
 
     pub fn replay_session_events(
@@ -748,7 +712,8 @@ impl RuntimeSessionManager {
                         turn_result.status,
                         ProviderTurnStatus::Completed | ProviderTurnStatus::Interrupted
                     ) && turn_result.usage.is_some();
-                    if let Err(error) = manager.apply_terminal_result(turn_result).await {
+                    let applied = manager.apply_terminal_result(turn_result).await;
+                    if let Err(error) = &applied {
                         if std::env::var("GG_CLAUDE_SMOKE_DEBUG")
                             .ok()
                             .map(|value| value.trim() == "1")
@@ -759,7 +724,7 @@ impl RuntimeSessionManager {
                                 session_id, turn_id, error
                             );
                         }
-                    } else if has_provider_usage {
+                    } else if matches!(applied, Ok(true)) && has_provider_usage {
                         manager
                             .record_terminal_context_limit(session_id.as_str(), turn_id.as_str())
                             .await;
@@ -783,201 +748,5 @@ impl RuntimeSessionManager {
                 }
             }
         });
-    }
-
-    pub(super) async fn mark_provider_event_stream_unknown(
-        &self,
-        session_id: &str,
-        turn_id: &str,
-        code: &str,
-        message: String,
-    ) -> Result<(), RuntimeError> {
-        {
-            let mut turns = self.turns.write().await;
-            if let Some(turn) = turns.get_mut(turn_id) {
-                turn.status = "provider_event_recovery_required".to_string();
-                turn.error = Some(serde_json::json!({
-                    "code": code,
-                    "message": message,
-                }));
-                self.store.upsert_turn(turn)?;
-            }
-        }
-        {
-            let mut sessions = self.sessions.write().await;
-            if let Some(session) = sessions.get_mut(session_id) {
-                session.status = "turn_recovery_required".to_string();
-                session.failure_code = Some(code.to_string());
-                session.failure_message = Some(message.clone());
-                session.updated_at = now_ms();
-                self.store.upsert_session(session)?;
-            }
-        }
-        self.append_event(
-            RuntimeEventScope::Session,
-            session_id,
-            Some(session_id),
-            Some(turn_id),
-            "provider.event_stream_unknown",
-            RuntimeEventCriticality::Critical,
-            serde_json::json!({
-                "code": code,
-                "message": message,
-            }),
-        )
-        .await?;
-        Ok(())
-    }
-
-    pub(super) async fn apply_terminal_result(
-        &self,
-        result: ProviderTurnResult,
-    ) -> Result<(), RuntimeError> {
-        let mut turns = self.turns.write().await;
-        let mut sessions = self.sessions.write().await;
-        let Some(turn) = turns.get_mut(&result.turn_id) else {
-            return Err(RuntimeError::NotFound(format!("turn {}", result.turn_id)));
-        };
-        if turn.session_id != result.runtime_session_id {
-            return Err(RuntimeError::ProtocolViolation(format!(
-                "provider turn ownership mismatch for turn {}",
-                result.turn_id
-            )));
-        }
-
-        if is_terminal_turn_status(turn.status.as_str()) {
-            let incoming_status = result.status.as_str();
-            if turn.status == incoming_status {
-                return Ok(());
-            }
-            let session_id = turn.session_id.clone();
-            let conflict = format!(
-                "conflicting terminal state for turn {} (stored={}, incoming={})",
-                result.turn_id, turn.status, incoming_status
-            );
-            if let Some(session) = sessions.get_mut(&session_id) {
-                session.status = "failed".to_string();
-                session.failure_code = Some("terminal_conflict".to_string());
-                session.failure_message = Some(conflict.clone());
-                session.updated_at = now_ms();
-                self.store.upsert_session(session)?;
-            }
-            return Err(RuntimeError::ProtocolViolation(conflict));
-        }
-
-        turn.status = result.status.as_str().to_string();
-        turn.completed_at = Some(now_ms());
-        turn.usage = result.usage.clone();
-        turn.error = result.error.clone();
-        self.store.upsert_turn(turn)?;
-
-        let Some(session) = sessions.get_mut(&result.runtime_session_id) else {
-            return Err(RuntimeError::NotFound(format!(
-                "session {}",
-                result.runtime_session_id
-            )));
-        };
-        if session.active_turn_id.as_deref() == Some(result.turn_id.as_str()) {
-            session.active_turn_id = None;
-        }
-        if session.status != "closed" && session.status != "failed" {
-            session.status = "ready".to_string();
-        }
-        if result.status == ProviderTurnStatus::Completed
-            || result.status == ProviderTurnStatus::Interrupted
-        {
-            let user_text = extract_turn_user_text(turn.input.as_array());
-            let assistant_text = result
-                .usage
-                .as_ref()
-                .and_then(extract_assistant_text_from_usage);
-            if let Some(user_text) = user_text {
-                append_session_transcript(&mut session.metadata, "user", user_text.as_str());
-            }
-            if let Some(assistant_text) = assistant_text {
-                append_session_transcript(
-                    &mut session.metadata,
-                    "assistant",
-                    assistant_text.as_str(),
-                );
-            }
-        }
-        session.updated_at = now_ms();
-        self.store.upsert_session(session)?;
-
-        let event_kind = match result.status {
-            ProviderTurnStatus::Completed => "turn.completed",
-            ProviderTurnStatus::Interrupted => "turn.interrupted",
-            ProviderTurnStatus::Failed => "turn.failed",
-            ProviderTurnStatus::InProgress => "turn.in_progress",
-        };
-        let assistant_text = result
-            .usage
-            .as_ref()
-            .and_then(extract_assistant_text_from_usage);
-        drop(sessions);
-        drop(turns);
-
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                result.runtime_session_id.as_str(),
-                Some(result.runtime_session_id.as_str()),
-                Some(result.turn_id.as_str()),
-                event_kind,
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({
-                    "status": result.status.as_str(),
-                    "usage": result.usage,
-                    "error": result.error,
-                    "assistant_text": assistant_text,
-                }),
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn apply_terminal_failure(
-        &self,
-        session_id: &str,
-        turn_id: &str,
-        error: RuntimeError,
-    ) -> Result<(), RuntimeError> {
-        let mut turns = self.turns.write().await;
-        if let Some(turn) = turns.get_mut(turn_id) {
-            if !is_terminal_turn_status(turn.status.as_str()) {
-                turn.status = "failed".to_string();
-                turn.completed_at = Some(now_ms());
-                turn.error = Some(serde_json::json!({ "message": error.to_string() }));
-                self.store.upsert_turn(turn)?;
-            }
-        }
-        drop(turns);
-
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
-            if session.active_turn_id.as_deref() == Some(turn_id) {
-                session.active_turn_id = None;
-            }
-            session.status = "failed".to_string();
-            session.failure_code = Some("provider_wait_failure".to_string());
-            session.failure_message = Some(error.to_string());
-            session.updated_at = now_ms();
-            self.store.upsert_session(session)?;
-        }
-        drop(sessions);
-
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                session_id,
-                Some(session_id),
-                Some(turn_id),
-                "provider.error",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({ "error": error.to_string() }),
-            )
-            .await?;
-        Ok(())
     }
 }

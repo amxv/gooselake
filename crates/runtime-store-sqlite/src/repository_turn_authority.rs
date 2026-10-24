@@ -23,6 +23,7 @@ impl SqliteRuntimeRepository {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting turn admission transaction", error))?;
+        guard_process_completion_admission(&transaction, admission)?;
         let rebind_pending: i64 = transaction
             .query_row(
                 "SELECT COUNT(*) FROM workspace_agent_rebinds
@@ -181,6 +182,53 @@ fn validate_admission_bundle(
                 "turn admission approval identity does not match".to_string(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn guard_process_completion_admission(
+    transaction: &Transaction<'_>,
+    admission: &TurnAdmissionRecord,
+) -> Result<(), RuntimeError> {
+    if admission.projection_source != TurnInputProjectionSource::AutomationContext {
+        return Ok(());
+    }
+    let Some(correlation) = admission.correlation.correlation_id.as_deref() else {
+        return Ok(());
+    };
+    let Some(process_id) = correlation.strip_prefix("process_completion:") else {
+        return Ok(());
+    };
+    let owner: Option<Option<String>> = transaction
+        .query_row(
+            "SELECT owner_session_id FROM managed_processes WHERE process_id=?1",
+            [process_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| db_error("failed checking process completion admission owner", error))?;
+    if owner.flatten().as_deref() != Some(admission.session_id.as_str()) {
+        return Err(RuntimeError::Conflict(
+            "completion input does not identify an owned managed process".into(),
+        ));
+    }
+    // A worker that claimed before retirement may wake after explicit restore.
+    // Correlation authority outlives its claim and prevents a second model input
+    // even when another completion turn has already finished and the session is idle.
+    let already_admitted: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM turn_admissions
+             WHERE session_id=?1 AND projection_source='automation_context'
+               AND json_extract(correlation_json,'$.correlation_id')=?2
+               AND dispatch_state<>'not_dispatched')",
+            params![admission.session_id, correlation],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed checking prior process completion admission", error))?;
+    if already_admitted {
+        return Err(RuntimeError::Conflict(
+            "process completion already has admitted or dispatched input".into(),
+        ));
     }
     Ok(())
 }

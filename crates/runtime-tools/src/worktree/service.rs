@@ -78,13 +78,6 @@ impl WorktreeService for RuntimeWorktreeService {
             .store
             .get_workspace(&request.workspace_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace {}", request.workspace_id)))?;
-        let lifecycle_lock =
-            runtime_core::repository_lifecycle_lock(&workspace.canonical_root).await;
-        let _admission_guard = lifecycle_lock.read().await;
-        let workspace = self
-            .store
-            .get_workspace(&request.workspace_id)?
-            .ok_or_else(|| RuntimeError::NotFound(format!("workspace {}", request.workspace_id)))?;
         if workspace.lifecycle_state != WorkspaceLifecycleState::Active {
             return Err(RuntimeError::Conflict("workspace is not active".into()));
         }
@@ -270,6 +263,9 @@ impl WorktreeService for RuntimeWorktreeService {
         self.ensure_enabled()?;
         let hydrated = self.store.hydrate_runtime_state()?;
         let worktree = self.get_worktree_from_hydrated(request.worktree_id.as_str(), &hydrated)?;
+        let lifecycle_lock = runtime_core::repository_lifecycle_lock(&worktree.repo_root).await;
+        let _lifecycle_guard = lifecycle_lock.read().await;
+        self.ensure_repository_native_mutation_allowed(&worktree.repo_root)?;
         let active_claim_count = self
             .active_claims_for(&hydrated, worktree.id.as_str())
             .len();
@@ -475,6 +471,38 @@ impl WorktreeService for RuntimeWorktreeService {
 }
 
 impl RuntimeWorktreeService {
+    // Call while holding the repository lifecycle read lock through the
+    // corresponding native Git action and its durable record update.
+    fn ensure_repository_native_mutation_allowed(
+        &self,
+        repo_root: &str,
+    ) -> Result<(), RuntimeError> {
+        let workspaces = match self.store.list_workspaces() {
+            Ok(workspaces) => workspaces,
+            Err(RuntimeError::Unsupported(_)) => Vec::new(),
+            Err(error) => return Err(error),
+        };
+        if let Some(workspace) = workspaces
+            .iter()
+            .find(|workspace| workspace.canonical_root == repo_root)
+        {
+            if workspace.lifecycle_state != WorkspaceLifecycleState::Active
+                || self
+                    .store
+                    .workspace_retirement_preflight(&workspace.workspace_id)?
+                    .blockers
+                    .iter()
+                    .any(|blocker| blocker.code == "retirement_in_progress")
+            {
+                return Err(RuntimeError::Conflict(format!(
+                    "workspace {} is frozen for retirement; native worktree mutation is unavailable",
+                    workspace.workspace_id
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn has_live_session_binding(
         state: &runtime_core::RuntimeHydratedState,
         worktree: &ManagedWorktreeRecord,
@@ -624,6 +652,14 @@ impl RuntimeWorktreeService {
         request: WorktreeCreateRequest,
         event_source_session_id: Option<String>,
     ) -> Result<WorktreeCreateResponse, RuntimeError> {
+        // Both legacy and workspace-native creation perform Git and optional
+        // init-script work before the managed row is persisted. Serialize the
+        // whole native window with retirement, and check its durable fence
+        // before creating anything. An INSERT trigger alone would be too late.
+        let repo_root = resolve_repository_identity(Path::new(&repo_root))?.canonical_root;
+        let lifecycle_lock = runtime_core::repository_lifecycle_lock(&repo_root).await;
+        let _admission_guard = lifecycle_lock.read().await;
+        self.ensure_repository_native_mutation_allowed(&repo_root)?;
         Self::validate_managed_worktree_name(&request.worktree_name)?;
         if let Some(prefix) = request.branch_prefix.as_deref() {
             for segment in prefix.split('/') {

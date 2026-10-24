@@ -29,6 +29,7 @@ mod bridge_path_tests;
 mod contract_tests;
 mod identity_recovery_tests;
 mod policy_and_advanced_tests;
+mod retirement_close;
 
 const FAKE_BRIDGE_SCRIPT: &str = r#"#!/usr/bin/env python3
 import json
@@ -44,6 +45,7 @@ state = {
   "next_session": 1,
   "next_turn": 1,
   "send_calls": 0,
+  "sessions": {},
 }
 
 def log_request(payload):
@@ -123,6 +125,7 @@ for raw_line in sys.stdin:
     session_index = state["next_session"]
     state["next_session"] = session_index + 1
     session_id = f"bridge-session-{session_index}"
+    state["sessions"][session_id] = f"provider-session-{session_index}"
     emit_ok(
       rpc_id,
       {
@@ -146,6 +149,7 @@ for raw_line in sys.stdin:
     state["next_session"] = session_index + 1
     session_id = f"bridge-session-resume-{session_index}"
     provider_session_ref = params.get("providerSessionRef") or params.get("sessionId") or f"provider-resume-{session_index}"
+    state["sessions"][session_id] = provider_session_ref
     canonical_ref = params.get("claudeCanonicalSessionRef")
     emit_ok(
       rpc_id,
@@ -229,6 +233,21 @@ for raw_line in sys.stdin:
     continue
   if method == "session.hard_fork":
     emit_ok(rpc_id, {"childProviderSessionRef": "child-provider", "childClaudeCanonicalSessionRef": None if scenario == "hard_fork_missing_identity" else "child-native", "rolledBackTurnIds": [params["rollbackBoundaryId"]]})
+    continue
+  if method == "session.close_for_retirement":
+    if scenario == "retirement_close_error":
+      emit_error(rpc_id, "INTERNAL_ERROR", "native close failed")
+      continue
+    if scenario == "retirement_close_hang":
+      continue
+    if scenario == "retirement_close_old_bridge":
+      emit_error(rpc_id, "BAD_REQUEST", "unsupported method")
+      continue
+    session_id = params["sessionId"]
+    native_ref = state["sessions"].get(session_id)
+    if scenario == "retirement_close_bad_identity":
+      native_ref = "wrong-provider-session"
+    emit_ok(rpc_id, {"ok": True, "sessionId": session_id, "providerSessionRef": native_ref})
     continue
   if method == "session.close":
     emit_ok(rpc_id, {"ok": True})

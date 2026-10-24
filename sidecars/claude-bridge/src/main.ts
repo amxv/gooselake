@@ -206,6 +206,11 @@ async function handleRequest(
       const models = await client.supportedModels()
       return { models }
     }
+    case 'session.close_for_retirement': {
+      const sessionId = ensureString(request.params.sessionId, 'sessionId')
+      const reason = asOptionalString(request.params.reason)
+      return client.closeSessionForRetirement(sessionId, reason)
+    }
     case 'session.close': {
       const sessionId = ensureString(request.params.sessionId, 'sessionId')
       const reason = asOptionalString(request.params.reason)

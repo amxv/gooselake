@@ -23,6 +23,7 @@ pub mod workspace_agent;
 pub mod workspace_control;
 pub mod workspace_migration;
 pub mod workspace_notice;
+pub mod workspace_retirement_review;
 pub mod worktree_lock;
 
 pub use agent_comms::{
@@ -57,7 +58,8 @@ pub use provider::{
     ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
     ProviderCloseSessionRequest, ProviderCreateSessionPolicyRequest, ProviderCreateSessionRequest,
     ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata, ProviderModel,
-    ProviderResumeSessionPolicyRequest, ProviderResumeSessionRequest, ProviderRuntimeEvent,
+    ProviderResumeSessionPolicyRequest, ProviderResumeSessionRequest,
+    ProviderRetirementCloseEvidence, ProviderRetirementCloseProofKind, ProviderRuntimeEvent,
     ProviderSendTurnRequest, ProviderSession, ProviderTurnAck, ProviderTurnResult,
     ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeProvider,
 };
@@ -136,8 +138,9 @@ pub use workspace_control::{
     WorkspaceInterruptCommand, WorkspaceInterruptPlan, WorkspaceInterruptResponse,
     WorkspaceInterruptTarget, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionRequest,
     WorkspaceLeadTransitionResponse, WorkspaceMembershipAction, WorkspaceMembershipPolicy,
-    WorkspaceRetirementBlocker, WorkspaceRetirementCommand, WorkspaceRetirementPreflight,
-    WorkspaceRetirementRequest, WorkspaceRetirementResponse,
+    WorkspaceRetirementAdmission, WorkspaceRetirementBlocker, WorkspaceRetirementCloseAttempt,
+    WorkspaceRetirementCommand, WorkspaceRetirementPlan, WorkspaceRetirementPreflight,
+    WorkspaceRetirementRequest, WorkspaceRetirementResponse, WorkspaceRetirementTurnStep,
 };
 pub use workspace_migration::{
     plan_legacy_workspace_migration, prepare_legacy_workspace_migration_apply,
@@ -151,5 +154,11 @@ pub use workspace_migration::{
 pub use workspace_notice::{
     WorkspaceAgentOnboardingRequest, WorkspaceNoticePolicy, WorkspaceNoticePolicyRecord,
     WorkspaceNoticePolicyUpdate, WorkspaceSystemNoticeRecord,
+};
+pub use workspace_retirement_review::{
+    prepare_workspace_retirement_review, WorkspaceRetirementNativeIdentity,
+    WorkspaceRetirementReviewCommand, WorkspaceRetirementReviewOutcome,
+    WorkspaceRetirementReviewReceipt, WorkspaceRetirementReviewRequest,
+    WorkspaceRetirementReviewResolution,
 };
 pub use worktree_lock::{repository_lifecycle_lock, repository_worktree_lock};

@@ -95,6 +95,17 @@ impl SqliteRuntimeRepository {
         let mut reactivated = false;
         let workspace = match workspace_by_canonical_root(&transaction, &command.canonical_root)? {
             Some(existing) if existing.lifecycle_state == WorkspaceLifecycleState::Active => {
+                let frozen: bool = transaction.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspace_retirement_fences WHERE workspace_id=?1)",
+                    [&existing.workspace_id],
+                    |row| row.get(0),
+                ).map_err(|error| db_error("failed checking workspace registration retirement fence",error))?;
+                if frozen {
+                    return Err(RuntimeError::Conflict(format!(
+                        "workspace {} is undergoing retirement; resolve the durable operation first",
+                        existing.workspace_id
+                    )));
+                }
                 existing
             }
             Some(existing) => {

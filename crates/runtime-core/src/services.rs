@@ -22,16 +22,18 @@ use crate::{
     ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
     ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
     ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
-    ProviderCompactionObservation, ProviderWorkspaceRebindEvidence, RuntimeError,
-    RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, SessionCompactionRun,
-    SessionContextLimitSnapshot, SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord,
-    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState,
-    WorkspaceAgentRebindOperation, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
-    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
-    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
-    WorkspaceRegisterCommand, WorkspaceRegisterResponse, WorkspaceRetirementCommand,
-    WorkspaceRetirementPreflight, WorkspaceRetirementResponse,
+    ProviderCompactionObservation, ProviderRetirementCloseEvidence,
+    ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
+    RuntimeHydratedState, SessionCompactionRun, SessionContextLimitSnapshot,
+    SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
+    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
+    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission,
+    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
+    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse, WorkspaceRetirementAdmission, WorkspaceRetirementCloseAttempt,
+    WorkspaceRetirementCommand, WorkspaceRetirementPlan, WorkspaceRetirementPreflight,
+    WorkspaceRetirementResponse, WorkspaceRetirementTurnStep,
 };
 use crate::{
     TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
@@ -56,18 +58,14 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         _workspace_id: &str,
     ) -> Result<TeamHookApproval, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "team-hook approval store unavailable".into(),
-        ))
+        unsupported_store("team-hook approval store unavailable")
     }
 
     fn update_team_hook_approval(
         &self,
         _update: &TeamHookApprovalUpdate,
     ) -> Result<TeamHookApproval, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "team-hook approval store unavailable".into(),
-        ))
+        unsupported_store("team-hook approval store unavailable")
     }
 
     fn list_team_hook_effects(
@@ -99,18 +97,14 @@ pub trait RuntimeStore: Send + Sync {
         _effect: &TeamHookEffectRecord,
         _at_ms: i64,
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable hook context application is unavailable".into(),
-        ))
+        unsupported_store("durable hook context application is unavailable")
     }
 
     fn admit_team_hook_effect(
         &self,
         _admission: &TeamHookEffectAdmission,
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "team-hook effect admission unavailable".into(),
-        ))
+        unsupported_store("team-hook effect admission unavailable")
     }
 
     fn get_team_hook_effect(
@@ -131,9 +125,7 @@ pub trait RuntimeStore: Send + Sync {
         _hook_name: &str,
         _at_ms: i64,
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "team-hook effect claim unavailable".into(),
-        ))
+        unsupported_store("team-hook effect claim unavailable")
     }
 
     fn finish_team_hook_effect(
@@ -146,9 +138,7 @@ pub trait RuntimeStore: Send + Sync {
         _receipt: TeamHookEffectReceipt,
         _at_ms: i64,
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "team-hook effect receipt unavailable".into(),
-        ))
+        unsupported_store("team-hook effect receipt unavailable")
     }
 
     /// Reconcile ambiguous shell dispatch at startup. A started hook is never
@@ -163,9 +153,7 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         _command: &AgentToolMutationCommand,
     ) -> Result<AgentToolMutationAdmission, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable model-tool mutation admission unavailable".into(),
-        ))
+        unsupported_store("durable model-tool mutation admission unavailable")
     }
 
     fn finish_agent_tool_mutation(
@@ -174,18 +162,14 @@ pub trait RuntimeStore: Send + Sync {
         _exact_result: &Value,
         _finished_at: i64,
     ) -> Result<(), RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable model-tool mutation receipt unavailable".into(),
-        ))
+        unsupported_store("durable model-tool mutation receipt unavailable")
     }
 
     fn begin_session_edit_rerun(
         &self,
         _operation: &SessionEditRerunOperation,
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "edit-and-rerun persistence unavailable".into(),
-        ))
+        unsupported_store("edit-and-rerun persistence unavailable")
     }
 
     fn get_session_edit_rerun(
@@ -216,9 +200,7 @@ pub trait RuntimeStore: Send + Sync {
         _error_code: Option<&str>,
         _now: i64,
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "edit-and-rerun transition unavailable".into(),
-        ))
+        unsupported_store("edit-and-rerun transition unavailable")
     }
 
     fn recover_session_edit_reruns(
@@ -234,18 +216,14 @@ pub trait RuntimeStore: Send + Sync {
         _evidence: &str,
         _now: i64,
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "edit-and-rerun review unavailable".into(),
-        ))
+        unsupported_store("edit-and-rerun review unavailable")
     }
 
     fn begin_session_compaction(
         &self,
         _run: &SessionCompactionRun,
     ) -> Result<SessionCompactionRun, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "session compaction persistence unavailable".into(),
-        ))
+        unsupported_store("session compaction persistence unavailable")
     }
 
     fn transition_session_compaction(
@@ -256,9 +234,7 @@ pub trait RuntimeStore: Send + Sync {
         _error_code: Option<&str>,
         _updated_at_ms: i64,
     ) -> Result<SessionCompactionRun, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "session compaction persistence unavailable".into(),
-        ))
+        unsupported_store("session compaction persistence unavailable")
     }
 
     fn get_session_compaction(
@@ -272,9 +248,7 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         _observation: &ProviderCompactionObservation,
     ) -> Result<CompactionObservationReceipt, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "provider compaction observation persistence unavailable".into(),
-        ))
+        unsupported_store("provider compaction observation persistence unavailable")
     }
 
     fn get_session_compaction_by_key(
@@ -303,9 +277,7 @@ pub trait RuntimeStore: Send + Sync {
         _evidence: &str,
         _now_ms: i64,
     ) -> Result<SessionCompactionRun, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "compaction manual review unavailable".into(),
-        ))
+        unsupported_store("compaction manual review unavailable")
     }
 
     async fn initialize(&self) -> Result<(), RuntimeError>;
@@ -328,57 +300,129 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         _command: &WorkspaceRegisterCommand,
     ) -> Result<WorkspaceRegisterResponse, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace authority is not implemented by this runtime store")
     }
 
     fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace authority is not implemented by this runtime store")
     }
 
     fn get_workspace(&self, _workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace authority is not implemented by this runtime store")
     }
 
     fn retire_empty_workspace(
         &self,
         _command: &WorkspaceRetirementCommand,
     ) -> Result<WorkspaceRetirementResponse, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "atomic retirement of quiescent workspaces is unavailable".to_string(),
-        ))
+        unsupported_store("atomic retirement of quiescent workspaces is unavailable")
+    }
+
+    fn admit_workspace_retirement(
+        &self,
+        _command: &WorkspaceRetirementCommand,
+    ) -> Result<WorkspaceRetirementAdmission, RuntimeError> {
+        unsupported_store("recoverable workspace retirement admission unavailable")
+    }
+
+    fn reconcile_workspace_retirement(
+        &self,
+        _command: &crate::WorkspaceRetirementReviewCommand,
+    ) -> Result<crate::WorkspaceRetirementReviewOutcome, RuntimeError> {
+        unsupported_store("operator retirement reconciliation unavailable")
+    }
+
+    fn claim_workspace_retirement_native_close(
+        &self,
+        _operation_id: &str,
+        _agent_id: &str,
+        _at_ms: i64,
+    ) -> Result<WorkspaceRetirementCloseAttempt, RuntimeError> {
+        unsupported_store("retirement native close authority unavailable")
+    }
+
+    fn finalize_workspace_retirement_native_close(
+        &self,
+        _attempt: &WorkspaceRetirementCloseAttempt,
+        _evidence: &ProviderRetirementCloseEvidence,
+        _at_ms: i64,
+    ) -> Result<(), RuntimeError> {
+        unsupported_store("retirement native close settlement unavailable")
+    }
+    fn quarantine_workspace_retirement_native_close(
+        &self,
+        _attempt: &WorkspaceRetirementCloseAttempt,
+        _reason: &str,
+        _at_ms: i64,
+    ) -> Result<(), RuntimeError> {
+        unsupported_store("retirement native close quarantine unavailable")
+    }
+    fn settle_passive_workspace_retirement(
+        &self,
+        _operation_id: &str,
+        _at_ms: i64,
+    ) -> Result<WorkspaceRetirementPlan, RuntimeError> {
+        unsupported_store("passive retirement settlement unavailable")
+    }
+    fn finalize_settled_workspace_retirement(
+        &self,
+        _operation_id: &str,
+        _at_ms: i64,
+    ) -> Result<Option<WorkspaceRetirementResponse>, RuntimeError> {
+        unsupported_store("retirement finalization unavailable")
+    }
+    fn progress_workspace_retirement_turn(
+        &self,
+        _operation_id: &str,
+        _turn_id: &str,
+        _at_ms: i64,
+    ) -> Result<WorkspaceRetirementTurnStep, RuntimeError> {
+        unsupported_store("retirement turn reconciliation unavailable")
+    }
+    fn acknowledge_workspace_retirement_interrupt(
+        &self,
+        _operation_id: &str,
+        _turn_id: &str,
+        _at_ms: i64,
+    ) -> Result<(), RuntimeError> {
+        unsupported_store("retirement turn interrupt acknowledgement unavailable")
+    }
+    fn quarantine_workspace_retirement_interrupt(
+        &self,
+        _operation_id: &str,
+        _turn_id: &str,
+        _reason: &str,
+        _at_ms: i64,
+    ) -> Result<(), RuntimeError> {
+        unsupported_store("retirement turn quarantine unavailable")
+    }
+
+    fn retiring_operation_for_session(
+        &self,
+        _session_id: &str,
+    ) -> Result<Option<String>, RuntimeError> {
+        Ok(None)
     }
 
     fn workspace_retirement_preflight(
         &self,
         _workspace_id: &str,
     ) -> Result<WorkspaceRetirementPreflight, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace retirement preflight is unavailable".to_string(),
-        ))
+        unsupported_store("workspace retirement preflight is unavailable")
     }
 
     fn transition_workspace_lead(
         &self,
         _command: &WorkspaceLeadTransitionCommand,
     ) -> Result<WorkspaceLeadTransitionResponse, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace lead authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace lead authority is not implemented by this runtime store")
     }
 
     fn begin_workspace_interrupt(
         &self,
         _command: &WorkspaceInterruptCommand,
     ) -> Result<WorkspaceInterruptAdmission, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace interrupt authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
 
     fn mark_workspace_interrupt_started(
@@ -388,9 +432,7 @@ pub trait RuntimeStore: Send + Sync {
         _turn_id: &str,
         _changed_at: i64,
     ) -> Result<(), RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace interrupt authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
 
     fn finalize_workspace_interrupt_effect(
@@ -402,9 +444,7 @@ pub trait RuntimeStore: Send + Sync {
         _reason: &str,
         _changed_at: i64,
     ) -> Result<(), RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace interrupt authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
 
     fn mark_workspace_interrupt_uncertain(
@@ -415,9 +455,7 @@ pub trait RuntimeStore: Send + Sync {
         _error: &Value,
         _changed_at: i64,
     ) -> Result<(), RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace interrupt authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
 
     fn complete_workspace_interrupt(
@@ -425,9 +463,7 @@ pub trait RuntimeStore: Send + Sync {
         _operation_id: &str,
         _completed_at: i64,
     ) -> Result<WorkspaceInterruptResponse, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace interrupt authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
 
     fn create_workspace_agent(
@@ -435,9 +471,7 @@ pub trait RuntimeStore: Send + Sync {
         _session: &SessionRecord,
         _agent: &WorkspaceAgentRecord,
     ) -> Result<(), RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace agent authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace agent authority is not implemented by this runtime store")
     }
 
     fn create_workspace_agent_with_onboarding(
@@ -446,9 +480,7 @@ pub trait RuntimeStore: Send + Sync {
         _agent: &WorkspaceAgentRecord,
         _onboarding: &WorkspaceAgentOnboardingRequest,
     ) -> Result<(), RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "atomic workspace onboarding admission unavailable".into(),
-        ))
+        unsupported_store("atomic workspace onboarding admission unavailable")
     }
 
     fn create_workspace_agent_with_hook_context(
@@ -459,9 +491,7 @@ pub trait RuntimeStore: Send + Sync {
         hooks: Option<&TeamHookPreAddContext>,
     ) -> Result<(), RuntimeError> {
         if hooks.is_some() {
-            return Err(RuntimeError::Unsupported(
-                "atomic pre-add hook context admission unavailable".into(),
-            ));
+            return unsupported_store("atomic pre-add hook context admission unavailable");
         }
         self.create_workspace_agent_with_onboarding(session, agent, onboarding)
     }
@@ -481,9 +511,7 @@ pub trait RuntimeStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<WorkspaceSystemNoticeRecord>, RuntimeError> {
         if after.is_some() {
-            return Err(RuntimeError::Unsupported(
-                "workspace system notice cursor pagination unavailable".into(),
-            ));
+            return unsupported_store("workspace system notice cursor pagination unavailable");
         }
         self.list_workspace_system_notices(limit)
     }
@@ -494,9 +522,7 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         _notice: &WorkspaceSystemNoticeRecord,
     ) -> Result<bool, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace system notice recipient ordering unavailable".into(),
-        ))
+        unsupported_store("workspace system notice recipient ordering unavailable")
     }
 
     fn get_workspace_system_notice(
@@ -510,9 +536,7 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         _workspace_id: &str,
     ) -> Result<crate::WorkspaceNoticePolicyRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace notice policy unavailable".into(),
-        ))
+        unsupported_store("workspace notice policy unavailable")
     }
 
     fn update_workspace_notice_policy(
@@ -520,9 +544,7 @@ pub trait RuntimeStore: Send + Sync {
         _workspace_id: &str,
         _update: &crate::WorkspaceNoticePolicyUpdate,
     ) -> Result<crate::WorkspaceNoticePolicyRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace notice policy unavailable".into(),
-        ))
+        unsupported_store("workspace notice policy unavailable")
     }
 
     fn transition_workspace_system_notice(
@@ -534,9 +556,7 @@ pub trait RuntimeStore: Send + Sync {
         _error: Option<&str>,
         _now: i64,
     ) -> Result<bool, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable workspace notice transitions unavailable".into(),
-        ))
+        unsupported_store("durable workspace notice transitions unavailable")
     }
 
     fn list_workspace_agents(
@@ -544,9 +564,7 @@ pub trait RuntimeStore: Send + Sync {
         _workspace_id: &str,
         _lifecycle: Option<WorkspaceAgentLifecycleState>,
     ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace agent authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace agent authority is not implemented by this runtime store")
     }
 
     fn get_workspace_agent(
@@ -554,9 +572,7 @@ pub trait RuntimeStore: Send + Sync {
         _workspace_id: &str,
         _agent_id: &str,
     ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace agent authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace agent authority is not implemented by this runtime store")
     }
 
     fn get_workspace_agent_by_id(
@@ -578,9 +594,9 @@ pub trait RuntimeStore: Send + Sync {
         _snapshot: &SessionContextLimitSnapshot,
         _expected_session_updated_at: i64,
     ) -> Result<bool, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable provider context snapshots are not implemented by this runtime store".into(),
-        ))
+        unsupported_store(
+            "durable provider context snapshots are not implemented by this runtime store",
+        )
     }
 
     fn get_session_context_limit(
@@ -594,9 +610,7 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         _operation: &WorkspaceAgentRebindOperation,
     ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable workspace rebind is not implemented".into(),
-        ))
+        unsupported_store("durable workspace rebind is not implemented")
     }
 
     fn finalize_workspace_agent_rebind(
@@ -607,9 +621,7 @@ pub trait RuntimeStore: Send + Sync {
         _evidence: &ProviderWorkspaceRebindEvidence,
         _changed_at: i64,
     ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable workspace rebind is not implemented".into(),
-        ))
+        unsupported_store("durable workspace rebind is not implemented")
     }
 
     fn classify_workspace_agent_rebind(
@@ -619,9 +631,7 @@ pub trait RuntimeStore: Send + Sync {
         _error_code: &str,
         _changed_at: i64,
     ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable workspace rebind is not implemented".into(),
-        ))
+        unsupported_store("durable workspace rebind is not implemented")
     }
 
     fn get_workspace_agent_rebind(
@@ -637,9 +647,7 @@ pub trait RuntimeStore: Send + Sync {
         _observed_status: &str,
         _changed_at: i64,
     ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable previous-worktree cleanup recording is not implemented".into(),
-        ))
+        unsupported_store("durable previous-worktree cleanup recording is not implemented")
     }
 
     fn get_workspace_agent_rebind_by_key(
@@ -663,9 +671,7 @@ pub trait RuntimeStore: Send + Sync {
         _archive_reason: Option<&str>,
         _changed_at: i64,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace agent authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace agent authority is not implemented by this runtime store")
     }
 
     fn set_workspace_agent_lifecycle_with_initiator(
@@ -688,49 +694,38 @@ pub trait RuntimeStore: Send + Sync {
         _recreation_policy: &crate::WorkspaceAgentRecreationPolicy,
         _changed_at: i64,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace agent recreation-policy mutation is not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "workspace agent recreation-policy mutation is not implemented by this runtime store",
+        )
     }
 
     fn get_operation(&self, _operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "durable operation authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("durable operation authority is not implemented by this runtime store")
     }
 
     fn persist_workspace_migration_preview(
         &self,
         _status: &LegacyWorkspaceMigrationStatus,
     ) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace migration authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace migration authority is not implemented by this runtime store")
     }
 
     fn workspace_migration_status(&self) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace migration authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace migration authority is not implemented by this runtime store")
     }
 
     fn apply_workspace_migration(
         &self,
         _command: &LegacyWorkspaceMigrationApplyCommand,
     ) -> Result<LegacyWorkspaceMigrationApplyResponse, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace migration authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace migration authority is not implemented by this runtime store")
     }
 
     fn resolve_workspace_migration_subject(
         &self,
         _command: &LegacyWorkspaceMigrationResolutionCommand,
     ) -> Result<LegacyWorkspaceMigrationResolutionResponse, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "workspace migration authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("workspace migration authority is not implemented by this runtime store")
     }
 
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError>;
@@ -742,9 +737,7 @@ pub trait RuntimeStore: Send + Sync {
         _session: &SessionRecord,
         _approval: Option<&ApprovalRecord>,
     ) -> Result<(), RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "atomic turn admission is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("atomic turn admission is not implemented by this runtime store")
     }
 
     fn upsert_turn_admission(&self, _record: &TurnAdmissionRecord) -> Result<(), RuntimeError> {
@@ -774,22 +767,27 @@ pub trait RuntimeStore: Send + Sync {
         _message: &AgentMessageRecord,
         _deliveries: &[AgentDeliveryRecord],
     ) -> Result<(), RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "agent message persistence is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("agent message persistence is not implemented by this runtime store")
     }
 
     fn upsert_agent_delivery(&self, _record: &AgentDeliveryRecord) -> Result<(), RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "agent delivery persistence is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("agent delivery persistence is not implemented by this runtime store")
+    }
+
+    fn get_agent_delivery(&self, _id: &str) -> Result<Option<AgentDeliveryRecord>, RuntimeError> {
+        unsupported_store("agent delivery reads unavailable")
+    }
+
+    fn list_agent_delivery_records(
+        &self,
+        _request: &crate::AgentDeliveryListRequest,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        unsupported_store("agent delivery reads unavailable")
     }
 
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError>;
     fn managed_worktree_revision(&self, _worktree_id: &str) -> Result<u64, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed worktree revision unavailable".into(),
-        ))
+        unsupported_store("managed worktree revision unavailable")
     }
     fn upsert_managed_worktree_claim(
         &self,
@@ -800,25 +798,20 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         _admission: &ManagedProcessAdmission,
     ) -> Result<ManagedProcessRecord, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process admission authority is not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "managed-process admission authority is not implemented by this runtime store",
+        )
     }
 
     fn list_managed_processes(&self) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("managed-process authority is not implemented by this runtime store")
     }
 
     fn get_managed_process(
         &self,
         _process_id: &str,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("managed-process authority is not implemented by this runtime store")
     }
 
     fn claim_managed_processes(
@@ -826,10 +819,9 @@ pub trait RuntimeStore: Send + Sync {
         _settings: &ProcessSchedulerSettings,
         _claimed_at: i64,
     ) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process scheduler authority is not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "managed-process scheduler authority is not implemented by this runtime store",
+        )
     }
 
     fn mark_managed_process_running(
@@ -840,9 +832,9 @@ pub trait RuntimeStore: Send + Sync {
         _os_start_identity: &str,
         _started_at: i64,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process launch authority is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store(
+            "managed-process launch authority is not implemented by this runtime store",
+        )
     }
 
     fn requeue_managed_process_claim(
@@ -851,10 +843,9 @@ pub trait RuntimeStore: Send + Sync {
         _claim_generation: i64,
         _updated_at: i64,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process requeue authority is not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "managed-process requeue authority is not implemented by this runtime store",
+        )
     }
 
     fn terminalize_managed_process(
@@ -862,10 +853,9 @@ pub trait RuntimeStore: Send + Sync {
         _process_id: &str,
         _update: &ManagedProcessTerminalUpdate,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process terminal authority is not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "managed-process terminal authority is not implemented by this runtime store",
+        )
     }
 
     fn update_managed_process_capture_progress(
@@ -876,9 +866,9 @@ pub trait RuntimeStore: Send + Sync {
         _truncated: bool,
         _updated_at: i64,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process capture progress is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store(
+            "managed-process capture progress is not implemented by this runtime store",
+        )
     }
 
     fn cancel_queued_managed_process(
@@ -887,10 +877,9 @@ pub trait RuntimeStore: Send + Sync {
         _owner_session_id: Option<&str>,
         _canceled_at: i64,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process cancellation authority is not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "managed-process cancellation authority is not implemented by this runtime store",
+        )
     }
 
     fn request_managed_process_cancel(
@@ -899,10 +888,9 @@ pub trait RuntimeStore: Send + Sync {
         _owner_session_id: Option<&str>,
         _updated_at: i64,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process cancellation authority is not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "managed-process cancellation authority is not implemented by this runtime store",
+        )
     }
 
     fn update_managed_process_completion(
@@ -910,30 +898,27 @@ pub trait RuntimeStore: Send + Sync {
         _process_id: &str,
         _update: &ProcessCompletionUpdate,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process completion authority is not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "managed-process completion authority is not implemented by this runtime store",
+        )
     }
 
     fn load_or_initialize_process_scheduler_settings(
         &self,
         _defaults: &ProcessSchedulerSettings,
     ) -> Result<ProcessSchedulerSettings, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process scheduler settings are not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "managed-process scheduler settings are not implemented by this runtime store",
+        )
     }
 
     fn replace_process_scheduler_settings(
         &self,
         _settings: &ProcessSchedulerSettings,
     ) -> Result<ProcessSchedulerSettings, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process scheduler settings are not implemented by this runtime store"
-                .to_string(),
-        ))
+        unsupported_store(
+            "managed-process scheduler settings are not implemented by this runtime store",
+        )
     }
 
     fn reorder_queued_managed_process(
@@ -943,9 +928,7 @@ pub trait RuntimeStore: Send + Sync {
         _after_process_id: Option<&str>,
         _updated_at: i64,
     ) -> Result<Vec<String>, RuntimeError> {
-        Err(RuntimeError::Unsupported(
-            "managed-process queue reorder is not implemented by this runtime store".to_string(),
-        ))
+        unsupported_store("managed-process queue reorder is not implemented by this runtime store")
     }
 
     fn upsert_team_operation_journal(
@@ -984,4 +967,8 @@ pub trait ToolGateway: Send + Sync {
     async fn invoke_tool(&self, request: ToolInvokeRequest) -> Result<Value, RuntimeError>;
 
     async fn capabilities(&self) -> Result<Value, RuntimeError>;
+}
+
+fn unsupported_store<T>(message: &str) -> Result<T, RuntimeError> {
+    Err(RuntimeError::Unsupported(message.to_string()))
 }

@@ -12,6 +12,9 @@ pub struct WorkspaceNoticePolicy {
     pub membership_to_lead: bool,
     pub worktree_reassignment: bool,
     pub workspace_interrupt: bool,
+    /// Retain retirement notices as cancelled history because the freeze
+    /// prevents admitting any new model input to retiring members.
+    pub workspace_retirement: bool,
     /// Creator notices additionally respect each member's subscription.
     pub compaction_to_lead: bool,
     /// Optional team-wide compaction notices. Defaults off to avoid noise.
@@ -25,6 +28,7 @@ impl Default for WorkspaceNoticePolicy {
             membership_to_lead: true,
             worktree_reassignment: true,
             workspace_interrupt: true,
+            workspace_retirement: true,
             compaction_to_lead: true,
             compaction_to_team: false,
         }

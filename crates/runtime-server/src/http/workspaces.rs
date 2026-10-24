@@ -78,6 +78,41 @@ pub(super) async fn retire_workspace(
     ))
 }
 
+/// Effect-evidenced retirement of populated workspaces. A 202 response is a
+/// durable frozen operation, never a claim of completed provider settlement.
+/// Repeated calls with the same idempotency key advance its stored effects.
+pub(super) async fn advance_workspace_retirement(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<WorkspaceRetirementRequest>,
+) -> Result<(StatusCode, Json<runtime_core::OperationDetails>), ApiError> {
+    let command = prepare_workspace_retirement(
+        workspace_id.trim(),
+        request,
+        OperationActor::operator(OPERATOR_PRINCIPAL),
+        parse_idempotency_key(&headers)?,
+    )?;
+    let result = state
+        .runtime
+        .advance_workspace_retirement(&command, state.app.services.process_manager.as_ref())
+        .await?;
+    if result.operation.phase == runtime_core::OperationPhase::Requested {
+        let mut command = command;
+        command.operation_id = result.operation.operation_id.clone();
+        crate::workspace_retirement_worker::spawn_retirement_worker(
+            state.runtime.clone(),
+            state.app.services.process_manager.clone(),
+            command,
+        );
+    }
+    let status = match result.operation.phase {
+        runtime_core::OperationPhase::Completed => StatusCode::OK,
+        _ => StatusCode::ACCEPTED,
+    };
+    Ok((status, Json(result)))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WorkspaceHooksQuery {

@@ -44,6 +44,17 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         .initialize()
         .await
         .context("failed to initialize runtime store")?;
+    let startup_clock_ms = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .context("system clock predates unix epoch")?
+            .as_millis(),
+    )
+    .context("startup clock overflow")?;
+    let quarantined_retirement_effects = store
+        .repository()
+        .quarantine_ambiguous_retirement_effects_after_restart(startup_clock_ms)
+        .context("failed reconciling unknown native workspace retirement outcomes")?;
 
     let codex_home = config.resolve_provider_dir("codex").join("home");
     let codex_provider = Arc::new(CodexProvider::new(CodexProviderConfig {
@@ -265,6 +276,11 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
         .recover_startup()
         .await
         .context("failed running startup recovery for session runtime")?;
+    if quarantined_retirement_effects != 0 {
+        startup_recovery.notes.push(format!(
+            "{quarantined_retirement_effects} in-flight native retirement effect(s) quarantined for operator review"
+        ));
+    }
     let resumed_onboarding = runtime
         .recover_workspace_system_notices()
         .await
@@ -331,6 +347,23 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
     app.initialize()
         .await
         .context("runtime initialization failed")?;
+    let resumable_retirements = store
+        .repository()
+        .list_recoverable_workspace_retirements()
+        .context("failed finding recoverable workspace retirements")?;
+    if !resumable_retirements.is_empty() {
+        startup_recovery.notes.push(format!(
+            "resuming {} frozen workspace retirement operation(s) from durable evidence",
+            resumable_retirements.len()
+        ));
+    }
+    for command in resumable_retirements {
+        crate::workspace_retirement_worker::spawn_retirement_worker(
+            runtime.clone(),
+            app.services.process_manager.clone(),
+            command,
+        );
+    }
     runtime
         .emit_startup_recovered_event(&startup_recovery)
         .await

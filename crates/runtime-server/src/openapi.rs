@@ -224,6 +224,12 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}/retirement-preflight") => {
             "Inspect authoritative obligations before workspace retirement".to_string()
         }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/retirement/advance") => {
+            "Advance recoverable workspace retirement under durable ingress freeze".to_string()
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile") => {
+            "Reconcile an exact quarantined retirement effect with operator evidence".to_string()
+        }
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}/worktrees") => {
             "List eligible and blocked managed worktrees".to_string()
         }
@@ -359,6 +365,8 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
             path,
             "/v2/workspaces"
                 | "/v2/workspaces/{workspace_id}/retire"
+                | "/v2/workspaces/{workspace_id}/retirement/advance"
+                | "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile"
                 | "/v2/agents/{agent_id}/compact"
                 | "/v2/workspaces/{workspace_id}/lead"
                 | "/v2/workspaces/{workspace_id}/interrupt"
@@ -438,7 +446,11 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
     if accepts_idempotency_key {
         out.push_str("        - name: Idempotency-Key\n");
         out.push_str("          in: header\n");
-        out.push_str("          required: false\n");
+        out.push_str(if path.contains("/retirement/") {
+            "          required: true\n"
+        } else {
+            "          required: false\n"
+        });
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
     }
@@ -476,6 +488,8 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v1/teams/{team_id}/interrupt-all"
             | "/v2/workspaces"
             | "/v2/workspaces/{workspace_id}/retire"
+            | "/v2/workspaces/{workspace_id}/retirement/advance"
+            | "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile"
             | "/v2/agents/{agent_id}/preferences"
             | "/v2/agents/{agent_id}/permission"
             | "/v2/agents/{agent_id}/turns"
@@ -547,6 +561,16 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
     out.push_str("            application/json:\n");
     out.push_str("              schema:\n");
     out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
+    if method == HttpMethod::Post && path == "/v2/workspaces/{workspace_id}/retirement/advance" {
+        out.push_str("        \"202\":\n");
+        out.push_str(
+            "          description: Retirement remains requested or requires manual review\n",
+        );
+        out.push_str("          content:\n");
+        out.push_str("            application/json:\n");
+        out.push_str("              schema:\n");
+        out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
+    }
 }
 
 fn collect_routes() -> BTreeMap<String, RouteSpec> {

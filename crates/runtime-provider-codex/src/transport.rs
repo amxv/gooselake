@@ -288,6 +288,40 @@ impl CodexTransport {
         let _ = child.kill().await;
         let _ = child.wait().await;
     }
+
+    /// Unlike best-effort shutdown, retirement needs evidence that the native
+    /// app-server child is no longer executing work before archival commits.
+    pub(super) async fn shutdown_verified(&self) -> Result<(), RuntimeError> {
+        let mut child = self.child.lock().await;
+        if child
+            .try_wait()
+            .map_err(|error| {
+                RuntimeError::Io(format!(
+                    "failed observing Codex app-server exit before retirement: {error}"
+                ))
+            })?
+            .is_none()
+        {
+            tokio::time::timeout(self.request_timeout, child.kill())
+                .await
+                .map_err(|_| {
+                    RuntimeError::Io(
+                        "timed out observing Codex app-server termination for retirement".into(),
+                    )
+                })?
+                .map_err(|error| {
+                    RuntimeError::Io(format!(
+                        "failed terminating Codex app-server for retirement: {error}"
+                    ))
+                })?;
+            child.wait().await.map_err(|error| {
+                RuntimeError::Io(format!(
+                    "failed waiting for Codex app-server termination: {error}"
+                ))
+            })?;
+        }
+        Ok(())
+    }
 }
 
 fn map_rpc_error(method: &str, error: &Value) -> RuntimeError {

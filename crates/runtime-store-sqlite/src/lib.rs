@@ -23,8 +23,18 @@ mod repository_workspace_migration;
 mod repository_workspace_notice;
 mod repository_workspace_rebind;
 mod repository_workspace_retirement;
+mod repository_workspace_retirement_admission;
+mod repository_workspace_retirement_close_receipt;
+mod repository_workspace_retirement_events;
+mod repository_workspace_retirement_native_close;
+mod repository_workspace_retirement_review;
+mod repository_workspace_retirement_review_settlement;
+mod repository_workspace_retirement_review_turns;
+mod repository_workspace_retirement_settlement;
+mod repository_workspace_retirement_turns;
 mod schema;
 mod store;
+mod store_retirement;
 
 pub use repository::SqliteRuntimeRepository;
 pub use store::SqliteRuntimeStore;

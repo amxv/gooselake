@@ -209,5 +209,6 @@ async fn wait_for_completion_delivery(
     panic!("process {process_id} completion was not delivered");
 }
 
+mod completion_retirement;
 mod lifecycle;
 mod recovery;

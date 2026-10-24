@@ -1,8 +1,9 @@
-import { rebindSession, compactSession } from './client/advanced'
+import { assertIdle, rebindSession, compactSession } from './client/advanced'
 import type { ClaudePermissionIntent } from './types'
 import { randomUUID } from 'node:crypto'
 
 import { BridgeError } from '../errors'
+import { nativeProcessesFor } from './native-processes'
 import { runTurnDeterministic as runDeterministicTurn } from './deterministic-turn'
 import { getOptionalRecord, getOptionalString } from './guards'
 import {
@@ -510,6 +511,22 @@ export class ClaudeClient {
   }
   async compactSession(sessionId: string): Promise<{ outcome: 'accepted' | 'not_performed' }> {
     return compactSession(this.requireSession(sessionId), this.mode, this.emit, this.sdkQueryOverride)
+  }
+
+  async closeSessionForRetirement(sessionId: string, reason?: string): Promise<{
+    ok: true; sessionId: string; providerSessionRef: string
+  }> {
+    const session = this.requireSession(sessionId)
+    // Ordinary close is best effort. Retirement must never acknowledge a
+    // session while an SDK query, approval or binding change remains active.
+    assertIdle(session)
+    session.rebinding = true
+    // SDK iterator cleanup is best effort and can outlive the query pointer.
+    // Observe termination of this attachment's exact children before removal.
+    await nativeProcessesFor(session).closeVerified()
+    const providerSessionRef = session.providerSessionRef
+    await this.closeSession(sessionId, reason)
+    return { ok: true, sessionId, providerSessionRef }
   }
 
   async closeSession(sessionId: string, reason?: string): Promise<void> {

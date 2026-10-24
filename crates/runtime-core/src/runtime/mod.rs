@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -116,6 +116,7 @@ pub struct RuntimeSessionManager {
     pub(super) system_notice_dispatch_lock: Mutex<Option<WorkspaceSystemNoticeRecord>>,
     pub(super) pre_add_hook_executor: RwLock<Option<Arc<dyn RuntimeTeamHookExecutor>>>,
     next_id: AtomicU64,
+    pub(super) provider_compaction_observer_flags: AtomicU8,
     pub(super) event_tx: broadcast::Sender<RuntimeEventRecord>,
 }
 
@@ -159,6 +160,7 @@ impl RuntimeSessionManager {
             system_notice_dispatch_lock: Mutex::new(None),
             pre_add_hook_executor: RwLock::new(None),
             next_id: AtomicU64::new(1),
+            provider_compaction_observer_flags: AtomicU8::new(0),
             event_tx,
         })
     }

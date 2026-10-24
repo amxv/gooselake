@@ -19,15 +19,34 @@ impl TestProvider {
             .subscribe()
     }
 
-    pub(crate) fn emit_compaction_event(&self, session_id: &str, phase: &str) {
+    pub(crate) async fn emit_compaction_event(&self, session_id: &str, phase: &str) {
+        self.emit_compaction_event_with_trigger(session_id, phase, "manual")
+            .await;
+    }
+
+    pub(crate) async fn emit_compaction_event_with_trigger(
+        &self,
+        session_id: &str,
+        phase: &str,
+        trigger: &str,
+    ) {
+        let attachment = self
+            .state
+            .lock()
+            .await
+            .sessions
+            .get(session_id)
+            .map(|s| s.provider_session_ref.clone());
         let slot = self.compaction_events.lock().expect("event mutex");
-        if let Some(sender) = slot.as_ref() {
+        if let (Some(sender), Some(provider_session_ref)) = (slot.as_ref(), attachment) {
             let _ = sender.send(
                 runtime_core::ProviderRuntimeEvent::ContextCompactionObserved {
                     runtime_session_id: session_id.into(),
+                    provider_session_ref,
+                    canonical_provider_session_ref: None,
                     turn_id: None,
                     phase: phase.into(),
-                    trigger: Some("manual".into()),
+                    trigger: Some(trigger.into()),
                     pre_tokens: None,
                     post_tokens: None,
                     context_window_size: None,

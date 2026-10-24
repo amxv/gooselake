@@ -94,7 +94,9 @@ pub use services::{
     WorktreeMemberRemovedRequest, WorktreeMemberRemovedResponse, WorktreeReleaseRequest,
     WorktreeReleaseResponse, WorktreeService,
 };
-pub use session_compaction::SessionCompactionRun;
+pub use session_compaction::{
+    CompactionObservationReceipt, ProviderCompactionObservation, SessionCompactionRun,
+};
 pub use state::{
     ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
     NewRuntimeEvent, ProcessRecord, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,

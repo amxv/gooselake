@@ -516,6 +516,8 @@ async fn bridge_compaction_event_preserves_logical_turn_and_updates_context() {
         while observed.len() < 2 {
             if let ProviderRuntimeEvent::ContextCompactionObserved {
                 runtime_session_id,
+                provider_session_ref,
+                canonical_provider_session_ref,
                 turn_id,
                 phase,
                 trigger,
@@ -526,7 +528,19 @@ async fn bridge_compaction_event_preserves_logical_turn_and_updates_context() {
             {
                 assert_eq!(runtime_session_id, "compaction-event");
                 assert_eq!(turn_id.as_deref(), Some("logical-compaction"));
-                observed.push((phase, trigger, pre_tokens, post_tokens, context_window_size));
+                assert!(
+                    !provider_session_ref.is_empty(),
+                    "compaction must retain native attachment identity"
+                );
+                observed.push((
+                    phase,
+                    trigger,
+                    pre_tokens,
+                    post_tokens,
+                    context_window_size,
+                    provider_session_ref,
+                    canonical_provider_session_ref,
+                ));
             }
         }
     })
@@ -538,6 +552,8 @@ async fn bridge_compaction_event_preserves_logical_turn_and_updates_context() {
     assert_eq!(observed[1].2, Some(80));
     assert_eq!(observed[1].3, Some(25));
     assert_eq!(observed[1].4, Some(100));
+    assert_eq!(observed[0].5, observed[1].5);
+    assert_eq!(observed[0].6, observed[1].6);
 
     let context = provider
         .observe_context_limit("compaction-event")

@@ -90,6 +90,7 @@ pub(super) async fn get_workspace_hooks(
         runtime_core::TeamHookEventName::PostTeammateRemove,
         runtime_core::TeamHookEventName::PostDirectMessageSend,
         runtime_core::TeamHookEventName::PostBroadcastMessageSend,
+        runtime_core::TeamHookEventName::PostCompaction,
     ];
     if state.runtime.pre_add_hook_executor_enabled().await {
         executable_events.insert(0, runtime_core::TeamHookEventName::PreTeammateAdd);
@@ -97,8 +98,8 @@ pub(super) async fn get_workspace_hooks(
     Ok(Json(WorkspaceHooksResponse {
         workspace_id: workspace.workspace_id,
         config_version: runtime_core::TEAM_HOOK_CONFIG_VERSION,
-        // Pre-add has a distinct blocking mutation contract; compaction has a
-        // separate canonical lifecycle. Neither may be advertised early.
+        // Pre-add remains gated on a blocking executor. Post-compaction is
+        // durably admitted by the canonical manager/store lifecycle.
         execution_enabled: true,
         executable_events,
         hooks: hooks

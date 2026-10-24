@@ -16,20 +16,21 @@ use serde_json::Value;
 
 use crate::{
     AgentDeliveryRecord, AgentMessageRecord, AgentToolMutationAdmission, AgentToolMutationCommand,
-    ApprovalRecord, LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
-    LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
-    LegacyWorkspaceMigrationStatus, ManagedProcessAdmission, ManagedProcessRecord,
-    ManagedProcessTerminalUpdate, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
-    NewRuntimeEvent, OperationDetails, ProcessCompletionUpdate, ProcessRecord,
-    ProcessSchedulerSettings, ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord,
-    RuntimeEventScope, RuntimeHydratedState, SessionCompactionRun, SessionContextLimitSnapshot,
-    SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation,
-    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission,
-    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
-    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
-    WorkspaceRegisterResponse,
+    ApprovalRecord, CompactionObservationReceipt, LegacyWorkspaceMigrationApplyCommand,
+    LegacyWorkspaceMigrationApplyResponse, LegacyWorkspaceMigrationResolutionCommand,
+    LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
+    ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
+    ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
+    ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
+    ProviderCompactionObservation, ProviderWorkspaceRebindEvidence, RuntimeError,
+    RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, SessionCompactionRun,
+    SessionContextLimitSnapshot, SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord,
+    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
+    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState,
+    WorkspaceAgentRebindOperation, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
+    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
+    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use crate::{
     TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
@@ -264,6 +265,15 @@ pub trait RuntimeStore: Send + Sync {
         _run_id: &str,
     ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
         Ok(None)
+    }
+
+    fn observe_provider_compaction(
+        &self,
+        _observation: &ProviderCompactionObservation,
+    ) -> Result<CompactionObservationReceipt, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "provider compaction observation persistence unavailable".into(),
+        ))
     }
 
     fn get_session_compaction_by_key(

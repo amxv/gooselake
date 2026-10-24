@@ -1,3 +1,4 @@
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -5,13 +6,162 @@ use tokio::sync::broadcast;
 
 use crate::{
     ProviderCapabilitySupport, ProviderCompactSessionOutcome, ProviderCompactSessionRequest,
-    ProviderKind, ProviderRuntimeEvent, RuntimeError, RuntimeEventCriticality, RuntimeEventScope,
-    SessionCompactionRun, WorkspaceAgentLifecycleState,
+    ProviderCompactionObservation, ProviderKind, ProviderRuntimeEvent, RuntimeError,
+    RuntimeEventCriticality, RuntimeEventScope, SessionCompactionRun, WorkspaceAgentLifecycleState,
 };
 
 use super::{helpers::now_ms, RuntimeSessionManager};
 
 impl RuntimeSessionManager {
+    fn compaction_observer_flag(provider: ProviderKind) -> u8 {
+        match provider {
+            ProviderKind::Codex => 1,
+            ProviderKind::Claude => 2,
+            ProviderKind::Acp => 4,
+        }
+    }
+
+    /// The production listener is the single owner of a provider's native
+    /// compaction stream. Turn-local consumers only need the fallback when
+    /// an embedded/standalone manager never started that listener.
+    pub(super) async fn global_compaction_observer_owns(&self, session_id: &str) -> bool {
+        let sessions = self.sessions.read().await;
+        sessions
+            .get(session_id)
+            .and_then(|session| ProviderKind::from_str(&session.provider))
+            .is_some_and(|provider| {
+                self.provider_compaction_observer_flags
+                    .load(Ordering::Acquire)
+                    & Self::compaction_observer_flag(provider)
+                    != 0
+            })
+    }
+
+    /// All provider events, including manual replies and background automatic
+    /// compaction, enter this one attachment-fenced durable state machine.
+    pub(super) async fn observe_provider_compaction_event(
+        &self,
+        event: &ProviderRuntimeEvent,
+    ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
+        let ProviderRuntimeEvent::ContextCompactionObserved {
+            runtime_session_id,
+            provider_session_ref,
+            canonical_provider_session_ref,
+            turn_id,
+            phase,
+            trigger,
+            pre_tokens,
+            post_tokens,
+            context_window_size,
+        } = event
+        else {
+            return Ok(None);
+        };
+        let provider_name = {
+            let sessions = self.sessions.read().await;
+            let Some(session) = sessions.get(runtime_session_id) else {
+                return Ok(None);
+            };
+            session.provider.clone()
+        };
+        let provider = ProviderKind::from_str(&provider_name).ok_or_else(|| {
+            RuntimeError::ProtocolViolation("unknown provider emitting compaction".into())
+        })?;
+        let observation = ProviderCompactionObservation {
+            proposed_run_id: self.allocate_id("cmp", provider.as_str()),
+            agent_id: runtime_session_id.clone(),
+            provider,
+            provider_session_ref: provider_session_ref.clone(),
+            canonical_provider_session_ref: canonical_provider_session_ref.clone(),
+            turn_id: turn_id.clone(),
+            phase: phase.clone(),
+            trigger: trigger.clone(),
+            pre_tokens: *pre_tokens,
+            post_tokens: *post_tokens,
+            context_window_size: *context_window_size,
+            observed_at_ms: now_ms(),
+        };
+        let receipt = match self.store.observe_provider_compaction(&observation) {
+            Ok(receipt) => receipt,
+            Err(RuntimeError::Conflict(message)) => {
+                // A delayed event from a superseded provider generation
+                // cannot mutate the new session or poison its active turn.
+                tracing::debug!("ignored uncorrelated compaction observation: {message}");
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        if receipt.changed {
+            self.append_event(
+                RuntimeEventScope::Session,
+                runtime_session_id,
+                Some(runtime_session_id),
+                turn_id.as_deref(),
+                "compaction.lifecycle_changed",
+                RuntimeEventCriticality::Critical,
+                serde_json::json!({
+                    "run_id": receipt.run.run_id,
+                    "phase": receipt.run.phase,
+                    "source": receipt.run.source,
+                    "trigger": receipt.run.trigger,
+                    "pre_tokens": receipt.run.pre_tokens,
+                    "post_tokens": receipt.run.post_tokens,
+                    "context_window_size": receipt.run.context_window_size,
+                }),
+            )
+            .await?;
+        }
+        if receipt.changed && receipt.run.phase == "completed" {
+            let _ = self
+                .refresh_session_context_limit(runtime_session_id, turn_id.as_deref())
+                .await;
+        }
+        Ok(Some(receipt.run))
+    }
+
+    /// Subscribe at runtime bootstrap, before any client can admit work.
+    /// This also observes Codex automatic compactions with no active turn ID.
+    pub fn start_provider_compaction_observers(self: &Arc<Self>) {
+        for metadata in self.providers.metadata() {
+            let Some(mut events) = self
+                .providers
+                .get(metadata.kind)
+                .and_then(|adapter| adapter.subscribe_events())
+            else {
+                continue;
+            };
+            let manager = Arc::downgrade(self);
+            self.provider_compaction_observer_flags.fetch_or(
+                Self::compaction_observer_flag(metadata.kind),
+                Ordering::Release,
+            );
+            tokio::spawn(async move {
+                loop {
+                    match events.recv().await {
+                        Ok(event @ ProviderRuntimeEvent::ContextCompactionObserved { .. }) => {
+                            let Some(runtime) = manager.upgrade() else {
+                                break;
+                            };
+                            if let Err(error) =
+                                runtime.observe_provider_compaction_event(&event).await
+                            {
+                                tracing::warn!(
+                                    "could not persist provider compaction observation: {error}"
+                                );
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // Never synthesize a missing terminal event.
+                            tracing::warn!("compaction event receiver lagged; ambiguous manual runs require review");
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
+    }
+
     pub fn session_compaction_run(
         &self,
         agent_id: &str,
@@ -117,6 +267,13 @@ impl RuntimeSessionManager {
             outcome: None,
             error_code: None,
             review_evidence: None,
+            source: "manual".into(),
+            confidence: None,
+            observed_turn_id: None,
+            trigger: Some("manual".into()),
+            pre_tokens: None,
+            post_tokens: None,
+            context_window_size: None,
             created_at_ms: now,
             updated_at_ms: now,
         };
@@ -174,6 +331,13 @@ impl RuntimeSessionManager {
                 Some("native_compaction_outcome_unknown"),
             ),
         };
+        if let Some(observed) = self.store.get_session_compaction(&run.run_id)? {
+            if observed.phase == "completed" {
+                // Native terminal evidence is stronger than a late or
+                // contradictory synchronous response.
+                return Ok(observed);
+            }
+        }
         let persisted = self.store.transition_session_compaction(
             &run.run_id,
             phase,
@@ -194,7 +358,19 @@ impl RuntimeSessionManager {
             .await;
         match native_result {
             Ok(ProviderCompactSessionOutcome::Accepted) => {
-                if let Some(events) = events {
+                if persisted.phase == "completed" {
+                    return Ok(persisted);
+                }
+                if self.provider_compaction_observer_flags.load(Ordering::Acquire)
+                    & Self::compaction_observer_flag(provider) != 0
+                {
+                    // The global receiver owns the event stream; a second
+                    // subscriber would risk duplicate weak native signals.
+                    self.spawn_compaction_timeout(persisted.run_id.clone());
+                    Ok(persisted)
+                } else if let Some(events) = events {
+                    // Standalone manager instances (including tests) that
+                    // have no global worker still observe native completion.
                     self.spawn_compaction_observer(persisted.run_id.clone(), agent_id.into(), events);
                     Ok(persisted)
                 } else {
@@ -229,56 +405,72 @@ impl RuntimeSessionManager {
     ) {
         let manager = Arc::clone(self);
         tokio::spawn(async move {
-            let observation = tokio::time::timeout(Duration::from_secs(120), async {
+            let terminal = tokio::time::timeout(Duration::from_secs(120), async {
                 loop {
+                    if let Ok(Some(current)) = manager.store.get_session_compaction(&run_id) {
+                        if matches!(current.phase.as_str(), "completed" | "failed" | "cancelled") {
+                            return true;
+                        }
+                    }
                     match events.recv().await {
-                        Ok(ProviderRuntimeEvent::ContextCompactionObserved {
-                            runtime_session_id,
-                            phase,
-                            turn_id,
-                            trigger,
-                            ..
-                        }) if runtime_session_id == agent_id
-                            && (turn_id.is_none() || trigger.as_deref() == Some("manual")) =>
-                        {
-                            match phase.to_ascii_lowercase().as_str() {
-                                "completed" => return "completed",
-                                "failed" | "cancelled" => return "failed",
-                                _ => {}
+                        Ok(
+                            ref event @ ProviderRuntimeEvent::ContextCompactionObserved {
+                                ref runtime_session_id,
+                                ..
+                            },
+                        ) if runtime_session_id == &agent_id => {
+                            if let Ok(Some(run)) =
+                                manager.observe_provider_compaction_event(&event).await
+                            {
+                                if run.run_id == run_id
+                                    && matches!(
+                                        run.phase.as_str(),
+                                        "completed" | "failed" | "cancelled"
+                                    )
+                                {
+                                    return true;
+                                }
                             }
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => return "manual_review",
-                        Err(broadcast::error::RecvError::Closed) => return "manual_review",
+                        Err(broadcast::error::RecvError::Lagged(_)) => return false,
+                        Err(broadcast::error::RecvError::Closed) => return false,
                         _ => {}
                     }
                 }
             })
             .await
-            .unwrap_or("manual_review");
-            let outcome =
-                (observation == "completed").then_some(ProviderCompactSessionOutcome::Accepted);
-            let error_code =
-                (observation != "completed").then_some("compaction_evidence_missing_or_failed");
-            if let Ok(settled) = manager.store.transition_session_compaction(
+            .unwrap_or(false);
+            if terminal {
+                return;
+            }
+            // Lost native evidence must not be interpreted as a failure or
+            // successful compaction. Preserve the manual-review fence.
+            let _ = manager.store.transition_session_compaction(
                 &run_id,
-                observation,
-                outcome,
-                error_code,
+                "manual_review",
+                None,
+                Some("compaction_evidence_missing"),
                 now_ms(),
-            ) {
-                let _ = manager
-                    .append_event(
-                        RuntimeEventScope::Session,
-                        &agent_id,
-                        Some(&agent_id),
+            );
+        });
+    }
+
+    fn spawn_compaction_timeout(self: &Arc<Self>, run_id: String) {
+        let manager = Arc::clone(self);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(120)).await;
+            if let Ok(Some(run)) = manager.store.get_session_compaction(&run_id) {
+                if matches!(
+                    run.phase.as_str(),
+                    "intended" | "accepted" | "started" | "compacting"
+                ) {
+                    let _ = manager.store.transition_session_compaction(
+                        &run_id,
+                        "manual_review",
                         None,
-                        "compaction.observed",
-                        RuntimeEventCriticality::Critical,
-                        serde_json::json!({"run_id": run_id, "phase": settled.phase}),
-                    )
-                    .await;
-                if observation == "completed" {
-                    let _ = manager.refresh_session_context_limit(&agent_id, None).await;
+                        Some("compaction_evidence_missing"),
+                        now_ms(),
+                    );
                 }
             }
         });

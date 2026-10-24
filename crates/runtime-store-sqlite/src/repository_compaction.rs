@@ -2,6 +2,7 @@ use runtime_core::{ProviderCompactSessionOutcome, RuntimeError, SessionCompactio
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::db::{db_error, open_connection};
+use crate::repository_compaction_observations::admit_compaction_completion_tx;
 use crate::SqliteRuntimeRepository;
 
 fn load(
@@ -41,7 +42,7 @@ impl SqliteRuntimeRepository {
             let mut stmt = tx
                 .prepare(
                     "SELECT record_json FROM session_compaction_runs
-                          WHERE phase IN ('intended', 'accepted') ORDER BY run_id",
+                          WHERE phase IN ('intended', 'accepted', 'started', 'compacting') ORDER BY run_id",
                 )
                 .map_err(|error| db_error("failed querying compaction recovery", error))?;
             let rows = stmt
@@ -144,6 +145,9 @@ impl SqliteRuntimeRepository {
             params![run_id, phase, encode(&run)?, run.updated_at_ms],
         )
         .map_err(|error| db_error("failed committing operator compaction review", error))?;
+        if phase == "completed" {
+            admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?;
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing reviewed compaction outcome", error))?;
         Ok(run)
@@ -182,7 +186,8 @@ impl SqliteRuntimeRepository {
         let count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM session_compaction_runs
-                 WHERE session_id = ?1 AND phase IN ('intended','accepted','manual_review')",
+                 WHERE session_id = ?1
+                   AND phase IN ('intended','accepted','started','compacting','manual_review')",
                 [agent_id],
                 |row| row.get(0),
             )
@@ -279,7 +284,8 @@ impl SqliteRuntimeRepository {
         let pending: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM session_compaction_runs
-                 WHERE session_id = ?1 AND phase IN ('intended','accepted','manual_review')",
+                 WHERE session_id = ?1
+                   AND phase IN ('intended','accepted','started','compacting','manual_review')",
                 [&run.agent_id],
                 |row| row.get(0),
             )
@@ -322,6 +328,15 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed starting compaction transition", error))?;
         let mut run = load(&tx, run_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("compaction run {run_id}")))?;
+        if phase == "accepted"
+            && run.source == "manual"
+            && matches!(run.phase.as_str(), "started" | "compacting" | "completed")
+            && outcome == Some(ProviderCompactSessionOutcome::Accepted)
+        {
+            // The native event can arrive and durably complete before the
+            // asynchronous acceptance response reaches the manager.
+            return Ok(run);
+        }
         if run.phase == phase {
             if run.outcome == outcome && run.error_code.as_deref() == error_code {
                 return Ok(run);
@@ -333,7 +348,11 @@ impl SqliteRuntimeRepository {
         let allowed = matches!(
             (run.phase.as_str(), phase),
             ("intended", "accepted" | "not_performed" | "manual_review")
-                | ("accepted", "completed" | "failed" | "manual_review")
+                | (
+                    "accepted" | "started" | "compacting",
+                    "completed" | "failed" | "cancelled" | "manual_review"
+                )
+                | ("started", "compacting")
                 | ("manual_review", "completed" | "failed")
         );
         if !allowed || updated_at_ms < run.created_at_ms {
@@ -381,11 +400,14 @@ impl SqliteRuntimeRepository {
                  WHERE run_id = ?1 AND phase = ?5",
                 params![run_id, phase, encode(&run)?, run.updated_at_ms, before],
             )
-            .map_err(|error| db_error("failed transitioning compaction operation", error))?;
+        .map_err(|error| db_error("failed transitioning compaction operation", error))?;
         if changed != 1 {
             return Err(RuntimeError::Conflict(
                 "concurrent compaction state update".into(),
             ));
+        }
+        if phase == "completed" {
+            admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?;
         }
         tx.commit()
             .map_err(|error| db_error("failed committing compaction transition", error))?;

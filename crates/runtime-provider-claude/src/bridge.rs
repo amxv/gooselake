@@ -704,6 +704,12 @@ async fn handle_bridge_event(
                 .provider_events
                 .send(ProviderRuntimeEvent::ContextCompactionObserved {
                     runtime_session_id: session.runtime_session_id.clone(),
+                    provider_session_ref: session.provider_session_ref.read().await.clone(),
+                    canonical_provider_session_ref: session
+                        .canonical_provider_session_ref
+                        .read()
+                        .await
+                        .clone(),
                     turn_id: event_turn_id,
                     phase,
                     trigger,

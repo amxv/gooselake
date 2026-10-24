@@ -12,6 +12,10 @@ pub struct WorkspaceNoticePolicy {
     pub membership_to_lead: bool,
     pub worktree_reassignment: bool,
     pub workspace_interrupt: bool,
+    /// Creator notices additionally respect each member's subscription.
+    pub compaction_to_lead: bool,
+    /// Optional team-wide compaction notices. Defaults off to avoid noise.
+    pub compaction_to_team: bool,
 }
 
 impl Default for WorkspaceNoticePolicy {
@@ -21,6 +25,8 @@ impl Default for WorkspaceNoticePolicy {
             membership_to_lead: true,
             worktree_reassignment: true,
             workspace_interrupt: true,
+            compaction_to_lead: true,
+            compaction_to_team: false,
         }
     }
 }

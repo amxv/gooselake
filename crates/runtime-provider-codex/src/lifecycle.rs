@@ -488,24 +488,43 @@ impl CodexProvider {
                     .or(session.last_total_tokens);
             }
             "thread/compacted" => {
+                let native_thread_id = message
+                    .get("params")
+                    .and_then(|params| params.get("threadId"))
+                    .and_then(Value::as_str);
                 let mut sessions = inner.sessions.write().await;
-                if let Some(session) = sessions.get_mut(runtime_session_id) {
+                let native_attachment = sessions.get_mut(runtime_session_id).and_then(|session| {
+                    // The notification can outlive a rebind. Never capture
+                    // identity from a different, newer live attachment.
+                    if native_thread_id != Some(session.provider_session_ref.as_str()) {
+                        return None;
+                    }
                     for waiter in session.compaction_waiters.drain(..) {
                         let _ = waiter.send(());
                     }
-                }
+                    Some((
+                        session.provider_session_ref.clone(),
+                        session.canonical_provider_session_ref.clone(),
+                    ))
+                });
                 drop(sessions);
-                let _ = inner
-                    .events
-                    .send(ProviderRuntimeEvent::ContextCompactionObserved {
-                        runtime_session_id: runtime_session_id.to_string(),
-                        turn_id: None,
-                        phase: "completed".into(),
-                        trigger: Some("provider".into()),
-                        pre_tokens: None,
-                        post_tokens: None,
-                        context_window_size: None,
-                    });
+                if let Some((provider_session_ref, canonical_provider_session_ref)) =
+                    native_attachment
+                {
+                    let _ = inner
+                        .events
+                        .send(ProviderRuntimeEvent::ContextCompactionObserved {
+                            runtime_session_id: runtime_session_id.to_string(),
+                            provider_session_ref,
+                            canonical_provider_session_ref,
+                            turn_id: None,
+                            phase: "completed".into(),
+                            trigger: Some("provider".into()),
+                            pre_tokens: None,
+                            post_tokens: None,
+                            context_window_size: None,
+                        });
+                }
             }
             "turn/completed" => {
                 let Some(turn) = message.get("params").and_then(|params| params.get("turn")) else {

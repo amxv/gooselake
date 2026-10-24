@@ -191,6 +191,7 @@ mod hook_integration;
 mod turn_authority;
 mod workspace_agent;
 mod workspace_authority;
+mod workspace_compaction_observations;
 mod workspace_control;
 mod workspace_migration;
 

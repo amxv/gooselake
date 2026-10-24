@@ -286,7 +286,8 @@ impl SqliteRuntimeRepository {
         let unresolved_compaction: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM session_compaction_runs
-                 WHERE session_id = ?1 AND phase IN ('intended','accepted','manual_review')",
+                 WHERE session_id = ?1
+                   AND phase IN ('intended','accepted','started','compacting','manual_review')",
                 params![operation.agent_id],
                 |row| row.get(0),
             )

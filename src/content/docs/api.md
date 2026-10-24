@@ -126,11 +126,11 @@ read-only** view of versioned user/project hook configuration. An optional
 result. The JSON response includes `config_version`, `execution_enabled`, `executable_events`, and
 effective entries (`event_name`, normalized `name`, `command`, `timeout_ms`,
 `scope`, `fingerprint`). `execution_enabled: true` means approved hooks can
-execute, and `executable_events` lists **five live events**:
+execute, and `executable_events` lists **six live events**:
 `pre_teammate_add`, `post_teammate_add`, `post_teammate_remove`,
-`post_direct_message_send`, and `post_broadcast_message_send`.
-`post_compaction` remains discoverable but is activated by the later unified
-compaction lifecycle. Discovery never grants permission to run
+`post_direct_message_send`, `post_broadcast_message_send`, and
+`post_compaction`. Compaction hooks are admitted only upon durable
+terminal completion, not a provider's provisional acceptance. Discovery never grants permission to run
 commands or enables a new model-facing tool.
 
 Configuration files live at `~/.agents/gg/team-hooks.json` for the runtime
@@ -181,7 +181,7 @@ the script has run but before agent admission also prevents the provider
 session and onboarding context from being committed as a workspace member.
 
 An approved post hook is admitted *atomically* with its canonical workspace
-membership or message mutation. A worker runs its bounded script once and
+membership, message or completed compaction mutation. A worker runs its bounded script once and
 commits a terminal receipt before separately validating any optional output.
 Message hooks wait until the message's durable delivery attempts have settled,
 so their context cannot race ahead of a still-pending or deferred message.
@@ -289,7 +289,11 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/agents/$AGENT_ID/turns"
 ```
 
-`POST /v2/agents/{agent_id}/compact` requires a ready, active workspace-owned Codex or Claude agent. It durably admits a manager-owned `cmp_*` run before invoking the native provider, with optional `Idempotency-Key`. The result distinguishes `accepted` (native request accepted, **not yet confirmed complete**) from `not_performed`; an unknown provider outcome becomes `manual_review` and is never automatically resubmitted. `GET /v2/agents/{agent_id}/compactions/{run_id}` reports the exact durable operation. Provider completion events settle accepted runs to `completed`/`failed`. Until an outstanding or ambiguous run is settled, new turns, permission updates, and worktree rebinds are fenced. A crash does not erase or replay unresolved compaction. If evidence is lost, an operator can independently inspect native provider state and settle an ambiguous `manual_review` via `POST /v2/agents/{agent_id}/compactions/{run_id}/resolve` with JSON `{"phase":"failed","evidence":"..."}` or a verified `completed` result. This records external review evidence and never repeats native compaction; confirming completion requires the same native attachment/revision. The broader automatic/provider compaction and notice/hook unification remains a separate lifecycle expansion.
+`POST /v2/agents/{agent_id}/compact` requires a ready, active workspace-owned Codex or Claude agent. It durably admits a manager-owned `cmp_*` run before invoking the native provider, with optional `Idempotency-Key`. The result distinguishes `accepted` (native request accepted, **not yet confirmed complete**) from `not_performed`; an unknown provider outcome becomes `manual_review` and is never automatically resubmitted. `GET /v2/agents/{agent_id}/compactions/{run_id}` reports the exact durable operation. Manual and unsolicited provider/automatic compaction now share this lifecycle: `started`, `compacting`, `completed`, `failed`, or `cancelled` observations are attached to the exact provider-native session, with `source`, `confidence`, `trigger`, and optional before/after token counts. Automatic run IDs appear in durable `compaction.lifecycle_changed` session events. An observation may confirm completion before the provider returns synchronous manual acceptance; a late acceptance cannot roll back its terminal state. The provider's native session reference is checked at commit time, so delayed observations from a replaced attachment are rejected.
+
+Compaction completion transactionally admits approved `post_compaction` hook intents and one stable system notice per selected recipient. The compacted member's active creator is subscribed by default unless their `creator_compaction_subscription` is `unsubscribed`; the workspace notice policy enables lead notifications by default and disables team-wide notifications by default. Lead/creator overlap is deduplicated. If no eligible lead, creator, or opted-in team member exists, no notice is injected. System notices use the same ordered, recoverable `automation_context` dispatcher as onboarding; hook commands still require the operator's exact trusted approval. Neither a failed compaction nor replayed terminal evidence emits a completion hook.
+
+Until an outstanding or ambiguous run is settled, new turns, permission updates, and worktree rebinds are fenced. A crash does not erase or replay unresolved compaction; a started/compacting native run without terminal evidence is quarantined to `manual_review`. If evidence is lost, an operator can independently inspect native provider state and settle an ambiguous `manual_review` via `POST /v2/agents/{agent_id}/compactions/{run_id}/resolve` with JSON `{"phase":"failed","evidence":"..."}` or a verified `completed` result. This records external review evidence and never repeats native compaction; confirming completion requires the same native attachment/revision. Codex has session-level completion events without a native compaction item ID, so a bounded weak-alias deduplication window is used instead of claiming an exact native run identity. ACP remains unsupported for provider-native compaction.
 
 `POST /v2/agents/{agent_id}/turns/{turn_id}/edit-rerun` is the manager-owned historical edit path. It requires an idle workspace agent, a **completed user-visible** target turn with persisted input/native turn identity, and a provider advertising verified hard-fork support (Codex and Claude advertise this capability; ACP does not). Its body is `{"edited_snapshot":{"prompt_text":"Updated request","image_refs":[],"invocation":null}}`; optional `Idempotency-Key` makes exact retries return the original operation and rejects a different edit under the same key. The manager rebuilds native structured inputs from the edited snapshot, including ordered persisted image paths and a **Codex-only** skill invocation when supplied, rejecting missing files and unsupported invocation types. It records an `edit_*` operation **before** provider fork, verifies the provider-native child, atomically commits the child attachment, retained transcript prefix and superseded-turn lineage, then durably admits a **new logical user turn** with operation correlation. Previous turns remain durably available for audit; no source turn is overwritten. `completed` on the edit operation means the replacement turn was admitted, not that model work finished. The new turn's own state and provider dispatch outcome remain canonical.
 
@@ -409,11 +413,11 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 curl -fsS -X PUT \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"expected_revision":0,"policy":{"lead_transitions":true,"membership_to_lead":true,"worktree_reassignment":true,"workspace_interrupt":true}}' \
+  -d '{"expected_revision":0,"policy":{"lead_transitions":true,"membership_to_lead":true,"worktree_reassignment":true,"workspace_interrupt":true,"compaction_to_lead":true,"compaction_to_team":false}}' \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/notice-policy"
 ```
 
-All four lifecycle flags default to `true`; mandatory onboarding is not suppressible through this policy. The policy revision starts at `0`, increments after each successful change, and mismatched `expected_revision` returns HTTP `409`. It is independent of the workspace lead/roster revision. These operator endpoints require the ordinary `/v2` bearer token; models have no notice-policy mutation tool.
+The four existing lifecycle flags and `compaction_to_lead` default to `true`; `compaction_to_team` defaults to `false`. Mandatory onboarding is not suppressible through this policy. The policy revision starts at `0`, increments after each successful change, and mismatched `expected_revision` returns HTTP `409`. It is independent of the workspace lead/roster revision. These operator endpoints require the ordinary `/v2` bearer token; models have no notice-policy mutation tool.
 
 Interrupt every currently active turn owned by the workspace roster:
 

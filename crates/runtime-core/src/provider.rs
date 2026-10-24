@@ -343,6 +343,10 @@ pub enum ProviderRuntimeEvent {
     },
     ContextCompactionObserved {
         runtime_session_id: String,
+        /// Captured at emission, never inferred from a possibly rebound
+        /// runtime session when an asynchronous observation is consumed.
+        provider_session_ref: String,
+        canonical_provider_session_ref: Option<String>,
         turn_id: Option<String>,
         phase: String,
         trigger: Option<String>,

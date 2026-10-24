@@ -115,25 +115,13 @@ impl RuntimeSessionManager {
                 .await?;
                 Ok(None)
             }
-            ProviderRuntimeEvent::ContextCompactionObserved {
-                runtime_session_id,
-                turn_id: Some(event_turn_id),
-                phase,
-                trigger,
-                pre_tokens,
-                post_tokens,
-                context_window_size,
-            } if runtime_session_id == session_id && event_turn_id == turn_id => {
-                self.record_provider_context_compaction_observed(
-                    session_id,
-                    turn_id,
-                    phase,
-                    trigger,
-                    pre_tokens,
-                    post_tokens,
-                    context_window_size,
-                )
-                .await?;
+            ref event @ ProviderRuntimeEvent::ContextCompactionObserved {
+                ref runtime_session_id,
+                ..
+            } if runtime_session_id == session_id => {
+                if !self.global_compaction_observer_owns(session_id).await {
+                    self.observe_provider_compaction_event(&event).await?;
+                }
                 Ok(None)
             }
             event => Ok(Some(event)),
@@ -239,47 +227,6 @@ impl RuntimeSessionManager {
         updated.updated_at = now_ms();
         self.store.upsert_session(&updated)?;
         *session = updated;
-        Ok(())
-    }
-
-    pub(super) async fn record_provider_context_compaction_observed(
-        &self,
-        session_id: &str,
-        turn_id: &str,
-        phase: String,
-        trigger: Option<String>,
-        pre_tokens: Option<u64>,
-        post_tokens: Option<u64>,
-        context_window_size: Option<u64>,
-    ) -> Result<(), RuntimeError> {
-        if let Err(error) = self
-            .append_event(
-                RuntimeEventScope::Session,
-                session_id,
-                Some(session_id),
-                Some(turn_id),
-                "provider.context_compaction_observed",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({
-                    "phase": phase,
-                    "trigger": trigger,
-                    "pre_tokens": pre_tokens,
-                    "post_tokens": post_tokens,
-                    "context_window_size": context_window_size,
-                }),
-            )
-            .await
-        {
-            let _ = self
-                .mark_provider_event_stream_unknown(
-                    session_id,
-                    turn_id,
-                    "provider_context_compaction_observation_persistence_failed",
-                    error.to_string(),
-                )
-                .await;
-            return Err(error);
-        }
         Ok(())
     }
 }

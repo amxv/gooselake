@@ -74,20 +74,20 @@ Workspace membership authorization is leadless-aware: an active member can manag
 Team hook configuration discovery merges strict version-1 user and project files
 by event and normalized hook name, with project overrides. Operator approval
 stores immutable command snapshots using compare-and-set revision authority;
-unapproved config files cannot grant shell execution. Four post-operation
+unapproved config files cannot grant shell execution. Five post-operation
 events (`post_teammate_add`, `post_teammate_remove`, `post_direct_message_send`,
-`post_broadcast_message_send`) now create immutable effect intents in their
+`post_broadcast_message_send`, `post_compaction`) now create immutable effect intents in their
 canonical transaction. An approved worker executes each script at most once
 and applies validated, recipient-scoped automation context with a separate
 durable receipt. Approved `pre_teammate_add` scripts are admitted before
 provider creation and may modify only validated workspace-local cwd and
 onboarding/caller context, with a fail-closed, durable recovery boundary.
 `execution_enabled: true` advertises active hooks and `executable_events`
-enumerates exactly these five live events. Post-compaction remains
-discovery-only until its canonical compaction lifecycle. Neither discovery nor approval alone
+enumerates exactly these six live events. Post-compaction effects are admitted
+only when the native attachment-fenced compaction lifecycle commits completion. Neither discovery nor approval alone
 launches commands.
 
-Lifecycle notices are durable system/automation-context turns, not user messages. A lead promotion/demotion, eligible non-self lead-membership change, verified worktree reassignment or completed interruption queues its notice in the same transaction as the authoritative change; no-op/idempotent replay does not duplicate. The revisioned notice policy has four default-enabled toggles: `lead_transitions`, `membership_to_lead`, `worktree_reassignment` and `workspace_interrupt`. It does not suppress mandatory onboarding. Stale policy revisions return `409`. Pending notices are injected only when safe, with an unknown provider outcome held for manual review rather than blindly retried.
+Lifecycle notices are durable system/automation-context turns, not user messages. A lead promotion/demotion, eligible non-self lead-membership change, verified worktree reassignment, completed interruption or completed compaction queues its notice in the same transaction as the authoritative change; no-op/idempotent replay does not duplicate. The revisioned notice policy has five default-enabled toggles: `lead_transitions`, `membership_to_lead`, `worktree_reassignment`, `workspace_interrupt`, `compaction_to_lead`; `compaction_to_team` defaults to false. Compaction creator notifications also respect the member's persisted `creator_compaction_subscription`. It does not suppress mandatory onboarding. Stale policy revisions return `409`. Pending notices are injected only when safe, with an unknown provider outcome held for manual review rather than blindly retried.
 
 `POST /v2/workspaces/{workspace_id}/interrupt` snapshots the authoritative active roster and active turn IDs, records durable per-agent effect intent before provider calls, and returns sorted `interrupted_agent_ids` and `skipped_agent_ids`. Idle members are skipped, agents outside the workspace are never touched, and exact `Idempotency-Key` retries replay the original result without redispatch. Durable effect/event evidence supports restart recovery without blindly duplicating an interrupt whose provider outcome may already have crossed the execution boundary.
 

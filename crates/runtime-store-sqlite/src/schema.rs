@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 17;
+pub(crate) const SCHEMA_VERSION: i64 = 18;
 
 #[path = "schema_chain.rs"]
 mod schema_chain;
@@ -982,3 +982,5 @@ UPDATE workspace_hook_effects SET application_state = 'rejected',
   application_error_code = 'pre_activation_effect'
   WHERE phase IN ('succeeded','failed','timed_out','manual_review');
 "#;
+
+const MIGRATION_18_SQL: &str = include_str!("schema_migration_18.sql");

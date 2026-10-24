@@ -472,43 +472,64 @@ async fn runtime_manager_persists_admitted_turn_compaction_observations() {
         database_path: temp_dir.path().join("runtime.sqlite3"),
     }));
     store.initialize().await.expect("initialize sqlite store");
+    let workspace_root = temp_dir.path().join("workspace");
+    std::fs::create_dir_all(&workspace_root).expect("workspace root");
+    let workspace = store
+        .register_workspace(
+            &runtime_core::prepare_workspace_registration(
+                runtime_core::WorkspaceRegisterRequest {
+                    canonical_root: workspace_root.to_string_lossy().into_owned(),
+                    display_name: Some("Claude compaction observations".into()),
+                },
+                runtime_core::OperationActor::operator("claude-compaction-test"),
+                None,
+            )
+            .expect("prepare workspace"),
+        )
+        .expect("register workspace")
+        .workspace;
     let manager = Arc::new(
         RuntimeSessionManager::new(store.clone(), Arc::new(registry), 256)
             .expect("construct runtime session manager"),
     );
 
-    let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Claude,
-            model: Some("claude-sonnet-5-5".to_string()),
-            cwd: Some("/tmp/runtime".to_string()),
-            permission_mode: None,
-            metadata: None,
-        })
-        .await
-        .expect("create runtime session");
-    manager
-        .send_turn(
-            session.id.as_str(),
-            SendTurnInput {
-                input: vec![json!({"type":"text","text":"compact automatically"})],
-                expected_turn_id: None,
-                permission_mode: None,
-                projection_source: None,
-                user_input_snapshot: None,
-                correlation_id: None,
-                turn_settings: Default::default(),
+    let agent = manager
+        .create_workspace_agent(
+            &workspace.workspace_id,
+            runtime_core::WorkspaceAgentCreateRequest {
+                provider: ProviderKind::Claude,
+                model: Some("claude-sonnet-5-5".into()),
+                permission_intent:
+                    runtime_core::ProviderPermissionIntent::InheritProviderConfiguration,
+                setting_sources_intent: runtime_core::ProviderSettingSourcesIntent::Isolated,
+                current_preferences: Default::default(),
+                system_prompt: None,
+                allowed_tools: Vec::new(),
+                disallowed_tools: Vec::new(),
+                cwd: Some(workspace_root.to_string_lossy().into_owned()),
+                worktree: None,
+                harness_version_slot: Some(runtime_core::HARNESS_VERSION.into()),
+                title: None,
+                metadata: None,
+                onboarding: None,
             },
+            "claude-compaction-test",
         )
         .await
-        .expect("send turn");
-    wait_for_ready_session(&manager, session.id.as_str()).await;
+        .expect("create workspace agent");
+    // Onboarding is an admitted automation turn and must have the same native
+    // compaction lifecycle as any later user turn.
+    manager
+        .dispatch_workspace_system_notices()
+        .await
+        .expect("dispatch durable onboarding");
+    wait_for_ready_session(&manager, agent.agent_id.as_str()).await;
 
     let events = store
         .list_runtime_events(
             Some((
                 runtime_core::RuntimeEventScope::Session,
-                session.id.as_str(),
+                agent.agent_id.as_str(),
             )),
             None,
             100,
@@ -516,15 +537,27 @@ async fn runtime_manager_persists_admitted_turn_compaction_observations() {
         .expect("list runtime events");
     let compaction = events
         .iter()
-        .filter(|event| event.kind == "provider.context_compaction_observed")
+        .filter(|event| event.kind == "compaction.lifecycle_changed")
         .collect::<Vec<_>>();
     assert_eq!(compaction.len(), 2);
     assert!(compaction.iter().all(|event| event.turn_id.is_some()));
+    assert_eq!(
+        compaction[0].payload["run_id"],
+        compaction[1].payload["run_id"]
+    );
     assert_eq!(compaction[0].payload["phase"], "started");
     assert_eq!(compaction[1].payload["phase"], "completed");
     assert_eq!(compaction[1].payload["trigger"], "auto");
     assert_eq!(compaction[1].payload["post_tokens"], 25);
     assert_eq!(compaction[1].payload["context_window_size"], 100);
+    let run = store
+        .get_session_compaction(compaction[1].payload["run_id"].as_str().unwrap())
+        .expect("read durable compaction")
+        .expect("recorded compaction");
+    assert_eq!(run.agent_id, agent.agent_id);
+    assert_eq!(run.source, "provider");
+    assert_eq!(run.phase, "completed");
+    assert_eq!(run.confidence.as_deref(), Some("native_turn"));
 }
 
 #[tokio::test]

@@ -4,6 +4,7 @@ use runtime_core::{
     WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRecord,
     WorkspaceAgentRecreationPolicy, WorkspaceRegisterRequest,
 };
+
 use rusqlite::TransactionBehavior;
 
 fn apply_schema_through(database_path: &std::path::Path, version: i64) {
@@ -143,6 +144,13 @@ fn manual_compaction_admission_replay_and_native_recovery_are_durable() {
         outcome: None,
         error_code: None,
         review_evidence: None,
+        source: "manual".into(),
+        confidence: None,
+        observed_turn_id: None,
+        trigger: Some("manual".into()),
+        pre_tokens: None,
+        post_tokens: None,
+        context_window_size: None,
         created_at_ms: 101,
         updated_at_ms: 101,
     };
@@ -330,6 +338,13 @@ fn restart_classifies_pre_dispatch_and_accepted_compaction_without_replaying_pro
         outcome: None,
         error_code: None,
         review_evidence: None,
+        source: "manual".into(),
+        confidence: None,
+        observed_turn_id: None,
+        trigger: Some("manual".into()),
+        pre_tokens: None,
+        post_tokens: None,
+        context_window_size: None,
         created_at_ms: 101,
         updated_at_ms: 101,
     };

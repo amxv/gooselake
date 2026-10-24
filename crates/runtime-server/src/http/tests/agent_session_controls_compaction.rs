@@ -2,6 +2,73 @@ use super::workspace_worktree_routes::call;
 use super::*;
 
 #[tokio::test]
+async fn native_auto_compaction_is_durable_without_a_manual_api_request() {
+    let (router, token, temp, provider, runtime) =
+        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
+    let root = temp.path().join("auto-compaction");
+    std::fs::create_dir(&root).unwrap();
+    let (status, workspace) = call(
+        &router,
+        &token,
+        "POST",
+        "/v2/workspaces",
+        Some(serde_json::json!({"canonical_root":root,"display_name":"Automatic Compact"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let workspace_id = workspace["workspace"]["workspace_id"].as_str().unwrap();
+    let (status, agent) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v2/workspaces/{workspace_id}/agents"),
+        Some(serde_json::json!({"provider":"codex","model":"test-model"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let agent_id = agent["agent_id"].as_str().unwrap();
+    finish_test_onboarding(&runtime, workspace_id, agent_id).await;
+    let mut events = runtime.subscribe_events();
+    runtime.start_provider_compaction_observers();
+    provider
+        .emit_compaction_event_with_trigger(agent_id, "completed", "auto")
+        .await;
+    let run_id = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event.kind == "compaction.lifecycle_changed" && event.scope_id == agent_id {
+                assert_eq!(event.payload["phase"], "completed");
+                assert_eq!(event.payload["source"], "provider");
+                break event.payload["run_id"].as_str().unwrap().to_owned();
+            }
+        }
+    })
+    .await
+    .expect("native unsolicited compaction should reach durable manager");
+    let (status, recorded) = call(
+        &router,
+        &token,
+        "GET",
+        &format!("/v2/agents/{agent_id}/compactions/{run_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(recorded["source"], "provider");
+    assert_eq!(recorded["phase"], "completed");
+    assert_eq!(recorded["outcome"], serde_json::Value::Null);
+    assert_eq!(recorded["trigger"], "auto");
+    assert_eq!(
+        provider.compaction_calls(),
+        0,
+        "no manual native compact RPC"
+    );
+}
+
+#[tokio::test]
 async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguously() {
     let (router, token, temp, provider, runtime) =
         build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
@@ -74,7 +141,7 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
     assert_eq!(status, StatusCode::CONFLICT, "singleflight is durable");
     assert_eq!(provider.compaction_calls(), 1);
 
-    provider.emit_compaction_event(agent_id, "completed");
+    provider.emit_compaction_event(agent_id, "completed").await;
     let uri = format!("/v2/agents/{agent_id}/compactions/{run_id}");
     let confirmed = tokio::time::timeout(Duration::from_secs(3), async {
         loop {

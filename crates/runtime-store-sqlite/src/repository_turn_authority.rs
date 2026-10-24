@@ -48,7 +48,8 @@ impl SqliteRuntimeRepository {
         let compaction_pending: i64 = transaction
             .query_row(
                 "SELECT COUNT(*) FROM session_compaction_runs
-                 WHERE session_id = ?1 AND phase IN ('intended','accepted','manual_review')",
+                 WHERE session_id = ?1
+                   AND phase IN ('intended','accepted','started','compacting','manual_review')",
                 params![session.id],
                 |row| row.get(0),
             )

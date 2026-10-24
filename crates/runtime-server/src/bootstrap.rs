@@ -274,6 +274,7 @@ pub async fn bootstrap_runtime(config: RuntimeServerConfig) -> Result<Bootstrapp
             "restored {resumed_onboarding} pre-admission workspace notice claims"
         ));
     }
+    runtime.start_provider_compaction_observers();
     runtime.start_workspace_system_notice_worker();
     let hook_store: Arc<dyn RuntimeStore> = store.clone();
     runtime_tools::start_team_hook_worker(&hook_store);

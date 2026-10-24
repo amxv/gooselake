@@ -253,7 +253,8 @@ impl SqliteRuntimeRepository {
         }
         let pending: i64 = tx.query_row(
             "SELECT (SELECT COUNT(*) FROM session_compaction_runs
-               WHERE session_id=?1 AND phase IN ('intended','accepted','manual_review'))
+               WHERE session_id=?1
+                 AND phase IN ('intended','accepted','started','compacting','manual_review'))
                +(SELECT COUNT(*) FROM workspace_agent_rebinds
                WHERE agent_id=?1 AND phase IN ('intended','manual_review'))
                +(SELECT COUNT(*) FROM session_edit_reruns

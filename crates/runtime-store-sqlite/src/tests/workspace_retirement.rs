@@ -56,6 +56,85 @@ fn retirement_command(
 }
 
 #[test]
+fn preflight_snapshots_independent_blocker_counts_without_mutating_workspace_authority() {
+    let (temp, repo, workspace) = setup();
+    let ready = repo
+        .workspace_retirement_preflight(&workspace.workspace_id)
+        .unwrap();
+    assert_eq!(ready.workspace, workspace);
+    assert!(ready.eligible_for_quiescent_retirement);
+    assert!(ready.blockers.is_empty());
+
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    for id in ["first", "second"] {
+        db.execute(
+            "INSERT INTO managed_processes
+              (process_id,workspace_id,command_json,status,admission_order,queue_order,
+               capture_limit_bytes,stdout_path,stderr_path,admitted_at,updated_at)
+             VALUES (?1,?2,'{}','queued',1+?3,1+?3,1024,'out','err',1,1)",
+            params![
+                id,
+                workspace.workspace_id,
+                if id == "first" { 0 } else { 1 }
+            ],
+        )
+        .unwrap();
+    }
+    db.execute(
+        "INSERT INTO runtime_operations(operation_id,workspace_id,kind,actor_kind,actor_id,
+                normalized_request_hash,normalized_request_json,phase,created_at,updated_at)
+         VALUES ('review',?1,'external','system','worker','input','{}','manual_review',1,1)",
+        [&workspace.workspace_id],
+    )
+    .unwrap();
+    let mut legacy = sample_session();
+    legacy.cwd = Some(workspace.canonical_root.clone());
+    legacy.worktree_id = None;
+    legacy.active_turn_id = None;
+    repo.upsert_session(&legacy).unwrap();
+    let blocked = repo
+        .workspace_retirement_preflight(&workspace.workspace_id)
+        .unwrap();
+    assert!(!blocked.eligible_for_quiescent_retirement);
+    let counts = blocked
+        .blockers
+        .iter()
+        .map(|blocker| (blocker.code.as_str(), blocker.count))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(counts.len(), 3);
+    assert_eq!(counts["managed_processes_unsettled"], 2);
+    assert_eq!(counts["operations_unresolved"], 1);
+    assert_eq!(counts["unowned_provider_sessions"], 1);
+    assert_eq!(
+        repo.get_workspace(&workspace.workspace_id).unwrap(),
+        Some(workspace.clone())
+    );
+    let refusal = repo.retire_empty_workspace(&retirement_command(&workspace, "preflight-refusal"));
+    assert!(refusal.is_err());
+    assert_eq!(
+        repo.get_workspace(&workspace.workspace_id).unwrap(),
+        Some(workspace)
+    );
+}
+
+#[test]
+fn preflight_after_retirement_is_ineligible_even_with_no_remaining_obligations() {
+    let (_temp, repo, workspace) = setup();
+    repo.retire_empty_workspace(&retirement_command(&workspace, "retire"))
+        .unwrap();
+    let result = repo
+        .workspace_retirement_preflight(&workspace.workspace_id)
+        .unwrap();
+    assert!(!result.eligible_for_quiescent_retirement);
+    assert_eq!(result.blockers.len(), 1);
+    assert_eq!(result.blockers[0].code, "workspace_not_active");
+    assert_eq!(result.blockers[0].count, 1);
+    assert!(repo
+        .workspace_retirement_preflight("unknown-workspace")
+        .is_err());
+}
+
+#[test]
 fn quiescent_workspace_retirement_and_root_reactivation_preserve_identity_and_history() {
     let (temp, repo, original) = setup();
     let command = retirement_command(&original, "retire-once");

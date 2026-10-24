@@ -31,6 +31,23 @@ pub struct WorkspaceRetirementResponse {
     pub workspace: WorkspaceRecord,
 }
 
+/// Operator-facing snapshot of obligations requiring settlement before
+/// retirement. This is advisory: retirement rechecks every invariant within
+/// its own write transaction and must never trust a prior preview.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceRetirementPreflight {
+    pub workspace: WorkspaceRecord,
+    pub eligible_for_quiescent_retirement: bool,
+    pub blockers: Vec<WorkspaceRetirementBlocker>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceRetirementBlocker {
+    pub code: String,
+    pub count: u64,
+    pub description: String,
+}
+
 /// The persistence layer admits this request only after proving that there
 /// are no member/provider or asynchronous resource obligations to settle.
 /// Resource-bearing retirement is a separate recoverable operation, never a

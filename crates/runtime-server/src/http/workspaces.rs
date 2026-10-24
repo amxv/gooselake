@@ -43,6 +43,21 @@ pub(super) async fn get_workspace(
     Ok(Json(workspace))
 }
 
+/// Operator-only advisory inspection; the retirement write rechecks these
+/// obligations transactionally and never trusts a previously returned result.
+pub(super) async fn workspace_retirement_preflight(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+) -> Result<Json<runtime_core::WorkspaceRetirementPreflight>, ApiError> {
+    Ok(Json(
+        state
+            .app
+            .services
+            .store
+            .workspace_retirement_preflight(workspace_id.trim())?,
+    ))
+}
+
 /// Operator-only, atomic zero-external-effect retirement. A populated
 /// workspace is rejected without any lifecycle write until its native and
 /// durable obligations can be settled by the recoverable retirement workflow.

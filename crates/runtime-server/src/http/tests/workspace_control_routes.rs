@@ -1,6 +1,66 @@
 use super::*;
 
 #[tokio::test]
+async fn retirement_preflight_http_is_operator_only_and_remains_advisory_after_retirement() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("preflight-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let workspace = register_control_workspace(&router, &token, &root, "Preflight").await;
+    let uri = format!(
+        "/v2/workspaces/{}/retirement-preflight",
+        workspace.workspace_id
+    );
+    let request = |authorized: bool| {
+        let mut builder = Request::builder().uri(&uri);
+        if authorized {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder.body(Body::empty()).unwrap()
+    };
+
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(request(false))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let ready = router.clone().oneshot(request(true)).await.unwrap();
+    assert_eq!(ready.status(), StatusCode::OK);
+    let preview: runtime_core::WorkspaceRetirementPreflight =
+        serde_json::from_slice(&to_bytes(ready.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(preview.workspace, workspace);
+    assert!(preview.eligible_for_quiescent_retirement);
+    assert!(preview.blockers.is_empty());
+
+    let retirement = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v2/workspaces/{}/retire", workspace.workspace_id))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"expected_revision":workspace.revision}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retirement.status(), StatusCode::OK);
+    let retired = router.clone().oneshot(request(true)).await.unwrap();
+    assert_eq!(retired.status(), StatusCode::OK);
+    let preview: runtime_core::WorkspaceRetirementPreflight =
+        serde_json::from_slice(&to_bytes(retired.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert!(!preview.eligible_for_quiescent_retirement);
+    assert_eq!(preview.blockers[0].code, "workspace_not_active");
+    assert_eq!(preview.blockers.len(), 1);
+}
+
+#[tokio::test]
 async fn quiescent_retirement_api_requires_operator_and_preserves_root_identity_on_reactivation() {
     let (router, token, temp) = build_test_router().await;
     let root = temp.path().join("retirement-root");

@@ -136,7 +136,8 @@ pub use workspace_control::{
     WorkspaceInterruptCommand, WorkspaceInterruptPlan, WorkspaceInterruptResponse,
     WorkspaceInterruptTarget, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionRequest,
     WorkspaceLeadTransitionResponse, WorkspaceMembershipAction, WorkspaceMembershipPolicy,
-    WorkspaceRetirementCommand, WorkspaceRetirementRequest, WorkspaceRetirementResponse,
+    WorkspaceRetirementBlocker, WorkspaceRetirementCommand, WorkspaceRetirementPreflight,
+    WorkspaceRetirementRequest, WorkspaceRetirementResponse,
 };
 pub use workspace_migration::{
     plan_legacy_workspace_migration, prepare_legacy_workspace_migration_apply,

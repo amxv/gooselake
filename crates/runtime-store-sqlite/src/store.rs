@@ -18,7 +18,7 @@ use runtime_core::{
     WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
     WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
     WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
-    WorkspaceRetirementCommand, WorkspaceRetirementResponse,
+    WorkspaceRetirementCommand, WorkspaceRetirementPreflight, WorkspaceRetirementResponse,
 };
 use runtime_core::{
     TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
@@ -368,20 +368,23 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<WorkspaceRegisterResponse, RuntimeError> {
         self.repository.register_workspace(command)
     }
-
     fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
         self.repository.list_workspaces()
     }
-
     fn get_workspace(&self, workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
         self.repository.get_workspace(workspace_id)
     }
-
     fn retire_empty_workspace(
         &self,
         command: &WorkspaceRetirementCommand,
     ) -> Result<WorkspaceRetirementResponse, RuntimeError> {
         self.repository.retire_empty_workspace(command)
+    }
+    fn workspace_retirement_preflight(
+        &self,
+        workspace_id: &str,
+    ) -> Result<WorkspaceRetirementPreflight, RuntimeError> {
+        self.repository.workspace_retirement_preflight(workspace_id)
     }
     fn transition_workspace_lead(
         &self,
@@ -389,14 +392,12 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<WorkspaceLeadTransitionResponse, RuntimeError> {
         self.repository.transition_workspace_lead(command)
     }
-
     fn begin_workspace_interrupt(
         &self,
         command: &WorkspaceInterruptCommand,
     ) -> Result<WorkspaceInterruptAdmission, RuntimeError> {
         self.repository.begin_workspace_interrupt(command)
     }
-
     fn mark_workspace_interrupt_started(
         &self,
         operation_id: &str,
@@ -411,7 +412,6 @@ impl RuntimeStore for SqliteRuntimeStore {
             changed_at,
         )
     }
-
     fn finalize_workspace_interrupt_effect(
         &self,
         operation_id: &str,
@@ -430,7 +430,6 @@ impl RuntimeStore for SqliteRuntimeStore {
             changed_at,
         )
     }
-
     fn mark_workspace_interrupt_uncertain(
         &self,
         operation_id: &str,
@@ -447,7 +446,6 @@ impl RuntimeStore for SqliteRuntimeStore {
             changed_at,
         )
     }
-
     fn complete_workspace_interrupt(
         &self,
         operation_id: &str,

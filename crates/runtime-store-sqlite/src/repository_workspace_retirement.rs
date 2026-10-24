@@ -1,6 +1,7 @@
 use runtime_core::{
     OperationPhase, OperationRecord, OperationTransitionRecord, RuntimeError,
-    WorkspaceLifecycleState, WorkspaceRetirementCommand, WorkspaceRetirementResponse,
+    WorkspaceLifecycleState, WorkspaceRecord, WorkspaceRetirementBlocker,
+    WorkspaceRetirementCommand, WorkspaceRetirementPreflight, WorkspaceRetirementResponse,
 };
 use rusqlite::{params, Connection, Transaction, TransactionBehavior};
 use std::path::Path;
@@ -80,6 +81,30 @@ pub(crate) fn reactivate_retired_workspace(
 }
 
 impl SqliteRuntimeRepository {
+    /// A consistent, read-only snapshot of the same persisted obligations the
+    /// quiescent retirement transaction later rechecks under its write lock.
+    pub fn workspace_retirement_preflight(
+        &self,
+        workspace_id: &str,
+    ) -> Result<WorkspaceRetirementPreflight, RuntimeError> {
+        let mut conn = open_connection(&self.database_path)?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|e| db_error("failed beginning retirement preflight snapshot", e))?;
+        let workspace = workspace_by_id(&tx, workspace_id)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("workspace {workspace_id}")))?;
+        let blockers = retirement_blockers(&tx, &workspace)?;
+        let eligible_for_quiescent_retirement =
+            workspace.lifecycle_state == WorkspaceLifecycleState::Active && blockers.is_empty();
+        tx.commit()
+            .map_err(|e| db_error("failed finalizing retirement preflight snapshot", e))?;
+        Ok(WorkspaceRetirementPreflight {
+            workspace,
+            eligible_for_quiescent_retirement,
+            blockers,
+        })
+    }
+
     /// The quiescent fast path has no native side effects. Every precondition,
     /// retired-root tombstone, operation receipt and workspace transition
     /// commits together. An occupied workspace must use a separately durable
@@ -143,8 +168,12 @@ impl SqliteRuntimeRepository {
         // There are no provider-close assumptions here. Even archived agents
         // may have an unconfirmed native close; preserve them for the full
         // effect-evidenced retirement operation rather than guessing.
-        ensure_quiescent_workspace(&tx, &command.workspace_id)?;
-        ensure_unowned_native_resources_do_not_use_root(&tx, &workspace.canonical_root)?;
+        if let Some(blocker) = retirement_blockers(&tx, &workspace)?.first() {
+            return Err(RuntimeError::Conflict(format!(
+                "workspace {} has {}; recoverable resource settlement is required before retirement",
+                workspace.workspace_id, blocker.description
+            )));
+        }
 
         let authority = OperationAuthorityTransaction::new(&tx);
         let requested_at = command.requested_at;
@@ -247,115 +276,103 @@ impl SqliteRuntimeRepository {
     }
 }
 
-/// These guards are deliberately stronger than an empty roster: persisted
-/// provider attachments, pending process results, transport and hook effects
-/// must not be silently abandoned by a lifecycle flag transition.
-fn ensure_quiescent_workspace(db: &Connection, workspace_id: &str) -> Result<(), RuntimeError> {
-    let blockers = [
-        (
-            "workspace session ownership (including archived provider attachments)",
-            "SELECT EXISTS(SELECT 1 FROM workspace_session_ownership WHERE workspace_id=?1)",
-        ),
-        (
-            "workspace agents",
-            "SELECT EXISTS(SELECT 1 FROM workspace_agents WHERE workspace_id=?1)",
-        ),
-        (
-            "unsettled managed processes",
-            "SELECT EXISTS(SELECT 1 FROM managed_processes WHERE workspace_id=?1
-               AND (status IN ('queued','launch_reserved','running')
-               OR completion_state IN ('pending','injecting')))",
-        ),
-        (
-            "unfinished message deliveries",
-            "SELECT EXISTS(SELECT 1 FROM agent_deliveries d
-             JOIN agent_messages m ON m.id=d.message_id
-             WHERE m.workspace_id=?1 AND d.status NOT IN ('delivered','failed','cancelled'))",
-        ),
-        (
-            "unsettled lifecycle notices",
-            "SELECT EXISTS(SELECT 1 FROM workspace_system_notices WHERE workspace_id=?1
-             AND state IN ('pending','injecting','manual_review'))",
-        ),
-        (
-            "unsettled hook effects",
-            "SELECT EXISTS(SELECT 1 FROM workspace_hook_effects WHERE workspace_id=?1
-             AND (phase IN ('intended','started','manual_review')
-             OR application_state='pending'))",
-        ),
-        (
-            "unresolved workspace operations",
-            "SELECT EXISTS(SELECT 1 FROM runtime_operations WHERE workspace_id=?1
-             AND phase IN ('requested','manual_review'))",
-        ),
-        (
-            "unresolved legacy migration subjects",
-            "SELECT EXISTS(SELECT 1 FROM legacy_workspace_migration_subjects WHERE workspace_id=?1
-             AND classification='unresolved')",
-        ),
-    ];
-    for (description, query) in blockers {
-        let exists = db
-            .query_row(query, [workspace_id], |row| row.get::<_, bool>(0))
-            .map_err(|e| db_error("failed checking workspace retirement obligations", e))?;
-        if exists {
-            return Err(RuntimeError::Conflict(format!(
-                "workspace {workspace_id} has {description}; recoverable resource settlement is required before retirement"
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// The legacy `/v1` authority can still contain a provider session or process
-/// working in the repository without an explicit workspace ownership row.
-/// Absence of the v2 roster is not proof that the root is truly quiescent.
-fn ensure_unowned_native_resources_do_not_use_root(
+/// These checks are stronger than an empty roster. A preview never clears a
+/// blocker or proves native provider-close success, and the write transaction
+/// runs this exact classifier again before committing a quiescent retirement.
+fn retirement_blockers(
     db: &Connection,
-    canonical_root: &str,
-) -> Result<(), RuntimeError> {
-    let root = Path::new(canonical_root);
-    for (kind, sql) in [
-        (
-            "unowned provider session",
-            "SELECT s.id,s.cwd FROM sessions s
-             WHERE s.cwd IS NOT NULL
-             AND NOT EXISTS(SELECT 1 FROM workspace_session_ownership o WHERE o.session_id=s.id)",
-        ),
-        (
-            "unowned managed process",
-            "SELECT process_id,cwd FROM managed_processes
-             WHERE workspace_id IS NULL AND cwd IS NOT NULL
-               AND (status IN ('queued','launch_reserved','running')
-                 OR completion_state IN ('pending','injecting'))",
-        ),
-        (
-            "unowned legacy process",
-            "SELECT id,cwd FROM processes WHERE cwd IS NOT NULL
-             AND status NOT IN ('completed','failed','killed','canceled','timed_out','interrupted')",
-        ),
+    workspace: &WorkspaceRecord,
+) -> Result<Vec<WorkspaceRetirementBlocker>, RuntimeError> {
+    let mut blockers = Vec::new();
+    if workspace.lifecycle_state != WorkspaceLifecycleState::Active {
+        add_blocker(
+            &mut blockers,
+            "workspace_not_active",
+            "workspace is not active",
+            1,
+        );
+    }
+    if workspace.lead_agent_id.is_some() {
+        add_blocker(
+            &mut blockers,
+            "lead_not_cleared",
+            "workspace lead remains assigned",
+            1,
+        );
+    }
+    let queries = [
+        ("session_ownership", "workspace session ownership (including archived provider attachments)",
+         "SELECT COUNT(*) FROM workspace_session_ownership WHERE workspace_id=?1"),
+        ("agent_records", "workspace agents (including archived members)",
+         "SELECT COUNT(*) FROM workspace_agents WHERE workspace_id=?1"),
+        ("managed_processes_unsettled", "unsettled managed processes",
+         "SELECT COUNT(*) FROM managed_processes WHERE workspace_id=?1 AND (status IN ('queued','launch_reserved','running') OR completion_state IN ('pending','injecting'))"),
+        ("message_deliveries_unfinished", "unfinished message deliveries",
+         "SELECT COUNT(*) FROM agent_deliveries d JOIN agent_messages m ON m.id=d.message_id WHERE m.workspace_id=?1 AND d.status NOT IN ('delivered','failed','cancelled')"),
+        ("lifecycle_notices_unsettled", "unsettled lifecycle notices",
+         "SELECT COUNT(*) FROM workspace_system_notices WHERE workspace_id=?1 AND state IN ('pending','injecting','manual_review')"),
+        ("hook_effects_unsettled", "unsettled hook effects",
+         "SELECT COUNT(*) FROM workspace_hook_effects WHERE workspace_id=?1 AND (phase IN ('intended','started','manual_review') OR application_state='pending')"),
+        ("operations_unresolved", "unresolved workspace operations",
+         "SELECT COUNT(*) FROM runtime_operations WHERE workspace_id=?1 AND phase IN ('requested','manual_review')"),
+        ("migration_subjects_unresolved", "unresolved legacy migration subjects",
+         "SELECT COUNT(*) FROM legacy_workspace_migration_subjects WHERE workspace_id=?1 AND classification='unresolved'"),
+    ];
+    for (code, description, sql) in queries {
+        let count = db
+            .query_row(sql, [workspace.workspace_id.as_str()], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|e| db_error("failed checking workspace retirement obligations", e))?;
+        add_blocker(
+            &mut blockers,
+            code,
+            description,
+            u64::try_from(count).map_err(|_| {
+                RuntimeError::ProtocolViolation("negative retirement obligation count".into())
+            })?,
+        );
+    }
+
+    // The legacy `/v1` authority may still use this root without a v2
+    // ownership row. An empty workspace roster is not native quiescence.
+    let root = Path::new(&workspace.canonical_root);
+    for (code, description, sql) in [
+        ("unowned_provider_sessions", "unowned provider sessions in workspace root",
+         "SELECT s.id,s.cwd FROM sessions s WHERE s.cwd IS NOT NULL AND NOT EXISTS(SELECT 1 FROM workspace_session_ownership o WHERE o.session_id=s.id)"),
+        ("unowned_managed_processes", "unowned managed processes in workspace root",
+         "SELECT process_id,cwd FROM managed_processes WHERE workspace_id IS NULL AND cwd IS NOT NULL AND (status IN ('queued','launch_reserved','running') OR completion_state IN ('pending','injecting'))"),
+        ("unowned_legacy_processes", "unowned legacy processes in workspace root",
+         "SELECT id,cwd FROM processes WHERE cwd IS NOT NULL AND status NOT IN ('completed','failed','killed','canceled','timed_out','interrupted')"),
     ] {
-        let mut statement = db.prepare(sql).map_err(|e| {
-            db_error("failed preparing legacy retirement obligation scan", e)
-        })?;
-        let rows = statement
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        let mut statement = db.prepare(sql)
+            .map_err(|e| db_error("failed preparing legacy retirement obligation scan", e))?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(1))
             .map_err(|e| db_error("failed scanning legacy retirement obligations", e))?;
+        let mut count = 0_u64;
         for row in rows {
-            let (id, cwd) = row.map_err(|e| {
-                db_error("failed reading legacy retirement obligation", e)
-            })?;
+            let cwd = row.map_err(|e| db_error("failed reading legacy retirement obligation", e))?;
             let cwd = Path::new(&cwd);
-            if cwd.starts_with(root)
-                || cwd
-                    .canonicalize()
-                    .is_ok_and(|canonical| canonical.starts_with(root))
-            {
-                return Err(RuntimeError::Conflict(format!(
-                    "workspace root {canonical_root} has {kind} {id}; its native state must be reconciled before retirement"
-                )));
+            if cwd.starts_with(root) || cwd.canonicalize().is_ok_and(|p| p.starts_with(root)) {
+                count += 1;
             }
         }
+        add_blocker(&mut blockers, code, description, count);
     }
-    Ok(())
+    Ok(blockers)
+}
+
+fn add_blocker(
+    blockers: &mut Vec<WorkspaceRetirementBlocker>,
+    code: &str,
+    description: &str,
+    count: u64,
+) {
+    if count > 0 {
+        blockers.push(WorkspaceRetirementBlocker {
+            code: code.to_string(),
+            count,
+            description: description.to_string(),
+        });
+    }
 }

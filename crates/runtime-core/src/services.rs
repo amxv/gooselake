@@ -31,7 +31,7 @@ use crate::{
     WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
     WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
     WorkspaceRegisterCommand, WorkspaceRegisterResponse, WorkspaceRetirementCommand,
-    WorkspaceRetirementResponse,
+    WorkspaceRetirementPreflight, WorkspaceRetirementResponse,
 };
 use crate::{
     TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
@@ -351,6 +351,15 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<WorkspaceRetirementResponse, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "atomic retirement of quiescent workspaces is unavailable".to_string(),
+        ))
+    }
+
+    fn workspace_retirement_preflight(
+        &self,
+        _workspace_id: &str,
+    ) -> Result<WorkspaceRetirementPreflight, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "workspace retirement preflight is unavailable".to_string(),
         ))
     }
 

@@ -221,6 +221,9 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/retire") => {
             "Atomically retire a workspace with no outstanding resources".to_string()
         }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/retirement-preflight") => {
+            "Inspect authoritative obligations before workspace retirement".to_string()
+        }
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}/worktrees") => {
             "List eligible and blocked managed worktrees".to_string()
         }
@@ -712,6 +715,7 @@ mod tests {
         assert!(yaml.contains("  /v2/workspaces:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/lead:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/retire:"));
+        assert!(yaml.contains("  /v2/workspaces/{workspace_id}/retirement-preflight:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/notice-policy:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/interrupt:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents:"));

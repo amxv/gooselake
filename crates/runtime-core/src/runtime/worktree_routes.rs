@@ -53,6 +53,9 @@ impl RuntimeSessionManager {
                 continue;
             }
             let mut blockers = Vec::new();
+            if workspace.lifecycle_state != WorkspaceLifecycleState::Active {
+                blockers.push("workspace_not_active".to_string());
+            }
             if let Err(reason) = eligible_managed_route(&identity, &record) {
                 blockers.push(reason);
             }

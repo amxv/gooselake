@@ -18,6 +18,7 @@ use runtime_core::{
     WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
     WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
     WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    WorkspaceRetirementCommand, WorkspaceRetirementResponse,
 };
 use runtime_core::{
     TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
@@ -376,6 +377,12 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.get_workspace(workspace_id)
     }
 
+    fn retire_empty_workspace(
+        &self,
+        command: &WorkspaceRetirementCommand,
+    ) -> Result<WorkspaceRetirementResponse, RuntimeError> {
+        self.repository.retire_empty_workspace(command)
+    }
     fn transition_workspace_lead(
         &self,
         command: &WorkspaceLeadTransitionCommand,

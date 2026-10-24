@@ -29,6 +29,7 @@ Auth legend:
 - `POST /v2/workspaces` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/workspaces` (Bearer)
 - `GET /v2/workspaces/{workspace_id}` (Bearer)
+- `POST /v2/workspaces/{workspace_id}/retire` (Bearer, JSON `expected_revision`, optional `Idempotency-Key`; atomic retirement only when no session or asynchronous obligations exist)
 - `GET /v2/workspaces/{workspace_id}/hooks` (Bearer; optional `event` filter, read-only effective hook configuration plus exact executable post-event capability list)
 - `GET /v2/workspaces/{workspace_id}/hooks/approval` (Bearer; current operator-granted hook snapshot and revision)
 - `PUT /v2/workspaces/{workspace_id}/hooks/approval` (Bearer, JSON; `expected_revision` and resolved event/name/fingerprint selections; empty selection revokes all grants)
@@ -66,6 +67,8 @@ Auth legend:
 - `GET /v2/operations/{operation_id}` (Bearer)
 
 Workspace registration canonicalizes the requested filesystem root and uses that canonical root as the durable uniqueness key. Repeated or concurrent registrations of the same root converge on one workspace identity. With `Idempotency-Key`, an exact retry replays the original terminal result; a different normalized request under the same key returns HTTP `409` without changing state.
+
+For a **quiescent** workspace with no associated session/agent authority or unsettled process, message, notice, hook, migration or workspace operation, `POST /v2/workspaces/{workspace_id}/retire` transactionally commits the retired state, durable operation receipt, identity tombstone and revision increment. Populated workspaces are rejected with `409` and left untouched rather than risking an unconfirmed provider close or destroying worktrees. Registering the same canonical root after proven retirement with a new idempotency key reactivates that original workspace ID, still leadless. This is not yet a full multi-resource retirement workflow for active agents/processes.
 
 Workspace leadership is nullable and revisioned. `POST /v2/workspaces/{workspace_id}/lead` accepts `lead_agent_id` (`string` or `null`) plus `expected_revision`. Non-null leads must be active members of that exact workspace, enforced by both service validation and SQLite triggers. Set/reassign/clear operations use compare-and-swap revision authority and durable operation identity. Archiving the current lead atomically clears leadership; restore never promotes it again. No workspace or legacy-team code path auto-elects a replacement lead.
 

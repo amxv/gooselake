@@ -307,6 +307,16 @@ impl RuntimeSessionManager {
             .store
             .get_workspace(workspace_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace {workspace_id}")))?;
+        // Native provider creation precedes the durable agent row. Serialize
+        // that entire window with quiescent retirement for this repository,
+        // then recheck lifecycle under the same lock. Otherwise retirement
+        // could observe an empty roster while a new provider starts.
+        let repository_lock = crate::repository_lifecycle_lock(&workspace.canonical_root).await;
+        let _repository_guard = repository_lock.read().await;
+        let workspace = self
+            .store
+            .get_workspace(workspace_id)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("workspace {workspace_id}")))?;
         if workspace.lifecycle_state != WorkspaceLifecycleState::Active {
             return Err(RuntimeError::InvalidState(format!(
                 "workspace {workspace_id} is not active"

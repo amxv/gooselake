@@ -114,6 +114,14 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/operations/$OPERATION_
 
 The operation endpoint exposes the durable operation row plus current claims, transition evidence, effect evidence, outbox rows, and delivery receipts. Workspace registration itself is committed in one SQLite transaction with its operation transitions and canonical-root claim/fence bookkeeping, so a failed commit does not leave a half-created workspace or a falsely terminal operation.
 
+### Retiring and reactivating a workspace
+
+`POST /v2/workspaces/{workspace_id}/retire` is an operator-only **quiescent retirement** operation. Pass JSON `{"expected_revision":0}` (use the current revision from `GET /v2/workspaces/{workspace_id}`) and preferably an `Idempotency-Key`. The response contains the durable `operation_id` and the workspace in `retired` state. The operation, its claim/fence history, a retired-root identity receipt, and the lifecycle change commit **atomically**. Retrying the same key and exact input returns the original response without retiring the workspace again.
+
+This endpoint is deliberately conservative: if *any* workspace session ownership or agent record exists (even archived), or a managed process, message delivery, lifecycle notice, hook effect, migration subject, or workspace operation needs settlement, it returns `409 Conflict` and **does not retire anything**. It also checks for unowned legacy provider sessions and live processes using the same filesystem root; an empty v2 roster alone is not sufficient proof. It does not send provider close requests, interrupt turns, kill processes, or delete worktrees. Workspace retirement with active or archived agents still needs an effect-evidenced multi-resource settlement workflow; clients must not treat this narrow endpoint as a full populated-workspace removal feature. Worktrees remain preserved rather than implicitly deleted.
+
+After a proven completed retirement, `POST /v2/workspaces` with the **same canonical root** and a **new idempotency key** reactivates the existing workspace identity instead of minting another ID. It increments the revision and leaves leadership unset. While retired, worktree inventory marks retained worktrees with the `workspace_not_active` assignment blocker. A retired flag without a valid terminal retirement operation cannot reactivate automatically. Reusing an old registration key returns its historical exact receipt and does not reactivate anything.
+
 Existing session/team/process/worktree APIs remain under `/v1`; `/v2` is introduced incrementally rather than changing `/v1` behavior in place. Canonical agent messaging is also available under `/v2` without requiring a legacy team ID.
 
 ### Workspace-owned agents

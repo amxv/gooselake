@@ -238,6 +238,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/workspaces", post(register_workspace).get(list_workspaces))
         .route("/workspaces/{workspace_id}", get(get_workspace))
+        .route("/workspaces/{workspace_id}/retire", post(retire_workspace))
         .route("/workspaces/{workspace_id}/hooks", get(get_workspace_hooks))
         .route(
             "/workspaces/{workspace_id}/hooks/approval",

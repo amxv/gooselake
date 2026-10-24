@@ -218,6 +218,9 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/workspaces") => "Register workspace".to_string(),
         (HttpMethod::Get, "/v2/workspaces") => "List workspaces".to_string(),
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}") => "Get workspace".to_string(),
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/retire") => {
+            "Atomically retire a workspace with no outstanding resources".to_string()
+        }
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}/worktrees") => {
             "List eligible and blocked managed worktrees".to_string()
         }
@@ -352,6 +355,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         && matches!(
             path,
             "/v2/workspaces"
+                | "/v2/workspaces/{workspace_id}/retire"
                 | "/v2/agents/{agent_id}/compact"
                 | "/v2/workspaces/{workspace_id}/lead"
                 | "/v2/workspaces/{workspace_id}/interrupt"
@@ -468,6 +472,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v1/teams/{team_id}/messages/{message_id}/cancel"
             | "/v1/teams/{team_id}/interrupt-all"
             | "/v2/workspaces"
+            | "/v2/workspaces/{workspace_id}/retire"
             | "/v2/agents/{agent_id}/preferences"
             | "/v2/agents/{agent_id}/permission"
             | "/v2/agents/{agent_id}/turns"
@@ -706,6 +711,7 @@ mod tests {
         assert!(yaml.contains("  /v1/providers/acp/auth/status:"));
         assert!(yaml.contains("  /v2/workspaces:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/lead:"));
+        assert!(yaml.contains("  /v2/workspaces/{workspace_id}/retire:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/notice-policy:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/interrupt:"));
         assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents:"));

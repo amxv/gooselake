@@ -1,6 +1,82 @@
 use super::*;
 
 #[tokio::test]
+async fn quiescent_retirement_api_requires_operator_and_preserves_root_identity_on_reactivation() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("retirement-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let original = register_control_workspace(&router, &token, &root, "Retire and Revive").await;
+    let uri = format!("/v2/workspaces/{}/retire", original.workspace_id);
+    let input = serde_json::json!({"expected_revision": original.revision});
+    let request = |authorized: bool, key: &str, body: serde_json::Value| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri(&uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("idempotency-key", key);
+        if authorized {
+            builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        builder.body(Body::from(body.to_string())).unwrap()
+    };
+
+    let unauthorized = router
+        .clone()
+        .oneshot(request(false, "retire", input.clone()))
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    let retired = router
+        .clone()
+        .oneshot(request(true, "retire", input.clone()))
+        .await
+        .unwrap();
+    assert_eq!(retired.status(), StatusCode::OK);
+    let receipt: runtime_core::WorkspaceRetirementResponse =
+        serde_json::from_slice(&to_bytes(retired.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+        receipt.workspace.lifecycle_state,
+        runtime_core::WorkspaceLifecycleState::Retired
+    );
+    assert_eq!(receipt.workspace.revision, original.revision + 1);
+
+    let replay = router
+        .clone()
+        .oneshot(request(true, "retire", input.clone()))
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay_receipt: runtime_core::WorkspaceRetirementResponse =
+        serde_json::from_slice(&to_bytes(replay.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(receipt, replay_receipt);
+    let mismatch = router
+        .clone()
+        .oneshot(request(
+            true,
+            "retire",
+            serde_json::json!({"expected_revision":900}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(mismatch.status(), StatusCode::CONFLICT);
+
+    let reactivated = register_control_workspace(&router, &token, &root, "Retire and Revive").await;
+    assert_eq!(reactivated.workspace_id, original.workspace_id);
+    assert_eq!(reactivated.revision, original.revision + 2);
+    assert_eq!(reactivated.lead_agent_id, None);
+    let old_receipt = router
+        .clone()
+        .oneshot(request(true, "retire", input))
+        .await
+        .unwrap();
+    assert_eq!(old_receipt.status(), StatusCode::OK);
+    assert_eq!(
+        get_control_workspace(&router, &token, &original.workspace_id).await,
+        reactivated
+    );
+}
+
+#[tokio::test]
 async fn workspace_notice_policy_routes_enforce_revision_and_operator_authority() {
     let (router, token, temp) = build_test_router().await;
     let root = temp.path().join("notice-policy-workspace");

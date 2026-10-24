@@ -8,6 +8,64 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRetirementRequest {
+    pub expected_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceRetirementCommand {
+    pub operation_id: String,
+    pub actor: OperationActor,
+    pub idempotency_key: Option<String>,
+    pub normalized_request_hash: String,
+    pub normalized_request: serde_json::Value,
+    pub workspace_id: String,
+    pub expected_revision: u64,
+    pub requested_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceRetirementResponse {
+    pub operation_id: String,
+    pub workspace: WorkspaceRecord,
+}
+
+/// The persistence layer admits this request only after proving that there
+/// are no member/provider or asynchronous resource obligations to settle.
+/// Resource-bearing retirement is a separate recoverable operation, never a
+/// partial success of this command.
+pub fn prepare_workspace_retirement(
+    workspace_id: &str,
+    request: WorkspaceRetirementRequest,
+    actor: OperationActor,
+    idempotency_key: Option<String>,
+) -> Result<WorkspaceRetirementCommand, RuntimeError> {
+    let workspace_id = normalize_required(workspace_id, "workspace_id")?;
+    if actor.identifier.trim().is_empty() {
+        return Err(RuntimeError::InvalidState(
+            "operation actor identifier cannot be empty".to_string(),
+        ));
+    }
+    let idempotency_key = normalize_idempotency_key(idempotency_key)?;
+    let normalized_request = json!({
+        "workspace_id": workspace_id,
+        "expected_revision": request.expected_revision,
+    });
+    let normalized_request_hash = normalized_json_hash(&normalized_request)?;
+    Ok(WorkspaceRetirementCommand {
+        operation_id: opaque_id("op"),
+        actor,
+        idempotency_key,
+        normalized_request_hash,
+        normalized_request,
+        workspace_id,
+        expected_revision: request.expected_revision,
+        requested_at: unix_time_ms()?,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceLeadTransitionRequest {
     pub lead_agent_id: Option<String>,
     pub expected_revision: u64,

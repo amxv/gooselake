@@ -8,6 +8,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 
 use crate::db::{collect_rows, db_error, open_connection, string_to_json};
 use crate::operation_tx::OperationAuthorityTransaction;
+use crate::repository_workspace_retirement::reactivate_retired_workspace;
 use crate::SqliteRuntimeRepository;
 
 const WORKSPACE_REGISTER_KIND: &str = "workspace_register";
@@ -34,7 +35,9 @@ impl SqliteRuntimeRepository {
             command.actor.identifier.as_str(),
             command.idempotency_key.as_deref(),
         )? {
-            if existing.normalized_request_hash != command.normalized_request_hash {
+            if existing.kind != WORKSPACE_REGISTER_KIND
+                || existing.normalized_request_hash != command.normalized_request_hash
+            {
                 return Err(RuntimeError::Conflict(format!(
                     "Idempotency-Key already belongs to operation {} with different input",
                     existing.operation_id
@@ -89,15 +92,20 @@ impl SqliteRuntimeRepository {
             command.requested_at,
         )?;
 
+        let mut reactivated = false;
         let workspace = match workspace_by_canonical_root(&transaction, &command.canonical_root)? {
             Some(existing) if existing.lifecycle_state == WorkspaceLifecycleState::Active => {
                 existing
             }
             Some(existing) => {
-                return Err(RuntimeError::Conflict(format!(
-                    "workspace {} is retired; explicit reactivation is required",
-                    existing.workspace_id
-                )));
+                // Root identity is never reallocated. Re-registration is an
+                // explicit operator operation with a fresh idempotency key;
+                // a retired workspace comes back leadless with all previously
+                // archived members still archived.
+                let restored =
+                    reactivate_retired_workspace(&transaction, &existing, command.requested_at)?;
+                reactivated = true;
+                restored
             }
             None => insert_workspace(&transaction, command)?,
         };
@@ -129,6 +137,7 @@ impl SqliteRuntimeRepository {
             evidence: Some(serde_json::json!({
                 "workspace_id": workspace.workspace_id,
                 "canonical_root": workspace.canonical_root,
+                "reactivated": reactivated,
                 "resource_fence_generation": claim.fence_generation,
             })),
             created_at: command.requested_at,

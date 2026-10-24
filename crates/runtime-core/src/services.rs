@@ -30,7 +30,8 @@ use crate::{
     WorkspaceAgentRebindOperation, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
     WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
     WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRecord,
-    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    WorkspaceRegisterCommand, WorkspaceRegisterResponse, WorkspaceRetirementCommand,
+    WorkspaceRetirementResponse,
 };
 use crate::{
     TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
@@ -341,6 +342,15 @@ pub trait RuntimeStore: Send + Sync {
     fn get_workspace(&self, _workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "workspace authority is not implemented by this runtime store".to_string(),
+        ))
+    }
+
+    fn retire_empty_workspace(
+        &self,
+        _command: &WorkspaceRetirementCommand,
+    ) -> Result<WorkspaceRetirementResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "atomic retirement of quiescent workspaces is unavailable".to_string(),
         ))
     }
 

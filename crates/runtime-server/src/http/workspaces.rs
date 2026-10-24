@@ -1,9 +1,10 @@
 use super::*;
 use runtime_core::{
     prepare_workspace_interrupt, prepare_workspace_lead_transition, prepare_workspace_registration,
-    OperationActor, WorkspaceAgentArchiveRequest, WorkspaceAgentCreateRequest,
-    WorkspaceAgentInitialRoute, WorkspaceAgentLifecycleState, WorkspaceLeadTransitionRequest,
-    WorkspaceRegisterRequest, WorkspaceWorktreeCreateRequest,
+    prepare_workspace_retirement, OperationActor, WorkspaceAgentArchiveRequest,
+    WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute, WorkspaceAgentLifecycleState,
+    WorkspaceLeadTransitionRequest, WorkspaceRegisterRequest, WorkspaceRetirementRequest,
+    WorkspaceWorktreeCreateRequest,
 };
 
 pub(super) const OPERATOR_PRINCIPAL: &str = "runtime_operator";
@@ -40,6 +41,26 @@ pub(super) async fn get_workspace(
         .get_workspace(workspace_id.trim())?
         .ok_or_else(|| ApiError::not_found(format!("workspace {workspace_id}")))?;
     Ok(Json(workspace))
+}
+
+/// Operator-only, atomic zero-external-effect retirement. A populated
+/// workspace is rejected without any lifecycle write until its native and
+/// durable obligations can be settled by the recoverable retirement workflow.
+pub(super) async fn retire_workspace(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<WorkspaceRetirementRequest>,
+) -> Result<Json<runtime_core::WorkspaceRetirementResponse>, ApiError> {
+    let command = prepare_workspace_retirement(
+        workspace_id.trim(),
+        request,
+        OperationActor::operator(OPERATOR_PRINCIPAL),
+        parse_idempotency_key(&headers)?,
+    )?;
+    Ok(Json(
+        state.runtime.retire_quiescent_workspace(&command).await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]

@@ -78,6 +78,13 @@ impl WorktreeService for RuntimeWorktreeService {
             .store
             .get_workspace(&request.workspace_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace {}", request.workspace_id)))?;
+        let lifecycle_lock =
+            runtime_core::repository_lifecycle_lock(&workspace.canonical_root).await;
+        let _admission_guard = lifecycle_lock.read().await;
+        let workspace = self
+            .store
+            .get_workspace(&request.workspace_id)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("workspace {}", request.workspace_id)))?;
         if workspace.lifecycle_state != WorkspaceLifecycleState::Active {
             return Err(RuntimeError::Conflict("workspace is not active".into()));
         }

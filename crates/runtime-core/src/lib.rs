@@ -132,10 +132,11 @@ pub use workspace_agent::{
 };
 pub use workspace_control::{
     authorize_workspace_membership_mutation, prepare_workspace_interrupt,
-    prepare_workspace_lead_transition, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
-    WorkspaceInterruptPlan, WorkspaceInterruptResponse, WorkspaceInterruptTarget,
-    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionRequest,
+    prepare_workspace_lead_transition, prepare_workspace_retirement, WorkspaceInterruptAdmission,
+    WorkspaceInterruptCommand, WorkspaceInterruptPlan, WorkspaceInterruptResponse,
+    WorkspaceInterruptTarget, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionRequest,
     WorkspaceLeadTransitionResponse, WorkspaceMembershipAction, WorkspaceMembershipPolicy,
+    WorkspaceRetirementCommand, WorkspaceRetirementRequest, WorkspaceRetirementResponse,
 };
 pub use workspace_migration::{
     plan_legacy_workspace_migration, prepare_legacy_workspace_migration_apply,
@@ -150,4 +151,4 @@ pub use workspace_notice::{
     WorkspaceAgentOnboardingRequest, WorkspaceNoticePolicy, WorkspaceNoticePolicyRecord,
     WorkspaceNoticePolicyUpdate, WorkspaceSystemNoticeRecord,
 };
-pub use worktree_lock::repository_worktree_lock;
+pub use worktree_lock::{repository_lifecycle_lock, repository_worktree_lock};

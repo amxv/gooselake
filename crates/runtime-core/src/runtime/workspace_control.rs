@@ -4,12 +4,28 @@ use crate::{
     authorize_workspace_membership_mutation, RuntimeError, WorkspaceAgentCreateRequest,
     WorkspaceAgentRecord, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
     WorkspaceInterruptResponse, WorkspaceMembershipAction, WorkspaceMembershipPolicy,
+    WorkspaceRetirementCommand, WorkspaceRetirementResponse,
 };
 
 use super::helpers::now_ms;
 use super::RuntimeSessionManager;
 
 impl RuntimeSessionManager {
+    /// Wait for native workspace-agent admission and managed worktree creation
+    /// to finish before trusting the durable no-obligations snapshot.
+    pub async fn retire_quiescent_workspace(
+        &self,
+        command: &WorkspaceRetirementCommand,
+    ) -> Result<WorkspaceRetirementResponse, RuntimeError> {
+        let workspace = self
+            .store
+            .get_workspace(&command.workspace_id)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("workspace {}", command.workspace_id)))?;
+        let repository_lock = crate::repository_lifecycle_lock(&workspace.canonical_root).await;
+        let _repository_guard = repository_lock.write().await;
+        self.store.retire_empty_workspace(command)
+    }
+
     pub fn authorize_workspace_membership(
         &self,
         workspace_id: &str,

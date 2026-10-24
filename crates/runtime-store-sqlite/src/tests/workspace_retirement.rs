@@ -213,6 +213,80 @@ fn quiescent_workspace_retirement_and_root_reactivation_preserve_identity_and_hi
 }
 
 #[test]
+fn reactivation_rechecks_resource_obligations_admitted_after_retirement() {
+    let (temp, repo, original) = setup();
+    let retired = repo
+        .retire_empty_workspace(&retirement_command(&original, "retire"))
+        .unwrap()
+        .workspace;
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let root = temp.path().join("workspace");
+    let command = prepare_workspace_registration(
+        WorkspaceRegisterRequest {
+            canonical_root: root.to_string_lossy().into_owned(),
+            display_name: Some("Retirement Test".into()),
+        },
+        OperationActor::operator("retirement-test"),
+        Some("reactivate-after-settlement".into()),
+    )
+    .unwrap();
+
+    // A legacy/runtime writer might still have produced new work after the
+    // terminal receipt. That receipt must never bypass current obligations.
+    db.execute(
+        "INSERT INTO managed_processes
+          (process_id,workspace_id,command_json,status,admission_order,queue_order,
+           capture_limit_bytes,stdout_path,stderr_path,admitted_at,updated_at)
+         VALUES ('late-process',?1,'{}','queued',1,1,1024,'out','err',1,1)",
+        [&original.workspace_id],
+    )
+    .unwrap();
+    assert!(
+        format!("{}", repo.register_workspace(&command).unwrap_err())
+            .contains("unsettled managed processes")
+    );
+    db.execute(
+        "DELETE FROM managed_processes WHERE process_id='late-process'",
+        [],
+    )
+    .unwrap();
+
+    let mut legacy_session = sample_session();
+    legacy_session.cwd = Some(original.canonical_root.clone());
+    legacy_session.active_turn_id = None;
+    legacy_session.worktree_id = None;
+    legacy_session.status = "closed".into();
+    repo.upsert_session(&legacy_session).unwrap();
+    assert!(
+        format!("{}", repo.register_workspace(&command).unwrap_err())
+            .contains("unowned provider sessions")
+    );
+    assert_eq!(
+        repo.get_workspace(&original.workspace_id).unwrap(),
+        Some(retired)
+    );
+    assert!(repo.get_operation(&command.operation_id).unwrap().is_none());
+    let tombstones: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM retired_workspaces WHERE workspace_id=?1",
+            [&original.workspace_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(tombstones, 1);
+
+    legacy_session.cwd = None;
+    repo.upsert_session(&legacy_session).unwrap();
+    let reopened = repo.register_workspace(&command).unwrap();
+    assert_eq!(reopened.workspace.workspace_id, original.workspace_id);
+    assert_eq!(
+        reopened.workspace.lifecycle_state,
+        WorkspaceLifecycleState::Active
+    );
+    assert!(reopened.workspace.lead_agent_id.is_none());
+}
+
+#[test]
 fn retirement_rejects_ownership_and_unsettled_obligations_without_any_state_change() {
     let (temp, repo, original) = setup();
     let path = temp.path().join("runtime.sqlite3");

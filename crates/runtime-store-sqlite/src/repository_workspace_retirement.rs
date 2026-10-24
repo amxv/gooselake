@@ -46,21 +46,17 @@ pub(crate) fn reactivate_retired_workspace(
             retired.workspace_id
         )));
     }
-    let mut blockers = tx
-        .prepare(
-            "SELECT EXISTS(SELECT 1 FROM workspace_agents WHERE workspace_id=?1 AND lifecycle_state='active')
-                  OR EXISTS(SELECT 1 FROM runtime_operations WHERE workspace_id=?1
-                            AND phase IN ('requested','manual_review'))",
-        )
-        .map_err(|e| db_error("failed preparing workspace reactivation safety check", e))?;
-    let unsafe_state: bool = blockers
-        .query_row([retired.workspace_id.as_str()], |row| row.get(0))
-        .map_err(|e| db_error("failed inspecting workspace reactivation state", e))?;
-    drop(blockers);
-    if unsafe_state || retired.lead_agent_id.is_some() {
+    // A terminal tombstone does not excuse new obligations written through a
+    // legacy ingress after retirement. Recheck the same conservative resource
+    // inventory under the registration transaction's write lock; the only
+    // expected blocker for a quiescent retired identity is its lifecycle flag.
+    if let Some(blocker) = retirement_blockers(tx, retired)?
+        .into_iter()
+        .find(|blocker| blocker.code != "workspace_not_active")
+    {
         return Err(RuntimeError::Conflict(format!(
-            "workspace {} cannot reactivate with active members, lead or unresolved operations",
-            retired.workspace_id
+            "workspace {} cannot reactivate with {} ({}); recovery is required",
+            retired.workspace_id, blocker.description, blocker.count
         )));
     }
     tx.execute(

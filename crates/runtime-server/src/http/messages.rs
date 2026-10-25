@@ -156,19 +156,15 @@ pub(super) async fn list_agent_deliveries(
         .app
         .services
         .team_comms
-        .get_agent_deliveries(AgentDeliveryListRequest {
-            message_id: Some(message_id),
-            recipient_agent_id: query.recipient_agent_id,
-        })
-        .await?
-        .into_iter()
-        .filter(|row| {
-            cursor.as_ref().is_none_or(|(created_at, id)| {
-                (row.created_at, row.id.as_str()) > (*created_at, id.as_str())
-            })
-        })
-        .take(limit + 1)
-        .collect();
+        .get_agent_deliveries_page(
+            AgentDeliveryListRequest {
+                message_id: Some(message_id),
+                recipient_agent_id: query.recipient_agent_id,
+            },
+            cursor,
+            limit + 1,
+        )
+        .await?;
     Ok(paged_response(rows, limit, |row| (row.created_at, &row.id)))
 }
 

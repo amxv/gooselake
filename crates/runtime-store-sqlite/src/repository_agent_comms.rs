@@ -193,6 +193,46 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed listing authoritative agent deliveries", error))?;
         collect_rows(rows)
     }
+
+    /// Indexed delivery keyset page. The `message_id` predicate is required
+    /// for the `(message_id, created_at, id)` index; unlike the full listing
+    /// used for internal recovery, this never loads the whole message fanout.
+    pub fn list_agent_delivery_records_page(
+        &self,
+        request: &runtime_core::AgentDeliveryListRequest,
+        cursor: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        let message_id = request.message_id.as_deref().ok_or_else(|| {
+            RuntimeError::InvalidState("paged deliveries require a message ID".into())
+        })?;
+        if !(1..=101).contains(&limit) {
+            return Err(RuntimeError::InvalidState(
+                "paged delivery limit must be between 1 and 101".into(),
+            ));
+        }
+        let connection = open_connection(&self.database_path)?;
+        let mut sql = format!("SELECT {DELIVERY_COLUMNS} FROM agent_deliveries WHERE message_id=?");
+        let mut values: Vec<rusqlite::types::Value> = vec![message_id.to_owned().into()];
+        if let Some(recipient) = request.recipient_agent_id.as_deref() {
+            sql.push_str(" AND recipient_agent_id=?");
+            values.push(recipient.to_owned().into());
+        }
+        if let Some((created_at, id)) = cursor {
+            sql.push_str(" AND (created_at, id) > (?, ?)");
+            values.push(created_at.into());
+            values.push(id.into());
+        }
+        sql.push_str(" ORDER BY created_at, id LIMIT ?");
+        values.push((limit as i64).into());
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| db_error("failed preparing indexed delivery page", error))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(values), decode_delivery)
+            .map_err(|error| db_error("failed listing indexed agent deliveries", error))?;
+        collect_rows(rows)
+    }
 }
 
 const DELIVERY_COLUMNS: &str = "id,message_id,recipient_agent_id,provider,status,effective_policy,

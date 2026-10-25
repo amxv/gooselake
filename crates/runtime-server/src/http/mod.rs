@@ -191,6 +191,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let protected_v2 = Router::new()
         .route("/capabilities", get(runtime_capabilities_v2))
+        .route("/agents/{agent_id}", get(get_agent_by_id))
         .route(
             "/agents/{agent_id}/turns/{turn_id}/edit-rerun",
             post(edit_agent_turn_and_rerun),

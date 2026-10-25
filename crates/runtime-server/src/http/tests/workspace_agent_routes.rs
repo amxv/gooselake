@@ -449,6 +449,29 @@ async fn workspace_agent_create_archive_restore_and_restart_preserve_authority()
         archived.lifecycle_state,
         runtime_core::WorkspaceAgentLifecycleState::Archived
     );
+    let global_archived = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v2/agents/{}", archived.agent_id))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("global archived lookup"),
+        )
+        .await
+        .expect("global archived response");
+    assert_eq!(global_archived.status(), StatusCode::OK);
+    assert_eq!(
+        global_archived.headers()[header::ETAG].to_str().unwrap(),
+        format!("\"{}\"", archived.revision)
+    );
+    let globally_resolved: runtime_core::WorkspaceAgentRecord = serde_json::from_slice(
+        &to_bytes(global_archived.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .expect("global archived agent");
+    assert_eq!(globally_resolved, archived);
     assert!(list_agents(&router, &token, &workspace.workspace_id, None)
         .await
         .is_empty());

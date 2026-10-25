@@ -89,6 +89,28 @@ pub trait TeamCommsService: Send + Sync {
         ))
     }
 
+    /// Bounded delivery inspection for operator HTTP. Legacy implementations
+    /// can use the default sorted-list fallback, while persistent stores may
+    /// override it with an indexed keyset query.
+    async fn get_agent_deliveries_page(
+        &self,
+        request: AgentDeliveryListRequest,
+        cursor: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        Ok(self
+            .get_agent_deliveries(request)
+            .await?
+            .into_iter()
+            .filter(|row| {
+                cursor
+                    .as_ref()
+                    .is_none_or(|(at, id)| (row.created_at, row.id.as_str()) > (*at, id.as_str()))
+            })
+            .take(limit)
+            .collect())
+    }
+
     async fn retry_agent_delivery(
         &self,
         _request: AgentRetryDeliveryRequest,

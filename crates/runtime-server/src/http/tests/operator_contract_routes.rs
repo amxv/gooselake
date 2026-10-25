@@ -583,6 +583,54 @@ async fn agent_revisions_guard_policy_mutation_before_provider_work() {
         get.headers()[header::ETAG].to_str().unwrap(),
         format!("\"{revision}\"")
     );
+    let workspace_scoped_agent = response_json(get).await;
+    let global_uri = format!("/v2/agents/{agent_id}");
+    let global = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(global_uri.as_str())
+                .header(header::AUTHORIZATION, auth.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(global.status(), StatusCode::OK);
+    assert_eq!(
+        global.headers()[header::ETAG].to_str().unwrap(),
+        format!("\"{revision}\"")
+    );
+    assert_eq!(response_json(global).await, workspace_scoped_agent);
+
+    let missing = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v2/agents/sess_missing")
+                .header(header::AUTHORIZATION, auth.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert_eq!(response_json(missing).await["error"]["code"], "not_found");
+    let unauthorized = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(global_uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response_json(unauthorized).await["error"]["code"],
+        "unauthorized"
+    );
 
     let prefix = format!("/v2/agents/{agent_id}");
     for (route, payload) in [

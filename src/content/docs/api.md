@@ -338,10 +338,17 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID"
 
 curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/agents/$AGENT_ID"
+
+curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/onboarding"
 ```
 
 The list defaults to active agents. Use `?lifecycle=archived` for archived history or `?lifecycle=all` for both states.
+`GET /v2/agents/{agent_id}` is a read-only global operator lookup for a
+workspace-owned agent, including an archived agent. It returns the canonical
+workspace identity and a strong revision `ETag`, just like the workspace-scoped
+agent lookup; it does not create standalone agents.
 
 ### Provider observations and mutable session controls
 
@@ -624,7 +631,9 @@ in the JSON response; pass the cursor unchanged to fetch the next page.
 `GET /v2/messages/{message_id}/deliveries` supports `recipient_agent_id`,
 `cursor`, and `limit=1..100` (default 50). Delivery lists retain their JSON
 array shape; when another page exists the response includes `X-Next-Cursor`,
-based on stable delivery creation time and ID. Delivery state is per recipient
+based on stable delivery creation time and ID. The SQLite backend reads these
+pages using the indexed message/time/ID keyset rather than loading every
+delivery of a large broadcast into the HTTP request. Delivery state is per recipient
 and remains explicit across `pending`, `deferred`, `injecting`, `injected`,
 `failed`, and `cancelled` transitions. Retry is allowed from failed/deferred
 state, and cancellation applies only while all outstanding deliveries are

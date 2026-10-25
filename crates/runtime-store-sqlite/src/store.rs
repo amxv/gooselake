@@ -778,6 +778,16 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.list_agent_delivery_records(request)
     }
 
+    fn list_agent_delivery_records_page(
+        &self,
+        request: &runtime_core::AgentDeliveryListRequest,
+        cursor: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        self.repository
+            .list_agent_delivery_records_page(request, cursor, limit)
+    }
+
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_managed_worktree(record)
     }

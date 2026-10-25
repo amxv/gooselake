@@ -1066,6 +1066,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/agents/{agent_id}:
+    get:
+      summary: GET /v2/agents/{agent_id}
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/agents/{agent_id}/compact:
     post:
       summary: Durably admit manual context compaction before provider dispatch

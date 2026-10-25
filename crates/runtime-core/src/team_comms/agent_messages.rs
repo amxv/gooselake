@@ -268,6 +268,55 @@ impl RuntimeTeamCommsService {
         Ok(rows)
     }
 
+    /// Operator-facing pagination reads directly from the authoritative
+    /// bounded store query when available. The original full-list method
+    /// remains unchanged for legacy callers and retirement/recovery paths.
+    pub(super) async fn get_agent_deliveries_page_impl(
+        &self,
+        request: AgentDeliveryListRequest,
+        cursor: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        self.ensure_enabled()?;
+        let message_id = request.message_id.as_deref().ok_or_else(|| {
+            RuntimeError::InvalidState("paged deliveries require a message ID".into())
+        })?;
+        if !self
+            .state
+            .read()
+            .await
+            .agent_messages
+            .contains_key(message_id)
+        {
+            return Err(RuntimeError::NotFound(format!("message {message_id}")));
+        }
+        let limit = limit.clamp(1, 101);
+        match self
+            .store
+            .list_agent_delivery_records_page(&request, cursor.clone(), limit)
+        {
+            Ok(rows) => {
+                self.cache_agent_delivery_records(&rows).await;
+                return Ok(rows);
+            }
+            Err(RuntimeError::Unsupported(_)) => {}
+            Err(error) => return Err(error),
+        }
+        // Deliberately preserve other RuntimeStore implementations without
+        // inventing a durable paging guarantee for their legacy cache.
+        Ok(self
+            .get_agent_deliveries_impl(request)
+            .await?
+            .into_iter()
+            .filter(|row| {
+                cursor
+                    .as_ref()
+                    .is_none_or(|(at, id)| (row.created_at, row.id.as_str()) > (*at, id.as_str()))
+            })
+            .take(limit)
+            .collect())
+    }
+
     pub(super) async fn retry_agent_delivery_impl(
         &self,
         request: AgentRetryDeliveryRequest,

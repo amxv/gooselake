@@ -182,3 +182,147 @@ fn new_agent_message_and_deliveries_commit_atomically() {
     assert!(hydrated.agent_messages.is_empty());
     assert!(hydrated.agent_deliveries.is_empty());
 }
+
+#[test]
+fn indexed_delivery_pages_bound_fanout_preserve_equal_timestamp_order_and_filter_recipient() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("schema");
+    let connection = open_connection(&temp_dir.path().join("runtime.sqlite3")).expect("db");
+    connection
+        .execute(
+            "INSERT INTO workspaces (
+                workspace_id, canonical_root, display_name, lifecycle_state,
+                revision, created_at, updated_at, lead_agent_id
+             ) VALUES ('workspace_paged', '/tmp/paged', 'Paged', 'active', 0, 1, 1, NULL)",
+            [],
+        )
+        .expect("workspace");
+    drop(connection);
+
+    let make_message = |id: &str| AgentMessageRecord {
+        id: id.to_owned(),
+        scope: "broadcast".to_string(),
+        context_kind: AgentMessageContextKind::WorkspaceTeam,
+        workspace_id: Some("workspace_paged".to_string()),
+        legacy_team_id: None,
+        sender_agent_id: "sender".to_string(),
+        recipient_agent_ids: (0..180).map(|index| format!("agent_{index:03}")).collect(),
+        input: serde_json::json!([{"type":"text","text":"fanout"}]),
+        image_paths: Vec::new(),
+        priority: "normal".to_string(),
+        policy: "non_interrupting".to_string(),
+        correlation_id: None,
+        reply_to_message_id: None,
+        idempotency_key: None,
+        created_at: 100,
+    };
+    let make_delivery = |id: String, message_id: &str, index: usize| AgentDeliveryRecord {
+        id,
+        message_id: message_id.to_string(),
+        recipient_agent_id: format!("agent_{index:03}"),
+        provider: "codex".to_string(),
+        status: "pending".to_string(),
+        effective_policy: Some("non_interrupting".to_string()),
+        injection_strategy: None,
+        injected_turn_id: None,
+        last_error_code: None,
+        last_error_message: None,
+        created_at: 100 + (index / 3) as i64,
+        updated_at: 100 + (index / 3) as i64,
+    };
+    let message = make_message("msg_paged");
+    let deliveries = (0..180)
+        .map(|index| make_delivery(format!("delivery_{index:03}"), &message.id, index))
+        .collect::<Vec<_>>();
+    repository
+        .insert_agent_message_with_deliveries(&message, &deliveries)
+        .expect("message and fanout");
+    let connection = open_connection(&temp_dir.path().join("runtime.sqlite3")).expect("db");
+    let query_plan: String = connection
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT id FROM agent_deliveries \
+             WHERE message_id=?1 AND (created_at,id) > (?2,?3) \
+             ORDER BY created_at,id LIMIT ?4",
+            rusqlite::params![message.id, 100_i64, "delivery_005", 17_i64],
+            |row| row.get(3),
+        )
+        .expect("delivery query plan");
+    assert!(
+        query_plan.contains("idx_agent_deliveries_message"),
+        "delivery paging should use the message/time/id index: {query_plan}"
+    );
+    let other = make_message("msg_other");
+    repository
+        .insert_agent_message_with_deliveries(
+            &other,
+            &[make_delivery("delivery_other".to_string(), &other.id, 7)],
+        )
+        .expect("other message");
+
+    let request = runtime_core::AgentDeliveryListRequest {
+        message_id: Some(message.id.clone()),
+        recipient_agent_id: None,
+    };
+    let mut cursor = None;
+    let mut seen = Vec::new();
+    loop {
+        let page = repository
+            .list_agent_delivery_records_page(&request, cursor.clone(), 17)
+            .expect("page");
+        assert!(page.len() <= 17);
+        if page.is_empty() {
+            break;
+        }
+        for row in &page {
+            assert_eq!(row.message_id, message.id);
+            if let Some((at, id)) = cursor.as_ref() {
+                assert!((row.created_at, row.id.as_str()) > (*at, id.as_str()));
+            }
+            seen.push(row.id.clone());
+        }
+        let last = page.last().unwrap();
+        cursor = Some((last.created_at, last.id.clone()));
+    }
+    assert_eq!(seen.len(), 180);
+    assert_eq!(
+        seen,
+        deliveries
+            .iter()
+            .map(|row| row.id.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        repository
+            .list_agent_delivery_records(&request)
+            .unwrap()
+            .len(),
+        180,
+        "existing unbounded recovery inspection still works"
+    );
+    let filtered = repository
+        .list_agent_delivery_records_page(
+            &runtime_core::AgentDeliveryListRequest {
+                message_id: Some(message.id.clone()),
+                recipient_agent_id: Some("agent_050".to_string()),
+            },
+            None,
+            101,
+        )
+        .unwrap();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].id, "delivery_050");
+    assert!(repository
+        .list_agent_delivery_records_page(&request, None, 102)
+        .is_err());
+    assert!(repository
+        .list_agent_delivery_records_page(
+            &runtime_core::AgentDeliveryListRequest {
+                message_id: None,
+                recipient_agent_id: None,
+            },
+            None,
+            1,
+        )
+        .is_err());
+}

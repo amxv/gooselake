@@ -594,6 +594,16 @@ impl TeamCommsService for RuntimeTeamCommsService {
         self.get_agent_deliveries_impl(request).await
     }
 
+    async fn get_agent_deliveries_page(
+        &self,
+        request: AgentDeliveryListRequest,
+        cursor: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        self.get_agent_deliveries_page_impl(request, cursor, limit)
+            .await
+    }
+
     async fn retry_agent_delivery(
         &self,
         request: AgentRetryDeliveryRequest,

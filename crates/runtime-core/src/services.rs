@@ -795,7 +795,6 @@ pub trait RuntimeStore: Send + Sync {
     fn get_agent_delivery(&self, _id: &str) -> Result<Option<AgentDeliveryRecord>, RuntimeError> {
         unsupported_store("agent delivery reads unavailable")
     }
-
     fn list_agent_delivery_records(
         &self,
         _request: &crate::AgentDeliveryListRequest,
@@ -803,6 +802,15 @@ pub trait RuntimeStore: Send + Sync {
         unsupported_store("agent delivery reads unavailable")
     }
 
+    /// Bounded durable `(created_at, id)` page, unlike recovery's full listing.
+    fn list_agent_delivery_records_page(
+        &self,
+        _request: &crate::AgentDeliveryListRequest,
+        _cursor: Option<(i64, String)>,
+        _limit: usize,
+    ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
+        unsupported_store("paged agent delivery reads unavailable")
+    }
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError>;
     fn managed_worktree_revision(&self, _worktree_id: &str) -> Result<u64, RuntimeError> {
         unsupported_store("managed worktree revision unavailable")

@@ -615,6 +615,21 @@ pub(super) async fn get_workspace_agent(
     Ok(revisioned_response(agent.revision, agent))
 }
 
+/// Global operator lookup resolves the same stable workspace-owned identity,
+/// including archived agents, without a legacy team/session lookup.
+pub(super) async fn get_agent_by_id(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+) -> Result<Response, ApiError> {
+    let agent = state
+        .app
+        .services
+        .store
+        .get_workspace_agent_by_id(agent_id.trim())?
+        .ok_or_else(|| ApiError::not_found(format!("agent {agent_id}")))?;
+    Ok(revisioned_response(agent.revision, agent))
+}
+
 pub(super) async fn get_workspace_agent_onboarding(
     State(state): State<AppState>,
     Path((workspace_id, agent_id)): Path<(String, String)>,

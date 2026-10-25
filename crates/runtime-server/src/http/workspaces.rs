@@ -26,21 +26,30 @@ pub(super) async fn register_workspace(
 
 pub(super) async fn list_workspaces(
     State(state): State<AppState>,
-) -> Result<Json<Vec<runtime_core::WorkspaceRecord>>, ApiError> {
-    Ok(Json(state.app.services.store.list_workspaces()?))
+    Query(query): Query<ResourcePageQuery>,
+) -> Result<Response, ApiError> {
+    let (limit, cursor) = query.parse()?;
+    let rows = state
+        .app
+        .services
+        .store
+        .list_workspaces_page(cursor, limit + 1)?;
+    Ok(paged_response(rows, limit, |row| {
+        (row.created_at, &row.workspace_id)
+    }))
 }
 
 pub(super) async fn get_workspace(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
-) -> Result<Json<runtime_core::WorkspaceRecord>, ApiError> {
+) -> Result<Response, ApiError> {
     let workspace = state
         .app
         .services
         .store
         .get_workspace(workspace_id.trim())?
         .ok_or_else(|| ApiError::not_found(format!("workspace {workspace_id}")))?;
-    Ok(Json(workspace))
+    Ok(revisioned_response(workspace.revision, workspace))
 }
 
 /// Operator-only advisory inspection; the retirement write rechecks these
@@ -67,6 +76,7 @@ pub(super) async fn retire_workspace(
     headers: HeaderMap,
     Json(request): Json<WorkspaceRetirementRequest>,
 ) -> Result<Json<runtime_core::WorkspaceRetirementResponse>, ApiError> {
+    check_if_match_revision(&headers, request.expected_revision)?;
     let command = prepare_workspace_retirement(
         workspace_id.trim(),
         request,
@@ -87,6 +97,7 @@ pub(super) async fn advance_workspace_retirement(
     headers: HeaderMap,
     Json(request): Json<WorkspaceRetirementRequest>,
 ) -> Result<(StatusCode, Json<runtime_core::OperationDetails>), ApiError> {
+    check_if_match_revision(&headers, request.expected_revision)?;
     let command = prepare_workspace_retirement(
         workspace_id.trim(),
         request,
@@ -195,8 +206,10 @@ pub(super) struct WorkspaceHookApprovalInput {
 pub(super) async fn update_workspace_hook_approval(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
+    headers: HeaderMap,
     Json(input): Json<WorkspaceHookApprovalInput>,
-) -> Result<Json<runtime_core::TeamHookApproval>, ApiError> {
+) -> Result<Response, ApiError> {
+    check_if_match_revision(&headers, input.expected_revision)?;
     let workspace = state
         .app
         .services
@@ -252,20 +265,19 @@ pub(super) async fn update_workspace_hook_approval(
                 .map_err(|_| RuntimeError::Bootstrap("hook approval timestamp overflow".into()))?,
         },
     )?;
-    Ok(Json(result))
+    Ok(revisioned_response(result.revision, result))
 }
 
 pub(super) async fn get_workspace_hook_approval(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
-) -> Result<Json<runtime_core::TeamHookApproval>, ApiError> {
-    Ok(Json(
-        state
-            .app
-            .services
-            .store
-            .get_team_hook_approval(workspace_id.trim())?,
-    ))
+) -> Result<Response, ApiError> {
+    let approval = state
+        .app
+        .services
+        .store
+        .get_team_hook_approval(workspace_id.trim())?;
+    Ok(revisioned_response(approval.revision, approval))
 }
 
 #[derive(Debug, Deserialize)]
@@ -438,7 +450,8 @@ pub(super) async fn set_workspace_lead(
     Path(workspace_id): Path<String>,
     headers: HeaderMap,
     Json(request): Json<WorkspaceLeadTransitionRequest>,
-) -> Result<Json<runtime_core::WorkspaceLeadTransitionResponse>, ApiError> {
+) -> Result<Response, ApiError> {
+    check_if_match_revision(&headers, request.expected_revision)?;
     let idempotency_key = parse_idempotency_key(&headers)?;
     let command = prepare_workspace_lead_transition(
         workspace_id.trim(),
@@ -446,40 +459,41 @@ pub(super) async fn set_workspace_lead(
         OperationActor::operator(OPERATOR_PRINCIPAL),
         idempotency_key,
     )?;
-    Ok(Json(
-        state
-            .app
-            .services
-            .store
-            .transition_workspace_lead(&command)?,
-    ))
+    let result = state
+        .app
+        .services
+        .store
+        .transition_workspace_lead(&command)?;
+    // Mutations still use the transactional revision guard in the store;
+    // If-Match is an optional HTTP precondition, not an alternate authority.
+    Ok(revisioned_response(result.workspace.revision, result))
 }
 
 pub(super) async fn get_workspace_notice_policy(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
-) -> Result<Json<runtime_core::WorkspaceNoticePolicyRecord>, ApiError> {
-    Ok(Json(
-        state
-            .app
-            .services
-            .store
-            .get_workspace_notice_policy(workspace_id.trim())?,
-    ))
+) -> Result<Response, ApiError> {
+    let policy = state
+        .app
+        .services
+        .store
+        .get_workspace_notice_policy(workspace_id.trim())?;
+    Ok(revisioned_response(policy.revision, policy))
 }
 
 pub(super) async fn update_workspace_notice_policy(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
+    headers: HeaderMap,
     Json(update): Json<runtime_core::WorkspaceNoticePolicyUpdate>,
-) -> Result<Json<runtime_core::WorkspaceNoticePolicyRecord>, ApiError> {
-    Ok(Json(
-        state
-            .app
-            .services
-            .store
-            .update_workspace_notice_policy(workspace_id.trim(), &update)?,
-    ))
+) -> Result<Response, ApiError> {
+    check_if_match_revision(&headers, update.expected_revision)?;
+    let result = state
+        .app
+        .services
+        .store
+        .update_workspace_notice_policy(workspace_id.trim(), &update)?;
+    Ok(revisioned_response(result.revision, result))
 }
 
 pub(super) async fn interrupt_workspace_turns(
@@ -497,8 +511,11 @@ pub(super) async fn interrupt_workspace_turns(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WorkspaceAgentListQuery {
     lifecycle: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
 }
 
 pub(super) async fn create_workspace_agent(
@@ -559,7 +576,7 @@ pub(super) async fn list_workspace_agents(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
     Query(query): Query<WorkspaceAgentListQuery>,
-) -> Result<Json<Vec<runtime_core::WorkspaceAgentRecord>>, ApiError> {
+) -> Result<Response, ApiError> {
     ensure_workspace_exists(&state, workspace_id.trim())?;
     let lifecycle = match query.lifecycle.as_deref().map(str::trim) {
         None | Some("") | Some("active") => Some(WorkspaceAgentLifecycleState::Active),
@@ -571,11 +588,20 @@ pub(super) async fn list_workspace_agents(
             )))
         }
     };
-    Ok(Json(
-        state
-            .runtime
-            .list_workspace_agents(workspace_id.trim(), lifecycle)?,
-    ))
+    let (limit, cursor) = ResourcePageQuery {
+        cursor: query.cursor,
+        limit: query.limit,
+    }
+    .parse()?;
+    let rows = state.app.services.store.list_workspace_agents_page(
+        workspace_id.trim(),
+        lifecycle,
+        cursor,
+        limit + 1,
+    )?;
+    Ok(paged_response(rows, limit, |row| {
+        (row.created_at, &row.agent_id)
+    }))
 }
 
 pub(super) async fn get_workspace_agent(
@@ -643,12 +669,29 @@ pub(super) async fn get_operation(
 }
 
 pub(super) fn parse_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
-    let Some(value) = headers.get("idempotency-key") else {
+    let mut values = headers.get_all("idempotency-key").iter();
+    let Some(value) = values.next() else {
         return Ok(None);
     };
+    if values.next().is_some() {
+        return Err(ApiError::bad_request(
+            "exactly one Idempotency-Key header is allowed".into(),
+        ));
+    }
     let value = value.to_str().map_err(|_| {
         ApiError::bad_request("invalid Idempotency-Key header encoding".to_string())
     })?;
+    if value.is_empty()
+        || value.len() > 512
+        || value.trim() != value
+        || !value
+            .bytes()
+            .all(|byte| (0x20..=0x7e).contains(&byte) && byte != b',')
+    {
+        return Err(ApiError::bad_request(
+            "Idempotency-Key must be 1–512 printable ASCII characters without commas or surrounding whitespace".into(),
+        ));
+    }
     Ok(Some(value.to_string()))
 }
 

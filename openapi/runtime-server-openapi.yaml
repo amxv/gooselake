@@ -1308,6 +1308,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/capabilities:
+    get:
+      summary: GET /v2/capabilities
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/deliveries/{delivery_id}/retry:
     post:
       summary: Retry canonical agent delivery

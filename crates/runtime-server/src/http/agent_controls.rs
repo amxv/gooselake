@@ -12,15 +12,7 @@ pub(super) async fn edit_agent_turn_and_rerun(
     headers: HeaderMap,
     Json(input): Json<EditAndRerunRequest>,
 ) -> Result<Json<SessionEditRerunOperation>, ApiError> {
-    let key = headers
-        .get("Idempotency-Key")
-        .map(|value| value.to_str().map(str::to_string))
-        .transpose()
-        .map_err(|_| {
-            ApiError::from(RuntimeError::InvalidState(
-                "Idempotency-Key must be valid header text".into(),
-            ))
-        })?;
+    let key = parse_idempotency_key(&headers)?;
     Ok(Json(
         state
             .runtime
@@ -63,15 +55,7 @@ pub(super) async fn compact_agent_session(
     Path(agent_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<SessionCompactionRun>, ApiError> {
-    let key = headers
-        .get("Idempotency-Key")
-        .map(|value| value.to_str().map(str::to_string))
-        .transpose()
-        .map_err(|_| {
-            ApiError::from(runtime_core::RuntimeError::InvalidState(
-                "Idempotency-Key must be valid header text".into(),
-            ))
-        })?;
+    let key = parse_idempotency_key(&headers)?;
     Ok(Json(
         state
             .runtime

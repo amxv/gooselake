@@ -37,11 +37,50 @@ Protected routes:
 - all `/v1/**` routes require `Authorization: Bearer <token>`
 - all `/v2/**` routes require `Authorization: Bearer <token>`
 
-Auth failure returns HTTP `401` with:
+Legacy `/v1` auth failure returns HTTP `401` with:
 
 ```json
 {"error":"missing or invalid bearer token"}
 ```
+
+The operator `/v2` API instead uses a machine-readable error envelope for
+application errors, authentication failures, malformed JSON/query requests,
+and unsupported methods. For example, `401`:
+
+```json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "missing or invalid operator bearer token",
+    "retryable": false,
+    "details": null
+  },
+  "request_id": "req_<server-generated-128-bit-hex>"
+}
+```
+
+Every `/v2` operator response, including success responses, carries
+`X-Request-ID`; error responses repeat the same ID in `request_id`. The server
+creates these IDs and never trusts an incoming `X-Request-ID` as authority.
+Common codes include `invalid_request`, `invalid_state`, `not_found`,
+`conflict`, `onboarding_pending`, `unsupported_capability`, and
+`internal_error`. Provider-dispatch conflicts retain their typed code and
+`details.dispatch_outcome`. Do not blindly repeat an effectful request after
+an unknown native dispatch outcome; inspect its durable operation/turn state.
+The agent-scoped `/v2/mcp` gateway uses its separate credential and model-tool
+result contract, not the operator error envelope.
+
+Workspace GET responses also carry a strong `ETag` containing the quoted
+numeric `revision`, for example `ETag: "5"`. When setting workspace leadership,
+send `If-Match: "5"` alongside JSON `expected_revision: 5`. A mismatched or
+malformed precondition returns `412 revision_precondition_failed`; the actual
+lead write still performs its authoritative transactional compare-and-set, so
+concurrent changes cannot be overwritten by a stale request. The header is
+optional for existing callers; `expected_revision` remains mandatory. The
+same precondition applies to workspace retirement and to their respective
+revisioned hook-approval and notice-policy GET/PUT contracts. Each revisioned
+GET and successful PUT returns its resource's own `ETag`; policy revisions are
+distinct from the workspace's revision.
 
 ## API surface by group
 
@@ -49,6 +88,10 @@ See [Endpoint Catalog](/docs/endpoint-catalog) for the full route list.
 
 Top-level groups:
 
+- Operator capability discovery: `GET /v2/capabilities` reports the active
+  runtime and API versions, versioned harness/tool contract, enabled model GG
+  tools, worktree/process enablement, and *configured* providers' real
+  capability flags. An ACP agent-managed catalog is not a static model list.
 - Workspace authority: durable workspace registration, nullable/revisioned lead authority, workspace-wide turn interruption, workspace-owned agent create/list/get/archive/restore, managed-worktree inventory and guarded reassignment, legacy-authority migration, and operation inspection under `/v2`
 - Agent messaging: agent-first direct messages across workspaces plus workspace-local broadcasts, delivery inspection, retry, and cancellation under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
@@ -103,6 +146,15 @@ OPERATION_ID=$(echo "$WORKSPACE_RESULT" | jq -r '.operation_id')
 | `display_name` | no | Defaults to the canonical root's final path component. Re-registering an existing root does not rename it. |
 
 `Idempotency-Key` is optional, but recommended for retried mutations. The key is scoped to the authenticated operator principal. Repeating the same key with the same normalized input replays the exact terminal response, including the original `operation_id`. Reusing the same key with different normalized input returns HTTP `409` and does not mutate workspace state.
+
+Workspace and workspace-agent lists use bounded keyset pages with optional
+`limit` (1–100; defaults to 50) and `cursor` query parameters. The response
+remains a JSON array for client compatibility. When another page exists, the
+server returns an `X-Next-Cursor` response header to pass back verbatim as the
+next `cursor`; when the header is absent, the listing is complete. The cursor
+uses the durable `(created_at, opaque_id)` order, not offsets that can shift
+when agents or workspaces are added. Workspace-agent lists also accept
+`lifecycle=active|archived|all` independently from pagination.
 
 Read the durable state:
 

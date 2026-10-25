@@ -130,7 +130,8 @@ async fn v2_provider_contract_reports_capabilities_harness_and_discovery_modes()
         .expect("invalid source response");
     assert_eq!(invalid_sources.status(), StatusCode::BAD_REQUEST);
     let invalid_sources = body_json(invalid_sources).await;
-    assert!(invalid_sources["error"]
+    assert_eq!(invalid_sources["error"]["code"], "invalid_state");
+    assert!(invalid_sources["error"]["message"]
         .as_str()
         .is_some_and(|message| message.contains("working directory")));
 }

@@ -17,7 +17,7 @@ use runtime_core::{
     WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
     WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
     WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
-    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use runtime_core::{
     TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
@@ -367,12 +367,7 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<WorkspaceRegisterResponse, RuntimeError> {
         self.repository.register_workspace(command)
     }
-    fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
-        self.repository.list_workspaces()
-    }
-    fn get_workspace(&self, workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
-        self.repository.get_workspace(workspace_id)
-    }
+    crate::store_pagination::delegate_workspace_listing!();
     crate::store_retirement::delegate_workspace_retirement!();
 
     fn transition_workspace_lead(
@@ -600,15 +595,6 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn unresolved_workspace_agent_rebind(&self, agent_id: &str) -> Result<bool, RuntimeError> {
         self.repository.unresolved_workspace_agent_rebind(agent_id)
-    }
-
-    fn list_workspace_agents(
-        &self,
-        workspace_id: &str,
-        lifecycle: Option<WorkspaceAgentLifecycleState>,
-    ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
-        self.repository
-            .list_workspace_agents(workspace_id, lifecycle)
     }
 
     fn get_workspace_agent(

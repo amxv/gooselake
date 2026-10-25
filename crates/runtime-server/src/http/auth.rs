@@ -78,6 +78,111 @@ pub(super) struct ProviderCapabilitiesResponse {
     harness: runtime_core::HarnessContractMetadata,
 }
 
+#[derive(Debug, Serialize)]
+pub(super) struct RuntimeCapabilitiesResponse {
+    runtime_version: &'static str,
+    api_version: &'static str,
+    harness_version: &'static str,
+    tool_contract_version: String,
+    tool_manifest_hash: String,
+    /// Exactly the model-visible tools enabled by current runtime policy.
+    tools: Vec<&'static str>,
+    managed_processes: bool,
+    managed_worktrees: bool,
+    providers: Vec<RuntimeProviderCapabilities>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct RuntimeProviderCapabilities {
+    metadata: runtime_core::ProviderMetadata,
+    capabilities: runtime_core::ProviderCapabilities,
+    harness: runtime_core::HarnessContractMetadata,
+}
+
+pub(super) async fn runtime_capabilities_v2(
+    State(state): State<AppState>,
+) -> Result<Json<RuntimeCapabilitiesResponse>, ApiError> {
+    let envelope = state.app.services.tool_gateway.capabilities().await?;
+    let result = envelope
+        .get("result")
+        .filter(|_| envelope["ok"] == true)
+        .ok_or_else(|| {
+            RuntimeError::Bootstrap("tool gateway capability snapshot is unavailable".into())
+        })?;
+    let team_enabled = result["ggTeamEnabled"]
+        .as_bool()
+        .ok_or_else(|| RuntimeError::Bootstrap("tool gateway omitted GG team enablement".into()))?;
+    let process_enabled = result["ggProcessEnabled"].as_bool().ok_or_else(|| {
+        RuntimeError::Bootstrap("tool gateway omitted GG process enablement".into())
+    })?;
+    let mut tools = Vec::new();
+    if team_enabled {
+        tools.extend(["gg_team", "gg_message"]);
+    }
+    if process_enabled {
+        tools.push("gg_process");
+    }
+    let actual = result["tools"]
+        .as_array()
+        .ok_or_else(|| RuntimeError::Bootstrap("tool gateway omitted tool discovery".into()))?;
+    if actual.len() != tools.len()
+        || !tools
+            .iter()
+            .all(|tool| actual.iter().any(|observed| observed == tool))
+    {
+        return Err(RuntimeError::Bootstrap(
+            "tool gateway discovery and enabled capability flags disagree".into(),
+        )
+        .into());
+    }
+
+    let mut providers = Vec::new();
+    let mut manifest = None;
+    for metadata in state.app.provider_registry.metadata() {
+        if !metadata.enabled {
+            continue;
+        }
+        let adapter = state
+            .app
+            .provider_registry
+            .get(metadata.kind)
+            .ok_or_else(|| {
+                RuntimeError::Bootstrap("enabled provider missing from registry".into())
+            })?;
+        let harness = runtime_core::harness_contract_metadata(metadata.kind)?;
+        if let Some((version, hash)) = &manifest {
+            if version != &harness.tool_manifest_version || hash != &harness.tool_manifest_hash {
+                return Err(RuntimeError::Bootstrap(
+                    "provider tool-contract manifests disagree".into(),
+                )
+                .into());
+            }
+        }
+        manifest = Some((
+            harness.tool_manifest_version.clone(),
+            harness.tool_manifest_hash.clone(),
+        ));
+        providers.push(RuntimeProviderCapabilities {
+            metadata,
+            capabilities: adapter.capabilities(),
+            harness,
+        });
+    }
+    let (tool_contract_version, tool_manifest_hash) = manifest
+        .ok_or_else(|| RuntimeError::Bootstrap("runtime has no enabled providers".into()))?;
+    Ok(Json(RuntimeCapabilitiesResponse {
+        runtime_version: env!("CARGO_PKG_VERSION"),
+        api_version: "v2",
+        harness_version: runtime_core::HARNESS_VERSION,
+        tool_contract_version,
+        tool_manifest_hash,
+        tools,
+        managed_processes: process_enabled,
+        managed_worktrees: state.app.worktree_settings.enabled,
+        providers,
+    }))
+}
+
 pub(super) async fn provider_capabilities_v2(
     State(state): State<AppState>,
     Path(provider): Path<String>,

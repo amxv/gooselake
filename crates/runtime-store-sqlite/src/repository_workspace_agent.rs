@@ -5,7 +5,7 @@ use runtime_core::{
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 
-use crate::db::{db_error, json_to_string, open_connection, string_to_json};
+use crate::db::{collect_rows, db_error, json_to_string, open_connection, string_to_json};
 use crate::repository_team_hooks::effect_grant_is_current;
 use crate::repository_team_hooks::{active_workspace_hook_targets_tx, queue_team_hook_trigger_tx};
 use crate::repository_workspace_notice::queue_membership_lead_notice_tx;
@@ -420,6 +420,41 @@ impl SqliteRuntimeRepository {
             }
         }
         Ok(records)
+    }
+
+    pub fn list_workspace_agents_page(
+        &self,
+        workspace_id: &str,
+        lifecycle: Option<WorkspaceAgentLifecycleState>,
+        after: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        let query = format!(
+            "{AGENT_SELECT} WHERE a.workspace_id = ?1
+             AND (?2 IS NULL OR a.lifecycle_state = ?2)
+             AND (?3 IS NULL OR a.created_at > ?3 OR
+                (a.created_at = ?3 AND a.session_id > ?4))
+             ORDER BY a.created_at ASC, a.session_id ASC LIMIT ?5"
+        );
+        let mut statement = connection
+            .prepare(&query)
+            .map_err(|error| db_error("failed preparing paginated workspace agent list", error))?;
+        let (timestamp, id) =
+            after.map_or((None, None), |(timestamp, id)| (Some(timestamp), Some(id)));
+        let rows = statement
+            .query_map(
+                params![
+                    workspace_id,
+                    lifecycle.map(|state| state.as_str()),
+                    timestamp,
+                    id,
+                    i64::try_from(limit).unwrap_or(i64::MAX)
+                ],
+                workspace_agent_from_row,
+            )
+            .map_err(|error| db_error("failed listing paginated workspace agents", error))?;
+        collect_rows(rows)
     }
 
     pub fn get_workspace_agent(

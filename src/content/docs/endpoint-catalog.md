@@ -20,14 +20,20 @@ Auth legend:
 
 - `GET /health` (Public)
 - `GET /openapi.yaml` (Public)
+- `GET /v2/capabilities` (Bearer; live aggregate API/harness/tool/provider capability snapshot, with actual enabled model-facing tools)
 - `GET /v1/health` (Bearer)
 - `GET /v1/openapi.yaml` (Bearer)
 - `GET /v1/version` (Bearer)
 
+Operator `/v2` responses carry a server-minted `X-Request-ID`. Error responses
+contain `{ "error": { "code", "message", "retryable", "details" },
+"request_id" }`, including framework-level 4xx rejections. Legacy `/v1`
+error bodies and the separate agent-scoped `/v2/mcp` tool contract are unchanged.
+
 ## Workspace Authority + Durable Operations
 
 - `POST /v2/workspaces` (Bearer, JSON; optional `Idempotency-Key` header)
-- `GET /v2/workspaces` (Bearer)
+- `GET /v2/workspaces` (Bearer; keyset pagination with optional `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when another page exists)
 - `GET /v2/workspaces/{workspace_id}` (Bearer)
 - `POST /v2/workspaces/{workspace_id}/retire` (Bearer, JSON `expected_revision`, optional `Idempotency-Key`; atomic retirement only when no session or asynchronous obligations exist)
 - `POST /v2/workspaces/{workspace_id}/retirement/advance` (Bearer, JSON `expected_revision`, required `Idempotency-Key`; durable populated-workspace retirement, returning operation details)
@@ -44,7 +50,7 @@ Auth legend:
 - `PUT /v2/workspaces/{workspace_id}/notice-policy` (Bearer, JSON; compare-and-set policy by `expected_revision`)
 - `POST /v2/workspaces/{workspace_id}/interrupt` (Bearer; optional `Idempotency-Key` header)
 - `POST /v2/workspaces/{workspace_id}/agents` (Bearer, JSON)
-- `GET /v2/workspaces/{workspace_id}/agents` (Bearer; optional `lifecycle=active|archived|all`, defaults to `active`)
+- `GET /v2/workspaces/{workspace_id}/agents` (Bearer; optional `lifecycle=active|archived|all` defaults to `active`; keyset `cursor`, `limit=1..100` defaults to 50; `X-Next-Cursor` when more)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` (Bearer)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding` (Bearer; durable system notice, correlation and dispatch outcome)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree` (Bearer, JSON; optional `Idempotency-Key`, revisioned provider-evidence-backed rebind)

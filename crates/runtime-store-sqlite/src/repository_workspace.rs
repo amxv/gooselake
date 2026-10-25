@@ -177,6 +177,32 @@ impl SqliteRuntimeRepository {
         collect_rows(rows)
     }
 
+    pub fn list_workspaces_page(
+        &self,
+        after: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT workspace_id, canonical_root, display_name, lifecycle_state,
+                    lead_agent_id, revision, created_at, updated_at
+             FROM workspaces
+             WHERE (?1 IS NULL OR created_at > ?1 OR (created_at = ?1 AND workspace_id > ?2))
+             ORDER BY created_at ASC, workspace_id ASC LIMIT ?3",
+            )
+            .map_err(|error| db_error("failed preparing paginated workspace list", error))?;
+        let (timestamp, id) =
+            after.map_or((None, None), |(timestamp, id)| (Some(timestamp), Some(id)));
+        let rows = statement
+            .query_map(
+                params![timestamp, id, i64::try_from(limit).unwrap_or(i64::MAX)],
+                workspace_from_row,
+            )
+            .map_err(|error| db_error("failed listing paginated workspaces", error))?;
+        collect_rows(rows)
+    }
+
     pub fn get_workspace(
         &self,
         workspace_id: &str,

@@ -43,6 +43,7 @@ mod agent_session_controls_compaction;
 mod agent_session_controls_edit_rerun;
 mod mcp_core;
 mod mcp_policy_process;
+mod operator_contract_routes;
 mod process_more;
 mod provider_contract_routes;
 mod scoped_mcp;

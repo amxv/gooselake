@@ -34,6 +34,7 @@ mod repository_workspace_retirement_settlement;
 mod repository_workspace_retirement_turns;
 mod schema;
 mod store;
+mod store_pagination;
 mod store_retirement;
 
 pub use repository::SqliteRuntimeRepository;

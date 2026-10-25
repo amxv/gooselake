@@ -307,6 +307,14 @@ pub trait RuntimeStore: Send + Sync {
         unsupported_store("workspace authority is not implemented by this runtime store")
     }
 
+    fn list_workspaces_page(
+        &self,
+        _after: Option<(i64, String)>,
+        _limit: usize,
+    ) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
+        unsupported_store("paginated workspace listing is unavailable in this store")
+    }
+
     fn get_workspace(&self, _workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
         unsupported_store("workspace authority is not implemented by this runtime store")
     }
@@ -565,6 +573,16 @@ pub trait RuntimeStore: Send + Sync {
         _lifecycle: Option<WorkspaceAgentLifecycleState>,
     ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
         unsupported_store("workspace agent authority is not implemented by this runtime store")
+    }
+
+    fn list_workspace_agents_page(
+        &self,
+        _workspace_id: &str,
+        _lifecycle: Option<WorkspaceAgentLifecycleState>,
+        _after: Option<(i64, String)>,
+        _limit: usize,
+    ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
+        unsupported_store("paginated workspace agent listing is unavailable in this store")
     }
 
     fn get_workspace_agent(

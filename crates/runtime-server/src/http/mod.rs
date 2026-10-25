@@ -39,6 +39,7 @@ mod processes;
 mod sessions;
 mod shared;
 mod teams;
+mod v2_contract;
 mod workspace_migrations;
 mod workspace_retirement_review;
 mod workspaces;
@@ -54,6 +55,7 @@ use processes::*;
 use sessions::*;
 use shared::*;
 use teams::*;
+use v2_contract::*;
 use workspace_migrations::*;
 use workspace_retirement_review::*;
 use workspaces::*;
@@ -188,6 +190,7 @@ pub fn build_router(state: AppState) -> Router {
         ));
 
     let protected_v2 = Router::new()
+        .route("/capabilities", get(runtime_capabilities_v2))
         .route(
             "/agents/{agent_id}/turns/{turn_id}/edit-rerun",
             post(edit_agent_turn_and_rerun),
@@ -340,7 +343,8 @@ pub fn build_router(state: AppState) -> Router {
         .route_layer(middleware::from_fn_with_state(
             state.bearer_token.clone(),
             bearer_auth,
-        ));
+        ))
+        .layer(middleware::from_fn(v2_operator_response_contract));
 
     Router::new()
         .route("/health", get(health))

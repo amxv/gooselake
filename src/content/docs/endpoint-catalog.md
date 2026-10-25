@@ -51,7 +51,7 @@ error bodies and the separate agent-scoped `/v2/mcp` tool contract are unchanged
 - `POST /v2/workspaces/{workspace_id}/interrupt` (Bearer; optional `Idempotency-Key` header)
 - `POST /v2/workspaces/{workspace_id}/agents` (Bearer, JSON)
 - `GET /v2/workspaces/{workspace_id}/agents` (Bearer; optional `lifecycle=active|archived|all` defaults to `active`; keyset `cursor`, `limit=1..100` defaults to 50; `X-Next-Cursor` when more)
-- `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` (Bearer)
+- `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` (Bearer; strong agent-revision ETag)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding` (Bearer; durable system notice, correlation and dispatch outcome)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree` (Bearer, JSON; optional `Idempotency-Key`, revisioned provider-evidence-backed rebind)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}` (Bearer, durable provider-rebind status)
@@ -118,8 +118,8 @@ Legacy workspace migration preview classifies every persisted legacy authority s
 ## Agent Messages + Deliveries
 
 - `POST /v2/messages` (Bearer, JSON; optional `Idempotency-Key` header)
-- `GET /v2/messages` (Bearer; optional `workspace_id`, `sender_agent_id`, `cursor`, `limit`)
-- `GET /v2/messages/{message_id}/deliveries` (Bearer; optional `recipient_agent_id`)
+- `GET /v2/messages` (Bearer; optional `workspace_id`, `sender_agent_id`, `cursor`, `limit=1..100` default 50; JSON `next_cursor`)
+- `GET /v2/messages/{message_id}/deliveries` (Bearer; optional `recipient_agent_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for subsequent array pages)
 - `POST /v2/messages/{message_id}/cancel` (Bearer)
 - `POST /v2/deliveries/{delivery_id}/retry` (Bearer)
 

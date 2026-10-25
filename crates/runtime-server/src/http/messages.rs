@@ -90,6 +90,7 @@ pub(super) async fn create_agent_message(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct AgentMessageListQuery {
     workspace_id: Option<String>,
     sender_agent_id: Option<String>,
@@ -101,6 +102,23 @@ pub(super) async fn list_agent_messages(
     State(state): State<AppState>,
     Query(query): Query<AgentMessageListQuery>,
 ) -> Result<Json<runtime_core::AgentMessageListResponse>, ApiError> {
+    // Keep the operator API's collection contract bounded even when the
+    // legacy message service has a more permissive internal list interface.
+    let limit = query.limit.unwrap_or(50);
+    if !(1..=100).contains(&limit) {
+        return Err(ApiError::bad_request(
+            "limit must be between 1 and 100".into(),
+        ));
+    }
+    if query.cursor.as_ref().is_some_and(|cursor| {
+        cursor.is_empty()
+            || cursor.len() > 128
+            || !cursor
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    }) {
+        return Err(ApiError::bad_request("invalid message cursor".into()));
+    }
     Ok(Json(
         state
             .app
@@ -110,33 +128,48 @@ pub(super) async fn list_agent_messages(
                 workspace_id: query.workspace_id,
                 sender_agent_id: query.sender_agent_id,
                 cursor: query.cursor,
-                limit: query.limit,
+                limit: Some(limit),
             })
             .await?,
     ))
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct AgentDeliveryListQuery {
     recipient_agent_id: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
 }
 
 pub(super) async fn list_agent_deliveries(
     State(state): State<AppState>,
     Path(message_id): Path<String>,
     Query(query): Query<AgentDeliveryListQuery>,
-) -> Result<Json<Vec<runtime_core::AgentDeliveryRecord>>, ApiError> {
-    Ok(Json(
-        state
-            .app
-            .services
-            .team_comms
-            .get_agent_deliveries(AgentDeliveryListRequest {
-                message_id: Some(message_id),
-                recipient_agent_id: query.recipient_agent_id,
+) -> Result<Response, ApiError> {
+    let (limit, cursor) = ResourcePageQuery {
+        cursor: query.cursor,
+        limit: query.limit,
+    }
+    .parse()?;
+    let rows = state
+        .app
+        .services
+        .team_comms
+        .get_agent_deliveries(AgentDeliveryListRequest {
+            message_id: Some(message_id),
+            recipient_agent_id: query.recipient_agent_id,
+        })
+        .await?
+        .into_iter()
+        .filter(|row| {
+            cursor.as_ref().is_none_or(|(created_at, id)| {
+                (row.created_at, row.id.as_str()) > (*created_at, id.as_str())
             })
-            .await?,
-    ))
+        })
+        .take(limit + 1)
+        .collect();
+    Ok(paged_response(rows, limit, |row| (row.created_at, &row.id)))
 }
 
 pub(super) async fn retry_agent_delivery(

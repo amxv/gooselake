@@ -521,3 +521,308 @@ async fn workspace_agent_pages_keep_filter_and_do_not_duplicate_members() {
     assert_eq!(no_archived.status(), StatusCode::OK);
     assert_eq!(response_json(no_archived).await, serde_json::json!([]));
 }
+
+#[tokio::test]
+async fn agent_revisions_guard_policy_mutation_before_provider_work() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("agent-policy-etag");
+    fs::create_dir_all(&root).unwrap();
+    let auth = format!("Bearer {token}");
+    let created_workspace = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v2/workspaces")
+                .header(header::AUTHORIZATION, auth.as_str())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"canonical_root":root}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created_workspace.status(), StatusCode::OK);
+    let workspace = response_json(created_workspace).await;
+    let workspace = workspace["workspace"]["workspace_id"].as_str().unwrap();
+    let created_agent = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v2/workspaces/{workspace}/agents"))
+                .header(header::AUTHORIZATION, auth.as_str())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"provider":"codex","model":"test-model"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created_agent.status(), StatusCode::OK);
+    let agent = response_json(created_agent).await;
+    let agent_id = agent["agent_id"].as_str().unwrap();
+    let revision = agent["revision"].as_u64().unwrap();
+
+    let get_uri = format!("/v2/workspaces/{workspace}/agents/{agent_id}");
+    let get = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(get_uri.as_str())
+                .header(header::AUTHORIZATION, auth.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+    assert_eq!(
+        get.headers()[header::ETAG].to_str().unwrap(),
+        format!("\"{revision}\"")
+    );
+
+    let prefix = format!("/v2/agents/{agent_id}");
+    for (route, payload) in [
+        (
+            "preferences",
+            serde_json::json!({"expected_revision":revision,
+                "current_preferences":{"thinking_effort":"high"}}),
+        ),
+        (
+            "permission",
+            serde_json::json!({"expected_revision":revision,
+                "permission_intent":{"kind":"provider_default"}}),
+        ),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("{prefix}/{route}"))
+                    .header(header::AUTHORIZATION, auth.as_str())
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::IF_MATCH, "\"9999\"")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        let error = response_json(response).await;
+        assert_eq!(error["error"]["code"], "revision_precondition_failed");
+    }
+    let after = router
+        .oneshot(
+            Request::builder()
+                .uri(get_uri)
+                .header(header::AUTHORIZATION, auth.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response_json(after).await["revision"], revision);
+}
+
+#[tokio::test]
+async fn message_and_delivery_collection_queries_are_bounded_and_stably_paged() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("paged-message-workspace");
+    fs::create_dir_all(&root).unwrap();
+    let auth = format!("Bearer {token}");
+    let create = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v2/workspaces")
+                .header(header::AUTHORIZATION, auth.as_str())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"canonical_root":root}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::OK);
+    let workspace = response_json(create).await;
+    let workspace_id = workspace["workspace"]["workspace_id"].as_str().unwrap();
+    let mut agents = Vec::new();
+    for _ in 0..3 {
+        let create = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v2/workspaces/{workspace_id}/agents"))
+                    .header(header::AUTHORIZATION, auth.as_str())
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"provider":"codex","model":"test-model"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::OK);
+        agents.push(
+            response_json(create).await["agent_id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+    let message = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v2/messages")
+                .header(header::AUTHORIZATION, auth.as_str())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"mode":"broadcast","sender_agent_id":agents[0],
+                        "input":[{"type":"text","text":"page test"}]})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(message.status(), StatusCode::OK);
+    let message = response_json(message).await;
+    let message_id = message["message"]["id"].as_str().unwrap();
+    assert_eq!(message["deliveries"].as_array().unwrap().len(), 2);
+
+    let second_message = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v2/messages")
+                .header(header::AUTHORIZATION, auth.as_str())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"mode":"direct","sender_agent_id":agents[0],
+                        "recipient_agent_id":agents[1],
+                        "input":[{"type":"text","text":"second page"}]})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_message.status(), StatusCode::OK);
+    let second_message_id = response_json(second_message).await["message"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let first_messages = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v2/messages?limit=1")
+                .header(header::AUTHORIZATION, auth.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_messages.status(), StatusCode::OK);
+    let first_messages = response_json(first_messages).await;
+    assert_eq!(first_messages["messages"].as_array().unwrap().len(), 1);
+    let message_cursor = first_messages["next_cursor"].as_str().unwrap();
+    let next_messages = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v2/messages?limit=1&cursor={message_cursor}"))
+                .header(header::AUTHORIZATION, auth.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(next_messages.status(), StatusCode::OK);
+    let next_messages = response_json(next_messages).await;
+    assert_eq!(next_messages["messages"].as_array().unwrap().len(), 1);
+    assert!(next_messages["next_cursor"].is_null());
+    let mut all_ids = vec![
+        first_messages["messages"][0]["id"].as_str().unwrap(),
+        next_messages["messages"][0]["id"].as_str().unwrap(),
+    ];
+    all_ids.sort_unstable();
+    let mut expected_ids = vec![message_id, second_message_id.as_str()];
+    expected_ids.sort_unstable();
+    assert_eq!(all_ids, expected_ids);
+
+    let first_uri = format!("/v2/messages/{message_id}/deliveries?limit=1");
+    let first = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(first_uri)
+                .header(header::AUTHORIZATION, auth.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let cursor = first.headers()["x-next-cursor"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let first_rows = response_json(first).await;
+    assert_eq!(first_rows.as_array().unwrap().len(), 1);
+    let second = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v2/messages/{message_id}/deliveries?limit=1&cursor={cursor}"
+                ))
+                .header(header::AUTHORIZATION, auth.as_str())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::OK);
+    assert!(second.headers().get("x-next-cursor").is_none());
+    let second_rows = response_json(second).await;
+    assert_eq!(second_rows.as_array().unwrap().len(), 1);
+    assert_ne!(first_rows[0]["id"], second_rows[0]["id"]);
+
+    for uri in [
+        "/v2/messages?limit=0".to_string(),
+        "/v2/messages?limit=101".to_string(),
+        "/v2/messages?cursor=%20".to_string(),
+        "/v2/messages?unexpected=true".to_string(),
+        format!("/v2/messages/{message_id}/deliveries?limit=0"),
+        format!("/v2/messages/{message_id}/deliveries?cursor=broken"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri.as_str())
+                    .header(header::AUTHORIZATION, auth.as_str())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(
+            response_json(response).await["error"]["code"],
+            "invalid_request"
+        );
+    }
+}

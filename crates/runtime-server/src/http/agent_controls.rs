@@ -1,9 +1,8 @@
 use super::*;
 use runtime_core::{
     EditAndRerunRequest, ProviderPermissionIntent, ProviderPermissionMutationRequest,
-    ProviderPermissionMutationResult, ProviderSessionPreferences,
-    ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
-    SessionCompactionRun, SessionContextLimitSnapshot, SessionEditRerunOperation,
+    ProviderSessionPreferences, ProviderSessionPreferencesMutationRequest, SessionCompactionRun,
+    SessionContextLimitSnapshot, SessionEditRerunOperation,
 };
 
 pub(super) async fn edit_agent_turn_and_rerun(
@@ -141,18 +140,19 @@ pub(super) struct UpdateAgentPreferencesInput {
 pub(super) async fn update_agent_preferences(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    headers: HeaderMap,
     Json(request): Json<UpdateAgentPreferencesInput>,
-) -> Result<Json<ProviderSessionPreferencesMutationResult>, ApiError> {
-    Ok(Json(
-        state
-            .runtime
-            .mutate_workspace_agent_preferences(ProviderSessionPreferencesMutationRequest {
-                runtime_session_id: agent_id,
-                expected_revision: Some(request.expected_revision),
-                current_preferences: request.current_preferences,
-            })
-            .await?,
-    ))
+) -> Result<Response, ApiError> {
+    check_if_match_revision(&headers, request.expected_revision)?;
+    let result = state
+        .runtime
+        .mutate_workspace_agent_preferences(ProviderSessionPreferencesMutationRequest {
+            runtime_session_id: agent_id,
+            expected_revision: Some(request.expected_revision),
+            current_preferences: request.current_preferences,
+        })
+        .await?;
+    Ok(revisioned_response(result.revision, result))
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,18 +165,19 @@ pub(super) struct UpdateAgentPermissionInput {
 pub(super) async fn update_agent_permission(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    headers: HeaderMap,
     Json(request): Json<UpdateAgentPermissionInput>,
-) -> Result<Json<ProviderPermissionMutationResult>, ApiError> {
-    Ok(Json(
-        state
-            .runtime
-            .mutate_workspace_agent_permission(ProviderPermissionMutationRequest {
-                runtime_session_id: agent_id,
-                expected_revision: Some(request.expected_revision),
-                permission_intent: request.permission_intent,
-            })
-            .await?,
-    ))
+) -> Result<Response, ApiError> {
+    check_if_match_revision(&headers, request.expected_revision)?;
+    let result = state
+        .runtime
+        .mutate_workspace_agent_permission(ProviderPermissionMutationRequest {
+            runtime_session_id: agent_id,
+            expected_revision: Some(request.expected_revision),
+            permission_intent: request.permission_intent,
+        })
+        .await?;
+    Ok(revisioned_response(result.revision, result))
 }
 
 #[cfg(test)]

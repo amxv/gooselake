@@ -81,6 +81,11 @@ same precondition applies to workspace retirement and to their respective
 revisioned hook-approval and notice-policy GET/PUT contracts. Each revisioned
 GET and successful PUT returns its resource's own `ETag`; policy revisions are
 distinct from the workspace's revision.
+`GET /v2/workspaces/{workspace_id}/agents/{agent_id}` likewise returns the
+agent's own revision ETag. Agent preference and permission mutations accept
+optional matching `If-Match` alongside mandatory `expected_revision`, and
+successful mutations return the new agent-policy revision ETag. The service
+still verifies the revision transactionally before committing policy changes.
 
 ## API surface by group
 
@@ -613,7 +618,17 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/messages/$MESSAGE_ID/deliveries"
 ```
 
-`GET /v2/messages` supports `workspace_id`, `sender_agent_id`, `cursor`, and bounded `limit` filters. Delivery state is per recipient and remains explicit across `pending`, `deferred`, `injecting`, `injected`, `failed`, and `cancelled` transitions. Retry is allowed from failed/deferred state, and cancellation applies only while all outstanding deliveries are still cancellable:
+`GET /v2/messages` supports `workspace_id`, `sender_agent_id`, `cursor`, and
+`limit=1..100` (default 50). It returns a `messages` array and `next_cursor`
+in the JSON response; pass the cursor unchanged to fetch the next page.
+`GET /v2/messages/{message_id}/deliveries` supports `recipient_agent_id`,
+`cursor`, and `limit=1..100` (default 50). Delivery lists retain their JSON
+array shape; when another page exists the response includes `X-Next-Cursor`,
+based on stable delivery creation time and ID. Delivery state is per recipient
+and remains explicit across `pending`, `deferred`, `injecting`, `injected`,
+`failed`, and `cancelled` transitions. Retry is allowed from failed/deferred
+state, and cancellation applies only while all outstanding deliveries are
+still cancellable:
 
 ```bash
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \

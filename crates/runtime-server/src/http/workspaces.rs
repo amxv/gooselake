@@ -607,12 +607,12 @@ pub(super) async fn list_workspace_agents(
 pub(super) async fn get_workspace_agent(
     State(state): State<AppState>,
     Path((workspace_id, agent_id)): Path<(String, String)>,
-) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+) -> Result<Response, ApiError> {
     ensure_workspace_exists(&state, workspace_id.trim())?;
-    Ok(Json(state.runtime.get_workspace_agent(
-        workspace_id.trim(),
-        agent_id.trim(),
-    )?))
+    let agent = state
+        .runtime
+        .get_workspace_agent(workspace_id.trim(), agent_id.trim())?;
+    Ok(revisioned_response(agent.revision, agent))
 }
 
 pub(super) async fn get_workspace_agent_onboarding(

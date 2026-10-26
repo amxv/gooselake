@@ -181,6 +181,8 @@ Session event query parameters:
 
 ## Global Runtime Events
 
+- `GET /v2/events` (Bearer; indexed global-row-ID ascending, optional paired `scope` and `scope_id`, numeric `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for next page, eight-field redacted rows)
+- `GET /v2/events/{event_id}` (Bearer; full event payload/provider diagnostic metadata, exact immutable event ID)
 - `GET /v1/events` (Bearer)
 - `GET /v1/events/stream` (Bearer, SSE)
 

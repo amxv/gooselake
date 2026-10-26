@@ -785,10 +785,30 @@ SSE endpoints:
 
 Replay endpoints:
 
+- `GET /v2/events` (operator history, bounded metadata pages)
+- `GET /v2/events/{event_id}` (operator single-event details)
 - `GET /v1/events`
 - `GET /v1/sessions/{session_id}/events`
 - `GET /v1/teams/{team_id}/events`
 - `GET /v1/processes/{process_id}/events`
+
+The new **operator-only** `GET /v2/events` lists lightweight, redacted event
+metadata in **global row ID ascending** order. It accepts `cursor` (a
+nonnegative global row ID), `limit` (1–100, default 50), and an optional
+**paired** `scope` / `scope_id` filter. Valid scopes are `session`, `workspace`,
+`team`, `process`, `worktree`, and `system`. The cursor is always the global
+`row_id`, **including within scoped filters**; it is never the per-scope
+`seq`. The `X-Next-Cursor` response header is present when further rows exist.
+Separate global and scoped SQLite indexes back the bounded reads.
+
+Each summary includes only `row_id`, `event_id`, `scope`, `scope_id`, `seq`,
+`kind`, `criticality`, and `created_at`. Payloads, provider/native metadata,
+and per-session/turn IDs are not selected for list pages. Inspect the complete
+authenticated event, including its payload, with
+`GET /v2/events/{event_id}`. This is a read-only history contract; `/v2` does
+not yet claim new unified SSE streams. Legacy `/v1` replay/SSE contracts and
+their respective cursor conventions remain unchanged while live fan-out is
+separately hardened.
 
 Behavior:
 

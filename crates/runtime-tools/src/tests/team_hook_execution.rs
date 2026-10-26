@@ -704,7 +704,12 @@ async fn competing_dispatchers_can_launch_at_most_one_hook() {
         )
         .unwrap()
         .unwrap();
-    assert_eq!(latest.phase, TeamHookEffectPhase::Succeeded);
+    assert_eq!(
+        latest.phase,
+        TeamHookEffectPhase::Succeeded,
+        "receipt: {:?}",
+        latest.receipt
+    );
     assert_eq!(latest.attempt_count, 1);
     assert_eq!(std::fs::read_to_string(marker_path).unwrap(), "x");
 }

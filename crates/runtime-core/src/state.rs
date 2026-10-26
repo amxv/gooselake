@@ -263,6 +263,20 @@ pub struct RuntimeEventRecord {
     pub created_at: i64,
 }
 
+/// Indexed operator history projection. Large event payloads and provider
+/// diagnostics are only read by explicit single-event inspection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorEventSummary {
+    pub row_id: i64,
+    pub event_id: String,
+    pub scope: RuntimeEventScope,
+    pub scope_id: String,
+    pub seq: i64,
+    pub kind: String,
+    pub criticality: RuntimeEventCriticality,
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewRuntimeEvent {
     pub event_id: String,

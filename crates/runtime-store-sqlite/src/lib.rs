@@ -11,6 +11,7 @@ mod repository_compaction;
 mod repository_compaction_observations;
 mod repository_context_limit;
 mod repository_edit_rerun;
+mod repository_event_history;
 mod repository_hydration;
 mod repository_process;
 mod repository_team_hooks;
@@ -34,6 +35,7 @@ mod repository_workspace_retirement_settlement;
 mod repository_workspace_retirement_turns;
 mod schema;
 mod store;
+mod store_event_history;
 mod store_pagination;
 mod store_retirement;
 

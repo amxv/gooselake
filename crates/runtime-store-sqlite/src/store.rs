@@ -355,7 +355,7 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError> {
         self.repository.list_runtime_events(scope, after_seq, limit)
     }
-
+    crate::store_event_history::delegate_event_history!();
     fn register_workspace(
         &self,
         command: &WorkspaceRegisterCommand,

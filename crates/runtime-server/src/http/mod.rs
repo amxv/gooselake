@@ -35,6 +35,7 @@ mod diagnostics;
 mod events;
 mod mcp;
 mod messages;
+mod operator_events;
 mod operator_processes;
 mod processes;
 mod sessions;
@@ -52,6 +53,7 @@ use diagnostics::*;
 use events::*;
 use mcp::*;
 use messages::*;
+use operator_events::*;
 use operator_processes::*;
 use processes::*;
 use sessions::*;
@@ -344,6 +346,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/operations", get(list_operations))
         .route("/operations/{operation_id}", get(get_operation))
+        .route("/events", get(list_operator_events))
+        .route("/events/{event_id}", get(get_operator_event))
         .route("/processes", get(list_operator_processes))
         .route("/processes/{process_id}", get(get_operator_process))
         .route_layer(middleware::from_fn_with_state(

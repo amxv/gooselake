@@ -21,6 +21,7 @@ pub(crate) const MAX_SCRIPT_STDOUT: usize = 16 * 1024;
 const MAX_SCRIPT_STDERR: usize = 4 * 1024;
 pub(crate) const MAX_DURABLE_RECEIPT_BYTES: usize = 16 * 1024;
 
+#[derive(Debug)]
 enum ScriptResult {
     Success(Vec<u8>),
     Failed(&'static str),
@@ -268,8 +269,20 @@ async fn run_approved_script(
         return ScriptResult::Failed("stderr_unavailable");
     };
     let execution = async {
-        stdin.write_all(input).await?;
-        stdin.shutdown().await?;
+        // Approved hooks may legitimately ignore stdin or close it before
+        // the runtime finishes sending the JSON envelope. EPIPE says nothing
+        // about command success; still wait for the exit code and validate
+        // stdout. Every other write failure remains a script I/O failure.
+        if let Err(error) = stdin.write_all(input).await {
+            if error.kind() != std::io::ErrorKind::BrokenPipe {
+                return Err(error);
+            }
+        }
+        if let Err(error) = stdin.shutdown().await {
+            if error.kind() != std::io::ErrorKind::BrokenPipe {
+                return Err(error);
+            }
+        }
         drop(stdin);
         let mut stdout_buffer = Vec::new();
         let mut stderr_buffer = Vec::new();
@@ -310,5 +323,33 @@ async fn run_approved_script(
                 ScriptResult::Success(stdout)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn successful_script_that_closes_stdin_early_keeps_its_output_receipt() {
+        let temp = tempfile::tempdir().unwrap();
+        // Make the input larger than any pipe buffer. Even if the shell exits
+        // immediately without reading, a successful and validated output
+        // must not become a failed durable effect from EPIPE on stdin.
+        let input = vec![b'x'; 1024 * 1024];
+        let result =
+            run_approved_script("exec 0<&-; printf '{}'", &input, temp.path(), 5_000).await;
+        assert!(
+            matches!(result, ScriptResult::Success(ref output) if output == b"{}"),
+            "successful shell that ignores stdin returned {result:?}"
+        );
+
+        // A closed input pipe must not conceal a failing native exit.
+        let failed =
+            run_approved_script("exec 0<&-; printf '{}'; exit 3", &input, temp.path(), 5_000).await;
+        assert!(
+            matches!(failed, ScriptResult::Failed("exit_failure")),
+            "failed shell with closed stdin returned {failed:?}"
+        );
     }
 }

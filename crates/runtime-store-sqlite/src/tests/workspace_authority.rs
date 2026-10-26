@@ -438,7 +438,8 @@ fn operation_history_pages_use_indexed_stable_keysets_with_workspace_isolation()
              DROP INDEX idx_runtime_operations_workspace_created_page;
              DROP INDEX idx_managed_processes_admitted_page;
              DROP INDEX idx_managed_processes_workspace_admitted_page;
-             DELETE FROM schema_migrations WHERE version IN (20, 21);",
+             DROP INDEX idx_runtime_events_scope_row_id;
+             DELETE FROM schema_migrations WHERE version IN (20, 21, 22);",
         )
         .unwrap();
     drop(connection);

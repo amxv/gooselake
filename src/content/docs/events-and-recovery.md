@@ -15,12 +15,27 @@ Runtime events are scoped. A scope is the logbook a record belongs to.
 | Scope | What it describes |
 | --- | --- |
 | `session` | session and turn lifecycle |
+| `workspace` | workspace authority, membership and lifecycle |
 | `team` | team messages, deliveries, member operations |
 | `process` | runtime-managed command lifecycle and sampled output |
 | `worktree` | worktree creation, claim, release, cleanup |
 | `system` | runtime-level events such as startup recovery |
 
 Each scoped event has a scoped sequence number. Global event listing uses the database row ID as the cursor.
+
+## Operator history vs live replay
+
+`GET /v2/events` is an operator-authenticated, bounded history index. It can
+list the entire durable journal or filter by an exact `scope` and `scope_id`
+pair. The cursor is **always the global event row ID** (`row_id`), not the
+per-scope `seq`, and `limit` defaults to 50 with a maximum of 100. Pass the
+returned `X-Next-Cursor` header verbatim to retrieve another page.
+
+The eight-field list projection excludes payloads and provider-native details
+even for events with large/private diagnostic bodies. Inspect an exact event
+with `GET /v2/events/{event_id}` to retrieve its full record and payload.
+The v2 collection uses database indexes, not memory scans; it does not replace
+the `/v1` SSE streams or change their sequence-number contract.
 
 ## Critical and droppable events
 

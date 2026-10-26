@@ -111,7 +111,8 @@ fn operator_process_pages_use_indexed_stable_keysets_without_loading_commands() 
     db.execute_batch(
         "DROP INDEX idx_managed_processes_admitted_page;
          DROP INDEX idx_managed_processes_workspace_admitted_page;
-         DELETE FROM schema_migrations WHERE version=21;",
+         DROP INDEX idx_runtime_events_scope_row_id;
+         DELETE FROM schema_migrations WHERE version IN (21,22);",
     )
     .unwrap();
     drop(db);
@@ -136,6 +137,6 @@ fn operator_process_pages_use_indexed_stable_keysets_without_loading_commands() 
             0
         ))
         .unwrap(),
-        21
+        22
     );
 }

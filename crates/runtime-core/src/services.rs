@@ -1,3 +1,5 @@
+#[path = "services_event_history.rs"]
+mod event_history;
 #[path = "services_team_comms_trait.rs"]
 mod team_comms_trait;
 #[path = "services_team_models.rs"]
@@ -271,7 +273,6 @@ pub trait RuntimeStore: Send + Sync {
     async fn initialize(&self) -> Result<(), RuntimeError>;
 
     async fn healthcheck(&self) -> Result<(), RuntimeError>;
-
     fn append_runtime_event(
         &self,
         event: &NewRuntimeEvent,
@@ -283,7 +284,7 @@ pub trait RuntimeStore: Send + Sync {
         after_seq: Option<i64>,
         limit: usize,
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError>;
-
+    event_history::event_history_methods!();
     fn register_workspace(
         &self,
         _command: &WorkspaceRegisterCommand,

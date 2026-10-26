@@ -151,6 +151,34 @@ pub struct TeamHookEffectRecord {
     pub applied_at_ms: Option<i64>,
 }
 
+/// Immutable admission key for stable newest-first operator history pages.
+/// Neither phase nor output application can change the cursor ordering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamHookEffectPageCursor {
+    pub created_at_ms: i64,
+    pub parent_event_id: String,
+    pub event_name: TeamHookEventName,
+    pub hook_name: String,
+}
+
+/// Bounded operator-list projection. Commands, inputs and execution receipts
+/// require explicit inspection of the exact effect instead of list retrieval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamHookEffectSummary {
+    pub workspace_id: String,
+    pub parent_event_id: String,
+    pub event_name: TeamHookEventName,
+    pub hook_name: String,
+    pub phase: TeamHookEffectPhase,
+    pub attempt_count: u32,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub application_state: String,
+    pub application_error_code: Option<String>,
+    pub applied_at_ms: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TeamHookEffectReceipt {

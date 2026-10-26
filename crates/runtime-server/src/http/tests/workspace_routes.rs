@@ -165,11 +165,39 @@ async fn approved_pre_add_hook_runs_before_http_agent_creation_and_persists_cont
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["hook"]["event_name"] == "pre_teammate_add")
+        .find(|row| row["event_name"] == "pre_teammate_add")
         .unwrap();
+    assert_eq!(pre["hook_name"], "review_setup");
+    assert!(pre.get("hook").is_none(), "list must redact hook commands");
+    assert!(pre.get("input").is_none(), "list must redact hook inputs");
+    assert!(
+        pre.get("receipt").is_none(),
+        "list must redact native receipts"
+    );
     assert_eq!(pre["phase"], "succeeded");
     assert_eq!(pre["application_state"], "applied");
     assert_eq!(pre["attempt_count"], 1);
+    let parent_event_id = pre["parent_event_id"].as_str().unwrap();
+    let detail = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v2/workspaces/{}/hooks/effects/{parent_event_id}/pre_teammate_add/review_setup",
+                    workspace.workspace_id
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail: serde_json::Value =
+        serde_json::from_slice(&to_bytes(detail.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(detail["hook"]["event_name"], "pre_teammate_add");
+    assert_eq!(detail["hook"]["name"], "review_setup");
+    assert_eq!(detail["application_state"], "applied");
 }
 
 #[tokio::test]

@@ -45,6 +45,7 @@ mod mcp_core;
 mod mcp_policy_process;
 mod operator_contract_routes;
 mod operator_event_pages;
+mod operator_hook_effect_pages;
 mod operator_operation_pages;
 mod operator_process_pages;
 mod process_more;

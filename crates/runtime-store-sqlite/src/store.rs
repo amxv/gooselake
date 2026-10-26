@@ -20,8 +20,9 @@ use runtime_core::{
     WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use runtime_core::{
-    TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
-    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEventName,
+    TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPageCursor,
+    TeamHookEffectPhase, TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEffectSummary,
+    TeamHookEventName,
 };
 use runtime_core::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 use serde_json::Value;
@@ -84,6 +85,15 @@ impl RuntimeStore for SqliteRuntimeStore {
         limit: usize,
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         self.repository.list_team_hook_effects(workspace_id, limit)
+    }
+    fn list_team_hook_effect_summaries_page(
+        &self,
+        workspace_id: &str,
+        cursor: Option<&TeamHookEffectPageCursor>,
+        limit: usize,
+    ) -> Result<Vec<TeamHookEffectSummary>, RuntimeError> {
+        self.repository
+            .list_team_hook_effect_summaries_page(workspace_id, cursor, limit)
     }
     fn list_dispatchable_team_hook_effects(
         &self,
@@ -160,18 +170,15 @@ impl RuntimeStore for SqliteRuntimeStore {
             at_ms,
         )
     }
-
     fn quarantine_started_team_hook_effects(&self, at_ms: i64) -> Result<usize, RuntimeError> {
         self.repository.quarantine_started_team_hook_effects(at_ms)
     }
-
     fn begin_agent_tool_mutation(
         &self,
         command: &AgentToolMutationCommand,
     ) -> Result<AgentToolMutationAdmission, RuntimeError> {
         self.repository.begin_agent_tool_mutation(command)
     }
-
     fn finish_agent_tool_mutation(
         &self,
         operation_id: &str,
@@ -181,21 +188,18 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .finish_agent_tool_mutation(operation_id, exact_result, finished_at)
     }
-
     fn begin_session_edit_rerun(
         &self,
         operation: &SessionEditRerunOperation,
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
         self.repository.begin_session_edit_rerun(operation)
     }
-
     fn get_session_edit_rerun(
         &self,
         operation_id: &str,
     ) -> Result<Option<SessionEditRerunOperation>, RuntimeError> {
         self.repository.get_session_edit_rerun(operation_id)
     }
-
     fn get_session_edit_rerun_by_key(
         &self,
         agent_id: &str,
@@ -203,11 +207,9 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<Option<SessionEditRerunOperation>, RuntimeError> {
         self.repository.get_session_edit_rerun_by_key(agent_id, key)
     }
-
     fn unresolved_session_edit_rerun(&self, agent_id: &str) -> Result<bool, RuntimeError> {
         self.repository.unresolved_session_edit_rerun(agent_id)
     }
-
     fn advance_session_edit_rerun(
         &self,
         operation_id: &str,
@@ -226,14 +228,12 @@ impl RuntimeStore for SqliteRuntimeStore {
             now,
         )
     }
-
     fn recover_session_edit_reruns(
         &self,
         now: i64,
     ) -> Result<Vec<SessionEditRerunOperation>, RuntimeError> {
         self.repository.recover_session_edit_reruns(now)
     }
-
     fn resolve_session_edit_rerun_review(
         &self,
         operation_id: &str,
@@ -243,14 +243,12 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .resolve_session_edit_rerun_review(operation_id, evidence, now)
     }
-
     fn begin_session_compaction(
         &self,
         run: &SessionCompactionRun,
     ) -> Result<SessionCompactionRun, RuntimeError> {
         self.repository.begin_session_compaction(run)
     }
-
     fn transition_session_compaction(
         &self,
         run_id: &str,
@@ -267,7 +265,6 @@ impl RuntimeStore for SqliteRuntimeStore {
             updated_at_ms,
         )
     }
-
     fn get_session_compaction(
         &self,
         run_id: &str,

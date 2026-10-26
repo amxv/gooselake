@@ -128,7 +128,8 @@ fn indexed_event_history_pages_preserve_global_cursor_scope_order_and_payload_pr
     // rewriting existing event IDs, sequence numbers or JSON payloads.
     db.execute_batch(
         "DROP INDEX idx_runtime_events_scope_row_id;
-         DELETE FROM schema_migrations WHERE version=22;",
+         DROP INDEX idx_workspace_hook_effects_history;
+         DELETE FROM schema_migrations WHERE version IN (22,23);",
     )
     .unwrap();
     drop(db);
@@ -153,6 +154,6 @@ fn indexed_event_history_pages_preserve_global_cursor_scope_order_and_payload_pr
             0
         ))
         .unwrap(),
-        22
+        23
     );
 }

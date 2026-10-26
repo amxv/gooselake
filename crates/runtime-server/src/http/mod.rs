@@ -36,6 +36,7 @@ mod events;
 mod mcp;
 mod messages;
 mod operator_events;
+mod operator_hook_effects;
 mod operator_processes;
 mod processes;
 mod sessions;
@@ -54,6 +55,7 @@ use events::*;
 use mcp::*;
 use messages::*;
 use operator_events::*;
+use operator_hook_effects::*;
 use operator_processes::*;
 use processes::*;
 use sessions::*;
@@ -269,6 +271,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/workspaces/{workspace_id}/hooks/effects",
             get(list_workspace_hook_effects),
+        )
+        .route(
+            "/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}",
+            get(get_workspace_hook_effect),
         )
         .route(
             "/workspaces/{workspace_id}/worktrees",

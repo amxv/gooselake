@@ -307,9 +307,18 @@ both script execution and the independently receipted output application.
 Hook effect intents, single-execution claims, terminal script and context
 application receipts, and ambiguous-start `manual_review` classifications
 are persisted separately.
-`GET /v2/workspaces/{workspace_id}/hooks/effects?limit=50` returns bounded
-operator diagnostics (maximum 100 records). Post-compaction hooks await the
-canonical provider-compaction lifecycle.
+`GET /v2/workspaces/{workspace_id}/hooks/effects?limit=50` returns
+newest-first, indexed operator effect summaries, with `limit` from 1 to 100
+and an optional `cursor`. When another page exists, pass the response's
+`X-Next-Cursor` as the next request's `cursor`. Summary rows expose event
+identity, hook name, execution phase, attempts, application state and
+timestamps, **not** shell commands, hook inputs or native receipts. Inspect
+one effect explicitly via
+`GET /v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}`
+to retrieve its full approved hook, input and receipt. Both routes require
+operator bearer authentication. Historical effect keys are immutable across
+phase/application transitions, so changing those states does not reorder
+pages. Post-compaction hooks follow the canonical provider-compaction lifecycle.
 
 Normal `/v2` agent creation is always scoped to a registered workspace:
 

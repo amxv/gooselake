@@ -641,3 +641,160 @@ fn workspace_retirement_fences_an_approved_pending_hook() {
         Err(RuntimeError::Conflict(_))
     ));
 }
+
+#[test]
+fn indexed_hook_history_pages_preserve_tied_keys_scope_privacy_and_upgrade() {
+    use runtime_core::TeamHookEffectPageCursor;
+    use std::collections::HashSet;
+
+    let (_temp, repo) = fixture();
+    let mut connection = open_connection(&repo.database_path).unwrap();
+    let transaction = connection.transaction().unwrap();
+    for index in 0..180i64 {
+        let workspace = if index % 3 == 0 { "ws_two" } else { "ws_one" };
+        let parent = format!("evt_hist_{index:03}");
+        transaction
+            .execute(
+                "INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at)
+                 VALUES(?1,'workspace',?2,?3,'workspace.hook_parent',0,'{}',10)",
+                rusqlite::params![parent, workspace, index + 1],
+            )
+            .unwrap();
+        let name = format!("audit_{index:03}:details");
+        let entry = TeamHookResolvedEntry {
+            name: name.clone(),
+            command: "printf 'private command and token'".into(),
+            ..hook()
+        };
+        transaction
+            .execute(
+                "INSERT INTO workspace_hook_effects
+                 (workspace_id,parent_event_id,event_name,hook_name,hook_json,input_json,
+                  phase,attempt_count,receipt_json,created_at_ms,updated_at_ms,
+                  application_state)
+                 VALUES (?1,?2,'post_teammate_add',?3,?4,?5,'succeeded',1,?6,100,101,'applied')",
+                rusqlite::params![
+                    workspace,
+                    parent,
+                    name,
+                    serde_json::to_string(&entry).unwrap(),
+                    r#"{"token":"private input"}"#,
+                    r#"{"validated_output":{"token":"private receipt"},"error_code":null}"#,
+                ],
+            )
+            .unwrap();
+    }
+    for name in ["trace:a", "trace:b"] {
+        let entry = TeamHookResolvedEntry {
+            event_name: TeamHookEventName::PostTeammateRemove,
+            name: name.into(),
+            ..hook()
+        };
+        transaction
+            .execute(
+                "INSERT INTO workspace_hook_effects
+             (workspace_id,parent_event_id,event_name,hook_name,hook_json,input_json,
+              phase,attempt_count,created_at_ms,updated_at_ms,application_state)
+             VALUES('ws_two','evt_hist_000','post_teammate_remove',?1,?2,'{}',
+                    'intended',0,100,100,'not_ready')",
+                rusqlite::params![name, serde_json::to_string(&entry).unwrap()],
+            )
+            .unwrap();
+    }
+    transaction.commit().unwrap();
+    let mut seen = HashSet::new();
+    let mut cursor: Option<TeamHookEffectPageCursor> = None;
+    loop {
+        let page = repo
+            .list_team_hook_effect_summaries_page("ws_two", cursor.as_ref(), 13)
+            .unwrap();
+        if page.is_empty() {
+            break;
+        }
+        for row in &page {
+            assert_eq!(row.workspace_id, "ws_two");
+            assert_eq!(row.created_at_ms, 100);
+            assert!(seen.insert((
+                row.parent_event_id.clone(),
+                row.event_name,
+                row.hook_name.clone()
+            )));
+            let json = serde_json::to_value(row).unwrap();
+            assert_eq!(json.as_object().unwrap().len(), 11);
+            assert!(json.get("hook").is_none());
+            assert!(json.get("input").is_none());
+            assert!(json.get("receipt").is_none());
+        }
+        cursor = page.last().map(|row| TeamHookEffectPageCursor {
+            created_at_ms: row.created_at_ms,
+            parent_event_id: row.parent_event_id.clone(),
+            event_name: row.event_name,
+            hook_name: row.hook_name.clone(),
+        });
+    }
+    assert_eq!(seen.len(), 62);
+    assert_eq!(
+        repo.list_team_hook_effect_summaries_page("ws_one", None, 101)
+            .unwrap()
+            .len(),
+        101
+    );
+    assert!(repo
+        .list_team_hook_effect_summaries_page("ws_one", None, 102)
+        .is_err());
+    let exact = repo
+        .get_team_hook_effect(
+            "ws_two",
+            "evt_hist_000",
+            TeamHookEventName::PostTeammateAdd,
+            "audit_000:details",
+        )
+        .unwrap()
+        .unwrap();
+    assert!(exact.hook.command.contains("private command"));
+    assert_eq!(exact.input["token"], "private input");
+
+    let details = connection
+        .prepare(
+            "EXPLAIN QUERY PLAN SELECT parent_event_id FROM workspace_hook_effects
+             WHERE workspace_id='ws_two'
+               AND (created_at_ms,parent_event_id,event_name,hook_name)
+                 < (100,'evt_hist_100','post_teammate_add','trace:a')
+             ORDER BY created_at_ms DESC,parent_event_id DESC,event_name DESC,hook_name DESC LIMIT 13",
+        )
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .join(" ");
+    assert!(
+        details.contains("idx_workspace_hook_effects_history"),
+        "{details}"
+    );
+    assert!(!details.contains("USE TEMP B-TREE"), "{details}");
+
+    // Simulate a previously populated version before the index landed.
+    connection
+        .execute_batch(
+            "DROP INDEX idx_workspace_hook_effects_history;
+         DELETE FROM schema_migrations WHERE version=23;",
+        )
+        .unwrap();
+    drop(connection);
+    repo.initialize_schema().unwrap();
+    assert_eq!(
+        repo.list_team_hook_effect_summaries_page("ws_two", None, 101)
+            .unwrap()
+            .len(),
+        62
+    );
+    let reopened = open_connection(&repo.database_path).unwrap();
+    assert_eq!(
+        reopened
+            .query_row("SELECT COUNT(*) FROM workspace_hook_effects", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        182
+    );
+}

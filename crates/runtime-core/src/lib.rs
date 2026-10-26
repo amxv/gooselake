@@ -110,10 +110,10 @@ pub use state::{
 pub use team_comms::{RuntimeTeamCommsConfig, RuntimeTeamCommsService};
 pub use team_hooks::{
     resolve_effective_team_hooks, team_hook_fingerprint, RuntimeTeamHookExecutor, TeamHookApproval,
-    TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase, TeamHookEffectReceipt,
-    TeamHookEffectRecord, TeamHookEventName, TeamHookPreAddAdmission, TeamHookPreAddContext,
-    TeamHookResolvedEntry, TeamHookScope, TeamHookSelection, TEAM_HOOK_CONFIG_RELATIVE_PATH,
-    TEAM_HOOK_CONFIG_VERSION,
+    TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPageCursor, TeamHookEffectPhase,
+    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEffectSummary, TeamHookEventName,
+    TeamHookPreAddAdmission, TeamHookPreAddContext, TeamHookResolvedEntry, TeamHookScope,
+    TeamHookSelection, TEAM_HOOK_CONFIG_RELATIVE_PATH, TEAM_HOOK_CONFIG_VERSION,
 };
 pub use turn_authority::{
     PersistedUserInputSnapshot, PersistedUserInputSnapshotImageRef,

@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 22;
+pub(crate) const SCHEMA_VERSION: i64 = 23;
 
 #[path = "schema_chain.rs"]
 mod schema_chain;
@@ -994,3 +994,4 @@ ON runtime_operations(workspace_id, created_at DESC, operation_id DESC);
 
 const MIGRATION_21_SQL: &str = include_str!("schema_migration_21.sql");
 const MIGRATION_22_SQL: &str = include_str!("schema_migration_22.sql");
+const MIGRATION_23_SQL: &str = include_str!("schema_migration_23.sql");

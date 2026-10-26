@@ -1994,6 +1994,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}:
+    get:
+      summary: GET /v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: parent_event_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: event_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: hook_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/workspaces/{workspace_id}/interrupt:
     post:
       summary: Interrupt active workspace turns

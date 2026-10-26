@@ -1,6 +1,7 @@
 use runtime_core::{
-    RuntimeError, TeamHookEffectAdmission, TeamHookEffectPhase, TeamHookEffectReceipt,
-    TeamHookEffectRecord, TeamHookEventName, TeamHookResolvedEntry,
+    RuntimeError, TeamHookEffectAdmission, TeamHookEffectPageCursor, TeamHookEffectPhase,
+    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEffectSummary, TeamHookEventName,
+    TeamHookResolvedEntry,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
@@ -398,6 +399,94 @@ impl SqliteRuntimeRepository {
             }
         }
         Ok(items)
+    }
+
+    /// Reads only summary columns, in one indexed keyset query. The full
+    /// approved command, input and result remain behind get_team_hook_effect.
+    pub fn list_team_hook_effect_summaries_page(
+        &self,
+        workspace_id: &str,
+        cursor: Option<&TeamHookEffectPageCursor>,
+        limit: usize,
+    ) -> Result<Vec<TeamHookEffectSummary>, RuntimeError> {
+        if !(1..=101).contains(&limit) {
+            return Err(RuntimeError::InvalidState(
+                "hook effect page limit must be between 1 and 101".into(),
+            ));
+        }
+        let connection = open_connection(&self.database_path)?;
+        let select = "SELECT parent_event_id,event_name,hook_name,phase,attempt_count,
+                created_at_ms,updated_at_ms,application_state,application_error_code,applied_at_ms
+             FROM workspace_hook_effects WHERE workspace_id=?1";
+        let sql = if cursor.is_some() {
+            format!(
+                "{select} AND (created_at_ms,parent_event_id,event_name,hook_name) < (?2,?3,?4,?5)
+                 ORDER BY created_at_ms DESC,parent_event_id DESC,event_name DESC,hook_name DESC LIMIT ?6"
+            )
+        } else {
+            format!(
+                "{select} ORDER BY created_at_ms DESC,parent_event_id DESC,event_name DESC,hook_name DESC LIMIT ?2"
+            )
+        };
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| db_error("failed preparing indexed hook history", error))?;
+        let mut rows = match cursor {
+            Some(cursor) => statement.query(params![
+                workspace_id,
+                cursor.created_at_ms,
+                cursor.parent_event_id,
+                cursor.event_name.as_str(),
+                cursor.hook_name,
+                limit as i64
+            ]),
+            None => statement.query(params![workspace_id, limit as i64]),
+        }
+        .map_err(|error| db_error("failed querying indexed hook history", error))?;
+        let mut summaries = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .map_err(|error| db_error("failed reading indexed hook history", error))?
+        {
+            macro_rules! field {
+                ($index:expr) => {
+                    row.get($index)
+                        .map_err(|error| db_error("corrupt hook history row", error))?
+                };
+            }
+            let parent_event_id: String = field!(0);
+            let event_name: String = field!(1);
+            let hook_name: String = field!(2);
+            let phase: String = field!(3);
+            let attempts: i64 = field!(4);
+            let created_at_ms: i64 = field!(5);
+            let updated_at_ms: i64 = field!(6);
+            let application_state: String = field!(7);
+            let application_error_code: Option<String> = field!(8);
+            let applied_at_ms: Option<i64> = field!(9);
+            let event_name = TeamHookEventName::ALL
+                .into_iter()
+                .find(|event| event.as_str() == event_name)
+                .ok_or_else(|| RuntimeError::Bootstrap("corrupt team-hook event name".into()))?;
+            let phase = TeamHookEffectPhase::from_str(&phase)
+                .ok_or_else(|| RuntimeError::Bootstrap("corrupt team-hook effect phase".into()))?;
+            summaries.push(TeamHookEffectSummary {
+                workspace_id: workspace_id.into(),
+                parent_event_id,
+                event_name,
+                hook_name,
+                phase,
+                attempt_count: u32::try_from(attempts).map_err(|_| {
+                    RuntimeError::Bootstrap("invalid hook effect attempt count".into())
+                })?,
+                created_at_ms,
+                updated_at_ms,
+                application_state,
+                application_error_code,
+                applied_at_ms,
+            });
+        }
+        Ok(summaries)
     }
 }
 

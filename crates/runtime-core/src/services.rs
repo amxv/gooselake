@@ -38,9 +38,9 @@ use crate::{
     WorkspaceRetirementResponse, WorkspaceRetirementTurnStep,
 };
 use crate::{
-    TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
-    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEventName, TeamHookPreAddAdmission,
-    TeamHookPreAddContext,
+    TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPageCursor,
+    TeamHookEffectPhase, TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEffectSummary,
+    TeamHookEventName, TeamHookPreAddAdmission, TeamHookPreAddContext,
 };
 use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 
@@ -74,6 +74,15 @@ pub trait RuntimeStore: Send + Sync {
         _limit: usize,
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         Ok(Vec::new())
+    }
+
+    fn list_team_hook_effect_summaries_page(
+        &self,
+        _workspace_id: &str,
+        _cursor: Option<&TeamHookEffectPageCursor>,
+        _limit: usize,
+    ) -> Result<Vec<TeamHookEffectSummary>, RuntimeError> {
+        unsupported_store("indexed team-hook effect history unavailable")
     }
 
     /// Startup/retry work queues are derived from durable immutable intents,
@@ -134,13 +143,11 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
         unsupported_store("team-hook effect receipt unavailable")
     }
-
     /// Reconcile ambiguous shell dispatch at startup. A started hook is never
     /// blindly retried because the child might already have modified state.
     fn quarantine_started_team_hook_effects(&self, _at_ms: i64) -> Result<usize, RuntimeError> {
         Ok(0)
     }
-
     /// Admission is committed before any native spawn, archive, or worktree
     /// mutation. A previously admitted but unreceipted call fails closed.
     fn begin_agent_tool_mutation(
@@ -176,11 +183,9 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<Option<SessionEditRerunOperation>, RuntimeError> {
         Ok(None)
     }
-
     fn unresolved_session_edit_rerun(&self, _agent_id: &str) -> Result<bool, RuntimeError> {
         Ok(false)
     }
-
     fn advance_session_edit_rerun(
         &self,
         _operation_id: &str,
@@ -192,14 +197,12 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
         unsupported_store("edit-and-rerun transition unavailable")
     }
-
     fn recover_session_edit_reruns(
         &self,
         _now: i64,
     ) -> Result<Vec<SessionEditRerunOperation>, RuntimeError> {
         Ok(Vec::new())
     }
-
     fn resolve_session_edit_rerun_review(
         &self,
         _operation_id: &str,
@@ -208,14 +211,12 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
         unsupported_store("edit-and-rerun review unavailable")
     }
-
     fn begin_session_compaction(
         &self,
         _run: &SessionCompactionRun,
     ) -> Result<SessionCompactionRun, RuntimeError> {
         unsupported_store("session compaction persistence unavailable")
     }
-
     fn transition_session_compaction(
         &self,
         _run_id: &str,
@@ -226,21 +227,18 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<SessionCompactionRun, RuntimeError> {
         unsupported_store("session compaction persistence unavailable")
     }
-
     fn get_session_compaction(
         &self,
         _run_id: &str,
     ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
         Ok(None)
     }
-
     fn observe_provider_compaction(
         &self,
         _observation: &ProviderCompactionObservation,
     ) -> Result<CompactionObservationReceipt, RuntimeError> {
         unsupported_store("provider compaction observation persistence unavailable")
     }
-
     fn get_session_compaction_by_key(
         &self,
         _agent_id: &str,
@@ -248,7 +246,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
         Ok(None)
     }
-
     fn unresolved_session_compaction(&self, _agent_id: &str) -> Result<bool, RuntimeError> {
         Ok(false)
     }

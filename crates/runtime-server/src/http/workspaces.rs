@@ -280,29 +280,6 @@ pub(super) async fn get_workspace_hook_approval(
     Ok(revisioned_response(approval.revision, approval))
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct WorkspaceHookEffectsQuery {
-    limit: Option<usize>,
-}
-
-pub(super) async fn list_workspace_hook_effects(
-    State(state): State<AppState>,
-    Path(workspace_id): Path<String>,
-    Query(query): Query<WorkspaceHookEffectsQuery>,
-) -> Result<Json<Vec<runtime_core::TeamHookEffectRecord>>, ApiError> {
-    state
-        .app
-        .services
-        .store
-        .get_workspace(workspace_id.trim())?
-        .ok_or_else(|| ApiError::not_found(format!("workspace {workspace_id}")))?;
-    Ok(Json(state.app.services.store.list_team_hook_effects(
-        workspace_id.trim(),
-        query.limit.unwrap_or(50).clamp(1, 100),
-    )?))
-}
-
 pub(super) async fn list_workspace_worktree_inventory(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,

@@ -104,7 +104,8 @@ Top-level groups:
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
 - Global events: replay and stream
 - Teams/comms: team lifecycle, spawn, messages, deliveries, retries, snapshots, interrupts
-- Processes: run/list/get/logs/kill, replay and stream process events
+- Processes: indexed operator `/v2` history and single-process inspection;
+  legacy `/v1` run/list/get/logs/kill and event replay/stream remain available
 - Worktrees: create/list/get/claim/release/cleanup
 - MCP gateway: capabilities and invoke
 
@@ -864,6 +865,32 @@ ACP v1 notes:
 See [Provider Guide](/docs/providers) for full provider setup.
 
 ## Processes
+
+The operator-only `/v2` process history is a bounded, indexed read surface:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/processes?workspace_id=$WORKSPACE_ID&limit=50"
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/processes/$PROCESS_ID"
+```
+
+`GET /v2/processes` returns a JSON array, newest admitted process first, with
+an optional exact `workspace_id` filter. `limit` defaults to 50 (1–100),
+and an `X-Next-Cursor` header supplies the next keyset page when there are more
+rows. The cursor uses `(admitted_at, process_id)` descending order; the database
+uses separate global and workspace indexes instead of scanning all stored
+commands or doing in-memory pagination. Each list item includes only
+`process_id`, `workspace_id`, `owner_agent_id`, `status`, `admitted_at`,
+`started_at`, `ended_at`, and `completion_state`. Neither process commands,
+native PIDs, invocation keys nor full log paths are loaded into list results.
+
+`GET /v2/processes/{process_id}` deliberately returns the existing detailed
+operator process record, including command and log locations, for explicit
+diagnosis. Both endpoints require the operator bearer token. Native process
+launch/cancel and scheduler controls remain under `/v1/processes` until the
+corresponding `/v2` effectful operations have durable idempotency/recovery
+semantics; `POST /v2/processes` is not supported.
 
 Start a process:
 

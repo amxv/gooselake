@@ -219,6 +219,8 @@ Team query parameters:
 
 ## Processes
 
+- `GET /v2/processes` (Bearer; indexed newest-first admitted-process summaries, optional `workspace_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when more)
+- `GET /v2/processes/{process_id}` (Bearer; detailed native process diagnosis, including command/log locations)
 - `POST /v1/processes` (Bearer)
 - `GET /v1/processes` (Bearer)
 - `GET /v1/processes/scheduler` (Bearer)
@@ -229,6 +231,11 @@ Team query parameters:
 - `GET /v1/processes/{process_id}/events` (Bearer)
 - `GET /v1/processes/{process_id}/events/stream` (Bearer, SSE)
 - `POST /v1/processes/{process_id}/kill` (Bearer)
+
+The `/v2` collection returns eight non-sensitive metadata fields and never
+materializes process commands, native PIDs or logs during list reads. Launch,
+cancel and scheduler writes still use `/v1/processes`; no unguarded effectful
+`POST /v2/processes` alias is exposed.
 
 Process query parameters:
 - list: `session_id`, `include_completed`

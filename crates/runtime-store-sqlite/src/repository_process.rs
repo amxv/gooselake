@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use runtime_core::{
     process_status_is_terminal, ManagedProcessAdmission, ManagedProcessRecord,
-    ManagedProcessTerminalUpdate, ProcessCompletionUpdate, ProcessSchedulerSettings, RuntimeError,
-    PROCESS_COMPLETION_NOT_REQUIRED, PROCESS_COMPLETION_PENDING,
+    ManagedProcessTerminalUpdate, OperatorProcessSummary, ProcessCompletionUpdate,
+    ProcessSchedulerSettings, RuntimeError, PROCESS_COMPLETION_NOT_REQUIRED,
+    PROCESS_COMPLETION_PENDING,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
@@ -131,6 +132,62 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed querying managed processes", error))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| db_error("failed decoding managed processes", error))
+    }
+
+    /// Operator history is deliberately a small projection instead of a full
+    /// process scan that deserializes commands and log/OS diagnostic fields.
+    /// Two query shapes allow each scope to use its own descending page index.
+    pub fn list_managed_processes_page(
+        &self,
+        workspace_id: Option<&str>,
+        cursor: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<OperatorProcessSummary>, RuntimeError> {
+        if !(1..=101).contains(&limit) {
+            return Err(RuntimeError::InvalidState(
+                "operator process page limit must be between 1 and 101".into(),
+            ));
+        }
+        let connection = open_connection(&self.database_path)?;
+        let columns = "process_id, workspace_id, owner_session_id, status, admitted_at, \
+                       execution_started_at, ended_at, completion_state";
+        let filter = match (workspace_id.is_some(), cursor.is_some()) {
+            (true, true) => "WHERE workspace_id = ?1 AND (admitted_at, process_id) < (?2, ?3)",
+            (true, false) => "WHERE workspace_id = ?1",
+            (false, true) => "WHERE (admitted_at, process_id) < (?2, ?3)",
+            (false, false) => "",
+        };
+        let sql = format!(
+            "SELECT {columns} FROM managed_processes {filter} \
+             ORDER BY admitted_at DESC, process_id DESC LIMIT ?4"
+        );
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| db_error("failed preparing operator process page", error))?;
+        let rows = statement
+            .query_map(
+                params![
+                    workspace_id,
+                    cursor.as_ref().map(|value| value.0),
+                    cursor.as_ref().map(|value| value.1.as_str()),
+                    limit as i64,
+                ],
+                |row| {
+                    Ok(OperatorProcessSummary {
+                        process_id: row.get(0)?,
+                        workspace_id: row.get(1)?,
+                        owner_agent_id: row.get(2)?,
+                        status: row.get(3)?,
+                        admitted_at: row.get(4)?,
+                        started_at: row.get(5)?,
+                        ended_at: row.get(6)?,
+                        completion_state: row.get(7)?,
+                    })
+                },
+            )
+            .map_err(|error| db_error("failed querying operator process page", error))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| db_error("failed decoding operator process page", error))
     }
 
     pub fn get_managed_process(

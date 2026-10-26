@@ -35,6 +35,7 @@ mod diagnostics;
 mod events;
 mod mcp;
 mod messages;
+mod operator_processes;
 mod processes;
 mod sessions;
 mod shared;
@@ -51,6 +52,7 @@ use diagnostics::*;
 use events::*;
 use mcp::*;
 use messages::*;
+use operator_processes::*;
 use processes::*;
 use sessions::*;
 use shared::*;
@@ -342,6 +344,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/operations", get(list_operations))
         .route("/operations/{operation_id}", get(get_operation))
+        .route("/processes", get(list_operator_processes))
+        .route("/processes/{process_id}", get(get_operator_process))
         .route_layer(middleware::from_fn_with_state(
             state.bearer_token.clone(),
             bearer_auth,

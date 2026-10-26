@@ -7,6 +7,7 @@ use runtime_core::{
 };
 use rusqlite::{params, Connection};
 
+mod operator_process_pages;
 mod process_completion_authority;
 mod workspace_retirement;
 mod workspace_retirement_deliveries;

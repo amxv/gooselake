@@ -1559,6 +1559,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/processes:
+    get:
+      summary: GET /v2/processes
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/processes/{process_id}:
+    get:
+      summary: GET /v2/processes/{process_id}
+      parameters:
+        - name: process_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/providers/{provider}/capabilities:
     get:
       summary: Get provider capability contract

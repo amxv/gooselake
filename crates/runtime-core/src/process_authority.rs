@@ -70,6 +70,21 @@ pub struct ManagedProcessRecord {
     pub updated_at: i64,
 }
 
+/// Bounded operator history projection. Commands, native PIDs, log paths,
+/// invocation identities, and diagnostic errors stay in the single-process
+/// detail endpoint rather than being materialized in list responses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorProcessSummary {
+    pub process_id: String,
+    pub workspace_id: Option<String>,
+    pub owner_agent_id: Option<String>,
+    pub status: String,
+    pub admitted_at: i64,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub completion_state: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedProcessTerminalUpdate {
     pub status: String,

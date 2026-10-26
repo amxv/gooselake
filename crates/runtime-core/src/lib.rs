@@ -46,9 +46,10 @@ pub use model_policy::{
 };
 pub use process_authority::{
     process_status_is_terminal, ManagedProcessAdmission, ManagedProcessRecord,
-    ManagedProcessTerminalUpdate, ProcessCompletionUpdate, ProcessQueueEntry,
-    ProcessSchedulerSettings, ProcessSchedulerSnapshot, PROCESS_COMPLETION_DELIVERED,
-    PROCESS_COMPLETION_INJECTING, PROCESS_COMPLETION_NOT_REQUIRED, PROCESS_COMPLETION_PENDING,
+    ManagedProcessTerminalUpdate, OperatorProcessSummary, ProcessCompletionUpdate,
+    ProcessQueueEntry, ProcessSchedulerSettings, ProcessSchedulerSnapshot,
+    PROCESS_COMPLETION_DELIVERED, PROCESS_COMPLETION_INJECTING, PROCESS_COMPLETION_NOT_REQUIRED,
+    PROCESS_COMPLETION_PENDING,
 };
 pub use process_service::{
     ProcessDetails, ProcessGetRequest, ProcessKillRequest, ProcessListRequest,

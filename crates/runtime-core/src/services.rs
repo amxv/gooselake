@@ -823,32 +823,32 @@ pub trait RuntimeStore: Send + Sync {
         &self,
         _admission: &ManagedProcessAdmission,
     ) -> Result<ManagedProcessRecord, RuntimeError> {
-        unsupported_store(
-            "managed-process admission authority is not implemented by this runtime store",
-        )
+        unsupported_store("managed-process admission authority unavailable")
     }
-
     fn list_managed_processes(&self) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
         unsupported_store("managed-process authority is not implemented by this runtime store")
     }
-
+    fn list_managed_processes_page(
+        &self,
+        _workspace_id: Option<&str>,
+        _cursor: Option<(i64, String)>,
+        _limit: usize,
+    ) -> Result<Vec<crate::OperatorProcessSummary>, RuntimeError> {
+        unsupported_store("indexed operator process history unavailable")
+    }
     fn get_managed_process(
         &self,
         _process_id: &str,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
         unsupported_store("managed-process authority is not implemented by this runtime store")
     }
-
     fn claim_managed_processes(
         &self,
         _settings: &ProcessSchedulerSettings,
         _claimed_at: i64,
     ) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
-        unsupported_store(
-            "managed-process scheduler authority is not implemented by this runtime store",
-        )
+        unsupported_store("managed-process scheduler authority unavailable")
     }
-
     fn mark_managed_process_running(
         &self,
         _process_id: &str,

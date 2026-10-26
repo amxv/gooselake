@@ -8,9 +8,9 @@ use runtime_core::{
     LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
     ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
     ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
-    OperationSummary, ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
-    ProviderCompactionObservation, ProviderWorkspaceRebindEvidence, RuntimeError,
-    RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, RuntimeStore,
+    OperationSummary, OperatorProcessSummary, ProcessCompletionUpdate, ProcessRecord,
+    ProcessSchedulerSettings, ProviderCompactionObservation, ProviderWorkspaceRebindEvidence,
+    RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, RuntimeStore,
     SessionCompactionRun, SessionContextLimitSnapshot, SessionEditRerunOperation, SessionRecord,
     TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
     TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
@@ -796,40 +796,42 @@ impl RuntimeStore for SqliteRuntimeStore {
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_managed_worktree(record)
     }
-
     fn managed_worktree_revision(&self, worktree_id: &str) -> Result<u64, RuntimeError> {
         self.repository.managed_worktree_revision(worktree_id)
     }
-
     fn upsert_managed_worktree_claim(
         &self,
         record: &ManagedWorktreeClaimRecord,
     ) -> Result<(), RuntimeError> {
         self.repository.upsert_managed_worktree_claim(record)
     }
-
     fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_process(record)
     }
-
     fn admit_managed_process(
         &self,
         admission: &ManagedProcessAdmission,
     ) -> Result<ManagedProcessRecord, RuntimeError> {
         self.repository.admit_managed_process(admission)
     }
-
     fn list_managed_processes(&self) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
         self.repository.list_managed_processes()
     }
-
+    fn list_managed_processes_page(
+        &self,
+        workspace_id: Option<&str>,
+        cursor: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<OperatorProcessSummary>, RuntimeError> {
+        self.repository
+            .list_managed_processes_page(workspace_id, cursor, limit)
+    }
     fn get_managed_process(
         &self,
         process_id: &str,
     ) -> Result<Option<ManagedProcessRecord>, RuntimeError> {
         self.repository.get_managed_process(process_id)
     }
-
     fn claim_managed_processes(
         &self,
         settings: &ProcessSchedulerSettings,
@@ -838,7 +840,6 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .claim_managed_processes(settings, claimed_at)
     }
-
     fn mark_managed_process_running(
         &self,
         process_id: &str,

@@ -1,3 +1,4 @@
+use super::workspace_control_routes::register_control_workspace;
 use super::*;
 
 #[tokio::test]

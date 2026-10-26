@@ -729,7 +729,7 @@ async fn workspace_interrupt_targets_only_active_turns_in_authoritative_roster_a
     assert!(operation.claims.is_empty());
 }
 
-async fn register_control_workspace(
+pub(super) async fn register_control_workspace(
     router: &Router,
     token: &str,
     root: &Path,

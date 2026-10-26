@@ -131,6 +131,20 @@ pub struct OperationRecord {
     pub updated_at: i64,
 }
 
+/// Bounded operator-list projection. The complete admission request and
+/// terminal result are deliberately available only through get_operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperationSummary {
+    pub operation_id: String,
+    pub workspace_id: Option<String>,
+    pub kind: String,
+    pub actor_kind: OperationActorKind,
+    pub phase: OperationPhase,
+    pub error_code: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// Host-admitted, exact-input receipt for a model's effectful workspace tool.
 /// The agent and workspace are derived from authenticated runtime authority,
 /// never from model-authored arguments.

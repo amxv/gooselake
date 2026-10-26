@@ -683,6 +683,33 @@ pub(super) async fn get_operation(
     Ok(Json(operation))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OperationListQuery {
+    workspace_id: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+}
+
+pub(super) async fn list_operations(
+    State(state): State<AppState>,
+    Query(query): Query<OperationListQuery>,
+) -> Result<Response, ApiError> {
+    let (limit, cursor) = ResourcePageQuery {
+        cursor: query.cursor,
+        limit: query.limit,
+    }
+    .parse()?;
+    let rows = state.app.services.store.list_operations_page(
+        query.workspace_id.as_deref(),
+        cursor,
+        limit + 1,
+    )?;
+    Ok(paged_response(rows, limit, |row| {
+        (row.created_at, &row.operation_id)
+    }))
+}
+
 pub(super) fn parse_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
     let mut values = headers.get_all("idempotency-key").iter();
     let Some(value) = values.next() else {

@@ -1,8 +1,8 @@
 use runtime_core::{
     OperationActor, OperationActorKind, OperationDetails, OperationEffectRecord,
     OperationOutboxReceiptRecord, OperationOutboxRecord, OperationPhase, OperationRecord,
-    OperationResourceClaimRecord, OperationTransitionRecord, RuntimeError, WorkspaceLifecycleState,
-    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    OperationResourceClaimRecord, OperationSummary, OperationTransitionRecord, RuntimeError,
+    WorkspaceLifecycleState, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
@@ -228,6 +228,85 @@ impl SqliteRuntimeRepository {
             operation,
         }))
     }
+
+    /// Read only one bounded page of operation summaries. Filter predicates
+    /// are built explicitly so both global and workspace queries can use
+    /// their respective `(created_at, operation_id)` ordering indexes.
+    pub fn list_operations_page(
+        &self,
+        workspace_id: Option<&str>,
+        after: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<OperationSummary>, RuntimeError> {
+        if !(1..=101).contains(&limit) {
+            return Err(RuntimeError::InvalidState(
+                "operation page size must be between 1 and 101".into(),
+            ));
+        }
+        let connection = open_connection(&self.database_path)?;
+        let mut sql = String::from(
+            "SELECT operation_id, workspace_id, kind, actor_kind, phase, error_code, \
+             created_at, updated_at \
+             FROM runtime_operations",
+        );
+        let mut filters = Vec::new();
+        let mut parameters = Vec::<rusqlite::types::Value>::new();
+        if let Some(workspace_id) = workspace_id {
+            parameters.push(workspace_id.to_owned().into());
+            filters.push(format!("workspace_id = ?{}", parameters.len()));
+        }
+        if let Some((timestamp, id)) = after {
+            parameters.push(timestamp.into());
+            let first = parameters.len();
+            parameters.push(id.into());
+            filters.push(format!(
+                "(created_at, operation_id) < (?{first}, ?{})",
+                parameters.len()
+            ));
+        }
+        if !filters.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&filters.join(" AND "));
+        }
+        parameters.push(i64::try_from(limit).unwrap_or(i64::MAX).into());
+        sql.push_str(&format!(
+            " ORDER BY created_at DESC, operation_id DESC LIMIT ?{}",
+            parameters.len()
+        ));
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| db_error("failed preparing operation page", error))?;
+        let rows = statement
+            .query_map(
+                rusqlite::params_from_iter(parameters),
+                operation_summary_from_row,
+            )
+            .map_err(|error| db_error("failed querying operation page", error))?;
+        collect_rows(rows)
+    }
+}
+
+fn operation_summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<OperationSummary> {
+    let actor_kind_text: String = row.get(3)?;
+    let actor_kind = OperationActorKind::from_str(&actor_kind_text).ok_or_else(|| {
+        invalid_text(
+            3,
+            format!("invalid operation actor kind {actor_kind_text:?}"),
+        )
+    })?;
+    let phase_text: String = row.get(4)?;
+    let phase = OperationPhase::from_str(&phase_text)
+        .ok_or_else(|| invalid_text(4, format!("invalid operation phase {phase_text:?}")))?;
+    Ok(OperationSummary {
+        operation_id: row.get(0)?,
+        workspace_id: row.get(1)?,
+        kind: row.get(2)?,
+        actor_kind,
+        phase,
+        error_code: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
 }
 
 pub(crate) fn operation_by_idempotency(

@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 19;
+pub(crate) const SCHEMA_VERSION: i64 = 20;
 
 #[path = "schema_chain.rs"]
 mod schema_chain;
@@ -985,3 +985,9 @@ UPDATE workspace_hook_effects SET application_state = 'rejected',
 
 const MIGRATION_18_SQL: &str = include_str!("schema_migration_18.sql");
 const MIGRATION_19_SQL: &str = include_str!("schema_migration_19.sql");
+const MIGRATION_20_SQL: &str = r#"
+CREATE INDEX idx_runtime_operations_created_page
+ON runtime_operations(created_at DESC, operation_id DESC);
+CREATE INDEX idx_runtime_operations_workspace_created_page
+ON runtime_operations(workspace_id, created_at DESC, operation_id DESC);
+"#;

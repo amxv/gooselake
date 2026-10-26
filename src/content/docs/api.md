@@ -166,10 +166,22 @@ Read the durable state:
 ```bash
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/workspaces"
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/workspaces/$WORKSPACE_ID"
+curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/operations?workspace_id=$WORKSPACE_ID&limit=50"
 curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/operations/$OPERATION_ID"
 ```
 
-The operation endpoint exposes the durable operation row plus current claims, transition evidence, effect evidence, outbox rows, and delivery receipts. Workspace registration itself is committed in one SQLite transaction with its operation transitions and canonical-root claim/fence bookkeeping, so a failed commit does not leave a half-created workspace or a falsely terminal operation.
+`GET /v2/operations` returns newest-first durable operation summaries, optionally
+filtered by exact `workspace_id`. It uses indexed `(created_at, operation_id)`
+keyset pagination: `limit` defaults to 50 (maximum 100), and `X-Next-Cursor`
+supplies the next page's cursor. Each row contains only the operation ID,
+workspace ID, kind, actor kind, phase, optional error code and timestamps.
+It does not retrieve admission requests, idempotency credentials, terminal
+results, claims, transitions or effect details for every row. The singular operation endpoint returns the full durable
+operation row plus current claims, transition evidence, effect evidence, outbox
+rows, and delivery receipts. Workspace registration itself is committed in one
+SQLite transaction with its operation transitions and canonical-root claim/fence
+bookkeeping, so a failed commit does not leave a half-created workspace or a
+falsely terminal operation.
 
 ### Retiring and reactivating a workspace
 

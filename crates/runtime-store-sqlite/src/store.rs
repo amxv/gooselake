@@ -8,7 +8,7 @@ use runtime_core::{
     LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
     ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
     ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
-    ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
+    OperationSummary, ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
     ProviderCompactionObservation, ProviderWorkspaceRebindEvidence, RuntimeError,
     RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, RuntimeStore,
     SessionCompactionRun, SessionContextLimitSnapshot, SessionEditRerunOperation, SessionRecord,
@@ -72,14 +72,12 @@ impl RuntimeStore for SqliteRuntimeStore {
     fn get_team_hook_approval(&self, workspace_id: &str) -> Result<TeamHookApproval, RuntimeError> {
         self.repository.get_team_hook_approval(workspace_id)
     }
-
     fn update_team_hook_approval(
         &self,
         update: &TeamHookApprovalUpdate,
     ) -> Result<TeamHookApproval, RuntimeError> {
         self.repository.update_team_hook_approval(update)
     }
-
     fn list_team_hook_effects(
         &self,
         workspace_id: &str,
@@ -87,21 +85,18 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         self.repository.list_team_hook_effects(workspace_id, limit)
     }
-
     fn list_dispatchable_team_hook_effects(
         &self,
         limit: usize,
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         self.repository.list_dispatchable_team_hook_effects(limit)
     }
-
     fn list_unapplied_team_hook_effects(
         &self,
         limit: usize,
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         self.repository.list_unapplied_team_hook_effects(limit)
     }
-
     fn apply_team_hook_effect_output(
         &self,
         effect: &TeamHookEffectRecord,
@@ -676,6 +671,16 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn get_operation(&self, operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
         self.repository.get_operation(operation_id)
+    }
+
+    fn list_operations_page(
+        &self,
+        workspace_id: Option<&str>,
+        after: Option<(i64, String)>,
+        limit: usize,
+    ) -> Result<Vec<OperationSummary>, RuntimeError> {
+        self.repository
+            .list_operations_page(workspace_id, after, limit)
     }
 
     fn persist_workspace_migration_preview(

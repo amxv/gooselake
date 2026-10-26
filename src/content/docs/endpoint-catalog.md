@@ -75,6 +75,7 @@ error bodies and the separate agent-scoped `/v2/mcp` tool contract are unchanged
 - `POST /v2/migrations/workspaces/apply` (Bearer; optional `Idempotency-Key` header)
 - `POST /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/operations/{operation_id}` (Bearer)
+- `GET /v2/operations` (Bearer; indexed newest-first durable operation summaries, optional `workspace_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when more)
 
 Workspace registration canonicalizes the requested filesystem root and uses that canonical root as the durable uniqueness key. Repeated or concurrent registrations of the same root converge on one workspace identity. With `Idempotency-Key`, an exact retry replays the original terminal result; a different normalized request under the same key returns HTTP `409` without changing state.
 

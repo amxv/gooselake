@@ -325,6 +325,145 @@ fn registration_command(
 }
 
 #[test]
+fn operation_history_pages_use_indexed_stable_keysets_with_workspace_isolation() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let repository = repo(&temp_dir);
+    repository.initialize_schema().expect("schema");
+    let root_a = temp_dir.path().join("history-a");
+    let root_b = temp_dir.path().join("history-b");
+    std::fs::create_dir(&root_a).expect("root a");
+    std::fs::create_dir(&root_b).expect("root b");
+    let a = repository
+        .register_workspace(&registration_command(&root_a, "A", Some("history-a")))
+        .expect("register a")
+        .workspace
+        .workspace_id;
+    let b = repository
+        .register_workspace(&registration_command(&root_b, "B", Some("history-b")))
+        .expect("register b")
+        .workspace
+        .workspace_id;
+    let connection =
+        Connection::open(temp_dir.path().join("runtime.sqlite3")).expect("open synthetic history");
+    for n in 0..180 {
+        connection
+            .execute(
+                "INSERT INTO runtime_operations (
+                   operation_id, workspace_id, kind, actor_kind, actor_id,
+                   normalized_request_hash, normalized_request_json, phase,
+                   created_at, updated_at
+                 ) VALUES (?1, ?2, 'synthetic', 'system', 'system', 'hash', ?3,
+                           'requested', 100, 100)",
+                params![
+                    format!("op_test_{n:04}"),
+                    if n % 2 == 0 { &a } else { &b },
+                    serde_json::json!({"secret": "not-a-list-field"}).to_string(),
+                ],
+            )
+            .expect("synthetic operation");
+    }
+
+    let mut cursor = None;
+    let mut seen = Vec::new();
+    let mut keys = Vec::new();
+    loop {
+        let page = repository
+            .list_operations_page(None, cursor, 27)
+            .expect("operation page");
+        if page.is_empty() {
+            break;
+        }
+        assert!(page.len() <= 27);
+        let last = page.last().unwrap();
+        cursor = Some((last.created_at, last.operation_id.clone()));
+        for operation in page {
+            assert!(!serde_json::to_string(&operation)
+                .unwrap()
+                .contains("not-a-list-field"));
+            keys.push((operation.created_at, operation.operation_id.clone()));
+            seen.push(operation.operation_id);
+        }
+    }
+    assert_eq!(seen.len(), 182);
+    assert_eq!(
+        seen.iter().collect::<std::collections::HashSet<_>>().len(),
+        182
+    );
+    assert!(keys.windows(2).all(|pair| pair[0] > pair[1]));
+    for workspace_id in [&a, &b] {
+        let mut after = None;
+        let mut count = 0;
+        loop {
+            let page = repository
+                .list_operations_page(Some(workspace_id), after, 19)
+                .expect("workspace page");
+            if page.is_empty() {
+                break;
+            }
+            assert!(page
+                .iter()
+                .all(|op| op.workspace_id.as_deref() == Some(workspace_id)));
+            let last = page.last().unwrap();
+            after = Some((last.created_at, last.operation_id.clone()));
+            count += page.len();
+        }
+        assert_eq!(
+            count, 91,
+            "registration plus 90 synthetic workspace operations"
+        );
+    }
+    for (sql, expected_index) in [
+        ("SELECT operation_id FROM runtime_operations ORDER BY created_at DESC, operation_id DESC LIMIT 20", "idx_runtime_operations_created_page"),
+        ("SELECT operation_id FROM runtime_operations WHERE workspace_id='w' ORDER BY created_at DESC, operation_id DESC LIMIT 20", "idx_runtime_operations_workspace_created_page"),
+    ] {
+        let details = connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join(" ");
+        assert!(details.contains(expected_index), "query plan: {details}");
+    }
+    assert!(repository.list_operations_page(None, None, 102).is_err());
+    drop(connection);
+    // Model an existing database containing durable operations: only the
+    // new indexes and migration receipt are absent. Upgrading must retain the
+    // full operation history without rewriting any authority row.
+    let connection = Connection::open(temp_dir.path().join("runtime.sqlite3")).unwrap();
+    connection
+        .execute_batch(
+            "DROP INDEX idx_runtime_operations_created_page;
+             DROP INDEX idx_runtime_operations_workspace_created_page;
+             DELETE FROM schema_migrations WHERE version = 20;",
+        )
+        .unwrap();
+    drop(connection);
+    repository
+        .initialize_schema()
+        .expect("upgrade existing database");
+    assert!(repository.list_operations_page(None, None, 200).is_err());
+    let connection = Connection::open(temp_dir.path().join("runtime.sqlite3")).unwrap();
+    let surviving: i64 = connection
+        .query_row("SELECT COUNT(*) FROM runtime_operations", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        surviving, 182,
+        "existing operation rows survive the upgrade"
+    );
+    assert_eq!(
+        repository
+            .list_operations_page(None, None, 5)
+            .unwrap()
+            .len(),
+        5
+    );
+}
+
+#[test]
 fn workspace_registration_replays_exact_result_and_rejects_key_reuse_with_different_input() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let repository = repo(&temp_dir);

@@ -21,7 +21,7 @@ use crate::{
     LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
     ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
     ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
-    ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
+    OperationSummary, ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
     ProviderCompactionObservation, ProviderRetirementCloseEvidence,
     ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
     RuntimeHydratedState, SessionCompactionRun, SessionContextLimitSnapshot,
@@ -60,14 +60,12 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<TeamHookApproval, RuntimeError> {
         unsupported_store("team-hook approval store unavailable")
     }
-
     fn update_team_hook_approval(
         &self,
         _update: &TeamHookApprovalUpdate,
     ) -> Result<TeamHookApproval, RuntimeError> {
         unsupported_store("team-hook approval store unavailable")
     }
-
     fn list_team_hook_effects(
         &self,
         _workspace_id: &str,
@@ -84,14 +82,12 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         Ok(Vec::new())
     }
-
     fn list_unapplied_team_hook_effects(
         &self,
         _limit: usize,
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         Ok(Vec::new())
     }
-
     fn apply_team_hook_effect_output(
         &self,
         _effect: &TeamHookEffectRecord,
@@ -99,14 +95,12 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
         unsupported_store("durable hook context application is unavailable")
     }
-
     fn admit_team_hook_effect(
         &self,
         _admission: &TeamHookEffectAdmission,
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
         unsupported_store("team-hook effect admission unavailable")
     }
-
     fn get_team_hook_effect(
         &self,
         _workspace_id: &str,
@@ -116,7 +110,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<Option<TeamHookEffectRecord>, RuntimeError> {
         Ok(None)
     }
-
     fn claim_team_hook_effect(
         &self,
         _workspace_id: &str,
@@ -127,7 +120,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
         unsupported_store("team-hook effect claim unavailable")
     }
-
     fn finish_team_hook_effect(
         &self,
         _workspace_id: &str,
@@ -155,7 +147,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<AgentToolMutationAdmission, RuntimeError> {
         unsupported_store("durable model-tool mutation admission unavailable")
     }
-
     fn finish_agent_tool_mutation(
         &self,
         _operation_id: &str,
@@ -164,21 +155,18 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<(), RuntimeError> {
         unsupported_store("durable model-tool mutation receipt unavailable")
     }
-
     fn begin_session_edit_rerun(
         &self,
         _operation: &SessionEditRerunOperation,
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
         unsupported_store("edit-and-rerun persistence unavailable")
     }
-
     fn get_session_edit_rerun(
         &self,
         _operation_id: &str,
     ) -> Result<Option<SessionEditRerunOperation>, RuntimeError> {
         Ok(None)
     }
-
     fn get_session_edit_rerun_by_key(
         &self,
         _agent_id: &str,
@@ -719,6 +707,17 @@ pub trait RuntimeStore: Send + Sync {
 
     fn get_operation(&self, _operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
         unsupported_store("durable operation authority is not implemented by this runtime store")
+    }
+
+    /// Indexed, deterministic operation history for the operator control plane.
+    /// This is a summary page; exact claims/effects are read by get_operation.
+    fn list_operations_page(
+        &self,
+        _workspace_id: Option<&str>,
+        _after: Option<(i64, String)>,
+        _limit: usize,
+    ) -> Result<Vec<OperationSummary>, RuntimeError> {
+        unsupported_store("durable operation pagination is not implemented by this runtime store")
     }
 
     fn persist_workspace_migration_preview(

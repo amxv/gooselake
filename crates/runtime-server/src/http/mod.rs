@@ -340,6 +340,7 @@ pub fn build_router(state: AppState) -> Router {
             "/migrations/workspaces/resolutions/{subject_kind}/{subject_id}",
             post(resolve_workspace_migration_subject),
         )
+        .route("/operations", get(list_operations))
         .route("/operations/{operation_id}", get(get_operation))
         .route_layer(middleware::from_fn_with_state(
             state.bearer_token.clone(),

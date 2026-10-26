@@ -122,7 +122,7 @@ pub use workspace::{
     normalized_json_hash, prepare_workspace_registration, AgentToolMutationAdmission,
     AgentToolMutationCommand, OperationActor, OperationActorKind, OperationDetails,
     OperationEffectRecord, OperationOutboxReceiptRecord, OperationOutboxRecord, OperationPhase,
-    OperationRecord, OperationResourceClaimRecord, OperationTransitionRecord,
+    OperationRecord, OperationResourceClaimRecord, OperationSummary, OperationTransitionRecord,
     WorkspaceLifecycleState, WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterRequest,
     WorkspaceRegisterResponse,
 };

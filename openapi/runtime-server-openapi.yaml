@@ -1533,6 +1533,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/operations:
+    get:
+      summary: GET /v2/operations
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/operations/{operation_id}:
     get:
       summary: Get durable operation

@@ -497,13 +497,12 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.get_workspace_notice_policy(workspace_id)
     }
 
-    fn update_workspace_notice_policy(
+    fn update_workspace_notice_policy_idempotent(
         &self,
-        workspace_id: &str,
-        update: &runtime_core::WorkspaceNoticePolicyUpdate,
-    ) -> Result<runtime_core::WorkspaceNoticePolicyRecord, RuntimeError> {
+        command: &runtime_core::WorkspaceNoticePolicyMutationCommand,
+    ) -> Result<runtime_core::WorkspaceNoticePolicyMutationResponse, RuntimeError> {
         self.repository
-            .update_workspace_notice_policy(workspace_id, update)
+            .update_workspace_notice_policy_idempotent(command)
     }
 
     fn transition_workspace_system_notice(

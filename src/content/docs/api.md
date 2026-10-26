@@ -530,11 +530,26 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 curl -fsS -X PUT \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: notice-policy-update-1" \
   -d '{"expected_revision":0,"policy":{"lead_transitions":true,"membership_to_lead":true,"worktree_reassignment":true,"workspace_interrupt":true,"workspace_retirement":true,"compaction_to_lead":true,"compaction_to_team":false}}' \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/notice-policy"
 ```
 
 The four existing lifecycle flags and `compaction_to_lead` default to `true`; `compaction_to_team` defaults to `false`. Mandatory onboarding is not suppressible through this policy. The policy revision starts at `0`, increments after each successful change, and mismatched `expected_revision` returns HTTP `409`. It is independent of the workspace lead/roster revision. These operator endpoints require the ordinary `/v2` bearer token; models have no notice-policy mutation tool.
+
+For retry-safe notice-policy updates, include `Idempotency-Key` on the `PUT`
+request. The policy compare-and-set, operation admission, exact response
+receipt, and resource-claim release commit in **one SQLite transaction**.
+Successful responses preserve the policy JSON and its strong revision `ETag`,
+and add `X-Operation-ID` for `GET /v2/operations/{operation_id}`. Repeating
+the same operator key with the same workspace, expected revision and policy
+returns the original exact policy result and operation ID, even after a
+subsequent policy change or runtime restart. Reusing the key for different
+input, a different workspace, or another operation kind returns `409`
+without mutating state. Distinct stale revisions still return `409`;
+an optional mismatched `If-Match` returns `412`. Updates to retired or
+retirement-frozen workspaces are rejected. Omitting the key retains normal
+CAS semantics but does not provide lost-response replay.
 
 Interrupt every currently active turn owned by the workspace roster:
 

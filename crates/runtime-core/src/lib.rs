@@ -154,7 +154,9 @@ pub use workspace_migration::{
     LegacyWorkspaceMigrationSubject, LegacyWorkspaceMigrationSubjectKind,
 };
 pub use workspace_notice::{
-    WorkspaceAgentOnboardingRequest, WorkspaceNoticePolicy, WorkspaceNoticePolicyRecord,
+    prepare_workspace_notice_policy_mutation, WorkspaceAgentOnboardingRequest,
+    WorkspaceNoticePolicy, WorkspaceNoticePolicyMutationCommand,
+    WorkspaceNoticePolicyMutationResponse, WorkspaceNoticePolicyRecord,
     WorkspaceNoticePolicyUpdate, WorkspaceSystemNoticeRecord,
 };
 pub use workspace_retirement_review::{

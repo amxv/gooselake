@@ -465,12 +465,24 @@ pub(super) async fn update_workspace_notice_policy(
     Json(update): Json<runtime_core::WorkspaceNoticePolicyUpdate>,
 ) -> Result<Response, ApiError> {
     check_if_match_revision(&headers, update.expected_revision)?;
+    let command = runtime_core::prepare_workspace_notice_policy_mutation(
+        workspace_id.trim(),
+        update,
+        OperationActor::operator(OPERATOR_PRINCIPAL),
+        parse_idempotency_key(&headers)?,
+    )?;
     let result = state
         .app
         .services
         .store
-        .update_workspace_notice_policy(workspace_id.trim(), &update)?;
-    Ok(revisioned_response(result.revision, result))
+        .update_workspace_notice_policy_idempotent(&command)?;
+    let mut response = revisioned_response(result.policy.revision, result.policy);
+    response.headers_mut().insert(
+        "x-operation-id",
+        axum::http::HeaderValue::from_str(&result.operation_id)
+            .expect("generated operation id is a valid header"),
+    );
+    Ok(response)
 }
 
 pub(super) async fn interrupt_workspace_turns(

@@ -1,15 +1,74 @@
 use runtime_core::{
-    RuntimeError, WorkspaceNoticePolicy, WorkspaceNoticePolicyRecord, WorkspaceNoticePolicyUpdate,
-    WorkspaceSystemNoticeRecord,
+    prepare_workspace_notice_policy_mutation, OperationActor, OperationPhase, OperationRecord,
+    OperationTransitionRecord, RuntimeError, WorkspaceNoticePolicy,
+    WorkspaceNoticePolicyMutationCommand, WorkspaceNoticePolicyMutationResponse,
+    WorkspaceNoticePolicyRecord, WorkspaceNoticePolicyUpdate, WorkspaceSystemNoticeRecord,
 };
 use rusqlite::{params, types::Type, OptionalExtension, Row, Transaction, TransactionBehavior};
 
 use crate::db::{db_error, json_to_string, open_connection};
+use crate::operation_tx::OperationAuthorityTransaction;
+use crate::repository_workspace::operation_by_idempotency;
 use crate::SqliteRuntimeRepository;
 
 const SELECT_NOTICE: &str = "SELECT notice_id, workspace_id, recipient_agent_id, kind,
     correlation_id, input_json, state, turn_id, attempt_count, last_error,
     created_at_ms, updated_at_ms FROM workspace_system_notices";
+const NOTICE_POLICY_MUTATION_KIND: &str = "workspace_notice_policy_update";
+
+fn write_notice_policy_tx(
+    tx: &Transaction<'_>,
+    workspace_id: &str,
+    update: &WorkspaceNoticePolicyUpdate,
+) -> Result<WorkspaceNoticePolicyRecord, RuntimeError> {
+    let lifecycle: Option<String> = tx
+        .query_row(
+            "SELECT lifecycle_state FROM workspaces WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| db_error("failed reading notice policy workspace lifecycle", error))?;
+    let frozen: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_retirement_fences WHERE workspace_id = ?1)",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed reading notice policy retirement fence", error))?;
+    if lifecycle.is_none() {
+        return Err(RuntimeError::NotFound(format!("workspace {workspace_id}")));
+    }
+    if lifecycle.as_deref() != Some("active") || frozen {
+        return Err(RuntimeError::Conflict(
+            "cannot update notice policy while the workspace is retired or retiring".into(),
+        ));
+    }
+    let current = workspace_notice_policy_tx(tx, workspace_id)?;
+    if current.revision != update.expected_revision {
+        return Err(RuntimeError::Conflict(format!(
+            "workspace notice policy revision mismatch: expected {}, actual {}",
+            update.expected_revision, current.revision,
+        )));
+    }
+    let json = json_to_string(&serde_json::json!(update.policy))?;
+    let next_revision = current.revision.checked_add(1).ok_or_else(|| {
+        RuntimeError::InvalidState("workspace notice policy revision overflow".into())
+    })?;
+    tx.execute(
+        "INSERT INTO workspace_notice_policies (workspace_id, revision, policy_json)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(workspace_id) DO UPDATE
+         SET revision = excluded.revision, policy_json = excluded.policy_json",
+        params![workspace_id, next_revision, json],
+    )
+    .map_err(|error| db_error("failed saving workspace notice policy", error))?;
+    Ok(WorkspaceNoticePolicyRecord {
+        workspace_id: workspace_id.to_string(),
+        revision: next_revision,
+        policy: update.policy.clone(),
+    })
+}
 
 pub(crate) fn workspace_notice_policy_tx(
     tx: &Transaction<'_>,
@@ -184,36 +243,118 @@ impl SqliteRuntimeRepository {
         workspace_id: &str,
         update: &WorkspaceNoticePolicyUpdate,
     ) -> Result<WorkspaceNoticePolicyRecord, RuntimeError> {
+        // Older internal callers share the same transactional operation
+        // authority; only the HTTP path supplies a replayable client key.
+        let command = prepare_workspace_notice_policy_mutation(
+            workspace_id,
+            update.clone(),
+            OperationActor::operator("runtime_store_compat"),
+            None,
+        )?;
+        Ok(self
+            .update_workspace_notice_policy_idempotent(&command)?
+            .policy)
+    }
+
+    pub fn update_workspace_notice_policy_idempotent(
+        &self,
+        command: &WorkspaceNoticePolicyMutationCommand,
+    ) -> Result<WorkspaceNoticePolicyMutationResponse, RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| db_error("failed opening workspace notice policy write", error))?;
-        let current = workspace_notice_policy_tx(&tx, workspace_id)?;
-        if current.revision != update.expected_revision {
-            return Err(RuntimeError::Conflict(format!(
-                "workspace notice policy revision mismatch: expected {}, actual {}",
-                update.expected_revision, current.revision,
-            )));
+            .map_err(|error| db_error("failed opening durable notice policy transaction", error))?;
+        if let Some(existing) = operation_by_idempotency(
+            &tx,
+            command.actor.kind,
+            &command.actor.identifier,
+            command.idempotency_key.as_deref(),
+        )? {
+            if existing.kind != NOTICE_POLICY_MUTATION_KIND
+                || existing.normalized_request_hash != command.normalized_request_hash
+            {
+                return Err(RuntimeError::Conflict(format!(
+                    "Idempotency-Key already belongs to operation {} with different input",
+                    existing.operation_id
+                )));
+            }
+            let exact = existing.exact_terminal_result.ok_or_else(|| {
+                RuntimeError::Conflict(format!(
+                    "notice policy operation {} has no terminal result; review before retry",
+                    existing.operation_id
+                ))
+            })?;
+            let response = serde_json::from_value(exact).map_err(|error| {
+                RuntimeError::Bootstrap(format!(
+                    "failed decoding exact notice policy mutation receipt: {error}"
+                ))
+            })?;
+            tx.commit().map_err(|error| {
+                db_error("failed committing notice policy mutation replay", error)
+            })?;
+            return Ok(response);
         }
-        let json = json_to_string(&serde_json::json!(update.policy))?;
-        let next_revision = current.revision.checked_add(1).ok_or_else(|| {
-            RuntimeError::InvalidState("workspace notice policy revision overflow".into())
+
+        let authority = OperationAuthorityTransaction::new(&tx);
+        authority.insert_operation(&OperationRecord {
+            operation_id: command.operation_id.clone(),
+            workspace_id: Some(command.workspace_id.clone()),
+            kind: NOTICE_POLICY_MUTATION_KIND.into(),
+            actor: command.actor.clone(),
+            idempotency_key: command.idempotency_key.clone(),
+            normalized_request_hash: command.normalized_request_hash.clone(),
+            normalized_request: command.normalized_request.clone(),
+            phase: OperationPhase::Requested,
+            exact_terminal_result: None,
+            error_code: None,
+            error_message: None,
+            created_at: command.requested_at,
+            updated_at: command.requested_at,
         })?;
-        tx.execute(
-            "INSERT INTO workspace_notice_policies (workspace_id, revision, policy_json)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(workspace_id) DO UPDATE
-             SET revision = excluded.revision, policy_json = excluded.policy_json",
-            params![workspace_id, next_revision, json],
-        )
-        .map_err(|error| db_error("failed saving workspace notice policy", error))?;
+        authority.append_transition(&OperationTransitionRecord {
+            operation_id: command.operation_id.clone(),
+            sequence: 1,
+            from_phase: None,
+            to_phase: OperationPhase::Requested,
+            evidence: None,
+            created_at: command.requested_at,
+        })?;
+        let claim = authority.acquire_claim(
+            &command.operation_id,
+            "workspace_notice_policy",
+            &command.workspace_id,
+            command.requested_at,
+        )?;
+        let policy = write_notice_policy_tx(&tx, &command.workspace_id, &command.update)?;
+        let response = WorkspaceNoticePolicyMutationResponse {
+            operation_id: command.operation_id.clone(),
+            policy,
+        };
+        let exact = serde_json::to_value(&response).map_err(|error| {
+            RuntimeError::Bootstrap(format!("failed encoding notice policy result: {error}"))
+        })?;
+        authority.terminalize(
+            &command.operation_id,
+            OperationPhase::Requested,
+            OperationPhase::Completed,
+            Some(&command.workspace_id),
+            &exact,
+            None,
+            None,
+            command.requested_at,
+        )?;
+        authority.append_transition(&OperationTransitionRecord {
+            operation_id: command.operation_id.clone(),
+            sequence: 2,
+            from_phase: Some(OperationPhase::Requested),
+            to_phase: OperationPhase::Completed,
+            evidence: Some(serde_json::json!({"revision": response.policy.revision})),
+            created_at: command.requested_at,
+        })?;
+        authority.release_claim(&claim)?;
         tx.commit()
-            .map_err(|error| db_error("failed committing workspace notice policy", error))?;
-        Ok(WorkspaceNoticePolicyRecord {
-            workspace_id: workspace_id.to_string(),
-            revision: next_revision,
-            policy: update.policy.clone(),
-        })
+            .map_err(|error| db_error("failed committing durable notice policy mutation", error))?;
+        Ok(response)
     }
 
     pub(crate) fn insert_workspace_system_notice_tx(

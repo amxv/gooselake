@@ -533,12 +533,11 @@ pub trait RuntimeStore: Send + Sync {
         unsupported_store("workspace notice policy unavailable")
     }
 
-    fn update_workspace_notice_policy(
+    fn update_workspace_notice_policy_idempotent(
         &self,
-        _workspace_id: &str,
-        _update: &crate::WorkspaceNoticePolicyUpdate,
-    ) -> Result<crate::WorkspaceNoticePolicyRecord, RuntimeError> {
-        unsupported_store("workspace notice policy unavailable")
+        _command: &crate::WorkspaceNoticePolicyMutationCommand,
+    ) -> Result<crate::WorkspaceNoticePolicyMutationResponse, RuntimeError> {
+        unsupported_store("durable workspace notice policy mutation unavailable")
     }
 
     fn transition_workspace_system_notice(

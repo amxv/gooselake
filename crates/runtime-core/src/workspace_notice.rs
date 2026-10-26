@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{PersistedUserInputSnapshotInvocation, RuntimeError, WorkspaceAgentRecord};
+use crate::workspace::{normalize_idempotency_key, opaque_id, unix_time_ms};
+use crate::{
+    normalized_json_hash, OperationActor, PersistedUserInputSnapshotInvocation, RuntimeError,
+    WorkspaceAgentRecord,
+};
 
 /// Operator-owned, durable delivery policy. These flags affect new lifecycle
 /// events only; changing them never rewrites already-admitted notices.
@@ -47,6 +51,57 @@ pub struct WorkspaceNoticePolicyRecord {
 pub struct WorkspaceNoticePolicyUpdate {
     pub expected_revision: u64,
     pub policy: WorkspaceNoticePolicy,
+}
+
+/// Operator mutation admitted and completed with its exact response in the
+/// same storage transaction as the notice policy compare-and-swap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceNoticePolicyMutationCommand {
+    pub operation_id: String,
+    pub actor: OperationActor,
+    pub idempotency_key: Option<String>,
+    pub normalized_request: Value,
+    pub normalized_request_hash: String,
+    pub workspace_id: String,
+    pub update: WorkspaceNoticePolicyUpdate,
+    pub requested_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceNoticePolicyMutationResponse {
+    pub operation_id: String,
+    pub policy: WorkspaceNoticePolicyRecord,
+}
+
+pub fn prepare_workspace_notice_policy_mutation(
+    workspace_id: &str,
+    update: WorkspaceNoticePolicyUpdate,
+    actor: OperationActor,
+    idempotency_key: Option<String>,
+) -> Result<WorkspaceNoticePolicyMutationCommand, RuntimeError> {
+    let workspace_id = workspace_id.trim();
+    if workspace_id.is_empty() || actor.identifier.trim().is_empty() {
+        return Err(RuntimeError::InvalidState(
+            "workspace and operator identity are required".into(),
+        ));
+    }
+    let idempotency_key = normalize_idempotency_key(idempotency_key)?;
+    let normalized_request = json!({
+        "workspace_id": workspace_id,
+        "expected_revision": update.expected_revision,
+        "policy": &update.policy,
+    });
+    let normalized_request_hash = normalized_json_hash(&normalized_request)?;
+    Ok(WorkspaceNoticePolicyMutationCommand {
+        operation_id: opaque_id("op"),
+        actor,
+        idempotency_key,
+        normalized_request,
+        normalized_request_hash,
+        workspace_id: workspace_id.to_string(),
+        update,
+        requested_at: unix_time_ms()?,
+    })
 }
 
 /// User-authored task context is a field of trusted workspace creation, not

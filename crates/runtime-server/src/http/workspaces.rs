@@ -210,14 +210,34 @@ pub(super) async fn update_workspace_hook_approval(
     Json(input): Json<WorkspaceHookApprovalInput>,
 ) -> Result<Response, ApiError> {
     check_if_match_revision(&headers, input.expected_revision)?;
+    let command = runtime_core::prepare_team_hook_approval_mutation(
+        &workspace_id,
+        input.expected_revision,
+        input.hooks.clone(),
+        runtime_core::OperationActor::operator(OPERATOR_PRINCIPAL),
+        parse_idempotency_key(&headers)?,
+    )?;
+    // The original terminal receipt takes precedence over current filesystem
+    // configuration: a lost HTTP reply may be retried after hooks are edited.
+    if let Some(replay) = state
+        .app
+        .services
+        .store
+        .replay_team_hook_approval_mutation(&command)?
+    {
+        return Ok(hook_approval_response(replay));
+    }
     let workspace = state
         .app
         .services
         .store
         .get_workspace(workspace_id.trim())?
         .ok_or_else(|| ApiError::not_found(format!("workspace {workspace_id}")))?;
-    let mut approved = Vec::new();
-    if !input.hooks.is_empty() {
+    let resolve = || -> Result<Vec<runtime_core::TeamHookResolvedEntry>, ApiError> {
+        let mut approved = Vec::new();
+        if input.hooks.is_empty() {
+            return Ok(approved);
+        }
         let home = std::env::var_os("HOME")
             .filter(|value| !value.is_empty())
             .map(std::path::PathBuf::from);
@@ -227,7 +247,7 @@ pub(super) async fn update_workspace_hook_approval(
             None,
         )?;
         let mut seen = std::collections::HashSet::new();
-        for selection in input.hooks {
+        for selection in &input.hooks {
             if !seen.insert((selection.event_name, selection.name.clone())) {
                 return Err(RuntimeError::InvalidState("duplicate hook selection".into()).into());
             }
@@ -250,22 +270,41 @@ pub(super) async fn update_workspace_hook_approval(
             }
             approved.push(entry.clone());
         }
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| {
-            RuntimeError::Bootstrap(format!("invalid clock for hook approval: {error}"))
-        })?;
-    let result = state.app.services.store.update_team_hook_approval(
-        &runtime_core::TeamHookApprovalUpdate {
-            workspace_id: workspace.workspace_id,
-            expected_revision: input.expected_revision,
-            hooks: approved,
-            approved_at_ms: i64::try_from(now.as_millis())
-                .map_err(|_| RuntimeError::Bootstrap("hook approval timestamp overflow".into()))?,
-        },
-    )?;
-    Ok(revisioned_response(result.revision, result))
+        Ok(approved)
+    };
+    let approved = match resolve() {
+        Ok(approved) => approved,
+        Err(error) => {
+            // Concurrent identical callers can cross this config read while
+            // the winning write commits. A fresh journal replay wins even if
+            // the losing caller observed a different or invalid hook file.
+            if let Some(replay) = state
+                .app
+                .services
+                .store
+                .replay_team_hook_approval_mutation(&command)?
+            {
+                return Ok(hook_approval_response(replay));
+            }
+            return Err(error);
+        }
+    };
+    let result = state
+        .app
+        .services
+        .store
+        .update_team_hook_approval_idempotent(&command, &approved)?;
+    Ok(hook_approval_response(result))
+}
+
+fn hook_approval_response(result: runtime_core::TeamHookApprovalMutationResponse) -> Response {
+    let mut response = revisioned_response(result.approval.revision, result.approval);
+    response.headers_mut().insert(
+        "x-operation-id",
+        axum::http::HeaderValue::from_str(&result.operation_id)
+            .expect("durable operation ID has a valid header representation"),
+    );
+    response
 }
 
 pub(super) async fn get_workspace_hook_approval(
@@ -283,15 +322,16 @@ pub(super) async fn get_workspace_hook_approval(
 pub(super) async fn list_workspace_worktree_inventory(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
-) -> Result<Json<runtime_core::WorkspaceWorktreeInventory>, ApiError> {
+    Query(query): Query<WorktreeInventoryPageQuery>,
+) -> Result<Response, ApiError> {
     if !state.app.worktree_settings.enabled {
         return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
     }
-    Ok(Json(
-        state
-            .runtime
-            .list_workspace_worktree_inventory(&workspace_id)?,
-    ))
+    let (limit, cursor) = query.parse()?;
+    let inventory = state
+        .runtime
+        .list_workspace_worktree_inventory(&workspace_id)?;
+    Ok(paged_worktree_inventory(inventory, limit, cursor))
 }
 
 #[derive(Debug, Deserialize)]

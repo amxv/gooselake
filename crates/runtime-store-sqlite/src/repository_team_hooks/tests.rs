@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use runtime_core::{
-    RuntimeError, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase,
-    TeamHookEffectReceipt, TeamHookEventName, TeamHookResolvedEntry, TeamHookScope,
+    prepare_team_hook_approval_mutation, prepare_workspace_notice_policy_mutation,
+    team_hook_fingerprint, OperationActor, OperationPhase, RuntimeError,
+    TeamHookApprovalMutationCommand, TeamHookApprovalUpdate, TeamHookEffectAdmission,
+    TeamHookEffectPhase, TeamHookEffectReceipt, TeamHookEventName, TeamHookResolvedEntry,
+    TeamHookScope, TeamHookSelection, WorkspaceNoticePolicy, WorkspaceNoticePolicyUpdate,
 };
 use serde_json::json;
 
@@ -84,6 +87,187 @@ fn hook() -> TeamHookResolvedEntry {
         timeout_ms: 500,
         scope: TeamHookScope::Project,
     }
+}
+
+fn approval_command(
+    revision: u64,
+    hooks: &[TeamHookResolvedEntry],
+    key: &str,
+) -> TeamHookApprovalMutationCommand {
+    prepare_team_hook_approval_mutation(
+        "ws_one",
+        revision,
+        hooks
+            .iter()
+            .map(|hook| TeamHookSelection {
+                event_name: hook.event_name,
+                name: hook.name.clone(),
+                fingerprint: team_hook_fingerprint(hook),
+            })
+            .collect(),
+        OperationActor::operator("operator"),
+        Some(key.into()),
+    )
+    .unwrap()
+}
+
+#[test]
+fn operator_hook_approval_replay_survives_restart_revision_advancement_and_config_change() {
+    let (_temp, repo) = fixture();
+    let first_command = approval_command(0, &[hook()], "lost-hook-reply");
+    let first = repo
+        .update_team_hook_approval_idempotent(&first_command, &[hook()])
+        .unwrap();
+    assert_eq!(first.approval.revision, 1);
+    assert_eq!(first.approval.hooks, vec![hook()]);
+    let operation = repo.get_operation(&first.operation_id).unwrap().unwrap();
+    assert_eq!(operation.operation.phase, OperationPhase::Completed);
+    assert_eq!(operation.operation.kind, "workspace_hook_approval_update");
+    assert_eq!(
+        operation.operation.exact_terminal_result,
+        Some(json!(first))
+    );
+    assert!(operation.claims.is_empty());
+    assert_eq!(operation.transitions.len(), 2);
+
+    let revoke = repo
+        .update_team_hook_approval_idempotent(&approval_command(1, &[], "revoke-after-grant"), &[])
+        .unwrap();
+    assert_eq!(revoke.approval.revision, 2);
+    let reopened = SqliteRuntimeRepository::new(repo.database_path.clone());
+    let retried = approval_command(0, &[hook()], "lost-hook-reply");
+    assert_eq!(
+        reopened
+            .replay_team_hook_approval_mutation(&retried)
+            .unwrap(),
+        Some(first.clone())
+    );
+    // Config drift must never invalidate a previously terminal reply. Even
+    // if the client accidentally supplies a different live hook snapshot,
+    // the authoritative original operation takes precedence.
+    let mut new_hook = hook();
+    new_hook.command = "echo changed on disk".into();
+    assert_eq!(
+        reopened
+            .update_team_hook_approval_idempotent(&retried, &[new_hook])
+            .unwrap(),
+        first
+    );
+    assert_eq!(
+        reopened.get_team_hook_approval("ws_one").unwrap(),
+        revoke.approval
+    );
+    let different_input = approval_command(1, &[], "lost-hook-reply");
+    assert!(matches!(
+        reopened.replay_team_hook_approval_mutation(&different_input),
+        Err(RuntimeError::Conflict(_))
+    ));
+    let mut different_actor = approval_command(2, &[], "lost-hook-reply");
+    different_actor.actor = OperationActor::operator("other-principal");
+    assert!(reopened
+        .replay_team_hook_approval_mutation(&different_actor)
+        .unwrap()
+        .is_none());
+    let different_kind: i64 = open_connection(&reopened.database_path)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM runtime_operations WHERE kind='workspace_hook_approval_update'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(different_kind, 2);
+}
+
+#[test]
+fn operator_hook_approval_transaction_rolls_back_on_write_failure() {
+    let (_temp, repo) = fixture();
+    let conn = open_connection(&repo.database_path).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_hook_approval BEFORE INSERT ON workspace_hook_approvals BEGIN SELECT RAISE(ABORT, 'simulated grant write failure'); END;").unwrap();
+    drop(conn);
+    let command = approval_command(0, &[hook()], "atomic-hook-grant");
+    assert!(repo
+        .update_team_hook_approval_idempotent(&command, &[hook()])
+        .is_err());
+    assert_eq!(repo.get_team_hook_approval("ws_one").unwrap().revision, 0);
+    assert!(repo.get_operation(&command.operation_id).unwrap().is_none());
+    open_connection(&repo.database_path)
+        .unwrap()
+        .execute_batch("DROP TRIGGER fail_hook_approval;")
+        .unwrap();
+    let successful = repo
+        .update_team_hook_approval_idempotent(&command, &[hook()])
+        .unwrap();
+    assert_eq!(successful.approval.revision, 1);
+    assert_eq!(
+        repo.get_operation(&command.operation_id)
+            .unwrap()
+            .unwrap()
+            .operation
+            .phase,
+        OperationPhase::Completed
+    );
+}
+
+#[test]
+fn concurrent_operator_hook_approval_with_same_key_converges_exactly_once() {
+    let (_temp, repo) = fixture();
+    let repo = Arc::new(repo);
+    let barrier = Arc::new(std::sync::Barrier::new(4));
+    let joins = (0..4)
+        .map(|_| {
+            let repo = Arc::clone(&repo);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let command = approval_command(0, &[hook()], "same-concurrent-grant");
+                barrier.wait();
+                repo.update_team_hook_approval_idempotent(&command, &[hook()])
+                    .unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+    let results = joins
+        .into_iter()
+        .map(|join| join.join().unwrap())
+        .collect::<Vec<_>>();
+    assert!(results.iter().all(|result| result == &results[0]));
+    assert_eq!(repo.get_team_hook_approval("ws_one").unwrap().revision, 1);
+    let operations: i64 = open_connection(&repo.database_path)
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM runtime_operations WHERE kind='workspace_hook_approval_update'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(operations, 1);
+}
+
+#[test]
+fn operator_hook_approval_rejects_key_consumed_by_another_mutation_kind() {
+    let (_temp, repo) = fixture();
+    let policy = prepare_workspace_notice_policy_mutation(
+        "ws_one",
+        WorkspaceNoticePolicyUpdate {
+            expected_revision: 0,
+            policy: WorkspaceNoticePolicy::default(),
+        },
+        OperationActor::operator("operator"),
+        Some("shared-operator-key".into()),
+    )
+    .unwrap();
+    repo.update_workspace_notice_policy_idempotent(&policy)
+        .unwrap();
+    let approval = approval_command(0, &[hook()], "shared-operator-key");
+    assert!(matches!(
+        repo.replay_team_hook_approval_mutation(&approval),
+        Err(RuntimeError::Conflict(_))
+    ));
+    assert!(matches!(
+        repo.update_team_hook_approval_idempotent(&approval, &[hook()]),
+        Err(RuntimeError::Conflict(_))
+    ));
+    assert_eq!(repo.get_team_hook_approval("ws_one").unwrap().revision, 0);
 }
 
 fn approve(repo: &SqliteRuntimeRepository, revision: u64, hooks: Vec<TeamHookResolvedEntry>) {

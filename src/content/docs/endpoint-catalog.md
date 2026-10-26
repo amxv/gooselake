@@ -41,10 +41,10 @@ error bodies and the separate agent-scoped `/v2/mcp` tool contract are unchanged
 - `GET /v2/workspaces/{workspace_id}/retirement-preflight` (Bearer; advisory, read-only blocker codes and counts; retirement independently rechecks every obligation)
 - `GET /v2/workspaces/{workspace_id}/hooks` (Bearer; optional `event` filter, read-only effective hook configuration plus exact executable post-event capability list)
 - `GET /v2/workspaces/{workspace_id}/hooks/approval` (Bearer; current operator-granted hook snapshot and revision)
-- `PUT /v2/workspaces/{workspace_id}/hooks/approval` (Bearer, JSON; `expected_revision` and resolved event/name/fingerprint selections; empty selection revokes all grants)
+- `PUT /v2/workspaces/{workspace_id}/hooks/approval` (Bearer, JSON; `expected_revision` and resolved event/name/fingerprint selections, optional `Idempotency-Key`, response `ETag` and `X-Operation-ID`; empty selection revokes all grants)
 - `GET /v2/workspaces/{workspace_id}/hooks/effects` (Bearer; redacted, indexed newest-first hook effect summaries; `limit` from 1 to 100 and optional `cursor`, response `X-Next-Cursor`)
 - `GET /v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}` (Bearer; full approved hook, input and receipt for one exact durable effect)
-- `GET /v2/workspaces/{workspace_id}/worktrees` (Bearer, workspace-managed Git inventory and native eligibility)
+- `GET /v2/workspaces/{workspace_id}/worktrees` (Bearer; managed Git inventory, native eligibility, attached agents and per-record revisions; `limit=1..100` with `cursor` and `X-Next-Cursor` for further name/ID-ordered pages)
 - `POST /v2/workspaces/{workspace_id}/worktrees` (Bearer, JSON; create/reuse a named workspace managed worktree)
 - `POST /v2/workspaces/{workspace_id}/lead` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/workspaces/{workspace_id}/notice-policy` (Bearer; current lifecycle notice policy and revision)
@@ -71,8 +71,8 @@ error bodies and the separate agent-scoped `/v2/mcp` tool contract are unchanged
 - `POST /v2/agents/{agent_id}/compact` (Bearer; optional `Idempotency-Key`; admit provider compaction before dispatch)
 - `GET /v2/agents/{agent_id}/compactions/{run_id}` (Bearer; durable compaction request state)
 - `POST /v2/agents/{agent_id}/compactions/{run_id}/resolve` (Bearer, JSON; operator-confirmed `completed` or `failed` with external evidence)
-- `GET /v2/migrations/workspaces` (Bearer)
-- `POST /v2/migrations/workspaces/preview` (Bearer)
+- `GET /v2/migrations/workspaces` (Bearer; bounded subject diagnostics, `limit=1..100`, `cursor`, `X-Next-Cursor`, full-state counts)
+- `POST /v2/migrations/workspaces/preview` (Bearer; refresh and page subject diagnostics with the same cursor contract)
 - `POST /v2/migrations/workspaces/apply` (Bearer; optional `Idempotency-Key` header)
 - `POST /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/operations/{operation_id}` (Bearer)
@@ -93,7 +93,10 @@ Workspace membership authorization is leadless-aware: an active member can manag
 Team hook configuration discovery merges strict version-1 user and project files
 by event and normalized hook name, with project overrides. Operator approval
 stores immutable command snapshots using compare-and-set revision authority;
-unapproved config files cannot grant shell execution. Five post-operation
+each operator change also commits a durable idempotent operation receipt. An
+exact retry recovers the original approval despite later revision/config
+changes; retirement freezes new grants. Unapproved config files cannot grant
+shell execution. Five post-operation
 events (`post_teammate_add`, `post_teammate_remove`, `post_direct_message_send`,
 `post_broadcast_message_send`, `post_compaction`) now create immutable effect intents in their
 canonical transaction. An approved worker executes each script at most once

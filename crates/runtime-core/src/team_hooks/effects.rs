@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{TeamHookEventName, TeamHookResolvedEntry};
-use crate::RuntimeError;
+use crate::workspace::{normalize_idempotency_key, opaque_id, unix_time_ms};
+use crate::{normalized_json_hash, OperationActor, RuntimeError};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,6 +51,78 @@ pub struct TeamHookApprovalUpdate {
     /// Empty selection revokes all hook execution grants.
     pub hooks: Vec<TeamHookResolvedEntry>,
     pub approved_at_ms: i64,
+}
+
+/// The operator supplies only fingerprinted selections, never shell text.
+/// The request identity is prepared before looking up current project config
+/// so a lost-response retry can recover its original grant even after edits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamHookApprovalMutationCommand {
+    pub operation_id: String,
+    pub actor: OperationActor,
+    pub idempotency_key: Option<String>,
+    pub normalized_request: Value,
+    pub normalized_request_hash: String,
+    pub workspace_id: String,
+    pub expected_revision: u64,
+    pub selections: Vec<TeamHookSelection>,
+    pub requested_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamHookApprovalMutationResponse {
+    pub operation_id: String,
+    pub approval: TeamHookApproval,
+}
+
+pub fn prepare_team_hook_approval_mutation(
+    workspace_id: &str,
+    expected_revision: u64,
+    selections: Vec<TeamHookSelection>,
+    actor: OperationActor,
+    idempotency_key: Option<String>,
+) -> Result<TeamHookApprovalMutationCommand, RuntimeError> {
+    let workspace_id = workspace_id.trim();
+    if workspace_id.is_empty() || actor.identifier.trim().is_empty() {
+        return Err(RuntimeError::InvalidState(
+            "workspace and operator identity are required".into(),
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    if selections.len() > 6 * 32
+        || selections.iter().any(|selection| {
+            selection.name.is_empty()
+                || selection.name.len() > 128
+                || !selection.fingerprint.starts_with("sha256:")
+                || selection.fingerprint.len() != 71
+                || !selection.fingerprint[7..]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+                || !seen.insert((selection.event_name, selection.name.clone()))
+        })
+    {
+        return Err(RuntimeError::InvalidState(
+            "invalid or duplicate hook approval selections".into(),
+        ));
+    }
+    let idempotency_key = normalize_idempotency_key(idempotency_key)?;
+    let normalized_request = serde_json::json!({
+        "workspace_id": workspace_id,
+        "expected_revision": expected_revision,
+        "hooks": selections,
+    });
+    let normalized_request_hash = normalized_json_hash(&normalized_request)?;
+    Ok(TeamHookApprovalMutationCommand {
+        operation_id: opaque_id("op"),
+        actor,
+        idempotency_key,
+        normalized_request,
+        normalized_request_hash,
+        workspace_id: workspace_id.to_string(),
+        expected_revision,
+        selections,
+        requested_at_ms: unix_time_ms()?,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -142,6 +142,105 @@ pub(super) async fn fixture() -> (
 }
 
 #[tokio::test]
+async fn workspace_worktree_inventory_pages_names_and_tied_ids_without_duplicates() {
+    let (router, token, temp, _, workspace, _, _) = fixture().await;
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let seed = |id: &str, name: &str| {
+        store
+            .upsert_managed_worktree(&runtime_core::ManagedWorktreeRecord {
+                id: id.into(),
+                repo_root: workspace.canonical_root.clone(),
+                worktree_root: temp.path().to_string_lossy().to_string(),
+                worktree_cwd: temp.path().join(id).to_string_lossy().to_string(),
+                branch_name: format!("gg/{id}"),
+                worktree_name: name.into(),
+                unified_workspace_path: name.into(),
+                deletion_policy: "retain_on_last_claim".into(),
+                created_by_session_id: None,
+                created_by_operation_id: None,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .expect("register managed inventory candidate");
+    };
+    seed("wt_a", "early");
+    seed("wt_d", "same");
+    seed("wt_b", "same");
+    let uri = format!("/v2/workspaces/{}/worktrees", workspace.workspace_id);
+    let mut cursor: Option<String> = None;
+    let mut ids = Vec::new();
+    let mut fingerprint = None;
+    loop {
+        let page_uri = cursor.as_ref().map_or_else(
+            || format!("{uri}?limit=1"),
+            |cursor| format!("{uri}?limit=1&cursor={cursor}"),
+        );
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(page_uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let next = response
+            .headers()
+            .get("x-next-cursor")
+            .map(|value| value.to_str().unwrap().to_owned());
+        let page: runtime_core::WorkspaceWorktreeInventory =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(page.worktrees.len(), 1);
+        assert!(page.repository_fingerprint.starts_with("repo_v2_"));
+        if let Some(previous) = &fingerprint {
+            assert_eq!(&page.repository_fingerprint, previous);
+        } else {
+            fingerprint = Some(page.repository_fingerprint);
+        }
+        ids.push(page.worktrees[0].worktree_id.clone());
+        if ids.len() == 1 {
+            // A row arriving before the cursor cannot repeat old results.
+            seed("wt_before", "aardvark");
+        }
+        match next {
+            Some(next) => {
+                assert!(next.bytes().all(|value| value.is_ascii_hexdigit()));
+                cursor = Some(next);
+            }
+            None => break,
+        }
+        assert!(ids.len() < 10, "pagination cursor did not advance");
+    }
+    assert_eq!(ids, ["wt_a", "wt_linked", "wt_b", "wt_d"]);
+    for query in [
+        "?limit=0",
+        "?limit=101",
+        "?cursor=abc",
+        "?cursor=zz",
+        "?cursor=5b5d",
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("{uri}{query}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+    }
+}
+
+#[tokio::test]
 async fn workspace_inventory_and_verified_rebind_update_session_policy_and_claim_atomically() {
     let (router, token, temp, provider, workspace, agent, linked) = fixture().await;
     let base = format!(

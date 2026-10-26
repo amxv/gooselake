@@ -20,9 +20,9 @@ use runtime_core::{
     WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use runtime_core::{
-    TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPageCursor,
-    TeamHookEffectPhase, TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEffectSummary,
-    TeamHookEventName,
+    TeamHookApproval, TeamHookApprovalMutationCommand, TeamHookApprovalMutationResponse,
+    TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPageCursor, TeamHookEffectPhase,
+    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEffectSummary, TeamHookEventName,
 };
 use runtime_core::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 use serde_json::Value;
@@ -79,6 +79,20 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<TeamHookApproval, RuntimeError> {
         self.repository.update_team_hook_approval(update)
     }
+    fn replay_team_hook_approval_mutation(
+        &self,
+        command: &TeamHookApprovalMutationCommand,
+    ) -> Result<Option<TeamHookApprovalMutationResponse>, RuntimeError> {
+        self.repository.replay_team_hook_approval_mutation(command)
+    }
+    fn update_team_hook_approval_idempotent(
+        &self,
+        command: &TeamHookApprovalMutationCommand,
+        hooks: &[runtime_core::TeamHookResolvedEntry],
+    ) -> Result<TeamHookApprovalMutationResponse, RuntimeError> {
+        self.repository
+            .update_team_hook_approval_idempotent(command, hooks)
+    }
     fn list_team_hook_effects(
         &self,
         workspace_id: &str,
@@ -121,7 +135,6 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
         self.repository.admit_team_hook_effect(admission)
     }
-
     fn get_team_hook_effect(
         &self,
         workspace_id: &str,
@@ -132,7 +145,6 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .get_team_hook_effect(workspace_id, parent_event_id, event, hook_name)
     }
-
     fn claim_team_hook_effect(
         &self,
         workspace_id: &str,
@@ -149,7 +161,6 @@ impl RuntimeStore for SqliteRuntimeStore {
             at_ms,
         )
     }
-
     fn finish_team_hook_effect(
         &self,
         workspace_id: &str,
@@ -271,14 +282,12 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
         self.repository.get_session_compaction(run_id)
     }
-
     fn observe_provider_compaction(
         &self,
         observation: &ProviderCompactionObservation,
     ) -> Result<CompactionObservationReceipt, RuntimeError> {
         self.repository.observe_provider_compaction(observation)
     }
-
     fn get_session_compaction_by_key(
         &self,
         agent_id: &str,
@@ -286,18 +295,15 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
         self.repository.get_session_compaction_by_key(agent_id, key)
     }
-
     fn unresolved_session_compaction(&self, agent_id: &str) -> Result<bool, RuntimeError> {
         self.repository.unresolved_session_compaction(agent_id)
     }
-
     fn recover_session_compactions(
         &self,
         now_ms: i64,
     ) -> Result<Vec<SessionCompactionRun>, RuntimeError> {
         self.repository.recover_session_compactions(now_ms)
     }
-
     fn resolve_session_compaction_review(
         &self,
         run_id: &str,
@@ -316,19 +322,16 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .record_session_context_limit(snapshot, expected_session_updated_at)
     }
-
     fn get_session_context_limit(
         &self,
         agent_id: &str,
     ) -> Result<Option<SessionContextLimitSnapshot>, RuntimeError> {
         self.repository.get_session_context_limit(agent_id)
     }
-
     async fn initialize(&self) -> Result<(), RuntimeError> {
         Self::ensure_parent_dir(self.database_path()).await?;
         self.repository.initialize_schema()
     }
-
     async fn healthcheck(&self) -> Result<(), RuntimeError> {
         let connection = open_connection(self.database_path())?;
         let _: i64 = connection
@@ -336,14 +339,12 @@ impl RuntimeStore for SqliteRuntimeStore {
             .map_err(|error| db_error("sqlite healthcheck query failed", error))?;
         Ok(())
     }
-
     fn append_runtime_event(
         &self,
         event: &NewRuntimeEvent,
     ) -> Result<RuntimeEventRecord, RuntimeError> {
         self.repository.append_runtime_event(event)
     }
-
     fn list_runtime_events(
         &self,
         scope: Option<(RuntimeEventScope, &str)>,
@@ -361,7 +362,6 @@ impl RuntimeStore for SqliteRuntimeStore {
     }
     crate::store_pagination::delegate_workspace_listing!();
     crate::store_retirement::delegate_workspace_retirement!();
-
     fn transition_workspace_lead(
         &self,
         command: &WorkspaceLeadTransitionCommand,
@@ -430,7 +430,6 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .complete_workspace_interrupt(operation_id, completed_at)
     }
-
     fn create_workspace_agent(
         &self,
         session: &SessionRecord,
@@ -438,7 +437,6 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<(), RuntimeError> {
         self.repository.create_workspace_agent(session, agent)
     }
-
     fn create_workspace_agent_with_onboarding(
         &self,
         session: &SessionRecord,
@@ -448,7 +446,6 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .create_workspace_agent_with_onboarding(session, agent, onboarding)
     }
-
     fn create_workspace_agent_with_hook_context(
         &self,
         session: &SessionRecord,
@@ -459,14 +456,12 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .create_workspace_agent_with_hook_context(session, agent, onboarding, hooks)
     }
-
     fn list_workspace_system_notices(
         &self,
         limit: usize,
     ) -> Result<Vec<WorkspaceSystemNoticeRecord>, RuntimeError> {
         self.repository.list_workspace_system_notices(limit)
     }
-
     fn list_workspace_system_notices_after(
         &self,
         after: Option<&WorkspaceSystemNoticeRecord>,
@@ -475,21 +470,18 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .list_workspace_system_notices_after(after, limit)
     }
-
     fn is_workspace_system_notice_head(
         &self,
         notice: &WorkspaceSystemNoticeRecord,
     ) -> Result<bool, RuntimeError> {
         self.repository.is_workspace_system_notice_head(notice)
     }
-
     fn get_workspace_system_notice(
         &self,
         notice_id: &str,
     ) -> Result<Option<WorkspaceSystemNoticeRecord>, RuntimeError> {
         self.repository.get_workspace_system_notice(notice_id)
     }
-
     fn get_workspace_notice_policy(
         &self,
         workspace_id: &str,

@@ -38,9 +38,10 @@ use crate::{
     WorkspaceRetirementResponse, WorkspaceRetirementTurnStep,
 };
 use crate::{
-    TeamHookApproval, TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPageCursor,
-    TeamHookEffectPhase, TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEffectSummary,
-    TeamHookEventName, TeamHookPreAddAdmission, TeamHookPreAddContext,
+    TeamHookApproval, TeamHookApprovalMutationCommand, TeamHookApprovalMutationResponse,
+    TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPageCursor, TeamHookEffectPhase,
+    TeamHookEffectReceipt, TeamHookEffectRecord, TeamHookEffectSummary, TeamHookEventName,
+    TeamHookPreAddAdmission, TeamHookPreAddContext,
 };
 use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 
@@ -67,6 +68,19 @@ pub trait RuntimeStore: Send + Sync {
         _update: &TeamHookApprovalUpdate,
     ) -> Result<TeamHookApproval, RuntimeError> {
         unsupported_store("team-hook approval store unavailable")
+    }
+    fn replay_team_hook_approval_mutation(
+        &self,
+        _command: &TeamHookApprovalMutationCommand,
+    ) -> Result<Option<TeamHookApprovalMutationResponse>, RuntimeError> {
+        unsupported_store("durable team-hook approval store unavailable")
+    }
+    fn update_team_hook_approval_idempotent(
+        &self,
+        _command: &TeamHookApprovalMutationCommand,
+        _hooks: &[crate::TeamHookResolvedEntry],
+    ) -> Result<TeamHookApprovalMutationResponse, RuntimeError> {
+        unsupported_store("durable team-hook approval store unavailable")
     }
     fn list_team_hook_effects(
         &self,
@@ -249,14 +263,12 @@ pub trait RuntimeStore: Send + Sync {
     fn unresolved_session_compaction(&self, _agent_id: &str) -> Result<bool, RuntimeError> {
         Ok(false)
     }
-
     fn recover_session_compactions(
         &self,
         _now_ms: i64,
     ) -> Result<Vec<SessionCompactionRun>, RuntimeError> {
         Ok(Vec::new())
     }
-
     fn resolve_session_compaction_review(
         &self,
         _run_id: &str,
@@ -266,15 +278,12 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<SessionCompactionRun, RuntimeError> {
         unsupported_store("compaction manual review unavailable")
     }
-
     async fn initialize(&self) -> Result<(), RuntimeError>;
-
     async fn healthcheck(&self) -> Result<(), RuntimeError>;
     fn append_runtime_event(
         &self,
         event: &NewRuntimeEvent,
     ) -> Result<RuntimeEventRecord, RuntimeError>;
-
     fn list_runtime_events(
         &self,
         scope: Option<(RuntimeEventScope, &str)>,
@@ -288,11 +297,9 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<WorkspaceRegisterResponse, RuntimeError> {
         unsupported_store("workspace authority is not implemented by this runtime store")
     }
-
     fn list_workspaces(&self) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
         unsupported_store("workspace authority is not implemented by this runtime store")
     }
-
     fn list_workspaces_page(
         &self,
         _after: Option<(i64, String)>,
@@ -300,32 +307,27 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
         unsupported_store("paginated workspace listing is unavailable in this store")
     }
-
     fn get_workspace(&self, _workspace_id: &str) -> Result<Option<WorkspaceRecord>, RuntimeError> {
         unsupported_store("workspace authority is not implemented by this runtime store")
     }
-
     fn retire_empty_workspace(
         &self,
         _command: &WorkspaceRetirementCommand,
     ) -> Result<WorkspaceRetirementResponse, RuntimeError> {
         unsupported_store("atomic retirement of quiescent workspaces is unavailable")
     }
-
     fn admit_workspace_retirement(
         &self,
         _command: &WorkspaceRetirementCommand,
     ) -> Result<WorkspaceRetirementAdmission, RuntimeError> {
         unsupported_store("recoverable workspace retirement admission unavailable")
     }
-
     fn reconcile_workspace_retirement(
         &self,
         _command: &crate::WorkspaceRetirementReviewCommand,
     ) -> Result<crate::WorkspaceRetirementReviewOutcome, RuntimeError> {
         unsupported_store("operator retirement reconciliation unavailable")
     }
-
     fn claim_workspace_retirement_native_close(
         &self,
         _operation_id: &str,
@@ -334,7 +336,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<WorkspaceRetirementCloseAttempt, RuntimeError> {
         unsupported_store("retirement native close authority unavailable")
     }
-
     fn finalize_workspace_retirement_native_close(
         &self,
         _attempt: &WorkspaceRetirementCloseAttempt,
@@ -390,35 +391,30 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<(), RuntimeError> {
         unsupported_store("retirement turn quarantine unavailable")
     }
-
     fn retiring_operation_for_session(
         &self,
         _session_id: &str,
     ) -> Result<Option<String>, RuntimeError> {
         Ok(None)
     }
-
     fn workspace_retirement_preflight(
         &self,
         _workspace_id: &str,
     ) -> Result<WorkspaceRetirementPreflight, RuntimeError> {
         unsupported_store("workspace retirement preflight is unavailable")
     }
-
     fn transition_workspace_lead(
         &self,
         _command: &WorkspaceLeadTransitionCommand,
     ) -> Result<WorkspaceLeadTransitionResponse, RuntimeError> {
         unsupported_store("workspace lead authority is not implemented by this runtime store")
     }
-
     fn begin_workspace_interrupt(
         &self,
         _command: &WorkspaceInterruptCommand,
     ) -> Result<WorkspaceInterruptAdmission, RuntimeError> {
         unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
-
     fn mark_workspace_interrupt_started(
         &self,
         _operation_id: &str,
@@ -428,7 +424,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<(), RuntimeError> {
         unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
-
     fn finalize_workspace_interrupt_effect(
         &self,
         _operation_id: &str,
@@ -440,7 +435,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<(), RuntimeError> {
         unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
-
     fn mark_workspace_interrupt_uncertain(
         &self,
         _operation_id: &str,
@@ -451,7 +445,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<(), RuntimeError> {
         unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
-
     fn complete_workspace_interrupt(
         &self,
         _operation_id: &str,
@@ -459,7 +452,6 @@ pub trait RuntimeStore: Send + Sync {
     ) -> Result<WorkspaceInterruptResponse, RuntimeError> {
         unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
-
     fn create_workspace_agent(
         &self,
         _session: &SessionRecord,

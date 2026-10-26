@@ -253,6 +253,14 @@ has since become invalid. Commands and timeouts come from the effective
 configuration and cannot be supplied directly in the approval request. The
 fingerprint binds the observed command, timeout, event, name, and origin scope;
 an edit between discovery and approval is rejected with `409`.
+Include an `Idempotency-Key` on the `PUT` for retry safety. Approval and its
+durable operation receipt commit atomically; the response returns the approved
+revision's `ETag` and `X-Operation-ID` (inspectable at
+`GET /v2/operations/{operation_id}`). Retrying the same key and selections
+recovers the original approval and revision, even after effective hook config
+changes or later operator revocation. Reusing the key for different selections
+or another operation returns `409` without authorizing new commands. New
+approvals are refused while workspace retirement is in progress.
 An agent editing its project's configuration therefore cannot add approved
 commands. Grants are workspace-local, and an admitted but unclaimed effect
 cannot begin once its grant is revoked.
@@ -417,6 +425,14 @@ Until an outstanding or ambiguous run is settled, new turns, permission updates,
 ### Workspace worktree routes
 
 `GET /v2/workspaces/{workspace_id}/worktrees` lists persisted managed worktrees for the workspace's canonical Git repository. Each item includes its logical ID, monotonically increasing persisted-record `revision`, name, branch, path, retention policy, active attached agent IDs, and `eligible_for_assignment` plus explicit `eligibility_blockers`. The response includes the canonical repository root, Git common directory, and repository fingerprint. A stale/missing path, mismatched native branch/repository, or conflicting claim is **not** considered eligible. The worktree revision changes on persisted record updates; it is independent of the workspace-agent revision and Git commit.
+
+Inventory output is bounded with `limit=1..100` (default 50) and an optional
+opaque `cursor`. When more records remain, follow the response's
+`X-Next-Cursor` as `?cursor=...` on the next request. Ordering uses the stable
+normalized worktree name and logical ID, so names that tie cannot skip or
+repeat an entry. Entries inserted before an existing cursor do not get
+replayed on later pages. Repository identity metadata remains present on
+every page; worktree eligibility is recalculated from current Git evidence.
 
 To create or reuse a named managed Git checkout without needing an existing source agent, use the workspace-scoped endpoint:
 
@@ -593,6 +609,12 @@ Read migration diagnostics:
 curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/migrations/workspaces"
 ```
+
+Both this status route and the preview accept `limit=1..100` (default 50)
+and an opaque `cursor`. Follow `X-Next-Cursor` until exhausted to inspect
+all subject diagnostics ordered by kind and immutable subject ID. The global
+mapped, archived and unresolved counts, including `cutover_blocked`, always
+describe the complete migration snapshot, not only the current page.
 
 An operator can explicitly map an unresolved subject to an existing active workspace:
 

@@ -29,6 +29,74 @@ async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessio
     assert_eq!(preview.unresolved_subjects, 1);
     assert!(preview.cutover_blocked);
 
+    // Page only the diagnostic subjects, never the global migration totals.
+    // Both preview and persisted-status routes use the same stable ordering.
+    for route in [
+        ("POST", "/v2/migrations/workspaces/preview"),
+        ("GET", "/v2/migrations/workspaces"),
+    ] {
+        let first_response = router
+            .clone()
+            .oneshot(auth_request(
+                route.0,
+                &format!("{}?limit=1", route.1),
+                &token,
+                None,
+                None,
+            ))
+            .await
+            .expect("first migration page");
+        assert_eq!(first_response.status(), StatusCode::OK);
+        let cursor = first_response.headers()["x-next-cursor"]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let first: runtime_core::LegacyWorkspaceMigrationStatus = decode(first_response).await;
+        assert_eq!(first.subjects.len(), 1);
+        assert_eq!(first.mapped_subjects, 1);
+        assert_eq!(first.unresolved_subjects, 1);
+
+        let second_response = router
+            .clone()
+            .oneshot(auth_request(
+                route.0,
+                &format!("{}?limit=1&cursor={cursor}", route.1),
+                &token,
+                None,
+                None,
+            ))
+            .await
+            .expect("second migration page");
+        assert_eq!(second_response.status(), StatusCode::OK);
+        assert!(!second_response.headers().contains_key("x-next-cursor"));
+        let second: runtime_core::LegacyWorkspaceMigrationStatus = decode(second_response).await;
+        assert_eq!(second.subjects.len(), 1);
+        assert_eq!(second.mapped_subjects, 1);
+        assert_eq!(second.unresolved_subjects, 1);
+        assert_ne!(first.subjects[0].subject_id, second.subjects[0].subject_id);
+
+        for bad_query in [
+            "limit=0",
+            "limit=101",
+            "cursor=zz",
+            "cursor=5b5d",
+            "cursor=abc",
+        ] {
+            let invalid = router
+                .clone()
+                .oneshot(auth_request(
+                    route.0,
+                    &format!("{}?{bad_query}", route.1),
+                    &token,
+                    None,
+                    None,
+                ))
+                .await
+                .expect("invalid migration page");
+            assert_eq!(invalid.status(), StatusCode::BAD_REQUEST, "{bad_query}");
+        }
+    }
+
     let apply_response = router
         .clone()
         .oneshot(auth_request(

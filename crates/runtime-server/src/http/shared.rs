@@ -200,6 +200,18 @@ impl From<RuntimeError> for ApiError {
                 Self::new(StatusCode::BAD_REQUEST, "unsupported_capability", message)
             }
             RuntimeError::Conflict(message) => Self::new(StatusCode::CONFLICT, "conflict", message),
+            RuntimeError::OperationUnresolved {
+                operation_id,
+                message,
+            } => {
+                let mut error = Self::new(
+                    StatusCode::CONFLICT,
+                    "outcome_unresolved",
+                    format!("{message}; inspect /v2/operations/{operation_id}"),
+                );
+                error.details = Some(serde_json::json!({"operation_id": operation_id}));
+                error
+            }
             RuntimeError::OnboardingPending(message) => {
                 let mut error = Self::new(StatusCode::CONFLICT, "onboarding_pending", message);
                 error.retryable = true;

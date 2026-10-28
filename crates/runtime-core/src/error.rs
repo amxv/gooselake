@@ -35,6 +35,15 @@ pub enum RuntimeError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// A write-ahead operation may already have reached a non-idempotent
+    /// native effect. Callers must inspect the durable operation rather than
+    /// interpreting a lost response as permission to dispatch again.
+    #[error("operation {operation_id} outcome unresolved: {message}")]
+    OperationUnresolved {
+        operation_id: String,
+        message: String,
+    },
+
     /// A mandatory workspace onboarding notice must reach native turn
     /// admission before any unrelated input; transient transport inputs defer.
     #[error("onboarding pending: {0}")]
@@ -61,6 +70,16 @@ pub enum RuntimeError {
 }
 
 impl RuntimeError {
+    pub fn operation_unresolved(
+        operation_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::OperationUnresolved {
+            operation_id: operation_id.into(),
+            message: message.into(),
+        }
+    }
+
     pub fn provider_not_dispatched(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self::ProviderDispatch {
             code: code.into(),

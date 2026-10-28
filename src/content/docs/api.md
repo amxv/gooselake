@@ -63,7 +63,7 @@ Every `/v2` operator response, including success responses, carries
 `X-Request-ID`; error responses repeat the same ID in `request_id`. The server
 creates these IDs and never trusts an incoming `X-Request-ID` as authority.
 Common codes include `invalid_request`, `invalid_state`, `not_found`,
-`conflict`, `onboarding_pending`, `unsupported_capability`, and
+`conflict`, `outcome_unresolved`, `onboarding_pending`, `unsupported_capability`, and
 `internal_error`. Provider-dispatch conflicts retain their typed code and
 `details.dispatch_outcome`. Do not blindly repeat an effectful request after
 an unknown native dispatch outcome; inspect its durable operation/turn state.
@@ -159,7 +159,10 @@ OPERATION_ID=$(echo "$WORKSPACE_RESULT" | jq -r '.operation_id')
 `branch_prefix`, `base_ref`, `deletion_policy` and `run_init_script`. For retryable
 operator automation, send an `Idempotency-Key`. By default, init scripts are
 disabled unless `run_init_script` is explicitly `true`; omitted deletion policy
-uses the server's configured default. Every creation commits the exact
+uses the server's configured default **for a new checkout**; when reusing an
+existing managed checkout without a policy override, it preserves that
+checkout's original retention setting. Explicitly requesting a conflicting
+retention setting rejects before native-effect admission. Every creation commits the exact
 requested Git checkout identity, **exclusive checkout-path and Git-branch
 claims**, and native-effect intent **before** running Git or an init script. After successful
 native work and a verified managed row, a second transaction records the exact
@@ -169,14 +172,18 @@ durable operation. The same key with changed input returns HTTP `409` without
 running another command.
 
 If Git, an init script, or response persistence has an ambiguous outcome, the
-operator must consult `GET /v2/operations/{operation_id}`. The intent remains
+operator receives HTTP `409` with `error.code: "outcome_unresolved"`,
+`error.retryable: false`, `error.details.operation_id`, and the same
+`X-Operation-ID` header when the durable operation is known. The operator must
+consult `GET /v2/operations/{operation_id}`. The intent remains
 `requested` or `manual_review`, without automatic native re-execution. The
 two claims prevent a fresh key from overwriting uncertain effects on either the
 same checkout or native Git branch, even after changing the managed root. Recover
 only after independent verification; simply using a new
 key is not a recovery procedure. Calls without `Idempotency-Key` also persist
 native intent with a server-generated one-shot key and return `X-Operation-ID`
-on success, but cannot replay the original receipt after a lost response.
+on success (or when reporting an unresolved native outcome), but cannot replay
+the original receipt after a lost response.
 
 Workspace and workspace-agent lists use bounded keyset pages with optional
 `limit` (1–100; defaults to 50) and `cursor` query parameters. The response

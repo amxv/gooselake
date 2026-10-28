@@ -500,6 +500,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/workspaces/{workspace_id}/lead"
             | "/v2/workspaces/{workspace_id}/notice-policy"
             | "/v2/workspaces/{workspace_id}/hooks/approval"
+            | "/v2/workspaces/{workspace_id}/worktrees"
             | "/v2/workspaces/{workspace_id}/agents"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
             | "/v2/messages"
@@ -569,6 +570,21 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
     out.push_str("            application/json:\n");
     out.push_str("              schema:\n");
     out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
+    if method == HttpMethod::Post && path == "/v2/workspaces/{workspace_id}/worktrees" {
+        out.push_str("        \"409\":\n");
+        out.push_str("          description: Conflict or unresolved native Git/init outcome; inspect the operation without retrying the effect\n");
+        out.push_str("          headers:\n");
+        out.push_str("            X-Operation-ID:\n");
+        out.push_str(
+            "              description: Present when the native outcome requires durable review\n",
+        );
+        out.push_str("              schema:\n");
+        out.push_str("                type: string\n");
+        out.push_str("          content:\n");
+        out.push_str("            application/json:\n");
+        out.push_str("              schema:\n");
+        out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
+    }
     if method == HttpMethod::Post && path == "/v2/workspaces/{workspace_id}/retirement/advance" {
         out.push_str("        \"202\":\n");
         out.push_str(
@@ -770,6 +786,17 @@ mod tests {
         );
         assert!(yaml.contains("  /v2/operations/{operation_id}:"));
         assert!(yaml.contains("        - name: Idempotency-Key"));
+        let worktree_path = yaml
+            .split("  /v2/workspaces/{workspace_id}/worktrees:\n")
+            .nth(1)
+            .expect("managed worktree operator route");
+        let worktree_path = worktree_path
+            .split("\n  /v2/")
+            .next()
+            .expect("worktree route contents");
+        assert!(worktree_path.contains("      requestBody:\n"));
+        assert!(worktree_path.contains("        \"409\":\n"));
+        assert!(worktree_path.contains("Present when the native outcome requires durable review"));
         assert!(yaml.contains("  /openapi.yaml:"));
 
         let resolution_start = yaml

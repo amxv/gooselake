@@ -9,6 +9,7 @@ pub(super) async fn v2_operator_response_contract(request: Request<Body>, next: 
     let request_id = format!("req_{:032x}", rand::random::<u128>());
     let response = next.run(request).await;
     let status = response.status();
+    let mut unresolved_operation_id = None;
     let mut response = if status.is_client_error() || status.is_server_error() {
         let error = response.extensions().get::<ApiError>().cloned();
         let (code, message, retryable, details) = if let Some(error) = error {
@@ -39,6 +40,13 @@ pub(super) async fn v2_operator_response_contract(request: Request<Body>, next: 
             };
             (code.to_string(), message.to_string(), false, None)
         };
+        if code == "outcome_unresolved" {
+            unresolved_operation_id = details
+                .as_ref()
+                .and_then(|value: &serde_json::Value| value.get("operation_id"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+        }
         (
             status,
             Json(serde_json::json!({
@@ -55,6 +63,11 @@ pub(super) async fn v2_operator_response_contract(request: Request<Body>, next: 
     } else {
         response
     };
+    if let Some(operation_id) = unresolved_operation_id {
+        if let Ok(value) = HeaderValue::from_str(&operation_id) {
+            response.headers_mut().insert("x-operation-id", value);
+        }
+    }
     // A server-minted ID, not an untrusted echoed client header. The same ID
     // is in the error body and response header for cross-layer diagnostics.
     response.headers_mut().insert(

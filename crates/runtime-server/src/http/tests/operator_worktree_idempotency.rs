@@ -230,25 +230,33 @@ async fn workspace_worktree_unknown_git_result_never_reexecutes_after_retry() {
         "base_ref":"refs/heads/nonexistent-branch-for-native-recovery",
         "run_init_script":false
     });
-    let (status, failure) = call(
-        &router,
-        &token,
-        "POST",
-        &uri,
-        Some(bad_base.clone()),
-        Some("unknown-native-worktree"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{failure:?}");
-    let operation_id = failure.to_string().split("op_wt_").nth(1).map(|suffix| {
-        format!(
-            "op_wt_{}",
-            &suffix[..suffix
-                .find(|c: char| !c.is_ascii_hexdigit())
-                .unwrap_or(suffix.len())]
+    let first = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("Idempotency-Key", "unknown-native-worktree")
+                .body(Body::from(bad_base.to_string()))
+                .unwrap(),
         )
-    });
-    let operation_id = operation_id.expect("conflict identifies recoverable operation ID");
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::CONFLICT);
+    let operation_id = first
+        .headers()
+        .get("x-operation-id")
+        .expect("unresolved native effects expose their durable operation header")
+        .to_str()
+        .unwrap()
+        .to_string();
+    let failure: serde_json::Value =
+        serde_json::from_slice(&to_bytes(first.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(failure["error"]["code"], "outcome_unresolved");
+    assert_eq!(failure["error"]["retryable"], false);
+    assert_eq!(failure["error"]["details"]["operation_id"], operation_id);
     let (status, repeated) = call(
         &router,
         &token,
@@ -259,7 +267,8 @@ async fn workspace_worktree_unknown_git_result_never_reexecutes_after_retry() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{repeated:?}");
-    assert!(repeated.to_string().contains(&operation_id));
+    assert_eq!(repeated["error"]["code"], "outcome_unresolved");
+    assert_eq!(repeated["error"]["details"]["operation_id"], operation_id);
     let (status, operation) = call(
         &router,
         &token,

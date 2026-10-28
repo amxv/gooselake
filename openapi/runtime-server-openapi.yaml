@@ -2247,12 +2247,29 @@ paths:
           required: false
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
       responses:
         "200":
           description: JSON response
           headers:
             X-Operation-ID:
               description: Durable native worktree creation operation
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "409":
+          description: Conflict or unresolved native Git/init outcome; inspect the operation without retrying the effect
+          headers:
+            X-Operation-ID:
+              description: Present when the native outcome requires durable review
               schema:
                 type: string
           content:

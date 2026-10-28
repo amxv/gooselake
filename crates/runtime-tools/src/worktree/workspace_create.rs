@@ -66,9 +66,10 @@ impl RuntimeWorktreeService {
                     });
                 }
                 WorkspaceWorktreeCreationAdmission::Unresolved { operation_id } => {
-                    return Err(RuntimeError::Conflict(format!(
-                        "worktree create operation {operation_id} is unresolved; inspect /v2/operations/{operation_id} without retrying Git"
-                    )));
+                    return Err(RuntimeError::operation_unresolved(
+                        operation_id.clone(),
+                        format!("inspect /v2/operations/{operation_id} without retrying Git"),
+                    ));
                 }
                 WorkspaceWorktreeCreationAdmission::Execute { .. } => {
                     return Err(RuntimeError::ProtocolViolation(
@@ -80,7 +81,6 @@ impl RuntimeWorktreeService {
         // The feature may have been disabled since the original success, but
         // a matching historical receipt is still immutable and replayable.
         self.ensure_enabled()?;
-        let deletion_policy = self.normalize_deletion_policy(requested_deletion_policy);
         let workspace = self
             .store
             .get_workspace(&request.workspace_id)?
@@ -99,6 +99,21 @@ impl RuntimeWorktreeService {
         let lifecycle_guard = lifecycle_lock.read().await;
         let repo_lock = self.lock_for_repo(&repository.canonical_root).await;
         let repo_guard = repo_lock.lock().await;
+        // An explicitly conflicting policy is a deterministic preflight
+        // rejection, not an uncertain native effect. Do not leave a durable
+        // Git reservation behind for an operation that never reached Git.
+        // An omitted policy, however, must be allowed to reuse a managed
+        // checkout with its existing retention setting.
+        if let Some(requested_policy) = requested_deletion_policy {
+            let hydrated = self.store.hydrate_runtime_state()?;
+            if let Some(existing) = self.worktree_by_identity(&hydrated, &planned) {
+                if existing.deletion_policy != requested_policy {
+                    return Err(RuntimeError::Conflict(
+                        "existing managed worktree has a different retention policy".into(),
+                    ));
+                }
+            }
+        }
         let admitted =
             self.store
                 .admit_workspace_worktree_creation(&WorkspaceWorktreeCreationCommand {
@@ -126,9 +141,12 @@ impl RuntimeWorktreeService {
                 });
             }
             WorkspaceWorktreeCreationAdmission::Unresolved { operation_id } => {
-                return Err(RuntimeError::Conflict(format!(
-                    "worktree create operation {operation_id} is unresolved; inspect /v2/operations/{operation_id} and do not retry the native effect"
-                )));
+                return Err(RuntimeError::operation_unresolved(
+                    operation_id.clone(),
+                    format!(
+                        "inspect /v2/operations/{operation_id} and do not retry the native effect"
+                    ),
+                ));
             }
             WorkspaceWorktreeCreationAdmission::Execute { operation_id } => operation_id,
         };
@@ -143,7 +161,9 @@ impl RuntimeWorktreeService {
                     worktree_name: request.worktree_name,
                     branch_prefix: request.branch_prefix,
                     base_ref: request.base_ref,
-                    deletion_policy: Some(deletion_policy),
+                    // None uses the configured default only when creating a
+                    // checkout, without imposing it on an existing record.
+                    deletion_policy: requested_deletion_policy.map(str::to_owned),
                     run_init_script: Some(request.run_init_script.unwrap_or(false)),
                     created_by_session_id: None,
                     operation_id: Some(operation_id.clone()),
@@ -155,9 +175,10 @@ impl RuntimeWorktreeService {
             Ok(response) => {
                 self.store
                     .complete_workspace_worktree_creation(&operation_id, &response, now_ms())
-                    .map_err(|_| RuntimeError::Conflict(format!(
-                        "worktree create operation {operation_id} completed native work but its exact receipt remains unresolved; inspect /v2/operations/{operation_id} before retrying"
-                    )))?;
+                    .map_err(|_| RuntimeError::operation_unresolved(
+                        operation_id.clone(),
+                        format!("native work completed but its exact receipt is unresolved; inspect /v2/operations/{operation_id} before retrying"),
+                    ))?;
                 Ok(WorkspaceWorktreeCreationResult {
                     operation_id,
                     response,
@@ -170,12 +191,14 @@ impl RuntimeWorktreeService {
                         &error.to_string(),
                         now_ms(),
                     )
-                    .map_err(|_| RuntimeError::Conflict(format!(
-                        "worktree create operation {operation_id} has an unresolved native result and could not record review status; inspect /v2/operations/{operation_id}"
-                    )))?;
-                Err(RuntimeError::Conflict(format!(
-                    "worktree create operation {operation_id} has an unresolved native outcome; inspect the operation before taking recovery action: {error}"
-                )))
+                    .map_err(|_| RuntimeError::operation_unresolved(
+                        operation_id.clone(),
+                        format!("native result and review-status write are unresolved; inspect /v2/operations/{operation_id}"),
+                    ))?;
+                Err(RuntimeError::operation_unresolved(
+                    operation_id,
+                    format!("inspect the native effect before taking recovery action: {error}"),
+                ))
             }
         }
     }

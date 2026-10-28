@@ -92,6 +92,22 @@ async fn workspace_agents_start_on_root_existing_or_new_managed_worktree() {
             && claim.released_at.is_none()
     }));
 
+    // A specified, incompatible retention policy is a pure preflight
+    // conflict: it must not strand a write-ahead native Git reservation.
+    let (status, conflict) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v2/workspaces/{}/worktrees", workspace.workspace_id),
+        Some(serde_json::json!({
+            "worktree_name":"new-route", "deletion_policy":"delete_on_last_claim"
+        })),
+        Some("incompatible-existing-retention"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{conflict:?}");
+    assert_eq!(conflict["error"]["code"], "conflict");
+
     let (status, replay) = call(
         &router,
         &token,
@@ -178,7 +194,7 @@ async fn failing_init_script_cannot_delete_newly_created_worktree_files() {
     );
 
     let uri = format!("/v2/workspaces/{}/worktrees", workspace.workspace_id);
-    let (status, _) = call(
+    let (status, failed) = call(
         &router,
         &token,
         "POST",
@@ -186,14 +202,64 @@ async fn failing_init_script_cannot_delete_newly_created_worktree_files() {
         Some(serde_json::json!({
             "worktree_name":"retain-failed-init", "run_init_script":true
         })),
+        Some("native-failed-init-checkout"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{failed:?}");
+    assert_eq!(failed["error"]["code"], "outcome_unresolved");
+    assert_eq!(failed["error"]["retryable"], false);
+    let operation_id = failed["error"]["details"]["operation_id"]
+        .as_str()
+        .expect("native effect has a durable review operation");
+    let (status, review) = call(
+        &router,
+        &token,
+        "GET",
+        &format!("/v2/operations/{operation_id}"),
+        None,
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(review["operation"]["phase"], "manual_review");
+    assert_eq!(review["effects"][0]["phase"], "uncertain");
+    assert_eq!(review["claims"].as_array().unwrap().len(), 2);
 
     // The failed initializer created an untracked file. Compensating cleanup
-    // must not run git worktree remove --force and destroy that data.
-    let (status, recovered) = call(
+    // must not run git worktree remove --force and destroy that data. A new
+    // operator key must also not silently adopt a checkout owned by an
+    // unresolved native effect; explicit reconciliation is required.
+    let native = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .expect("list Git worktrees");
+    assert!(native.status.success());
+    let listings = String::from_utf8_lossy(&native.stdout);
+    let cwd = listings
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .find(|path| path.ends_with("/gg--retain-failed-init"))
+        .expect("the failed native checkout survives with its untracked data");
+    assert_eq!(
+        std::fs::read_to_string(Path::new(cwd).join("init-output.txt")).unwrap(),
+        "retained user output\n"
+    );
+    let (status, replay) = call(
+        &router,
+        &token,
+        "POST",
+        &uri,
+        Some(serde_json::json!({
+            "worktree_name":"retain-failed-init", "run_init_script":true
+        })),
+        Some("native-failed-init-checkout"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{replay:?}");
+    assert_eq!(replay["error"]["details"]["operation_id"], operation_id);
+    let (status, blocked) = call(
         &router,
         &token,
         "POST",
@@ -201,15 +267,10 @@ async fn failing_init_script_cannot_delete_newly_created_worktree_files() {
         Some(serde_json::json!({
             "worktree_name":"retain-failed-init", "run_init_script":false
         })),
-        None,
+        Some("cannot-bypass-uncertain-init"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{recovered:?}");
-    assert_eq!(
-        recovered["init_script_status"],
-        "recovered_existing_checkout"
-    );
-    let cwd = recovered["worktree"]["worktree_cwd"].as_str().unwrap();
+    assert_eq!(status, StatusCode::CONFLICT, "{blocked:?}");
     assert_eq!(
         std::fs::read_to_string(Path::new(cwd).join("init-output.txt")).unwrap(),
         "retained user output\n"

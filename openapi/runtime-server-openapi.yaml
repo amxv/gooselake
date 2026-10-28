@@ -2235,16 +2235,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/JsonObject"
     post:
-      summary: Create or reuse managed worktree
+      summary: Durably create or reuse managed worktree with native Git/init intent
       parameters:
         - name: workspace_id
           in: path
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Operation-ID:
+              description: Durable native worktree creation operation
+              schema:
+                type: string
           content:
             application/json:
               schema:

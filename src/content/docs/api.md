@@ -153,6 +153,31 @@ OPERATION_ID=$(echo "$WORKSPACE_RESULT" | jq -r '.operation_id')
 
 `Idempotency-Key` is optional, but recommended for retried mutations. The key is scoped to the authenticated operator principal. Repeating the same key with the same normalized input replays the exact terminal response, including the original `operation_id`. Reusing the same key with different normalized input returns HTTP `409` and does not mutate workspace state.
 
+### Durable managed-worktree creation
+
+`POST /v2/workspaces/{workspace_id}/worktrees` accepts `worktree_name`, optional
+`branch_prefix`, `base_ref`, `deletion_policy` and `run_init_script`. For retryable
+operator automation, send an `Idempotency-Key`. By default, init scripts are
+disabled unless `run_init_script` is explicitly `true`; omitted deletion policy
+uses the server's configured default. Every creation commits the exact
+requested Git checkout identity, **exclusive checkout-path and Git-branch
+claims**, and native-effect intent **before** running Git or an init script. After successful
+native work and a verified managed row, a second transaction records the exact
+response (including the original `created` and `init_script_status`), finalizes
+the effect, and releases both claims. On success, `X-Operation-ID` identifies the
+durable operation. The same key with changed input returns HTTP `409` without
+running another command.
+
+If Git, an init script, or response persistence has an ambiguous outcome, the
+operator must consult `GET /v2/operations/{operation_id}`. The intent remains
+`requested` or `manual_review`, without automatic native re-execution. The
+two claims prevent a fresh key from overwriting uncertain effects on either the
+same checkout or native Git branch, even after changing the managed root. Recover
+only after independent verification; simply using a new
+key is not a recovery procedure. Calls without `Idempotency-Key` also persist
+native intent with a server-generated one-shot key and return `X-Operation-ID`
+on success, but cannot replay the original receipt after a lost response.
+
 Workspace and workspace-agent lists use bounded keyset pages with optional
 `limit` (1–100; defaults to 50) and `cursor` query parameters. The response
 remains a JSON array for client compatibility. When another page exists, the

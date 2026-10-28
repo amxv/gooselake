@@ -12,6 +12,7 @@ use runtime_core::{
 mod core;
 mod service;
 mod spawn;
+mod workspace_create;
 
 pub struct RuntimeWorktreeService {
     pub(super) store: Arc<dyn RuntimeStore>,

@@ -6,11 +6,14 @@ mod team_comms_trait;
 mod team_models;
 #[path = "services_worktree_models.rs"]
 mod worktree_models;
+#[path = "services_worktree_store_trait.rs"]
+mod worktree_store_trait;
 #[path = "services_worktree_trait.rs"]
 mod worktree_trait;
 pub use team_comms_trait::*;
 pub use team_models::*;
 pub use worktree_models::*;
+pub use worktree_store_trait::*;
 pub use worktree_trait::*;
 
 use async_trait::async_trait;
@@ -46,7 +49,7 @@ use crate::{
 use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 
 #[async_trait]
-pub trait RuntimeStore: Send + Sync {
+pub trait RuntimeStore: WorkspaceWorktreeCreationStore + Send + Sync {
     /// Transactionally snapshot approved pre-add hooks against a trusted
     /// reserved agent identity before any shell or provider work can start.
     fn admit_pre_add_team_hooks(

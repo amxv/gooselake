@@ -1,4 +1,5 @@
 use super::*;
+use crate::OperationActor;
 
 #[async_trait]
 pub trait WorktreeService: Send + Sync {
@@ -19,6 +20,17 @@ pub trait WorktreeService: Send + Sync {
     ) -> Result<WorktreeCreateResponse, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "workspace-scoped worktree creation is not supported by this service".into(),
+        ))
+    }
+
+    async fn create_workspace_worktree_idempotent(
+        &self,
+        _request: WorkspaceWorktreeCreateRequest,
+        _actor: OperationActor,
+        _idempotency_key: String,
+    ) -> Result<WorkspaceWorktreeCreationResult, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable workspace worktree creation is not supported by this service".into(),
         ))
     }
 

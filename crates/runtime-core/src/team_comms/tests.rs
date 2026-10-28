@@ -44,6 +44,8 @@ impl TestStore {
     }
 }
 
+impl crate::WorkspaceWorktreeCreationStore for TestStore {}
+
 #[async_trait]
 impl RuntimeStore for TestStore {
     async fn initialize(&self) -> Result<(), RuntimeError> {

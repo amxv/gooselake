@@ -2,10 +2,11 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use runtime_core::{
-    resolve_repository_identity, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, RuntimeError,
-    WorkspaceLifecycleState, WorkspaceWorktreeCreateRequest, WorktreeClaimRequest,
-    WorktreeClaimResponse, WorktreeCleanupRequest, WorktreeCleanupResponse, WorktreeCreateRequest,
-    WorktreeCreateResponse, WorktreeReleaseRequest, WorktreeReleaseResponse, WorktreeService,
+    resolve_repository_identity, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, OperationActor,
+    RuntimeError, WorkspaceLifecycleState, WorkspaceWorktreeCreateRequest,
+    WorkspaceWorktreeCreationResult, WorktreeClaimRequest, WorktreeClaimResponse,
+    WorktreeCleanupRequest, WorktreeCleanupResponse, WorktreeCreateRequest, WorktreeCreateResponse,
+    WorktreeReleaseRequest, WorktreeReleaseResponse, WorktreeService,
 };
 
 use crate::now_ms;
@@ -99,6 +100,16 @@ impl WorktreeService for RuntimeWorktreeService {
             None,
         )
         .await
+    }
+
+    async fn create_workspace_worktree_idempotent(
+        &self,
+        request: WorkspaceWorktreeCreateRequest,
+        actor: OperationActor,
+        idempotency_key: String,
+    ) -> Result<WorkspaceWorktreeCreationResult, RuntimeError> {
+        self.create_workspace_worktree_with_receipt(request, actor, idempotency_key)
+            .await
     }
 
     async fn claim_worktree(
@@ -307,6 +318,25 @@ impl WorktreeService for RuntimeWorktreeService {
 
         let repo_lock = self.lock_for_repo(worktree.repo_root.as_str()).await;
         let _repo_guard = repo_lock.lock().await;
+        // An admitted creation may have completed Git and persisted its row
+        // without yet committing the exact terminal receipt. Deletion must
+        // not race this unknown native effect, even on legacy cleanup routes.
+        if let Some(operation_id) = self
+            .store
+            .native_worktree_creation_claim_owner(&worktree.worktree_cwd)?
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "cannot delete checkout while native worktree operation {operation_id} is unresolved"
+            )));
+        }
+        if let Some(operation_id) = self
+            .store
+            .native_worktree_creation_branch_owner(&worktree.repo_root, &worktree.branch_name)?
+        {
+            return Err(RuntimeError::Conflict(format!(
+                "cannot delete a branch reserved by unresolved native worktree operation {operation_id}"
+            )));
+        }
         // A provider rebind reserves its destination in durable SQLite
         // before invoking the provider. Recheck claims immediately before
         // native deletion, not just before waiting for the repository lock.
@@ -646,7 +676,7 @@ impl RuntimeWorktreeService {
         .map(Some)
     }
 
-    async fn create_worktree_for_repository(
+    pub(super) async fn create_worktree_for_repository(
         &self,
         repo_root: String,
         request: WorktreeCreateRequest,
@@ -674,6 +704,27 @@ impl RuntimeWorktreeService {
 
         let repo_lock = self.lock_for_repo(planned.repo_root.as_str()).await;
         let _repo_guard = repo_lock.lock().await;
+
+        if let Some(owner) = self
+            .store
+            .native_worktree_creation_claim_owner(&planned.worktree_cwd)?
+        {
+            if request.operation_id.as_deref() != Some(&owner) {
+                return Err(RuntimeError::Conflict(format!(
+                    "checkout is reserved by unresolved native worktree operation {owner}"
+                )));
+            }
+        }
+        if let Some(owner) = self
+            .store
+            .native_worktree_creation_branch_owner(&planned.repo_root, &planned.branch_name)?
+        {
+            if request.operation_id.as_deref() != Some(&owner) {
+                return Err(RuntimeError::Conflict(format!(
+                    "Git branch is reserved by unresolved native worktree operation {owner}"
+                )));
+            }
+        }
 
         let hydrated_before = self.store.hydrate_runtime_state()?;
         if let Some(existing) = self.worktree_by_identity(&hydrated_before, &planned) {

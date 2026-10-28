@@ -33,11 +33,13 @@ mod repository_workspace_retirement_review_settlement;
 mod repository_workspace_retirement_review_turns;
 mod repository_workspace_retirement_settlement;
 mod repository_workspace_retirement_turns;
+mod repository_workspace_worktree_creation;
 mod schema;
 mod store;
 mod store_event_history;
 mod store_pagination;
 mod store_retirement;
+mod store_worktree_creation;
 
 pub use repository::SqliteRuntimeRepository;
 pub use store::SqliteRuntimeStore;

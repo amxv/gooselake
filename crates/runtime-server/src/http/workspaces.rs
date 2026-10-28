@@ -347,26 +347,38 @@ pub(super) struct WorkspaceWorktreeCreateInput {
 pub(super) async fn create_workspace_worktree(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
+    headers: HeaderMap,
     Json(input): Json<WorkspaceWorktreeCreateInput>,
-) -> Result<Json<runtime_core::WorktreeCreateResponse>, ApiError> {
-    if !state.app.worktree_settings.enabled {
-        return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
-    }
-    Ok(Json(
-        state
-            .app
-            .services
-            .worktrees
-            .create_workspace_worktree(WorkspaceWorktreeCreateRequest {
-                workspace_id,
-                worktree_name: input.worktree_name,
-                branch_prefix: input.branch_prefix,
-                base_ref: input.base_ref,
-                deletion_policy: input.deletion_policy,
-                run_init_script: input.run_init_script,
-            })
-            .await?,
-    ))
+) -> Result<Response, ApiError> {
+    let request = WorkspaceWorktreeCreateRequest {
+        workspace_id,
+        worktree_name: input.worktree_name,
+        branch_prefix: input.branch_prefix,
+        base_ref: input.base_ref,
+        deletion_policy: input.deletion_policy,
+        run_init_script: input.run_init_script,
+    };
+    // A caller without a replay key still gets durable write-ahead evidence.
+    // The server-minted one-shot key cannot be reused for an exact retry.
+    let key = parse_idempotency_key(&headers)?
+        .unwrap_or_else(|| format!("implicit-wt-{:032x}", rand::random::<u128>()));
+    let result = state
+        .app
+        .services
+        .worktrees
+        .create_workspace_worktree_idempotent(
+            request,
+            OperationActor::operator(OPERATOR_PRINCIPAL),
+            key,
+        )
+        .await?;
+    let mut response = Json(result.response).into_response();
+    response.headers_mut().insert(
+        "x-operation-id",
+        axum::http::HeaderValue::from_str(&result.operation_id)
+            .expect("generated operation id must be HTTP header safe"),
+    );
+    Ok(response)
 }
 
 pub(super) async fn rebind_workspace_agent(

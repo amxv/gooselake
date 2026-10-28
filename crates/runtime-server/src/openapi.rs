@@ -234,7 +234,7 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
             "List eligible and blocked managed worktrees".to_string()
         }
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/worktrees") => {
-            "Create or reuse managed worktree".to_string()
+            "Durably create or reuse managed worktree with native Git/init intent".to_string()
         }
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree") => {
             "Reassign agent using verified provider cwd evidence".to_string()
@@ -369,6 +369,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile"
                 | "/v2/agents/{agent_id}/compact"
                 | "/v2/workspaces/{workspace_id}/lead"
+                | "/v2/workspaces/{workspace_id}/worktrees"
                 | "/v2/workspaces/{workspace_id}/interrupt"
                 | "/v2/messages"
                 | "/v2/migrations/workspaces/apply"
@@ -557,6 +558,13 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         return;
     }
     out.push_str("JSON response\n");
+    if method == HttpMethod::Post && path == "/v2/workspaces/{workspace_id}/worktrees" {
+        out.push_str("          headers:\n");
+        out.push_str("            X-Operation-ID:\n");
+        out.push_str("              description: Durable native worktree creation operation\n");
+        out.push_str("              schema:\n");
+        out.push_str("                type: string\n");
+    }
     out.push_str("          content:\n");
     out.push_str("            application/json:\n");
     out.push_str("              schema:\n");

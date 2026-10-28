@@ -3,8 +3,8 @@ use serde_json::Value;
 
 use super::TeamWithMembers;
 use crate::{
-    ManagedWorktreeClaimRecord, ManagedWorktreeRecord, SessionRecord, TeamMemberRecord,
-    TeamOperationDiagnosticRecord,
+    ManagedWorktreeClaimRecord, ManagedWorktreeRecord, OperationActor, SessionRecord,
+    TeamMemberRecord, TeamOperationDiagnosticRecord,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +37,44 @@ pub struct WorktreeCreateResponse {
     pub worktree: ManagedWorktreeRecord,
     pub created: bool,
     pub init_script_status: String,
+}
+
+/// Exact operator intent and expected native Git identity, committed before
+/// worktree creation or an optional initialization script can execute.
+#[derive(Debug, Clone)]
+pub struct WorkspaceWorktreeCreationCommand {
+    pub operation_id: String,
+    pub workspace_id: String,
+    pub actor: OperationActor,
+    pub idempotency_key: String,
+    pub normalized_request: Value,
+    pub normalized_request_hash: String,
+    pub repository_root: String,
+    pub branch_name: String,
+    pub checkout_path: String,
+    pub requested_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub enum WorkspaceWorktreeCreationAdmission {
+    Execute {
+        operation_id: String,
+    },
+    Replay {
+        operation_id: String,
+        response: WorktreeCreateResponse,
+    },
+    /// An earlier execution may have reached Git or an init script. Never
+    /// replay that native effect without independent operator evidence.
+    Unresolved {
+        operation_id: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceWorktreeCreationResult {
+    pub operation_id: String,
+    pub response: WorktreeCreateResponse,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

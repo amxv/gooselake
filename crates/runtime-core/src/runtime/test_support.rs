@@ -32,6 +32,8 @@ pub(super) struct MockStore {
     pub(super) fail_session_write: Mutex<bool>,
 }
 
+impl crate::WorkspaceWorktreeCreationStore for MockStore {}
+
 #[async_trait]
 impl RuntimeStore for MockStore {
     async fn initialize(&self) -> Result<(), RuntimeError> {

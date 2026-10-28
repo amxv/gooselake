@@ -50,6 +50,7 @@ mod operator_hook_effect_pages;
 mod operator_notice_policy_idempotency;
 mod operator_operation_pages;
 mod operator_process_pages;
+mod operator_worktree_idempotency;
 mod process_more;
 mod provider_contract_routes;
 mod scoped_mcp;

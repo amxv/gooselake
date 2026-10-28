@@ -26,8 +26,9 @@ fn git(root: &Path, args: &[&str]) -> String {
 async fn retirement_freeze_prevents_native_worktrees_and_legacy_external_session_creation() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("repository");
+    let nested_workspace_root = root.join("nested/project");
     let outside = temp.path().join("unrelated");
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&nested_workspace_root).unwrap();
     std::fs::create_dir_all(&outside).unwrap();
     git(&root, &["init", "--quiet"]);
     git(
@@ -67,11 +68,27 @@ async fn retirement_freeze_prevents_native_worktrees_and_legacy_external_session
         .register_workspace(
             &prepare_workspace_registration(
                 WorkspaceRegisterRequest {
-                    canonical_root: root.display().to_string(),
-                    display_name: Some("Frozen native routes".into()),
+                    canonical_root: nested_workspace_root.display().to_string(),
+                    display_name: Some("Frozen nested native routes".into()),
                 },
                 OperationActor::operator("worktree-retirement-test"),
                 Some("register".into()),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .workspace;
+    // A second, active workspace rooted at the primary checkout must not
+    // bypass the nested workspace's later retirement through a different ID.
+    let active_sibling = store
+        .register_workspace(
+            &prepare_workspace_registration(
+                WorkspaceRegisterRequest {
+                    canonical_root: root.display().to_string(),
+                    display_name: Some("Active primary sibling".into()),
+                },
+                OperationActor::operator("worktree-retirement-test"),
+                Some("register-primary-sibling".into()),
             )
             .unwrap(),
         )
@@ -140,6 +157,18 @@ async fn retirement_freeze_prevents_native_worktrees_and_legacy_external_session
         .await
         .unwrap_err();
     assert!(matches!(current_error, RuntimeError::Conflict(_)));
+    let sibling_error = service
+        .create_workspace_worktree(WorkspaceWorktreeCreateRequest {
+            workspace_id: active_sibling.workspace_id,
+            worktree_name: "late-sibling".into(),
+            branch_prefix: None,
+            base_ref: None,
+            deletion_policy: None,
+            run_init_script: Some(false),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(sibling_error, RuntimeError::Conflict(_)));
     let legacy_error = service
         .create_worktree(WorktreeCreateRequest {
             team_id: None,
@@ -181,6 +210,7 @@ async fn retirement_freeze_prevents_native_worktrees_and_legacy_external_session
             "for-each-ref",
             "--format=%(refname)",
             "refs/heads/gg/late-current",
+            "refs/heads/gg/late-sibling",
             "refs/heads/gg/late-legacy"
         ]
     )

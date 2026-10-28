@@ -79,7 +79,10 @@ pub use provider_contract::{
     SessionContextLimitSnapshot,
 };
 pub use provider_registry::ProviderRegistry;
-pub use repository_identity::{resolve_repository_identity, RepositoryIdentity};
+pub use repository_identity::{
+    checkout_contains_workspace, repository_checkout_roots, resolve_repository_identity,
+    RepositoryIdentity,
+};
 pub use runtime::{
     ApprovalResponseInput, CreateSessionInput, ResumeSessionInput, RuntimeSessionManager,
     SendTurnAccepted, SendTurnInput, StartupRecoveryProviderStatus, StartupRecoverySummary,

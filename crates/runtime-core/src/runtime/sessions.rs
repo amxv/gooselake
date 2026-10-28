@@ -128,7 +128,7 @@ impl RuntimeSessionManager {
         // admission. Hold the same root lock as workspace retirement across
         // that entire window; a later DB rejection must not orphan native
         // activity outside the retired workspace's obligation inventory.
-        let matched_workspace = if let Some(cwd) = input.cwd.as_deref() {
+        let matched_workspaces = if let Some(cwd) = input.cwd.as_deref() {
             let candidate =
                 std::fs::canonicalize(cwd).unwrap_or_else(|_| std::path::PathBuf::from(cwd));
             let workspaces = match self.store.list_workspaces() {
@@ -139,6 +139,11 @@ impl RuntimeSessionManager {
             let repository_root = crate::resolve_repository_identity(&candidate)
                 .ok()
                 .map(|identity| identity.canonical_root);
+            let checkout_roots = repository_root
+                .as_ref()
+                .map(|root| crate::repository_checkout_roots(std::path::Path::new(root)))
+                .transpose()?
+                .unwrap_or_default();
             let managed_worktrees = if workspaces.is_empty() {
                 Vec::new()
             } else {
@@ -146,22 +151,55 @@ impl RuntimeSessionManager {
             };
             workspaces
                 .into_iter()
-                .filter(|workspace| {
-                    candidate.starts_with(&workspace.canonical_root)
-                        || repository_root.as_deref() == Some(workspace.canonical_root.as_str())
+                .filter_map(|workspace| {
+                    let same_repository = checkout_roots.iter().any(|checkout| {
+                        crate::checkout_contains_workspace(
+                            checkout,
+                            std::path::Path::new(&workspace.canonical_root),
+                        )
+                    });
+                    let matches = candidate.starts_with(&workspace.canonical_root)
+                        || same_repository
                         || managed_worktrees.iter().any(|worktree| {
-                            worktree.repo_root == workspace.canonical_root
+                            (worktree.repo_root == workspace.canonical_root
+                                || (same_repository
+                                    && repository_root.as_deref()
+                                        == Some(worktree.repo_root.as_str())))
                                 && std::path::Path::new(&worktree.worktree_cwd).is_absolute()
                                 && candidate.starts_with(&worktree.worktree_cwd)
-                        })
+                        });
+                    if matches {
+                        let lock_root = if same_repository {
+                            repository_root
+                                .clone()
+                                .unwrap_or_else(|| workspace.canonical_root.clone())
+                        } else {
+                            workspace.canonical_root.clone()
+                        };
+                        Some((workspace, lock_root))
+                    } else {
+                        None
+                    }
                 })
-                .max_by_key(|workspace| workspace.canonical_root.len())
+                .collect::<Vec<_>>()
         } else {
-            None
+            Vec::new()
         };
-        let _legacy_workspace_guard = if let Some(workspace) = matched_workspace {
-            let lock = crate::repository_lifecycle_lock(&workspace.canonical_root).await;
-            let guard = lock.read_owned().await;
+        // All workspaces sharing a Git repository must be checked. Selecting
+        // only the longest root could choose an active nested workspace and
+        // silently bypass a retired sibling's native-effect freeze. Acquire
+        // each distinct repository lock once, in sorted order, to avoid
+        // self-deadlock when several workspace roots map to the same lock.
+        let mut roots = std::collections::BTreeSet::new();
+        for (_, root) in &matched_workspaces {
+            roots.insert(root.clone());
+        }
+        let mut _legacy_workspace_guards = Vec::with_capacity(roots.len());
+        for root in roots {
+            let lock = crate::repository_lifecycle_lock(&root).await;
+            _legacy_workspace_guards.push(lock.read_owned().await);
+        }
+        for (workspace, _) in matched_workspaces {
             let current = self
                 .store
                 .get_workspace(&workspace.workspace_id)?
@@ -187,10 +225,7 @@ impl RuntimeSessionManager {
                     workspace.workspace_id
                 )));
             }
-            Some(guard)
-        } else {
-            None
-        };
+        }
         let provider = self.providers.get(input.provider).ok_or_else(|| {
             RuntimeError::ProviderNotRegistered(input.provider.as_str().to_string())
         })?;

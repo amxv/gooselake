@@ -17,8 +17,22 @@ Normal agents belong to one workspace. Use `GET /v2/workspaces/{workspace_id}/wo
 ```bash
 curl -X POST "$BASE_URL/v2/workspaces/$WORKSPACE_ID/worktrees" \
   "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: create-agent-branch' \
   -d '{"worktree_name":"agent-branch","run_init_script":false}'
 ```
+
+The idempotency key replays the original Git/initializer result. Native creation
+records a durable operation before Git executes; an unknown outcome returns
+non-retryable `409 outcome_unresolved` with `X-Operation-ID`. Inspect that exact
+operation before recovery, rather than using a new key to repeat Git or an init
+script. An omitted deletion policy preserves an existing checkout's retention
+setting, and uses the server default for newly created checkouts.
+
+The runtime treats all paths sharing one Git repository identity as a single
+native lifecycle boundary, even if a workspace is registered in a subdirectory
+or a linked worktree. Retirement of a workspace fences legacy `/v1` native
+checkout and provider-session creation against that same Git repository; using
+another checkout or an active sibling workspace does not bypass the freeze.
 
 On `POST /v2/workspaces/{workspace_id}/agents`, the `worktree` selector can choose the `root`, an `existing` managed worktree ID, or a `new` named checkout. The runtime commits the selected cwd and managed-worktree claim along with agent ownership. No separate manual claim is required for this flow.
 

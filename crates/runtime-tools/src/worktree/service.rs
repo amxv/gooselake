@@ -512,10 +512,29 @@ impl RuntimeWorktreeService {
             Err(RuntimeError::Unsupported(_)) => Vec::new(),
             Err(error) => return Err(error),
         };
-        if let Some(workspace) = workspaces
-            .iter()
-            .find(|workspace| workspace.canonical_root == repo_root)
-        {
+        if workspaces.is_empty() {
+            return Ok(());
+        }
+        let checkout_roots = runtime_core::repository_checkout_roots(Path::new(repo_root))?;
+        if checkout_roots.is_empty() {
+            return Err(RuntimeError::InvalidState(
+                "native worktree mutation cannot prove a checkout identity for this bare repository".into(),
+            ));
+        }
+        for workspace in &workspaces {
+            // A workspace registered at a Git subdirectory or another linked
+            // checkout still owns native obligations in this *same* primary
+            // repository. Checking only an equal filesystem path can let an
+            // old /v1 worktree creation bypass its retirement freeze.
+            let same_repository = checkout_roots.iter().any(|checkout| {
+                runtime_core::checkout_contains_workspace(
+                    checkout,
+                    Path::new(&workspace.canonical_root),
+                )
+            });
+            if !same_repository {
+                continue;
+            }
             if workspace.lifecycle_state != WorkspaceLifecycleState::Active
                 || self
                     .store

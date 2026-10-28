@@ -65,7 +65,10 @@ pub fn resolve_repository_identity(checkout: &Path) -> Result<RepositoryIdentity
     })
 }
 
-fn primary_worktree_root(checkout: &Path) -> Result<Option<PathBuf>, RuntimeError> {
+/// Inspect one Git worktree inventory rather than invoking `git rev-parse`
+/// separately for every workspace that might share this repository. Includes
+/// the primary checkout and linked checkouts, but never a bare checkout.
+pub fn repository_checkout_roots(checkout: &Path) -> Result<Vec<PathBuf>, RuntimeError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(checkout)
@@ -76,6 +79,7 @@ fn primary_worktree_root(checkout: &Path) -> Result<Option<PathBuf>, RuntimeErro
         return Err(git_failure("git worktree list", output.stderr));
     }
 
+    let mut roots = Vec::new();
     let mut current_path: Option<PathBuf> = None;
     let mut current_bare = false;
     for field in output.stdout.split(|byte| *byte == 0) {
@@ -88,7 +92,7 @@ fn primary_worktree_root(checkout: &Path) -> Result<Option<PathBuf>, RuntimeErro
         if let Some(path) = text.strip_prefix("worktree ") {
             if let Some(path) = current_path.take() {
                 if !current_bare {
-                    return Ok(Some(path));
+                    roots.push(path.canonicalize().unwrap_or(path));
                 }
             }
             current_path = Some(PathBuf::from(path));
@@ -98,9 +102,39 @@ fn primary_worktree_root(checkout: &Path) -> Result<Option<PathBuf>, RuntimeErro
         }
     }
     if !current_bare {
-        return Ok(current_path);
+        if let Some(path) = current_path {
+            roots.push(path.canonicalize().unwrap_or(path));
+        }
     }
-    Ok(None)
+    let mut seen = std::collections::HashSet::new();
+    roots.retain(|path| seen.insert(path.clone()));
+    // A bare Git repository has no checkout. Preserve the caller's prior
+    // bare-repository fallback rather than inventing a worktree root.
+    Ok(roots)
+}
+
+/// A nested independent Git repository is not part of its parent checkout,
+/// even though its filesystem path has the parent's prefix. This check is
+/// filesystem-only and cheap for ordinary nested workspace roots; native Git
+/// still provides the authoritative checkout list above.
+pub fn checkout_contains_workspace(checkout: &Path, workspace: &Path) -> bool {
+    let mut cursor = workspace;
+    while cursor != checkout {
+        if !cursor.starts_with(checkout) || cursor.join(".git").exists() {
+            return false;
+        }
+        let Some(parent) = cursor.parent() else {
+            return false;
+        };
+        cursor = parent;
+    }
+    true
+}
+
+fn primary_worktree_root(checkout: &Path) -> Result<Option<PathBuf>, RuntimeError> {
+    // Git lists the primary checkout first. All callers share this inventory
+    // parser, so linked and nested workspace identity cannot drift.
+    Ok(repository_checkout_roots(checkout)?.into_iter().next())
 }
 
 fn git_stdout(checkout: &Path, args: &[&str]) -> Result<String, RuntimeError> {
@@ -167,6 +201,23 @@ mod tests {
         let primary = resolve_repository_identity(&repo).expect("primary identity");
         let secondary = resolve_repository_identity(&linked).expect("linked identity");
         assert_eq!(primary, secondary);
+        let inventory = repository_checkout_roots(&repo).expect("one Git checkout inventory");
+        assert_eq!(inventory.len(), 2);
+        assert_eq!(inventory[0], repo.canonicalize().unwrap());
+        assert_eq!(inventory[1], linked.canonicalize().unwrap());
+        let nested = repo.join("nested/workspace");
+        std::fs::create_dir_all(&nested).unwrap();
+        assert!(checkout_contains_workspace(&inventory[0], &nested));
+        assert!(!checkout_contains_workspace(&inventory[1], &nested));
+        let independent = repo.join("nested/separate");
+        std::fs::create_dir_all(&independent).unwrap();
+        run_git(&independent, &["init"]);
+        let independent_project = independent.join("project");
+        std::fs::create_dir_all(&independent_project).unwrap();
+        assert!(!checkout_contains_workspace(
+            &inventory[0],
+            &independent_project
+        ));
         assert_eq!(
             primary.canonical_root,
             repo.canonicalize()

@@ -15,6 +15,14 @@ type LifecycleLock = RwLock<()>;
 static LIFECYCLE_LOCKS: OnceLock<Mutex<HashMap<String, Weak<LifecycleLock>>>> = OnceLock::new();
 
 fn canonical_key(repository_root: &str) -> String {
+    // A workspace may be registered inside a repository or in a linked
+    // checkout. Native Git effects and provider admission must use the same
+    // lifecycle/worktree lock as retirement of any of those workspace roots.
+    // The primary Git root is stable across linked checkouts; filesystem-only
+    // canonicalization would allocate competing locks for the same repo.
+    if let Ok(identity) = crate::resolve_repository_identity(Path::new(repository_root)) {
+        return identity.canonical_root;
+    }
     std::fs::canonicalize(Path::new(repository_root))
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|_| repository_root.to_string())
@@ -55,6 +63,64 @@ pub async fn repository_worktree_lock(repository_root: &str) -> Arc<Mutex<()>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn nested_and_linked_git_checkouts_share_primary_repository_locks() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("repo");
+        let nested = root.join("nested/workspace");
+        let linked = temp.path().join("linked");
+        std::fs::create_dir_all(&nested).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "--quiet"]);
+        git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "--quiet",
+            "-m",
+            "seed",
+        ]);
+        git(&[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "linked-branch",
+            linked.to_str().unwrap(),
+        ]);
+
+        let primary = repository_lifecycle_lock(root.to_str().unwrap()).await;
+        let nested_lock = repository_lifecycle_lock(nested.to_str().unwrap()).await;
+        let linked_lock = repository_lifecycle_lock(linked.to_str().unwrap()).await;
+        assert!(Arc::ptr_eq(&primary, &nested_lock));
+        assert!(Arc::ptr_eq(&primary, &linked_lock));
+        let reader = nested_lock.read().await;
+        assert!(primary.try_write().is_err());
+        drop(reader);
+        assert!(primary.try_write().is_ok());
+
+        let primary = repository_worktree_lock(root.to_str().unwrap()).await;
+        let nested_lock = repository_worktree_lock(nested.to_str().unwrap()).await;
+        let linked_lock = repository_worktree_lock(linked.to_str().unwrap()).await;
+        assert!(Arc::ptr_eq(&primary, &nested_lock));
+        assert!(Arc::ptr_eq(&primary, &linked_lock));
+    }
 
     #[tokio::test]
     async fn independent_services_share_a_canonical_repository_lock() {

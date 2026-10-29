@@ -4,11 +4,12 @@ use tokio::sync::broadcast;
 use tokio::sync::MutexGuard;
 
 use crate::{
-    ApprovalRecord, PersistedUserInputSnapshot, ProviderDispatchOutcome, ProviderKind,
-    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderTurnStatus, ProviderWaitTurnRequest,
-    RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,
-    TurnAdmissionRecord, TurnCorrelationState, TurnDispatchPolicySnapshot, TurnDispatchState,
-    TurnInputProjectionSource, TurnRecord,
+    ApprovalRecord, OperationActor, OperatorUserTurnCommand, OperatorUserTurnReplay,
+    PersistedUserInputSnapshot, ProviderDispatchOutcome, ProviderKind, ProviderRuntimeEvent,
+    ProviderSendTurnRequest, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
+    RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, TurnAdmissionRecord,
+    TurnCorrelationState, TurnDispatchPolicySnapshot, TurnDispatchState, TurnInputProjectionSource,
+    TurnRecord,
 };
 
 use super::helpers::now_ms;
@@ -22,8 +23,142 @@ impl RuntimeSessionManager {
         input: SendTurnInput,
     ) -> Result<SendTurnAccepted, RuntimeError> {
         let policy_mutation_guard = self.session_policy_mutation_lock.lock().await;
-        self.send_turn_under_policy_guard(session_id, input, None, None, policy_mutation_guard)
-            .await
+        self.send_turn_under_policy_guard(
+            session_id,
+            input,
+            None,
+            None,
+            None,
+            policy_mutation_guard,
+        )
+        .await
+    }
+
+    /// `/v2` user turns share the canonical admission and provider dispatch
+    /// path, but first claim the trusted operator's retry key alongside that
+    /// exact logical turn. A retry never re-enters provider dispatch.
+    pub async fn send_operator_user_turn(
+        self: &Arc<Self>,
+        session_id: &str,
+        input: SendTurnInput,
+        actor: OperationActor,
+        idempotency_key: String,
+    ) -> Result<(SendTurnAccepted, String), RuntimeError> {
+        let normalized_request = serde_json::json!({
+            "agent_id": session_id,
+            "input": input.input,
+            "expected_turn_id": input.expected_turn_id,
+            "permission_mode": input.permission_mode,
+            "turn_settings": input.turn_settings,
+        });
+        let normalized_request_hash = crate::normalized_json_hash(&normalized_request)?;
+        let policy_guard = self.session_policy_mutation_lock.lock().await;
+        // Replay precedes active-session, retirement and even workspace
+        // existence checks. A previously accepted turn must remain replayable
+        // after it finishes or its agent is archived.
+        if let Some(replay) = self.store.operator_user_turn_replay(
+            &actor,
+            &idempotency_key,
+            session_id,
+            &normalized_request_hash,
+        )? {
+            return replay.into_result();
+        }
+        let agent = self.get_active_workspace_agent_by_id(session_id)?;
+        // Selecting a *new* persistent thinking preference invokes provider
+        // work before ordinary turn admission. A keyed operator turn cannot
+        // safely perform that separate effect without its own journal. Require
+        // preselection via the revisioned policy endpoint instead of claiming
+        // this key protects an unjournaled native preference mutation.
+        if let Some(effort) = input.turn_settings.thinking_effort {
+            if agent.recreation_policy.current_preferences.thinking_effort != Some(effort) {
+                return Err(RuntimeError::Unsupported(
+                    "keyed operator turns require the selected thinking effort to be the agent's current preference; update the agent preference separately first".into(),
+                ));
+            }
+        }
+        let command = OperatorUserTurnCommand {
+            operation_id: format!("op_turn_{:032x}", rand::random::<u128>()),
+            agent_id: agent.agent_id,
+            workspace_id: agent.workspace_id,
+            actor: actor.clone(),
+            idempotency_key: idempotency_key.clone(),
+            normalized_request,
+            normalized_request_hash: normalized_request_hash.clone(),
+            requested_at: now_ms(),
+        };
+
+        let result = self
+            .send_turn_under_policy_guard(
+                session_id,
+                input,
+                None,
+                None,
+                Some(&command),
+                policy_guard,
+            )
+            .await;
+        match result {
+            Ok(accepted) => {
+                self.store
+                    .complete_operator_user_turn(&command.operation_id, &accepted, now_ms())
+                    .map_err(|_| RuntimeError::operation_unresolved(
+                        command.operation_id.clone(),
+                        "provider accepted the original logical turn but exact operator receipt persistence is unresolved",
+                    ))?;
+                Ok((accepted, command.operation_id))
+            }
+            Err(error) => {
+                // Only an operation actually admitted by this caller can be
+                // settled. A preflight failure leaves no journal and a race
+                // against another runtime must not rewrite its native effect.
+                let admitted = self.store.operator_user_turn_replay(
+                    &actor,
+                    &idempotency_key,
+                    session_id,
+                    &normalized_request_hash,
+                )?;
+                if !matches!(
+                    admitted.as_ref(),
+                    Some(OperatorUserTurnReplay::Unresolved { operation_id })
+                        if operation_id == &command.operation_id
+                ) {
+                    return Err(error);
+                }
+                if let RuntimeError::ProviderDispatch {
+                    code,
+                    outcome: "not_dispatched",
+                    message,
+                } = &error
+                {
+                    self.store
+                        .fail_operator_user_turn_not_dispatched(
+                            &command.operation_id,
+                            code,
+                            message,
+                            now_ms(),
+                        )
+                        .map_err(|_| RuntimeError::operation_unresolved(
+                            command.operation_id.clone(),
+                            "original native dispatch was not performed but its failure receipt could not be saved",
+                        ))?;
+                    return Err(RuntimeError::OperatorTurnNotDispatched {
+                        operation_id: command.operation_id,
+                        code: code.clone(),
+                        message: message.clone(),
+                    });
+                }
+                let _ = self.store.mark_operator_user_turn_uncertain(
+                    &command.operation_id,
+                    &error.to_string(),
+                    now_ms(),
+                );
+                Err(RuntimeError::operation_unresolved(
+                    command.operation_id,
+                    format!("original turn dispatch or its receipt is unresolved: {error}"),
+                ))
+            }
+        }
     }
 
     pub(super) async fn send_turn_under_policy_guard(
@@ -32,6 +167,7 @@ impl RuntimeSessionManager {
         input: SendTurnInput,
         authorized_edit_id: Option<&str>,
         authorized_notice_id: Option<&str>,
+        operator_command: Option<&OperatorUserTurnCommand>,
         policy_mutation_guard: MutexGuard<'_, ()>,
     ) -> Result<SendTurnAccepted, RuntimeError> {
         if let Some(operation_id) = self.store.retiring_operation_for_session(session_id)? {
@@ -60,6 +196,22 @@ impl RuntimeSessionManager {
                 "session {session_id} has unresolved native edit-and-rerun; inspect its operation"
             )));
         }
+        // A prior keyed operator request may already have called the native
+        // provider, even when a stale session projection appears idle. Fence
+        // it BEFORE a new user's thinking selection mutates provider policy.
+        if let Some(operation_id) = self
+            .store
+            .unresolved_operator_user_turn_for_agent(session_id)?
+        {
+            if operator_command.map(|command| command.operation_id.as_str())
+                != Some(operation_id.as_str())
+            {
+                return Err(RuntimeError::operation_unresolved(
+                    operation_id,
+                    "an earlier operator model turn has unresolved native dispatch; inspect its operation before sending another turn",
+                ));
+            }
+        }
         if session.status == "closed" || session.status == "failed" {
             return Err(RuntimeError::InvalidState(format!(
                 "session {session_id} is not writable in status {}",
@@ -77,9 +229,14 @@ impl RuntimeSessionManager {
         })?;
         let turn_settings = input.turn_settings.clone();
         self.validate_turn_settings(provider_kind, &turn_settings)?;
-        let session = self
-            .persist_selected_turn_thinking(session_id, turn_settings.thinking_effort, session)
-            .await?;
+        let session = if operator_command.is_some() {
+            // The operator path verified this choice before any native effect;
+            // its matching durable policy is rechecked transactionally below.
+            session
+        } else {
+            self.persist_selected_turn_thinking(session_id, turn_settings.thinking_effort, session)
+                .await?
+        };
         let turn_id = self.allocate_id("turn", provider_kind.as_str());
         let now = now_ms();
         let effective_permission_mode = input
@@ -157,8 +314,18 @@ impl RuntimeSessionManager {
             updated_at: now,
         };
 
-        self.store
-            .admit_turn(&admission, &turn, &updated_session, approval.as_ref())?;
+        if let Some(command) = operator_command {
+            self.store.admit_operator_user_turn(
+                command,
+                &admission,
+                &turn,
+                &updated_session,
+                approval.as_ref(),
+            )?;
+        } else {
+            self.store
+                .admit_turn(&admission, &turn, &updated_session, approval.as_ref())?;
+        }
         {
             let mut turns = self.turns.write().await;
             turns.insert(turn_id.clone(), turn.clone());

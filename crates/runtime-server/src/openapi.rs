@@ -370,6 +370,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/agents/{agent_id}/compact"
                 | "/v2/workspaces/{workspace_id}/lead"
                 | "/v2/workspaces/{workspace_id}/worktrees"
+                | "/v2/agents/{agent_id}/turns"
                 | "/v2/workspaces/{workspace_id}/interrupt"
                 | "/v2/messages"
                 | "/v2/migrations/workspaces/apply"
@@ -559,10 +560,15 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         return;
     }
     out.push_str("JSON response\n");
-    if method == HttpMethod::Post && path == "/v2/workspaces/{workspace_id}/worktrees" {
+    if method == HttpMethod::Post
+        && matches!(
+            path,
+            "/v2/workspaces/{workspace_id}/worktrees" | "/v2/agents/{agent_id}/turns"
+        )
+    {
         out.push_str("          headers:\n");
         out.push_str("            X-Operation-ID:\n");
-        out.push_str("              description: Durable native worktree creation operation\n");
+        out.push_str("              description: Durable native mutation operation when an idempotency key is supplied\n");
         out.push_str("              schema:\n");
         out.push_str("                type: string\n");
     }
@@ -570,9 +576,14 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
     out.push_str("            application/json:\n");
     out.push_str("              schema:\n");
     out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
-    if method == HttpMethod::Post && path == "/v2/workspaces/{workspace_id}/worktrees" {
+    if method == HttpMethod::Post
+        && matches!(
+            path,
+            "/v2/workspaces/{workspace_id}/worktrees" | "/v2/agents/{agent_id}/turns"
+        )
+    {
         out.push_str("        \"409\":\n");
-        out.push_str("          description: Conflict or unresolved native Git/init outcome; inspect the operation without retrying the effect\n");
+        out.push_str("          description: Conflict or unresolved native effect; inspect the operation without retrying the effect\n");
         out.push_str("          headers:\n");
         out.push_str("            X-Operation-ID:\n");
         out.push_str(
@@ -786,6 +797,16 @@ mod tests {
         );
         assert!(yaml.contains("  /v2/operations/{operation_id}:"));
         assert!(yaml.contains("        - name: Idempotency-Key"));
+        let user_turn = yaml
+            .split("  /v2/agents/{agent_id}/turns:\n")
+            .nth(1)
+            .expect("canonical operator agent turn route")
+            .split("\n  /v2/")
+            .next()
+            .expect("agent turn route content");
+        assert!(user_turn.contains("        - name: Idempotency-Key\n"));
+        assert!(user_turn.contains("        \"409\":\n"));
+        assert!(user_turn.contains("            X-Operation-ID:\n"));
         let worktree_path = yaml
             .split("  /v2/workspaces/{workspace_id}/worktrees:\n")
             .nth(1)

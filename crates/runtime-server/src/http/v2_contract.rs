@@ -40,13 +40,11 @@ pub(super) async fn v2_operator_response_contract(request: Request<Body>, next: 
             };
             (code.to_string(), message.to_string(), false, None)
         };
-        if code == "outcome_unresolved" {
-            unresolved_operation_id = details
-                .as_ref()
-                .and_then(|value: &serde_json::Value| value.get("operation_id"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned);
-        }
+        unresolved_operation_id = details
+            .as_ref()
+            .and_then(|value: &serde_json::Value| value.get("operation_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
         (
             status,
             Json(serde_json::json!({

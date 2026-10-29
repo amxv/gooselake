@@ -722,6 +722,7 @@ pub(crate) fn is_missing_gg_mcp_server_bad_request(error: &RuntimeError) -> bool
             message.contains(GG_MCP_MISSING_BAD_REQUEST)
         }
         RuntimeError::OperationUnresolved { .. } => false,
+        RuntimeError::OperatorTurnNotDispatched { .. } => false,
     }
 }
 

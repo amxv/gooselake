@@ -33,6 +33,7 @@ pub(super) struct MockStore {
 }
 
 impl crate::WorkspaceWorktreeCreationStore for MockStore {}
+impl crate::OperatorUserTurnStore for MockStore {}
 
 #[async_trait]
 impl RuntimeStore for MockStore {

@@ -437,10 +437,34 @@ The permission endpoint is Claude-only. These controls do not rewrite earlier tu
 
 `POST /v2/agents/{agent_id}/turns` admits a new user-visible turn, preserving its typed `turn_settings` in the durable dispatch-policy snapshot even if the runtime has to recover an admitted-but-not-dispatched turn after restart. Explicit `thinking_effort` selects and durably updates the agent's revisioned current thinking preference **before turn admission**; subsequent turns inherit that preference until it is changed again. Omit it to use the existing preference without a revision change. Codex also accepts `codex_collaboration_mode: "default" | "plan"` on a specific turn, without turning that selection into permission or a persistent session default. Claude accepts thinking changes without Codex collaboration. Unsupported ACP preferences or cross-provider collaboration modes fail before turn admission.
 
+For operator automation, include an optional `Idempotency-Key`. The trusted
+operator, agent identity, normalized input, expected turn, permission override
+and typed per-turn settings are reserved in **the same SQLite transaction as the
+logical turn and provider-dispatch admission**. A successful request returns
+`X-Operation-ID`, and an exact replay returns the original immutable
+`session_id`, `turn_id`, and accepted status, even after that turn completes or
+the agent is archived. Changing the key's input or mutation kind returns
+`409`. A definitively **not-dispatched** provider failure is receipted without
+allowing the same key to send again; a new key can safely retry once the
+original turn is settled. If the native dispatch or acceptance receipt is
+uncertain, `409 outcome_unresolved` supplies `error.details.operation_id` and
+`X-Operation-ID` for `GET /v2/operations/{operation_id}`. Its exclusive
+agent-dispatch claim remains held until independently reconciled; a new key
+cannot bypass that fence. Do not blindly resend the model input. Calls without
+a key retain their existing direct-turn behavior and cannot replay a lost
+response by request identity.
+
+For keyed turns, an explicit `thinking_effort` must already match the agent's
+current persisted preference; selecting a *different* effort would itself
+invoke a separate native provider mutation before turn admission and is
+therefore rejected. Update the agent's thinking preference through its
+revisioned policy endpoint before submitting a keyed turn. Unkeyed turns retain
+their existing optional thinking-selection behavior.
+
 ```bash
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"input":[{"type":"text","text":"Review this change"}],"turn_settings":{"thinking_effort":"high","codex_collaboration_mode":"plan"}}' \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: review-change-001' \
+  -d '{"input":[{"type":"text","text":"Review this change"}],"turn_settings":{"codex_collaboration_mode":"plan"}}' \
   "$BASE_URL/v2/agents/$AGENT_ID/turns"
 ```
 

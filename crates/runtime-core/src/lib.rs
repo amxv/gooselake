@@ -89,9 +89,10 @@ pub use runtime::{
 };
 pub use scoped_mcp::{agent_from_scoped_mcp_token, mint_scoped_mcp_token};
 pub use services::{
-    RuntimeStore, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCommsService,
-    TeamCreateRequest, TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamInterruptAllResponse,
-    TeamJoinRequest, TeamListMessagesRequest, TeamListMessagesResponse, TeamMemberSpawnRequest,
+    OperatorUserTurnCommand, OperatorUserTurnReplay, OperatorUserTurnStore, RuntimeStore,
+    TeamBroadcastRequest, TeamCancelMessageRequest, TeamCommsService, TeamCreateRequest,
+    TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamInterruptAllResponse, TeamJoinRequest,
+    TeamListMessagesRequest, TeamListMessagesResponse, TeamMemberSpawnRequest,
     TeamMemberSpawnResponse, TeamMemberSpawnWorktreeInput, TeamMessageAck, TeamRemoveMemberRequest,
     TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest,
     TeamViewSnapshotResponse, TeamWithMembers, ToolGateway, ToolInvokeRequest,

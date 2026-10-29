@@ -95,17 +95,33 @@ pub(super) async fn resolve_agent_compaction_review(
 pub(super) async fn send_agent_turn_v2(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    headers: HeaderMap,
     Json(input): Json<PublicSendTurnInput>,
-) -> Result<Json<SendTurnAccepted>, ApiError> {
+) -> Result<Response, ApiError> {
+    let idempotency_key = parse_idempotency_key(&headers)?;
+    let input = SendTurnInput::from(input);
+    if let Some(key) = idempotency_key {
+        let (accepted, operation_id) = state
+            .runtime
+            .send_operator_user_turn(
+                agent_id.as_str(),
+                input,
+                runtime_core::OperationActor::operator(OPERATOR_PRINCIPAL),
+                key,
+            )
+            .await?;
+        let mut response = Json(accepted).into_response();
+        response.headers_mut().insert(
+            "x-operation-id",
+            axum::http::HeaderValue::from_str(&operation_id)
+                .expect("durable turn operation id is valid HTTP header text"),
+        );
+        return Ok(response);
+    }
     state
         .runtime
         .get_active_workspace_agent_by_id(agent_id.as_str())?;
-    Ok(Json(
-        state
-            .runtime
-            .send_turn(agent_id.as_str(), input.into())
-            .await?,
-    ))
+    Ok(Json(state.runtime.send_turn(agent_id.as_str(), input).await?).into_response())
 }
 
 /// A missing snapshot is represented as null, not a guessed percentage.

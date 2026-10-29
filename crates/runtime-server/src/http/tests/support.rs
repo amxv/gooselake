@@ -44,6 +44,8 @@ pub(super) struct TestProvider {
     edit_mode: std::sync::atomic::AtomicU8,
     edit_calls: std::sync::atomic::AtomicUsize,
     edit_inputs: Mutex<Vec<Vec<serde_json::Value>>>,
+    pub(super) send_failure_mode: std::sync::atomic::AtomicU8,
+    pub(super) send_invocations: std::sync::atomic::AtomicUsize,
     supports_thinking: std::sync::atomic::AtomicBool,
     compaction_events: std::sync::Mutex<
         Option<tokio::sync::broadcast::Sender<runtime_core::ProviderRuntimeEvent>>,
@@ -270,6 +272,26 @@ impl RuntimeProvider for TestProvider {
         &self,
         req: ProviderSendTurnRequest,
     ) -> Result<ProviderTurnAck, RuntimeError> {
+        self.send_invocations
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        match self
+            .send_failure_mode
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            1 => {
+                return Err(RuntimeError::provider_not_dispatched(
+                    "capacity_rejected",
+                    "test provider explicitly rejected capacity before native turn dispatch",
+                ));
+            }
+            2 => {
+                return Err(RuntimeError::provider_dispatch_unknown(
+                    "unknown_native_turn",
+                    "test provider may have dispatched the native model turn",
+                ));
+            }
+            _ => {}
+        }
         let mut state = self.state.lock().await;
         let session = state
             .sessions

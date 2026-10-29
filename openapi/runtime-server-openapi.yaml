@@ -1284,6 +1284,11 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -1293,6 +1298,22 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Operation-ID:
+              description: Durable native mutation operation when an idempotency key is supplied
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "409":
+          description: Conflict or unresolved native effect; inspect the operation without retrying the effect
+          headers:
+            X-Operation-ID:
+              description: Present when the native outcome requires durable review
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2258,7 +2279,7 @@ paths:
           description: JSON response
           headers:
             X-Operation-ID:
-              description: Durable native worktree creation operation
+              description: Durable native mutation operation when an idempotency key is supplied
               schema:
                 type: string
           content:
@@ -2266,7 +2287,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/JsonObject"
         "409":
-          description: Conflict or unresolved native Git/init outcome; inspect the operation without retrying the effect
+          description: Conflict or unresolved native effect; inspect the operation without retrying the effect
           headers:
             X-Operation-ID:
               description: Present when the native outcome requires durable review

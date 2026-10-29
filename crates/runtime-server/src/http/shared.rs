@@ -212,6 +212,18 @@ impl From<RuntimeError> for ApiError {
                 error.details = Some(serde_json::json!({"operation_id": operation_id}));
                 error
             }
+            RuntimeError::OperatorTurnNotDispatched {
+                operation_id,
+                code,
+                message,
+            } => {
+                let mut error = Self::new(StatusCode::CONFLICT, code, message);
+                error.details = Some(serde_json::json!({
+                    "dispatch_outcome":"not_dispatched",
+                    "operation_id": operation_id,
+                }));
+                error
+            }
             RuntimeError::OnboardingPending(message) => {
                 let mut error = Self::new(StatusCode::CONFLICT, "onboarding_pending", message);
                 error.retryable = true;

@@ -19,6 +19,13 @@ pub use worktree_trait::*;
 use async_trait::async_trait;
 use serde_json::Value;
 
+#[path = "services_operator_turn_models.rs"]
+mod operator_turn_models;
+#[path = "services_operator_turn_store_trait.rs"]
+mod operator_turn_store_trait;
+pub use operator_turn_models::*;
+pub use operator_turn_store_trait::*;
+
 use crate::{
     AgentDeliveryRecord, AgentMessageRecord, AgentToolMutationAdmission, AgentToolMutationCommand,
     ApprovalRecord, CompactionObservationReceipt, LegacyWorkspaceMigrationApplyCommand,
@@ -49,7 +56,9 @@ use crate::{
 use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 
 #[async_trait]
-pub trait RuntimeStore: WorkspaceWorktreeCreationStore + Send + Sync {
+pub trait RuntimeStore:
+    WorkspaceWorktreeCreationStore + OperatorUserTurnStore + Send + Sync
+{
     /// Transactionally snapshot approved pre-add hooks against a trusted
     /// reserved agent identity before any shell or provider work can start.
     fn admit_pre_add_team_hooks(

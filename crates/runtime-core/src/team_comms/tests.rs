@@ -45,6 +45,7 @@ impl TestStore {
 }
 
 impl crate::WorkspaceWorktreeCreationStore for TestStore {}
+impl crate::OperatorUserTurnStore for TestStore {}
 
 #[async_trait]
 impl RuntimeStore for TestStore {

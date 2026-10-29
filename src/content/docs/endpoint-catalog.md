@@ -64,7 +64,7 @@ error bodies and the separate agent-scoped `/v2/mcp` tool contract are unchanged
 - `POST /v2/agents/{agent_id}/context-limit/refresh` (Bearer; refresh provider context with atomic identity validation)
 - `POST /v2/agents/{agent_id}/preferences` (Bearer, JSON; revisioned Codex/Claude thinking preferences)
 - `POST /v2/agents/{agent_id}/permission` (Bearer, JSON; revisioned Claude permission selection)
-- `POST /v2/agents/{agent_id}/turns` (Bearer, JSON; durable user turn with optional `turn_settings`)
+- `POST /v2/agents/{agent_id}/turns` (Bearer, JSON; durable user turn with optional `turn_settings` and operator-scoped `Idempotency-Key`; same key replays the original logical-turn receipt with `X-Operation-ID`, unknown native outcomes are nonretryable `409 outcome_unresolved`)
 - `POST /v2/agents/{agent_id}/turns/{turn_id}/edit-rerun` (Bearer, JSON; optional `Idempotency-Key`; native hard-fork and new durable user turn)
 - `GET /v2/agents/{agent_id}/edits/{operation_id}` (Bearer; inspect native edit admission, fork and replacement identity)
 - `POST /v2/agents/{agent_id}/edits/{operation_id}/resolve` (Bearer, JSON; explicitly settle a verified child fork with no admitted replacement)

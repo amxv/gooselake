@@ -1,6 +1,7 @@
 use runtime_core::{
-    ApprovalRecord, RuntimeError, SessionRecord, TurnAdmissionRecord, TurnDispatchState,
-    TurnInputProjectionSource, TurnRecord,
+    ApprovalRecord, OperationActorKind, OperationEffectRecord, OperationPhase, OperationRecord,
+    OperationTransitionRecord, OperatorUserTurnCommand, RuntimeError, SessionRecord,
+    TurnAdmissionRecord, TurnDispatchState, TurnInputProjectionSource, TurnRecord,
 };
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde::de::DeserializeOwned;
@@ -8,7 +9,13 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::db::{db_error, json_to_string, open_connection, opt_json_to_string};
+use crate::operation_tx::OperationAuthorityTransaction;
+use crate::repository_workspace::operation_by_idempotency;
 use crate::SqliteRuntimeRepository;
+
+pub(crate) const OPERATOR_TURN_KIND: &str = "operator_user_turn_send";
+pub(crate) const OPERATOR_TURN_CLAIM: &str = "operator_user_turn_native";
+pub(crate) const OPERATOR_TURN_EFFECT: &str = "operator_turn_dispatch";
 
 impl SqliteRuntimeRepository {
     pub fn admit_turn(
@@ -18,11 +25,73 @@ impl SqliteRuntimeRepository {
         session: &SessionRecord,
         approval: Option<&ApprovalRecord>,
     ) -> Result<(), RuntimeError> {
+        self.admit_turn_internal(admission, turn, session, approval, None)
+    }
+
+    pub fn admit_operator_user_turn(
+        &self,
+        command: &OperatorUserTurnCommand,
+        admission: &TurnAdmissionRecord,
+        turn: &TurnRecord,
+        session: &SessionRecord,
+        approval: Option<&ApprovalRecord>,
+    ) -> Result<(), RuntimeError> {
+        self.admit_turn_internal(admission, turn, session, approval, Some(command))
+    }
+
+    fn admit_turn_internal(
+        &self,
+        admission: &TurnAdmissionRecord,
+        turn: &TurnRecord,
+        session: &SessionRecord,
+        approval: Option<&ApprovalRecord>,
+        command: Option<&OperatorUserTurnCommand>,
+    ) -> Result<(), RuntimeError> {
         validate_admission_bundle(admission, turn, session, approval)?;
         let mut connection = open_connection(&self.database_path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting turn admission transaction", error))?;
+
+        if let Some(command) = command {
+            validate_operator_user_turn_command(&transaction, command, admission, turn, session)?;
+            if let Some(existing) = operation_by_idempotency(
+                &transaction,
+                command.actor.kind,
+                &command.actor.identifier,
+                Some(&command.idempotency_key),
+            )? {
+                if existing.kind != OPERATOR_TURN_KIND
+                    || existing.normalized_request_hash != command.normalized_request_hash
+                    || existing.normalized_request["agent_id"] != command.agent_id
+                {
+                    return Err(RuntimeError::Conflict(format!(
+                        "Idempotency-Key belongs to operation {} with different input",
+                        existing.operation_id
+                    )));
+                }
+                return Err(RuntimeError::operation_unresolved(
+                    existing.operation_id,
+                    "operator logical turn was already admitted; inspect its durable receipt",
+                ));
+            }
+        }
+
+        let active_native_claim: Option<String> = transaction
+            .query_row(
+                "SELECT owner_operation_id FROM runtime_operation_resource_claims
+                 WHERE resource_kind=?1 AND resource_id=?2 AND claim_mode='exclusive'",
+                params![OPERATOR_TURN_CLAIM, session.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking unresolved operator turn claim", error))?;
+        if let Some(operation_id) = active_native_claim {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "an operator turn has unresolved native dispatch; inspect its operation before sending another turn",
+            ));
+        }
         guard_process_completion_admission(&transaction, admission)?;
         let rebind_pending: i64 = transaction
             .query_row(
@@ -108,6 +177,52 @@ impl SqliteRuntimeRepository {
             )));
         }
 
+        if let Some(command) = command {
+            let authority = OperationAuthorityTransaction::new(&transaction);
+            authority.insert_operation(&OperationRecord {
+                operation_id: command.operation_id.clone(),
+                workspace_id: Some(command.workspace_id.clone()),
+                kind: OPERATOR_TURN_KIND.into(),
+                actor: command.actor.clone(),
+                idempotency_key: Some(command.idempotency_key.clone()),
+                normalized_request_hash: command.normalized_request_hash.clone(),
+                normalized_request: command.normalized_request.clone(),
+                phase: OperationPhase::Requested,
+                exact_terminal_result: None,
+                error_code: None,
+                error_message: None,
+                created_at: command.requested_at,
+                updated_at: command.requested_at,
+            })?;
+            authority.append_transition(&OperationTransitionRecord {
+                operation_id: command.operation_id.clone(),
+                sequence: 1,
+                from_phase: None,
+                to_phase: OperationPhase::Requested,
+                evidence: Some(serde_json::json!({"logical_turn_id":turn.id})),
+                created_at: command.requested_at,
+            })?;
+            authority.acquire_claim(
+                &command.operation_id,
+                OPERATOR_TURN_CLAIM,
+                &session.id,
+                command.requested_at,
+            )?;
+            authority.insert_effect(&OperationEffectRecord {
+                effect_id: format!("fx_{}", command.operation_id),
+                operation_id: command.operation_id.clone(),
+                effect_kind: OPERATOR_TURN_EFFECT.into(),
+                target_kind: "logical_turn".into(),
+                target_id: turn.id.clone(),
+                phase: "intended".into(),
+                idempotency_key: "provider_turn_send".into(),
+                evidence: Some(serde_json::json!({"agent_id":session.id,"turn_id":turn.id})),
+                attempt_count: 0,
+                created_at: command.requested_at,
+                updated_at: command.requested_at,
+            })?;
+        }
+
         insert_turn(&transaction, turn)?;
         insert_admission(&transaction, admission)?;
         if let Some(approval) = approval {
@@ -159,6 +274,94 @@ impl SqliteRuntimeRepository {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| db_error("failed collecting turn admissions", error))
     }
+}
+
+fn validate_operator_user_turn_command(
+    transaction: &Transaction<'_>,
+    command: &OperatorUserTurnCommand,
+    admission: &TurnAdmissionRecord,
+    turn: &TurnRecord,
+    session: &SessionRecord,
+) -> Result<(), RuntimeError> {
+    if command.actor.kind != OperationActorKind::Operator
+        || command.actor.identifier.trim().is_empty()
+        || command.agent_id != session.id
+        || command.workspace_id.is_empty()
+        || command.operation_id.is_empty()
+        || command.idempotency_key.is_empty()
+        || command.idempotency_key.len() > 512
+        || command.idempotency_key.trim() != command.idempotency_key
+        || admission.projection_source != TurnInputProjectionSource::UserVisible
+        || admission.correlation.correlation_id.is_some()
+        || command.normalized_request_hash
+            != runtime_core::normalized_json_hash(&command.normalized_request)?
+        || command.normalized_request["agent_id"].as_str() != Some(session.id.as_str())
+        || command.normalized_request["input"] != turn.input
+        || command.normalized_request["expected_turn_id"]
+            != serde_json::to_value(&admission.correlation.expected_turn_id)
+                .map_err(|error| RuntimeError::Bootstrap(error.to_string()))?
+        || command.normalized_request["turn_settings"]
+            != serde_json::to_value(&admission.dispatch_policy.turn_settings)
+                .map_err(|error| RuntimeError::Bootstrap(error.to_string()))?
+        || !matches!(
+            &command.normalized_request["permission_mode"],
+            Value::Null | Value::String(_)
+        )
+    {
+        return Err(RuntimeError::InvalidState(
+            "invalid trusted operator user turn input or admission identity".into(),
+        ));
+    }
+    let authority: Option<(String, String, String, String)> = transaction
+        .query_row(
+            "SELECT a.workspace_id, a.lifecycle_state, w.lifecycle_state,
+                    a.recreation_policy_json
+             FROM workspace_agents a JOIN workspaces w ON w.workspace_id=a.workspace_id
+             WHERE a.session_id=?1",
+            [&command.agent_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(|error| db_error("failed verifying operator turn workspace owner", error))?;
+    let Some((workspace_id, agent_state, workspace_state, recreation_policy_json)) = authority
+    else {
+        return Err(RuntimeError::NotFound(format!(
+            "active workspace agent {}",
+            command.agent_id
+        )));
+    };
+    if workspace_id != command.workspace_id
+        || agent_state != "active"
+        || workspace_state != "active"
+    {
+        return Err(RuntimeError::Conflict(
+            "operator turn agent or workspace authority changed before admission".into(),
+        ));
+    }
+    if let Some(effort) = admission.dispatch_policy.turn_settings.thinking_effort {
+        let policy: runtime_core::WorkspaceAgentRecreationPolicy =
+            serde_json::from_str(&recreation_policy_json).map_err(|error| {
+                RuntimeError::Bootstrap(format!("invalid durable agent policy: {error}"))
+            })?;
+        if policy.current_preferences.thinking_effort != Some(effort) {
+            return Err(RuntimeError::Conflict(
+                "agent thinking preference changed before keyed operator turn admission".into(),
+            ));
+        }
+    }
+    let frozen: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_retirement_fences WHERE workspace_id=?1)",
+            [&workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed checking operator turn retirement fence", error))?;
+    if frozen {
+        return Err(RuntimeError::Conflict(
+            "operator turn blocked by workspace retirement".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_admission_bundle(

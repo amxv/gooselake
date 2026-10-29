@@ -44,6 +44,16 @@ pub enum RuntimeError {
         message: String,
     },
 
+    /// The exact canonical turn was admitted but the provider confirmed that
+    /// its native dispatch did not occur. The original key replays this error
+    /// without sending the user input again.
+    #[error("operator turn {operation_id} not dispatched: {message}")]
+    OperatorTurnNotDispatched {
+        operation_id: String,
+        code: String,
+        message: String,
+    },
+
     /// A mandatory workspace onboarding notice must reach native turn
     /// admission before any unrelated input; transient transport inputs defer.
     #[error("onboarding pending: {0}")]
@@ -98,6 +108,7 @@ impl RuntimeError {
 
     pub fn provider_dispatch_outcome(&self) -> ProviderDispatchOutcome {
         match self {
+            Self::OperatorTurnNotDispatched { .. } => ProviderDispatchOutcome::NotDispatched,
             Self::ProviderDispatch { outcome, .. }
                 if *outcome == ProviderDispatchOutcome::NotDispatched.as_str() =>
             {
@@ -109,6 +120,7 @@ impl RuntimeError {
 
     pub fn provider_dispatch_code(&self) -> Option<&str> {
         match self {
+            Self::OperatorTurnNotDispatched { code, .. } => Some(code.as_str()),
             Self::ProviderDispatch { code, .. } => Some(code.as_str()),
             _ => None,
         }

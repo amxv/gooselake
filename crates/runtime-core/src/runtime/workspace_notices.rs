@@ -205,6 +205,7 @@ impl RuntimeSessionManager {
                     },
                     None,
                     Some(&notice.notice_id),
+                    None,
                     guard,
                 )
                 .await

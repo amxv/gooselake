@@ -318,6 +318,7 @@ impl RuntimeSessionManager {
                 "cannot close a session with unresolved native edit-and-rerun".into(),
             ));
         }
+        self.fence_unresolved_operator_turn_native_effect(session_id)?;
         let session = self.get_session(session_id).await?;
         let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
             RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
@@ -368,6 +369,7 @@ impl RuntimeSessionManager {
                 "cannot resume a session with unresolved native edit-and-rerun".into(),
             ));
         }
+        self.fence_unresolved_operator_turn_native_effect(session_id)?;
         let session = self.get_session(session_id).await?;
         let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
             RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))

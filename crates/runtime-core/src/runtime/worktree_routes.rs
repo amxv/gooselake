@@ -191,6 +191,7 @@ impl RuntimeSessionManager {
                 });
             }
         }
+        self.fence_unresolved_operator_turn_native_effect(agent_id)?;
         let workspace = self
             .store
             .get_workspace(workspace_id)?

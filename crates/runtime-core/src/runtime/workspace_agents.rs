@@ -88,6 +88,7 @@ impl RuntimeSessionManager {
                 "cannot change permissions while provider compaction is unresolved".into(),
             ));
         }
+        self.fence_unresolved_operator_turn_native_effect(&request.runtime_session_id)?;
         let agent = self
             .store
             .get_workspace_agent_by_id(request.runtime_session_id.trim())?
@@ -223,6 +224,7 @@ impl RuntimeSessionManager {
                 "cannot change preferences during unresolved native edit-and-rerun".into(),
             ));
         }
+        self.fence_unresolved_operator_turn_native_effect(&request.runtime_session_id)?;
         let agent = self
             .store
             .get_workspace_agent_by_id(request.runtime_session_id.trim())?
@@ -603,6 +605,7 @@ impl RuntimeSessionManager {
         if agent.lifecycle_state == WorkspaceAgentLifecycleState::Archived {
             return Ok(agent);
         }
+        self.fence_unresolved_operator_turn_native_effect(agent_id)?;
         let mut session = self.get_session(agent.agent_id.as_str()).await?;
         if session.active_turn_id.is_some() {
             return Err(RuntimeError::InvalidState(format!(
@@ -677,6 +680,7 @@ impl RuntimeSessionManager {
         if agent.lifecycle_state == WorkspaceAgentLifecycleState::Active {
             return Ok(agent);
         }
+        self.fence_unresolved_operator_turn_native_effect(agent_id)?;
         let mut session = self.get_session(agent.agent_id.as_str()).await?;
         let provider = self
             .providers

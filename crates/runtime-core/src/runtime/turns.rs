@@ -17,6 +17,25 @@ use super::turn_dispatch_transitions::is_valid_dispatch_transition;
 use super::{RuntimeSessionManager, SendTurnAccepted, SendTurnInput};
 
 impl RuntimeSessionManager {
+    /// Unknown native user-turn dispatch holds an agent-level durable claim.
+    /// Other provider-native mutations must honor it too: a stale in-memory
+    /// `active_turn_id` cannot establish that the original turn is finished.
+    pub(super) fn fence_unresolved_operator_turn_native_effect(
+        &self,
+        agent_id: &str,
+    ) -> Result<(), RuntimeError> {
+        if let Some(operation_id) = self
+            .store
+            .unresolved_operator_user_turn_for_agent(agent_id)?
+        {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "an operator turn has unresolved native dispatch; reconcile its operation before changing this provider attachment",
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn send_turn(
         self: &Arc<Self>,
         session_id: &str,

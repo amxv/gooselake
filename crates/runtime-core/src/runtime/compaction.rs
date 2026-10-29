@@ -217,6 +217,7 @@ impl RuntimeSessionManager {
                 return Ok(existing);
             }
         }
+        self.fence_unresolved_operator_turn_native_effect(agent_id)?;
         let agent = self.get_active_workspace_agent_by_id(agent_id)?;
         if agent.lifecycle_state != WorkspaceAgentLifecycleState::Active {
             return Err(RuntimeError::Conflict("agent is archived".into()));

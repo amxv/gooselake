@@ -132,6 +132,7 @@ impl RuntimeSessionManager {
                 return Ok(previous);
             }
         }
+        self.fence_unresolved_operator_turn_native_effect(agent_id)?;
         let agent = self.get_active_workspace_agent_by_id(agent_id)?;
         let session = self.get_session(agent_id).await?;
         if session.status != "ready" || session.active_turn_id.is_some() {

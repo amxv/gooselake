@@ -454,6 +454,14 @@ cannot bypass that fence. Do not blindly resend the model input. Calls without
 a key retain their existing direct-turn behavior and cannot replay a lost
 response by request identity.
 
+The unresolved native-turn claim also blocks other provider-native mutations
+on that agent: permission and preference changes, manual compaction, historical
+edit/fork, worktree reassignment, archive, and explicit session close/resume.
+The `409 outcome_unresolved` error identifies the original operation rather
+than relying on a possibly stale in-memory active-turn marker. Exact replay of
+an already completed, independently journaled mutation is still allowed; a
+restore request that is already a no-op does not change the native attachment.
+
 For keyed turns, an explicit `thinking_effort` must already match the agent's
 current persisted preference; selecting a *different* effort would itself
 invoke a separate native provider mutation before turn admission and is

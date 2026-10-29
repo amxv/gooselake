@@ -206,7 +206,7 @@ async fn keyed_user_turn_replays_exact_logical_admission_after_completion_and_ar
 
 #[tokio::test]
 async fn unknown_provider_user_turn_is_nonretryable_and_fences_every_new_key() {
-    let (router, token, _temp, provider, _runtime, _workspace_id, agent_id) = fixture().await;
+    let (router, token, _temp, provider, runtime, workspace_id, agent_id) = fixture().await;
     let uri = format!("/v2/agents/{agent_id}/turns");
     let input = serde_json::json!({"input":[{"type":"text","text":"might have run"}]});
     provider
@@ -248,6 +248,67 @@ async fn unknown_provider_user_turn_is_nonretryable_and_fences_every_new_key() {
     assert_eq!(status, StatusCode::CONFLICT, "{unkeyed}");
     assert_eq!(unkeyed["error"]["code"], "outcome_unresolved");
     assert_eq!(unkeyed["error"]["details"]["operation_id"], operation_id);
+
+    // Unknown native turn dispatch also freezes other provider-native effects,
+    // not merely the next send. A cached active_turn_id is not recovery proof.
+    let (status, agent) = call(
+        &router,
+        &token,
+        "GET",
+        &format!("/v2/agents/{agent_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{agent}");
+    let revision = agent["revision"].as_u64().unwrap();
+    for (uri, request) in [
+        (
+            format!("/v2/agents/{agent_id}/preferences"),
+            serde_json::json!({
+                "expected_revision": revision,
+                "current_preferences": {"thinking_effort": "high"},
+            }),
+        ),
+        (
+            format!("/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"),
+            serde_json::json!({"reason": "must-not-close-unknown-turn"}),
+        ),
+        (
+            format!("/v2/agents/{agent_id}/compact"),
+            serde_json::json!({}),
+        ),
+    ] {
+        let (status, denied) = call(&router, &token, "POST", &uri, Some(request), None).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{uri}: {denied}");
+        assert_eq!(denied["error"]["code"], "outcome_unresolved", "{uri}");
+        assert_eq!(
+            denied["error"]["details"]["operation_id"], operation_id,
+            "{uri}"
+        );
+    }
+    let rebind_error = runtime
+        .rebind_workspace_agent(
+            &workspace_id,
+            &agent_id,
+            runtime_core::WorkspaceAgentRebindRequest {
+                worktree_id: None,
+                expected_revision: revision,
+                cleanup_previous_worktree: false,
+            },
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        rebind_error,
+        RuntimeError::OperationUnresolved { operation_id: id, .. } if id == operation_id
+    ));
+    let close_error = runtime.close_session(&agent_id, None).await.unwrap_err();
+    assert!(matches!(
+        close_error,
+        RuntimeError::OperationUnresolved { operation_id: id, .. } if id == operation_id
+    ));
     assert_eq!(prompt_count(&provider), first_count + 1);
     let (status, operation) = call(
         &router,

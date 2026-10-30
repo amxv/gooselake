@@ -61,4 +61,4 @@ When cutting a release, update `src/content/docs/changelog.md` before tagging.
 
 ### Docs deployment
 
-The Docs GitHub Actions workflow deploys production only for the watched site paths; Vercel Git auto-deployments and `ignoreCommand` stay disabled. Keep the project-scoped `VERCEL_TOKEN` Actions secret and ID variables configured. Check Astro locally; builds run in CI.
+The Docs GitHub Actions workflow deploys production on watched site paths and Preview deployments on same-repository pull requests that change those inputs; unrelated Rust, test-only, and CI changes create no deployment. Vercel Git auto-deployments and `ignoreCommand` stay disabled. Keep the project-scoped `VERCEL_TOKEN` Actions secret and ID variables configured. Check Astro locally; builds run in CI.

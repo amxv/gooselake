@@ -13,7 +13,6 @@ on:
       - "tsconfig.json"
       - "vercel.json"
       - "scripts/prepare-prebuilt.mjs"
-      - "scripts/deployment.test.mjs"
   pull_request:
     branches: [main]
     paths:
@@ -25,11 +24,11 @@ on:
       - "tsconfig.json"
       - "vercel.json"
       - "scripts/prepare-prebuilt.mjs"
-      - "scripts/deployment.test.mjs"
   workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: docs-${{ github.ref }}
@@ -58,8 +57,8 @@ jobs:
         run: bun run check
       - name: Build static site in CI
         if: >-
-          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-          github.ref == 'refs/heads/main'
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
         run: |
           set -euo pipefail
           bun run build
@@ -77,4 +76,39 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$VERCEL_TOKEN" && test -n "$VERCEL_ORG_ID" && test -n "$VERCEL_PROJECT_ID"
-          npx --yes vercel@latest deploy --prebuilt --prod --yes --non-interactive
+          npx --yes vercel@65.1.0 deploy --prebuilt --prod --yes --non-interactive
+      - name: Deploy preview of actual docs changes
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        id: preview
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN" && test -n "$VERCEL_ORG_ID" && test -n "$VERCEL_PROJECT_ID"
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          url="$(npx --yes vercel@65.1.0 deploy --prebuilt --yes --non-interactive)"
+          printf 'url=%s\n' "$url" >> "$GITHUB_OUTPUT"
+          printf 'Docs preview: %s\n' "$url" >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish preview URL on pull request
+        if: github.event_name == 'pull_request' && steps.preview.outcome == 'success'
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+        with:
+          script: |
+            const marker = '<!-- gooselake-docs-preview -->';
+            const body = `${marker}\nDocs preview: ${process.env.PREVIEW_URL}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
+            const previous = comments.find(c => c.user?.type === 'Bot' && c.body?.includes(marker));
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

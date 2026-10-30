@@ -15,12 +15,14 @@ test('filtered GitHub pushes trigger deployment only for actual site inputs', ()
     assert.ok(block, 'missing event: ' + event);
     assert.match(block, /branches: \[main\]/);
     const found = [...block.matchAll(/^      - "([^"]+)"$/gm)].map(m => m[1]);
-    assert.deepEqual(found, ["src/**", "public/**", "package.json", "bun.lock", "astro.config.mjs", "tsconfig.json", "vercel.json", "scripts/prepare-prebuilt.mjs", "scripts/deployment.test.mjs"]);
+    assert.deepEqual(found, ["src/**", "public/**", "package.json", "bun.lock", "astro.config.mjs", "tsconfig.json", "vercel.json", "scripts/prepare-prebuilt.mjs"]);
   }
   assert.match(workflow, /secrets\.VERCEL_TOKEN/);
   assert.match(workflow, /vars\.VERCEL_ORG_ID/);
   assert.match(workflow, /vars\.VERCEL_PROJECT_ID/);
-  assert.match(workflow, /vercel@latest deploy --prebuilt --prod/);
+  assert.match(workflow, /vercel@65\.1\.0 deploy --prebuilt --prod/);
+  assert.match(workflow, /vercel@65\.1\.0 deploy --prebuilt --yes/);
+  assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(workflow, /working-directory: \./);
   assert.match(workflow, /prepare-prebuilt\.mjs/);
 });

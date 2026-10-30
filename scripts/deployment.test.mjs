@@ -21,7 +21,7 @@ test('filtered GitHub pushes trigger deployment only for actual site inputs', ()
   assert.match(workflow, /vars\.VERCEL_ORG_ID/);
   assert.match(workflow, /vars\.VERCEL_PROJECT_ID/);
   assert.match(workflow, /vercel@65\.1\.0 deploy --prebuilt --prod/);
-  assert.match(workflow, /vercel@65\.1\.0 deploy --prebuilt --yes/);
+  assert.match(workflow, /vercel@65\.1\.0 deploy --json --prebuilt --yes/);
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(workflow, /working-directory: \./);
   assert.match(workflow, /prepare-prebuilt\.mjs/);

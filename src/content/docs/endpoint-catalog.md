@@ -128,12 +128,12 @@ Legacy workspace migration preview classifies every persisted legacy authority s
 - `POST /v2/messages` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/messages` (Bearer; optional `workspace_id`, `sender_agent_id`, `cursor`, `limit=1..100` default 50; JSON `next_cursor`)
 - `GET /v2/messages/{message_id}/deliveries` (Bearer; optional `recipient_agent_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for subsequent array pages)
-- `POST /v2/messages/{message_id}/cancel` (Bearer)
+- `POST /v2/messages/{message_id}/cancel` (Bearer; optional `Idempotency-Key`; response `X-Operation-ID`)
 - `POST /v2/deliveries/{delivery_id}/retry` (Bearer)
 
 Canonical `/v2` messages are agent-first and do not require a legacy team ID. Direct routing can target any active/routable agent in the runtime: same-workspace direct messages use `workspace_team` context and cross-workspace/migration-compatible directs use `global_direct` context. Workspace broadcasts derive the sender workspace from canonical ownership, snapshot the active roster once, exclude the sender, and never fan out across workspace boundaries.
 
-Message creation commits the canonical message and every recipient delivery atomically. `Idempotency-Key` replays an exact duplicate and returns `409` if the same scoped key is reused with different normalized message input. Delivery status is durable per recipient; failed/deferred deliveries can be retried, pending/deferred messages can be cancelled when every outstanding delivery remains cancellable, and startup recovery resumes pending/deferred canonical work without duplicating migrated legacy delivery injection.
+Message creation commits the canonical message and every recipient delivery atomically. `Idempotency-Key` replays an exact duplicate and returns `409` if the same scoped key is reused with different normalized message input. Delivery status is durable per recipient; failed/deferred deliveries can be retried. Operator cancellation atomically cancels every recipient only if all remain pending/deferred, with an exact durable operation receipt at `/v2/operations/{operation_id}`. Repeating the same cancellation `Idempotency-Key` replays the original response even after a lost HTTP reply; different messages cannot reuse that key. Once a delivery is cancelled, a stale worker cannot overwrite its terminal cancellation. Startup recovery resumes pending/deferred canonical work without duplicating migrated legacy delivery injection.
 
 `image_paths` accepts up to eight ordered PNG, JPEG, GIF, or WebP files that must be regular/readable and match a supported byte signature. The current v2 transport delivers them as native structured image input to Codex and Claude; ACP rejects image-bearing v2 messages explicitly rather than silently flattening or dropping attachments. Validation errors are path-redacted.
 

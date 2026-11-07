@@ -27,10 +27,11 @@ pub mod workspace_retirement_review;
 pub mod worktree_lock;
 
 pub use agent_comms::{
-    AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
-    AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageContextKind,
-    AgentMessageListRequest, AgentMessageListResponse, AgentMessageRecord,
-    AgentRetryDeliveryRequest,
+    prepare_agent_message_cancellation, AgentBroadcastMessageRequest,
+    AgentCancelMessageMutationCommand, AgentCancelMessageMutationResponse,
+    AgentCancelMessageRequest, AgentDeliveryListRequest, AgentDeliveryRecord,
+    AgentDirectMessageRequest, AgentMessageAck, AgentMessageContextKind, AgentMessageListRequest,
+    AgentMessageListResponse, AgentMessageRecord, AgentRetryDeliveryRequest,
 };
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
 pub use edit_rerun::{EditAndRerunRequest, SessionEditRerunOperation};

@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::workspace::{
+    normalize_idempotency_key, normalized_json_hash, opaque_id, unix_time_ms, OperationActor,
+};
+use crate::RuntimeError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentMessageContextKind {
@@ -125,4 +130,47 @@ pub struct AgentRetryDeliveryRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentCancelMessageRequest {
     pub message_id: String,
+}
+
+/// Trusted operator intent. The receipt and all delivery transitions are
+/// committed in the same transaction, before a response can be returned.
+#[derive(Debug, Clone)]
+pub struct AgentCancelMessageMutationCommand {
+    pub operation_id: String,
+    pub message_id: String,
+    pub actor: OperationActor,
+    pub idempotency_key: Option<String>,
+    pub normalized_request: Value,
+    pub normalized_request_hash: String,
+    pub requested_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCancelMessageMutationResponse {
+    pub operation_id: String,
+    pub deliveries: Vec<AgentDeliveryRecord>,
+}
+
+pub fn prepare_agent_message_cancellation(
+    message_id: &str,
+    actor: OperationActor,
+    idempotency_key: Option<String>,
+) -> Result<AgentCancelMessageMutationCommand, RuntimeError> {
+    let message_id = message_id.trim();
+    if message_id.is_empty() || actor.identifier.trim().is_empty() {
+        return Err(RuntimeError::InvalidState(
+            "message and operator identity are required".into(),
+        ));
+    }
+    let idempotency_key = normalize_idempotency_key(idempotency_key)?;
+    let normalized_request = serde_json::json!({"message_id": message_id});
+    Ok(AgentCancelMessageMutationCommand {
+        operation_id: opaque_id("op"),
+        message_id: message_id.to_string(),
+        actor,
+        idempotency_key,
+        normalized_request_hash: normalized_json_hash(&normalized_request)?,
+        normalized_request,
+        requested_at: unix_time_ms()?,
+    })
 }

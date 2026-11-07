@@ -121,8 +121,7 @@ impl SqliteRuntimeRepository {
                     last_error_message = excluded.last_error_message,
                     created_at = excluded.created_at,
                     updated_at = excluded.updated_at
-                 WHERE NOT (agent_deliveries.status='cancelled'
-                    AND agent_deliveries.last_error_code IS 'workspace_retirement')",
+                 WHERE agent_deliveries.status != 'cancelled'",
                 params![
                     delivery.id,
                     delivery.message_id,
@@ -141,7 +140,7 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed upserting agent delivery", error))?;
         if changed == 0 {
             return Err(RuntimeError::Conflict(format!(
-                "delivery {} was cancelled by durable workspace retirement",
+                "delivery {} was already cancelled by durable authority",
                 delivery.id
             )));
         }
@@ -235,10 +234,11 @@ impl SqliteRuntimeRepository {
     }
 }
 
-const DELIVERY_COLUMNS: &str = "id,message_id,recipient_agent_id,provider,status,effective_policy,
+pub(crate) const DELIVERY_COLUMNS: &str =
+    "id,message_id,recipient_agent_id,provider,status,effective_policy,
     injection_strategy,injected_turn_id,last_error_code,last_error_message,created_at,updated_at";
 
-fn decode_delivery(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentDeliveryRecord> {
+pub(crate) fn decode_delivery(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentDeliveryRecord> {
     Ok(AgentDeliveryRecord {
         id: row.get(0)?,
         message_id: row.get(1)?,

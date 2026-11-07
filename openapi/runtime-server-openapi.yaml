@@ -1484,9 +1484,19 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Operation-ID:
+              description: Durable atomic message cancellation operation
+              schema:
+                type: string
           content:
             application/json:
               schema:

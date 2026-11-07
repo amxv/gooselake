@@ -59,6 +59,15 @@ use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 pub trait RuntimeStore:
     WorkspaceWorktreeCreationStore + OperatorUserTurnStore + Send + Sync
 {
+    /// Atomically cancel every still-undispatched recipient and store an exact
+    /// operator receipt. No partial fanout cancellation may be visible.
+    fn cancel_agent_message_operator(
+        &self,
+        _command: &crate::AgentCancelMessageMutationCommand,
+    ) -> Result<crate::AgentCancelMessageMutationResponse, RuntimeError> {
+        unsupported_store("durable operator message cancellation unavailable")
+    }
+
     /// Transactionally snapshot approved pre-add hooks against a trusted
     /// reserved agent identity before any shell or provider work can start.
     fn admit_pre_add_team_hooks(
@@ -101,7 +110,6 @@ pub trait RuntimeStore:
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         Ok(Vec::new())
     }
-
     fn list_team_hook_effect_summaries_page(
         &self,
         _workspace_id: &str,
@@ -471,7 +479,6 @@ pub trait RuntimeStore:
     ) -> Result<(), RuntimeError> {
         unsupported_store("workspace agent authority is not implemented by this runtime store")
     }
-
     fn create_workspace_agent_with_onboarding(
         &self,
         _session: &SessionRecord,
@@ -480,7 +487,6 @@ pub trait RuntimeStore:
     ) -> Result<(), RuntimeError> {
         unsupported_store("atomic workspace onboarding admission unavailable")
     }
-
     fn create_workspace_agent_with_hook_context(
         &self,
         session: &SessionRecord,
@@ -493,7 +499,6 @@ pub trait RuntimeStore:
         }
         self.create_workspace_agent_with_onboarding(session, agent, onboarding)
     }
-
     fn list_workspace_system_notices(
         &self,
         _limit: usize,
@@ -522,28 +527,24 @@ pub trait RuntimeStore:
     ) -> Result<bool, RuntimeError> {
         unsupported_store("workspace system notice recipient ordering unavailable")
     }
-
     fn get_workspace_system_notice(
         &self,
         _notice_id: &str,
     ) -> Result<Option<WorkspaceSystemNoticeRecord>, RuntimeError> {
         Ok(None)
     }
-
     fn get_workspace_notice_policy(
         &self,
         _workspace_id: &str,
     ) -> Result<crate::WorkspaceNoticePolicyRecord, RuntimeError> {
         unsupported_store("workspace notice policy unavailable")
     }
-
     fn update_workspace_notice_policy_idempotent(
         &self,
         _command: &crate::WorkspaceNoticePolicyMutationCommand,
     ) -> Result<crate::WorkspaceNoticePolicyMutationResponse, RuntimeError> {
         unsupported_store("durable workspace notice policy mutation unavailable")
     }
-
     fn transition_workspace_system_notice(
         &self,
         _notice_id: &str,
@@ -555,7 +556,6 @@ pub trait RuntimeStore:
     ) -> Result<bool, RuntimeError> {
         unsupported_store("durable workspace notice transitions unavailable")
     }
-
     fn list_workspace_agents(
         &self,
         _workspace_id: &str,

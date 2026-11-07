@@ -451,6 +451,166 @@ async fn deferred_agent_delivery_can_be_queried_and_cancelled_durably() {
     );
 }
 
+#[tokio::test]
+async fn keyed_message_cancellation_replays_exact_http_receipt_and_operation() {
+    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
+    let root = temp_dir.path().join("cancel-operator-workspace");
+    std::fs::create_dir_all(&root).expect("root");
+    let workspace = register_workspace(&router, &token, &root, "Cancellation").await;
+    let sender = create_agent(&router, &token, &workspace.workspace_id, &root, "Sender").await;
+    let recipient = create_agent_with_permission(
+        &router,
+        &token,
+        &workspace.workspace_id,
+        &root,
+        "Busy Recipient",
+        "require_approval",
+    )
+    .await;
+    runtime
+        .dispatch_workspace_system_notices()
+        .await
+        .expect("recipient onboarding gate");
+    assert_eq!(
+        runtime
+            .get_session(&recipient.agent_id)
+            .await
+            .unwrap()
+            .status,
+        "waiting_for_approval"
+    );
+    let message = create_message(
+        &router,
+        &token,
+        "cancel-source",
+        serde_json::json!({
+            "mode":"direct",
+            "sender_agent_id":sender.agent_id,
+            "recipient_agent_id":recipient.agent_id,
+            "input":[{"type":"text","text":"cancel me"}],
+            "policy":"non_interrupting"
+        }),
+    )
+    .await;
+    assert_eq!(message.deliveries[0].status, "deferred");
+
+    let uri = format!("/v2/messages/{}/cancel", message.message.id);
+    let cancel = |uri: &str, key: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header("Idempotency-Key", key)
+            .body(Body::empty())
+            .expect("cancel request")
+    };
+    let first = router
+        .clone()
+        .oneshot(cancel(&uri, "durable-cancel"))
+        .await
+        .expect("first response");
+    assert_eq!(first.status(), StatusCode::OK);
+    let operation_id = first.headers()["x-operation-id"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(operation_id.starts_with("op_"));
+    let original: Vec<runtime_core::AgentDeliveryRecord> =
+        serde_json::from_slice(&to_bytes(first.into_body(), usize::MAX).await.unwrap())
+            .expect("cancellation body");
+    assert_eq!(original.len(), 1);
+    assert_eq!(original[0].status, "cancelled");
+
+    let operation_get = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v2/operations/{operation_id}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(operation_get.status(), StatusCode::OK);
+    let operation: runtime_core::OperationDetails = serde_json::from_slice(
+        &to_bytes(operation_get.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        operation.operation.phase,
+        runtime_core::OperationPhase::Completed
+    );
+    assert_eq!(
+        operation.operation.exact_terminal_result,
+        Some(serde_json::json!({
+            "operation_id":operation_id,
+            "deliveries":original,
+        }))
+    );
+    assert!(operation.claims.is_empty());
+
+    let replay = router
+        .clone()
+        .oneshot(cancel(&uri, "durable-cancel"))
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(replay.headers()["x-operation-id"], operation_id.as_str());
+    let replay_body: Vec<runtime_core::AgentDeliveryRecord> =
+        serde_json::from_slice(&to_bytes(replay.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(replay_body, original);
+
+    let other_message = create_message(
+        &router,
+        &token,
+        "another-source",
+        serde_json::json!({
+            "mode":"direct",
+            "sender_agent_id":sender.agent_id,
+            "recipient_agent_id":recipient.agent_id,
+            "input":[{"type":"text","text":"different message"}],
+            "policy":"non_interrupting"
+        }),
+    )
+    .await;
+    assert_eq!(other_message.deliveries[0].status, "deferred");
+    let cross_resource = router
+        .clone()
+        .oneshot(cancel(
+            &format!("/v2/messages/{}/cancel", other_message.message.id),
+            "durable-cancel",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(cross_resource.status(), StatusCode::CONFLICT);
+
+    let already_cancelled = router
+        .clone()
+        .oneshot(cancel(&uri, "different-key"))
+        .await
+        .unwrap();
+    assert_eq!(already_cancelled.status(), StatusCode::CONFLICT);
+
+    let invalid_headers = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header("Idempotency-Key", "first")
+                .header("Idempotency-Key", "second")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_headers.status(), StatusCode::BAD_REQUEST);
+}
+
 async fn register_workspace(
     router: &Router,
     token: &str,

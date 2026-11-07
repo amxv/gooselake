@@ -64,6 +64,13 @@ impl SqliteRuntimeStore {
 
 #[async_trait]
 impl RuntimeStore for SqliteRuntimeStore {
+    fn cancel_agent_message_operator(
+        &self,
+        command: &runtime_core::AgentCancelMessageMutationCommand,
+    ) -> Result<runtime_core::AgentCancelMessageMutationResponse, RuntimeError> {
+        self.repository.cancel_agent_message_operator(command)
+    }
+
     fn admit_pre_add_team_hooks(
         &self,
         request: &runtime_core::TeamHookPreAddAdmission,

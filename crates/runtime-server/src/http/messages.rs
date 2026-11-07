@@ -1,7 +1,7 @@
 use super::*;
 use runtime_core::{
-    AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
-    AgentDirectMessageRequest, AgentMessageListRequest, AgentRetryDeliveryRequest,
+    prepare_agent_message_cancellation, AgentBroadcastMessageRequest, AgentDeliveryListRequest,
+    AgentDirectMessageRequest, AgentMessageListRequest, AgentRetryDeliveryRequest, OperationActor,
 };
 
 #[derive(Debug, Deserialize)]
@@ -185,13 +185,24 @@ pub(super) async fn retry_agent_delivery(
 pub(super) async fn cancel_agent_message(
     State(state): State<AppState>,
     Path(message_id): Path<String>,
-) -> Result<Json<Vec<runtime_core::AgentDeliveryRecord>>, ApiError> {
-    Ok(Json(
-        state
-            .app
-            .services
-            .team_comms
-            .cancel_agent_message(AgentCancelMessageRequest { message_id })
-            .await?,
-    ))
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let command = prepare_agent_message_cancellation(
+        &message_id,
+        OperationActor::operator(OPERATOR_PRINCIPAL),
+        parse_idempotency_key(&headers)?,
+    )?;
+    let result = state
+        .app
+        .services
+        .team_comms
+        .cancel_agent_message_operator(command)
+        .await?;
+    let mut response = Json(result.deliveries).into_response();
+    response.headers_mut().insert(
+        "x-operation-id",
+        axum::http::HeaderValue::from_str(&result.operation_id)
+            .expect("server-generated operation ID is valid HTTP header text"),
+    );
+    Ok(response)
 }

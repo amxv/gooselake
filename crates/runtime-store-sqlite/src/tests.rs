@@ -7,6 +7,7 @@ use runtime_core::{
 };
 use rusqlite::{params, Connection};
 
+mod agent_message_cancellation;
 mod operator_event_pages;
 mod operator_process_pages;
 mod process_completion_authority;

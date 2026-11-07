@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 
 use crate::{
-    AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
+    AgentBroadcastMessageRequest, AgentCancelMessageMutationCommand,
+    AgentCancelMessageMutationResponse, AgentCancelMessageRequest, AgentDeliveryListRequest,
     AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageContextKind,
     AgentMessageListRequest, AgentMessageListResponse, AgentMessageRecord,
     AgentRetryDeliveryRequest, RuntimeError, WorkspaceAgentLifecycleState, WorkspaceLifecycleState,
@@ -13,11 +14,38 @@ use super::{
     ensure_message_images_supported, normalize_non_empty, normalize_non_empty_input,
     normalize_policy, normalize_priority, normalized_non_empty, now_ms,
     prospective_agent_idempotency_key, validate_message_image_paths, DeliveryAttemptTrigger,
-    RuntimeTeamCommsService, DELIVERY_STATUS_CANCELLED, DELIVERY_STATUS_DEFERRED,
-    DELIVERY_STATUS_FAILED, DELIVERY_STATUS_PENDING,
+    RuntimeTeamCommsService, DELIVERY_STATUS_DEFERRED, DELIVERY_STATUS_FAILED,
+    DELIVERY_STATUS_PENDING,
 };
 
 impl RuntimeTeamCommsService {
+    pub(super) async fn cancel_agent_message_operator_impl(
+        &self,
+        command: AgentCancelMessageMutationCommand,
+    ) -> Result<AgentCancelMessageMutationResponse, RuntimeError> {
+        self.ensure_enabled()?;
+        let result = self.store.cancel_agent_message_operator(&command)?;
+        self.cache_agent_delivery_records(&result.deliveries).await;
+        // A replay returns the old operation ID, not this newly proposed ID.
+        // It must not kick off unrelated, now-eligible recipient work again.
+        if result.operation_id == command.operation_id {
+            for recipient in result
+                .deliveries
+                .iter()
+                .map(|delivery| delivery.recipient_agent_id.clone())
+                .collect::<HashSet<_>>()
+            {
+                let _ = self
+                    .resume_deferred_agent_for_recipient(
+                        &recipient,
+                        DeliveryAttemptTrigger::TurnCompletedBoundary,
+                    )
+                    .await;
+            }
+        }
+        Ok(result)
+    }
+
     pub(super) async fn send_agent_direct_impl(
         &self,
         request: AgentDirectMessageRequest,
@@ -357,63 +385,21 @@ impl RuntimeTeamCommsService {
         &self,
         request: AgentCancelMessageRequest,
     ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
-        self.ensure_enabled()?;
-        let message_id = normalize_non_empty(&request.message_id, "message_id")?;
-        self.get_agent_deliveries_impl(AgentDeliveryListRequest {
-            message_id: Some(message_id.clone()),
-            recipient_agent_id: None,
-        })
-        .await?;
-        let cancelled = {
-            let mut state = self.state.write().await;
-            if !state.agent_messages.contains_key(&message_id) {
-                return Err(RuntimeError::NotFound(format!("message {}", message_id)));
-            }
-            let delivery_ids = state
-                .agent_message_delivery_ids
-                .get(&message_id)
-                .cloned()
-                .unwrap_or_default();
-            for delivery_id in &delivery_ids {
-                if let Some(delivery) = state.agent_deliveries.get(delivery_id) {
-                    if !matches!(
-                        delivery.status.as_str(),
-                        DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED
-                    ) {
-                        return Err(RuntimeError::InvalidState(format!(
-                            "message {} cannot be cancelled because delivery {} is in {}",
-                            message_id, delivery.id, delivery.status
-                        )));
-                    }
-                }
-            }
-            let mut updated = Vec::new();
-            for delivery_id in delivery_ids {
-                if let Some(delivery) = state.agent_deliveries.get_mut(&delivery_id) {
-                    delivery.status = DELIVERY_STATUS_CANCELLED.to_string();
-                    delivery.updated_at = now_ms();
-                    updated.push(delivery.clone());
-                }
-            }
-            updated
-        };
-        for delivery in &cancelled {
-            self.persist_agent_delivery_with_legacy_mirror(delivery)
-                .await?;
-        }
-        for recipient in cancelled
-            .iter()
-            .map(|delivery| delivery.recipient_agent_id.clone())
-            .collect::<HashSet<_>>()
-        {
-            let _ = self
-                .resume_deferred_agent_for_recipient(
-                    &recipient,
-                    DeliveryAttemptTrigger::TurnCompletedBoundary,
-                )
-                .await;
-        }
-        Ok(cancelled)
+        // Retain the internal trait adapter without a second, partially
+        // persistent mutation path. The public operator route supplies a
+        // stable idempotency key; internal callers get a fresh system intent.
+        let command = crate::prepare_agent_message_cancellation(
+            &request.message_id,
+            crate::OperationActor {
+                kind: crate::OperationActorKind::System,
+                identifier: "runtime_team_comms".into(),
+            },
+            None,
+        )?;
+        Ok(self
+            .cancel_agent_message_operator_impl(command)
+            .await?
+            .deliveries)
     }
 
     #[allow(clippy::too_many_arguments)]

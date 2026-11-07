@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use async_trait::async_trait;
 
 use crate::{
-    AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
+    AgentBroadcastMessageRequest, AgentCancelMessageMutationCommand,
+    AgentCancelMessageMutationResponse, AgentCancelMessageRequest, AgentDeliveryListRequest,
     AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageListRequest,
     AgentMessageListResponse, AgentRetryDeliveryRequest, RuntimeError, RuntimeEventRecord,
     RuntimeEventScope, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCommsService,
@@ -616,6 +617,13 @@ impl TeamCommsService for RuntimeTeamCommsService {
         request: AgentCancelMessageRequest,
     ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
         self.cancel_agent_message_impl(request).await
+    }
+
+    async fn cancel_agent_message_operator(
+        &self,
+        command: AgentCancelMessageMutationCommand,
+    ) -> Result<AgentCancelMessageMutationResponse, RuntimeError> {
+        self.cancel_agent_message_operator_impl(command).await
     }
 
     async fn list_messages(

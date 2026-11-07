@@ -767,10 +767,11 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/deliveries/$DELIVERY_ID/retry"
 
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: cancel-$MESSAGE_ID" \
   "$BASE_URL/v2/messages/$MESSAGE_ID/cancel"
 ```
 
-Message creation and its recipient snapshot commit atomically. Startup recovery resumes canonical `pending`/`deferred` work, and migrated legacy delivery rows mirror canonical terminal transitions so `/v1` compatibility views cannot inject the same migrated delivery twice.
+Message creation and its recipient snapshot commit atomically. Operator cancellation now atomically updates every pending/deferred delivery and its legacy mirrors together with an exact durable operation receipt; it cannot partially cancel a broadcast. The cancellation response retains its JSON delivery array and adds `X-Operation-ID` for inspection through `/v2/operations/{id}`. The optional `Idempotency-Key` returns the original receipt after a lost response; reusing the same cancellation key for different inputs or another operation-backed operator resource conflicts with HTTP 409. A stale delivery worker cannot revive a terminal cancelled delivery. Retry still only applies to failed/deferred rows and does not yet have the same operator idempotency journal. Startup recovery resumes canonical `pending`/`deferred` work, and migrated legacy delivery rows mirror canonical terminal transitions so `/v1` compatibility views cannot inject the same migrated delivery twice.
 
 ## Sessions
 

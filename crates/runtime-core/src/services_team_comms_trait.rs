@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 
 use crate::{
-    AgentBroadcastMessageRequest, AgentCancelMessageRequest, AgentDeliveryListRequest,
+    AgentBroadcastMessageRequest, AgentCancelMessageMutationCommand,
+    AgentCancelMessageMutationResponse, AgentCancelMessageRequest, AgentDeliveryListRequest,
     AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageListRequest,
     AgentMessageListResponse, AgentRetryDeliveryRequest, RuntimeError, RuntimeEventRecord,
     TeamBroadcastRequest, TeamCancelMessageRequest, TeamCreateRequest, TeamDeliveryRecord,
@@ -126,6 +127,15 @@ pub trait TeamCommsService: Send + Sync {
     ) -> Result<Vec<AgentDeliveryRecord>, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "agent-first message cancellation is not implemented by this comms service".to_string(),
+        ))
+    }
+
+    async fn cancel_agent_message_operator(
+        &self,
+        _command: AgentCancelMessageMutationCommand,
+    ) -> Result<AgentCancelMessageMutationResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable operator message cancellation unavailable".into(),
         ))
     }
 

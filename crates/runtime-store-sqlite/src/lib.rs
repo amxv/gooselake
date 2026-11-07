@@ -6,6 +6,7 @@ mod db;
 mod operation_tx;
 mod repository;
 mod repository_agent_comms;
+mod repository_agent_delivery_operator;
 mod repository_agent_tool;
 mod repository_compaction;
 mod repository_compaction_observations;

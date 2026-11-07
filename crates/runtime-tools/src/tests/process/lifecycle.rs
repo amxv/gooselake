@@ -26,7 +26,9 @@ async fn durable_admission_precedes_spawn_and_queue_wait_does_not_consume_execut
                 timeout_marker.display()
             ),
             cwd: Some(temp_dir.path().display().to_string()),
-            timeout_ms: Some(100),
+            // Login-shell startup can exceed 100 ms on slower hosts; the
+            // process must still run before its execution timeout expires.
+            timeout_ms: Some(500),
         })
         .await
         .expect("admit process");
@@ -38,7 +40,7 @@ async fn durable_admission_precedes_spawn_and_queue_wait_does_not_consume_execut
         .expect("read durable process")
         .expect("durable process row");
     assert_eq!(durable.status, "queued");
-    assert_eq!(durable.timeout_ms, Some(100));
+    assert_eq!(durable.timeout_ms, Some(500));
 
     tokio::time::sleep(Duration::from_millis(120)).await;
     let still_queued = store
@@ -61,7 +63,7 @@ async fn durable_admission_precedes_spawn_and_queue_wait_does_not_consume_execut
         .expect("terminal process row");
     assert!(durable.execution_started_at.is_some());
     assert!(
-        durable.execution_duration_ms.expect("execution duration") >= 80,
+        durable.execution_duration_ms.expect("execution duration") >= 400,
         "execution timeout should begin only after actual launch"
     );
 }

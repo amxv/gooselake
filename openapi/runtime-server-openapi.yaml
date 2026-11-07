@@ -1364,9 +1364,19 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Operation-ID:
+              description: Durable exact retry admission receipt, present only when Idempotency-Key is supplied; not a provider delivery acknowledgment
+              schema:
+                type: string
           content:
             application/json:
               schema:

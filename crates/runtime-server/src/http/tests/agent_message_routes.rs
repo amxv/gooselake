@@ -734,7 +734,7 @@ async fn operator_message_history_pages_are_stable_filtered_and_cursor_validated
     assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
 }
 
-async fn register_workspace(
+pub(super) async fn register_workspace(
     router: &Router,
     token: &str,
     root: &Path,
@@ -763,7 +763,7 @@ async fn register_workspace(
     .workspace
 }
 
-async fn create_agent(
+pub(super) async fn create_agent(
     router: &Router,
     token: &str,
     workspace_id: &str,
@@ -773,7 +773,7 @@ async fn create_agent(
     create_agent_with_permission(router, token, workspace_id, root, title, "workspace_write").await
 }
 
-async fn create_agent_with_permission(
+pub(super) async fn create_agent_with_permission(
     router: &Router,
     token: &str,
     workspace_id: &str,
@@ -850,7 +850,7 @@ async fn create_legacy_session(router: &Router, token: &str) -> runtime_core::Se
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
 }
 
-async fn create_message(
+pub(super) async fn create_message(
     router: &Router,
     token: &str,
     key: &str,
@@ -904,7 +904,7 @@ async fn list_messages(
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
 }
 
-async fn list_deliveries(
+pub(super) async fn list_deliveries(
     router: &Router,
     token: &str,
     message_id: &str,

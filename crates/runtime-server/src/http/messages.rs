@@ -1,7 +1,8 @@
 use super::*;
 use runtime_core::{
-    prepare_agent_message_cancellation, AgentBroadcastMessageRequest, AgentDeliveryListRequest,
-    AgentDirectMessageRequest, AgentMessageListRequest, AgentRetryDeliveryRequest, OperationActor,
+    prepare_agent_delivery_retry, prepare_agent_message_cancellation, AgentBroadcastMessageRequest,
+    AgentDeliveryListRequest, AgentDirectMessageRequest, AgentMessageListRequest,
+    AgentRetryDeliveryRequest, OperationActor,
 };
 
 #[derive(Debug, Deserialize)]
@@ -171,7 +172,28 @@ pub(super) async fn list_agent_deliveries(
 pub(super) async fn retry_agent_delivery(
     State(state): State<AppState>,
     Path(delivery_id): Path<String>,
-) -> Result<Json<runtime_core::AgentDeliveryRecord>, ApiError> {
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(key) = parse_idempotency_key(&headers)? {
+        let command = prepare_agent_delivery_retry(
+            &delivery_id,
+            OperationActor::operator(OPERATOR_PRINCIPAL),
+            Some(key),
+        )?;
+        let result = state
+            .app
+            .services
+            .team_comms
+            .retry_agent_delivery_operator(command)
+            .await?;
+        let mut response = Json(result.delivery).into_response();
+        response.headers_mut().insert(
+            "x-operation-id",
+            axum::http::HeaderValue::from_str(&result.operation_id)
+                .expect("server-generated operation ID is valid HTTP header text"),
+        );
+        return Ok(response);
+    }
     Ok(Json(
         state
             .app
@@ -179,7 +201,8 @@ pub(super) async fn retry_agent_delivery(
             .team_comms
             .retry_agent_delivery(AgentRetryDeliveryRequest { delivery_id })
             .await?,
-    ))
+    )
+    .into_response())
 }
 
 pub(super) async fn cancel_agent_message(

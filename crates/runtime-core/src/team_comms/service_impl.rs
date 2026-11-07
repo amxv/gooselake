@@ -6,13 +6,14 @@ use crate::{
     AgentBroadcastMessageRequest, AgentCancelMessageMutationCommand,
     AgentCancelMessageMutationResponse, AgentCancelMessageRequest, AgentDeliveryListRequest,
     AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageListRequest,
-    AgentMessageListResponse, AgentRetryDeliveryRequest, RuntimeError, RuntimeEventRecord,
-    RuntimeEventScope, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCommsService,
-    TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamInterruptAllRequest,
-    TeamInterruptAllResponse, TeamJoinRequest, TeamListMessagesRequest, TeamListMessagesResponse,
-    TeamMemberRecord, TeamMessageAck, TeamRecord, TeamRemoveMemberRequest,
-    TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest,
-    TeamViewSnapshotResponse, TeamWithMembers,
+    AgentMessageListResponse, AgentRetryDeliveryMutationCommand,
+    AgentRetryDeliveryMutationResponse, AgentRetryDeliveryRequest, RuntimeError,
+    RuntimeEventRecord, RuntimeEventScope, TeamBroadcastRequest, TeamCancelMessageRequest,
+    TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
+    TeamInterruptAllRequest, TeamInterruptAllResponse, TeamJoinRequest, TeamListMessagesRequest,
+    TeamListMessagesResponse, TeamMemberRecord, TeamMessageAck, TeamRecord,
+    TeamRemoveMemberRequest, TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest,
+    TeamViewSnapshotRequest, TeamViewSnapshotResponse, TeamWithMembers,
 };
 
 use super::{
@@ -610,6 +611,13 @@ impl TeamCommsService for RuntimeTeamCommsService {
         request: AgentRetryDeliveryRequest,
     ) -> Result<AgentDeliveryRecord, RuntimeError> {
         self.retry_agent_delivery_impl(request).await
+    }
+
+    async fn retry_agent_delivery_operator(
+        &self,
+        command: AgentRetryDeliveryMutationCommand,
+    ) -> Result<AgentRetryDeliveryMutationResponse, RuntimeError> {
+        self.retry_agent_delivery_operator_impl(command).await
     }
 
     async fn cancel_agent_message(

@@ -7,6 +7,7 @@ use crate::{
     AgentCancelMessageMutationResponse, AgentCancelMessageRequest, AgentDeliveryListRequest,
     AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageContextKind,
     AgentMessageListRequest, AgentMessageListResponse, AgentMessageRecord,
+    AgentRetryDeliveryMutationCommand, AgentRetryDeliveryMutationResponse,
     AgentRetryDeliveryRequest, RuntimeError, WorkspaceAgentLifecycleState, WorkspaceLifecycleState,
 };
 
@@ -19,6 +20,36 @@ use super::{
 };
 
 impl RuntimeTeamCommsService {
+    pub(super) async fn retry_agent_delivery_operator_impl(
+        &self,
+        command: AgentRetryDeliveryMutationCommand,
+    ) -> Result<AgentRetryDeliveryMutationResponse, RuntimeError> {
+        self.ensure_enabled()?;
+        let receipt = self.store.retry_agent_delivery_operator(&command)?;
+        if receipt.operation_id == command.operation_id {
+            // Admission is committed before native effects. The terminal
+            // receipt is exact for the *pending admission*; native delivery
+            // remains independently observable on the delivery record.
+            self.cache_agent_delivery_records(&[receipt.delivery.clone()])
+                .await;
+            if let Err(error) = self
+                .inject_agent_delivery(&receipt.delivery.id, DeliveryAttemptTrigger::Retry)
+                .await
+            {
+                // The retry request already has a durable, successful queue
+                // admission; do not pretend a provider-effect error rolled
+                // that admission back or re-execute it on key replay.
+                tracing::warn!(
+                    delivery_id = %receipt.delivery.id,
+                    operation_id = %receipt.operation_id,
+                    error = %error,
+                    "retry admitted durably but native delivery attempt did not complete"
+                );
+            }
+        }
+        Ok(receipt)
+    }
+
     pub(super) async fn cancel_agent_message_operator_impl(
         &self,
         command: AgentCancelMessageMutationCommand,

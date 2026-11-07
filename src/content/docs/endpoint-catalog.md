@@ -127,12 +127,13 @@ Legacy workspace migration preview classifies every persisted legacy authority s
 
 - `POST /v2/messages` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/messages` (Bearer; optional `workspace_id`, `sender_agent_id`, `cursor`, `limit=1..100` default 50; JSON `next_cursor`)
-
 - `GET /v2/messages/{message_id}/deliveries` (Bearer; optional `recipient_agent_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for subsequent array pages)
 - `POST /v2/messages/{message_id}/cancel` (Bearer; optional `Idempotency-Key`; response `X-Operation-ID`)
-- `POST /v2/deliveries/{delivery_id}/retry` (Bearer)
+- `POST /v2/deliveries/{delivery_id}/retry` (Bearer; optional `Idempotency-Key`; `X-Operation-ID` only for keyed exact pending admission)
 
 Message history is paged by the durable indexed `(created_at, id)` keyset, with stable cursor validation against the requested workspace/sender filters. Only selected page bodies are read and decoded, not the entire runtime message history.
+
+Keyed operator retry atomically accepts a failed/deferred canonical delivery into `pending` along with its legacy mirror and records a completed operation receipt *before* attempting native delivery. The replayed JSON delivery is the original pending admission snapshot, not a claim about a later native outcome; a key replay does not send another turn. Unkeyed retry preserves the synchronous delivery-result semantics for compatibility. Read the delivery record again for its current state, and never infer success from the retry admission receipt alone.
 
 Canonical `/v2` messages are agent-first and do not require a legacy team ID. Direct routing can target any active/routable agent in the runtime: same-workspace direct messages use `workspace_team` context and cross-workspace/migration-compatible directs use `global_direct` context. Workspace broadcasts derive the sender workspace from canonical ownership, snapshot the active roster once, exclude the sender, and never fan out across workspace boundaries.
 

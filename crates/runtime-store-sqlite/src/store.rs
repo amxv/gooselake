@@ -65,12 +65,7 @@ impl SqliteRuntimeStore {
 #[async_trait]
 impl RuntimeStore for SqliteRuntimeStore {
     crate::store_pagination::delegate_agent_message_listing!();
-    fn cancel_agent_message_operator(
-        &self,
-        command: &runtime_core::AgentCancelMessageMutationCommand,
-    ) -> Result<runtime_core::AgentCancelMessageMutationResponse, RuntimeError> {
-        self.repository.cancel_agent_message_operator(command)
-    }
+    crate::store_message_operator::delegate_message_operator_methods!();
 
     fn admit_pre_add_team_hooks(
         &self,

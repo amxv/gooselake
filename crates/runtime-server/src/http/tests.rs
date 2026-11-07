@@ -37,6 +37,7 @@ mod claude_acp_smoke;
 mod codex_edit_rerun_live;
 mod codex_runtime_smoke;
 use codex_runtime_smoke::{codex_test_model, create_test_session, prepare_codex_smoke_config};
+mod agent_delivery_operator_retry;
 mod agent_message_routes;
 mod agent_session_controls;
 mod agent_session_controls_compaction;

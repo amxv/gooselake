@@ -7,6 +7,7 @@ use runtime_core::{
 };
 use rusqlite::{params, Connection};
 
+mod agent_delivery_retry;
 mod agent_message_cancellation;
 mod agent_message_pages;
 mod operator_event_pages;

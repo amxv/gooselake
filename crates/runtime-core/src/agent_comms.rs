@@ -151,6 +151,49 @@ pub struct AgentCancelMessageMutationResponse {
     pub deliveries: Vec<AgentDeliveryRecord>,
 }
 
+/// Exact durable receipt for re-admitting a failed/deferred delivery. The
+/// receipt describes queue admission, not a native provider-delivery result.
+#[derive(Debug, Clone)]
+pub struct AgentRetryDeliveryMutationCommand {
+    pub operation_id: String,
+    pub delivery_id: String,
+    pub actor: OperationActor,
+    pub idempotency_key: Option<String>,
+    pub normalized_request: Value,
+    pub normalized_request_hash: String,
+    pub requested_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRetryDeliveryMutationResponse {
+    pub operation_id: String,
+    pub delivery: AgentDeliveryRecord,
+}
+
+pub fn prepare_agent_delivery_retry(
+    delivery_id: &str,
+    actor: OperationActor,
+    idempotency_key: Option<String>,
+) -> Result<AgentRetryDeliveryMutationCommand, RuntimeError> {
+    let delivery_id = delivery_id.trim();
+    if delivery_id.is_empty() || actor.identifier.trim().is_empty() {
+        return Err(RuntimeError::InvalidState(
+            "delivery and operator identity are required".into(),
+        ));
+    }
+    let idempotency_key = normalize_idempotency_key(idempotency_key)?;
+    let normalized_request = serde_json::json!({"delivery_id": delivery_id});
+    Ok(AgentRetryDeliveryMutationCommand {
+        operation_id: opaque_id("op"),
+        delivery_id: delivery_id.to_string(),
+        actor,
+        idempotency_key,
+        normalized_request_hash: normalized_json_hash(&normalized_request)?,
+        normalized_request,
+        requested_at: unix_time_ms()?,
+    })
+}
+
 pub fn prepare_agent_message_cancellation(
     message_id: &str,
     actor: OperationActor,

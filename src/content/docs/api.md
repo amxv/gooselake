@@ -771,11 +771,17 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/deliveries/$DELIVERY_ID/retry"
 
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: retry-$DELIVERY_ID" \
+  "$BASE_URL/v2/deliveries/$DELIVERY_ID/retry"
+
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Idempotency-Key: cancel-$MESSAGE_ID" \
   "$BASE_URL/v2/messages/$MESSAGE_ID/cancel"
 ```
 
-Message creation and its recipient snapshot commit atomically. Operator cancellation now atomically updates every pending/deferred delivery and its legacy mirrors together with an exact durable operation receipt; it cannot partially cancel a broadcast. The cancellation response retains its JSON delivery array and adds `X-Operation-ID` for inspection through `/v2/operations/{id}`. The optional `Idempotency-Key` returns the original receipt after a lost response; reusing the same cancellation key for different inputs or another operation-backed operator resource conflicts with HTTP 409. A stale delivery worker cannot revive a terminal cancelled delivery. Retry still only applies to failed/deferred rows and does not yet have the same operator idempotency journal. Startup recovery resumes canonical `pending`/`deferred` work, and migrated legacy delivery rows mirror canonical terminal transitions so `/v1` compatibility views cannot inject the same migrated delivery twice.
+Message creation and its recipient snapshot commit atomically. Operator cancellation now atomically updates every pending/deferred delivery and its legacy mirrors together with an exact durable operation receipt; it cannot partially cancel a broadcast. The cancellation response retains its JSON delivery array and adds `X-Operation-ID` for inspection through `/v2/operations/{id}`. The optional `Idempotency-Key` returns the original receipt after a lost response; reusing the same operator key for different inputs or another operation-backed operator resource conflicts with HTTP 409. A stale delivery worker cannot revive a terminal cancelled delivery.
+
+Retry only accepts failed/deferred canonical deliveries. Without an idempotency key, its original synchronous delivery-result response is preserved. With `Idempotency-Key`, retry atomically re-admits the delivery in `pending` state with its migrated legacy mirror and a durable completed operation receipt, then attempts provider delivery. The response remains a single delivery JSON object but describes the **exact pending queue admission**, not the later provider delivery result; `X-Operation-ID` points to `/v2/operations/{id}`. Replaying that key returns the exact admission response without a second native attempt, even if the delivery subsequently becomes `injected`, `deferred`, or `failed`. Inspect the delivery endpoint for its current state. If the process dies after durable admission, startup recovery owns pending work; an `injecting` state is not a license to blindly duplicate an ambiguous native send. Key reuse for another delivery or operator operation conflicts. Startup recovery resumes canonical `pending`/`deferred` work, and migrated legacy delivery rows mirror canonical terminal transitions so `/v1` compatibility views cannot inject the same migrated delivery twice.
 
 ## Sessions
 

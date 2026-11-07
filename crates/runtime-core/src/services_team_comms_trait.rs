@@ -4,12 +4,13 @@ use crate::{
     AgentBroadcastMessageRequest, AgentCancelMessageMutationCommand,
     AgentCancelMessageMutationResponse, AgentCancelMessageRequest, AgentDeliveryListRequest,
     AgentDeliveryRecord, AgentDirectMessageRequest, AgentMessageAck, AgentMessageListRequest,
-    AgentMessageListResponse, AgentRetryDeliveryRequest, RuntimeError, RuntimeEventRecord,
-    TeamBroadcastRequest, TeamCancelMessageRequest, TeamCreateRequest, TeamDeliveryRecord,
-    TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamInterruptAllResponse, TeamJoinRequest,
-    TeamListMessagesRequest, TeamListMessagesResponse, TeamMessageAck, TeamRemoveMemberRequest,
-    TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest,
-    TeamViewSnapshotResponse, TeamWithMembers,
+    AgentMessageListResponse, AgentRetryDeliveryMutationCommand,
+    AgentRetryDeliveryMutationResponse, AgentRetryDeliveryRequest, RuntimeError,
+    RuntimeEventRecord, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCreateRequest,
+    TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamInterruptAllRequest,
+    TeamInterruptAllResponse, TeamJoinRequest, TeamListMessagesRequest, TeamListMessagesResponse,
+    TeamMessageAck, TeamRemoveMemberRequest, TeamRetryDeliveryRequest, TeamSendDirectRequest,
+    TeamSetLeadRequest, TeamViewSnapshotRequest, TeamViewSnapshotResponse, TeamWithMembers,
 };
 
 #[async_trait]
@@ -118,6 +119,15 @@ pub trait TeamCommsService: Send + Sync {
     ) -> Result<AgentDeliveryRecord, RuntimeError> {
         Err(RuntimeError::Unsupported(
             "agent-first delivery retry is not implemented by this comms service".to_string(),
+        ))
+    }
+
+    async fn retry_agent_delivery_operator(
+        &self,
+        _command: AgentRetryDeliveryMutationCommand,
+    ) -> Result<AgentRetryDeliveryMutationResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "durable operator delivery retry admission unavailable".into(),
         ))
     }
 

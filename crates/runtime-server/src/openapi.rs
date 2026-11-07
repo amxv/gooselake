@@ -374,6 +374,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/workspaces/{workspace_id}/interrupt"
                 | "/v2/messages"
                 | "/v2/messages/{message_id}/cancel"
+                | "/v2/deliveries/{delivery_id}/retry"
                 | "/v2/migrations/workspaces/apply"
                 | "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}"
         );
@@ -577,6 +578,13 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("          headers:\n");
         out.push_str("            X-Operation-ID:\n");
         out.push_str("              description: Durable atomic message cancellation operation\n");
+        out.push_str("              schema:\n");
+        out.push_str("                type: string\n");
+    }
+    if method == HttpMethod::Post && path == "/v2/deliveries/{delivery_id}/retry" {
+        out.push_str("          headers:\n");
+        out.push_str("            X-Operation-ID:\n");
+        out.push_str("              description: Durable exact retry admission receipt, present only when Idempotency-Key is supplied; not a provider delivery acknowledgment\n");
         out.push_str("              schema:\n");
         out.push_str("                type: string\n");
     }
@@ -806,6 +814,15 @@ mod tests {
         assert!(cancellation.contains("        - name: Idempotency-Key\n"));
         assert!(cancellation.contains("            X-Operation-ID:\n"));
         assert!(yaml.contains("  /v2/deliveries/{delivery_id}/retry:"));
+        let retry = yaml
+            .split("  /v2/deliveries/{delivery_id}/retry:\n")
+            .nth(1)
+            .expect("canonical retry route")
+            .split("\n  /v2/")
+            .next()
+            .expect("retry route content");
+        assert!(retry.contains("        - name: Idempotency-Key\n"));
+        assert!(retry.contains("            X-Operation-ID:\n"));
         assert!(yaml.contains("  /v2/migrations/workspaces:"));
         assert!(yaml.contains("  /v2/migrations/workspaces/preview:"));
         assert!(yaml.contains("  /v2/migrations/workspaces/apply:"));

@@ -4,7 +4,7 @@ use runtime_core::{
     AgentMessageRecord, OperationActor, OperationPhase,
 };
 
-fn seeded_messages() -> (tempfile::TempDir, SqliteRuntimeRepository) {
+pub(super) fn seeded_messages() -> (tempfile::TempDir, SqliteRuntimeRepository) {
     let temp = tempfile::tempdir().expect("tempdir");
     let repository = repo(&temp);
     repository.initialize_schema().expect("schema");

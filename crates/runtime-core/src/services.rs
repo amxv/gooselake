@@ -2,6 +2,8 @@
 mod event_history;
 #[path = "services_message_history.rs"]
 mod message_history;
+#[path = "services_message_operator.rs"]
+mod message_operator;
 #[path = "services_team_comms_trait.rs"]
 mod team_comms_trait;
 #[path = "services_team_models.rs"]
@@ -61,14 +63,7 @@ use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 pub trait RuntimeStore:
     WorkspaceWorktreeCreationStore + OperatorUserTurnStore + Send + Sync
 {
-    /// Atomically cancel every still-undispatched recipient and store an exact
-    /// operator receipt. No partial fanout cancellation may be visible.
-    fn cancel_agent_message_operator(
-        &self,
-        _command: &crate::AgentCancelMessageMutationCommand,
-    ) -> Result<crate::AgentCancelMessageMutationResponse, RuntimeError> {
-        unsupported_store("durable operator message cancellation unavailable")
-    }
+    message_operator::message_operator_methods!();
 
     /// Transactionally snapshot approved pre-add hooks against a trusted
     /// reserved agent identity before any shell or provider work can start.

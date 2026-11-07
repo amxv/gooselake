@@ -751,6 +751,10 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 `GET /v2/messages` supports `workspace_id`, `sender_agent_id`, `cursor`, and
 `limit=1..100` (default 50). It returns a `messages` array and `next_cursor`
 in the JSON response; pass the cursor unchanged to fetch the next page.
+Message pages use an indexed ascending `(created_at, id)` keyset over durable
+canonical messages, not an in-memory full-history scan. A cursor must refer to
+an existing message matching the same optional workspace/sender filters or
+the request is rejected; only the bounded page's JSON inputs are decoded.
 `GET /v2/messages/{message_id}/deliveries` supports `recipient_agent_id`,
 `cursor`, and `limit=1..100` (default 50). Delivery lists retain their JSON
 array shape; when another page exists the response includes `X-Next-Cursor`,

@@ -196,6 +196,14 @@ impl RuntimeTeamCommsService {
         request: AgentMessageListRequest,
     ) -> Result<AgentMessageListResponse, RuntimeError> {
         self.ensure_enabled()?;
+        match self.store.list_agent_messages_page(&request) {
+            Ok(page) => return Ok(page),
+            Err(RuntimeError::Unsupported(_)) => {
+                // Test-only/in-memory stores may not implement durable pages.
+                // The production SQLite store always uses the bounded query.
+            }
+            Err(error) => return Err(error),
+        }
         let limit = request.limit.unwrap_or(100).clamp(1, 500);
         let state = self.state.read().await;
         let filtered = state

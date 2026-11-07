@@ -127,9 +127,12 @@ Legacy workspace migration preview classifies every persisted legacy authority s
 
 - `POST /v2/messages` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/messages` (Bearer; optional `workspace_id`, `sender_agent_id`, `cursor`, `limit=1..100` default 50; JSON `next_cursor`)
+
 - `GET /v2/messages/{message_id}/deliveries` (Bearer; optional `recipient_agent_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for subsequent array pages)
 - `POST /v2/messages/{message_id}/cancel` (Bearer; optional `Idempotency-Key`; response `X-Operation-ID`)
 - `POST /v2/deliveries/{delivery_id}/retry` (Bearer)
+
+Message history is paged by the durable indexed `(created_at, id)` keyset, with stable cursor validation against the requested workspace/sender filters. Only selected page bodies are read and decoded, not the entire runtime message history.
 
 Canonical `/v2` messages are agent-first and do not require a legacy team ID. Direct routing can target any active/routable agent in the runtime: same-workspace direct messages use `workspace_team` context and cross-workspace/migration-compatible directs use `global_direct` context. Workspace broadcasts derive the sender workspace from canonical ownership, snapshot the active roster once, exclude the sender, and never fan out across workspace boundaries.
 

@@ -191,30 +191,7 @@ impl SqliteRuntimeRepository {
                     db_error("failed preparing agent message hydration query", error)
                 })?;
             let rows = statement
-                .query_map([], |row| {
-                    let context_raw: String = row.get(2)?;
-                    let context_kind = AgentMessageContextKind::from_str(&context_raw)
-                        .ok_or_else(|| invalid_text(2, "invalid agent message context"))?;
-                    let recipients = string_to_json(row.get(6)?)?;
-                    let images = string_to_json(row.get(8)?)?;
-                    Ok(AgentMessageRecord {
-                        id: row.get(0)?,
-                        scope: row.get(1)?,
-                        context_kind,
-                        workspace_id: row.get(3)?,
-                        legacy_team_id: row.get(4)?,
-                        sender_agent_id: row.get(5)?,
-                        recipient_agent_ids: json_string_array(6, recipients)?,
-                        input: string_to_json(row.get(7)?)?,
-                        image_paths: json_string_array(8, images)?,
-                        priority: row.get(9)?,
-                        policy: row.get(10)?,
-                        correlation_id: row.get(11)?,
-                        reply_to_message_id: row.get(12)?,
-                        idempotency_key: row.get(13)?,
-                        created_at: row.get(14)?,
-                    })
-                })
+                .query_map([], decode_agent_message)
                 .map_err(|error| db_error("failed running agent message hydration query", error))?;
             collect_rows(rows)?
         } else {
@@ -533,6 +510,33 @@ impl SqliteRuntimeRepository {
             credentials,
         })
     }
+}
+
+pub(crate) fn decode_agent_message(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<AgentMessageRecord> {
+    let context_raw: String = row.get(2)?;
+    let context_kind = AgentMessageContextKind::from_str(&context_raw)
+        .ok_or_else(|| invalid_text(2, "invalid agent message context"))?;
+    let recipients = string_to_json(row.get(6)?)?;
+    let images = string_to_json(row.get(8)?)?;
+    Ok(AgentMessageRecord {
+        id: row.get(0)?,
+        scope: row.get(1)?,
+        context_kind,
+        workspace_id: row.get(3)?,
+        legacy_team_id: row.get(4)?,
+        sender_agent_id: row.get(5)?,
+        recipient_agent_ids: json_string_array(6, recipients)?,
+        input: string_to_json(row.get(7)?)?,
+        image_paths: json_string_array(8, images)?,
+        priority: row.get(9)?,
+        policy: row.get(10)?,
+        correlation_id: row.get(11)?,
+        reply_to_message_id: row.get(12)?,
+        idempotency_key: row.get(13)?,
+        created_at: row.get(14)?,
+    })
 }
 
 fn json_string_array(index: usize, value: serde_json::Value) -> rusqlite::Result<Vec<String>> {

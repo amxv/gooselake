@@ -46,3 +46,16 @@ macro_rules! delegate_workspace_listing {
 }
 
 pub(crate) use delegate_workspace_listing;
+
+macro_rules! delegate_agent_message_listing {
+    () => {
+        fn list_agent_messages_page(
+            &self,
+            request: &runtime_core::AgentMessageListRequest,
+        ) -> Result<runtime_core::AgentMessageListResponse, runtime_core::RuntimeError> {
+            self.repository.list_agent_messages_page(request)
+        }
+    };
+}
+
+pub(crate) use delegate_agent_message_listing;

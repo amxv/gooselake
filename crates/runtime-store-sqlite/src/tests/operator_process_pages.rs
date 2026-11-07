@@ -138,6 +138,6 @@ fn operator_process_pages_use_indexed_stable_keysets_without_loading_commands() 
             0
         ))
         .unwrap(),
-        23
+        crate::schema::SCHEMA_VERSION
     );
 }

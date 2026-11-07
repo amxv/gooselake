@@ -611,6 +611,129 @@ async fn keyed_message_cancellation_replays_exact_http_receipt_and_operation() {
     assert_eq!(invalid_headers.status(), StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn operator_message_history_pages_are_stable_filtered_and_cursor_validated() {
+    let (router, token, temp_dir) = build_test_router().await;
+    let root = temp_dir.path().join("message-pages-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let workspace = register_workspace(&router, &token, &root, "Message Page Tests").await;
+    let sender = create_agent(
+        &router,
+        &token,
+        &workspace.workspace_id,
+        &root,
+        "Page Sender",
+    )
+    .await;
+    let recipient = create_agent(
+        &router,
+        &token,
+        &workspace.workspace_id,
+        &root,
+        "Page Recipient",
+    )
+    .await;
+    let other = create_agent(
+        &router,
+        &token,
+        &workspace.workspace_id,
+        &root,
+        "Other Sender",
+    )
+    .await;
+    let mut created = Vec::new();
+    for index in 0..5 {
+        let ack = create_message(
+            &router,
+            &token,
+            &format!("message-pages-key-{index}"),
+            serde_json::json!({
+                "mode":"direct",
+                "sender_agent_id":sender.agent_id,
+                "recipient_agent_id":recipient.agent_id,
+                "input":[{"type":"text","text":format!("page-{index}")}]
+            }),
+        )
+        .await;
+        created.push(ack.message);
+    }
+    let outside_filter = create_message(
+        &router,
+        &token,
+        "message-pages-other-sender",
+        serde_json::json!({
+            "mode":"direct",
+            "sender_agent_id":other.agent_id,
+            "recipient_agent_id":recipient.agent_id,
+            "input":[{"type":"text","text":"other sender"}]
+        }),
+    )
+    .await;
+    let mut expected = created
+        .iter()
+        .map(|message| (message.created_at, message.id.clone()))
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    let expected = expected.into_iter().map(|(_, id)| id).collect::<Vec<_>>();
+
+    let base = format!(
+        "/v2/messages?workspace_id={}&sender_agent_id={}&limit=2",
+        workspace.workspace_id, sender.agent_id
+    );
+    let get = |uri: &str| {
+        Request::builder()
+            .uri(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let mut cursor = None;
+    let mut received = Vec::new();
+    for _ in 0..4 {
+        let uri = cursor.as_ref().map_or_else(
+            || base.clone(),
+            |cursor: &String| format!("{base}&cursor={cursor}"),
+        );
+        let response = router.clone().oneshot(get(&uri)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let page: runtime_core::AgentMessageListResponse =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert!(page.messages.len() <= 2);
+        received.extend(page.messages.into_iter().map(|message| message.id));
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(received, expected);
+
+    let mismatched = router
+        .clone()
+        .oneshot(get(&format!("{base}&cursor={}", outside_filter.message.id)))
+        .await
+        .unwrap();
+    assert_eq!(mismatched.status(), StatusCode::BAD_REQUEST);
+    let unknown = router
+        .clone()
+        .oneshot(get(&format!("{base}&cursor=msg_unknown")))
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
+    let too_large = router
+        .clone()
+        .oneshot(get("/v2/messages?limit=101"))
+        .await
+        .unwrap();
+    assert_eq!(too_large.status(), StatusCode::BAD_REQUEST);
+    let unauthenticated = router
+        .clone()
+        .oneshot(Request::builder().uri(&base).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+}
+
 async fn register_workspace(
     router: &Router,
     token: &str,

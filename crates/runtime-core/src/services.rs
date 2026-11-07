@@ -1,5 +1,7 @@
 #[path = "services_event_history.rs"]
 mod event_history;
+#[path = "services_message_history.rs"]
+mod message_history;
 #[path = "services_team_comms_trait.rs"]
 mod team_comms_trait;
 #[path = "services_team_models.rs"]
@@ -311,6 +313,7 @@ pub trait RuntimeStore:
         limit: usize,
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError>;
     event_history::event_history_methods!();
+    message_history::message_history_methods!();
     fn register_workspace(
         &self,
         _command: &WorkspaceRegisterCommand,
@@ -563,7 +566,6 @@ pub trait RuntimeStore:
     ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
         unsupported_store("workspace agent authority is not implemented by this runtime store")
     }
-
     fn list_workspace_agents_page(
         &self,
         _workspace_id: &str,
@@ -573,7 +575,6 @@ pub trait RuntimeStore:
     ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
         unsupported_store("paginated workspace agent listing is unavailable in this store")
     }
-
     fn get_workspace_agent(
         &self,
         _workspace_id: &str,
@@ -581,14 +582,12 @@ pub trait RuntimeStore:
     ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
         unsupported_store("workspace agent authority is not implemented by this runtime store")
     }
-
     fn get_workspace_agent_by_id(
         &self,
         _agent_id: &str,
     ) -> Result<Option<WorkspaceAgentRecord>, RuntimeError> {
         Ok(None)
     }
-
     fn get_workspace_agent_by_alias(
         &self,
         _alias: &str,

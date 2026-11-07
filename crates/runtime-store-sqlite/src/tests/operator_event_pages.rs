@@ -154,6 +154,6 @@ fn indexed_event_history_pages_preserve_global_cursor_scope_order_and_payload_pr
             0
         ))
         .unwrap(),
-        23
+        crate::schema::SCHEMA_VERSION
     );
 }

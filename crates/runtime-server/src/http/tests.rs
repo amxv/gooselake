@@ -49,6 +49,7 @@ mod operator_contract_routes;
 mod operator_event_pages;
 mod operator_hook_approval_idempotency;
 mod operator_hook_effect_pages;
+mod operator_lead_inputs;
 mod operator_notice_policy_idempotency;
 mod operator_operation_pages;
 mod operator_process_pages;

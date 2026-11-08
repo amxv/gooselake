@@ -122,6 +122,7 @@ pub fn prepare_workspace_retirement(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceLeadTransitionRequest {
     pub lead_agent_id: Option<String>,
     pub expected_revision: u64,

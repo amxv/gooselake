@@ -50,7 +50,7 @@ provider rebind and edit records retain their specialized detail routes.
 - `GET /v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}` (Bearer; full approved hook, input and receipt for one exact durable effect)
 - `GET /v2/workspaces/{workspace_id}/worktrees` (Bearer; managed Git inventory, native eligibility, attached agents and per-record revisions; `limit=1..100` with `cursor` and `X-Next-Cursor` for name/ID-ordered pages; cursor must identify a currently present worktree in this repository)
 - `POST /v2/workspaces/{workspace_id}/worktrees` (Bearer, JSON; create/reuse a named workspace managed worktree; optional `Idempotency-Key` durably admits Git/init intent and replays its exact result; `X-Operation-ID` on success and on `409 outcome_unresolved` with `error.details.operation_id`)
-- `POST /v2/workspaces/{workspace_id}/lead` (Bearer, JSON; optional `Idempotency-Key` header)
+- `POST /v2/workspaces/{workspace_id}/lead` (Bearer, strict JSON; only `lead_agent_id` and `expected_revision` accepted; optional `Idempotency-Key` header)
 - `GET /v2/workspaces/{workspace_id}/notice-policy` (Bearer; current lifecycle notice policy and revision)
 - `PUT /v2/workspaces/{workspace_id}/notice-policy` (Bearer, JSON; compare-and-set policy by `expected_revision`; optional `Idempotency-Key` for durable exact retry replay; strong `ETag` and `X-Operation-ID` on success)
 - `POST /v2/workspaces/{workspace_id}/interrupt` (Bearer; optional `Idempotency-Key` header)

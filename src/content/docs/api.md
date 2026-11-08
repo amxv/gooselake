@@ -629,6 +629,8 @@ curl -fsS -X POST \
 ```
 
 `lead_agent_id`, when non-null, must name an active agent in the same workspace. SQLite enforces that invariant at commit time. A successful change increments the workspace revision; a stale `expected_revision` returns HTTP `409`. Exact retries under the same `Idempotency-Key` replay the original terminal result. Archiving the current lead clears leadership atomically and increments the workspace revision; restoring that agent leaves it as an ordinary active member. There is no oldest-member or other automatic lead election.
+Unknown lead mutation properties, including speculative election/force flags,
+are rejected before altering lead authority or revision.
 
 The runtime membership authority follows the same workspace policy as Golden Goose: while a workspace is leadless, any active member may add or remove members. Once a lead exists, the lead may manage membership and non-leads are governed independently by the configured `non_lead_can_add_members` and `non_lead_can_remove_members` policy flags. Lead assignment itself remains an operator-only control rather than a model/member action.
 

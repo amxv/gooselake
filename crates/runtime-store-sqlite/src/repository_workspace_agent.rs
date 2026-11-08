@@ -430,6 +430,32 @@ impl SqliteRuntimeRepository {
         limit: usize,
     ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        // A timestamp/id tuple is a continuation token, not an arbitrary
+        // offset. Check the exact anchor belongs to this workspace and its
+        // selected lifecycle before allowing it to advance the keyset.
+        if let Some((created_at, agent_id)) = after.as_ref() {
+            let belongs: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspace_agents
+                     WHERE session_id=?1 AND workspace_id=?2 AND created_at=?3
+                       AND (?4 IS NULL OR lifecycle_state=?4))",
+                    params![
+                        agent_id,
+                        workspace_id,
+                        created_at,
+                        lifecycle.map(|v| v.as_str())
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(|error| {
+                    db_error("failed validating workspace agent page cursor", error)
+                })?;
+            if !belongs {
+                return Err(RuntimeError::InvalidState(
+                    "workspace agent cursor is outside the selected workspace/lifecycle".into(),
+                ));
+            }
+        }
         let query = format!(
             "{AGENT_SELECT} WHERE a.workspace_id = ?1
              AND (?2 IS NULL OR a.lifecycle_state = ?2)

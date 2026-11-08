@@ -146,8 +146,21 @@ pub(super) fn paged_worktree_inventory(
     mut inventory: runtime_core::WorkspaceWorktreeInventory,
     limit: usize,
     cursor: Option<(String, String)>,
-) -> Response {
+) -> Result<Response, ApiError> {
     if let Some((name, id)) = cursor {
+        // A syntactically valid cursor from a different repository, a
+        // removed worktree, or an arbitrary future key must not silently
+        // skip this workspace's inventory. The cursor is a continuation of
+        // a row the client actually saw in this collection.
+        if !inventory
+            .worktrees
+            .iter()
+            .any(|row| row.normalized_name == name && row.worktree_id == id)
+        {
+            return Err(ApiError::bad_request(
+                "worktree cursor is not in the requested workspace inventory".into(),
+            ));
+        }
         inventory.worktrees.retain(|row| {
             (row.normalized_name.as_str(), row.worktree_id.as_str()) > (name.as_str(), id.as_str())
         });
@@ -169,5 +182,5 @@ pub(super) fn paged_worktree_inventory(
             HeaderValue::from_str(&cursor).expect("hex cursor produces valid header text"),
         );
     }
-    response
+    Ok(response)
 }

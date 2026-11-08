@@ -331,7 +331,7 @@ pub(super) async fn list_workspace_worktree_inventory(
     let inventory = state
         .runtime
         .list_workspace_worktree_inventory(&workspace_id)?;
-    Ok(paged_worktree_inventory(inventory, limit, cursor))
+    paged_worktree_inventory(inventory, limit, cursor)
 }
 
 #[derive(Debug, Deserialize)]

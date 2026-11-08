@@ -238,6 +238,28 @@ async fn workspace_worktree_inventory_pages_names_and_tied_ids_without_duplicate
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
     }
+    // Hex-encoded, structurally valid continuation keys from an unrelated
+    // worktree or a row no longer present must not silently skip inventory.
+    let foreign_cursor = encode_opaque_pair_cursor("same", "wt_foreign");
+    let foreign_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("{uri}?limit=1&cursor={foreign_cursor}"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign_response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = serde_json::from_slice(
+        &to_bytes(foreign_response.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["error"]["code"], "invalid_request");
 }
 
 #[tokio::test]

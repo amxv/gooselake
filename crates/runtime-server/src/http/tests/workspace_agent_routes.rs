@@ -598,6 +598,119 @@ async fn workspace_agent_create_archive_restore_and_restart_preserve_authority()
     assert_eq!(unowned_v2.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn workspace_agent_keyset_cursor_must_match_workspace_lifecycle_and_exact_timestamp() {
+    let (router, token, temp) = build_test_router().await;
+    let root_a = temp.path().join("cursor-workspace-a");
+    let root_b = temp.path().join("cursor-workspace-b");
+    fs::create_dir_all(&root_a).unwrap();
+    fs::create_dir_all(&root_b).unwrap();
+    let first_workspace = register_workspace(&router, &token, &root_a).await;
+    let second_workspace = register_workspace(&router, &token, &root_b).await;
+
+    let mut records = Vec::new();
+    for (workspace_id, title) in [
+        (&first_workspace.workspace_id, "First"),
+        (&first_workspace.workspace_id, "Second"),
+        (&second_workspace.workspace_id, "Foreign"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v2/workspaces/{workspace_id}/agents"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "provider":"codex", "model":"test-model", "title":title
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: runtime_core::WorkspaceAgentRecord =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        records.push(record);
+    }
+
+    let uri = format!(
+        "/v2/workspaces/{}/agents?lifecycle=active&limit=1",
+        first_workspace.workspace_id
+    );
+    let get = |url: &str| {
+        Request::builder()
+            .uri(url)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let first = router.clone().oneshot(get(&uri)).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let next = first.headers()["x-next-cursor"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let first_page: Vec<runtime_core::WorkspaceAgentRecord> =
+        serde_json::from_slice(&to_bytes(first.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(first_page.len(), 1);
+    assert_eq!(
+        next,
+        format!("{}:{}", first_page[0].created_at, first_page[0].agent_id)
+    );
+    let second = router
+        .clone()
+        .oneshot(get(&format!("{uri}&cursor={next}")))
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::OK);
+    assert!(second.headers().get("x-next-cursor").is_none());
+    let second_page: Vec<runtime_core::WorkspaceAgentRecord> =
+        serde_json::from_slice(&to_bytes(second.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(second_page.len(), 1);
+    assert_ne!(first_page[0].agent_id, second_page[0].agent_id);
+    assert_eq!(
+        [
+            first_page[0].agent_id.as_str(),
+            second_page[0].agent_id.as_str()
+        ]
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>(),
+        records[..2]
+            .iter()
+            .map(|row| row.agent_id.as_str())
+            .collect::<std::collections::HashSet<_>>()
+    );
+
+    for bad_uri in [
+        format!(
+            "{uri}&cursor={}:{}",
+            records[2].created_at, records[2].agent_id
+        ),
+        format!(
+            "{uri}&cursor={}:{}",
+            first_page[0].created_at + 1,
+            first_page[0].agent_id
+        ),
+        format!(
+            "/v2/workspaces/{}/agents?lifecycle=archived&cursor={next}",
+            first_workspace.workspace_id
+        ),
+    ] {
+        let response = router.clone().oneshot(get(&bad_uri)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{bad_uri}");
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["error"]["code"], "invalid_state", "{bad_uri}");
+    }
+}
+
 async fn register_workspace(
     router: &Router,
     token: &str,

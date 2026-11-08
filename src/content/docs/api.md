@@ -87,6 +87,14 @@ optional matching `If-Match` alongside mandatory `expected_revision`, and
 successful mutations return the new agent-policy revision ETag. The service
 still verifies the revision transactionally before committing policy changes.
 
+`GET /v2/workspaces/{workspace_id}/agents` uses an indexed ascending
+`(created_at, agent_id)` keyset, with optional `lifecycle=active|archived|all`
+and `limit=1..100`. Supply the exact `X-Next-Cursor` from a previous page.
+The continuation must refer to an existing agent in the **same workspace**
+and requested lifecycle, with its exact creation timestamp; an unrelated,
+stale, or fabricated cursor is rejected with HTTP 400 rather than silently
+skipping a portion of the collection.
+
 ## API surface by group
 
 See [Endpoint Catalog](/docs/endpoint-catalog) for the full route list.
@@ -497,6 +505,10 @@ normalized worktree name and logical ID, so names that tie cannot skip or
 repeat an entry. Entries inserted before an existing cursor do not get
 replayed on later pages. Repository identity metadata remains present on
 every page; worktree eligibility is recalculated from current Git evidence.
+The opaque cursor must refer to an existing name/ID pair in this workspace's
+currently visible managed Git inventory. A cursor from another repository or
+from a worktree removed since the preceding page returns HTTP 400 rather
+than silently skipping remaining candidates.
 
 To create or reuse a named managed Git checkout without needing an existing source agent, use the workspace-scoped endpoint:
 

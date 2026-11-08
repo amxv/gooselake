@@ -121,7 +121,12 @@ impl SqliteRuntimeRepository {
                     last_error_message = excluded.last_error_message,
                     created_at = excluded.created_at,
                     updated_at = excluded.updated_at
-                 WHERE agent_deliveries.status != 'cancelled'",
+                 WHERE agent_deliveries.status != 'cancelled'
+                   AND excluded.updated_at >= agent_deliveries.updated_at
+                   AND NOT (agent_deliveries.status='injecting'
+                            AND excluded.status='pending')
+                   AND NOT (agent_deliveries.status='injected'
+                            AND excluded.status!='injected')",
                 params![
                     delivery.id,
                     delivery.message_id,
@@ -140,7 +145,7 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed upserting agent delivery", error))?;
         if changed == 0 {
             return Err(RuntimeError::Conflict(format!(
-                "delivery {} was already cancelled by durable authority",
+                "delivery {} has a newer or terminal durable authority",
                 delivery.id
             )));
         }

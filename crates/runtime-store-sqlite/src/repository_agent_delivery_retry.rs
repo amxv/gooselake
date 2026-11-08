@@ -7,6 +7,7 @@ use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use crate::db::{db_error, open_connection};
 use crate::operation_tx::OperationAuthorityTransaction;
 use crate::repository_agent_comms::{decode_delivery, DELIVERY_COLUMNS};
+use crate::repository_agent_delivery_guard::require_active_delivery_owners;
 use crate::repository_workspace::operation_by_idempotency;
 use crate::SqliteRuntimeRepository;
 
@@ -86,77 +87,11 @@ impl SqliteRuntimeRepository {
                 )));
             }
         }
+        let admitted_at = command
+            .requested_at
+            .max(delivery.updated_at.saturating_add(1));
 
-        let workspace_id: Option<Option<String>> = tx
-            .query_row(
-                "SELECT COALESCE(message.workspace_id,sender.workspace_id)
-                 FROM agent_messages message
-                 LEFT JOIN workspace_agents sender ON sender.session_id=message.sender_agent_id
-                 WHERE message.id=?1",
-                [&delivery.message_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|error| db_error("failed locating retry origin workspace", error))?;
-        let workspace_id = workspace_id.ok_or_else(|| {
-            RuntimeError::NotFound(format!("retry message {}", delivery.message_id))
-        })?;
-
-        // A retirement may be frozen while its public lifecycle still reads
-        // active. Retry admission is a new provider-effect intent, so refuse
-        // it inside this same serialized SQLite transaction for both sender
-        // and recipient workspaces, not just after the provider call.
-        let mut owner_workspaces = Vec::new();
-        if let Some(ref workspace_id) = workspace_id {
-            owner_workspaces.push(workspace_id.clone());
-        }
-        let sender_id: String = tx
-            .query_row(
-                "SELECT sender_agent_id FROM agent_messages WHERE id=?1",
-                [&delivery.message_id],
-                |row| row.get(0),
-            )
-            .map_err(|error| db_error("failed inspecting retry sender", error))?;
-        for (role, session_id) in [
-            ("sender", &sender_id),
-            ("recipient", &delivery.recipient_agent_id),
-        ] {
-            let ownership: Option<(String, String)> = tx
-                .query_row(
-                    "SELECT workspace_id,lifecycle_state FROM workspace_agents WHERE session_id=?1",
-                    [session_id],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()
-                .map_err(|error| db_error("failed inspecting retry recipient ownership", error))?;
-            if let Some((owner, lifecycle)) = ownership {
-                if lifecycle != "active" {
-                    return Err(RuntimeError::Conflict(format!(
-                        "{role} {session_id} is archived and cannot accept a retry",
-                    )));
-                }
-                owner_workspaces.push(owner);
-            }
-        }
-        for owner in owner_workspaces {
-            let state: Option<(String, bool)> = tx
-                .query_row(
-                    "SELECT lifecycle_state,EXISTS(
-                         SELECT 1 FROM workspace_retirement_fences
-                         WHERE workspace_id=?1)
-                     FROM workspaces WHERE workspace_id=?1",
-                    [&owner],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()
-                .map_err(|error| db_error("failed inspecting retry workspace retirement", error))?;
-            let active = state.is_some_and(|(lifecycle, fenced)| lifecycle == "active" && !fenced);
-            if !active {
-                return Err(RuntimeError::Conflict(format!(
-                    "workspace {owner} is retired or frozen; delivery retry refused"
-                )));
-            }
-        }
+        let workspace_id = require_active_delivery_owners(&tx, &delivery)?;
 
         let authority = OperationAuthorityTransaction::new(&tx);
         authority.insert_operation(&OperationRecord {
@@ -195,7 +130,7 @@ impl SqliteRuntimeRepository {
                  SET status='pending', injection_strategy=NULL, injected_turn_id=NULL,
                      last_error_code=NULL, last_error_message=NULL, updated_at=?2
                  WHERE id=?1 AND status IN ('failed','deferred')",
-                params![delivery.id, command.requested_at],
+                params![delivery.id, admitted_at],
             )
             .map_err(|error| db_error("failed admitting canonical delivery retry", error))?;
         if changed != 1 {
@@ -211,7 +146,7 @@ impl SqliteRuntimeRepository {
                      SET status='pending', injection_strategy=NULL, injected_turn_id=NULL,
                          last_error_code=NULL, last_error_message=NULL, updated_at=?2
                      WHERE id=?1 AND status IN ('failed','deferred')",
-                    params![delivery.id, command.requested_at],
+                    params![delivery.id, admitted_at],
                 )
                 .map_err(|error| db_error("failed admitting legacy delivery retry", error))?;
             if mirrored != 1 {
@@ -226,7 +161,7 @@ impl SqliteRuntimeRepository {
         delivery.injected_turn_id = None;
         delivery.last_error_code = None;
         delivery.last_error_message = None;
-        delivery.updated_at = command.requested_at;
+        delivery.updated_at = admitted_at;
 
         let result = AgentRetryDeliveryMutationResponse {
             operation_id: command.operation_id.clone(),

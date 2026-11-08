@@ -15,10 +15,12 @@ impl RuntimeTeamCommsService {
         let mut state = self.state.write().await;
         for row in rows {
             if state.agent_deliveries.get(&row.id).is_some_and(|cached| {
-                cached.status == "cancelled"
-                    && cached.last_error_code.as_deref() == Some("workspace_retirement")
+                (cached.status == "cancelled"
                     && (row.status != "cancelled"
-                        || row.last_error_code.as_deref() != Some("workspace_retirement"))
+                        || (cached.last_error_code.as_deref() == Some("workspace_retirement")
+                            && row.last_error_code.as_deref() != Some("workspace_retirement"))))
+                    || (cached.status == "injected" && row.status != "injected")
+                    || (row.updated_at < cached.updated_at && row.status != "cancelled")
             }) {
                 continue;
             }
@@ -359,7 +361,7 @@ impl RuntimeTeamCommsService {
                 .get_mut(delivery_id)
                 .ok_or_else(|| RuntimeError::NotFound(format!("delivery {}", delivery_id)))?;
             delivery.injected_turn_id = Some(turn_id);
-            delivery.updated_at = now_ms();
+            delivery.updated_at = now_ms().max(delivery.updated_at.saturating_add(1));
             delivery.clone()
         };
         self.persist_agent_delivery_with_legacy_mirror(&updated)
@@ -428,7 +430,8 @@ impl RuntimeTeamCommsService {
         last_error_message: Option<String>,
     ) -> Result<(AgentDeliveryRecord, bool), RuntimeError> {
         let authoritative = self.refresh_current_agent_delivery(&current.id).await?;
-        if authoritative.status != current.status {
+        if authoritative.status != current.status || authoritative.updated_at != current.updated_at
+        {
             return Ok((authoritative, false));
         }
         if !is_valid_transition(&current.status, next_status) {
@@ -440,35 +443,65 @@ impl RuntimeTeamCommsService {
                 current.status, next_status
             )));
         }
-        let updated = {
-            let mut state = self.state.write().await;
-            let delivery = state
-                .agent_deliveries
-                .get_mut(&current.id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("delivery {}", current.id)))?;
-            if delivery.status != current.status {
-                return Ok((delivery.clone(), false));
+        let mut updated = authoritative.clone();
+        updated.status = next_status.to_string();
+        updated.updated_at = now_ms().max(
+            authoritative
+                .updated_at
+                .checked_add(1)
+                .ok_or_else(|| RuntimeError::InvalidState("delivery timestamp overflow".into()))?,
+        );
+        if let Some(strategy) = injection_strategy {
+            updated.injection_strategy = Some(strategy);
+        }
+        if next_status == DELIVERY_STATUS_FAILED {
+            updated.last_error_code = last_error_code;
+            updated.last_error_message = last_error_message;
+        } else {
+            updated.last_error_code = None;
+            updated.last_error_message = None;
+        }
+        if next_status != DELIVERY_STATUS_INJECTED {
+            updated.injected_turn_id = None;
+        }
+
+        match self
+            .store
+            .compare_and_swap_agent_delivery_status(&authoritative, &updated)
+        {
+            Ok(true) => {
+                self.cache_agent_delivery_records(std::slice::from_ref(&updated))
+                    .await;
+                Ok((updated, true))
             }
-            delivery.status = next_status.to_string();
-            delivery.updated_at = now_ms();
-            if let Some(strategy) = injection_strategy {
-                delivery.injection_strategy = Some(strategy);
+            Ok(false) => Ok((
+                self.refresh_current_agent_delivery(&current.id).await?,
+                false,
+            )),
+            Err(RuntimeError::Unsupported(_)) => {
+                // Legacy in-memory test stores may opt out. Every production
+                // SQLite transition is one transactional durable claim.
+                let mut state = self.state.write().await;
+                let delivery = state
+                    .agent_deliveries
+                    .get_mut(&current.id)
+                    .ok_or_else(|| RuntimeError::NotFound(format!("delivery {}", current.id)))?;
+                if delivery.status != authoritative.status
+                    || delivery.updated_at != authoritative.updated_at
+                {
+                    return Ok((delivery.clone(), false));
+                }
+                *delivery = updated.clone();
+                drop(state);
+                self.persist_agent_delivery_with_legacy_mirror(&updated)
+                    .await?;
+                Ok((updated, true))
             }
-            if next_status == DELIVERY_STATUS_FAILED {
-                delivery.last_error_code = last_error_code;
-                delivery.last_error_message = last_error_message;
-            } else {
-                delivery.last_error_code = None;
-                delivery.last_error_message = None;
+            Err(error) => {
+                let _ = self.refresh_current_agent_delivery(&current.id).await;
+                Err(error)
             }
-            if next_status != DELIVERY_STATUS_INJECTED {
-                delivery.injected_turn_id = None;
-            }
-            delivery.clone()
-        };
-        self.persist_agent_delivery_with_legacy_mirror(&updated)
-            .await?;
-        Ok((updated, true))
+        }
     }
 
     async fn find_agent_recipient_queue_blocker(

@@ -13,6 +13,15 @@ macro_rules! delegate_message_operator_methods {
         ) -> Result<runtime_core::AgentRetryDeliveryMutationResponse, runtime_core::RuntimeError> {
             self.repository.retry_agent_delivery_operator(command)
         }
+
+        fn compare_and_swap_agent_delivery_status(
+            &self,
+            expected: &runtime_core::AgentDeliveryRecord,
+            updated: &runtime_core::AgentDeliveryRecord,
+        ) -> Result<bool, runtime_core::RuntimeError> {
+            self.repository
+                .compare_and_swap_agent_delivery_status(expected, updated)
+        }
     };
 }
 

@@ -23,6 +23,19 @@ macro_rules! message_operator_methods {
                 "durable operator delivery retry admission unavailable".into(),
             ))
         }
+
+        /// First native dispatch claims must be a durable compare-and-swap,
+        /// including their legacy mirror. `false` means another worker won
+        /// the claim. Only unsupported in-memory stores may use the fallback.
+        fn compare_and_swap_agent_delivery_status(
+            &self,
+            _expected: &crate::AgentDeliveryRecord,
+            _updated: &crate::AgentDeliveryRecord,
+        ) -> Result<bool, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "durable agent delivery transition CAS unavailable".into(),
+            ))
+        }
     };
 }
 

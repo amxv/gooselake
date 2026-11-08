@@ -411,7 +411,7 @@ impl RuntimeTeamCommsService {
             delivery.injected_turn_id = None;
             delivery.last_error_code = None;
             delivery.last_error_message = None;
-            delivery.updated_at = now_ms();
+            delivery.updated_at = now_ms().max(delivery.updated_at.saturating_add(1));
             delivery.clone()
         };
         self.persist_agent_delivery_with_legacy_mirror(&updated)

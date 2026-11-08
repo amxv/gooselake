@@ -74,6 +74,43 @@ async fn ready_edit_agent(
 }
 
 #[tokio::test]
+async fn edit_rejects_unsupported_snapshot_options_before_native_fork_or_operation() {
+    let (router, token, temp, provider, agent_id, turn_id) = ready_edit_agent(1).await;
+    let uri = format!("/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun");
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let count_operations = || -> i64 {
+        db.query_row("SELECT COUNT(*) FROM runtime_operations", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    };
+    let before = count_operations();
+    for invalid in [
+        serde_json::json!({"edited_snapshot":{
+            "prompt_text":"edited", "image_refs":[], "invocation":null, "force":true
+        }}),
+        serde_json::json!({"edited_snapshot":{
+            "prompt_text":"edited", "image_refs":[{
+                "media_type":"image/png", "persisted_absolute_path":null,
+                "persisted_display_path":null, "skip_image_validation":true
+            }], "invocation":null
+        }}),
+        serde_json::json!({"edited_snapshot":{
+            "prompt_text":"edited", "image_refs":[], "invocation":{
+                "provider":"codex", "name":"audit", "display_name":null,
+                "path":null, "bypass_skill_validation":true
+            }
+        }}),
+    ] {
+        let (status, error) = call(&router, &token, "POST", &uri, Some(invalid), None).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{error}");
+        assert_eq!(error["error"]["code"], "invalid_request");
+    }
+    assert_eq!(provider.edit_calls(), 0, "no provider fork on invalid JSON");
+    assert_eq!(count_operations(), before, "no native intent was admitted");
+}
+
+#[tokio::test]
 async fn edit_and_rerun_forks_verified_provider_and_replays_exact_operation_without_reinvoking() {
     let (router, token, temp, provider, agent_id, turn_id) = ready_edit_agent(1).await;
     let base = format!("/v2/agents/{agent_id}");

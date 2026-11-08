@@ -194,6 +194,7 @@ pub enum LegacyWorkspaceMigrationResolutionAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LegacyWorkspaceMigrationResolutionRequest {
     pub action: LegacyWorkspaceMigrationResolutionAction,
     pub workspace_id: Option<String>,

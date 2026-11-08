@@ -147,6 +147,43 @@ async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessio
     let workspaces: Vec<runtime_core::WorkspaceRecord> = decode(workspaces_response).await;
     assert_eq!(workspaces.len(), 1);
 
+    // Rejected options must not silently authorize an authority rewrite or
+    // allocate an operation, even if the other resolution fields are valid.
+    let db = rusqlite::Connection::open(temp_dir.path().join("runtime.sqlite3")).unwrap();
+    let operation_count = || -> i64 {
+        db.query_row("SELECT COUNT(*) FROM runtime_operations", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    };
+    let before_invalid_resolution = operation_count();
+    for invalid in [
+        serde_json::json!({
+            "action":"map", "workspace_id":workspaces[0].workspace_id,
+            "force":true
+        }),
+        serde_json::json!({
+            "action":"archive", "workspace_id":null,
+            "dry_run":true
+        }),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(auth_request(
+                "POST",
+                &format!("/v2/migrations/workspaces/resolutions/session/{orphan_id}"),
+                &token,
+                Some(invalid),
+                Some("invalid-migration-options"),
+            ))
+            .await
+            .expect("invalid migration resolution response");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body: serde_json::Value = decode(response).await;
+        assert_eq!(body["error"]["code"], "invalid_request");
+    }
+    assert_eq!(operation_count(), before_invalid_resolution);
+
     let resolution_body = serde_json::json!({
         "action": "map",
         "workspace_id": workspaces[0].workspace_id,

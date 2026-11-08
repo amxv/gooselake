@@ -15,6 +15,14 @@ async fn agent_creation_and_archival_reject_unknown_fields_before_lifecycle_effe
             "provider":"codex", "model":"test-model",
             "current_preferences":{"thinking_efort":"max"}
         }),
+        serde_json::json!({
+            "provider":"codex", "model":"test-model",
+            "onboarding":{"skill":{
+                "provider":"codex", "name":"audit",
+                "display_name":null, "path":null,
+                "bypass_skill_validation":true
+            }}
+        }),
     ] {
         let (status, body) = super::workspace_worktree_routes::call(
             &router,

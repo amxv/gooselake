@@ -31,6 +31,7 @@ impl TurnInputProjectionSource {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PersistedUserInputSnapshotImageRef {
     pub media_type: String,
     pub persisted_absolute_path: Option<String>,
@@ -38,6 +39,7 @@ pub struct PersistedUserInputSnapshotImageRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PersistedUserInputSnapshotInvocation {
     pub provider: String,
     pub name: String,
@@ -46,6 +48,7 @@ pub struct PersistedUserInputSnapshotInvocation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PersistedUserInputSnapshot {
     pub prompt_text: String,
     #[serde(default)]

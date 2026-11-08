@@ -475,25 +475,37 @@ supplying custom refresh options returns `400 invalid_request` without querying 
 
 Use the current agent `revision` from `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` when updating thinking preference or Claude permission intent. Both public mutations require `expected_revision`, return the new revision, and reject stale revisions with HTTP `409`. Changes are rejected during an active turn. Codex and Claude thinking preferences carry into later turns/resume; ACP retains its own preferences and does not support these mutations.
 
-Provider-backed agent archive, restore, preference and permission mutations
-also currently lack durable native-effect idempotency journals. These endpoints
-reject an `Idempotency-Key` with non-retryable HTTP `400` and code
-`idempotency_not_supported` **before** native effects or revision changes,
-instead of implying that lost replies can be safely retried. The existing
-unkeyed operations remain available, with their documented lifecycle guards;
-an ambiguous provider outcome still requires inspecting authoritative state.
+**For retry-safe preference and permission changes, send `Idempotency-Key`.**
+These two routes now commit an immutable operator request, exact native-session
+identity and exclusive agent claim to SQLite **before** calling the provider.
+A confirmed provider acknowledgement and the updated agent policy/revision
+are committed with the exact result in one transaction; `X-Operation-ID`
+identifies the durable receipt. Replaying the original operator key and body
+returns the original successful response without another provider call, even
+after the agent revision advances. Reusing that key for a different request
+returns `409 conflict`. A lost or ambiguous native acknowledgement is
+`409 outcome_unresolved` with `error.details.operation_id`; the effect remains
+under `manual_review`, blocking another native mutation, turn or provider
+resume until independently reconciled. **Do not retry with a new key.**
+
+Unkeyed preference/permission requests remain the legacy nonjournaled paths;
+they still honor revision checks but a lost native reply is **not** replay-safe.
+Provider-backed agent **archive and restore** still have no native-effect
+idempotency journal and reject `Idempotency-Key` with nonretryable
+`400 idempotency_not_supported` before native work. Those unkeyed lifecycle
+operations remain available with their documented guards.
 
 ```bash
 curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/agents/$AGENT_ID/context-limit"
 
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: policy-pref-001' \
   -d '{"expected_revision":0,"current_preferences":{"thinking_effort":"high"}}' \
   "$BASE_URL/v2/agents/$AGENT_ID/preferences"
 
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: policy-permission-001' \
   -d '{"expected_revision":1,"permission_intent":{"kind":"inherit_provider_configuration"}}' \
   "$BASE_URL/v2/agents/$AGENT_ID/permission"
 ```

@@ -4,6 +4,7 @@ pub mod edit_rerun;
 pub mod error;
 pub mod harness;
 pub mod model_policy;
+pub mod operator_native_policy;
 pub mod process_authority;
 pub mod process_service;
 pub mod provider;
@@ -45,6 +46,9 @@ pub use model_policy::{
     claude_model_catalog, codex_model_catalog, codex_model_policy, default_model_presets,
     migrate_retired_model, ProviderModelPreset, CLAUDE_FABLE_MODEL, CLAUDE_OPUS_MODEL,
     CLAUDE_SONNET_MODEL,
+};
+pub use operator_native_policy::{
+    OperatorNativePolicyAdmission, OperatorNativePolicyCommand, OperatorNativePolicyKind,
 };
 pub use process_authority::{
     process_status_is_terminal, ManagedProcessAdmission, ManagedProcessRecord,

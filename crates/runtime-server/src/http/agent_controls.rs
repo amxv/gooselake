@@ -176,15 +176,30 @@ pub(super) async fn update_agent_preferences(
     headers: HeaderMap,
     Json(request): Json<UpdateAgentPreferencesInput>,
 ) -> Result<Response, ApiError> {
-    reject_unjournaled_idempotency_key(&headers, "agent preference mutation")?;
     check_if_match_revision(&headers, request.expected_revision)?;
+    let idempotency_key = parse_idempotency_key(&headers)?;
+    let request = ProviderSessionPreferencesMutationRequest {
+        runtime_session_id: agent_id,
+        expected_revision: Some(request.expected_revision),
+        current_preferences: request.current_preferences,
+    };
+    if let Some(key) = idempotency_key {
+        let (result, operation_id) = state
+            .runtime
+            .mutate_workspace_agent_preferences_operator(
+                request,
+                runtime_core::OperationActor::operator(OPERATOR_PRINCIPAL),
+                key,
+            )
+            .await?;
+        return Ok(with_operation_id(
+            revisioned_response(result.revision, result),
+            &operation_id,
+        ));
+    }
     let result = state
         .runtime
-        .mutate_workspace_agent_preferences(ProviderSessionPreferencesMutationRequest {
-            runtime_session_id: agent_id,
-            expected_revision: Some(request.expected_revision),
-            current_preferences: request.current_preferences,
-        })
+        .mutate_workspace_agent_preferences(request)
         .await?;
     Ok(revisioned_response(result.revision, result))
 }
@@ -202,15 +217,30 @@ pub(super) async fn update_agent_permission(
     headers: HeaderMap,
     Json(request): Json<UpdateAgentPermissionInput>,
 ) -> Result<Response, ApiError> {
-    reject_unjournaled_idempotency_key(&headers, "agent permission mutation")?;
     check_if_match_revision(&headers, request.expected_revision)?;
+    let idempotency_key = parse_idempotency_key(&headers)?;
+    let request = ProviderPermissionMutationRequest {
+        runtime_session_id: agent_id,
+        expected_revision: Some(request.expected_revision),
+        permission_intent: request.permission_intent,
+    };
+    if let Some(key) = idempotency_key {
+        let (result, operation_id) = state
+            .runtime
+            .mutate_workspace_agent_permission_operator(
+                request,
+                runtime_core::OperationActor::operator(OPERATOR_PRINCIPAL),
+                key,
+            )
+            .await?;
+        return Ok(with_operation_id(
+            revisioned_response(result.revision, result),
+            &operation_id,
+        ));
+    }
     let result = state
         .runtime
-        .mutate_workspace_agent_permission(ProviderPermissionMutationRequest {
-            runtime_session_id: agent_id,
-            expected_revision: Some(request.expected_revision),
-            permission_intent: request.permission_intent,
-        })
+        .mutate_workspace_agent_permission(request)
         .await?;
     Ok(revisioned_response(result.revision, result))
 }

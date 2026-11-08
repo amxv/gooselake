@@ -793,7 +793,10 @@ fn insert_session(connection: &Connection, record: &SessionRecord) -> Result<(),
     Ok(())
 }
 
-fn update_session(connection: &Connection, record: &SessionRecord) -> Result<(), RuntimeError> {
+pub(crate) fn update_session(
+    connection: &Connection,
+    record: &SessionRecord,
+) -> Result<(), RuntimeError> {
     let changed = connection
         .execute(
             "UPDATE sessions SET

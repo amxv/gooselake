@@ -23,6 +23,8 @@ pub use worktree_trait::*;
 use async_trait::async_trait;
 use serde_json::Value;
 
+#[path = "services_operator_policy_store_trait.rs"]
+mod operator_policy_store_trait;
 #[path = "services_operator_turn_models.rs"]
 mod operator_turn_models;
 #[path = "services_operator_turn_store_trait.rs"]
@@ -64,6 +66,8 @@ pub trait RuntimeStore:
     WorkspaceWorktreeCreationStore + OperatorUserTurnStore + Send + Sync
 {
     message_operator::message_operator_methods!();
+
+    operator_policy_store_trait::operator_native_policy_store_methods!();
 
     /// Transactionally snapshot approved pre-add hooks against a trusted
     /// reserved agent identity before any shell or provider work can start.

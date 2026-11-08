@@ -77,6 +77,18 @@ impl RuntimeSessionManager {
         }
 
         for session_id in session_ids {
+            if let Some(operation_id) = self
+                .store
+                .unresolved_operator_native_policy_for_agent(&session_id)?
+            {
+                // Native policy may have changed after SQLite committed the
+                // immutable intent. Never reconstruct the old policy by
+                // silently resuming/recreating this provider attachment.
+                summary.notes.push(format!(
+                    "session {session_id} native resume withheld by unresolved operator policy operation {operation_id}"
+                ));
+                continue;
+            }
             if let Some(operation_id) = self.store.retiring_operation_for_session(&session_id)? {
                 summary.notes.push(format!(
                     "session {session_id} native resume/turn replay withheld by workspace retirement {operation_id}"

@@ -109,6 +109,16 @@ impl TestProvider {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    pub(crate) fn set_preferences_mutation_mode(&self, mode: u8) {
+        self.preferences_mutation_mode
+            .store(mode, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn preferences_mutation_calls(&self) -> usize {
+        self.preferences_mutation_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub(crate) async fn observed_thinking_efforts(
         &self,
         session_id: &str,

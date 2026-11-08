@@ -28,6 +28,7 @@ struct TestProviderSession {
     cwd: Option<String>,
     history: Vec<String>,
     current_preferences: runtime_core::ProviderSessionPreferences,
+    current_permission_intent: runtime_core::ProviderPermissionIntent,
     seen_thinking_efforts: Vec<Option<runtime_core::ProviderThinkingEffort>>,
     completed: HashMap<String, ProviderTurnResult>,
     pending: HashMap<String, ProviderSendTurnRequest>,
@@ -47,6 +48,8 @@ pub(super) struct TestProvider {
     pub(super) send_failure_mode: std::sync::atomic::AtomicU8,
     pub(super) send_invocations: std::sync::atomic::AtomicUsize,
     supports_thinking: std::sync::atomic::AtomicBool,
+    preferences_mutation_calls: std::sync::atomic::AtomicUsize,
+    preferences_mutation_mode: std::sync::atomic::AtomicU8,
     disabled: std::sync::atomic::AtomicBool,
     compaction_events: std::sync::Mutex<
         Option<tokio::sync::broadcast::Sender<runtime_core::ProviderRuntimeEvent>>,
@@ -61,8 +64,10 @@ impl TestProvider {
 }
 
 #[derive(Default)]
-struct TestClaudeProvider {
+pub(super) struct TestClaudeProvider {
     state: Mutex<TestProviderState>,
+    permission_mutation_calls: std::sync::atomic::AtomicUsize,
+    permission_mutation_mode: std::sync::atomic::AtomicU8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,12 +155,24 @@ impl RuntimeProvider for TestProvider {
                 "thinking mutation disabled".into(),
             ));
         }
+        self.preferences_mutation_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut state = self.state.lock().await;
         let session = state
             .sessions
             .get_mut(&req.runtime_session_id)
             .ok_or_else(|| RuntimeError::NotFound(format!("session {}", req.runtime_session_id)))?;
         session.current_preferences = req.current_preferences.clone();
+        if self
+            .preferences_mutation_mode
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 2
+        {
+            return Err(RuntimeError::provider_dispatch_unknown(
+                "test_policy_ack_lost",
+                "test provider applied its native policy before losing the acknowledgement",
+            ));
+        }
         Ok(runtime_core::ProviderSessionPreferencesMutationResult {
             revision: 0,
             current_preferences: req.current_preferences,
@@ -464,11 +481,19 @@ impl RuntimeProvider for TestClaudeProvider {
         runtime_core::ProviderCapabilities {
             model_discovery: runtime_core::ProviderDiscoveryMode::Catalog,
             session_resume: runtime_core::ProviderCapabilitySupport::Supported,
+            permission_mutation: runtime_core::ProviderCapabilitySupport::Supported,
             interrupt: runtime_core::ProviderCapabilitySupport::Supported,
             tools: runtime_core::ProviderCapabilitySupport::Supported,
             setting_sources: runtime_core::ProviderCapabilitySupport::Supported,
             ..Default::default()
         }
+    }
+
+    async fn mutate_session_permission(
+        &self,
+        request: runtime_core::ProviderPermissionMutationRequest,
+    ) -> Result<runtime_core::ProviderPermissionMutationResult, RuntimeError> {
+        self.fake_claude_mutate_permission(request).await
     }
 
     async fn healthcheck(&self) -> Result<(), RuntimeError> {
@@ -640,6 +665,8 @@ impl RuntimeProvider for TestClaudeProvider {
 }
 
 mod acp_provider;
+#[path = "support_claude_policy.rs"]
+mod support_claude_policy;
 #[path = "support_compaction.rs"]
 mod support_compaction;
 #[path = "support_edit_rerun.rs"]
@@ -806,6 +833,19 @@ pub(super) async fn build_mixed_provider_test_router_with_runtime() -> (
     Arc<TestAcpProvider>,
     Arc<RuntimeSessionManager>,
 ) {
+    let (router, token, temp, acp, _claude, runtime) =
+        build_mixed_provider_test_router_with_claude().await;
+    (router, token, temp, acp, runtime)
+}
+
+pub(super) async fn build_mixed_provider_test_router_with_claude() -> (
+    Router,
+    String,
+    tempfile::TempDir,
+    Arc<TestAcpProvider>,
+    Arc<TestClaudeProvider>,
+    Arc<RuntimeSessionManager>,
+) {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp_dir.path().join("runtime.sqlite3"),
@@ -814,11 +854,12 @@ pub(super) async fn build_mixed_provider_test_router_with_runtime() -> (
 
     let mut registry = runtime_core::ProviderRegistry::new();
     let acp_provider = Arc::new(TestAcpProvider::default());
+    let claude_provider = Arc::new(TestClaudeProvider::default());
     registry
         .register(Arc::new(TestProvider::default()))
         .expect("register codex test provider");
     registry
-        .register(Arc::new(TestClaudeProvider::default()))
+        .register(claude_provider.clone())
         .expect("register claude test provider");
     registry
         .register(acp_provider.clone())
@@ -912,7 +953,14 @@ pub(super) async fn build_mixed_provider_test_router_with_runtime() -> (
         startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
     });
 
-    (router, bearer_token, temp_dir, acp_provider, runtime)
+    (
+        router,
+        bearer_token,
+        temp_dir,
+        acp_provider,
+        claude_provider,
+        runtime,
+    )
 }
 
 /// Test fixtures do not start a background worker, by design: some tests need

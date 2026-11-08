@@ -26,6 +26,15 @@ impl RuntimeSessionManager {
     ) -> Result<(), RuntimeError> {
         if let Some(operation_id) = self
             .store
+            .unresolved_operator_native_policy_for_agent(agent_id)?
+        {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "an operator policy mutation has unresolved native effects; inspect its operation before changing the provider attachment",
+            ));
+        }
+        if let Some(operation_id) = self
+            .store
             .unresolved_operator_user_turn_for_agent(agent_id)?
         {
             return Err(RuntimeError::operation_unresolved(
@@ -231,6 +240,15 @@ impl RuntimeSessionManager {
                     "an earlier operator model turn has unresolved native dispatch; inspect its operation before sending another turn",
                 ));
             }
+        }
+        if let Some(operation_id) = self
+            .store
+            .unresolved_operator_native_policy_for_agent(session_id)?
+        {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "a prior provider policy mutation has an unresolved native outcome; no new turn may be submitted",
+            ));
         }
         if session.status == "closed" || session.status == "failed" {
             return Err(RuntimeError::InvalidState(format!(

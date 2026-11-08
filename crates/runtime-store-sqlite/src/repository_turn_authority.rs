@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::db::{db_error, json_to_string, open_connection, opt_json_to_string};
 use crate::operation_tx::OperationAuthorityTransaction;
+use crate::repository_operator_native_policy::CLAIM_KIND as OPERATOR_POLICY_CLAIM;
 use crate::repository_workspace::operation_by_idempotency;
 use crate::SqliteRuntimeRepository;
 
@@ -90,6 +91,21 @@ impl SqliteRuntimeRepository {
             return Err(RuntimeError::operation_unresolved(
                 operation_id,
                 "an operator turn has unresolved native dispatch; inspect its operation before sending another turn",
+            ));
+        }
+        let policy_claim: Option<String> = transaction
+            .query_row(
+                "SELECT owner_operation_id FROM runtime_operation_resource_claims
+                 WHERE resource_kind=?1 AND resource_id=?2 AND claim_mode='exclusive'",
+                params![OPERATOR_POLICY_CLAIM, session.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking native operator policy claim", error))?;
+        if let Some(operation_id) = policy_claim {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "a provider policy mutation has unresolved native effects; no logical turn can be admitted",
             ));
         }
         guard_process_completion_admission(&transaction, admission)?;

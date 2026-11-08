@@ -57,6 +57,7 @@ mod operator_rebind_etag;
 mod operator_rebind_unknown;
 mod operator_success_headers;
 mod operator_unjournaled_idempotency;
+mod operator_unsupported_preconditions;
 mod operator_user_turn_idempotency;
 mod operator_worktree_idempotency;
 mod process_more;

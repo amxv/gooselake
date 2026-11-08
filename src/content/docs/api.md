@@ -101,6 +101,13 @@ optional matching `If-Match` alongside mandatory `expected_revision`, and
 successful mutations return the new agent-policy revision ETag. The service
 still verifies the revision transactionally before committing policy changes.
 
+Operator native-effect endpoints without a revision/`expected_revision` CAS
+contract reject `If-Match` with nonretryable `400
+revision_precondition_not_supported` **before** doing work. This includes
+agent creation/archive/restore, managed worktree creation/cleanup, user turn
+submission, manual compaction, context refresh and workspace interruption.
+Sending a strong ETag does not silently protect an unrelated action.
+
 `GET /v2/workspaces/{workspace_id}/agents` uses an indexed ascending
 `(created_at, agent_id)` keyset, with optional `lifecycle=active|archived|all`
 and `limit=1..100`. Supply the exact `X-Next-Cursor` from a previous page.

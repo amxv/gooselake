@@ -717,6 +717,35 @@ async fn verified_rebind_cleanup_retries_safely_after_an_interrupted_native_clea
         Path::new(previous).is_dir(),
         "rejected replay key must not delete Git worktree"
     );
+    let rejected_precondition = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&retry)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::IF_MATCH, "\"1\"")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected_precondition.status(), StatusCode::BAD_REQUEST);
+    let error: serde_json::Value = serde_json::from_slice(
+        &to_bytes(rejected_precondition.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        error["error"]["code"],
+        "revision_precondition_not_supported"
+    );
+    assert!(
+        Path::new(previous).is_dir(),
+        "ignored If-Match must not delete Git worktree"
+    );
+    assert_eq!(provider.rebind_calls().await, 1);
     let (status, result) = call(&router, &token, "POST", &retry, None, None).await;
     assert_eq!(status, StatusCode::OK, "{result:?}");
     assert_eq!(result["previous_cleanup_status"], "deleted");

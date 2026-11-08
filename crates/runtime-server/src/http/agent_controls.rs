@@ -59,6 +59,7 @@ pub(super) async fn compact_agent_session(
     body: axum::body::Bytes,
 ) -> Result<Json<SessionCompactionRun>, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unsupported_if_match(&headers, "native session compaction")?;
     let key = parse_idempotency_key(&headers)?;
     Ok(Json(
         state
@@ -105,6 +106,7 @@ pub(super) async fn send_agent_turn_v2(
     headers: HeaderMap,
     Json(input): Json<PublicSendTurnInput>,
 ) -> Result<Response, ApiError> {
+    reject_unsupported_if_match(&headers, "user turn submission")?;
     let idempotency_key = parse_idempotency_key(&headers)?;
     let input = SendTurnInput::from(input);
     if let Some(key) = idempotency_key {
@@ -148,6 +150,7 @@ pub(super) async fn refresh_agent_context_limit(
     body: axum::body::Bytes,
 ) -> Result<Json<SessionContextLimitSnapshot>, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unsupported_if_match(&headers, "context-limit refresh")?;
     reject_unjournaled_idempotency_key(&headers, "context-limit refresh")?;
     Ok(Json(
         state

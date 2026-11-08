@@ -166,6 +166,23 @@ pub(super) fn reject_unjournaled_idempotency_key(
     Ok(())
 }
 
+/// A nonrevisioned operator action may still have durable native-effect
+/// fences, but it has no `If-Match` compare-and-set contract. Never silently
+/// ignore a supplied strong ETag while performing that action.
+pub(super) fn reject_unsupported_if_match(
+    headers: &HeaderMap,
+    action: &str,
+) -> Result<(), ApiError> {
+    if headers.contains_key(header::IF_MATCH) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "revision_precondition_not_supported",
+            format!("If-Match is not supported for {action}; no revision precondition was checked"),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn check_if_match_revision(
     headers: &HeaderMap,
     expected_revision: u64,

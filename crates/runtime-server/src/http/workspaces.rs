@@ -352,6 +352,7 @@ pub(super) async fn create_workspace_worktree(
     headers: HeaderMap,
     Json(input): Json<WorkspaceWorktreeCreateInput>,
 ) -> Result<Response, ApiError> {
+    reject_unsupported_if_match(&headers, "managed worktree creation")?;
     let request = WorkspaceWorktreeCreateRequest {
         workspace_id,
         worktree_name: input.worktree_name,
@@ -460,6 +461,7 @@ pub(super) async fn retry_workspace_agent_rebind_cleanup(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unsupported_if_match(&headers, "worktree cleanup retry")?;
     reject_unjournaled_idempotency_key(&headers, "worktree cleanup retry")?;
     if !state.app.worktree_settings.enabled {
         return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
@@ -565,6 +567,7 @@ pub(super) async fn interrupt_workspace_turns(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unsupported_if_match(&headers, "workspace interruption")?;
     let idempotency_key = parse_idempotency_key(&headers)?;
     let command = prepare_workspace_interrupt(
         workspace_id.trim(),
@@ -590,6 +593,7 @@ pub(super) async fn create_workspace_agent(
     headers: HeaderMap,
     Json(mut request): Json<WorkspaceAgentCreateRequest>,
 ) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+    reject_unsupported_if_match(&headers, "workspace agent creation")?;
     reject_unjournaled_idempotency_key(&headers, "workspace agent creation")?;
     if let Some(WorkspaceAgentInitialRoute::New {
         worktree_name,
@@ -728,6 +732,7 @@ pub(super) async fn archive_workspace_agent(
     headers: HeaderMap,
     Json(request): Json<WorkspaceAgentArchiveRequest>,
 ) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+    reject_unsupported_if_match(&headers, "workspace agent archival")?;
     reject_unjournaled_idempotency_key(&headers, "workspace agent archive")?;
     let archived = state
         .runtime
@@ -747,6 +752,7 @@ pub(super) async fn restore_workspace_agent(
     body: axum::body::Bytes,
 ) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unsupported_if_match(&headers, "workspace agent restoration")?;
     reject_unjournaled_idempotency_key(&headers, "workspace agent restore")?;
     let restored = state
         .runtime

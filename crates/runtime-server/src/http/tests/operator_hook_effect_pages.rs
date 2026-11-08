@@ -118,6 +118,34 @@ async fn operator_hook_history_is_redacted_paginated_and_exactly_inspectable() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(beta.as_array().unwrap().len(), 25);
+    // Validly encoded keys from another workspace, fabricated timestamps,
+    // and deleted/missing effects cannot silently skip effect history.
+    let encoded = |text: &str| {
+        text.bytes()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
+    for invalid in [
+        format!(
+            "{base}?cursor=100:{}:post_teammate_add:{}",
+            encoded("evt_hook_000"),
+            encoded("private:hook-000")
+        ),
+        format!(
+            "{base}?cursor=101:{}:post_teammate_add:{}",
+            encoded("evt_hook_001"),
+            encoded("private:hook-001")
+        ),
+        format!(
+            "{base}?cursor=100:{}:post_teammate_add:{}",
+            encoded("evt_missing"),
+            encoded("private:hook-001")
+        ),
+    ] {
+        let (status, _, body) = hook_get(&router, Some(&token), &invalid).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}: {body}");
+        assert_eq!(body["error"]["code"], "invalid_state", "{invalid}");
+    }
     let detail = format!("{base}/evt_hook_001/post_teammate_add/private:hook-001");
     let (status, _, body) = hook_get(&router, Some(&token), &detail).await;
     assert_eq!(status, StatusCode::OK);

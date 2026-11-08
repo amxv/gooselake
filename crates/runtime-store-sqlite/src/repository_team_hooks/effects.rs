@@ -415,6 +415,28 @@ impl SqliteRuntimeRepository {
             ));
         }
         let connection = open_connection(&self.database_path)?;
+        if let Some(cursor) = cursor {
+            let timestamp: Option<i64> = connection
+                .query_row(
+                    "SELECT created_at_ms FROM workspace_hook_effects
+                     WHERE workspace_id=?1 AND parent_event_id=?2
+                       AND event_name=?3 AND hook_name=?4",
+                    params![
+                        workspace_id,
+                        cursor.parent_event_id,
+                        cursor.event_name.as_str(),
+                        cursor.hook_name,
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| db_error("failed validating hook effect page cursor", error))?;
+            if timestamp != Some(cursor.created_at_ms) {
+                return Err(RuntimeError::InvalidState(
+                    "hook effect cursor is outside the requested workspace or timestamp".into(),
+                ));
+            }
+        }
         let select = "SELECT parent_event_id,event_name,hook_name,phase,attempt_count,
                 created_at_ms,updated_at_ms,application_state,application_error_code,applied_at_ms
              FROM workspace_hook_effects WHERE workspace_id=?1";

@@ -1,6 +1,88 @@
 use super::*;
 
 #[tokio::test]
+async fn workspace_history_requires_an_existing_exact_cursor_anchor() {
+    let (router, token, temp) = build_test_router().await;
+    let mut expected = Vec::new();
+    for index in 0..3 {
+        let root = temp.path().join(format!("workspace-page-anchor-{index}"));
+        fs::create_dir_all(&root).unwrap();
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v2/workspaces")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"canonical_root":root}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let registered: runtime_core::WorkspaceRegisterResponse =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        expected.push((
+            registered.workspace.created_at,
+            registered.workspace.workspace_id,
+        ));
+    }
+    expected.sort();
+
+    let get = |uri: &str| {
+        Request::builder()
+            .uri(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let mut cursor = None;
+    let mut seen = Vec::new();
+    loop {
+        let uri = cursor.as_ref().map_or_else(
+            || "/v2/workspaces?limit=1".to_string(),
+            |cursor: &String| format!("/v2/workspaces?limit=1&cursor={cursor}"),
+        );
+        let response = router.clone().oneshot(get(&uri)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        cursor = response
+            .headers()
+            .get("x-next-cursor")
+            .map(|header| header.to_str().unwrap().to_string());
+        let page: Vec<runtime_core::WorkspaceRecord> =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(page.len(), 1);
+        seen.push((page[0].created_at, page[0].workspace_id.clone()));
+        if cursor.is_none() {
+            break;
+        }
+        assert!(seen.len() < 10, "cursor must advance");
+    }
+    assert_eq!(seen, expected);
+
+    for invalid in [
+        format!(
+            "/v2/workspaces?cursor={}:{}",
+            expected[0].0 + 1,
+            expected[0].1
+        ),
+        "/v2/workspaces?cursor=100:workspace_nonexistent".to_string(),
+    ] {
+        let response = router.clone().oneshot(get(&invalid)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{invalid}");
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["error"]["code"], "invalid_state");
+    }
+}
+
+#[tokio::test]
 async fn approved_pre_add_hook_runs_before_http_agent_creation_and_persists_context() {
     let (router, token, temp) = build_test_router().await;
     let root = temp.path().join("pre-add-http-workspace");

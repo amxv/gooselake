@@ -183,6 +183,21 @@ impl SqliteRuntimeRepository {
         limit: usize,
     ) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        if let Some((created_at, workspace_id)) = after.as_ref() {
+            let anchor: Option<i64> = connection
+                .query_row(
+                    "SELECT created_at FROM workspaces WHERE workspace_id=?1",
+                    [workspace_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| db_error("failed validating workspace page cursor", error))?;
+            if anchor != Some(*created_at) {
+                return Err(RuntimeError::InvalidState(
+                    "workspace cursor does not match an existing creation record".into(),
+                ));
+            }
+        }
         let mut statement = connection
             .prepare(
                 "SELECT workspace_id, canonical_root, display_name, lifecycle_state,

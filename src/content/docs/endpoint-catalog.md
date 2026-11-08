@@ -37,7 +37,7 @@ provider rebind and edit records retain their specialized detail routes.
 ## Workspace Authority + Durable Operations
 
 - `POST /v2/workspaces` (Bearer, JSON; optional `Idempotency-Key` header)
-- `GET /v2/workspaces` (Bearer; keyset pagination with optional `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when another page exists)
+- `GET /v2/workspaces` (Bearer; keyset pagination with optional `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when another page exists; cursor must identify an existing workspace at its exact creation timestamp)
 - `GET /v2/workspaces/{workspace_id}` (Bearer)
 - `POST /v2/workspaces/{workspace_id}/retire` (Bearer, JSON `expected_revision`, optional `Idempotency-Key`; atomic retirement only when no session or asynchronous obligations exist)
 - `POST /v2/workspaces/{workspace_id}/retirement/advance` (Bearer, JSON `expected_revision`, required `Idempotency-Key`; durable populated-workspace retirement, returning operation details)
@@ -46,7 +46,7 @@ provider rebind and edit records retain their specialized detail routes.
 - `GET /v2/workspaces/{workspace_id}/hooks` (Bearer; optional `event` filter, read-only effective hook configuration plus exact executable post-event capability list)
 - `GET /v2/workspaces/{workspace_id}/hooks/approval` (Bearer; current operator-granted hook snapshot and revision)
 - `PUT /v2/workspaces/{workspace_id}/hooks/approval` (Bearer, JSON; `expected_revision` and resolved event/name/fingerprint selections, optional `Idempotency-Key`, response `ETag` and `X-Operation-ID`; empty selection revokes all grants)
-- `GET /v2/workspaces/{workspace_id}/hooks/effects` (Bearer; redacted, indexed newest-first hook effect summaries; `limit` from 1 to 100 and optional `cursor`, response `X-Next-Cursor`)
+- `GET /v2/workspaces/{workspace_id}/hooks/effects` (Bearer; redacted, indexed newest-first hook effect summaries; `limit` from 1 to 100 and optional `cursor`, response `X-Next-Cursor`; cursor must identify an exact effect/time in this workspace)
 - `GET /v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}` (Bearer; full approved hook, input and receipt for one exact durable effect)
 - `GET /v2/workspaces/{workspace_id}/worktrees` (Bearer; managed Git inventory, native eligibility, attached agents and per-record revisions; `limit=1..100` with `cursor` and `X-Next-Cursor` for name/ID-ordered pages; cursor must identify a currently present worktree in this repository)
 - `POST /v2/workspaces/{workspace_id}/worktrees` (Bearer, JSON; create/reuse a named workspace managed worktree; optional `Idempotency-Key` durably admits Git/init intent and replays its exact result; `X-Operation-ID` on success and on `409 outcome_unresolved` with `error.details.operation_id`)
@@ -75,7 +75,7 @@ provider rebind and edit records retain their specialized detail routes.
 - `POST /v2/agents/{agent_id}/compact` (Bearer; optional `Idempotency-Key`; admit provider compaction before dispatch)
 - `GET /v2/agents/{agent_id}/compactions/{run_id}` (Bearer; durable compaction request state)
 - `POST /v2/agents/{agent_id}/compactions/{run_id}/resolve` (Bearer, JSON; operator-confirmed `completed` or `failed` with external evidence)
-- `GET /v2/migrations/workspaces` (Bearer; bounded subject diagnostics, `limit=1..100`, `cursor`, `X-Next-Cursor`, full-state counts)
+- `GET /v2/migrations/workspaces` (Bearer; bounded subject diagnostics, `limit=1..100`, `cursor`, `X-Next-Cursor`, full-state counts; cursor must identify a subject in the current preview)
 - `POST /v2/migrations/workspaces/preview` (Bearer; refresh and page subject diagnostics with the same cursor contract)
 - `POST /v2/migrations/workspaces/apply` (Bearer; optional `Idempotency-Key` header)
 - `POST /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}` (Bearer, JSON; optional `Idempotency-Key` header)

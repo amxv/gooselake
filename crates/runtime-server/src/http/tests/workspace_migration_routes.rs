@@ -75,6 +75,24 @@ async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessio
         assert_eq!(second.unresolved_subjects, 1);
         assert_ne!(first.subjects[0].subject_id, second.subjects[0].subject_id);
 
+        // A well-formed opaque continuation must refer to a real subject in
+        // the *current* migration snapshot. It is not a free-form seek key.
+        let forged = encode_opaque_pair_cursor("0", "not_a_current_migration_subject");
+        let response = router
+            .clone()
+            .oneshot(auth_request(
+                route.0,
+                &format!("{}?limit=1&cursor={forged}", route.1),
+                &token,
+                None,
+                None,
+            ))
+            .await
+            .expect("forged opaque migration cursor response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let invalid: serde_json::Value = decode(response).await;
+        assert_eq!(invalid["error"]["code"], "invalid_request");
+
         for bad_query in [
             "limit=0",
             "limit=101",

@@ -208,7 +208,10 @@ remains a JSON array for client compatibility. When another page exists, the
 server returns an `X-Next-Cursor` response header to pass back verbatim as the
 next `cursor`; when the header is absent, the listing is complete. The cursor
 uses the durable `(created_at, opaque_id)` order, not offsets that can shift
-when agents or workspaces are added. Workspace-agent lists also accept
+when agents or workspaces are added. The workspace-list cursor must match
+the exact creation timestamp and ID of a currently existing workspace;
+fabricated or removed anchors return HTTP 400 rather than silently skipping
+the collection. Workspace-agent lists also accept
 `lifecycle=active|archived|all` independently from pagination.
 
 Read the durable state:
@@ -372,7 +375,10 @@ newest-first, indexed operator effect summaries, with `limit` from 1 to 100
 and an optional `cursor`. When another page exists, pass the response's
 `X-Next-Cursor` as the next request's `cursor`. Summary rows expose event
 identity, hook name, execution phase, attempts, application state and
-timestamps, **not** shell commands, hook inputs or native receipts. Inspect
+timestamps, **not** shell commands, hook inputs or native receipts.
+The continuation must refer to an actual effect in the selected workspace
+with its original creation timestamp; a forged, removed or foreign effect
+cursor returns HTTP 400 without scanning other workspaces. Inspect
 one effect explicitly via
 `GET /v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}`
 to retrieve its full approved hook, input and receipt. Both routes require

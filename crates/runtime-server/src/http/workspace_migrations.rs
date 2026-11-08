@@ -10,11 +10,7 @@ pub(super) async fn preview_workspace_migration(
     Query(query): Query<MigrationSubjectPageQuery>,
 ) -> Result<Response, ApiError> {
     let (limit, cursor) = query.parse()?;
-    Ok(paged_migration_status(
-        refresh_preview(&state)?,
-        limit,
-        cursor,
-    ))
+    paged_migration_status(refresh_preview(&state)?, limit, cursor)
 }
 
 pub(super) async fn get_workspace_migration_status(
@@ -23,7 +19,7 @@ pub(super) async fn get_workspace_migration_status(
 ) -> Result<Response, ApiError> {
     let (limit, cursor) = query.parse()?;
     let status = state.app.services.store.workspace_migration_status()?;
-    Ok(paged_migration_status(status, limit, cursor))
+    paged_migration_status(status, limit, cursor)
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,8 +67,15 @@ fn paged_migration_status(
     mut status: runtime_core::LegacyWorkspaceMigrationStatus,
     limit: usize,
     cursor: Option<(u8, String)>,
-) -> Response {
+) -> Result<Response, ApiError> {
     if let Some((kind, id)) = cursor {
+        if !status.subjects.iter().any(|subject| {
+            migration_subject_rank(subject.subject_kind) == kind && subject.subject_id == id
+        }) {
+            return Err(ApiError::bad_request(
+                "migration cursor is not in the current subject collection".into(),
+            ));
+        }
         status.subjects.retain(|subject| {
             (
                 migration_subject_rank(subject.subject_kind),
@@ -100,7 +103,7 @@ fn paged_migration_status(
                 .expect("hex migration cursor is valid header text"),
         );
     }
-    response
+    Ok(response)
 }
 
 pub(super) async fn apply_workspace_migration(

@@ -173,7 +173,9 @@ pub(super) async fn retry_agent_delivery(
     State(state): State<AppState>,
     Path(delivery_id): Path<String>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
+    require_empty_request_body(&body)?;
     if let Some(key) = parse_idempotency_key(&headers)? {
         let command = prepare_agent_delivery_retry(
             &delivery_id,
@@ -209,7 +211,9 @@ pub(super) async fn cancel_agent_message(
     State(state): State<AppState>,
     Path(message_id): Path<String>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
+    require_empty_request_body(&body)?;
     let command = prepare_agent_message_cancellation(
         &message_id,
         OperationActor::operator(OPERATOR_PRINCIPAL),

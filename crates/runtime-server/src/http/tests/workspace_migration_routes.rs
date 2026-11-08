@@ -115,6 +115,57 @@ async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessio
         }
     }
 
+    // Neither preview nor apply has a JSON input contract. An optimistic
+    // `dry_run` or `force` flag must not be ignored while rewriting durable
+    // migration state or admitting a migration operation.
+    let db = rusqlite::Connection::open(temp_dir.path().join("runtime.sqlite3")).unwrap();
+    let before_unexpected_bodies: i64 = db
+        .query_row("SELECT COUNT(*) FROM runtime_operations", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    for path in [
+        "/v2/migrations/workspaces/preview",
+        "/v2/migrations/workspaces/apply",
+    ] {
+        for unexpected in [
+            serde_json::json!({"dry_run":true}),
+            serde_json::json!({"force":true}),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(auth_request(
+                    "POST",
+                    path,
+                    &token,
+                    Some(unexpected),
+                    Some("discarded-options-must-not-admit"),
+                ))
+                .await
+                .expect("unsupported mutation body response");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+            let error: serde_json::Value = decode(response).await;
+            assert_eq!(error["error"]["code"], "invalid_request");
+            assert_eq!(error["error"]["retryable"], false);
+        }
+    }
+    let after_unexpected_bodies: i64 = db
+        .query_row("SELECT COUNT(*) FROM runtime_operations", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(after_unexpected_bodies, before_unexpected_bodies);
+    let before_apply = router
+        .clone()
+        .oneshot(auth_request("GET", "/v2/workspaces", &token, None, None))
+        .await
+        .unwrap();
+    let unchanged_workspaces: Vec<runtime_core::WorkspaceRecord> = decode(before_apply).await;
+    assert!(
+        unchanged_workspaces.is_empty(),
+        "JSON options must not apply migration"
+    );
+
     let apply_response = router
         .clone()
         .oneshot(auth_request(

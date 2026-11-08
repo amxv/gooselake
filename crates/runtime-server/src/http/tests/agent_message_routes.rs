@@ -495,6 +495,29 @@ async fn keyed_message_cancellation_replays_exact_http_receipt_and_operation() {
     assert_eq!(message.deliveries[0].status, "deferred");
 
     let uri = format!("/v2/messages/{}/cancel", message.message.id);
+    let invalid = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("Idempotency-Key", "must-not-cancel")
+                .body(Body::from(r#"{"dry_run":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    let error: serde_json::Value =
+        serde_json::from_slice(&to_bytes(invalid.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(error["error"]["code"], "invalid_request");
+    assert_eq!(
+        list_deliveries(&router, &token, &message.message.id).await[0].status,
+        "deferred",
+        "unrecognized cancel options must not mutate a delivery"
+    );
     let cancel = |uri: &str, key: &str| {
         Request::builder()
             .method("POST")

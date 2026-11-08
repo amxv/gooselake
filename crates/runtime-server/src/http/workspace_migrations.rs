@@ -8,7 +8,9 @@ use runtime_core::{
 pub(super) async fn preview_workspace_migration(
     State(state): State<AppState>,
     Query(query): Query<MigrationSubjectPageQuery>,
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
+    require_empty_request_body(&body)?;
     let (limit, cursor) = query.parse()?;
     paged_migration_status(refresh_preview(&state)?, limit, cursor)
 }
@@ -109,7 +111,9 @@ fn paged_migration_status(
 pub(super) async fn apply_workspace_migration(
     State(state): State<AppState>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
+    require_empty_request_body(&body)?;
     let command = prepare_legacy_workspace_migration_apply(
         OperationActor::operator(super::workspaces::OPERATOR_PRINCIPAL),
         super::workspaces::parse_idempotency_key(&headers)?,

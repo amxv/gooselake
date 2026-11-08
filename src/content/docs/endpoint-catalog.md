@@ -80,8 +80,8 @@ provider rebind and edit records retain their specialized detail routes.
 - `GET /v2/agents/{agent_id}/compactions/{run_id}` (Bearer; durable compaction request state)
 - `POST /v2/agents/{agent_id}/compactions/{run_id}/resolve` (Bearer, JSON; operator-confirmed `completed` or `failed` with external evidence)
 - `GET /v2/migrations/workspaces` (Bearer; bounded subject diagnostics, `limit=1..100`, `cursor`, `X-Next-Cursor`, full-state counts; cursor must identify a subject in the current preview)
-- `POST /v2/migrations/workspaces/preview` (Bearer; refresh and page subject diagnostics with the same cursor contract)
-- `POST /v2/migrations/workspaces/apply` (Bearer; optional `Idempotency-Key` header)
+- `POST /v2/migrations/workspaces/preview` (Bearer; no request body accepted; refresh and page subject diagnostics with the same cursor contract)
+- `POST /v2/migrations/workspaces/apply` (Bearer; no request body accepted, including unsupported dry-run/force options; optional `Idempotency-Key` header)
 - `POST /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}` (Bearer, strict JSON `action` and optional `workspace_id`; unsupported fields rejected before a mapping operation; optional `Idempotency-Key` header)
 - `GET /v2/operations/{operation_id}` (Bearer)
 - `GET /v2/operations` (Bearer; indexed newest-first durable operation summaries, optional `workspace_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when more; cursor must match the exact operation ID/time in the selected workspace)
@@ -136,8 +136,8 @@ Legacy workspace migration preview classifies every persisted legacy authority s
 - `POST /v2/messages` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/messages` (Bearer; optional `workspace_id`, `sender_agent_id`, `cursor`, `limit=1..100` default 50; JSON `next_cursor`)
 - `GET /v2/messages/{message_id}/deliveries` (Bearer; optional `recipient_agent_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for subsequent array pages; cursor must match the exact delivery ID/time in that message and recipient filter)
-- `POST /v2/messages/{message_id}/cancel` (Bearer; optional `Idempotency-Key`; response `X-Operation-ID`)
-- `POST /v2/deliveries/{delivery_id}/retry` (Bearer; optional `Idempotency-Key`; `X-Operation-ID` only for keyed exact pending admission)
+- `POST /v2/messages/{message_id}/cancel` (Bearer; no request body accepted; optional `Idempotency-Key`; response `X-Operation-ID`)
+- `POST /v2/deliveries/{delivery_id}/retry` (Bearer; no request body accepted; optional `Idempotency-Key`; `X-Operation-ID` only for keyed exact pending admission)
 
 Message history is paged by the durable indexed `(created_at, id)` keyset, with stable cursor validation against the requested workspace/sender filters. Only selected page bodies are read and decoded, not the entire runtime message history.
 

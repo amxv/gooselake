@@ -44,6 +44,29 @@ async fn keyed_retry_admits_once_replays_exact_pending_snapshot_and_preserves_le
     assert_eq!(message.deliveries[0].status, "deferred");
 
     let uri = format!("/v2/deliveries/{}/retry", message.deliveries[0].id);
+    let invalid = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("Idempotency-Key", "must-not-be-admitted")
+                .body(Body::from(r#"{"dry_run":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    let error: serde_json::Value =
+        serde_json::from_slice(&to_bytes(invalid.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(error["error"]["code"], "invalid_request");
+    assert_eq!(
+        list_deliveries(&router, &token, &message.message.id).await[0].status,
+        "deferred",
+        "unrecognized retry options must not dispatch"
+    );
     let keyed = |uri: &str, key: &str| {
         Request::builder()
             .method("POST")

@@ -1,5 +1,18 @@
 use super::*;
 
+/// Mutations without a JSON input contract must not silently execute while
+/// discarding caller-supplied options such as `dry_run` or `force`. The body
+/// extractor runs before any operation admission or native effect.
+pub(super) fn require_empty_request_body(body: &[u8]) -> Result<(), ApiError> {
+    if body.is_empty() {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "this operation does not accept a request body".into(),
+        ))
+    }
+}
+
 pub(super) fn parse_provider_kind(value: &str) -> Result<ProviderKind, ApiError> {
     ProviderKind::from_str(value)
         .ok_or_else(|| ApiError::bad_request(format!("unknown provider {}", value)))

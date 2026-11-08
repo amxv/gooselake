@@ -389,6 +389,10 @@ pub(super) async fn rebind_workspace_agent(
     headers: HeaderMap,
     Json(request): Json<runtime_core::WorkspaceAgentRebindRequest>,
 ) -> Result<Response, ApiError> {
+    // The body revision remains the transaction's CAS authority, but a
+    // caller-supplied HTTP precondition cannot be silently ignored before
+    // we admit an irreversible provider workspace rebind.
+    check_if_match_revision(&headers, request.expected_revision)?;
     if !state.app.worktree_settings.enabled {
         return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
     }
@@ -403,7 +407,12 @@ pub(super) async fn rebind_workspace_agent(
                 .await?;
     }
     let id = response.operation.operation_id.clone();
-    Ok(with_operation_id(Json(response), &id))
+    let revision = response.agent.as_ref().map(|agent| agent.revision);
+    let body = match revision {
+        Some(revision) => revisioned_response(revision, response),
+        None => Json(response).into_response(),
+    };
+    Ok(with_operation_id(body, &id))
 }
 
 async fn attempt_previous_worktree_cleanup(

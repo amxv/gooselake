@@ -63,7 +63,7 @@ provider rebind and edit records retain their specialized detail routes.
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` (Bearer; strong agent-revision ETag)
 - `GET /v2/agents/{agent_id}` (Bearer; global lookup of a workspace-owned agent, including archived history, with strong agent-revision ETag)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding` (Bearer; durable system notice, correlation and dispatch outcome)
-- `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree` (Bearer, JSON; optional `Idempotency-Key`, revisioned provider-evidence-backed rebind)
+- `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree` (Bearer, JSON; mandatory `expected_revision`, optional matching strong `If-Match` with typed `412` mismatch, optional `Idempotency-Key`, revisioned provider-evidence-backed rebind returning new agent `ETag` and `X-Operation-ID`)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}` (Bearer, durable provider-rebind status)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup` (Bearer; no request options (`{}` legacy-compatible); rejects `Idempotency-Key` until an exact retry receipt exists; retry pending previous-worktree cleanup after verified rebind, without repeating provider dispatch)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/archive` (Bearer, strict JSON; unknown properties rejected; unjournaled native effect rejects `Idempotency-Key`)

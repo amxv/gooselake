@@ -1078,6 +1078,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1245,6 +1250,11 @@ paths:
           required: true
           schema:
             type: string
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -1254,6 +1264,17 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "412":
+          description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
@@ -1267,6 +1288,11 @@ paths:
           required: true
           schema:
             type: string
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -1276,6 +1302,17 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "412":
+          description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
@@ -1773,6 +1810,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1837,6 +1879,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1986,6 +2033,11 @@ paths:
           required: false
           schema:
             type: string
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: JSON response
@@ -1994,6 +2046,16 @@ paths:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
                 type: string
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "412":
+          description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
@@ -2032,6 +2094,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2045,6 +2112,11 @@ paths:
           schema:
             type: string
         - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: If-Match
           in: header
           required: false
           schema:
@@ -2064,9 +2136,15 @@ paths:
               schema:
                 type: string
             ETag:
-              description: Strong quoted revision of the mutated authority
+              description: Strong quoted revision of the returned authority
               schema:
                 type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "412":
+          description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
@@ -2165,53 +2243,7 @@ paths:
           required: false
           schema:
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JsonObject"
-      responses:
-        "200":
-          description: JSON response
-          headers:
-            X-Operation-ID:
-              description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
-              schema:
-                type: string
-            ETag:
-              description: Strong quoted revision of the mutated authority
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/JsonObject"
-  /v2/workspaces/{workspace_id}/notice-policy:
-    get:
-      summary: Get workspace lifecycle notification policy
-      parameters:
-        - name: workspace_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: JSON response
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/JsonObject"
-    put:
-      summary: Compare-and-set workspace lifecycle notification policy
-      parameters:
-        - name: workspace_id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: Idempotency-Key
+        - name: If-Match
           in: header
           required: false
           schema:
@@ -2231,9 +2263,82 @@ paths:
               schema:
                 type: string
             ETag:
-              description: Strong quoted revision of the mutated authority
+              description: Strong quoted revision of the returned authority
               schema:
                 type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "412":
+          description: If-Match does not equal the strong ETag of the body expected_revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/notice-policy:
+    get:
+      summary: Get workspace lifecycle notification policy
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          headers:
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+    put:
+      summary: Compare-and-set workspace lifecycle notification policy
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          headers:
+            X-Operation-ID:
+              description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
+              schema:
+                type: string
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "412":
+          description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
@@ -2252,6 +2357,11 @@ paths:
           required: false
           schema:
             type: string
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -2266,6 +2376,12 @@ paths:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
                 type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "412":
+          description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
@@ -2300,6 +2416,11 @@ paths:
           required: true
           schema:
             type: string
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -2325,6 +2446,12 @@ paths:
               description: Durable frozen retirement operation, not proof of native provider settlement
               schema:
                 type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "412":
+          description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:

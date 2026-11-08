@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
+#[path = "openapi_revision.rs"]
+mod revision;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum HttpMethod {
     Get,
@@ -395,7 +398,8 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/messages"
                 | "/v2/messages/{message_id}/deliveries"
         );
-    if params.is_empty() && !accepts_idempotency_key && !has_query_parameters {
+    let accepts_if_match = revision::accepts_revision_precondition(path, method);
+    if params.is_empty() && !accepts_idempotency_key && !has_query_parameters && !accepts_if_match {
         return;
     }
     out.push_str("      parameters:\n");
@@ -463,6 +467,13 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         } else {
             "          required: false\n"
         });
+        out.push_str("          schema:\n");
+        out.push_str("            type: string\n");
+    }
+    if accepts_if_match {
+        out.push_str("        - name: If-Match\n");
+        out.push_str("          in: header\n");
+        out.push_str("          required: false\n");
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
     }
@@ -570,6 +581,16 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         return;
     }
     out.push_str("JSON response\n");
+    if (method == HttpMethod::Get
+        || matches!(
+            path,
+            "/v2/agents/{agent_id}/preferences" | "/v2/agents/{agent_id}/permission"
+        ))
+        && revision::returns_revision_etag(path, method)
+    {
+        out.push_str("          headers:\n");
+        revision::append_etag_header(out);
+    }
     if method == HttpMethod::Post
         && matches!(
             path,
@@ -624,20 +645,8 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("              description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route\n");
         out.push_str("              schema:\n");
         out.push_str("                type: string\n");
-        if (method == HttpMethod::Post && path == "/v2/workspaces/{workspace_id}/lead")
-            || (method == HttpMethod::Put
-                && matches!(
-                    path,
-                    "/v2/workspaces/{workspace_id}/notice-policy"
-                        | "/v2/workspaces/{workspace_id}/hooks/approval"
-                ))
-        {
-            out.push_str("            ETag:\n");
-            out.push_str(
-                "              description: Strong quoted revision of the mutated authority\n",
-            );
-            out.push_str("              schema:\n");
-            out.push_str("                type: string\n");
+        if revision::returns_revision_etag(path, method) {
+            revision::append_etag_header(out);
         }
     }
     out.push_str("          content:\n");
@@ -678,6 +687,9 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("            application/json:\n");
         out.push_str("              schema:\n");
         out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
+    }
+    if revision::accepts_revision_precondition(path, method) {
+        revision::append_revision_precondition_failure(out);
     }
 }
 

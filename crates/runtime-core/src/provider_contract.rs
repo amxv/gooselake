@@ -117,10 +117,10 @@ impl Default for ProviderPermissionIntent {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum StructuredPermissionIntent {
-    ProviderDefault,
-    InheritProviderConfiguration,
+    ProviderDefault {},
+    InheritProviderConfiguration {},
     Explicit { mode: String },
 }
 
@@ -139,11 +139,11 @@ impl<'de> Deserialize<'de> for ProviderPermissionIntent {
         let value = Option::<PermissionIntentWire>::deserialize(deserializer)?;
         match value {
             None => Ok(Self::ProviderDefault),
-            Some(PermissionIntentWire::Structured(StructuredPermissionIntent::ProviderDefault)) => {
-                Ok(Self::ProviderDefault)
-            }
             Some(PermissionIntentWire::Structured(
-                StructuredPermissionIntent::InheritProviderConfiguration,
+                StructuredPermissionIntent::ProviderDefault { .. },
+            )) => Ok(Self::ProviderDefault),
+            Some(PermissionIntentWire::Structured(
+                StructuredPermissionIntent::InheritProviderConfiguration { .. },
             )) => Ok(Self::InheritProviderConfiguration),
             Some(PermissionIntentWire::Structured(StructuredPermissionIntent::Explicit {
                 mode,
@@ -210,11 +210,11 @@ impl Default for ProviderSettingSourcesIntent {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum StructuredSettingSourcesIntent {
-    Standard,
+    Standard {},
     Explicit { sources: Vec<ProviderSettingSource> },
-    Isolated,
+    Isolated {},
 }
 
 #[derive(Deserialize)]
@@ -230,7 +230,7 @@ impl<'de> Deserialize<'de> for ProviderSettingSourcesIntent {
         D: Deserializer<'de>,
     {
         match SettingSourcesWire::deserialize(deserializer)? {
-            SettingSourcesWire::Structured(StructuredSettingSourcesIntent::Standard) => {
+            SettingSourcesWire::Structured(StructuredSettingSourcesIntent::Standard { .. }) => {
                 Ok(Self::Standard)
             }
             SettingSourcesWire::Structured(StructuredSettingSourcesIntent::Explicit {
@@ -240,7 +240,7 @@ impl<'de> Deserialize<'de> for ProviderSettingSourcesIntent {
                 intent.validate().map_err(D::Error::custom)?;
                 Ok(intent)
             }
-            SettingSourcesWire::Structured(StructuredSettingSourcesIntent::Isolated) => {
+            SettingSourcesWire::Structured(StructuredSettingSourcesIntent::Isolated { .. }) => {
                 Ok(Self::Isolated)
             }
             SettingSourcesWire::Legacy(values) => {
@@ -739,6 +739,44 @@ mod tests {
             ProviderPermissionIntent::InheritProviderConfiguration
         );
         assert!(inherited.resolved_mode().is_none());
+    }
+
+    #[test]
+    fn tagged_provider_policy_rejects_unrecognized_fields_without_breaking_legacy_inputs() {
+        for value in [
+            json!({"kind":"standard","sources":["user"]}),
+            json!({"kind":"isolated","sources":["project"]}),
+            json!({"kind":"explicit","sources":["user"],"unsafe_override":true}),
+        ] {
+            assert!(
+                serde_json::from_value::<ProviderSettingSourcesIntent>(value.clone()).is_err(),
+                "unexpected sources fields must not be silently ignored: {value}"
+            );
+        }
+        for value in [
+            json!({"kind":"provider_default","mode":"danger"}),
+            json!({"kind":"inherit_provider_configuration","mode":"workspace_write"}),
+            json!({"kind":"explicit","mode":"workspace_write","silent_extra":true}),
+        ] {
+            assert!(
+                serde_json::from_value::<ProviderPermissionIntent>(value.clone()).is_err(),
+                "unexpected permission fields must not be silently ignored: {value}"
+            );
+        }
+        assert!(
+            serde_json::from_value::<ProviderSettingSourcesIntent>(json!({
+                "kind":"explicit", "sources":["user", "project"]
+            }))
+            .is_ok()
+        );
+        assert!(serde_json::from_value::<ProviderPermissionIntent>(json!({
+            "kind":"explicit", "mode":"workspace_write"
+        }))
+        .is_ok());
+        assert!(serde_json::from_value::<ProviderSettingSourcesIntent>(json!(["user"])).is_ok());
+        assert!(
+            serde_json::from_value::<ProviderPermissionIntent>(json!("workspace_write")).is_ok()
+        );
     }
 
     #[test]

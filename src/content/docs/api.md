@@ -1031,6 +1031,10 @@ default or triggers a provider call with unintended settings.
 `setting_sources_intent` is one of `{"kind":"standard"}`,
 `{"kind":"explicit","sources":["user","project","local"]}`, or
 `{"kind":"isolated"}`. Project/local sources require `cwd`.
+The tagged setting-source and permission-intent policy variants reject extra
+properties, including a `sources` array on an `isolated` policy or a `mode`
+on `provider_default`. Existing legacy setting-source arrays and permission
+strings remain readable for migration compatibility.
 
 Auth status examples:
 

@@ -152,6 +152,18 @@ async fn provider_discovery_rejects_unknown_inputs_before_adapter_dispatch() {
             "/v2/providers/codex/skills/discover",
             serde_json::json!({"force_refresh": false, "startup_mode": "cold"}),
         ),
+        (
+            "/v2/providers/codex/models/discover",
+            serde_json::json!({"setting_sources_intent": {
+                "kind": "isolated", "sources": ["project"]
+            }}),
+        ),
+        (
+            "/v2/providers/codex/skills/discover",
+            serde_json::json!({"setting_sources_intent": {
+                "kind": "explicit", "sources": ["user"], "unexpected": true
+            }}),
+        ),
     ] {
         let response = router
             .clone()

@@ -120,6 +120,26 @@ pub(super) fn with_operation_id<R: IntoResponse>(body: R, operation_id: &str) ->
     response
 }
 
+/// A caller-supplied replay key must never be silently ignored on a native
+/// provider mutation. Until that specific operation has a durable intent and
+/// exact-replay journal, fail before provider or lifecycle effects rather
+/// than falsely advertising at-least-once retries as idempotent.
+pub(super) fn reject_unjournaled_idempotency_key(
+    headers: &HeaderMap,
+    action: &str,
+) -> Result<(), ApiError> {
+    if headers.contains_key("idempotency-key") {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "idempotency_not_supported",
+            format!(
+                "Idempotency-Key is not supported for {action}; no durable provider mutation was admitted"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn check_if_match_revision(
     headers: &HeaderMap,
     expected_revision: u64,

@@ -572,8 +572,10 @@ pub(super) struct WorkspaceAgentListQuery {
 pub(super) async fn create_workspace_agent(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
+    headers: HeaderMap,
     Json(mut request): Json<WorkspaceAgentCreateRequest>,
 ) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+    reject_unjournaled_idempotency_key(&headers, "workspace agent creation")?;
     if let Some(WorkspaceAgentInitialRoute::New {
         worktree_name,
         branch_prefix,
@@ -708,8 +710,10 @@ pub(super) async fn get_workspace_agent_onboarding(
 pub(super) async fn archive_workspace_agent(
     State(state): State<AppState>,
     Path((workspace_id, agent_id)): Path<(String, String)>,
+    headers: HeaderMap,
     Json(request): Json<WorkspaceAgentArchiveRequest>,
 ) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+    reject_unjournaled_idempotency_key(&headers, "workspace agent archive")?;
     let archived = state
         .runtime
         .archive_workspace_agent(
@@ -724,7 +728,9 @@ pub(super) async fn archive_workspace_agent(
 pub(super) async fn restore_workspace_agent(
     State(state): State<AppState>,
     Path((workspace_id, agent_id)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+    reject_unjournaled_idempotency_key(&headers, "workspace agent restore")?;
     let restored = state
         .runtime
         .restore_workspace_agent(workspace_id.trim(), agent_id.trim())

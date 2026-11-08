@@ -72,8 +72,8 @@ complete. Use `GET /v2/operations/{operation_id}` for the shared journal;
 provider rebinds and historical edits also have their specialized operation
 inspection routes. An ordinary unjournaled action must not invent an ID.
 Common codes include `invalid_request`, `invalid_state`, `not_found`,
-`conflict`, `outcome_unresolved`, `onboarding_pending`, `unsupported_capability`, and
-`internal_error`. Provider-dispatch conflicts retain their typed code and
+`conflict`, `outcome_unresolved`, `onboarding_pending`, `unsupported_capability`,
+`idempotency_not_supported`, and `internal_error`. Provider-dispatch conflicts retain their typed code and
 `details.dispatch_outcome`. Do not blindly repeat an effectful request after
 an unknown native dispatch outcome; inspect its durable operation/turn state.
 The agent-scoped `/v2/mcp` gateway uses its separate credential and model-tool
@@ -453,6 +453,14 @@ After provider turns, Gooselake attempts to persist the provider-reported contex
 
 Use the current agent `revision` from `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` when updating thinking preference or Claude permission intent. Both public mutations require `expected_revision`, return the new revision, and reject stale revisions with HTTP `409`. Changes are rejected during an active turn. Codex and Claude thinking preferences carry into later turns/resume; ACP retains its own preferences and does not support these mutations.
 
+Provider-backed agent archive, restore, preference and permission mutations
+also currently lack durable native-effect idempotency journals. These endpoints
+reject an `Idempotency-Key` with non-retryable HTTP `400` and code
+`idempotency_not_supported` **before** native effects or revision changes,
+instead of implying that lost replies can be safely retried. The existing
+unkeyed operations remain available, with their documented lifecycle guards;
+an ambiguous provider outcome still requires inspecting authoritative state.
+
 ```bash
 curl -fsS -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/agents/$AGENT_ID/context-limit"
@@ -569,6 +577,11 @@ creation endpoint itself is **not yet** a durable idempotent provider-creation
 operation; its worktree step uses a one-shot server key, not a replayable
 caller key. The existing default retention policy for agent-created worktrees
 remains `retain_on_last_claim` when no policy is supplied.
+
+Until native provider-agent creation is journaled, callers must **not** assume
+that an `Idempotency-Key` makes the entire agent request replay-safe. The
+endpoint rejects that header with HTTP `400 idempotency_not_supported`, before
+admitting a provider or native Git mutation; it does not silently ignore it.
 
 The provider cwd, workspace-agent recreation policy, session worktree ID, and
 owned managed-worktree claim are persisted consistently. `cwd` must not also

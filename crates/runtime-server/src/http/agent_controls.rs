@@ -160,6 +160,7 @@ pub(super) async fn update_agent_preferences(
     headers: HeaderMap,
     Json(request): Json<UpdateAgentPreferencesInput>,
 ) -> Result<Response, ApiError> {
+    reject_unjournaled_idempotency_key(&headers, "agent preference mutation")?;
     check_if_match_revision(&headers, request.expected_revision)?;
     let result = state
         .runtime
@@ -185,6 +186,7 @@ pub(super) async fn update_agent_permission(
     headers: HeaderMap,
     Json(request): Json<UpdateAgentPermissionInput>,
 ) -> Result<Response, ApiError> {
+    reject_unjournaled_idempotency_key(&headers, "agent permission mutation")?;
     check_if_match_revision(&headers, request.expected_revision)?;
     let result = state
         .runtime

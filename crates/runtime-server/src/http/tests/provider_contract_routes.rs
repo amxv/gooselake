@@ -191,3 +191,67 @@ async fn provider_discovery_rejects_unknown_inputs_before_adapter_dispatch() {
             .is_some_and(|id| id.starts_with("req_")));
     }
 }
+
+#[tokio::test]
+async fn disabled_provider_is_not_exposed_by_individual_capabilities_or_discovery() {
+    let (router, token, _temp_dir, provider) =
+        build_test_router_with_provider(TeamMcpPolicy::default()).await;
+    provider.set_enabled(false);
+    for (method, path, body) in [
+        ("GET", "/v2/providers/codex/capabilities", None),
+        (
+            "POST",
+            "/v2/providers/codex/models/discover",
+            Some(serde_json::json!({"startup_mode":"start_runtime"})),
+        ),
+        (
+            "POST",
+            "/v2/providers/codex/skills/discover",
+            Some(serde_json::json!({"force_refresh":true})),
+        ),
+    ] {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"));
+        if body.is_some() {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+        }
+        let response = router
+            .clone()
+            .oneshot(
+                request
+                    .body(Body::from(
+                        body.map_or_else(String::new, |body| body.to_string()),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        let error = body_json(response).await;
+        assert_eq!(error["error"]["code"], "not_found", "{path}");
+        assert_eq!(error["error"]["retryable"], false, "{path}");
+        assert!(error["request_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("req_")));
+    }
+
+    // The same registered adapter becomes discoverable again if runtime
+    // policy enables it. A missing adapter must not be fabricated.
+    provider.set_enabled(true);
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v2/providers/codex/capabilities")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let restored = body_json(response).await;
+    assert_eq!(restored["provider"], "codex");
+}

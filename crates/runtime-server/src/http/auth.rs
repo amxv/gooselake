@@ -188,11 +188,7 @@ pub(super) async fn provider_capabilities_v2(
     Path(provider): Path<String>,
 ) -> Result<Json<ProviderCapabilitiesResponse>, ApiError> {
     let provider = parse_provider_kind(provider.as_str())?;
-    let adapter = state
-        .app
-        .provider_registry
-        .get(provider)
-        .ok_or_else(|| ApiError::not_found(format!("provider {}", provider.as_str())))?;
+    let adapter = enabled_provider_adapter(&state, provider)?;
     let harness = runtime_core::harness_contract_metadata(provider).map_err(ApiError::from)?;
     Ok(Json(ProviderCapabilitiesResponse {
         provider,
@@ -207,11 +203,7 @@ pub(super) async fn discover_provider_models_v2(
     Json(input): Json<runtime_core::ProviderModelDiscoveryRequest>,
 ) -> Result<Json<runtime_core::ProviderModelDiscoveryResponse>, ApiError> {
     let provider = parse_provider_kind(provider.as_str())?;
-    let adapter = state
-        .app
-        .provider_registry
-        .get(provider)
-        .ok_or_else(|| ApiError::not_found(format!("provider {}", provider.as_str())))?;
+    let adapter = enabled_provider_adapter(&state, provider)?;
     input
         .setting_sources_intent
         .resolved_sources(input.cwd.as_deref())
@@ -230,11 +222,7 @@ pub(super) async fn discover_provider_skills_v2(
     Json(input): Json<runtime_core::ProviderSkillDiscoveryRequest>,
 ) -> Result<Json<runtime_core::ProviderSkillDiscoveryResponse>, ApiError> {
     let provider = parse_provider_kind(provider.as_str())?;
-    let adapter = state
-        .app
-        .provider_registry
-        .get(provider)
-        .ok_or_else(|| ApiError::not_found(format!("provider {}", provider.as_str())))?;
+    let adapter = enabled_provider_adapter(&state, provider)?;
     input
         .setting_sources_intent
         .resolved_sources(input.cwd.as_deref())
@@ -245,6 +233,21 @@ pub(super) async fn discover_provider_skills_v2(
             .await
             .map_err(ApiError::from)?,
     ))
+}
+
+/// A registered adapter may be intentionally disabled by runtime policy.
+/// Individual discovery must not probe or start that provider when the
+/// aggregate `/v2/capabilities` correctly omits it from the enabled roster.
+fn enabled_provider_adapter(
+    state: &AppState,
+    provider: ProviderKind,
+) -> Result<Arc<dyn runtime_core::RuntimeProvider>, ApiError> {
+    state
+        .app
+        .provider_registry
+        .get(provider)
+        .filter(|adapter| adapter.metadata().enabled)
+        .ok_or_else(|| ApiError::not_found(format!("provider {}", provider.as_str())))
 }
 
 pub(super) async fn codex_auth_status(

@@ -1066,7 +1066,10 @@ capability tokens, such as Codex `xhigh`, and clients should use them directly
 when populating reasoning-effort controls. The list can be empty when a model
 does not expose a global selector.
 
-The v2 provider surface makes optional behavior explicit:
+The v2 provider surface makes optional behavior explicit. Its individual
+capability and discovery routes are available only for currently enabled
+adapters: a registered but disabled provider returns typed `404 not_found`
+without probing or starting its native discovery process.
 
 - `GET /v2/providers/{provider}/capabilities` returns provider capability support plus the tracked harness contract metadata.
 - `POST /v2/providers/{provider}/models/discover` accepts optional `cwd`, typed `setting_sources_intent`, `force_refresh`, and `startup_mode` (`cold` or `start_runtime`). The response includes a discovery `mode` plus typed model descriptors.

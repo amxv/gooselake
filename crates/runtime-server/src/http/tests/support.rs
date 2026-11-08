@@ -47,9 +47,17 @@ pub(super) struct TestProvider {
     pub(super) send_failure_mode: std::sync::atomic::AtomicU8,
     pub(super) send_invocations: std::sync::atomic::AtomicUsize,
     supports_thinking: std::sync::atomic::AtomicBool,
+    disabled: std::sync::atomic::AtomicBool,
     compaction_events: std::sync::Mutex<
         Option<tokio::sync::broadcast::Sender<runtime_core::ProviderRuntimeEvent>>,
     >,
+}
+
+impl TestProvider {
+    pub(super) fn set_enabled(&self, enabled: bool) {
+        self.disabled
+            .store(!enabled, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[derive(Default)]
@@ -88,7 +96,7 @@ impl RuntimeProvider for TestProvider {
         ProviderMetadata {
             kind: ProviderKind::Codex,
             display_name: "Test Codex".to_string(),
-            enabled: true,
+            enabled: !self.disabled.load(std::sync::atomic::Ordering::SeqCst),
         }
     }
 

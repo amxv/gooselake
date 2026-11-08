@@ -162,9 +162,9 @@ Message creation commits the canonical message and every recipient delivery atom
 - `POST /v1/providers/claude/auth/import-json` (Bearer)
 - `POST /v1/providers/claude/auth/import-file` (Bearer, `multipart/form-data`, field `file`)
 - `POST /v1/providers/claude/auth/logout` (Bearer)
-- `GET /v2/providers/{provider}/capabilities` (Bearer)
-- `POST /v2/providers/{provider}/models/discover` (Bearer; typed JSON options; unknown properties rejected)
-- `POST /v2/providers/{provider}/skills/discover` (Bearer; typed JSON options; unknown properties rejected)
+- `GET /v2/providers/{provider}/capabilities` (Bearer; only enabled providers; disabled or absent adapters return `404 not_found`)
+- `POST /v2/providers/{provider}/models/discover` (Bearer; only enabled providers; unknown properties rejected; disabled adapters cannot be probed)
+- `POST /v2/providers/{provider}/skills/discover` (Bearer; only enabled providers; unknown properties rejected; disabled adapters cannot be probed)
 
 Provider behavior notes:
 - `GET /v1/providers/{provider}/models` returns dynamic, provider-owned `reasoning_levels` using raw runtime capability tokens such as Codex `xhigh`.

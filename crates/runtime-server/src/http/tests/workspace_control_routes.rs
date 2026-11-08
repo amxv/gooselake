@@ -41,8 +41,13 @@ async fn populated_retirement_api_admits_and_reports_only_verified_terminal_stat
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    let operation_header = response.headers()["x-operation-id"]
+        .to_str()
+        .unwrap()
+        .to_string();
     let details: runtime_core::OperationDetails =
         serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(details.operation.operation_id, operation_header);
     assert_eq!(
         details.operation.phase,
         runtime_core::OperationPhase::Completed
@@ -59,6 +64,10 @@ async fn populated_retirement_api_admits_and_reports_only_verified_terminal_stat
         .await
         .unwrap();
     assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(
+        replay.headers()["x-operation-id"],
+        operation_header.as_str()
+    );
     let replayed: runtime_core::OperationDetails =
         serde_json::from_slice(&to_bytes(replay.into_body(), usize::MAX).await.unwrap()).unwrap();
     assert_eq!(
@@ -172,8 +181,13 @@ async fn quiescent_retirement_api_requires_operator_and_preserves_root_identity_
         .await
         .unwrap();
     assert_eq!(retired.status(), StatusCode::OK);
+    let operation_header = retired.headers()["x-operation-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
     let receipt: runtime_core::WorkspaceRetirementResponse =
         serde_json::from_slice(&to_bytes(retired.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(receipt.operation_id, operation_header);
     assert_eq!(
         receipt.workspace.lifecycle_state,
         runtime_core::WorkspaceLifecycleState::Retired
@@ -186,6 +200,10 @@ async fn quiescent_retirement_api_requires_operator_and_preserves_root_identity_
         .await
         .unwrap();
     assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(
+        replay.headers()["x-operation-id"],
+        operation_header.as_str()
+    );
     let replay_receipt: runtime_core::WorkspaceRetirementResponse =
         serde_json::from_slice(&to_bytes(replay.into_body(), usize::MAX).await.unwrap()).unwrap();
     assert_eq!(receipt, replay_receipt);
@@ -901,12 +919,18 @@ async fn set_lead(
         .await
         .expect("lead response");
     assert_eq!(response.status(), StatusCode::OK);
-    serde_json::from_slice(
+    let operation_header = response.headers()["x-operation-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let result: runtime_core::WorkspaceLeadTransitionResponse = serde_json::from_slice(
         &to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("lead body"),
     )
-    .expect("lead json")
+    .expect("lead json");
+    assert_eq!(result.operation_id, operation_header);
+    result
 }
 
 async fn interrupt_workspace(
@@ -929,12 +953,18 @@ async fn interrupt_workspace(
         .await
         .expect("interrupt response");
     assert_eq!(response.status(), StatusCode::OK);
-    serde_json::from_slice(
+    let operation_header = response.headers()["x-operation-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let result: runtime_core::WorkspaceInterruptResponse = serde_json::from_slice(
         &to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("interrupt body"),
     )
-    .expect("interrupt json")
+    .expect("interrupt json");
+    assert_eq!(result.operation_id, operation_header);
+    result
 }
 
 fn membership_agent_request(root: &Path, title: &str) -> runtime_core::WorkspaceAgentCreateRequest {

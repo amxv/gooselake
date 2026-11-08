@@ -292,7 +292,13 @@ async fn workspace_revision_etag_and_idempotency_headers_are_guarded() {
         .await
         .unwrap();
     assert_eq!(first.status(), StatusCode::OK);
-    let workspace = response_json(first).await["workspace"].clone();
+    let operation_header = first.headers()["x-operation-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let registered = response_json(first).await;
+    assert_eq!(registered["operation_id"], operation_header);
+    let workspace = registered["workspace"].clone();
     let id = workspace["workspace_id"].as_str().unwrap();
     let revision = workspace["revision"].as_u64().unwrap();
     let etag = format!("\"{revision}\"");
@@ -347,6 +353,17 @@ async fn workspace_revision_etag_and_idempotency_headers_are_guarded() {
         .await
         .unwrap();
     assert_eq!(guarded.status(), StatusCode::OK);
+    let lead_operation = guarded.headers()["x-operation-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let lead_etag = guarded.headers()[header::ETAG].to_str().unwrap().to_owned();
+    let lead_result = response_json(guarded).await;
+    assert_eq!(lead_result["operation_id"], lead_operation);
+    assert_eq!(
+        lead_etag,
+        format!("\"{}\"", lead_result["workspace"]["revision"])
+    );
 
     let policy_uri = format!("/v2/workspaces/{id}/notice-policy");
     let policy_get = router

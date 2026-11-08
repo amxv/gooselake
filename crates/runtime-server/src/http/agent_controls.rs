@@ -10,14 +10,14 @@ pub(super) async fn edit_agent_turn_and_rerun(
     Path((agent_id, turn_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(input): Json<EditAndRerunRequest>,
-) -> Result<Json<SessionEditRerunOperation>, ApiError> {
+) -> Result<Response, ApiError> {
     let key = parse_idempotency_key(&headers)?;
-    Ok(Json(
-        state
-            .runtime
-            .edit_workspace_agent_turn(&agent_id, &turn_id, input.edited_snapshot, key)
-            .await?,
-    ))
+    let result = state
+        .runtime
+        .edit_workspace_agent_turn(&agent_id, &turn_id, input.edited_snapshot, key)
+        .await?;
+    let id = result.operation_id.clone();
+    Ok(with_operation_id(Json(result), &id))
 }
 
 pub(super) async fn get_agent_edit_operation(
@@ -41,12 +41,13 @@ pub(super) async fn resolve_agent_edit_operation(
     State(state): State<AppState>,
     Path((agent_id, operation_id)): Path<(String, String)>,
     Json(input): Json<EditReviewInput>,
-) -> Result<Json<SessionEditRerunOperation>, ApiError> {
-    Ok(Json(state.runtime.resolve_edit_rerun_review(
-        &agent_id,
-        &operation_id,
-        &input.evidence,
-    )?))
+) -> Result<Response, ApiError> {
+    let result =
+        state
+            .runtime
+            .resolve_edit_rerun_review(&agent_id, &operation_id, &input.evidence)?;
+    let id = result.operation_id.clone();
+    Ok(with_operation_id(Json(result), &id))
 }
 
 pub(super) async fn compact_agent_session(

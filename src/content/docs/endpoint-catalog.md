@@ -29,6 +29,10 @@ Operator `/v2` responses carry a server-minted `X-Request-ID`. Error responses
 contain `{ "error": { "code", "message", "retryable", "details" },
 "request_id" }`, including framework-level 4xx rejections. Legacy `/v1`
 error bodies and the separate agent-scoped `/v2/mcp` tool contract are unchanged.
+Journaled operator mutations also return the exact durable `X-Operation-ID`
+on success, including when a keyed request replays the original result.
+`202` retirement responses identify a frozen operation, not native completion;
+provider rebind and edit records retain their specialized detail routes.
 
 ## Workspace Authority + Durable Operations
 

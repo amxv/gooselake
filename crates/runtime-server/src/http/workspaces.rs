@@ -13,7 +13,7 @@ pub(super) async fn register_workspace(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(request): Json<WorkspaceRegisterRequest>,
-) -> Result<Json<runtime_core::WorkspaceRegisterResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     let idempotency_key = parse_idempotency_key(&headers)?;
     let command = prepare_workspace_registration(
         request,
@@ -21,7 +21,8 @@ pub(super) async fn register_workspace(
         idempotency_key,
     )?;
     let response = state.app.services.store.register_workspace(&command)?;
-    Ok(Json(response))
+    let id = response.operation_id.clone();
+    Ok(with_operation_id(Json(response), &id))
 }
 
 pub(super) async fn list_workspaces(
@@ -75,7 +76,7 @@ pub(super) async fn retire_workspace(
     Path(workspace_id): Path<String>,
     headers: HeaderMap,
     Json(request): Json<WorkspaceRetirementRequest>,
-) -> Result<Json<runtime_core::WorkspaceRetirementResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     check_if_match_revision(&headers, request.expected_revision)?;
     let command = prepare_workspace_retirement(
         workspace_id.trim(),
@@ -83,9 +84,9 @@ pub(super) async fn retire_workspace(
         OperationActor::operator(OPERATOR_PRINCIPAL),
         parse_idempotency_key(&headers)?,
     )?;
-    Ok(Json(
-        state.runtime.retire_quiescent_workspace(&command).await?,
-    ))
+    let result = state.runtime.retire_quiescent_workspace(&command).await?;
+    let id = result.operation_id.clone();
+    Ok(with_operation_id(Json(result), &id))
 }
 
 /// Effect-evidenced retirement of populated workspaces. A 202 response is a
@@ -96,7 +97,7 @@ pub(super) async fn advance_workspace_retirement(
     Path(workspace_id): Path<String>,
     headers: HeaderMap,
     Json(request): Json<WorkspaceRetirementRequest>,
-) -> Result<(StatusCode, Json<runtime_core::OperationDetails>), ApiError> {
+) -> Result<Response, ApiError> {
     check_if_match_revision(&headers, request.expected_revision)?;
     let command = prepare_workspace_retirement(
         workspace_id.trim(),
@@ -121,7 +122,8 @@ pub(super) async fn advance_workspace_retirement(
         runtime_core::OperationPhase::Completed => StatusCode::OK,
         _ => StatusCode::ACCEPTED,
     };
-    Ok((status, Json(result)))
+    let id = result.operation.operation_id.clone();
+    Ok(with_operation_id((status, Json(result)), &id))
 }
 
 #[derive(Debug, Deserialize)]
@@ -386,7 +388,7 @@ pub(super) async fn rebind_workspace_agent(
     Path((workspace_id, agent_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(request): Json<runtime_core::WorkspaceAgentRebindRequest>,
-) -> Result<Json<runtime_core::WorkspaceAgentRebindResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     if !state.app.worktree_settings.enabled {
         return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
     }
@@ -400,7 +402,8 @@ pub(super) async fn rebind_workspace_agent(
             attempt_previous_worktree_cleanup(&state, &workspace_id, &agent_id, response.operation)
                 .await?;
     }
-    Ok(Json(response))
+    let id = response.operation.operation_id.clone();
+    Ok(with_operation_id(Json(response), &id))
 }
 
 async fn attempt_previous_worktree_cleanup(
@@ -444,7 +447,7 @@ async fn attempt_previous_worktree_cleanup(
 pub(super) async fn retry_workspace_agent_rebind_cleanup(
     State(state): State<AppState>,
     Path((workspace_id, agent_id, operation_id)): Path<(String, String, String)>,
-) -> Result<Json<runtime_core::WorkspaceAgentRebindOperation>, ApiError> {
+) -> Result<Response, ApiError> {
     if !state.app.worktree_settings.enabled {
         return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
     }
@@ -458,9 +461,10 @@ pub(super) async fn retry_workspace_agent_rebind_cleanup(
         )
         .into());
     }
-    Ok(Json(
-        attempt_previous_worktree_cleanup(&state, &workspace_id, &agent_id, operation).await?,
-    ))
+    let result =
+        attempt_previous_worktree_cleanup(&state, &workspace_id, &agent_id, operation).await?;
+    let id = result.operation_id.clone();
+    Ok(with_operation_id(Json(result), &id))
 }
 
 pub(super) async fn get_workspace_agent_rebind(
@@ -495,7 +499,11 @@ pub(super) async fn set_workspace_lead(
         .transition_workspace_lead(&command)?;
     // Mutations still use the transactional revision guard in the store;
     // If-Match is an optional HTTP precondition, not an alternate authority.
-    Ok(revisioned_response(result.workspace.revision, result))
+    let id = result.operation_id.clone();
+    Ok(with_operation_id(
+        revisioned_response(result.workspace.revision, result),
+        &id,
+    ))
 }
 
 pub(super) async fn get_workspace_notice_policy(
@@ -541,14 +549,16 @@ pub(super) async fn interrupt_workspace_turns(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<runtime_core::WorkspaceInterruptResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     let idempotency_key = parse_idempotency_key(&headers)?;
     let command = prepare_workspace_interrupt(
         workspace_id.trim(),
         OperationActor::operator(OPERATOR_PRINCIPAL),
         idempotency_key,
     )?;
-    Ok(Json(state.runtime.interrupt_workspace(command).await?))
+    let result = state.runtime.interrupt_workspace(command).await?;
+    let id = result.operation_id.clone();
+    Ok(with_operation_id(Json(result), &id))
 }
 
 #[derive(Debug, Deserialize)]

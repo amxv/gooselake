@@ -106,18 +106,18 @@ fn paged_migration_status(
 pub(super) async fn apply_workspace_migration(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<runtime_core::LegacyWorkspaceMigrationApplyResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     let command = prepare_legacy_workspace_migration_apply(
         OperationActor::operator(super::workspaces::OPERATOR_PRINCIPAL),
         super::workspaces::parse_idempotency_key(&headers)?,
     )?;
-    Ok(Json(
-        state
-            .app
-            .services
-            .store
-            .apply_workspace_migration(&command)?,
-    ))
+    let result = state
+        .app
+        .services
+        .store
+        .apply_workspace_migration(&command)?;
+    let id = result.operation_id.clone();
+    Ok(with_operation_id(Json(result), &id))
 }
 
 pub(super) async fn resolve_workspace_migration_subject(
@@ -125,7 +125,7 @@ pub(super) async fn resolve_workspace_migration_subject(
     headers: HeaderMap,
     Path((subject_kind, subject_id)): Path<(String, String)>,
     Json(request): Json<LegacyWorkspaceMigrationResolutionRequest>,
-) -> Result<Json<runtime_core::LegacyWorkspaceMigrationResolutionResponse>, ApiError> {
+) -> Result<Response, ApiError> {
     let subject_kind = LegacyWorkspaceMigrationSubjectKind::from_str(subject_kind.trim())
         .ok_or_else(|| {
             ApiError::bad_request(format!(
@@ -139,13 +139,13 @@ pub(super) async fn resolve_workspace_migration_subject(
         OperationActor::operator(super::workspaces::OPERATOR_PRINCIPAL),
         super::workspaces::parse_idempotency_key(&headers)?,
     )?;
-    Ok(Json(
-        state
-            .app
-            .services
-            .store
-            .resolve_workspace_migration_subject(&command)?,
-    ))
+    let result = state
+        .app
+        .services
+        .store
+        .resolve_workspace_migration_subject(&command)?;
+    let id = result.operation_id.clone();
+    Ok(with_operation_id(Json(result), &id))
 }
 
 fn refresh_preview(

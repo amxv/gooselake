@@ -106,6 +106,20 @@ pub(super) fn revisioned_response<T: Serialize>(revision: u64, record: T) -> Res
     response
 }
 
+/// Include the exact durable operation coordinate in the header without
+/// changing the existing JSON response body, status or ETag. This is only
+/// used for actions whose result names a durable operation; an ordinary
+/// session run or ephemeral refresh must not invent an operation ID.
+pub(super) fn with_operation_id<R: IntoResponse>(body: R, operation_id: &str) -> Response {
+    let mut response = body.into_response();
+    response.headers_mut().insert(
+        "x-operation-id",
+        axum::http::HeaderValue::from_str(operation_id)
+            .expect("durable operation IDs are valid HTTP header text"),
+    );
+    response
+}
+
 pub(super) fn check_if_match_revision(
     headers: &HeaderMap,
     expected_revision: u64,

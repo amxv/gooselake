@@ -62,6 +62,15 @@ and unsupported methods. For example, `401`:
 Every `/v2` operator response, including success responses, carries
 `X-Request-ID`; error responses repeat the same ID in `request_id`. The server
 creates these IDs and never trusts an incoming `X-Request-ID` as authority.
+When a supported operator mutation creates, updates, or replays a durable
+operation, its successful response also carries `X-Operation-ID` matching the
+operation identifier in the JSON result. This includes registration, lead
+changes, interruption, retirement, rebind and cleanup, migration apply and
+resolution, and historical edit/review. A `202` retirement response exposes
+the frozen operation ID but **does not** mean native provider settlement is
+complete. Use `GET /v2/operations/{operation_id}` for the shared journal;
+provider rebinds and historical edits also have their specialized operation
+inspection routes. An ordinary unjournaled action must not invent an ID.
 Common codes include `invalid_request`, `invalid_state`, `not_found`,
 `conflict`, `outcome_unresolved`, `onboarding_pending`, `unsupported_capability`, and
 `internal_error`. Provider-dispatch conflicts retain their typed code and

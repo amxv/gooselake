@@ -1,7 +1,6 @@
 use super::*;
 use runtime_core::{
-    prepare_workspace_retirement_review, OperationActor, WorkspaceRetirementReviewReceipt,
-    WorkspaceRetirementReviewRequest,
+    prepare_workspace_retirement_review, OperationActor, WorkspaceRetirementReviewRequest,
 };
 
 /// This route belongs exclusively to the operator bearer-authenticated router;
@@ -11,7 +10,7 @@ pub(super) async fn reconcile_workspace_retirement(
     Path((workspace_id, operation_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(request): Json<WorkspaceRetirementReviewRequest>,
-) -> Result<Json<WorkspaceRetirementReviewReceipt>, ApiError> {
+) -> Result<Response, ApiError> {
     let command = prepare_workspace_retirement_review(
         &workspace_id,
         &operation_id,
@@ -30,5 +29,6 @@ pub(super) async fn reconcile_workspace_retirement(
             original,
         );
     }
-    Ok(Json(outcome.receipt))
+    let id = outcome.receipt.operation_id.clone();
+    Ok(with_operation_id(Json(outcome.receipt), &id))
 }

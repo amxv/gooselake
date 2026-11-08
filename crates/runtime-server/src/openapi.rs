@@ -360,7 +360,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
             break;
         }
     }
-    let accepts_idempotency_key = method == HttpMethod::Post
+    let accepts_idempotency_key = (method == HttpMethod::Post
         && matches!(
             path,
             "/v2/workspaces"
@@ -371,13 +371,21 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/workspaces/{workspace_id}/lead"
                 | "/v2/workspaces/{workspace_id}/worktrees"
                 | "/v2/agents/{agent_id}/turns"
+                | "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun"
+                | "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree"
                 | "/v2/workspaces/{workspace_id}/interrupt"
                 | "/v2/messages"
                 | "/v2/messages/{message_id}/cancel"
                 | "/v2/deliveries/{delivery_id}/retry"
                 | "/v2/migrations/workspaces/apply"
                 | "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}"
-        );
+        ))
+        || (method == HttpMethod::Put
+            && matches!(
+                path,
+                "/v2/workspaces/{workspace_id}/notice-policy"
+                    | "/v2/workspaces/{workspace_id}/hooks/approval"
+            ));
     let has_query_parameters = method == HttpMethod::Get
         && matches!(
             path,
@@ -588,6 +596,50 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("              schema:\n");
         out.push_str("                type: string\n");
     }
+    if (method == HttpMethod::Post
+        && matches!(
+            path,
+            "/v2/workspaces"
+                | "/v2/workspaces/{workspace_id}/retire"
+                | "/v2/workspaces/{workspace_id}/retirement/advance"
+                | "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile"
+                | "/v2/workspaces/{workspace_id}/lead"
+                | "/v2/workspaces/{workspace_id}/interrupt"
+                | "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree"
+                | "/v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup"
+                | "/v2/migrations/workspaces/apply"
+                | "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}"
+                | "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun"
+                | "/v2/agents/{agent_id}/edits/{operation_id}/resolve"
+        ))
+        || (method == HttpMethod::Put
+            && matches!(
+                path,
+                "/v2/workspaces/{workspace_id}/notice-policy"
+                    | "/v2/workspaces/{workspace_id}/hooks/approval"
+            ))
+    {
+        out.push_str("          headers:\n");
+        out.push_str("            X-Operation-ID:\n");
+        out.push_str("              description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route\n");
+        out.push_str("              schema:\n");
+        out.push_str("                type: string\n");
+        if (method == HttpMethod::Post && path == "/v2/workspaces/{workspace_id}/lead")
+            || (method == HttpMethod::Put
+                && matches!(
+                    path,
+                    "/v2/workspaces/{workspace_id}/notice-policy"
+                        | "/v2/workspaces/{workspace_id}/hooks/approval"
+                ))
+        {
+            out.push_str("            ETag:\n");
+            out.push_str(
+                "              description: Strong quoted revision of the mutated authority\n",
+            );
+            out.push_str("              schema:\n");
+            out.push_str("                type: string\n");
+        }
+    }
     out.push_str("          content:\n");
     out.push_str("            application/json:\n");
     out.push_str("              schema:\n");
@@ -617,6 +669,11 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str(
             "          description: Retirement remains requested or requires manual review\n",
         );
+        out.push_str("          headers:\n");
+        out.push_str("            X-Operation-ID:\n");
+        out.push_str("              description: Durable frozen retirement operation, not proof of native provider settlement\n");
+        out.push_str("              schema:\n");
+        out.push_str("                type: string\n");
         out.push_str("          content:\n");
         out.push_str("            application/json:\n");
         out.push_str("              schema:\n");
@@ -823,6 +880,55 @@ mod tests {
             .expect("retry route content");
         assert!(retry.contains("        - name: Idempotency-Key\n"));
         assert!(retry.contains("            X-Operation-ID:\n"));
+        for path in [
+            "/v2/workspaces",
+            "/v2/workspaces/{workspace_id}/lead",
+            "/v2/workspaces/{workspace_id}/interrupt",
+            "/v2/workspaces/{workspace_id}/retire",
+            "/v2/workspaces/{workspace_id}/retirement/advance",
+            "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile",
+            "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree",
+            "/v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup",
+            "/v2/migrations/workspaces/apply",
+            "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}",
+            "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun",
+            "/v2/agents/{agent_id}/edits/{operation_id}/resolve",
+            "/v2/workspaces/{workspace_id}/notice-policy",
+            "/v2/workspaces/{workspace_id}/hooks/approval",
+        ] {
+            let marker = format!("  {path}:\n");
+            let content = yaml
+                .split(&marker)
+                .nth(1)
+                .unwrap_or_else(|| panic!("missing journaled mutation {path}"))
+                .split("\n  /v2/")
+                .next()
+                .unwrap();
+            assert!(
+                content.contains("            X-Operation-ID:\n"),
+                "undocumented operation response header on {path}"
+            );
+        }
+        let advance = yaml
+            .split("  /v2/workspaces/{workspace_id}/retirement/advance:\n")
+            .nth(1)
+            .unwrap()
+            .split("\n  /v2/")
+            .next()
+            .unwrap();
+        assert!(advance.contains("        \"202\":\n"));
+        assert!(advance.contains("Retirement remains requested or requires manual review\n          headers:\n            X-Operation-ID:\n"));
+        for path in [
+            "/v2/workspaces/{workspace_id}/lead",
+            "/v2/workspaces/{workspace_id}/notice-policy",
+            "/v2/workspaces/{workspace_id}/hooks/approval",
+        ] {
+            let content = yaml.split(&format!("  {path}:\n")).nth(1).unwrap();
+            assert!(
+                content.contains("            ETag:\n"),
+                "revision header on {path}"
+            );
+        }
         assert!(yaml.contains("  /v2/migrations/workspaces:"));
         assert!(yaml.contains("  /v2/migrations/workspaces/preview:"));
         assert!(yaml.contains("  /v2/migrations/workspaces/apply:"));

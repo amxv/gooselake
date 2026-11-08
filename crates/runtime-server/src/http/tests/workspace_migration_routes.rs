@@ -109,7 +109,12 @@ async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessio
         .await
         .expect("apply response");
     assert_eq!(apply_response.status(), StatusCode::OK);
+    let apply_operation_id = apply_response.headers()["x-operation-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
     let applied: runtime_core::LegacyWorkspaceMigrationApplyResponse = decode(apply_response).await;
+    assert_eq!(applied.operation_id, apply_operation_id);
     assert_eq!(applied.created_workspaces, 1);
     assert_eq!(applied.owned_sessions_created, 1);
     assert_eq!(applied.unresolved_subjects, 1);
@@ -140,8 +145,13 @@ async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessio
         .await
         .expect("resolution response");
     assert_eq!(resolution_response.status(), StatusCode::OK);
+    let resolution_operation_id = resolution_response.headers()["x-operation-id"]
+        .to_str()
+        .unwrap()
+        .to_string();
     let resolution: runtime_core::LegacyWorkspaceMigrationResolutionResponse =
         decode(resolution_response).await;
+    assert_eq!(resolution.operation_id, resolution_operation_id);
     assert_eq!(
         resolution.subject.classification,
         runtime_core::LegacyWorkspaceMigrationClassification::Mapped

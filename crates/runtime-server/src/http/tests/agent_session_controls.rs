@@ -84,6 +84,21 @@ async fn public_agent_session_controls_are_authenticated_revisioned_and_capabili
         "missing provider capability must fail explicitly"
     );
 
+    let (status, invalid_preferences) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("{prefix}/preferences"),
+        Some(serde_json::json!({
+            "expected_revision": revision,
+            "current_preferences":{"thinking_efort":"max"}
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(invalid_preferences["error"]["code"], "invalid_request");
+
     let (status, _) = call(
         &router,
         &token,

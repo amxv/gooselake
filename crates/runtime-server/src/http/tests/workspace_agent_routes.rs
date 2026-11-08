@@ -1,6 +1,69 @@
 use super::*;
 
 #[tokio::test]
+async fn agent_creation_and_archival_reject_unknown_fields_before_lifecycle_effects() {
+    let (router, token, temp) = build_test_router().await;
+    let root = temp.path().join("strict-agent-mutations");
+    std::fs::create_dir(&root).unwrap();
+    let workspace = register_workspace(&router, &token, &root).await;
+    let base = format!("/v2/workspaces/{}/agents", workspace.workspace_id);
+    for input in [
+        serde_json::json!({
+            "provider":"codex", "model":"test-model", "unsafe_extra":"ignored"
+        }),
+        serde_json::json!({
+            "provider":"codex", "model":"test-model",
+            "current_preferences":{"thinking_efort":"max"}
+        }),
+    ] {
+        let (status, body) = super::workspace_worktree_routes::call(
+            &router,
+            &token,
+            "POST",
+            &base,
+            Some(input),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(body["error"]["code"], "invalid_request");
+    }
+    let (status, rows) =
+        super::workspace_worktree_routes::call(&router, &token, "GET", &base, None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(rows.as_array().unwrap().is_empty());
+
+    let (status, created) = super::workspace_worktree_routes::call(
+        &router,
+        &token,
+        "POST",
+        &base,
+        Some(serde_json::json!({"provider":"codex","model":"test-model"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let agent_id = created["agent_id"].as_str().unwrap();
+    let agent_url = format!("{base}/{agent_id}");
+    let (status, body) = super::workspace_worktree_routes::call(
+        &router,
+        &token,
+        "POST",
+        &format!("{agent_url}/archive"),
+        Some(serde_json::json!({"reason":"hold","force":true})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "invalid_request");
+    let (status, unchanged) =
+        super::workspace_worktree_routes::call(&router, &token, "GET", &agent_url, None, None)
+            .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(unchanged["lifecycle_state"], "active");
+}
+
+#[tokio::test]
 async fn workspace_notices_recover_and_dispatch_after_more_than_256_blocked_older_entries() {
     let (router, token, temp, provider) =
         build_test_router_with_provider(TeamMcpPolicy::default()).await;

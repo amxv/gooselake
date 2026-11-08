@@ -353,6 +353,7 @@ impl ProviderSettingSourcesIntent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderSessionPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_effort: Option<ProviderThinkingEffort>,

@@ -91,6 +91,7 @@ pub struct WorkspaceAgentRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceAgentCreateRequest {
     pub provider: ProviderKind,
     pub model: Option<String>,
@@ -134,6 +135,7 @@ pub enum WorkspaceAgentInitialRoute {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceAgentArchiveRequest {
     pub reason: Option<String>,
 }

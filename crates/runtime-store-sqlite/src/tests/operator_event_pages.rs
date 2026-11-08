@@ -76,6 +76,46 @@ fn indexed_event_history_pages_preserve_global_cursor_scope_order_and_payload_pr
         cursor = rows.last().map(|row| row.row_id);
     }
     assert_eq!(seen_scoped.len(), 60);
+    let unrelated_row_id: i64 = db
+        .query_row(
+            "SELECT id FROM runtime_events WHERE event_id = 'evt_0001'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    for (scope, cursor) in [
+        (None, i64::MAX),
+        (Some((RuntimeEventScope::Workspace, "ws_alpha")), i64::MAX),
+        (
+            Some((RuntimeEventScope::Workspace, "ws_alpha")),
+            unrelated_row_id,
+        ),
+    ] {
+        let result = repository.list_operator_events_page(scope, Some(cursor), 3);
+        assert!(
+            matches!(result, Err(runtime_core::RuntimeError::InvalidState(_))),
+            "cursor {cursor} in {scope:?} must be rejected"
+        );
+    }
+    // Old consumers may explicitly use zero as the beginning of history.
+    assert_eq!(
+        repository
+            .list_operator_events_page(None, Some(0), 3)
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        repository
+            .list_operator_events_page(
+                Some((RuntimeEventScope::Workspace, "ws_alpha")),
+                Some(0),
+                3,
+            )
+            .unwrap()
+            .len(),
+        3
+    );
     assert!(repository
         .list_operator_events_page(Some((RuntimeEventScope::Workspace, "missing")), None, 3)
         .unwrap()

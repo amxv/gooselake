@@ -312,6 +312,30 @@ fn indexed_delivery_pages_bound_fanout_preserve_equal_timestamp_order_and_filter
         .unwrap();
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].id, "delivery_050");
+    let filtered_request = runtime_core::AgentDeliveryListRequest {
+        message_id: Some(message.id.clone()),
+        recipient_agent_id: Some("agent_050".to_string()),
+    };
+    assert!(repository
+        .list_agent_delivery_records_page(
+            &filtered_request,
+            Some((filtered[0].created_at, filtered[0].id.clone())),
+            2,
+        )
+        .unwrap()
+        .is_empty());
+    for (selection, anchor) in [
+        (&request, (102, "delivery_other".to_string())),
+        (&request, (999, "delivery_050".to_string())),
+        (&request, (100, "delivery_missing".to_string())),
+        (&filtered_request, (100, "delivery_000".to_string())),
+    ] {
+        let result = repository.list_agent_delivery_records_page(selection, Some(anchor), 2);
+        assert!(
+            matches!(result, Err(runtime_core::RuntimeError::InvalidState(_))),
+            "foreign, filtered, forged, or stale delivery cursor must be rejected"
+        );
+    }
     assert!(repository
         .list_agent_delivery_records_page(&request, None, 102)
         .is_err());

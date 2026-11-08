@@ -790,7 +790,10 @@ the request is rejected; only the bounded page's JSON inputs are decoded.
 array shape; when another page exists the response includes `X-Next-Cursor`,
 based on stable delivery creation time and ID. The SQLite backend reads these
 pages using the indexed message/time/ID keyset rather than loading every
-delivery of a large broadcast into the HTTP request. Delivery state is per recipient
+delivery of a large broadcast into the HTTP request. Each cursor must match
+the ID and exact creation time of a delivery in that message and optional
+recipient filter; unknown, changed, or cross-message cursors return HTTP `400`
+instead of skipping deliveries. Delivery state is per recipient
 and remains explicit across `pending`, `deferred`, `injecting`, `injected`,
 `failed`, and `cancelled` transitions. Retry is allowed from failed/deferred
 state, and cancellation applies only while all outstanding deliveries are
@@ -952,6 +955,10 @@ nonnegative global row ID), `limit` (1–100, default 50), and an optional
 `team`, `process`, `worktree`, and `system`. The cursor is always the global
 `row_id`, **including within scoped filters**; it is never the per-scope
 `seq`. The `X-Next-Cursor` response header is present when further rows exist.
+Positive cursors must identify a real event row in the selected global or
+`scope`/`scope_id` collection; unknown, deleted, or cross-scope anchors return
+HTTP `400` instead of silently skipping history. `cursor=0` is accepted as a
+beginning-of-history sentinel.
 Separate global and scoped SQLite indexes back the bounded reads.
 
 Each summary includes only `row_id`, `event_id`, `scope`, `scope_id`, `seq`,

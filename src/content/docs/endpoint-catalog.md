@@ -131,7 +131,7 @@ Legacy workspace migration preview classifies every persisted legacy authority s
 
 - `POST /v2/messages` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/messages` (Bearer; optional `workspace_id`, `sender_agent_id`, `cursor`, `limit=1..100` default 50; JSON `next_cursor`)
-- `GET /v2/messages/{message_id}/deliveries` (Bearer; optional `recipient_agent_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for subsequent array pages)
+- `GET /v2/messages/{message_id}/deliveries` (Bearer; optional `recipient_agent_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for subsequent array pages; cursor must match the exact delivery ID/time in that message and recipient filter)
 - `POST /v2/messages/{message_id}/cancel` (Bearer; optional `Idempotency-Key`; response `X-Operation-ID`)
 - `POST /v2/deliveries/{delivery_id}/retry` (Bearer; optional `Idempotency-Key`; `X-Operation-ID` only for keyed exact pending admission)
 
@@ -197,7 +197,7 @@ Session event query parameters:
 
 ## Global Runtime Events
 
-- `GET /v2/events` (Bearer; indexed global-row-ID ascending, optional paired `scope` and `scope_id`, numeric `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for next page, eight-field redacted rows)
+- `GET /v2/events` (Bearer; indexed global-row-ID ascending, optional paired `scope` and `scope_id`, numeric `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for next page, eight-field redacted rows; positive cursor must identify an existing row in the selected global/scoped collection; zero starts from the beginning)
 - `GET /v2/events/{event_id}` (Bearer; full event payload/provider diagnostic metadata, exact immutable event ID)
 - `GET /v1/events` (Bearer)
 - `GET /v1/events/stream` (Bearer, SSE)

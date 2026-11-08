@@ -216,6 +216,30 @@ impl SqliteRuntimeRepository {
             ));
         }
         let connection = open_connection(&self.database_path)?;
+        if let Some((created_at, id)) = cursor.as_ref() {
+            // The keyset anchor must be a delivery the caller could have
+            // obtained from this message/recipient collection. Otherwise a
+            // stale or foreign cursor could silently omit valid deliveries.
+            let present: i64 = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM agent_deliveries
+                     WHERE id=?1 AND created_at=?2 AND message_id=?3
+                       AND (?4 IS NULL OR recipient_agent_id=?4))",
+                    params![
+                        id,
+                        created_at,
+                        message_id,
+                        request.recipient_agent_id.as_deref()
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(|error| db_error("failed validating delivery page cursor", error))?;
+            if present == 0 {
+                return Err(RuntimeError::InvalidState(
+                    "delivery cursor is not in the selected message/recipient collection".into(),
+                ));
+            }
+        }
         let mut sql = format!("SELECT {DELIVERY_COLUMNS} FROM agent_deliveries WHERE message_id=?");
         let mut values: Vec<rusqlite::types::Value> = vec![message_id.to_owned().into()];
         if let Some(recipient) = request.recipient_agent_id.as_deref() {

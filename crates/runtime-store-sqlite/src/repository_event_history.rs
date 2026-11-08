@@ -28,6 +28,31 @@ impl SqliteRuntimeRepository {
             ));
         }
         let connection = open_connection(&self.database_path)?;
+        // Zero is the documented beginning-of-history sentinel. Every other
+        // cursor must identify a row in this exact collection: accepting an
+        // arbitrary global ID or an ID from another scope could silently
+        // skip results the caller never observed.
+        if let Some(after_id) = after_id.filter(|value| *value > 0) {
+            let present: i64 = match scope {
+                Some((kind, id)) => connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM runtime_events
+                     WHERE id = ?1 AND scope = ?2 AND scope_id = ?3)",
+                    params![after_id, kind.as_str(), id],
+                    |row| row.get(0),
+                ),
+                None => connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM runtime_events WHERE id = ?1)",
+                    params![after_id],
+                    |row| row.get(0),
+                ),
+            }
+            .map_err(|error| db_error("failed validating operator event history cursor", error))?;
+            if present == 0 {
+                return Err(RuntimeError::InvalidState(
+                    "event history cursor is not in the selected collection".into(),
+                ));
+            }
+        }
         let where_clause = match (scope.is_some(), after_id.is_some()) {
             (true, true) => "WHERE scope = ?1 AND scope_id = ?2 AND id > ?3",
             (true, false) => "WHERE scope = ?1 AND scope_id = ?2",

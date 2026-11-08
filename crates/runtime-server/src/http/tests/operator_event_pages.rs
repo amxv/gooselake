@@ -122,6 +122,38 @@ async fn operator_event_history_scopes_are_indexed_bounded_and_detail_is_explici
     }
     assert_eq!(scoped_seen.len(), 5);
 
+    let workspace_cursor: i64 = db
+        .query_row(
+            "SELECT id FROM runtime_events WHERE event_id = 'evt_operator_0'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let process_cursor: i64 = db
+        .query_row(
+            "SELECT id FROM runtime_events WHERE event_id = 'evt_operator_7'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    for invalid in [
+        format!("/v2/events?cursor={}", process_cursor + 10_000),
+        format!("/v2/events?scope=workspace&scope_id=ws_operator_alpha&cursor={process_cursor}"),
+        format!("/v2/events?scope=process&scope_id=proc_operator_beta&cursor={workspace_cursor}"),
+    ] {
+        let (status, _, body) = operator_event_get(&router, Some(&token), &invalid).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}");
+        assert_eq!(body["error"]["code"], "invalid_state");
+    }
+    for valid in [
+        "/v2/events?cursor=0",
+        "/v2/events?scope=workspace&scope_id=ws_operator_alpha&cursor=0",
+    ] {
+        let (status, _, body) = operator_event_get(&router, Some(&token), valid).await;
+        assert_eq!(status, StatusCode::OK, "{valid}");
+        assert!(!body.as_array().unwrap().is_empty());
+    }
+
     let (status, _, detail) =
         operator_event_get(&router, Some(&token), "/v2/events/evt_operator_0").await;
     assert_eq!(status, StatusCode::OK);

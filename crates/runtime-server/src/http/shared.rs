@@ -6,9 +6,18 @@ pub(super) fn parse_provider_kind(value: &str) -> Result<ProviderKind, ApiError>
 }
 
 pub(super) fn parse_last_event_id_header(headers: &HeaderMap) -> Result<Option<i64>, ApiError> {
-    let Some(value) = headers.get("last-event-id") else {
+    let mut values = headers.get_all("last-event-id").iter();
+    let Some(value) = values.next() else {
         return Ok(None);
     };
+    if values.next().is_some() {
+        // The cursor is a continuation of already observed history. Choosing
+        // the first of multiple values may silently skip events when a proxy
+        // and client disagree about the selected resume point.
+        return Err(ApiError::bad_request(
+            "exactly one Last-Event-ID header is allowed".into(),
+        ));
+    }
     let raw = value
         .to_str()
         .map_err(|_| ApiError::bad_request("invalid last-event-id header encoding".to_string()))?;

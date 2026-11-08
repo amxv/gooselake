@@ -1024,6 +1024,8 @@ Behavior:
 - `after_seq` query param takes precedence
 - otherwise stream endpoints use the `Last-Event-ID` header
 - invalid `Last-Event-ID` returns HTTP `400`
+- duplicate `Last-Event-ID` headers also return HTTP `400`, including with
+  an explicit `after_seq`, rather than silently choosing a resume position
 - keepalive pings are sent every 10 seconds
 
 SSE event envelope:

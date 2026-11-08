@@ -210,6 +210,10 @@ Global event query parameters:
 - replay: `after_seq`, `limit`
 - stream: `after_seq`, `limit`, optional `Last-Event-ID` header fallback
 
+All legacy SSE streams reject multiple `Last-Event-ID` header values with
+HTTP `400`, even when the request also supplies `after_seq`; a replay cursor
+must never be inferred from ambiguous proxy-provided headers.
+
 ## Teams + Comms
 
 - `POST /v1/teams` (Bearer)

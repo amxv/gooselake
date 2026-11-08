@@ -65,6 +65,9 @@ The runtime supports both explicit query cursors and the SSE `Last-Event-ID` hea
 - `after_seq` query parameter wins when provided.
 - otherwise `Last-Event-ID` is used.
 - invalid `Last-Event-ID` values are rejected with `400`.
+- duplicate `Last-Event-ID` headers return `400` (even if identical or an
+  explicit `after_seq` is present); the runtime never guesses which resume
+  cursor a proxy or client intended.
 - session, team, and process stream IDs are scoped sequence numbers.
 - global stream IDs are global runtime event row IDs.
 

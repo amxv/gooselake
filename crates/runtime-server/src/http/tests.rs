@@ -61,6 +61,7 @@ mod process_more;
 mod provider_contract_routes;
 mod scoped_mcp;
 mod session_basics;
+mod sse_cursor_headers;
 mod team_routes;
 mod workspace_agent_routes;
 mod workspace_control_routes;

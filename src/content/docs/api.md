@@ -35,7 +35,12 @@ Public routes:
 Protected routes:
 
 - all `/v1/**` routes require `Authorization: Bearer <token>`
-- all `/v2/**` routes require `Authorization: Bearer <token>`
+- operator `/v2/**` routes require `Authorization: Bearer <token>`; `/v2/mcp/**` uses a separate agent-scoped credential
+
+The operator bearer check requires exactly one `Authorization` header. Two
+headers are unauthorized even if one (or both) contains the valid token;
+`/v2` returns the typed `unauthorized` envelope and `/v1` keeps its legacy
+error shape.
 
 Legacy `/v1` auth failure returns HTTP `401` with:
 

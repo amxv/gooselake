@@ -16,6 +16,10 @@ Auth legend:
 - `Public`: no bearer token
 - `Bearer`: requires `Authorization: Bearer <token>`
 
+Operator bearer routes require exactly one `Authorization` header; duplicate
+values return `401` rather than choosing a proxy-dependent credential. The
+agent-scoped `/v2/mcp/**` gateway has independent authentication.
+
 ## Runtime + Meta
 
 - `GET /health` (Public)

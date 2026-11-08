@@ -36,12 +36,22 @@ Public routes:
 Protected routes:
 
 - all `/v1/**` routes
+- operator `/v2/**` routes other than the independently authenticated `/v2/mcp/**` gateway
 
-Protected routes require:
+The `/v2/mcp/**` gateway uses an agent-scoped credential rather than the
+operator bearer secret; an operator token alone cannot impersonate an agent.
+
+Operator-protected routes require:
 
 ```http
 Authorization: Bearer <token>
 ```
+
+The operator API requires **exactly one** `Authorization` header. Duplicate
+headers are rejected with HTTP `401` even if one or both contain a valid
+token, preventing disagreement between proxies and the runtime over which
+credential should be trusted. This is enforced on both `/v1` and operator
+`/v2` routes; their respective legacy/typed error bodies remain unchanged.
 
 The token can come from inline config or a token file. If no token is configured, the runtime can create token material under its data directory during bootstrap depending on configuration.
 

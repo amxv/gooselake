@@ -5,6 +5,59 @@ async fn response_json(response: Response) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn operator_auth_rejects_duplicate_authorization_headers_on_both_api_versions() {
+    let (router, token, _temp) = build_test_router().await;
+    for uri in ["/v1/sessions", "/v2/workspaces"] {
+        for (first, second) in [
+            (format!("Bearer {token}"), "Bearer wrong".to_string()),
+            ("Bearer wrong".to_string(), format!("Bearer {token}")),
+            (format!("Bearer {token}"), format!("Bearer {token}")),
+        ] {
+            let request = Request::builder()
+                .uri(uri)
+                .header(header::AUTHORIZATION, first)
+                .header(header::AUTHORIZATION, second)
+                .body(Body::empty())
+                .unwrap();
+            assert_eq!(
+                request
+                    .headers()
+                    .get_all(header::AUTHORIZATION)
+                    .iter()
+                    .count(),
+                2,
+                "test must actually send duplicate Authorization headers"
+            );
+            let response = router.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+            let body = response_json(response).await;
+            if uri.starts_with("/v2/") {
+                assert_eq!(body["error"]["code"], "unauthorized");
+                assert!(body["request_id"].as_str().is_some());
+            } else {
+                assert!(body["error"].is_string());
+            }
+        }
+        let valid = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            valid.status(),
+            StatusCode::OK,
+            "single valid auth must work: {uri}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn v2_operator_errors_have_stable_codes_server_request_ids_and_no_v1_auth_drift() {
     let (router, token, temp) = build_test_router().await;
     let unauthenticated = router

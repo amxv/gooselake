@@ -164,10 +164,14 @@ pub(super) async fn bearer_auth(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let auth_header = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok());
+    // A proxy and this runtime must not disagree about which duplicate
+    // Authorization value has authority. Require exactly one header even
+    // when a later (or earlier) duplicate contains the correct token.
+    let mut auth_values = request.headers().get_all(header::AUTHORIZATION).iter();
+    let auth_header = match (auth_values.next(), auth_values.next()) {
+        (Some(value), None) => value.to_str().ok(),
+        _ => None,
+    };
 
     let expected = format!("Bearer {expected_token}");
     if auth_header == Some(expected.as_str()) {

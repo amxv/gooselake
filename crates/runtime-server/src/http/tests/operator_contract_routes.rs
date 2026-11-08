@@ -70,6 +70,49 @@ async fn v2_operator_errors_have_stable_codes_server_request_ids_and_no_v1_auth_
     assert_eq!(invalid_body["error"]["code"], "invalid_request");
     assert!(invalid_body["error"]["message"].is_string());
 
+    let unknown_root = temp.path().join("unknown-field-rejected");
+    fs::create_dir_all(&unknown_root).unwrap();
+    let unknown_field = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v2/workspaces")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "canonical_root": unknown_root,
+                        "display_name": "Unknown field must not be accepted",
+                        "lead_agent_id": "spoofed-lead"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unknown_field.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let unknown_field = response_json(unknown_field).await;
+    assert_eq!(unknown_field["error"]["code"], "invalid_request");
+    let workspaces = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v2/workspaces")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(workspaces.status(), StatusCode::OK);
+    assert!(response_json(workspaces)
+        .await
+        .as_array()
+        .unwrap()
+        .is_empty());
+
     let legacy = router
         .clone()
         .oneshot(

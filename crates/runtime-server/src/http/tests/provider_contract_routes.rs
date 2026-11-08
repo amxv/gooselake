@@ -135,3 +135,47 @@ async fn v2_provider_contract_reports_capabilities_harness_and_discovery_modes()
         .as_str()
         .is_some_and(|message| message.contains("working directory")));
 }
+
+#[tokio::test]
+async fn provider_discovery_rejects_unknown_inputs_before_adapter_dispatch() {
+    let (router, token, _temp_dir, _acp) = build_mixed_provider_test_router().await;
+    for (path, body) in [
+        (
+            "/v2/providers/codex/models/discover",
+            serde_json::json!({"force_refersh": true}),
+        ),
+        (
+            "/v2/providers/acp/models/discover",
+            serde_json::json!({"startup_mode": "start_runtime", "silent_extra": 1}),
+        ),
+        (
+            "/v2/providers/codex/skills/discover",
+            serde_json::json!({"force_refresh": false, "startup_mode": "cold"}),
+        ),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{path}"
+        );
+        let value = body_json(response).await;
+        assert_eq!(value["error"]["code"], "invalid_request", "{path}");
+        assert_eq!(value["error"]["retryable"], false, "{path}");
+        assert!(value["request_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("req_")));
+    }
+}

@@ -472,6 +472,7 @@ pub struct ProviderSkillDescriptor {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderModelDiscoveryRequest {
     pub cwd: Option<String>,
     #[serde(default)]
@@ -483,6 +484,7 @@ pub struct ProviderModelDiscoveryRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ProviderSkillDiscoveryRequest {
     pub cwd: Option<String>,
     #[serde(default)]

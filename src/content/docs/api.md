@@ -168,6 +168,10 @@ OPERATION_ID=$(echo "$WORKSPACE_RESULT" | jq -r '.operation_id')
 | `canonical_root` | yes | Must resolve to an existing directory. The runtime canonicalizes it before durable admission. |
 | `display_name` | no | Defaults to the canonical root's final path component. Re-registering an existing root does not rename it. |
 
+Unknown JSON fields are rejected with the typed `invalid_request` error,
+rather than silently ignored. For example, registration cannot set
+`lead_agent_id`; use the separately revisioned workspace lead endpoint.
+
 `Idempotency-Key` is optional, but recommended for retried mutations. The key is scoped to the authenticated operator principal. Repeating the same key with the same normalized input replays the exact terminal response, including the original `operation_id`. Reusing the same key with different normalized input returns HTTP `409` and does not mutate workspace state.
 
 ### Durable managed-worktree creation
@@ -1017,6 +1021,10 @@ The v2 provider surface makes optional behavior explicit:
 - `GET /v2/providers/{provider}/capabilities` returns provider capability support plus the tracked harness contract metadata.
 - `POST /v2/providers/{provider}/models/discover` accepts optional `cwd`, typed `setting_sources_intent`, `force_refresh`, and `startup_mode` (`cold` or `start_runtime`). The response includes a discovery `mode` plus typed model descriptors.
 - `POST /v2/providers/{provider}/skills/discover` accepts optional `cwd`, typed `setting_sources_intent`, and `force_refresh`, and returns a discovery `mode` plus provider-tagged skills.
+
+Discovery request objects reject unrecognized JSON properties with
+`invalid_request`, so a misspelled option never silently falls back to a
+default or triggers a provider call with unintended settings.
 
 `mode` is `catalog`, `agent_managed`, or `unsupported`. ACP model discovery is currently `agent_managed`, so its empty model array must not be interpreted as a built-in empty catalog. Codex skill discovery is `catalog` mode and delegates to its app-server `skills/list` method; Claude and ACP skill discovery remain unsupported by the shipping adapters.
 

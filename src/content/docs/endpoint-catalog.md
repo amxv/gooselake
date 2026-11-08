@@ -36,7 +36,7 @@ provider rebind and edit records retain their specialized detail routes.
 
 ## Workspace Authority + Durable Operations
 
-- `POST /v2/workspaces` (Bearer, JSON; optional `Idempotency-Key` header)
+- `POST /v2/workspaces` (Bearer, strict JSON `canonical_root` and optional `display_name`; unknown fields rejected; optional `Idempotency-Key` header)
 - `GET /v2/workspaces` (Bearer; keyset pagination with optional `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when another page exists; cursor must identify an existing workspace at its exact creation timestamp)
 - `GET /v2/workspaces/{workspace_id}` (Bearer)
 - `POST /v2/workspaces/{workspace_id}/retire` (Bearer, JSON `expected_revision`, optional `Idempotency-Key`; atomic retirement only when no session or asynchronous obligations exist)
@@ -159,8 +159,8 @@ Message creation commits the canonical message and every recipient delivery atom
 - `POST /v1/providers/claude/auth/import-file` (Bearer, `multipart/form-data`, field `file`)
 - `POST /v1/providers/claude/auth/logout` (Bearer)
 - `GET /v2/providers/{provider}/capabilities` (Bearer)
-- `POST /v2/providers/{provider}/models/discover` (Bearer)
-- `POST /v2/providers/{provider}/skills/discover` (Bearer)
+- `POST /v2/providers/{provider}/models/discover` (Bearer; typed JSON options; unknown properties rejected)
+- `POST /v2/providers/{provider}/skills/discover` (Bearer; typed JSON options; unknown properties rejected)
 
 Provider behavior notes:
 - `GET /v1/providers/{provider}/models` returns dynamic, provider-owned `reasoning_levels` using raw runtime capability tokens such as Codex `xhigh`.

@@ -119,6 +119,7 @@ mod tests {
             .unwrap();
         assert_eq!(rebind.matches("      parameters:\n").count(), 1);
         assert!(rebind.contains("            X-Operation-ID:\n"));
+        assert!(rebind.contains("        \"409\":\n"));
         for path in [
             "/v2/workspaces/{workspace_id}",
             "/v2/workspaces/{workspace_id}/agents/{agent_id}",

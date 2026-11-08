@@ -296,10 +296,15 @@ impl From<RuntimeError> for ApiError {
             RuntimeError::ProviderDispatch {
                 code,
                 outcome,
+                operation_id,
                 message,
             } => {
                 let mut error = Self::new(StatusCode::CONFLICT, code, message);
-                error.details = Some(serde_json::json!({"dispatch_outcome":outcome}));
+                let mut details = serde_json::json!({"dispatch_outcome":outcome});
+                if let Some(operation_id) = operation_id {
+                    details["operation_id"] = serde_json::Value::String(operation_id);
+                }
+                error.details = Some(details);
                 error
             }
             RuntimeError::ProviderAlreadyRegistered(message) => Self::new(

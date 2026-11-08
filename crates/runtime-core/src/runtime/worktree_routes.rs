@@ -179,10 +179,14 @@ impl RuntimeSessionManager {
                     ));
                 }
                 if existing.phase != "completed" {
-                    return Err(RuntimeError::Conflict(format!(
-                        "worktree rebind {} is {}; do not replay provider dispatch",
-                        existing.operation_id, existing.phase,
-                    )));
+                    return Err(RuntimeError::provider_dispatch_unknown_for_operation(
+                        "reassignment_recovery_required",
+                        &existing.operation_id,
+                        format!(
+                            "worktree rebind {} is {}; do not replay provider dispatch",
+                            existing.operation_id, existing.phase,
+                        ),
+                    ));
                 }
                 return Ok(WorkspaceAgentRebindResponse {
                     agent: Some(self.get_workspace_agent(workspace_id, agent_id)?),
@@ -294,10 +298,14 @@ impl RuntimeSessionManager {
             });
         }
         if operation.operation_id != proposed.operation_id {
-            return Err(RuntimeError::Conflict(format!(
-                "worktree rebind {} already admitted; do not repeat provider dispatch",
-                operation.operation_id
-            )));
+            return Err(RuntimeError::provider_dispatch_unknown_for_operation(
+                "reassignment_recovery_required",
+                &operation.operation_id,
+                format!(
+                    "worktree rebind {} already admitted; do not repeat provider dispatch",
+                    operation.operation_id
+                ),
+            ));
         }
 
         let evidence = match provider
@@ -331,8 +339,9 @@ impl RuntimeSessionManager {
                 if safe_rejection {
                     return Err(error);
                 }
-                return Err(RuntimeError::provider_dispatch_unknown(
+                return Err(RuntimeError::provider_dispatch_unknown_for_operation(
                     "reassignment_recovery_required",
+                    &operation.operation_id,
                     format!(
                         "provider workspace binding outcome is unknown; inspect worktree rebind operation {} before taking further action: {error}",
                         operation.operation_id
@@ -376,8 +385,9 @@ impl RuntimeSessionManager {
                 "provider_rebind_evidence_mismatch",
                 now_ms(),
             );
-            return Err(RuntimeError::provider_dispatch_unknown(
+            return Err(RuntimeError::provider_dispatch_unknown_for_operation(
                 "reassignment_recovery_required",
+                &operation.operation_id,
                 format!(
                     "provider workspace rebind lacked authoritative binding evidence; operation {}",
                     operation.operation_id
@@ -412,8 +422,9 @@ impl RuntimeSessionManager {
                     "rebind_authority_commit_failed",
                     now_ms(),
                 );
-                return Err(RuntimeError::provider_dispatch_unknown(
+                return Err(RuntimeError::provider_dispatch_unknown_for_operation(
                     "reassignment_recovery_required",
+                    &operation.operation_id,
                     format!("provider changed cwd but durable route commit failed ({error}); operation {}", operation.operation_id),
                 ));
             }

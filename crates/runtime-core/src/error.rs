@@ -75,6 +75,9 @@ pub enum RuntimeError {
     ProviderDispatch {
         code: String,
         outcome: &'static str,
+        /// Only populated when a durable operator operation was admitted
+        /// before the native effect. Generic provider errors have no such ID.
+        operation_id: Option<String>,
         message: String,
     },
 }
@@ -94,6 +97,7 @@ impl RuntimeError {
         Self::ProviderDispatch {
             code: code.into(),
             outcome: ProviderDispatchOutcome::NotDispatched.as_str(),
+            operation_id: None,
             message: message.into(),
         }
     }
@@ -102,6 +106,22 @@ impl RuntimeError {
         Self::ProviderDispatch {
             code: code.into(),
             outcome: ProviderDispatchOutcome::Unknown.as_str(),
+            operation_id: None,
+            message: message.into(),
+        }
+    }
+
+    /// Preserve the original provider-specific machine error code while
+    /// attaching a durable recovery coordinate to ambiguous native results.
+    pub fn provider_dispatch_unknown_for_operation(
+        code: impl Into<String>,
+        operation_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::ProviderDispatch {
+            code: code.into(),
+            outcome: ProviderDispatchOutcome::Unknown.as_str(),
+            operation_id: Some(operation_id.into()),
             message: message.into(),
         }
     }

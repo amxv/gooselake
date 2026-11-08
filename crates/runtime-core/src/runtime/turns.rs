@@ -148,6 +148,7 @@ impl RuntimeSessionManager {
                     code,
                     outcome: "not_dispatched",
                     message,
+                    ..
                 } = &error
                 {
                     self.store

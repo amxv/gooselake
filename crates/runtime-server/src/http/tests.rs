@@ -54,6 +54,7 @@ mod operator_notice_policy_idempotency;
 mod operator_operation_pages;
 mod operator_process_pages;
 mod operator_rebind_etag;
+mod operator_rebind_unknown;
 mod operator_success_headers;
 mod operator_unjournaled_idempotency;
 mod operator_user_turn_idempotency;

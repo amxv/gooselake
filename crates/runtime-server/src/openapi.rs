@@ -656,7 +656,9 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
     if method == HttpMethod::Post
         && matches!(
             path,
-            "/v2/workspaces/{workspace_id}/worktrees" | "/v2/agents/{agent_id}/turns"
+            "/v2/workspaces/{workspace_id}/worktrees"
+                | "/v2/agents/{agent_id}/turns"
+                | "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree"
         )
     {
         out.push_str("        \"409\":\n");

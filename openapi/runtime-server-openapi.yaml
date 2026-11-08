@@ -2054,6 +2054,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        "409":
+          description: Conflict or unresolved native effect; inspect the operation without retrying the effect
+          headers:
+            X-Operation-ID:
+              description: Present when the native outcome requires durable review
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
           content:

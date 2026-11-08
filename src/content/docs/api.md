@@ -107,6 +107,11 @@ revision_precondition_not_supported` **before** doing work. This includes
 agent creation/archive/restore, managed worktree creation/cleanup, user turn
 submission, manual compaction, context refresh and workspace interruption.
 Sending a strong ETag does not silently protect an unrelated action.
+This also applies to nonrevisioned registration, messaging and delivery
+operations, migration preview/apply/resolution, provider model/skill discovery,
+historical edit/review, compaction review and retirement reconciliation.
+Only routes explicitly documented with a revision/`expected_revision`
+contract accept `If-Match`.
 
 `GET /v2/workspaces/{workspace_id}/agents` uses an indexed ascending
 `(created_at, agent_id)` keyset, with optional `lifecycle=active|archived|all`

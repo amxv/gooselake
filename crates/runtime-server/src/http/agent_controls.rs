@@ -11,6 +11,7 @@ pub(super) async fn edit_agent_turn_and_rerun(
     headers: HeaderMap,
     Json(input): Json<EditAndRerunRequest>,
 ) -> Result<Response, ApiError> {
+    reject_unsupported_if_match(&headers, "historical user turn edit-and-rerun")?;
     let key = parse_idempotency_key(&headers)?;
     let result = state
         .runtime
@@ -43,6 +44,7 @@ pub(super) async fn resolve_agent_edit_operation(
     headers: HeaderMap,
     Json(input): Json<EditReviewInput>,
 ) -> Result<Response, ApiError> {
+    reject_unsupported_if_match(&headers, "agent edit review")?;
     reject_unjournaled_idempotency_key(&headers, "agent edit review")?;
     let result =
         state
@@ -91,6 +93,7 @@ pub(super) async fn resolve_agent_compaction_review(
     headers: HeaderMap,
     Json(input): Json<ManualCompactionReviewInput>,
 ) -> Result<Json<SessionCompactionRun>, ApiError> {
+    reject_unsupported_if_match(&headers, "agent compaction review")?;
     reject_unjournaled_idempotency_key(&headers, "agent compaction review")?;
     Ok(Json(state.runtime.resolve_compaction_review(
         &agent_id,

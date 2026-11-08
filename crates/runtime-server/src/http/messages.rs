@@ -24,6 +24,7 @@ pub(super) async fn create_agent_message(
     headers: HeaderMap,
     Json(input): Json<AgentMessageCreateInput>,
 ) -> Result<Json<runtime_core::AgentMessageAck>, ApiError> {
+    reject_unsupported_if_match(&headers, "agent message submission")?;
     let idempotency_key = parse_idempotency_key(&headers)?;
     let mode = input.mode.trim().to_ascii_lowercase();
     let priority = input.priority.unwrap_or_else(|| "normal".to_string());
@@ -176,6 +177,7 @@ pub(super) async fn retry_agent_delivery(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unsupported_if_match(&headers, "agent delivery retry")?;
     if let Some(key) = parse_idempotency_key(&headers)? {
         let command = prepare_agent_delivery_retry(
             &delivery_id,
@@ -214,6 +216,7 @@ pub(super) async fn cancel_agent_message(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unsupported_if_match(&headers, "agent message cancellation")?;
     let command = prepare_agent_message_cancellation(
         &message_id,
         OperationActor::operator(OPERATOR_PRINCIPAL),

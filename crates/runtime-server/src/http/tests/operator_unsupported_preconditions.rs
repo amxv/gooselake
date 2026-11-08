@@ -55,6 +55,10 @@ async fn nonrevisioned_native_mutations_refuse_false_if_match_guarantees() {
 
     for (uri, input) in [
         (
+            "/v2/workspaces".to_string(),
+            Some(serde_json::json!({"canonical_root":workspace.canonical_root})),
+        ),
+        (
             format!("/v2/workspaces/{}/worktrees", workspace.workspace_id),
             Some(serde_json::json!({"worktree_name":"ignored-ifmatch-worktree"})),
         ),
@@ -73,6 +77,20 @@ async fn nonrevisioned_native_mutations_refuse_false_if_match_guarantees() {
             format!("/v2/agents/{}/turns", agent.agent_id),
             Some(serde_json::json!({"input":[{"type":"text","text":"do not send"}]})),
         ),
+        (
+            format!("/v2/agents/{}/turns/historical/edit-rerun", agent.agent_id),
+            Some(serde_json::json!({"edited_snapshot":{
+                "prompt_text":"do not fork", "image_refs":[], "invocation":null
+            }})),
+        ),
+        (
+            format!("/v2/agents/{}/edits/fork/resolve", agent.agent_id),
+            Some(serde_json::json!({"evidence":"should not settle"})),
+        ),
+        (
+            format!("/v2/agents/{}/compactions/run/resolve", agent.agent_id),
+            Some(serde_json::json!({"phase":"completed", "evidence":"should not settle"})),
+        ),
         (format!("/v2/agents/{}/compact", agent.agent_id), None),
         (
             format!("/v2/agents/{}/context-limit/refresh", agent.agent_id),
@@ -81,6 +99,39 @@ async fn nonrevisioned_native_mutations_refuse_false_if_match_guarantees() {
         (
             format!("/v2/workspaces/{}/interrupt", workspace.workspace_id),
             None,
+        ),
+        (
+            format!(
+                "/v2/workspaces/{}/retirement/unknown/reconcile",
+                workspace.workspace_id
+            ),
+            Some(serde_json::json!({
+                "effect_id":"unobserved", "evidence":"should not settle",
+                "resolution":{"kind":"recheck_settled"}
+            })),
+        ),
+        (
+            "/v2/messages".to_string(),
+            Some(serde_json::json!({
+                "mode":"direct", "sender_agent_id":agent.agent_id,
+                "recipient_agent_id":"unobserved", "input":"should not send"
+            })),
+        ),
+        ("/v2/messages/unknown/cancel".to_string(), None),
+        ("/v2/deliveries/unknown/retry".to_string(), None),
+        ("/v2/migrations/workspaces/preview".to_string(), None),
+        ("/v2/migrations/workspaces/apply".to_string(), None),
+        (
+            "/v2/migrations/workspaces/resolutions/session/unknown".to_string(),
+            Some(serde_json::json!({"action":"archive","workspace_id":null})),
+        ),
+        (
+            "/v2/providers/codex/models/discover".to_string(),
+            Some(serde_json::json!({})),
+        ),
+        (
+            "/v2/providers/codex/skills/discover".to_string(),
+            Some(serde_json::json!({})),
         ),
     ] {
         let (status, error) = post_with_unsupported_if_match(&router, &token, &uri, input).await;

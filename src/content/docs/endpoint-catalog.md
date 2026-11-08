@@ -93,6 +93,10 @@ Native operator actions without a revisioned `expected_revision` contract
 turn submission, compaction, context refresh and workspace interruption)
 reject a supplied `If-Match` as `400 revision_precondition_not_supported`
 before any native effect. A strong ETag is not silently ignored.
+Registration, message submission/cancellation/delivery retry, migration
+preview/apply/resolution, model/skill discovery, edit-and-rerun and its review,
+compaction review, and retirement reconciliation follow the same rule: these
+requests do not provide a revision compare-and-set guarantee.
 
 For workspace managed-worktree creation, supply `Idempotency-Key` when a request might be retried. Every operator creation records native Git/init intent and exclusive checkout-path plus Git-branch claims before execution; without a caller key, a generated one-shot key does not permit exact retry replay. Init scripts require `run_init_script: true`; omitted deletion policy uses the configured default for new checkouts and preserves the original policy on an existing managed checkout. Explicitly requesting an incompatible policy is a preflight conflict, without native admission. A successful response includes `X-Operation-ID`, and a repeated caller key replays the original `created` and `init_script_status` values. Key reuse with different input returns `409`. If the Git or init outcome cannot be proven, HTTP `409 outcome_unresolved` includes the durable `X-Operation-ID` and `error.details.operation_id` (with `retryable: false`), while the effect remains fenced in a `requested` or `manual_review` operation. `GET /v2/operations/{operation_id}` exposes its evidence; do not retry the effect with a new key until it has been independently reconciled.
 

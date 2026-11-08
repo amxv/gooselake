@@ -12,6 +12,7 @@ pub(super) async fn preview_workspace_migration(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unsupported_if_match(&headers, "workspace migration preview")?;
     reject_unjournaled_idempotency_key(&headers, "workspace migration preview")?;
     let (limit, cursor) = query.parse()?;
     paged_migration_status(refresh_preview(&state)?, limit, cursor)
@@ -116,6 +117,7 @@ pub(super) async fn apply_workspace_migration(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unsupported_if_match(&headers, "workspace migration apply")?;
     let command = prepare_legacy_workspace_migration_apply(
         OperationActor::operator(super::workspaces::OPERATOR_PRINCIPAL),
         super::workspaces::parse_idempotency_key(&headers)?,
@@ -135,6 +137,7 @@ pub(super) async fn resolve_workspace_migration_subject(
     Path((subject_kind, subject_id)): Path<(String, String)>,
     Json(request): Json<LegacyWorkspaceMigrationResolutionRequest>,
 ) -> Result<Response, ApiError> {
+    reject_unsupported_if_match(&headers, "workspace migration resolution")?;
     let subject_kind = LegacyWorkspaceMigrationSubjectKind::from_str(subject_kind.trim())
         .ok_or_else(|| {
             ApiError::bad_request(format!(

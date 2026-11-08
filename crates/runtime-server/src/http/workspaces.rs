@@ -14,6 +14,7 @@ pub(super) async fn register_workspace(
     headers: HeaderMap,
     Json(request): Json<WorkspaceRegisterRequest>,
 ) -> Result<Response, ApiError> {
+    reject_unsupported_if_match(&headers, "workspace registration")?;
     let idempotency_key = parse_idempotency_key(&headers)?;
     let command = prepare_workspace_registration(
         request,

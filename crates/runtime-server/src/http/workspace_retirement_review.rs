@@ -11,6 +11,7 @@ pub(super) async fn reconcile_workspace_retirement(
     headers: HeaderMap,
     Json(request): Json<WorkspaceRetirementReviewRequest>,
 ) -> Result<Response, ApiError> {
+    reject_unsupported_if_match(&headers, "workspace retirement review")?;
     let command = prepare_workspace_retirement_review(
         &workspace_id,
         &operation_id,

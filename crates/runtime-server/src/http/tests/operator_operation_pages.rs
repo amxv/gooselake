@@ -156,10 +156,109 @@ async fn operator_operation_history_pages_are_bounded_scoped_and_stable() {
         .iter()
         .all(|row| row["workspace_id"] == workspace_ids[0]));
 
+    // A continuation key is scoped to its source workspace and exact
+    // immutable creation timestamp; never interpret a foreign key as an
+    // arbitrary offset that silently loses rows from this collection.
+    let foreign_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v2/operations?workspace_id={}", workspace_ids[1]))
+                .header(header::AUTHORIZATION, &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(foreign_response.status(), StatusCode::OK);
+    let foreign: serde_json::Value = serde_json::from_slice(
+        &to_bytes(foreign_response.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let foreign = &foreign.as_array().unwrap()[0];
+    for invalid in [
+        format!(
+            "/v2/operations?workspace_id={}&cursor={}:{}",
+            workspace_ids[0],
+            foreign["created_at"],
+            foreign["operation_id"].as_str().unwrap()
+        ),
+        format!(
+            "/v2/operations?workspace_id={}&cursor={}:{}",
+            workspace_ids[0],
+            rows[0]["created_at"].as_i64().unwrap() + 1,
+            rows[0]["operation_id"].as_str().unwrap()
+        ),
+        format!(
+            "/v2/operations?workspace_id={}&cursor=100:op_missing",
+            workspace_ids[0]
+        ),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(&invalid)
+                    .header(header::AUTHORIZATION, &auth)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{invalid}");
+        let value: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(value["error"]["code"], "invalid_state", "{invalid}");
+    }
+
+    let first_scoped = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v2/operations?workspace_id={}&limit=1",
+                    workspace_ids[0]
+                ))
+                .header(header::AUTHORIZATION, &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first_scoped.status(), StatusCode::OK);
+    let next = first_scoped.headers()["x-next-cursor"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let continued = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v2/operations?workspace_id={}&limit=1&cursor={next}",
+                    workspace_ids[0]
+                ))
+                .header(header::AUTHORIZATION, &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(continued.status(), StatusCode::OK);
+    let continued: serde_json::Value =
+        serde_json::from_slice(&to_bytes(continued.into_body(), usize::MAX).await.unwrap())
+            .unwrap();
+    assert_eq!(continued.as_array().unwrap().len(), 1);
+
     for uri in [
         "/v2/operations?limit=0",
         "/v2/operations?limit=101",
         "/v2/operations?cursor=bogus",
+        "/v2/operations?workspace_id=",
+        "/v2/operations?workspace_id=%20",
         "/v2/operations?unexpected=true",
     ] {
         let response = router

@@ -736,6 +736,15 @@ pub(super) async fn list_operations(
     State(state): State<AppState>,
     Query(query): Query<OperationListQuery>,
 ) -> Result<Response, ApiError> {
+    if query
+        .workspace_id
+        .as_deref()
+        .is_some_and(|id| id.is_empty() || id.trim() != id || id.len() > 128)
+    {
+        return Err(ApiError::bad_request(
+            "workspace_id must be a nonempty canonical identifier".into(),
+        ));
+    }
     let (limit, cursor) = ResourcePageQuery {
         cursor: query.cursor,
         limit: query.limit,

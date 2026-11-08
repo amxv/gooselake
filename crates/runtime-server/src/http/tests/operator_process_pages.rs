@@ -138,6 +138,31 @@ async fn v2_operator_process_history_is_bounded_scoped_and_redacted() {
         .iter()
         .all(|row| { row["workspace_id"].as_str() == Some(first_workspace.as_str()) }));
 
+    let scoped_first = format!("/v2/processes?workspace_id={first_workspace}&limit=2");
+    let (status, next, first_page) = operator_get(&router, Some(&token), &scoped_first).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first_page.as_array().unwrap().len(), 2);
+    let next = next.expect("scoped history has another page");
+    let (status, tail_cursor, second_page) = operator_get(
+        &router,
+        Some(&token),
+        &format!("{scoped_first}&cursor={next}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(tail_cursor.is_none());
+    assert_eq!(second_page.as_array().unwrap().len(), 2);
+
+    for bad_uri in [
+        format!("/v2/processes?workspace_id={first_workspace}&cursor=10002:proc_httptest_4"),
+        format!("/v2/processes?workspace_id={first_workspace}&cursor=10001:proc_httptest_0"),
+        format!("/v2/processes?workspace_id={first_workspace}&cursor=10000:proc_unknown"),
+    ] {
+        let (status, _, body) = operator_get(&router, Some(&token), &bad_uri).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad_uri}");
+        assert_eq!(body["error"]["code"], "invalid_state", "{bad_uri}");
+    }
+
     let (status, _, detail) =
         operator_get(&router, Some(&token), "/v2/processes/proc_httptest_0").await;
     assert_eq!(status, StatusCode::OK);

@@ -214,7 +214,10 @@ curl -fsS -H "Authorization: Bearer $TOKEN" "$BASE_URL/v2/operations/$OPERATION_
 `GET /v2/operations` returns newest-first durable operation summaries, optionally
 filtered by exact `workspace_id`. It uses indexed `(created_at, operation_id)`
 keyset pagination: `limit` defaults to 50 (maximum 100), and `X-Next-Cursor`
-supplies the next page's cursor. Each row contains only the operation ID,
+supplies the next page's cursor. The cursor must identify an existing
+operation with the exact creation timestamp and, when filtering, the same
+workspace; an unknown or mismatched continuation returns HTTP 400 instead of
+silently skipping records. Each row contains only the operation ID,
 workspace ID, kind, actor kind, phase, optional error code and timestamps.
 It does not retrieve admission requests, idempotency credentials, terminal
 results, claims, transitions or effect details for every row. The singular operation endpoint returns the full durable
@@ -1035,7 +1038,9 @@ an optional exact `workspace_id` filter. `limit` defaults to 50 (1–100),
 and an `X-Next-Cursor` header supplies the next keyset page when there are more
 rows. The cursor uses `(admitted_at, process_id)` descending order; the database
 uses separate global and workspace indexes instead of scanning all stored
-commands or doing in-memory pagination. Each list item includes only
+commands or doing in-memory pagination. A cursor must match a real process
+admission timestamp and the selected workspace when filtered; missing,
+fabricated, or cross-workspace cursors return HTTP 400. Each list item includes only
 `process_id`, `workspace_id`, `owner_agent_id`, `status`, `admitted_at`,
 `started_at`, `ended_at`, and `completion_state`. Neither process commands,
 native PIDs, invocation keys nor full log paths are loaded into list results.

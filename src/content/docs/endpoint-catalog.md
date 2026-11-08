@@ -76,7 +76,7 @@ error bodies and the separate agent-scoped `/v2/mcp` tool contract are unchanged
 - `POST /v2/migrations/workspaces/apply` (Bearer; optional `Idempotency-Key` header)
 - `POST /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}` (Bearer, JSON; optional `Idempotency-Key` header)
 - `GET /v2/operations/{operation_id}` (Bearer)
-- `GET /v2/operations` (Bearer; indexed newest-first durable operation summaries, optional `workspace_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when more)
+- `GET /v2/operations` (Bearer; indexed newest-first durable operation summaries, optional `workspace_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when more; cursor must match the exact operation ID/time in the selected workspace)
 
 Workspace registration canonicalizes the requested filesystem root and uses that canonical root as the durable uniqueness key. Repeated or concurrent registrations of the same root converge on one workspace identity. With `Idempotency-Key`, an exact retry replays the original terminal result; a different normalized request under the same key returns HTTP `409` without changing state.
 
@@ -233,7 +233,7 @@ Team query parameters:
 
 ## Processes
 
-- `GET /v2/processes` (Bearer; indexed newest-first admitted-process summaries, optional `workspace_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when more)
+- `GET /v2/processes` (Bearer; indexed newest-first admitted-process summaries, optional `workspace_id`, `cursor`, `limit=1..100` default 50; `X-Next-Cursor` when more; cursor must match the exact process ID/admission time and selected workspace)
 - `GET /v2/processes/{process_id}` (Bearer; detailed native process diagnosis, including command/log locations)
 - `POST /v1/processes` (Bearer)
 - `GET /v1/processes` (Bearer)

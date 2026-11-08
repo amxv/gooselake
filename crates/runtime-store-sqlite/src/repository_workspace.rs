@@ -244,6 +244,24 @@ impl SqliteRuntimeRepository {
             ));
         }
         let connection = open_connection(&self.database_path)?;
+        if let Some((created_at, operation_id)) = after.as_ref() {
+            let anchor: Option<(i64, Option<String>)> = connection
+                .query_row(
+                    "SELECT created_at,workspace_id FROM runtime_operations WHERE operation_id=?1",
+                    [operation_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|error| db_error("failed validating operation page cursor", error))?;
+            if !anchor.is_some_and(|(timestamp, owner)| {
+                timestamp == *created_at
+                    && workspace_id.is_none_or(|scope| owner.as_deref() == Some(scope))
+            }) {
+                return Err(RuntimeError::InvalidState(
+                    "operation cursor is outside the requested workspace or timestamp".into(),
+                ));
+            }
+        }
         let mut sql = String::from(
             "SELECT operation_id, workspace_id, kind, actor_kind, phase, error_code, \
              created_at, updated_at \

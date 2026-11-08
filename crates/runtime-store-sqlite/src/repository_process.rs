@@ -149,6 +149,24 @@ impl SqliteRuntimeRepository {
             ));
         }
         let connection = open_connection(&self.database_path)?;
+        if let Some((admitted_at, process_id)) = cursor.as_ref() {
+            let anchor: Option<(i64, Option<String>)> = connection
+                .query_row(
+                    "SELECT admitted_at,workspace_id FROM managed_processes WHERE process_id=?1",
+                    [process_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|error| db_error("failed validating process page cursor", error))?;
+            if !anchor.is_some_and(|(timestamp, owner)| {
+                timestamp == *admitted_at
+                    && workspace_id.is_none_or(|scope| owner.as_deref() == Some(scope))
+            }) {
+                return Err(RuntimeError::InvalidState(
+                    "process cursor is outside the requested workspace or timestamp".into(),
+                ));
+            }
+        }
         let columns = "process_id, workspace_id, owner_session_id, status, admitted_at, \
                        execution_started_at, ended_at, completion_state";
         let filter = match (workspace_id.is_some(), cursor.is_some()) {

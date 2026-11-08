@@ -669,7 +669,18 @@ async fn workspace_interrupt_targets_only_active_turns_in_authoritative_roster_a
         .active_turn_id
         .expect("outside onboarding is still waiting for approval");
     finish_test_onboarding(&runtime, &workspace.workspace_id, &idle.agent_id).await;
-
+    let (status, invalid) = super::workspace_worktree_routes::call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v2/workspaces/{}/interrupt", workspace.workspace_id),
+        Some(serde_json::json!({"dry_run":true})),
+        Some("must-not-interrupt"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid["error"]["code"], "invalid_request");
+    assert!(runtime.get_session(&active.agent_id).await.unwrap().status == "waiting_for_approval");
     let first = interrupt_workspace(
         &router,
         &token,

@@ -447,7 +447,9 @@ async fn attempt_previous_worktree_cleanup(
 pub(super) async fn retry_workspace_agent_rebind_cleanup(
     State(state): State<AppState>,
     Path((workspace_id, agent_id, operation_id)): Path<(String, String, String)>,
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
+    require_empty_request_body(&body)?;
     if !state.app.worktree_settings.enabled {
         return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
     }
@@ -549,7 +551,9 @@ pub(super) async fn interrupt_workspace_turns(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
+    require_empty_request_body(&body)?;
     let idempotency_key = parse_idempotency_key(&headers)?;
     let command = prepare_workspace_interrupt(
         workspace_id.trim(),
@@ -729,7 +733,9 @@ pub(super) async fn restore_workspace_agent(
     State(state): State<AppState>,
     Path((workspace_id, agent_id)): Path<(String, String)>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+    require_empty_request_body(&body)?;
     reject_unjournaled_idempotency_key(&headers, "workspace agent restore")?;
     let restored = state
         .runtime

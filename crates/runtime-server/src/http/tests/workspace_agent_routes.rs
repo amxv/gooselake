@@ -585,15 +585,47 @@ async fn workspace_agent_create_archive_restore_and_restart_preserve_authority()
         Some("recipient_archived")
     );
 
+    let restore_uri = format!(
+        "/v2/workspaces/{}/agents/{}/restore",
+        workspace.workspace_id, created.agent_id
+    );
+    let invalid_restore = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&restore_uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"force":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_restore.status(), StatusCode::BAD_REQUEST);
+    let invalid: serde_json::Value = serde_json::from_slice(
+        &to_bytes(invalid_restore.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(invalid["error"]["code"], "invalid_request");
+    assert_eq!(
+        store
+            .get_workspace_system_notice(&onboarding_id)
+            .unwrap()
+            .unwrap()
+            .state,
+        "cancelled",
+        "ignored restore options must not reinstate onboarding"
+    );
+
     let restore_response = router
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(format!(
-                    "/v2/workspaces/{}/agents/{}/restore",
-                    workspace.workspace_id, created.agent_id
-                ))
+                .uri(&restore_uri)
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
                 .expect("restore request"),

@@ -69,6 +69,18 @@ async fn public_agent_session_controls_are_authenticated_revisioned_and_capabili
         "missing provider evidence is JSON null"
     );
 
+    let (status, invalid) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("{prefix}/context-limit/refresh"),
+        Some(serde_json::json!({"force_refresh":true})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid["error"]["code"], "invalid_request");
+
     let (status, _) = call(
         &router,
         &token,

@@ -1,10 +1,14 @@
 use super::*;
 
 /// Mutations without a JSON input contract must not silently execute while
-/// discarding caller-supplied options such as `dry_run` or `force`. The body
-/// extractor runs before any operation admission or native effect.
+/// discarding options such as `dry_run` or `force`. Old generic API clients
+/// may send `{}` for every POST; preserve that no-options representation.
+/// The extractor runs before any operation admission or native effect.
 pub(super) fn require_empty_request_body(body: &[u8]) -> Result<(), ApiError> {
-    if body.is_empty() {
+    if body.is_empty()
+        || serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(body)
+            .is_ok_and(|value| value.is_empty())
+    {
         Ok(())
     } else {
         Err(ApiError::bad_request(

@@ -54,7 +54,9 @@ pub(super) async fn compact_agent_session(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
     headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Json<SessionCompactionRun>, ApiError> {
+    require_empty_request_body(&body)?;
     let key = parse_idempotency_key(&headers)?;
     Ok(Json(
         state
@@ -138,7 +140,9 @@ pub(super) async fn get_agent_context_limit(
 pub(super) async fn refresh_agent_context_limit(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    body: axum::body::Bytes,
 ) -> Result<Json<SessionContextLimitSnapshot>, ApiError> {
+    require_empty_request_body(&body)?;
     Ok(Json(
         state
             .runtime

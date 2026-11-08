@@ -457,6 +457,9 @@ agent lookup; it does not create standalone agents.
 
 After provider turns, Gooselake attempts to persist the provider-reported context window, token usage and remaining percentage. `GET /v2/agents/{agent_id}/context-limit` returns the current observation or JSON `null` if none exists for the current native attachment. Snapshots carry the provider native reference, optional canonical reference, agent revision, observation time, and source turn. A late observation cannot overwrite newer evidence or survive a rebind, reattachment, or revisioned policy update. `POST /v2/agents/{agent_id}/context-limit/refresh` requests fresh evidence; it never estimates usage from transcript text.
 
+Context-limit refresh accepts **no options** (empty body or `{}`):
+supplying custom refresh options returns `400 invalid_request` without querying the provider.
+
 Use the current agent `revision` from `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` when updating thinking preference or Claude permission intent. Both public mutations require `expected_revision`, return the new revision, and reject stale revisions with HTTP `409`. Changes are rejected during an active turn. Codex and Claude thinking preferences carry into later turns/resume; ACP retains its own preferences and does not support these mutations.
 
 Provider-backed agent archive, restore, preference and permission mutations
@@ -526,6 +529,11 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
 ```
 
 `POST /v2/agents/{agent_id}/compact` requires a ready, active workspace-owned Codex or Claude agent. It durably admits a manager-owned `cmp_*` run before invoking the native provider, with optional `Idempotency-Key`. The result distinguishes `accepted` (native request accepted, **not yet confirmed complete**) from `not_performed`; an unknown provider outcome becomes `manual_review` and is never automatically resubmitted. `GET /v2/agents/{agent_id}/compactions/{run_id}` reports the exact durable operation. Manual and unsolicited provider/automatic compaction now share this lifecycle: `started`, `compacting`, `completed`, `failed`, or `cancelled` observations are attached to the exact provider-native session, with `source`, `confidence`, `trigger`, and optional before/after token counts. Automatic run IDs appear in durable `compaction.lifecycle_changed` session events. An observation may confirm completion before the provider returns synchronous manual acceptance; a late acceptance cannot roll back its terminal state. The provider's native session reference is checked at commit time, so delayed observations from a replaced attachment are rejected.
+
+Manual compaction accepts **no options** (empty body or `{}` allowed).
+A speculative `dry_run`,
+`force`, or other JSON option returns `400 invalid_request` before durable
+compaction admission or native provider invocation.
 
 Compaction completion transactionally admits approved `post_compaction` hook intents and one stable system notice per selected recipient. The compacted member's active creator is subscribed by default unless their `creator_compaction_subscription` is `unsubscribed`; the workspace notice policy enables lead notifications by default and disables team-wide notifications by default. Lead/creator overlap is deduplicated. If no eligible lead, creator, or opted-in team member exists, no notice is injected. System notices use the same ordered, recoverable `automation_context` dispatcher as onboarding; hook commands still require the operator's exact trusted approval. Neither a failed compaction nor replayed terminal evidence emits a completion hook.
 
@@ -619,6 +627,10 @@ curl -fsS -X POST \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/rebinds/$OPERATION_ID/cleanup"
 ```
 
+This explicit cleanup retry accepts **no options** (empty body or `{}`):
+unsupported
+`force` or other options fail before any Git deletion or record change.
+
 Only checkout paths under the configured managed root with verified Git identity/branch, no uncommitted changes, and no unmerged branch commits are eligible for automatic deletion. This retry is a separate cleanup action, not a retry of provider rebinding: replaying the original `Idempotency-Key` does not implicitly retry pending native cleanup, even if the checkout has since become clean. Recovery from an ambiguous provider rebind still requires operator investigation and is not implicitly resolved by this endpoint.
 
 Older agent creation requests without a `worktree` selector still accept a `cwd` inside the registered root. The legacy `/v1/worktrees` endpoints remain temporarily available to existing clients; the workspace-scoped endpoint is the preferred creation path. Unresolved provider rebinds still require explicit operator recovery rather than automatic guessing or replay.
@@ -636,6 +648,9 @@ curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/restore"
 ```
+
+Agent restore accepts **no options** (empty body or `{}`); policy or force
+options return `400 invalid_request` before provider resume.
 
 An archived agent is removed from the default active roster and its underlying runtime session rejects new turns. History, workspace ownership, alias, recreation policy, and provider identity remain durable. Restore returns the same agent ID and alias and resumes the provider from the stored policy; it does not implicitly assign any future workspace role such as lead.
 
@@ -718,6 +733,11 @@ curl -fsS -X POST \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/interrupt"
 ```
 
+Workspace interruption accepts **no options** (empty body or `{}`).
+Nonempty JSON options such as
+`{"dry_run":true}` returns `400 invalid_request` without interrupting turns
+or allocating an operation.
+
 The response contains the durable `operation_id`, `workspace_id`, and deterministic `interrupted_agent_ids` / `skipped_agent_ids` sets. The runtime snapshots only active workspace members, records per-agent interrupt intent before provider calls, skips idle members, and cannot target a session outside the workspace. An exact idempotency-key retry replays the stored terminal result without issuing another provider interrupt. If a process dies after the provider accepted an interrupt but before the effect was finalized, recovery uses the durable `turn.interrupt_requested` event instead of blindly dispatching a duplicate; genuinely ambiguous effects remain non-terminal for explicit recovery rather than being guessed.
 
 ### Migrating legacy workspace authority
@@ -745,10 +765,11 @@ curl -fsS -X POST \
 
 Run preview before apply; apply consumes the persisted preview rather than silently refreshing it. Apply creates durable workspace/session ownership and placeholder workspace-agent profiles only for subjects whose repository authority is proven. `unresolved` subjects receive no guessed ownership and keep `cutover_blocked: true` until they are explicitly resolved. Re-running apply is convergent; an exact `Idempotency-Key` retry replays the original terminal operation result without reclassifying legacy rows as a hidden side effect.
 
-The migration preview/apply POST routes accept **no request body**. Supplying
+The migration preview/apply POST routes accept **no options** (empty body or
+`{}` allowed for older clients). Supplying
 speculative options such as `{"dry_run":true}` or `{"force":true}` returns
 `400 invalid_request` before preview writes, migration authority, or operation
-admission. Do not send JSON to these endpoints.
+admission. Prefer omitting the body.
 
 Read migration diagnostics:
 
@@ -871,8 +892,8 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
 
 Message creation and its recipient snapshot commit atomically. Operator cancellation now atomically updates every pending/deferred delivery and its legacy mirrors together with an exact durable operation receipt; it cannot partially cancel a broadcast. The cancellation response retains its JSON delivery array and adds `X-Operation-ID` for inspection through `/v2/operations/{id}`. The optional `Idempotency-Key` returns the original receipt after a lost response; reusing the same operator key for different inputs or another operation-backed operator resource conflicts with HTTP 409. A stale delivery worker cannot revive a terminal cancelled delivery.
 
-Message cancellation and delivery retry POST routes accept **no request
-body**. Any supplied JSON, including `{"dry_run":true}`, fails with
+Message cancellation and delivery retry POST routes accept **no options**
+(empty body or `{}` allowed for older clients). Nonempty JSON options, including `{"dry_run":true}`, fails with
 `400 invalid_request` without cancelling deliveries or attempting a retry.
 
 Retry only accepts failed/deferred canonical deliveries. Without an idempotency key, its original synchronous delivery-result response is preserved. With `Idempotency-Key`, retry atomically re-admits the delivery in `pending` state with its migrated legacy mirror and a durable completed operation receipt, then attempts provider delivery. The response remains a single delivery JSON object but describes the **exact pending queue admission**, not the later provider delivery result; `X-Operation-ID` points to `/v2/operations/{id}`. Replaying that key returns the exact admission response without a second native attempt, even if the delivery subsequently becomes `injected`, `deferred`, or `failed`. Inspect the delivery endpoint for its current state. If the process dies after durable admission, startup recovery owns pending work; an `injecting` state is not a license to blindly duplicate an ambiguous native send. Key reuse for another delivery or operator operation conflicts. Startup recovery resumes canonical `pending`/`deferred` work, and migrated legacy delivery rows mirror canonical terminal transitions so `/v1` compatibility views cannot inject the same migrated delivery twice.

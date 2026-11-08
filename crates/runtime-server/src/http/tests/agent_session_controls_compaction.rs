@@ -100,6 +100,23 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
     finish_test_onboarding(&runtime, workspace_id, agent_id).await;
     let compact_uri = format!("/v2/agents/{agent_id}/compact");
 
+    let (status, invalid) = call(
+        &router,
+        &token,
+        "POST",
+        &compact_uri,
+        Some(serde_json::json!({"dry_run":true})),
+        Some("do-not-compact"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid["error"]["code"], "invalid_request");
+    assert_eq!(
+        provider.compaction_calls(),
+        0,
+        "must not invoke native compact"
+    );
+
     let (status, accepted) = call(
         &router,
         &token,
@@ -118,7 +135,7 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
         &token,
         "POST",
         &compact_uri,
-        None,
+        Some(serde_json::json!({})),
         Some("same-request"),
     )
     .await;

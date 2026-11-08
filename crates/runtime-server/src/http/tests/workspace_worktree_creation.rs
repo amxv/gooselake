@@ -661,6 +661,22 @@ async fn verified_rebind_cleanup_retries_safely_after_an_interrupted_native_clea
         "/v2/workspaces/{}/agents/{agent_id}/rebinds/{operation_id}/cleanup",
         workspace.workspace_id
     );
+    let (status, invalid) = call(
+        &router,
+        &token,
+        "POST",
+        &retry,
+        Some(serde_json::json!({"force":true})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid["error"]["code"], "invalid_request");
+    assert!(
+        Path::new(previous).is_dir(),
+        "ignored force option must not delete Git worktree"
+    );
+    assert_eq!(provider.rebind_calls().await, 1);
     let (status, result) = call(&router, &token, "POST", &retry, None, None).await;
     assert_eq!(status, StatusCode::OK, "{result:?}");
     assert_eq!(result["previous_cleanup_status"], "deleted");

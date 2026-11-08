@@ -99,11 +99,16 @@ pub(super) struct ScopedMcpInvokeRequest {
 }
 
 async fn scoped_mcp_caller(state: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
-    let token = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|header| header.to_str().ok())
-        .and_then(|authorization| authorization.strip_prefix("Bearer "))
-        .ok_or_else(|| ApiError::unauthorized("scoped MCP credential required".to_string()))?;
+    // Agent credentials have the same exactly-one-header requirement as
+    // operator auth. A proxy and this gateway must never disagree about
+    // which of multiple supplied bearer values identifies the caller.
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    let token = match (values.next(), values.next()) {
+        (Some(value), None) => value.to_str().ok(),
+        _ => None,
+    }
+    .and_then(|authorization| authorization.strip_prefix("Bearer "))
+    .ok_or_else(|| ApiError::unauthorized("scoped MCP credential required".to_string()))?;
     let caller = runtime_core::agent_from_scoped_mcp_token(&state.bearer_token, token)
         .ok_or_else(|| ApiError::unauthorized("invalid scoped MCP credential".to_string()))?;
     let agent = state
@@ -169,8 +174,19 @@ pub(super) async fn scoped_mcp_invoke(
     }
     // Invocation correlation belongs to the trusted MCP host transport, not
     // the model-authored JSON body. The sidecar reuses this value on retries.
-    let invocation_id = headers
-        .get("x-gg-tool-invocation-id")
+    let mut invocation_values = headers.get_all("x-gg-tool-invocation-id").iter();
+    let invocation_header = invocation_values.next();
+    if invocation_values.next().is_some() {
+        // Duplicate invocation IDs can be interpreted differently by a
+        // reverse proxy, MCP sidecar, and gateway. Never silently choose one
+        // for a mutation with durable exact-replay semantics.
+        return Ok(Json(serde_json::json!({"ok":false,"error":{
+            "code":"invalid_invocation_id",
+            "message":"exactly one trusted tool invocation ID is allowed; no mutation was admitted",
+            "retryable":false
+        }})));
+    }
+    let invocation_id = invocation_header
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| {

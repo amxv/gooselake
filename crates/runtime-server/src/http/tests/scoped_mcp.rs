@@ -40,6 +40,128 @@ async fn scoped_setup() -> (Router, String, tempfile::TempDir, String, String) {
     (router, operator_token, temp, workspace, agents[0].clone())
 }
 
+#[tokio::test]
+async fn scoped_mcp_rejects_duplicate_authorization_headers_on_both_routes() {
+    let (router, operator, _temp, _workspace, caller) = scoped_setup().await;
+    let scoped = runtime_core::mint_scoped_mcp_token(&operator, &caller);
+    for uri in ["/v2/mcp/capabilities", "/v2/mcp/invoke"] {
+        for (first, second) in [
+            (format!("Bearer {scoped}"), "Bearer wrong".to_string()),
+            ("Bearer wrong".to_string(), format!("Bearer {scoped}")),
+            (format!("Bearer {scoped}"), format!("Bearer {scoped}")),
+            (format!("Bearer {scoped}"), format!("Bearer {operator}")),
+        ] {
+            let mut builder = Request::builder()
+                .uri(uri)
+                .header(header::AUTHORIZATION, first)
+                .header(header::AUTHORIZATION, second);
+            let body =
+                if uri.ends_with("/invoke") {
+                    builder = builder
+                        .method("POST")
+                        .header(header::CONTENT_TYPE, "application/json");
+                    Body::from(serde_json::json!({
+                    "tool_name":"gg_message", "args":{"mode":"broadcast","message":"never send"}
+                }).to_string())
+                } else {
+                    Body::empty()
+                };
+            let request = builder.body(body).unwrap();
+            assert_eq!(
+                request
+                    .headers()
+                    .get_all(header::AUTHORIZATION)
+                    .iter()
+                    .count(),
+                2,
+                "test must actually send duplicate Authorization headers"
+            );
+            let response = router.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            assert!(
+                body["error"].is_string(),
+                "scoped gateway keeps its legacy error body"
+            );
+        }
+    }
+    let valid = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v2/mcp/capabilities")
+                .header(header::AUTHORIZATION, format!("Bearer {scoped}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        valid.status(),
+        StatusCode::OK,
+        "single scoped credential still works"
+    );
+}
+
+#[tokio::test]
+async fn scoped_mcp_rejects_duplicate_invocation_ids_without_admitting_model_mutations() {
+    let (router, operator, temp, _workspace, caller) = scoped_setup().await;
+    let scoped = runtime_core::mint_scoped_mcp_token(&operator, &caller);
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let count_messages = || -> i64 {
+        db.query_row("SELECT COUNT(*) FROM agent_messages", [], |row| row.get(0))
+            .unwrap()
+    };
+    let original_count = count_messages();
+    let mutation = serde_json::json!({
+        "tool_name":"gg_message",
+        "args":{"mode":"broadcast","message":"must not send with ambiguous identity"}
+    });
+    for (first, second) in [
+        ("trusted-first", "attacker-second"),
+        ("same-id", "same-id"),
+        ("invalid invocation id", "trusted-second"),
+    ] {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v2/mcp/invoke")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {scoped}"))
+            .header("x-gg-tool-invocation-id", first)
+            .header("x-gg-tool-invocation-id", second)
+            .body(Body::from(mutation.to_string()))
+            .unwrap();
+        assert_eq!(
+            request
+                .headers()
+                .get_all("x-gg-tool-invocation-id")
+                .iter()
+                .count(),
+            2,
+        );
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"]["code"], "invalid_invocation_id");
+        assert_eq!(body["error"]["retryable"], false);
+        assert_eq!(
+            count_messages(),
+            original_count,
+            "no message may be admitted"
+        );
+    }
+    let (status, accepted) =
+        scoped_call_with_id(&router, &scoped, mutation, "single-trusted-id").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(accepted["ok"], true, "{accepted}");
+    assert_eq!(count_messages(), original_count + 1);
+}
+
 async fn scoped_call(
     router: &Router,
     token: &str,

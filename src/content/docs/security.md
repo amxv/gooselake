@@ -40,6 +40,8 @@ Protected routes:
 
 The `/v2/mcp/**` gateway uses an agent-scoped credential rather than the
 operator bearer secret; an operator token alone cannot impersonate an agent.
+The scoped MCP gateway also rejects duplicate `Authorization` headers with
+HTTP `401`, including when one or both supplied agent credentials are valid.
 
 Operator-protected routes require:
 

@@ -1288,6 +1288,13 @@ The **model-facing** scoped MCP API is separate from operator authentication:
 
 The runtime resolves the trusted caller from the credential and rejects archived agents, retired workspaces, and closed sessions. The operator bearer token cannot be substituted. Requests are limited to **64 KiB**. The three model tools are `gg_team`, `gg_message`, and `gg_process`, omitted when their corresponding features are disabled. Native Codex sessions invoke these same tools through in-process `item/tool/call` RPCs with host-bound caller and invocation identity; Codex does not use the scoped MCP HTTP endpoint.
 
+The scoped gateway accepts exactly one agent bearer `Authorization` header;
+duplicates return HTTP `401`. It also rejects multiple
+`x-gg-tool-invocation-id` headers with a non-retryable
+`invalid_invocation_id` tool error before dispatch, rather than choosing a
+possibly ambiguous replay identity. The scoped gateway has its own error
+contract and does not adopt the operator `/v2` request-ID envelope.
+
 ```json
 {"namespace":"gg_message","tool_name":"gg_message","args":{"mode":"direct","agent_id":"sess_recipient","message":"Hello"}}
 ```

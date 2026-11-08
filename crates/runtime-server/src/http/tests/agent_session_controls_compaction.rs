@@ -206,6 +206,33 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
         "/v2/agents/{agent_id}/compactions/{}/resolve",
         review["run_id"].as_str().unwrap()
     );
+    let (status, keyed) = call(
+        &router,
+        &token,
+        "POST",
+        &review_uri,
+        Some(serde_json::json!({
+            "phase":"failed", "evidence":"Verified externally that native compaction failed"
+        })),
+        Some("misleading-review-replay"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(keyed["error"]["code"], "idempotency_not_supported");
+    let (status, still_pending) = call(
+        &router,
+        &token,
+        "GET",
+        &format!(
+            "/v2/agents/{agent_id}/compactions/{}",
+            review["run_id"].as_str().unwrap()
+        ),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(still_pending["phase"], "manual_review");
     let (status, _) = call(
         &router,
         &token,

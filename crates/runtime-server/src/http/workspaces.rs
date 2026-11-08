@@ -447,9 +447,11 @@ async fn attempt_previous_worktree_cleanup(
 pub(super) async fn retry_workspace_agent_rebind_cleanup(
     State(state): State<AppState>,
     Path((workspace_id, agent_id, operation_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unjournaled_idempotency_key(&headers, "worktree cleanup retry")?;
     if !state.app.worktree_settings.enabled {
         return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
     }

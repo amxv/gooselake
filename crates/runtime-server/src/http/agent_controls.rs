@@ -40,8 +40,10 @@ pub(super) struct EditReviewInput {
 pub(super) async fn resolve_agent_edit_operation(
     State(state): State<AppState>,
     Path((agent_id, operation_id)): Path<(String, String)>,
+    headers: HeaderMap,
     Json(input): Json<EditReviewInput>,
 ) -> Result<Response, ApiError> {
+    reject_unjournaled_idempotency_key(&headers, "agent edit review")?;
     let result =
         state
             .runtime
@@ -85,8 +87,10 @@ pub(super) struct ManualCompactionReviewInput {
 pub(super) async fn resolve_agent_compaction_review(
     State(state): State<AppState>,
     Path((agent_id, run_id)): Path<(String, String)>,
+    headers: HeaderMap,
     Json(input): Json<ManualCompactionReviewInput>,
 ) -> Result<Json<SessionCompactionRun>, ApiError> {
+    reject_unjournaled_idempotency_key(&headers, "agent compaction review")?;
     Ok(Json(state.runtime.resolve_compaction_review(
         &agent_id,
         &run_id,
@@ -140,9 +144,11 @@ pub(super) async fn get_agent_context_limit(
 pub(super) async fn refresh_agent_context_limit(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Json<SessionContextLimitSnapshot>, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unjournaled_idempotency_key(&headers, "context-limit refresh")?;
     Ok(Json(
         state
             .runtime

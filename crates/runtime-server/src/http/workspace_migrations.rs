@@ -8,9 +8,11 @@ use runtime_core::{
 pub(super) async fn preview_workspace_migration(
     State(state): State<AppState>,
     Query(query): Query<MigrationSubjectPageQuery>,
+    headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     require_empty_request_body(&body)?;
+    reject_unjournaled_idempotency_key(&headers, "workspace migration preview")?;
     let (limit, cursor) = query.parse()?;
     paged_migration_status(refresh_preview(&state)?, limit, cursor)
 }

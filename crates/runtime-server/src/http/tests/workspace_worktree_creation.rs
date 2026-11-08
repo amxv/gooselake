@@ -702,6 +702,21 @@ async fn verified_rebind_cleanup_retries_safely_after_an_interrupted_native_clea
         "ignored force option must not delete Git worktree"
     );
     assert_eq!(provider.rebind_calls().await, 1);
+    let (status, keyed) = call(
+        &router,
+        &token,
+        "POST",
+        &retry,
+        None,
+        Some("cleanup-replay-not-journaled"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(keyed["error"]["code"], "idempotency_not_supported");
+    assert!(
+        Path::new(previous).is_dir(),
+        "rejected replay key must not delete Git worktree"
+    );
     let (status, result) = call(&router, &token, "POST", &retry, None, None).await;
     assert_eq!(status, StatusCode::OK, "{result:?}");
     assert_eq!(result["previous_cleanup_status"], "deleted");

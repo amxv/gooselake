@@ -457,7 +457,8 @@ agent lookup; it does not create standalone agents.
 
 After provider turns, Gooselake attempts to persist the provider-reported context window, token usage and remaining percentage. `GET /v2/agents/{agent_id}/context-limit` returns the current observation or JSON `null` if none exists for the current native attachment. Snapshots carry the provider native reference, optional canonical reference, agent revision, observation time, and source turn. A late observation cannot overwrite newer evidence or survive a rebind, reattachment, or revisioned policy update. `POST /v2/agents/{agent_id}/context-limit/refresh` requests fresh evidence; it never estimates usage from transcript text.
 
-Context-limit refresh accepts **no options** (empty body or `{}`):
+Context-limit refresh accepts **no options** (empty body or `{}`)
+and rejects `Idempotency-Key` (no exact native-refresh receipt):
 supplying custom refresh options returns `400 invalid_request` without querying the provider.
 
 Use the current agent `revision` from `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` when updating thinking preference or Claude permission intent. Both public mutations require `expected_revision`, return the new revision, and reject stale revisions with HTTP `409`. Changes are rejected during an active turn. Codex and Claude thinking preferences carry into later turns/resume; ACP retains its own preferences and does not support these mutations.
@@ -540,6 +541,12 @@ Compaction completion transactionally admits approved `post_compaction` hook int
 Until an outstanding or ambiguous run is settled, new turns, permission updates, and worktree rebinds are fenced. A crash does not erase or replay unresolved compaction; a started/compacting native run without terminal evidence is quarantined to `manual_review`. If evidence is lost, an operator can independently inspect native provider state and settle an ambiguous `manual_review` via `POST /v2/agents/{agent_id}/compactions/{run_id}/resolve` with JSON `{"phase":"failed","evidence":"..."}` or a verified `completed` result. This records external review evidence and never repeats native compaction; confirming completion requires the same native attachment/revision. Codex has session-level completion events without a native compaction item ID, so a bounded weak-alias deduplication window is used instead of claiming an exact native run identity. ACP remains unsupported for provider-native compaction.
 
 `POST /v2/agents/{agent_id}/turns/{turn_id}/edit-rerun` is the manager-owned historical edit path. It requires an idle workspace agent, a **completed user-visible** target turn with persisted input/native turn identity, and a provider advertising verified hard-fork support (Codex and Claude advertise this capability; ACP does not). Its body is `{"edited_snapshot":{"prompt_text":"Updated request","image_refs":[],"invocation":null}}`; optional `Idempotency-Key` makes exact retries return the original operation and rejects a different edit under the same key. Unknown properties in `edited_snapshot`, its individual `image_refs`, or `invocation` are rejected with `422 invalid_request` **before any native fork or operation admission**. The manager rebuilds native structured inputs from the edited snapshot, including ordered persisted image paths and a **Codex-only** skill invocation when supplied, rejecting missing files and unsupported invocation types. It records an `edit_*` operation **before** provider fork, verifies the provider-native child, atomically commits the child attachment, retained transcript prefix and superseded-turn lineage, then durably admits a **new logical user turn** with operation correlation. Previous turns remain durably available for audit; no source turn is overwritten. `completed` on the edit operation means the replacement turn was admitted, not that model work finished. The new turn's own state and provider dispatch outcome remain canonical.
+
+Manual compaction review and edit resolution use their existing `run_id` or
+`operation_id` for inspection, **not** a new idempotency receipt. These POST
+review routes reject `Idempotency-Key` with `400 idempotency_not_supported`
+instead of silently ignoring a requested replay guarantee; after an uncertain
+response, inspect the corresponding GET resource before deciding next steps.
 
 `GET /v2/agents/{agent_id}/edits/{operation_id}` returns the durable operation, child identity and replacement turn (if any). A crash or uncertain provider fork is `manual_review`, **never automatically retried**. While an edit remains unresolved, ordinary new turns, native compaction and worktree reassignment are blocked. An operator who has independently established a verified child attachment with no admitted replacement turn can record evidence at `POST /v2/agents/{agent_id}/edits/{operation_id}/resolve` using `{"evidence":"Provider child verified, no replacement admitted"}`; this settles the operation as failed without repeating the native effect. Unknown native child identity cannot be dismissed by an unverified assertion and remains fenced for explicit external recovery. The provider-native edit path is capability-gated; unsupported providers do not silently emulate it. **A provider conversation fork does not undo filesystem writes, commands or external tool side effects from superseded turns.**
 
@@ -629,9 +636,12 @@ curl -fsS -X POST \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/rebinds/$OPERATION_ID/cleanup"
 ```
 
-This explicit cleanup retry accepts **no options** (empty body or `{}`):
-unsupported
-`force` or other options fail before any Git deletion or record change.
+This explicit cleanup retry accepts **no options** (empty body or `{}`)
+and rejects `Idempotency-Key` with `400 idempotency_not_supported`:
+the original provider-rebind key cannot safely promise another Git deletion
+receipt. Inspect the rebind by operation ID after an interrupted retry.
+Unsupported `force` or other options fail before any Git deletion or record
+change.
 
 Only checkout paths under the configured managed root with verified Git identity/branch, no uncommitted changes, and no unmerged branch commits are eligible for automatic deletion. This retry is a separate cleanup action, not a retry of provider rebinding: replaying the original `Idempotency-Key` does not implicitly retry pending native cleanup, even if the checkout has since become clean. Recovery from an ambiguous provider rebind still requires operator investigation and is not implicitly resolved by this endpoint.
 
@@ -766,6 +776,8 @@ curl -fsS -X POST \
 ```
 
 Run preview before apply; apply consumes the persisted preview rather than silently refreshing it. Apply creates durable workspace/session ownership and placeholder workspace-agent profiles only for subjects whose repository authority is proven. `unresolved` subjects receive no guessed ownership and keep `cutover_blocked: true` until they are explicitly resolved. Re-running apply is convergent; an exact `Idempotency-Key` retry replays the original terminal operation result without reclassifying legacy rows as a hidden side effect.
+
+Migration preview rejects `Idempotency-Key` with `400 idempotency_not_supported`: it refreshes diagnostic state instead of offering an exact replay receipt. Migration **apply** supports keyed durable replay.
 
 The migration preview/apply POST routes accept **no options** (empty body or
 `{}` allowed for older clients). Supplying
@@ -1097,6 +1109,10 @@ provider-owned `reasoning_levels` for each model. These are raw runtime
 capability tokens, such as Codex `xhigh`, and clients should use them directly
 when populating reasoning-effort controls. The list can be empty when a model
 does not expose a global selector.
+
+The model/skill discovery POST routes reject `Idempotency-Key` with
+`400 idempotency_not_supported`. Discovery may probe or start a native
+provider runtime, but does not journal an exact caller-replay receipt.
 
 The v2 provider surface makes optional behavior explicit. Its individual
 capability and discovery routes are available only for currently enabled

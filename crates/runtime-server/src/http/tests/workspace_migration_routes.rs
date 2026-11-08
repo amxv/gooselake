@@ -12,6 +12,21 @@ async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessio
         create_session(&router, &token, Some(git_root.to_string_lossy().as_ref())).await;
     let orphan_id = create_session(&router, &token, None).await;
 
+    let unsupported_key = router
+        .clone()
+        .oneshot(auth_request(
+            "POST",
+            "/v2/migrations/workspaces/preview",
+            &token,
+            None,
+            Some("must-not-claim-preview-replay"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unsupported_key.status(), StatusCode::BAD_REQUEST);
+    let keyed: serde_json::Value = decode(unsupported_key).await;
+    assert_eq!(keyed["error"]["code"], "idempotency_not_supported");
+
     let preview_response = router
         .clone()
         .oneshot(auth_request(

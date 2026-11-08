@@ -81,6 +81,18 @@ async fn public_agent_session_controls_are_authenticated_revisioned_and_capabili
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(invalid["error"]["code"], "invalid_request");
 
+    let (status, keyed) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("{prefix}/context-limit/refresh"),
+        None,
+        Some("not-a-journaled-refresh"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(keyed["error"]["code"], "idempotency_not_supported");
+
     let (status, _) = call(
         &router,
         &token,

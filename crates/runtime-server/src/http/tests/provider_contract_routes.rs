@@ -193,6 +193,40 @@ async fn provider_discovery_rejects_unknown_inputs_before_adapter_dispatch() {
 }
 
 #[tokio::test]
+async fn provider_discovery_rejects_unjournaled_replay_keys_before_native_probe() {
+    let (router, token, _temp_dir, _acp) = build_mixed_provider_test_router().await;
+    for path in [
+        "/v2/providers/codex/models/discover",
+        "/v2/providers/codex/skills/discover",
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("Idempotency-Key", "native-discovery-is-not-journaled")
+                    .body(Body::from(r#"{}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{path}");
+        let error = body_json(response).await;
+        assert_eq!(
+            error["error"]["code"], "idempotency_not_supported",
+            "{path}"
+        );
+        assert_eq!(error["error"]["retryable"], false, "{path}");
+        assert!(error["request_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("req_")));
+    }
+}
+
+#[tokio::test]
 async fn disabled_provider_is_not_exposed_by_individual_capabilities_or_discovery() {
     let (router, token, _temp_dir, provider) =
         build_test_router_with_provider(TeamMcpPolicy::default()).await;

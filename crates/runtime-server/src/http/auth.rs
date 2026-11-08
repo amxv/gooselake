@@ -200,8 +200,10 @@ pub(super) async fn provider_capabilities_v2(
 pub(super) async fn discover_provider_models_v2(
     State(state): State<AppState>,
     Path(provider): Path<String>,
+    headers: HeaderMap,
     Json(input): Json<runtime_core::ProviderModelDiscoveryRequest>,
 ) -> Result<Json<runtime_core::ProviderModelDiscoveryResponse>, ApiError> {
+    reject_unjournaled_idempotency_key(&headers, "provider model discovery")?;
     let provider = parse_provider_kind(provider.as_str())?;
     let adapter = enabled_provider_adapter(&state, provider)?;
     input
@@ -219,8 +221,10 @@ pub(super) async fn discover_provider_models_v2(
 pub(super) async fn discover_provider_skills_v2(
     State(state): State<AppState>,
     Path(provider): Path<String>,
+    headers: HeaderMap,
     Json(input): Json<runtime_core::ProviderSkillDiscoveryRequest>,
 ) -> Result<Json<runtime_core::ProviderSkillDiscoveryResponse>, ApiError> {
+    reject_unjournaled_idempotency_key(&headers, "provider skill discovery")?;
     let provider = parse_provider_kind(provider.as_str())?;
     let adapter = enabled_provider_adapter(&state, provider)?;
     input

@@ -247,11 +247,23 @@ async fn unknown_native_edit_is_fenced_across_idempotent_retries_and_cannot_be_g
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
     let operation_id = replay["operation_id"].as_str().unwrap();
+    let review_uri = format!("/v2/agents/{agent_id}/edits/{operation_id}/resolve");
+    let (status, keyed) = call(
+        &router,
+        &token,
+        "POST",
+        &review_uri,
+        Some(serde_json::json!({"evidence":"Provider outcome independently examined"})),
+        Some("misleading-edit-review-replay"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(keyed["error"]["code"], "idempotency_not_supported");
     let (status, _) = call(
         &router,
         &token,
         "POST",
-        &format!("/v2/agents/{agent_id}/edits/{operation_id}/resolve"),
+        &review_uri,
         Some(serde_json::json!({"evidence":"Provider outcome independently examined"})),
         None,
     )

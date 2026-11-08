@@ -2,6 +2,132 @@ use super::workspace_worktree_routes::{call, fixture, git};
 use super::*;
 
 #[tokio::test]
+async fn new_agent_worktree_rejects_invalid_agent_inputs_before_git_and_journals_valid_git() {
+    let (router, token, temp, _, workspace, _, _) = fixture().await;
+    let uri = format!("/v2/workspaces/{}/agents", workspace.workspace_id);
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let native_operations = || -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM runtime_operations WHERE kind='workspace_worktree_create'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    let before = native_operations();
+    for (index, extra, status) in [
+        (
+            0,
+            serde_json::json!({"allowed_tools":["Read"],"disallowed_tools":["Read"]}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            1,
+            serde_json::json!({"onboarding":{"prompt":"   "}}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            2,
+            serde_json::json!({"onboarding":{"creator_compaction_subscription":"unknown"}}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            3,
+            serde_json::json!({"provider":"acp"}),
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let name = format!("invalid-agent-checkout-{index}");
+        let mut request = serde_json::json!({
+            "provider":"codex", "model":"test-model",
+            "worktree":{"mode":"new","worktree_name":name}
+        });
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let (actual, body) = call(&router, &token, "POST", &uri, Some(request), None).await;
+        assert_eq!(actual, status, "invalid input {index}: {body:?}");
+        assert!(body["error"]["code"].is_string());
+        let registered: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM managed_worktrees WHERE worktree_name=?1",
+                [&name],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            registered, 0,
+            "bad agent input must not register Git worktree"
+        );
+        assert_eq!(
+            native_operations(),
+            before,
+            "bad input must not admit native work"
+        );
+        let git_list = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&workspace.canonical_root)
+            .args(["worktree", "list", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(git_list.status.success());
+        assert!(
+            !String::from_utf8_lossy(&git_list.stdout).contains(&name),
+            "bad agent input must not create a native checkout"
+        );
+    }
+
+    let (status, created) = call(
+        &router,
+        &token,
+        "POST",
+        &uri,
+        Some(serde_json::json!({
+            "provider":"codex", "model":"test-model",
+            "worktree":{"mode":"new","worktree_name":"journaled-agent-route"}
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created:?}");
+    assert_eq!(native_operations(), before + 1);
+    let session_id = created["agent_id"].as_str().unwrap();
+    let worktree_id: String = db
+        .query_row(
+            "SELECT worktree_id FROM sessions WHERE id=?1",
+            [session_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let (policy, operation_id): (String, String) = db
+        .query_row(
+            "SELECT deletion_policy,created_by_operation_id FROM managed_worktrees WHERE id=?1",
+            [&worktree_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        policy, "retain_on_last_claim",
+        "preserve agent-route default"
+    );
+    assert!(operation_id.starts_with("op_wt_"));
+    let (status, operation) = call(
+        &router,
+        &token,
+        "GET",
+        &format!("/v2/operations/{operation_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(operation["operation"]["kind"], "workspace_worktree_create");
+    assert_eq!(operation["operation"]["phase"], "completed");
+    assert_eq!(operation["effects"][0]["phase"], "finalized");
+}
+
+#[tokio::test]
 async fn workspace_agents_start_on_root_existing_or_new_managed_worktree() {
     let (router, token, temp, _, workspace, _, linked) = fixture().await;
     let agents_uri = format!("/v2/workspaces/{}/agents", workspace.workspace_id);

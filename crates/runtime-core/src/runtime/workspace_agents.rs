@@ -12,6 +12,7 @@ use crate::{
 };
 
 use super::helpers::now_ms;
+use super::workspace_agent_preflight::{validate_agent_onboarding, validate_initial_agent_route};
 use super::RuntimeSessionManager;
 
 const ALIAS_ADJECTIVES: &[&str] = &[
@@ -354,45 +355,12 @@ impl RuntimeSessionManager {
         let added_by = normalize_optional(Some(added_by)).ok_or_else(|| {
             RuntimeError::InvalidState("workspace agent added_by is required".to_string())
         })?;
-        let mut onboarding = request.onboarding.clone().unwrap_or_default();
-        onboarding.image_paths =
-            crate::team_comms::validate_message_image_paths(onboarding.image_paths)?;
-        crate::team_comms::ensure_message_images_supported(
-            request.provider.as_str(),
-            !onboarding.image_paths.is_empty(),
-        )?;
-        if onboarding
-            .prompt
-            .as_deref()
-            .is_some_and(|value| value.trim().is_empty())
-        {
-            return Err(RuntimeError::InvalidState(
-                "onboarding prompt cannot be blank".into(),
-            ));
-        }
-        if let Some(skill) = onboarding.skill.as_ref() {
-            if request.provider != ProviderKind::Codex
-                || skill.provider != "codex"
-                || skill.name.trim().is_empty()
-                || !skill
-                    .path
-                    .as_deref()
-                    .is_some_and(|path| Path::new(path).is_file())
-            {
-                return Err(RuntimeError::Unsupported(
-                    "onboarding skills require a readable native Codex skill file".into(),
-                ));
-            }
-        }
+        validate_initial_agent_route(&request)?;
+        let onboarding = validate_agent_onboarding(&request)?;
         let subscription = onboarding
             .creator_compaction_subscription
             .as_deref()
             .unwrap_or("auto");
-        if !matches!(subscription, "auto" | "unsubscribed") {
-            return Err(RuntimeError::InvalidState(
-                "creator_compaction_subscription must be auto or unsubscribed".into(),
-            ));
-        }
         let creator_agent_id = self
             .store
             .get_workspace_agent_by_id(&added_by)?
@@ -831,7 +799,7 @@ fn validate_claude_mutable_permission(
     }
 }
 
-fn normalize_recreation_policy(
+pub(super) fn normalize_recreation_policy(
     workspace_root: &str,
     request: &WorkspaceAgentCreateRequest,
 ) -> Result<WorkspaceAgentRecreationPolicy, RuntimeError> {

@@ -27,6 +27,7 @@ mod turn_queries;
 mod turn_settings;
 mod turn_terminal;
 mod turns;
+mod workspace_agent_preflight;
 mod workspace_agents;
 mod workspace_control;
 mod workspace_notices;

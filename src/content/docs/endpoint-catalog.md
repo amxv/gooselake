@@ -54,7 +54,7 @@ provider rebind and edit records retain their specialized detail routes.
 - `GET /v2/workspaces/{workspace_id}/notice-policy` (Bearer; current lifecycle notice policy and revision)
 - `PUT /v2/workspaces/{workspace_id}/notice-policy` (Bearer, JSON; compare-and-set policy by `expected_revision`; optional `Idempotency-Key` for durable exact retry replay; strong `ETag` and `X-Operation-ID` on success)
 - `POST /v2/workspaces/{workspace_id}/interrupt` (Bearer; optional `Idempotency-Key` header)
-- `POST /v2/workspaces/{workspace_id}/agents` (Bearer, strict JSON including nested current preferences; unknown properties rejected)
+- `POST /v2/workspaces/{workspace_id}/agents` (Bearer, strict JSON including nested current preferences; unknown properties rejected; `worktree.mode=new` preflights deterministic agent errors and journals its native Git operation before the checkout is created, but provider-agent creation itself is not yet idempotent)
 - `GET /v2/workspaces/{workspace_id}/agents` (Bearer; optional `lifecycle=active|archived|all` defaults to `active`; keyset `cursor`, `limit=1..100` defaults to 50; `X-Next-Cursor` when more; cursor must match an existing agent in that workspace and lifecycle at its exact creation timestamp)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` (Bearer; strong agent-revision ETag)
 - `GET /v2/agents/{agent_id}` (Bearer; global lookup of a workspace-owned agent, including archived history, with strong agent-revision ETag)

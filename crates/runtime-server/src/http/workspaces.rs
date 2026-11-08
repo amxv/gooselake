@@ -585,27 +585,38 @@ pub(super) async fn create_workspace_agent(
         if !state.app.worktree_settings.enabled {
             return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
         }
-        if request.cwd.is_some() {
-            return Err(RuntimeError::Conflict(
-                "new managed worktree selection cannot also specify cwd".into(),
-            )
-            .into());
-        }
+        // The native Git checkout must not be created for an agent whose
+        // other deterministic inputs will fail provider creation. Recheck
+        // all of these inputs in the manager at authoritative admission.
+        state.runtime.preflight_workspace_agent_creation_inputs(
+            workspace_id.trim(),
+            &request,
+            OPERATOR_PRINCIPAL,
+        )?;
         let result = state
             .app
             .services
             .worktrees
-            .create_workspace_worktree(WorkspaceWorktreeCreateRequest {
-                workspace_id: workspace_id.clone(),
-                worktree_name,
-                branch_prefix,
-                base_ref,
-                deletion_policy,
-                run_init_script,
-            })
+            .create_workspace_worktree_idempotent(
+                WorkspaceWorktreeCreateRequest {
+                    workspace_id: workspace_id.clone(),
+                    worktree_name,
+                    branch_prefix,
+                    base_ref,
+                    // Preserve this route's original default: the explicit
+                    // operator worktree endpoint uses a separate configured
+                    // default, but agent-created checkouts default to retain.
+                    deletion_policy: Some(
+                        deletion_policy.unwrap_or_else(|| "retain_on_last_claim".into()),
+                    ),
+                    run_init_script,
+                },
+                OperationActor::operator(OPERATOR_PRINCIPAL),
+                format!("implicit-agent-wt-{:032x}", rand::random::<u128>()),
+            )
             .await?;
         request.worktree = Some(WorkspaceAgentInitialRoute::Existing {
-            worktree_id: result.worktree.id,
+            worktree_id: result.response.worktree.id,
         });
     }
     if !state.app.worktree_settings.enabled

@@ -557,7 +557,25 @@ When creating an agent, choose one of these `worktree` selectors in the `POST /v
 {"provider":"codex","worktree":{"mode":"new","worktree_name":"feature-search","run_init_script":false}}
 ```
 
-The `new` selector creates or reuses the managed checkout before creating the provider session. The provider cwd, workspace-agent recreation policy, session worktree ID, and owned managed-worktree claim are persisted consistently. `cwd` must not also be supplied with an explicit worktree selector. An agent-create failure may leave an unclaimed, retained checkout for later inspection and reuse rather than destructively rolling it back.
+The `new` selector validates deterministic agent settings, provider availability,
+onboarding inputs and workspace lifecycle **before** creating a native Git
+checkout. The new checkout is admitted through the same durable write-ahead
+Git operation journal as `POST /v2/workspaces/{workspace_id}/worktrees`, including
+an operator-owned operation and exact native result; its ID is persisted as
+`created_by_operation_id` on the managed-worktree record. A native Git outcome
+that cannot be proven returns `409 outcome_unresolved` with the operation ID
+for explicit inspection rather than automatically repeating Git. The agent
+creation endpoint itself is **not yet** a durable idempotent provider-creation
+operation; its worktree step uses a one-shot server key, not a replayable
+caller key. The existing default retention policy for agent-created worktrees
+remains `retain_on_last_claim` when no policy is supplied.
+
+The provider cwd, workspace-agent recreation policy, session worktree ID, and
+owned managed-worktree claim are persisted consistently. `cwd` must not also
+be supplied with an explicit worktree selector. An agent-create failure after
+Git succeeds may still leave an unclaimed, retained checkout for inspection
+and reuse rather than destructively rolling it back. Preflight cannot rule
+out concurrent lifecycle changes or later provider/hook failures.
 
 Operators can rebind an **idle**, active workspace agent to an already registered eligible managed worktree, or back to the workspace root (null worktree ID):
 

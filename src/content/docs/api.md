@@ -581,7 +581,9 @@ When creating an agent, choose one of these `worktree` selectors in the `POST /v
 
 The `new` selector validates deterministic agent settings, provider availability,
 onboarding inputs and workspace lifecycle **before** creating a native Git
-checkout. The new checkout is admitted through the same durable write-ahead
+checkout. A registered but disabled provider is unavailable for agent creation,
+including the root route; the final manager admission also rechecks enablement
+before any provider-native session creation. The new checkout is admitted through the same durable write-ahead
 Git operation journal as `POST /v2/workspaces/{workspace_id}/worktrees`, including
 an operator-owned operation and exact native result; its ID is persisted as
 `created_by_operation_id` on the managed-worktree record. A native Git outcome

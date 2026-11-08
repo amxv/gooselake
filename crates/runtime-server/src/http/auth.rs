@@ -245,8 +245,7 @@ fn enabled_provider_adapter(
     state
         .app
         .provider_registry
-        .get(provider)
-        .filter(|adapter| adapter.metadata().enabled)
+        .get_enabled(provider)
         .ok_or_else(|| ApiError::not_found(format!("provider {}", provider.as_str())))
 }
 

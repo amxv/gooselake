@@ -48,9 +48,11 @@ impl RuntimeSessionManager {
         validate_initial_agent_route(request)?;
         validate_agent_onboarding(request)?;
         normalize_recreation_policy(&workspace.canonical_root, request)?;
-        self.providers.get(request.provider).ok_or_else(|| {
-            RuntimeError::ProviderNotRegistered(request.provider.as_str().to_string())
-        })?;
+        self.providers
+            .get_enabled(request.provider)
+            .ok_or_else(|| {
+                RuntimeError::ProviderNotRegistered(request.provider.as_str().to_string())
+            })?;
         Ok(())
     }
 }

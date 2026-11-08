@@ -3,7 +3,7 @@ use super::*;
 
 #[tokio::test]
 async fn new_agent_worktree_rejects_invalid_agent_inputs_before_git_and_journals_valid_git() {
-    let (router, token, temp, _, workspace, _, _) = fixture().await;
+    let (router, token, temp, provider, workspace, _, _) = fixture().await;
     let uri = format!("/v2/workspaces/{}/agents", workspace.workspace_id);
     let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
     let native_operations = || -> i64 {
@@ -77,6 +77,31 @@ async fn new_agent_worktree_rejects_invalid_agent_inputs_before_git_and_journals
             "bad agent input must not create a native checkout"
         );
     }
+
+    // Discovery correctly hides disabled adapters; agent creation must not
+    // bypass the same policy through either the root or new-worktree route.
+    provider.set_enabled(false);
+    for input in [
+        serde_json::json!({"provider":"codex","model":"test-model"}),
+        serde_json::json!({
+            "provider":"codex","model":"test-model",
+            "worktree":{"mode":"new","worktree_name":"disabled-provider-checkout"}
+        }),
+    ] {
+        let (status, rejected) = call(&router, &token, "POST", &uri, Some(input), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{rejected}");
+        assert_eq!(rejected["error"]["code"], "not_found");
+    }
+    assert_eq!(native_operations(), before);
+    let checkout: i64 = db.query_row(
+        "SELECT COUNT(*) FROM managed_worktrees WHERE worktree_name='disabled-provider-checkout'",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(
+        checkout, 0,
+        "disabled adapter cannot allocate a native checkout"
+    );
+    provider.set_enabled(true);
 
     let (status, created) = call(
         &router,

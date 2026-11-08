@@ -28,6 +28,13 @@ impl ProviderRegistry {
         self.providers.get(&kind).cloned()
     }
 
+    /// Registration and enablement are distinct: an adapter can remain
+    /// addressable for diagnostics while being ineligible for new native
+    /// work. Do not dispatch a newly-created session to a disabled adapter.
+    pub fn get_enabled(&self, kind: ProviderKind) -> Option<Arc<dyn RuntimeProvider>> {
+        self.get(kind).filter(|adapter| adapter.metadata().enabled)
+    }
+
     pub fn len(&self) -> usize {
         self.providers.len()
     }

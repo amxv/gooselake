@@ -416,7 +416,7 @@ impl RuntimeSessionManager {
         policy
             .setting_sources_intent
             .resolved_sources(Some(policy.authoritative_cwd.as_str()))?;
-        let provider = self.providers.get(policy.provider).ok_or_else(|| {
+        let provider = self.providers.get_enabled(policy.provider).ok_or_else(|| {
             RuntimeError::ProviderNotRegistered(policy.provider.as_str().to_string())
         })?;
         let session_id = self.allocate_id("sess", policy.provider.as_str());

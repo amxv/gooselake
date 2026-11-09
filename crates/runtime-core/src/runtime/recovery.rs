@@ -15,6 +15,14 @@ impl RuntimeSessionManager {
             started_at,
             ..Default::default()
         };
+        let native_policy_intents = self
+            .store
+            .quarantine_started_operator_native_policies(started_at)?;
+        for operation_id in native_policy_intents {
+            summary.notes.push(format!(
+                "operator native policy {operation_id} became manual_review after restart; no provider mutation was retried"
+            ));
+        }
         let ambiguous_hooks = self
             .store
             .quarantine_started_team_hook_effects(started_at)?;

@@ -53,6 +53,14 @@ macro_rules! delegate_operator_native_policy_methods {
             self.repository()
                 .mark_operator_native_policy_uncertain(operation_id, reason, at_ms)
         }
+
+        fn quarantine_started_operator_native_policies(
+            &self,
+            at_ms: i64,
+        ) -> Result<Vec<String>, RuntimeError> {
+            self.repository()
+                .quarantine_started_operator_native_policies(at_ms)
+        }
     };
 }
 

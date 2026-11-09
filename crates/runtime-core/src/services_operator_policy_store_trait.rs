@@ -46,6 +46,16 @@ macro_rules! operator_native_policy_store_methods {
         ) -> Result<(), RuntimeError> {
             unsupported_store("durable native policy recovery unavailable")
         }
+
+        /// Promote any pre-crash intended native policy effect to explicit
+        /// review. A request durable before an uncertain dispatch must never
+        /// be replayed automatically on startup.
+        fn quarantine_started_operator_native_policies(
+            &self,
+            _at_ms: i64,
+        ) -> Result<Vec<String>, RuntimeError> {
+            Ok(Vec::new())
+        }
     };
 }
 

@@ -20,6 +20,7 @@ mod repository_event_history;
 mod repository_hydration;
 mod repository_operator_native_policy;
 mod repository_operator_native_policy_receipt;
+mod repository_operator_native_policy_recovery;
 mod repository_operator_user_turn;
 mod repository_process;
 mod repository_team_hooks;

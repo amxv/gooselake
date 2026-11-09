@@ -317,6 +317,120 @@ async fn concurrent_same_key_native_preference_calls_converge_on_one_effect() {
 }
 
 #[tokio::test]
+async fn crash_after_durable_policy_intent_before_native_call_becomes_manual_review() {
+    let (router, token, temp, provider, runtime, agent_id, revision) =
+        operator_policy_fixture().await;
+    let before = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
+    let session = runtime.get_session(&agent_id).await.unwrap();
+    let operation_id = "op_policy_crashed_after_intent";
+    let request = serde_json::json!({
+        "agent_id":agent_id,
+        "kind":"preferences",
+        "expected_revision":revision,
+        "current_preferences":{"thinking_effort":"high"},
+    });
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let native_calls = provider.preferences_mutation_calls();
+    let admit = store
+        .repository()
+        .admit_operator_native_policy(&runtime_core::OperatorNativePolicyCommand {
+            operation_id: operation_id.into(),
+            actor: runtime_core::OperationActor::operator("runtime_operator"),
+            idempotency_key: "crash-between-intent-and-native-effect".into(),
+            workspace_id: before.workspace_id,
+            agent_id: agent_id.clone(),
+            kind: runtime_core::OperatorNativePolicyKind::Preferences,
+            expected_revision: revision,
+            provider: session.provider.clone(),
+            provider_session_ref: session.provider_session_ref.clone(),
+            canonical_provider_session_ref: session.canonical_provider_session_ref.clone(),
+            session_updated_at: session.updated_at,
+            normalized_request: request.clone(),
+            normalized_request_hash: runtime_core::normalized_json_hash(&request).unwrap(),
+            requested_at: session.updated_at + 1,
+        })
+        .unwrap();
+    assert!(matches!(
+        admit,
+        runtime_core::OperatorNativePolicyAdmission::Execute { .. }
+    ));
+    assert_eq!(provider.preferences_mutation_calls(), native_calls);
+
+    let mut providers = runtime_core::ProviderRegistry::new();
+    providers.register(provider.clone()).unwrap();
+    let reopened = Arc::new(
+        RuntimeSessionManager::new(
+            Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+                database_path: temp.path().join("runtime.sqlite3"),
+            })),
+            Arc::new(providers),
+            128,
+        )
+        .unwrap(),
+    );
+    let summary = reopened.recover_startup().await.unwrap();
+    assert!(
+        summary
+            .notes
+            .iter()
+            .any(|note| { note.contains(operation_id) && note.contains("became manual_review") }),
+        "{summary:?}"
+    );
+    assert!(
+        summary
+            .notes
+            .iter()
+            .any(|note| { note.contains(operation_id) && note.contains("resume withheld") }),
+        "{summary:?}"
+    );
+    assert_eq!(provider.preferences_mutation_calls(), native_calls);
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let (phase, effect_phase): (String, String) = db
+        .query_row(
+            "SELECT o.phase,e.phase FROM runtime_operations o
+         JOIN runtime_operation_effects e ON e.operation_id=o.operation_id
+         WHERE o.operation_id=?1",
+            [operation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(phase, "manual_review");
+    assert_eq!(effect_phase, "uncertain");
+    let active_claims: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM runtime_operation_resource_claims
+         WHERE owner_operation_id=?1 AND resource_kind='operator_provider_policy_native'",
+            [operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(active_claims, 1);
+    let second_recovery = reopened.recover_startup().await.unwrap();
+    assert!(
+        !second_recovery
+            .notes
+            .iter()
+            .any(|note| note.contains("became manual_review")),
+        "startup quarantine is idempotent, no duplicate operation transitions"
+    );
+    let (status, retry) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v2/agents/{agent_id}/preferences"),
+        Some(preference_body(revision, "high")),
+        Some("crash-between-intent-and-native-effect"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{retry:?}");
+    assert_eq!(retry["error"]["code"], "outcome_unresolved");
+    assert_eq!(retry["error"]["details"]["operation_id"], operation_id);
+    assert_eq!(provider.preferences_mutation_calls(), native_calls);
+}
+
+#[tokio::test]
 async fn native_preference_key_replays_exact_receipt_after_revision_and_reopen() {
     let (router, token, temp, provider, _runtime, agent_id, revision) =
         operator_policy_fixture().await;

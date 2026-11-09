@@ -487,6 +487,9 @@ returns `409 conflict`. A lost or ambiguous native acknowledgement is
 `409 outcome_unresolved` with `error.details.operation_id`; the effect remains
 under `manual_review`, blocking another native mutation, turn or provider
 resume until independently reconciled. **Do not retry with a new key.**
+On startup, any durable policy intent lacking a terminal native receipt is
+quarantined as `manual_review` with its original claim retained. Recovery
+does not guess whether the provider call happened or silently resubmit it.
 
 Unkeyed preference/permission requests remain the legacy nonjournaled paths;
 they still honor revision checks but a lost native reply is **not** replay-safe.

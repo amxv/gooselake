@@ -4,8 +4,9 @@ use serde_json::Value;
 
 use crate::{
     OperationActor, OperatorNativePolicyAdmission, OperatorNativePolicyCommand,
-    OperatorNativePolicyKind, ProviderCapabilitySupport, ProviderKind, ProviderPermissionIntent,
-    ProviderPermissionMutationRequest, ProviderPermissionMutationResult,
+    OperatorNativePolicyKind, OperatorNativePolicyReviewCommand, OperatorNativePolicyReviewInput,
+    OperatorNativePolicyReviewResponse, ProviderCapabilitySupport, ProviderKind,
+    ProviderPermissionIntent, ProviderPermissionMutationRequest, ProviderPermissionMutationResult,
     ProviderSessionPreferences, ProviderSessionPreferencesMutationRequest,
     ProviderSessionPreferencesMutationResult, RuntimeError,
 };
@@ -43,6 +44,37 @@ impl OperatorPolicySelection {
 }
 
 impl RuntimeSessionManager {
+    /// A manual outcome assertion never re-invokes the native provider. Both
+    /// the original key and any later model work consume the reconciled durable
+    /// result only after an explicit provider reattachment on next startup.
+    pub async fn resolve_operator_native_policy_review(
+        self: &Arc<Self>,
+        agent_id: &str,
+        operation_id: &str,
+        input: OperatorNativePolicyReviewInput,
+        actor: OperationActor,
+    ) -> Result<OperatorNativePolicyReviewResponse, RuntimeError> {
+        let _guard = self.session_policy_mutation_lock.lock().await;
+        let command = OperatorNativePolicyReviewCommand {
+            operation_id: operation_id.to_string(),
+            agent_id: agent_id.to_string(),
+            actor,
+            input,
+            reviewed_at: now_ms(),
+        };
+        let result = self.store.resolve_operator_native_policy_review(&command)?;
+        // The SQL review and resource release are one commit. Refresh the
+        // active projection while still serialized against other native work.
+        let hydrated = self.store.hydrate_runtime_state()?;
+        if let Some(session) = hydrated.sessions.into_iter().find(|row| row.id == agent_id) {
+            self.sessions
+                .write()
+                .await
+                .insert(agent_id.to_string(), session);
+        }
+        Ok(result)
+    }
+
     pub async fn mutate_workspace_agent_preferences_operator(
         self: &Arc<Self>,
         request: ProviderSessionPreferencesMutationRequest,

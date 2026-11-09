@@ -36,6 +36,13 @@ fn classify(
             operation_id: existing.operation_id,
             exact_result: result,
         }),
+        (OperationPhase::Failed, _)
+            if existing.error_code.as_deref() == Some("operator_verified_not_applied") =>
+        {
+            Ok(OperatorNativePolicyAdmission::VerifiedNotApplied {
+                operation_id: existing.operation_id,
+            })
+        }
         _ => Ok(OperatorNativePolicyAdmission::Unresolved {
             operation_id: existing.operation_id,
         }),

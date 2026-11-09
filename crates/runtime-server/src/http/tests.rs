@@ -30,6 +30,8 @@ use crate::config::RuntimeServerConfig;
 
 mod support;
 use support::*;
+mod support_onboarding;
+use support_onboarding::*;
 mod support_acp_http;
 use support_acp_http::*;
 
@@ -51,6 +53,7 @@ mod operator_hook_approval_idempotency;
 mod operator_hook_effect_pages;
 mod operator_lead_inputs;
 mod operator_native_policy;
+mod operator_native_policy_review;
 mod operator_notice_policy_idempotency;
 mod operator_operation_pages;
 mod operator_process_pages;

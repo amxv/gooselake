@@ -254,6 +254,36 @@ impl RuntimeProvider for TestProvider {
         })
     }
 
+    async fn resume_session_with_policy(
+        &self,
+        req: runtime_core::ProviderResumeSessionPolicyRequest,
+    ) -> Result<ProviderSession, RuntimeError> {
+        let transport = ProviderResumeSessionRequest {
+            runtime_session_id: req.runtime_session_id.clone(),
+            provider_session_ref: req.provider_session_ref,
+            canonical_provider_session_ref: req.canonical_provider_session_ref,
+            cwd: req.cwd.clone(),
+            model: req.model,
+            permission_mode: req.launch_policy.permission_intent.resolved_mode(),
+            setting_sources: req
+                .launch_policy
+                .resolved_setting_sources(req.cwd.as_deref())?,
+            system_prompt: req.launch_policy.system_prompt,
+            allowed_tools: req.launch_policy.allowed_tools,
+            disallowed_tools: req.launch_policy.disallowed_tools,
+            harness_version_slot: req.launch_policy.harness_version_slot,
+            metadata: req.metadata,
+        };
+        let resumed = self.resume_session(transport).await?;
+        let mut state = self.state.lock().await;
+        state
+            .sessions
+            .entry(req.runtime_session_id)
+            .or_default()
+            .current_preferences = req.current_preferences;
+        Ok(resumed)
+    }
+
     async fn rebind_workspace(
         &self,
         req: runtime_core::ProviderWorkspaceRebindRequest,
@@ -961,37 +991,4 @@ pub(super) async fn build_mixed_provider_test_router_with_claude() -> (
         claude_provider,
         runtime,
     )
-}
-
-/// Test fixtures do not start a background worker, by design: some tests need
-/// to inspect pending notice authority. Tests exercising ordinary user turns
-/// must explicitly establish the required first provider turn via this helper.
-pub(super) async fn finish_test_onboarding(
-    runtime: &Arc<RuntimeSessionManager>,
-    workspace_id: &str,
-    agent_id: &str,
-) {
-    runtime
-        .dispatch_workspace_system_notices()
-        .await
-        .expect("deliver pending system onboarding");
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            let notice = runtime
-                .get_workspace_onboarding_notice(workspace_id, agent_id)
-                .expect("read onboarding notice")
-                .expect("onboarding intent exists");
-            let session = runtime.get_session(agent_id).await.expect("test session");
-            if notice.state == "delivered" && session.active_turn_id.is_none() {
-                break;
-            }
-            assert!(
-                matches!(notice.state.as_str(), "pending" | "injecting" | "delivered"),
-                "onboarding cannot safely finish: {notice:?}"
-            );
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("mandatory onboarding must finish before user turns");
 }

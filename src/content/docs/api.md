@@ -476,7 +476,7 @@ supplying custom refresh options returns `400 invalid_request` without querying 
 Use the current agent `revision` from `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` when updating thinking preference or Claude permission intent. Both public mutations require `expected_revision`, return the new revision, and reject stale revisions with HTTP `409`. Changes are rejected during an active turn. Codex and Claude thinking preferences carry into later turns/resume; ACP retains its own preferences and does not support these mutations.
 
 **For retry-safe preference and permission changes, send `Idempotency-Key`.**
-These two routes now commit an immutable operator request, exact native-session
+Both routes *always* commit an immutable operator request, exact native-session
 identity and exclusive agent claim to SQLite **before** calling the provider.
 A confirmed provider acknowledgement and the updated agent policy/revision
 are committed with the exact result in one transaction; `X-Operation-ID`
@@ -491,8 +491,70 @@ On startup, any durable policy intent lacking a terminal native receipt is
 quarantined as `manual_review` with its original claim retained. Recovery
 does not guess whether the provider call happened or silently resubmit it.
 
-Unkeyed preference/permission requests remain the legacy nonjournaled paths;
-they still honor revision checks but a lost native reply is **not** replay-safe.
+### Resolve an uncertain native policy without a second provider call
+
+Use `GET /v2/operations/{operation_id}` to inspect the **exact** original
+provider/agent identity, expected agent revision, original session timestamp,
+and effect intent. Independently examine that very same native provider
+attachment and determine whether the originally requested preferences or
+permission intent **actually applied** (`applied`) or **did not apply**
+(`not_applied`). If this cannot be established, leave the operation in
+`manual_review`: guessing can silently discard a provider-side change.
+
+The operator-only
+`POST /v2/agents/{agent_id}/native-policy/{operation_id}/resolve` accepts a
+strict JSON object with `resolution`, `evidence` (8–2048 bytes), `provider`,
+`provider_session_ref`, `canonical_provider_session_ref` (`null` when absent),
+`expected_revision`, and `session_updated_at`. All identity fields must match
+the original immutable native-effect intent and the **currently unchanged**
+workspace/agent attachment. The optional strong `If-Match` must match
+`expected_revision`. This endpoint deliberately rejects `Idempotency-Key`,
+since the existing `operation_id` is the immutable review target; retry the
+same review request to receive its original durable response. Different or
+conflicting evidence is rejected. `X-Operation-ID` identifies the reviewed
+operation. No native provider call is made by this endpoint.
+
+An `applied` review atomically commits the exact originally requested policy,
+increments its revision, and completes the original mutation operation. A
+repeat of its **original** idempotency key subsequently returns the confirmed
+success receipt without native redispatch. A `not_applied` review preserves
+the previous policy/revision, marks the operation failed, and permanently
+consumes the original key: repeat calls return nonretryable
+`409 operator_verified_not_applied` with the original `operation_id`.
+The operator evidence, prior uncertainty, final effect and terminal transition
+remain in `GET /v2/operations/{operation_id}`.
+
+**Both outcomes leave the agent's runtime session in
+`policy_recovery_required`.** New turns and provider-native operations remain
+blocked even after the review releases its exclusive resource claim. Restart
+the runtime only after independent review. On the next startup, a successful
+native resume using the reconciled durable policy transitions the session to
+`ready`. If native reattachment fails, its recovery gate stays closed and
+another startup can retry the same exact identity. A review receipt is *not*
+permission to keep using a possibly stale in-process provider attachment.
+
+Example after inspecting the original operation/effect and obtaining its
+precise original identity (replace the placeholder values with the record's
+actual values, not a different session):
+
+```bash
+curl -fsS -X POST "$BASE_URL/v2/agents/$AGENT_ID/native-policy/$OPERATION_ID/resolve" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"resolution":"applied",
+       "evidence":"Verified the exact native session policy independently",
+       "provider":"codex","provider_session_ref":"<original-native-session-ref>",
+       "canonical_provider_session_ref":null,
+       "expected_revision":0,"session_updated_at":123456789}'
+```
+
+Unkeyed `/v2` preference/permission requests now also create a durable one-shot
+native intent using a server-generated key and return `X-Operation-ID`. This
+prevents untraceable native effects and retains the same recovery quarantine
+if their reply is lost. **An unkeyed HTTP retry is still not replay-safe**:
+there is no caller key to retrieve the original receipt, so always provide one
+for automation and consult the durable operation after an uncertain response.
+The old direct internal manager mutation methods are not exposed on these
+`/v2` operator routes; they have separate legacy semantics.
 Provider-backed agent **archive and restore** still have no native-effect
 idempotency journal and reject `Idempotency-Key` with nonretryable
 `400 idempotency_not_supported` before native work. Those unkeyed lifecycle

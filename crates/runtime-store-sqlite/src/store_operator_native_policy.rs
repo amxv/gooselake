@@ -61,6 +61,22 @@ macro_rules! delegate_operator_native_policy_methods {
             self.repository()
                 .quarantine_started_operator_native_policies(at_ms)
         }
+
+        fn resolve_operator_native_policy_review(
+            &self,
+            command: &runtime_core::OperatorNativePolicyReviewCommand,
+        ) -> Result<runtime_core::OperatorNativePolicyReviewResponse, RuntimeError> {
+            self.repository()
+                .resolve_operator_native_policy_review(command)
+        }
+
+        fn operator_native_policy_reattachment_pending(
+            &self,
+            agent_id: &str,
+        ) -> Result<bool, RuntimeError> {
+            self.repository()
+                .operator_native_policy_reattachment_pending(agent_id)
+        }
     };
 }
 

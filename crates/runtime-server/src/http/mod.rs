@@ -237,6 +237,10 @@ pub fn build_router(state: AppState) -> Router {
             post(update_agent_permission),
         )
         .route(
+            "/agents/{agent_id}/native-policy/{operation_id}/resolve",
+            post(resolve_agent_native_policy_review).layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route(
             "/providers/{provider}/capabilities",
             get(provider_capabilities_v2),
         )

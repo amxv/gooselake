@@ -42,6 +42,14 @@ impl RuntimeSessionManager {
                 "an operator turn has unresolved native dispatch; reconcile its operation before changing this provider attachment",
             ));
         }
+        if self
+            .store
+            .operator_native_policy_reattachment_pending(agent_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "operator-reviewed provider policy requires runtime restart and verified native reattachment before further provider work".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -210,6 +218,14 @@ impl RuntimeSessionManager {
             ));
         }
         let session = self.get_session(session_id).await?;
+        if self
+            .store
+            .operator_native_policy_reattachment_pending(session_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "operator-reviewed provider policy requires runtime restart and verified native reattachment before a new turn".into(),
+            ));
+        }
         if self.store.unresolved_workspace_agent_rebind(session_id)? {
             return Err(RuntimeError::Conflict(format!(
                 "session {session_id} has an unresolved workspace rebind; inspect its operation before submitting another turn"

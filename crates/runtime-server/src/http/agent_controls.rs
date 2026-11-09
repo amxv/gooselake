@@ -177,31 +177,25 @@ pub(super) async fn update_agent_preferences(
     Json(request): Json<UpdateAgentPreferencesInput>,
 ) -> Result<Response, ApiError> {
     check_if_match_revision(&headers, request.expected_revision)?;
-    let idempotency_key = parse_idempotency_key(&headers)?;
+    let idempotency_key = parse_idempotency_key(&headers)?
+        .unwrap_or_else(|| format!("implicit-policy-{:032x}", rand::random::<u128>()));
     let request = ProviderSessionPreferencesMutationRequest {
         runtime_session_id: agent_id,
         expected_revision: Some(request.expected_revision),
         current_preferences: request.current_preferences,
     };
-    if let Some(key) = idempotency_key {
-        let (result, operation_id) = state
-            .runtime
-            .mutate_workspace_agent_preferences_operator(
-                request,
-                runtime_core::OperationActor::operator(OPERATOR_PRINCIPAL),
-                key,
-            )
-            .await?;
-        return Ok(with_operation_id(
-            revisioned_response(result.revision, result),
-            &operation_id,
-        ));
-    }
-    let result = state
+    let (result, operation_id) = state
         .runtime
-        .mutate_workspace_agent_preferences(request)
+        .mutate_workspace_agent_preferences_operator(
+            request,
+            runtime_core::OperationActor::operator(OPERATOR_PRINCIPAL),
+            idempotency_key,
+        )
         .await?;
-    Ok(revisioned_response(result.revision, result))
+    Ok(with_operation_id(
+        revisioned_response(result.revision, result),
+        &operation_id,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,31 +212,48 @@ pub(super) async fn update_agent_permission(
     Json(request): Json<UpdateAgentPermissionInput>,
 ) -> Result<Response, ApiError> {
     check_if_match_revision(&headers, request.expected_revision)?;
-    let idempotency_key = parse_idempotency_key(&headers)?;
+    let idempotency_key = parse_idempotency_key(&headers)?
+        .unwrap_or_else(|| format!("implicit-policy-{:032x}", rand::random::<u128>()));
     let request = ProviderPermissionMutationRequest {
         runtime_session_id: agent_id,
         expected_revision: Some(request.expected_revision),
         permission_intent: request.permission_intent,
     };
-    if let Some(key) = idempotency_key {
-        let (result, operation_id) = state
-            .runtime
-            .mutate_workspace_agent_permission_operator(
-                request,
-                runtime_core::OperationActor::operator(OPERATOR_PRINCIPAL),
-                key,
-            )
-            .await?;
-        return Ok(with_operation_id(
-            revisioned_response(result.revision, result),
-            &operation_id,
-        ));
-    }
+    let (result, operation_id) = state
+        .runtime
+        .mutate_workspace_agent_permission_operator(
+            request,
+            runtime_core::OperationActor::operator(OPERATOR_PRINCIPAL),
+            idempotency_key,
+        )
+        .await?;
+    Ok(with_operation_id(
+        revisioned_response(result.revision, result),
+        &operation_id,
+    ))
+}
+
+/// Explicit resolution of one quarantined native provider policy effect.
+/// The caller supplies independent evidence and exact original native
+/// attachment identity; the runtime never contacts the provider here.
+pub(super) async fn resolve_agent_native_policy_review(
+    State(state): State<AppState>,
+    Path((agent_id, operation_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<runtime_core::OperatorNativePolicyReviewInput>,
+) -> Result<Response, ApiError> {
+    check_if_match_revision(&headers, input.expected_revision)?;
+    reject_unjournaled_idempotency_key(&headers, "native policy evidence review")?;
     let result = state
         .runtime
-        .mutate_workspace_agent_permission(request)
+        .resolve_operator_native_policy_review(
+            agent_id.trim(),
+            operation_id.trim(),
+            input,
+            runtime_core::OperationActor::operator(OPERATOR_PRINCIPAL),
+        )
         .await?;
-    Ok(revisioned_response(result.revision, result))
+    Ok(with_operation_id(Json(result), operation_id.trim()))
 }
 
 #[cfg(test)]

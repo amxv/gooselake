@@ -143,16 +143,61 @@ impl RuntimeSessionManager {
                         )?;
                         match provider.resume_session_with_policy(resume_request).await {
                             Ok(resumed) => {
-                                summary.resumed_sessions += 1;
-                                if updated_session.provider_session_ref
-                                    != Some(resumed.provider_session_ref.clone())
+                                let policy_identity_matches =
+                                    session.provider_session_ref.as_deref()
+                                        == Some(resumed.provider_session_ref.as_str())
+                                        && session.canonical_provider_session_ref
+                                            == resumed.canonical_provider_session_ref;
+                                if session.status == "policy_recovery_required"
+                                    && !policy_identity_matches
+                                {
+                                    // The review attested one precise native
+                                    // attachment. A provider resume that
+                                    // silently changes its identity cannot
+                                    // make that assertion authoritative.
+                                    provider_resume_ready = false;
+                                    updated_session.failure_code =
+                                        Some("startup_policy_identity_changed".to_string());
+                                    updated_session.failure_message = Some(
+                                        "provider resumed a different native attachment than the reviewed policy target".into(),
+                                    );
+                                    session_changed = true;
+                                    summary.notes.push(format!(
+                                        "session {} native policy review attachment changed during resume; still fenced",
+                                        session.id
+                                    ));
+                                } else {
+                                    summary.resumed_sessions += 1;
+                                }
+                                if session.status == "policy_recovery_required"
+                                    && policy_identity_matches
+                                {
+                                    // Manual review cannot promise that the
+                                    // current process/provider attachment is
+                                    // synchronized. Only a fresh successful
+                                    // native resume unlocks the durable policy.
+                                    updated_session.status = "ready".to_string();
+                                    updated_session.failure_code = None;
+                                    updated_session.failure_message = None;
+                                    session_changed = true;
+                                    summary.notes.push(format!(
+                                        "session {} operator-reviewed native policy reattached with durable settings",
+                                        session.id
+                                    ));
+                                }
+                                if (session.status != "policy_recovery_required"
+                                    || policy_identity_matches)
+                                    && updated_session.provider_session_ref
+                                        != Some(resumed.provider_session_ref.clone())
                                 {
                                     updated_session.provider_session_ref =
                                         Some(resumed.provider_session_ref);
                                     session_changed = true;
                                 }
-                                if updated_session.canonical_provider_session_ref
-                                    != resumed.canonical_provider_session_ref
+                                if (session.status != "policy_recovery_required"
+                                    || policy_identity_matches)
+                                    && updated_session.canonical_provider_session_ref
+                                        != resumed.canonical_provider_session_ref
                                 {
                                     updated_session.canonical_provider_session_ref =
                                         resumed.canonical_provider_session_ref;
@@ -197,6 +242,12 @@ impl RuntimeSessionManager {
                                     updated_session.failure_code =
                                         Some("startup_provider_resume_failed".to_string());
                                     updated_session.failure_message = Some(error.to_string());
+                                } else if session.status == "policy_recovery_required" {
+                                    // Keep the session fenced but retry its
+                                    // exact attachment on a future startup.
+                                    updated_session.failure_code =
+                                        Some("startup_policy_reattachment_failed".to_string());
+                                    updated_session.failure_message = Some(error.to_string());
                                 } else {
                                     updated_session.status = "failed".to_string();
                                     updated_session.failure_code =
@@ -218,6 +269,11 @@ impl RuntimeSessionManager {
                         updated_session.status = "turn_recovery_required".to_string();
                         updated_session.failure_code =
                             Some("startup_missing_provider_ref".to_string());
+                        updated_session.failure_message =
+                            Some("missing provider_session_ref".to_string());
+                    } else if session.status == "policy_recovery_required" {
+                        updated_session.failure_code =
+                            Some("startup_missing_policy_provider_ref".to_string());
                         updated_session.failure_message =
                             Some("missing provider_session_ref".to_string());
                     } else {

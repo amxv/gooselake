@@ -318,6 +318,10 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/agents/{agent_id}/permission") => {
             "Update Claude permission selection using expected revision".to_string()
         }
+        (HttpMethod::Post, "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve") => {
+            "Resolve exact uncertain native policy outcome using independent operator evidence"
+                .to_string()
+        }
         (HttpMethod::Post, "/v2/agents/{agent_id}/turns") => {
             "Admit a workspace agent turn with optional typed turn-scoped settings".to_string()
         }
@@ -515,6 +519,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile"
             | "/v2/agents/{agent_id}/preferences"
             | "/v2/agents/{agent_id}/permission"
+            | "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve"
             | "/v2/agents/{agent_id}/turns"
             | "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun"
             | "/v2/agents/{agent_id}/edits/{operation_id}/resolve"
@@ -594,7 +599,9 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
     if method == HttpMethod::Post
         && matches!(
             path,
-            "/v2/workspaces/{workspace_id}/worktrees" | "/v2/agents/{agent_id}/turns"
+            "/v2/workspaces/{workspace_id}/worktrees"
+                | "/v2/agents/{agent_id}/turns"
+                | "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve"
         )
     {
         out.push_str("          headers:\n");
@@ -872,6 +879,7 @@ mod tests {
         assert!(yaml.contains("  /v2/agents/{agent_id}/context-limit/refresh:"));
         assert!(yaml.contains("  /v2/agents/{agent_id}/preferences:"));
         assert!(yaml.contains("  /v2/agents/{agent_id}/permission:"));
+        assert!(yaml.contains("  /v2/agents/{agent_id}/native-policy/{operation_id}/resolve:"));
         assert!(yaml.contains("  /v2/messages:"));
         assert!(yaml.contains("  /v2/messages/{message_id}/deliveries:"));
         assert!(yaml.contains("  /v2/messages/{message_id}/cancel:"));

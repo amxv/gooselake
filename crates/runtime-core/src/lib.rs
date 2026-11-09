@@ -49,6 +49,8 @@ pub use model_policy::{
 };
 pub use operator_native_policy::{
     OperatorNativePolicyAdmission, OperatorNativePolicyCommand, OperatorNativePolicyKind,
+    OperatorNativePolicyReviewCommand, OperatorNativePolicyReviewInput,
+    OperatorNativePolicyReviewResolution, OperatorNativePolicyReviewResponse,
 };
 pub use process_authority::{
     process_status_is_terminal, ManagedProcessAdmission, ManagedProcessRecord,

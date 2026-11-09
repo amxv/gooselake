@@ -13,6 +13,7 @@ pub(super) fn accepts_revision_precondition(path: &str, method: HttpMethod) -> b
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree"
                 | "/v2/agents/{agent_id}/preferences"
                 | "/v2/agents/{agent_id}/permission"
+                | "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve"
         ))
         || (method == HttpMethod::Put
             && matches!(
@@ -76,6 +77,7 @@ mod tests {
             "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree",
             "/v2/agents/{agent_id}/preferences",
             "/v2/agents/{agent_id}/permission",
+            "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve",
             "/v2/workspaces/{workspace_id}/notice-policy",
             "/v2/workspaces/{workspace_id}/hooks/approval",
         ] {

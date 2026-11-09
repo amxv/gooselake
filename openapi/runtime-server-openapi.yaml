@@ -1241,6 +1241,49 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v2/agents/{agent_id}/native-policy/{operation_id}/resolve:
+    post:
+      summary: Resolve exact uncertain native policy outcome using independent operator evidence
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operation_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: If-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          headers:
+            X-Operation-ID:
+              description: Durable native mutation operation when an idempotency key is supplied
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "412":
+          description: If-Match does not equal the strong ETag of the body expected_revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v2/agents/{agent_id}/permission:
     post:
       summary: Update Claude permission selection using expected revision

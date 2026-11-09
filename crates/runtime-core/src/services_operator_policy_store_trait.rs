@@ -56,6 +56,23 @@ macro_rules! operator_native_policy_store_methods {
         ) -> Result<Vec<String>, RuntimeError> {
             Ok(Vec::new())
         }
+
+        /// Finalize an independently verified native policy outcome without
+        /// dispatching provider work. The verified claim and revised policy
+        /// must be committed atomically or neither may change.
+        fn resolve_operator_native_policy_review(
+            &self,
+            _command: &crate::OperatorNativePolicyReviewCommand,
+        ) -> Result<crate::OperatorNativePolicyReviewResponse, RuntimeError> {
+            unsupported_store("operator native policy evidence review unavailable")
+        }
+
+        fn operator_native_policy_reattachment_pending(
+            &self,
+            _agent_id: &str,
+        ) -> Result<bool, RuntimeError> {
+            Ok(false)
+        }
     };
 }
 

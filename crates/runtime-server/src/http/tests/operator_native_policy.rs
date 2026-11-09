@@ -1,7 +1,7 @@
 use super::workspace_worktree_routes::call;
 use super::*;
 
-async fn operator_policy_fixture() -> (
+pub(super) async fn operator_policy_fixture() -> (
     Router,
     String,
     tempfile::TempDir,
@@ -42,14 +42,14 @@ async fn operator_policy_fixture() -> (
     (router, token, temp, provider, runtime, agent_id, revision)
 }
 
-fn preference_body(revision: u64, effort: &str) -> serde_json::Value {
+pub(super) fn preference_body(revision: u64, effort: &str) -> serde_json::Value {
     serde_json::json!({
         "expected_revision":revision,
         "current_preferences":{"thinking_effort":effort},
     })
 }
 
-async fn claude_permission_fixture() -> (
+pub(super) async fn claude_permission_fixture() -> (
     Router,
     String,
     tempfile::TempDir,
@@ -89,7 +89,7 @@ async fn claude_permission_fixture() -> (
     (router, token, temp, claude, runtime, agent_id, revision)
 }
 
-fn permission_body(revision: u64) -> serde_json::Value {
+pub(super) fn permission_body(revision: u64) -> serde_json::Value {
     serde_json::json!({
         "expected_revision":revision,
         "permission_intent":{"kind":"inherit_provider_configuration"},

@@ -42,12 +42,29 @@ impl RuntimeSessionManager {
                 "an operator turn has unresolved native dispatch; reconcile its operation before changing this provider attachment",
             ));
         }
+        if let Some(operation_id) = self
+            .store
+            .unresolved_operator_agent_restore_for_agent(agent_id)?
+        {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "an operator agent restoration has unresolved native provider resume; independently review its operation before changing this attachment",
+            ));
+        }
         if self
             .store
             .operator_native_policy_reattachment_pending(agent_id)?
         {
             return Err(RuntimeError::Conflict(
                 "operator-reviewed provider policy requires runtime restart and verified native reattachment before further provider work".into(),
+            ));
+        }
+        if self
+            .store
+            .operator_agent_restore_reattachment_pending(agent_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "operator-reviewed native restore requires runtime restart and verified native reattachment before further provider work".into(),
             ));
         }
         Ok(())

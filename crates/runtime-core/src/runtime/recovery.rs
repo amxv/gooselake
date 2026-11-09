@@ -23,6 +23,14 @@ impl RuntimeSessionManager {
                 "operator native policy {operation_id} became manual_review after restart; no provider mutation was retried"
             ));
         }
+        let native_restore_intents = self
+            .store
+            .quarantine_started_operator_agent_restores(started_at)?;
+        for operation_id in native_restore_intents {
+            summary.notes.push(format!(
+                "operator native agent restore {operation_id} became manual_review after restart; no provider resume was retried"
+            ));
+        }
         let ambiguous_hooks = self
             .store
             .quarantine_started_team_hook_effects(started_at)?;
@@ -87,6 +95,15 @@ impl RuntimeSessionManager {
         for session_id in session_ids {
             if let Some(operation_id) = self
                 .store
+                .unresolved_operator_agent_restore_for_agent(&session_id)?
+            {
+                summary.notes.push(format!(
+                    "session {session_id} native provider resume withheld by unresolved agent restoration {operation_id}"
+                ));
+                continue;
+            }
+            if let Some(operation_id) = self
+                .store
                 .unresolved_operator_native_policy_for_agent(&session_id)?
             {
                 // Native policy may have changed after SQLite committed the
@@ -148,30 +165,36 @@ impl RuntimeSessionManager {
                                         == Some(resumed.provider_session_ref.as_str())
                                         && session.canonical_provider_session_ref
                                             == resumed.canonical_provider_session_ref;
-                                if session.status == "policy_recovery_required"
-                                    && !policy_identity_matches
-                                {
+                                let reviewed_attachment = matches!(
+                                    session.status.as_str(),
+                                    "policy_recovery_required" | "restore_recovery_required"
+                                );
+                                if reviewed_attachment && !policy_identity_matches {
                                     // The review attested one precise native
                                     // attachment. A provider resume that
                                     // silently changes its identity cannot
                                     // make that assertion authoritative.
                                     provider_resume_ready = false;
-                                    updated_session.failure_code =
-                                        Some("startup_policy_identity_changed".to_string());
+                                    updated_session.failure_code = Some(
+                                        if session.status == "policy_recovery_required" {
+                                            "startup_policy_identity_changed"
+                                        } else {
+                                            "startup_restore_identity_changed"
+                                        }
+                                        .into(),
+                                    );
                                     updated_session.failure_message = Some(
-                                        "provider resumed a different native attachment than the reviewed policy target".into(),
+                                        "provider resumed a different native attachment than the independently reviewed target".into(),
                                     );
                                     session_changed = true;
                                     summary.notes.push(format!(
-                                        "session {} native policy review attachment changed during resume; still fenced",
+                                        "session {} reviewed native attachment changed during resume; still fenced",
                                         session.id
                                     ));
                                 } else {
                                     summary.resumed_sessions += 1;
                                 }
-                                if session.status == "policy_recovery_required"
-                                    && policy_identity_matches
-                                {
+                                if reviewed_attachment && policy_identity_matches {
                                     // Manual review cannot promise that the
                                     // current process/provider attachment is
                                     // synchronized. Only a fresh successful
@@ -181,12 +204,12 @@ impl RuntimeSessionManager {
                                     updated_session.failure_message = None;
                                     session_changed = true;
                                     summary.notes.push(format!(
-                                        "session {} operator-reviewed native policy reattached with durable settings",
+                                        "session {} operator-reviewed native {} reattached with durable settings",
                                         session.id
+                                        , if session.status == "policy_recovery_required" { "policy" } else { "restore" }
                                     ));
                                 }
-                                if (session.status != "policy_recovery_required"
-                                    || policy_identity_matches)
+                                if (!reviewed_attachment || policy_identity_matches)
                                     && updated_session.provider_session_ref
                                         != Some(resumed.provider_session_ref.clone())
                                 {
@@ -194,8 +217,7 @@ impl RuntimeSessionManager {
                                         Some(resumed.provider_session_ref);
                                     session_changed = true;
                                 }
-                                if (session.status != "policy_recovery_required"
-                                    || policy_identity_matches)
+                                if (!reviewed_attachment || policy_identity_matches)
                                     && updated_session.canonical_provider_session_ref
                                         != resumed.canonical_provider_session_ref
                                 {
@@ -242,11 +264,20 @@ impl RuntimeSessionManager {
                                     updated_session.failure_code =
                                         Some("startup_provider_resume_failed".to_string());
                                     updated_session.failure_message = Some(error.to_string());
-                                } else if session.status == "policy_recovery_required" {
+                                } else if matches!(
+                                    session.status.as_str(),
+                                    "policy_recovery_required" | "restore_recovery_required"
+                                ) {
                                     // Keep the session fenced but retry its
                                     // exact attachment on a future startup.
-                                    updated_session.failure_code =
-                                        Some("startup_policy_reattachment_failed".to_string());
+                                    updated_session.failure_code = Some(
+                                        if session.status == "policy_recovery_required" {
+                                            "startup_policy_reattachment_failed"
+                                        } else {
+                                            "startup_restore_reattachment_failed"
+                                        }
+                                        .into(),
+                                    );
                                     updated_session.failure_message = Some(error.to_string());
                                 } else {
                                     updated_session.status = "failed".to_string();
@@ -271,9 +302,18 @@ impl RuntimeSessionManager {
                             Some("startup_missing_provider_ref".to_string());
                         updated_session.failure_message =
                             Some("missing provider_session_ref".to_string());
-                    } else if session.status == "policy_recovery_required" {
-                        updated_session.failure_code =
-                            Some("startup_missing_policy_provider_ref".to_string());
+                    } else if matches!(
+                        session.status.as_str(),
+                        "policy_recovery_required" | "restore_recovery_required"
+                    ) {
+                        updated_session.failure_code = Some(
+                            if session.status == "policy_recovery_required" {
+                                "startup_missing_policy_provider_ref"
+                            } else {
+                                "startup_missing_restore_provider_ref"
+                            }
+                            .into(),
+                        );
                         updated_session.failure_message =
                             Some("missing provider_session_ref".to_string());
                     } else {

@@ -108,6 +108,24 @@ impl SqliteRuntimeRepository {
                 "a provider policy mutation has unresolved native effects; no logical turn can be admitted",
             ));
         }
+        let restore_claim: Option<String> = transaction
+            .query_row(
+                "SELECT owner_operation_id FROM runtime_operation_resource_claims
+                 WHERE resource_kind=?1 AND resource_id=?2 AND claim_mode='exclusive'",
+                params![
+                    crate::repository_operator_agent_restore::CLAIM_KIND,
+                    session.id
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking native agent restore claim", error))?;
+        if let Some(operation_id) = restore_claim {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "provider restore has an unresolved native outcome; no logical turn can be admitted",
+            ));
+        }
         guard_process_completion_admission(&transaction, admission)?;
         let rebind_pending: i64 = transaction
             .query_row(
@@ -180,6 +198,15 @@ impl SqliteRuntimeRepository {
             .optional()
             .map_err(|error| db_error("failed reading session for turn admission", error))?
             .ok_or_else(|| RuntimeError::NotFound(format!("session {}", session.id)))?;
+        if matches!(
+            persisted.0.as_str(),
+            "policy_recovery_required" | "restore_recovery_required"
+        ) {
+            return Err(RuntimeError::Conflict(format!(
+                "session {} has an independently reviewed native attachment requiring verified startup reattachment",
+                session.id
+            )));
+        }
         if matches!(persisted.0.as_str(), "closed" | "failed") {
             return Err(RuntimeError::InvalidState(format!(
                 "session {} is not writable in status {}",
@@ -529,7 +556,7 @@ fn update_session_for_admission(
         .execute(
             "UPDATE sessions
              SET status = ?1, active_turn_id = ?2, updated_at = ?3
-             WHERE id = ?4 AND active_turn_id IS NULL AND status NOT IN ('closed', 'failed')",
+             WHERE id = ?4 AND active_turn_id IS NULL AND status NOT IN ('closed', 'failed', 'policy_recovery_required', 'restore_recovery_required')",
             params![
                 record.status,
                 record.active_turn_id,

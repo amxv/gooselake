@@ -751,15 +751,48 @@ pub(super) async fn restore_workspace_agent(
     Path((workspace_id, agent_id)): Path<(String, String)>,
     headers: HeaderMap,
     body: axum::body::Bytes,
-) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+) -> Result<Response, ApiError> {
     require_empty_request_body(&body)?;
     reject_unsupported_if_match(&headers, "workspace agent restoration")?;
-    reject_unjournaled_idempotency_key(&headers, "workspace agent restore")?;
-    let restored = state
+    // For clients without a caller key, still record a server-generated
+    // one-shot durable native intent. Automation should always supply a key:
+    // an unkeyed HTTP retry cannot identify a previous ambiguous restore.
+    let idempotency_key = parse_idempotency_key(&headers)?
+        .unwrap_or_else(|| format!("server-restore-{:032x}", rand::random::<u128>()));
+    let (restored, operation_id) = state
         .runtime
-        .restore_workspace_agent(workspace_id.trim(), agent_id.trim())
+        .restore_workspace_agent_operator(
+            workspace_id.trim(),
+            agent_id.trim(),
+            OperationActor::operator(OPERATOR_PRINCIPAL),
+            idempotency_key,
+        )
         .await?;
-    Ok(Json(restored))
+    Ok(with_operation_id(
+        revisioned_response(restored.revision, restored),
+        &operation_id,
+    ))
+}
+
+pub(super) async fn resolve_workspace_agent_restore_review(
+    State(state): State<AppState>,
+    Path((workspace_id, agent_id, operation_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<runtime_core::OperatorAgentRestoreReviewInput>,
+) -> Result<Response, ApiError> {
+    check_if_match_revision(&headers, input.expected_revision)?;
+    reject_unjournaled_idempotency_key(&headers, "native restoration evidence review")?;
+    let result = state
+        .runtime
+        .resolve_operator_agent_restore_review(
+            workspace_id.trim(),
+            agent_id.trim(),
+            operation_id.trim(),
+            input,
+            OperationActor::operator(OPERATOR_PRINCIPAL),
+        )
+        .await?;
+    Ok(with_operation_id(Json(result), operation_id.trim()))
 }
 
 pub(super) async fn get_operation(

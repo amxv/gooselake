@@ -210,8 +210,17 @@ impl SqliteRuntimeRepository {
                 return Ok(prior);
             }
         }
-        let (revision, lifecycle, session_cwd, session_worktree, active_turn, policy_json): (
+        let (
+            revision,
+            lifecycle,
+            session_status,
+            session_cwd,
+            session_worktree,
+            active_turn,
+            policy_json,
+        ): (
             i64,
+            String,
             String,
             Option<String>,
             Option<String>,
@@ -219,7 +228,7 @@ impl SqliteRuntimeRepository {
             String,
         ) = tx
             .query_row(
-                "SELECT a.revision, a.lifecycle_state, s.cwd, s.worktree_id,
+                "SELECT a.revision, a.lifecycle_state, s.status, s.cwd, s.worktree_id,
                     s.active_turn_id, a.recreation_policy_json
              FROM workspace_agents a JOIN sessions s ON s.id = a.session_id
              JOIN workspaces w ON w.workspace_id = a.workspace_id
@@ -233,6 +242,7 @@ impl SqliteRuntimeRepository {
                         row.get(3)?,
                         row.get(4)?,
                         row.get(5)?,
+                        row.get(6)?,
                     ))
                 },
             )
@@ -246,6 +256,7 @@ impl SqliteRuntimeRepository {
                 RuntimeError::Bootstrap(format!("invalid agent recreation policy: {error}"))
             })?;
         if lifecycle != "active"
+            || session_status != "ready"
             || active_turn.is_some()
             || revision != i64::try_from(operation.expected_revision).unwrap_or(-1)
             || session_cwd.as_deref() != Some(operation.previous_cwd.as_str())
@@ -278,6 +289,24 @@ impl SqliteRuntimeRepository {
             return Err(RuntimeError::Conflict(
                 "another worktree rebind is unresolved; inspect its operation before retrying"
                     .into(),
+            ));
+        }
+        let conflicting_native_restore: Option<String> = tx
+            .query_row(
+                "SELECT owner_operation_id FROM runtime_operation_resource_claims
+             WHERE resource_kind=?1 AND resource_id=?2 AND claim_mode='exclusive'",
+                params![
+                    crate::repository_operator_agent_restore::CLAIM_KIND,
+                    operation.agent_id
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking native restore before rebind", error))?;
+        if let Some(operation_id) = conflicting_native_restore {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "native agent restoration is unproven; provider rebind is fenced",
             ));
         }
         // The manager lock protects a single process. Native compaction and

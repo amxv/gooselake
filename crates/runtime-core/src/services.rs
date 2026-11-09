@@ -25,6 +25,8 @@ use serde_json::Value;
 
 #[path = "services_operator_policy_store_trait.rs"]
 mod operator_policy_store_trait;
+#[path = "services_operator_restore_store_trait.rs"]
+mod operator_restore_store_trait;
 #[path = "services_operator_turn_models.rs"]
 mod operator_turn_models;
 #[path = "services_operator_turn_store_trait.rs"]
@@ -68,6 +70,7 @@ pub trait RuntimeStore:
     message_operator::message_operator_methods!();
 
     operator_policy_store_trait::operator_native_policy_store_methods!();
+    operator_restore_store_trait::operator_agent_restore_store_methods!();
 
     /// Transactionally snapshot approved pre-add hooks against a trusted
     /// reserved agent identity before any shell or provider work can start.
@@ -708,8 +711,7 @@ pub trait RuntimeStore:
         unsupported_store("durable operation authority is not implemented by this runtime store")
     }
 
-    /// Indexed, deterministic operation history for the operator control plane.
-    /// This is a summary page; exact claims/effects are read by get_operation.
+    /// Indexed operation summaries; exact claims/effects live in get_operation.
     fn list_operations_page(
         &self,
         _workspace_id: Option<&str>,

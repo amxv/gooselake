@@ -302,6 +302,15 @@ impl From<RuntimeError> for ApiError {
                 error.details = Some(serde_json::json!({"operation_id": operation_id}));
                 error
             }
+            RuntimeError::OperatorRestoreNotResumed { operation_id } => {
+                let mut error = Self::new(
+                    StatusCode::CONFLICT,
+                    "operator_verified_not_resumed",
+                    format!("native agent restoration was verified not applied; original key is consumed; inspect /v2/operations/{operation_id}"),
+                );
+                error.details = Some(serde_json::json!({"operation_id": operation_id}));
+                error
+            }
             RuntimeError::OperatorTurnNotDispatched {
                 operation_id,
                 code,

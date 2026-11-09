@@ -326,6 +326,10 @@ pub fn build_router(state: AppState) -> Router {
             post(restore_workspace_agent),
         )
         .route(
+            "/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve",
+            post(resolve_workspace_agent_restore_review),
+        )
+        .route(
             "/messages",
             post(create_agent_message).get(list_agent_messages),
         )

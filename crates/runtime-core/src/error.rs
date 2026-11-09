@@ -49,6 +49,13 @@ pub enum RuntimeError {
     #[error("operator policy operation {operation_id} was verified not applied; original key is consumed")]
     OperatorPolicyNotApplied { operation_id: String },
 
+    /// A reviewed provider restore was proven absent. The original restore
+    /// key remains consumed and cannot reopen the provider attachment.
+    #[error(
+        "operator agent restore {operation_id} was verified not resumed; original key is consumed"
+    )]
+    OperatorRestoreNotResumed { operation_id: String },
+
     /// The exact canonical turn was admitted but the provider confirmed that
     /// its native dispatch did not occur. The original key replays this error
     /// without sending the user input again.

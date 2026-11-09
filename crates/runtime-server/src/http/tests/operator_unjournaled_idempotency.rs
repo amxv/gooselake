@@ -58,7 +58,7 @@ async fn unjournaled_provider_mutations_cannot_silently_accept_idempotency_keys(
     assert_eq!(status, StatusCode::OK, "{agent:?}");
     let agent_id = agent["agent_id"].as_str().unwrap();
     let revision = agent["revision"].as_u64().unwrap();
-    // Native agent creation/archive/restore still have no replay journal.
+    // Native agent creation/archive still lack a full operator replay journal.
     for (path, input) in [(
         format!("{base}/{agent_id}/archive"),
         serde_json::json!({"reason":"would close native session"}),
@@ -129,17 +129,32 @@ async fn unjournaled_provider_mutations_cannot_silently_accept_idempotency_keys(
     assert_eq!(status, StatusCode::OK, "{archived:?}");
     assert_eq!(archived["lifecycle_state"], "archived");
 
-    let (status, body) = call(
+    let (status, restored) = call(
         &router,
         &token,
         "POST",
         &format!("{agent_url}/restore"),
         None,
-        Some("do-not-replay-native-restore"),
+        Some("replay-native-restore-safely"),
     )
     .await;
-    assert_unjournaled_key_rejected(status, &body);
-    let (status, still_archived) = call(&router, &token, "GET", &agent_url, None, None).await;
+    assert_eq!(status, StatusCode::OK, "{restored:?}");
+    assert_eq!(restored["lifecycle_state"], "active");
+    let (status, replay) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("{agent_url}/restore"),
+        None,
+        Some("replay-native-restore-safely"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replay:?}");
+    assert_eq!(
+        replay, restored,
+        "keyed replay must return the exact original record"
+    );
+    let (status, still_active) = call(&router, &token, "GET", &agent_url, None, None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(still_archived["lifecycle_state"], "archived");
+    assert_eq!(still_active["lifecycle_state"], "active");
 }

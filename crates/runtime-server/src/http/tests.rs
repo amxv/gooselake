@@ -30,6 +30,8 @@ use crate::config::RuntimeServerConfig;
 
 mod support;
 use support::*;
+mod support_mixed_router;
+use support_mixed_router::*;
 mod support_onboarding;
 use support_onboarding::*;
 mod support_acp_http;
@@ -47,6 +49,7 @@ mod agent_session_controls_compaction;
 mod agent_session_controls_edit_rerun;
 mod mcp_core;
 mod mcp_policy_process;
+mod operator_agent_restore;
 mod operator_contract_routes;
 mod operator_event_pages;
 mod operator_hook_approval_idempotency;

@@ -14,6 +14,7 @@ pub(super) fn accepts_revision_precondition(path: &str, method: HttpMethod) -> b
                 | "/v2/agents/{agent_id}/preferences"
                 | "/v2/agents/{agent_id}/permission"
                 | "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve"
+                | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve"
         ))
         || (method == HttpMethod::Put
             && matches!(
@@ -40,6 +41,7 @@ pub(super) fn returns_revision_etag(path: &str, method: HttpMethod) -> bool {
                     | "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree"
                     | "/v2/agents/{agent_id}/preferences"
                     | "/v2/agents/{agent_id}/permission"
+                    | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore"
             ))
         || (method == HttpMethod::Put
             && matches!(
@@ -78,6 +80,7 @@ mod tests {
             "/v2/agents/{agent_id}/preferences",
             "/v2/agents/{agent_id}/permission",
             "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve",
+            "/v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve",
             "/v2/workspaces/{workspace_id}/notice-policy",
             "/v2/workspaces/{workspace_id}/hooks/approval",
         ] {
@@ -102,6 +105,7 @@ mod tests {
             "/v2/workspaces/{workspace_id}/lead",
             "/v2/agents/{agent_id}/preferences",
             "/v2/agents/{agent_id}/permission",
+            "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore",
         ] {
             let content = yaml
                 .split(&format!("  {path}:\n"))
@@ -122,6 +126,22 @@ mod tests {
         assert_eq!(rebind.matches("      parameters:\n").count(), 1);
         assert!(rebind.contains("            X-Operation-ID:\n"));
         assert!(rebind.contains("        \"409\":\n"));
+        let restore = yaml
+            .split("  /v2/workspaces/{workspace_id}/agents/{agent_id}/restore:\n")
+            .nth(1)
+            .unwrap()
+            .split("\n  /")
+            .next()
+            .unwrap();
+        assert!(restore.contains("            X-Operation-ID:\n"));
+        assert!(restore.contains("            ETag:\n"));
+        assert!(restore.contains("        \"409\":\n"));
+        let review = yaml
+            .split("  /v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve:\n")
+            .nth(1).unwrap().split("\n  /").next().unwrap();
+        assert!(review.contains("        - name: If-Match\n"));
+        assert!(review.contains("            X-Operation-ID:\n"));
+        assert!(review.contains("        \"412\":\n"));
         for path in [
             "/v2/workspaces/{workspace_id}",
             "/v2/workspaces/{workspace_id}/agents/{agent_id}",

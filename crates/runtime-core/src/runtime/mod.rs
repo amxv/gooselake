@@ -19,6 +19,7 @@ mod context_limit;
 mod edit_rerun;
 mod events;
 mod helpers;
+mod operator_agent_restore;
 mod operator_native_policy;
 mod recovery;
 mod sessions;

@@ -751,11 +751,45 @@ curl -fsS -X POST \
 
 curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: reopen-agent-123" \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/restore"
 ```
 
 Agent restore accepts **no options** (empty body or `{}`); policy or force
 options return `400 invalid_request` before provider resume.
+
+Agent restoration is a provider-native operation protected by a **pre-dispatch
+durable intent**, an exact per-agent resource claim, and a single SQLite
+commit joining the provider acknowledgement, active roster, session reference,
+revision, membership notices, and completed operation receipt. Send
+an `Idempotency-Key` to make safe retries possible: an identical key returns
+the original exact `ETag`, `X-Operation-ID` and JSON response without a second
+provider resume; a new key for an already active agent admits a journaled
+no-op. For compatibility, a missing key gets a generated one-shot key and
+`X-Operation-ID`, but **a new unkeyed HTTP retry cannot identify the prior
+attempt**. `409 outcome_unresolved` includes the original operation ID: use
+`GET /v2/operations/{operation_id}` to inspect its durable intent/effect/claim.
+An ambiguous provider response, failed atomic receipt or crash during the
+native operation leaves `manual_review` and never automatically dispatches
+another restore. An unresolved restore also fences other native turns,
+settings, reassignment and lifecycle changes across concurrent instances.
+
+After **independently verifying** the original native provider session, an
+operator can resolve a quarantined restore without contacting the provider.
+Send `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve`
+with `resolution` (`resumed` or `not_resumed`), substantive `evidence`, exact
+`provider`, `original_provider_session_ref`, nullable
+`original_canonical_provider_session_ref`, `expected_revision`, and
+`session_updated_at` from the original intent. For `resumed`, also supply the
+independently verified `observed_provider_session_ref` and nullable
+`observed_canonical_provider_session_ref`. This evidence-only endpoint accepts
+optional matching strong `If-Match`, rejects `Idempotency-Key`, and replays an
+identical review receipt. Verified `not_resumed` consumes the original key
+permanently with `409 operator_verified_not_resumed`; a distinct key can start
+a new restore. Verified `resumed` settles the durable roster/receipt but
+requires **a fresh runtime startup with successful exact provider identity
+reattachment** before any further native work. A changed attachment remains
+fenced under `restore_recovery_required` until corrected.
 
 An archived agent is removed from the default active roster and its underlying runtime session rejects new turns. History, workspace ownership, alias, recreation policy, and provider identity remain durable. Restore returns the same agent ID and alias and resumes the provider from the stored policy; it does not implicitly assign any future workspace role such as lead.
 

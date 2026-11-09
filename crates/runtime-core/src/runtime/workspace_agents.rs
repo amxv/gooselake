@@ -731,6 +731,13 @@ impl RuntimeSessionManager {
     ) -> Result<ProviderResumeSessionPolicyRequest, RuntimeError> {
         if let Some(operation_id) = self
             .store
+            .unresolved_operator_agent_restore_for_agent(session.id.as_str())?
+        {
+            return Err(RuntimeError::operation_unresolved(operation_id,
+                "a native agent restoration is unresolved; an unjournaled provider resume is not safe"));
+        }
+        if let Some(operation_id) = self
+            .store
             .unresolved_operator_native_policy_for_agent(session.id.as_str())?
         {
             return Err(RuntimeError::operation_unresolved(

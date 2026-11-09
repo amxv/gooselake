@@ -58,23 +58,9 @@ async fn unjournaled_provider_mutations_cannot_silently_accept_idempotency_keys(
     assert_eq!(status, StatusCode::OK, "{agent:?}");
     let agent_id = agent["agent_id"].as_str().unwrap();
     let revision = agent["revision"].as_u64().unwrap();
-    // Native agent creation/archive still lack a full operator replay journal.
-    for (path, input) in [(
-        format!("{base}/{agent_id}/archive"),
-        serde_json::json!({"reason":"would close native session"}),
-    )] {
-        let (status, body) = call(
-            &router,
-            &token,
-            "POST",
-            &path,
-            Some(input),
-            Some("should-not-be-accepted"),
-        )
-        .await;
-        assert_unjournaled_key_rejected(status, &body);
-    }
-    // Unlike archive/restore, policy edits now *do* understand an exact
+    // Provider creation remains unjournaled; archive/restore now both accept
+    // exact operator keys, so they must not be tested as unsupported here.
+    // Policy edits also understand an exact
     // operator retry key. Here the fake provider has no native capability,
     // so neither operation admission nor provider mutation is permitted.
     for (path, input) in [
@@ -116,7 +102,8 @@ async fn unjournaled_provider_mutations_cannot_silently_accept_idempotency_keys(
     assert_eq!(still_active["lifecycle_state"], "active");
     assert_eq!(still_active["revision"], revision);
 
-    // The old unkeyed native lifecycle paths are intentionally unchanged.
+    // Unkeyed archive is now a one-shot durable native operation, not a
+    // best-effort provider close that silently claims completion.
     let (status, archived) = call(
         &router,
         &token,

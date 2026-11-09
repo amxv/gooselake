@@ -72,14 +72,14 @@ pub(crate) fn apply_workspace_agent_lifecycle_tx(
     archive_reason: Option<&str>,
     changed_at: i64,
     initiator_agent_id: Option<&str>,
-    allowed_restore_operation: Option<&str>,
+    allowed_lifecycle_operation: Option<&str>,
 ) -> Result<WorkspaceAgentRecord, RuntimeError> {
     if session.id != agent_id {
         return Err(RuntimeError::ProtocolViolation(
             "workspace agent lifecycle session mismatch".to_string(),
         ));
     }
-    reject_unresolved_route_with_restore_claim(tx, agent_id, allowed_restore_operation)?;
+    reject_unresolved_route_with_lifecycle_claim(tx, agent_id, allowed_lifecycle_operation)?;
     let (workspace_id, prior_lifecycle, prior_revision): (String, String, i64) = tx
             .query_row(
                 "SELECT workspace_id, lifecycle_state, revision FROM workspace_agents WHERE session_id = ?1",
@@ -195,13 +195,13 @@ pub(crate) fn reject_unresolved_route(
     connection: &Connection,
     agent_id: &str,
 ) -> Result<(), RuntimeError> {
-    reject_unresolved_route_with_restore_claim(connection, agent_id, None)
+    reject_unresolved_route_with_lifecycle_claim(connection, agent_id, None)
 }
 
-fn reject_unresolved_route_with_restore_claim(
+fn reject_unresolved_route_with_lifecycle_claim(
     connection: &Connection,
     agent_id: &str,
-    allowed_restore_operation: Option<&str>,
+    allowed_lifecycle_operation: Option<&str>,
 ) -> Result<(), RuntimeError> {
     // Lifecycle transitions change the authoritative attachment state. A
     // stale manager or a direct store caller must not archive/restore around
@@ -211,15 +211,16 @@ fn reject_unresolved_route_with_restore_claim(
     let claim: Option<(String, String)> = connection
         .query_row(
             "SELECT resource_kind,owner_operation_id FROM runtime_operation_resource_claims
-             WHERE resource_id=?1 AND claim_mode='exclusive' AND resource_kind IN (?2,?3,?4)
-             AND (resource_kind!=?4 OR owner_operation_id!=?5)
+             WHERE resource_id=?1 AND claim_mode='exclusive' AND resource_kind IN (?2,?3,?4,?5)
+             AND (owner_operation_id!=?6 OR resource_kind NOT IN (?4,?5))
              LIMIT 1",
             params![
                 agent_id,
                 crate::repository_operator_native_policy::CLAIM_KIND,
                 crate::repository_turn_authority::OPERATOR_TURN_CLAIM,
                 crate::repository_operator_agent_restore::CLAIM_KIND,
-                allowed_restore_operation.unwrap_or("")
+                crate::repository_operator_agent_archive::CLAIM_KIND,
+                allowed_lifecycle_operation.unwrap_or("")
             ],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -233,14 +234,14 @@ fn reject_unresolved_route_with_restore_claim(
     }
     let recovery_required: bool = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1 AND status IN ('policy_recovery_required','restore_recovery_required'))",
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1 AND status IN ('policy_recovery_required','restore_recovery_required','archive_recovery_required'))",
             [agent_id],
             |row| row.get(0),
         )
         .map_err(|error| db_error("failed checking lifecycle provider reattachment", error))?;
     if recovery_required {
         return Err(RuntimeError::Conflict(
-            "agent lifecycle is frozen until independently reviewed native policy or restore is reattached on startup".into(),
+            "agent lifecycle is frozen until independently reviewed native policy, archive or restore is reattached on startup".into(),
         ));
     }
     let count: i64 = connection

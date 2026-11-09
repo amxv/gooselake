@@ -311,6 +311,15 @@ impl From<RuntimeError> for ApiError {
                 error.details = Some(serde_json::json!({"operation_id": operation_id}));
                 error
             }
+            RuntimeError::OperatorArchiveNotClosed { operation_id } => {
+                let mut error = Self::new(
+                    StatusCode::CONFLICT,
+                    "operator_verified_not_closed",
+                    format!("native agent archive was verified not closed; original key is consumed; inspect /v2/operations/{operation_id}"),
+                );
+                error.details = Some(serde_json::json!({"operation_id": operation_id}));
+                error
+            }
             RuntimeError::OperatorTurnNotDispatched {
                 operation_id,
                 code,

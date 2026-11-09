@@ -291,22 +291,23 @@ impl SqliteRuntimeRepository {
                     .into(),
             ));
         }
-        let conflicting_native_restore: Option<String> = tx
+        let conflicting_native_lifecycle: Option<String> = tx
             .query_row(
                 "SELECT owner_operation_id FROM runtime_operation_resource_claims
-             WHERE resource_kind=?1 AND resource_id=?2 AND claim_mode='exclusive'",
+             WHERE resource_kind IN (?1,?3) AND resource_id=?2 AND claim_mode='exclusive' LIMIT 1",
                 params![
                     crate::repository_operator_agent_restore::CLAIM_KIND,
-                    operation.agent_id
+                    operation.agent_id,
+                    crate::repository_operator_agent_archive::CLAIM_KIND,
                 ],
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| db_error("failed checking native restore before rebind", error))?;
-        if let Some(operation_id) = conflicting_native_restore {
+            .map_err(|error| db_error("failed checking native lifecycle before rebind", error))?;
+        if let Some(operation_id) = conflicting_native_lifecycle {
             return Err(RuntimeError::operation_unresolved(
                 operation_id,
-                "native agent restoration is unproven; provider rebind is fenced",
+                "native agent archival/restoration is unproven; provider rebind is fenced",
             ));
         }
         // The manager lock protects a single process. Native compaction and

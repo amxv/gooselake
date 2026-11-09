@@ -23,6 +23,8 @@ pub use worktree_trait::*;
 use async_trait::async_trait;
 use serde_json::Value;
 
+#[path = "services_operator_archive_store_trait.rs"]
+mod operator_archive_store_trait;
 #[path = "services_operator_policy_store_trait.rs"]
 mod operator_policy_store_trait;
 #[path = "services_operator_restore_store_trait.rs"]
@@ -71,17 +73,16 @@ pub trait RuntimeStore:
 
     operator_policy_store_trait::operator_native_policy_store_methods!();
     operator_restore_store_trait::operator_agent_restore_store_methods!();
+    operator_archive_store_trait::operator_agent_archive_store_methods!();
 
-    /// Transactionally snapshot approved pre-add hooks against a trusted
-    /// reserved agent identity before any shell or provider work can start.
+    /// Admission precedes native pre-add hooks and provider creation.
     fn admit_pre_add_team_hooks(
         &self,
         _request: &TeamHookPreAddAdmission,
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
         Ok(Vec::new())
     }
-    /// Operator-only execution capability. No project file can grant itself
-    /// shell authority, and a missing grant means disabled.
+    /// Only the operator can grant executable hooks.
     fn get_team_hook_approval(
         &self,
         _workspace_id: &str,
@@ -123,8 +124,7 @@ pub trait RuntimeStore:
         unsupported_store("indexed team-hook effect history unavailable")
     }
 
-    /// Startup/retry work queues are derived from durable immutable intents,
-    /// not the current project configuration or in-memory event listeners.
+    /// Startup queues derive from durable immutable intents.
     fn list_dispatchable_team_hook_effects(
         &self,
         _limit: usize,

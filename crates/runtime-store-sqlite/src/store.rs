@@ -68,6 +68,7 @@ impl RuntimeStore for SqliteRuntimeStore {
     crate::store_message_operator::delegate_message_operator_methods!();
     crate::store_operator_native_policy::delegate_operator_native_policy_methods!();
     crate::store_operator_agent_restore::delegate_operator_agent_restore_methods!();
+    crate::store_operator_agent_archive::delegate_operator_agent_archive_methods!();
 
     fn admit_pre_add_team_hooks(
         &self,

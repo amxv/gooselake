@@ -56,6 +56,13 @@ pub enum RuntimeError {
     )]
     OperatorRestoreNotResumed { operation_id: String },
 
+    /// An independently verified close never occurred; the original operator
+    /// archive key is consumed and needs fresh reattachment before new work.
+    #[error(
+        "operator agent archive {operation_id} was verified not closed; original key is consumed"
+    )]
+    OperatorArchiveNotClosed { operation_id: String },
+
     /// The exact canonical turn was admitted but the provider confirmed that
     /// its native dispatch did not occur. The original key replays this error
     /// without sending the user input again.

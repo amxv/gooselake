@@ -322,6 +322,10 @@ pub fn build_router(state: AppState) -> Router {
             post(archive_workspace_agent),
         )
         .route(
+            "/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve",
+            post(resolve_workspace_agent_archive_review),
+        )
+        .route(
             "/workspaces/{workspace_id}/agents/{agent_id}/restore",
             post(restore_workspace_agent),
         )

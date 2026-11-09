@@ -51,6 +51,8 @@ pub(super) struct TestProvider {
     preferences_mutation_calls: std::sync::atomic::AtomicUsize,
     preferences_mutation_mode: std::sync::atomic::AtomicU8,
     restore_failure_mode: std::sync::atomic::AtomicU8,
+    archive_close_mode: std::sync::atomic::AtomicU8,
+    archive_close_calls: std::sync::atomic::AtomicUsize,
     disabled: std::sync::atomic::AtomicBool,
     compaction_events: std::sync::Mutex<
         Option<tokio::sync::broadcast::Sender<runtime_core::ProviderRuntimeEvent>>,
@@ -58,6 +60,16 @@ pub(super) struct TestProvider {
 }
 
 impl TestProvider {
+    pub(super) fn set_archive_close_mode(&self, mode: u8) {
+        self.archive_close_mode
+            .store(mode, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(super) fn archive_close_count(&self) -> usize {
+        self.archive_close_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub(super) fn set_restore_failure_mode(&self, mode: u8) {
         self.restore_failure_mode
             .store(mode, std::sync::atomic::Ordering::SeqCst);
@@ -280,6 +292,44 @@ impl RuntimeProvider for TestProvider {
             runtime_session_id: req.runtime_session_id,
             provider_session_ref: observed_ref,
             canonical_provider_session_ref: req.canonical_provider_session_ref,
+        })
+    }
+
+    async fn close_session_for_retirement(
+        &self,
+        req: runtime_core::ProviderCloseSessionRequest,
+    ) -> Result<runtime_core::ProviderRetirementCloseEvidence, RuntimeError> {
+        use std::sync::atomic::Ordering;
+        self.archive_close_calls.fetch_add(1, Ordering::SeqCst);
+        let mode = self.archive_close_mode.load(Ordering::SeqCst);
+        if mode == 4 {
+            return Err(RuntimeError::Unsupported(
+                "test provider has no verifiable native close".into(),
+            ));
+        }
+        let native = self
+            .state
+            .lock()
+            .await
+            .sessions
+            .remove(&req.runtime_session_id)
+            .ok_or_else(|| RuntimeError::NotFound("native test attachment already closed".into()))?
+            .provider_session_ref;
+        if mode == 2 {
+            return Err(RuntimeError::provider_dispatch_unknown(
+                "test_archive_close_ack_lost",
+                "test provider closed native session, but its acknowledgement was lost",
+            ));
+        }
+        Ok(runtime_core::ProviderRetirementCloseEvidence {
+            runtime_session_id: req.runtime_session_id,
+            provider_session_ref: if mode == 3 {
+                format!("{native}-unexpected-close-reference")
+            } else {
+                native
+            },
+            proof_kind:
+                runtime_core::ProviderRetirementCloseProofKind::NativeSessionCloseAcknowledged,
         })
     }
 

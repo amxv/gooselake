@@ -225,6 +225,10 @@ impl SqliteRuntimeRepository {
                 return load(&tx, &id)?.ok_or_else(|| RuntimeError::NotFound(id));
             }
         }
+        // Same-key replay is an inspection of existing native authority, not
+        // permission to dispatch again. New runs still honor the cross-agent
+        // native claim and historical edit/rebind fences atomically.
+        crate::repository_workspace_agent_lifecycle::reject_unresolved_route(&tx, &run.agent_id)?;
         let eligible: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM sessions s

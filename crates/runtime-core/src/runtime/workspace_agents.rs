@@ -731,6 +731,13 @@ impl RuntimeSessionManager {
     ) -> Result<ProviderResumeSessionPolicyRequest, RuntimeError> {
         if let Some(operation_id) = self
             .store
+            .unresolved_operator_agent_archive_for_agent(session.id.as_str())?
+        {
+            return Err(RuntimeError::operation_unresolved(operation_id,
+                "an operator archival is unresolved; do not resume an attachment that may already be closed"));
+        }
+        if let Some(operation_id) = self
+            .store
             .unresolved_operator_agent_restore_for_agent(session.id.as_str())?
         {
             return Err(RuntimeError::operation_unresolved(operation_id,

@@ -191,7 +191,11 @@ impl SqliteRuntimeRepository {
             || workspace_state != "active"
             || matches!(
                 session_status.as_str(),
-                "closed" | "failed" | "policy_recovery_required" | "restore_recovery_required"
+                "closed"
+                    | "failed"
+                    | "policy_recovery_required"
+                    | "restore_recovery_required"
+                    | "archive_recovery_required"
             )
             || active_turn.is_some()
             || revision
@@ -224,8 +228,10 @@ impl SqliteRuntimeRepository {
                   + (SELECT COUNT(*) FROM session_compaction_runs WHERE session_id=?1 AND phase IN ('intended','accepted','started','compacting','manual_review'))
                   + (SELECT COUNT(*) FROM session_edit_reruns WHERE session_id=?1 AND phase IN ('intended','native_started','fork_observed','manual_review'))
                   + (SELECT COUNT(*) FROM runtime_operation_resource_claims
-                     WHERE resource_id=?1 AND claim_mode='exclusive' AND resource_kind IN (?2,?3,?4))",
-            params![command.agent_id, CLAIM_KIND, OPERATOR_TURN_CLAIM, crate::repository_operator_agent_restore::CLAIM_KIND],
+                     WHERE resource_id=?1 AND claim_mode='exclusive' AND resource_kind IN (?2,?3,?4,?5))",
+            params![command.agent_id, CLAIM_KIND, OPERATOR_TURN_CLAIM,
+                crate::repository_operator_agent_restore::CLAIM_KIND,
+                crate::repository_operator_agent_archive::CLAIM_KIND],
             |row| row.get(0),
         ).map_err(|error| db_error("failed checking competing provider native work", error))?;
         if native_blockers != 0 {

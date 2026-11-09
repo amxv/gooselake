@@ -219,6 +219,13 @@ impl SqliteRuntimeRepository {
                 return Ok(previous);
             }
         }
+        // Exact replay must precede competing-native-effect checks: the
+        // original edit's own unresolved row is intentionally retained as a
+        // durable fence, but cannot invalidate its already-admitted key.
+        crate::repository_workspace_agent_lifecycle::reject_unresolved_route(
+            &tx,
+            &operation.agent_id,
+        )?;
         let eligible: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM sessions s JOIN workspace_agents a ON a.session_id=s.id

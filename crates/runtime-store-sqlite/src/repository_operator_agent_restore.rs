@@ -315,13 +315,15 @@ impl SqliteRuntimeRepository {
                   + (SELECT COUNT(*) FROM session_compaction_runs WHERE session_id=?1 AND phase IN ('intended','accepted','started','compacting','manual_review'))
                   + (SELECT COUNT(*) FROM session_edit_reruns WHERE session_id=?1 AND phase IN ('intended','native_started','fork_observed','manual_review'))
                   + (SELECT COUNT(*) FROM runtime_operation_resource_claims
-                     WHERE resource_id=?1 AND claim_mode='exclusive' AND resource_kind IN (?2,?3,?4))",
-            params![command.agent_id, POLICY_CLAIM, OPERATOR_TURN_CLAIM, CLAIM_KIND],
+                     WHERE resource_id=?1 AND claim_mode='exclusive' AND resource_kind IN (?2,?3,?4,?5))",
+            params![command.agent_id, POLICY_CLAIM, OPERATOR_TURN_CLAIM,
+                CLAIM_KIND, crate::repository_operator_agent_archive::CLAIM_KIND],
             |row| row.get(0),
         ).map_err(|error| db_error("failed checking competing restore native effects", error))?;
         if blockers > 0
             || state.session_status == "policy_recovery_required"
             || state.session_status == "restore_recovery_required"
+            || state.session_status == "archive_recovery_required"
         {
             return Err(RuntimeError::Conflict(
                 "agent has unresolved native provider attachment or pending reattachment".into(),

@@ -280,6 +280,9 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore") => {
             "Restore workspace agent".to_string()
         }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve") => {
+            "Resolve a quarantined provider archive using independent native-close evidence without redispatch".to_string()
+        }
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve") => {
             "Resolve a quarantined provider restoration using independent operator evidence without native redispatch".to_string()
         }
@@ -524,6 +527,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/agents/{agent_id}/permission"
             | "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve"
+            | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve"
             | "/v2/agents/{agent_id}/turns"
             | "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun"
             | "/v2/agents/{agent_id}/edits/{operation_id}/resolve"
@@ -607,12 +611,14 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/agents/{agent_id}/turns"
                 | "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore"
+                | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
+                | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve"
         )
     {
         out.push_str("          headers:\n");
         out.push_str("            X-Operation-ID:\n");
-        out.push_str("              description: Durable native operation, including one-shot unkeyed restore intents and manual-review resolutions\n");
+        out.push_str("              description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions\n");
         out.push_str("              schema:\n");
         out.push_str("                type: string\n");
         if revision::returns_revision_etag(path, method) {
@@ -676,6 +682,7 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/agents/{agent_id}/turns"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore"
+                | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
         )
     {
         out.push_str("        \"409\":\n");

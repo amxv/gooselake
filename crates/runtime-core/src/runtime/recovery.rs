@@ -31,6 +31,14 @@ impl RuntimeSessionManager {
                 "operator native agent restore {operation_id} became manual_review after restart; no provider resume was retried"
             ));
         }
+        let native_archive_intents = self
+            .store
+            .quarantine_started_operator_agent_archives(started_at)?;
+        for operation_id in native_archive_intents {
+            summary.notes.push(format!(
+                "operator native agent archive {operation_id} became manual_review after restart; no provider close was retried"
+            ));
+        }
         let ambiguous_hooks = self
             .store
             .quarantine_started_team_hook_effects(started_at)?;
@@ -93,6 +101,15 @@ impl RuntimeSessionManager {
         }
 
         for session_id in session_ids {
+            if let Some(operation_id) = self
+                .store
+                .unresolved_operator_agent_archive_for_agent(&session_id)?
+            {
+                summary.notes.push(format!(
+                    "session {session_id} native provider resume withheld by unresolved agent archival {operation_id}"
+                ));
+                continue;
+            }
             if let Some(operation_id) = self
                 .store
                 .unresolved_operator_agent_restore_for_agent(&session_id)?
@@ -167,7 +184,9 @@ impl RuntimeSessionManager {
                                             == resumed.canonical_provider_session_ref;
                                 let reviewed_attachment = matches!(
                                     session.status.as_str(),
-                                    "policy_recovery_required" | "restore_recovery_required"
+                                    "policy_recovery_required"
+                                        | "restore_recovery_required"
+                                        | "archive_recovery_required"
                                 );
                                 if reviewed_attachment && !policy_identity_matches {
                                     // The review attested one precise native
@@ -176,10 +195,14 @@ impl RuntimeSessionManager {
                                     // make that assertion authoritative.
                                     provider_resume_ready = false;
                                     updated_session.failure_code = Some(
-                                        if session.status == "policy_recovery_required" {
-                                            "startup_policy_identity_changed"
-                                        } else {
-                                            "startup_restore_identity_changed"
+                                        match session.status.as_str() {
+                                            "policy_recovery_required" => {
+                                                "startup_policy_identity_changed"
+                                            }
+                                            "archive_recovery_required" => {
+                                                "startup_archive_identity_changed"
+                                            }
+                                            _ => "startup_restore_identity_changed",
                                         }
                                         .into(),
                                     );
@@ -205,8 +228,12 @@ impl RuntimeSessionManager {
                                     session_changed = true;
                                     summary.notes.push(format!(
                                         "session {} operator-reviewed native {} reattached with durable settings",
-                                        session.id
-                                        , if session.status == "policy_recovery_required" { "policy" } else { "restore" }
+                                        session.id,
+                                        match session.status.as_str() {
+                                            "policy_recovery_required" => "policy",
+                                            "archive_recovery_required" => "archive",
+                                            _ => "restore",
+                                        }
                                     ));
                                 }
                                 if (!reviewed_attachment || policy_identity_matches)
@@ -266,15 +293,21 @@ impl RuntimeSessionManager {
                                     updated_session.failure_message = Some(error.to_string());
                                 } else if matches!(
                                     session.status.as_str(),
-                                    "policy_recovery_required" | "restore_recovery_required"
+                                    "policy_recovery_required"
+                                        | "restore_recovery_required"
+                                        | "archive_recovery_required"
                                 ) {
                                     // Keep the session fenced but retry its
                                     // exact attachment on a future startup.
                                     updated_session.failure_code = Some(
-                                        if session.status == "policy_recovery_required" {
-                                            "startup_policy_reattachment_failed"
-                                        } else {
-                                            "startup_restore_reattachment_failed"
+                                        match session.status.as_str() {
+                                            "policy_recovery_required" => {
+                                                "startup_policy_reattachment_failed"
+                                            }
+                                            "archive_recovery_required" => {
+                                                "startup_archive_reattachment_failed"
+                                            }
+                                            _ => "startup_restore_reattachment_failed",
                                         }
                                         .into(),
                                     );
@@ -304,13 +337,17 @@ impl RuntimeSessionManager {
                             Some("missing provider_session_ref".to_string());
                     } else if matches!(
                         session.status.as_str(),
-                        "policy_recovery_required" | "restore_recovery_required"
+                        "policy_recovery_required"
+                            | "restore_recovery_required"
+                            | "archive_recovery_required"
                     ) {
                         updated_session.failure_code = Some(
-                            if session.status == "policy_recovery_required" {
-                                "startup_missing_policy_provider_ref"
-                            } else {
-                                "startup_missing_restore_provider_ref"
+                            match session.status.as_str() {
+                                "policy_recovery_required" => "startup_missing_policy_provider_ref",
+                                "archive_recovery_required" => {
+                                    "startup_missing_archive_provider_ref"
+                                }
+                                _ => "startup_missing_restore_provider_ref",
                             }
                             .into(),
                         );

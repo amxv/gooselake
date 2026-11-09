@@ -555,14 +555,15 @@ there is no caller key to retrieve the original receipt, so always provide one
 for automation and consult the durable operation after an uncertain response.
 The old direct internal manager mutation methods are not exposed on these
 `/v2` operator routes; they have separate legacy semantics.
-Provider-backed agent **archive and restore** still have no native-effect
-idempotency journal and reject `Idempotency-Key` with nonretryable
-`400 idempotency_not_supported` before native work. Those unkeyed lifecycle
-operations remain available with their documented guards. Both lifecycle
-transitions also check durable native provider-policy and operator-turn claims
-inside the SQLite write transaction. A reviewed native policy remains fenced
-until startup has verified reattachment to the exact provider session; a
-stale manager or direct persistence caller cannot bypass that gate.
+Provider-backed agent **archive and restore** now use separate native-effect
+idempotency journals. Caller `Idempotency-Key` enables replay of the exact
+original receipt across restart and lost HTTP responses, while omitted keys
+create durable one-shot intents that cannot be identified by a later unkeyed
+HTTP retry. Both transitions check unresolved native policy, user-turn,
+restore and archive claims inside the SQLite write transaction. Independently
+reviewed open attachments remain fenced until startup verifies exact native
+reattachment, including when a stale manager or direct persistence caller
+tries to skip the normal gate.
 
 ```bash
 curl -fsS -H "Authorization: Bearer $TOKEN" \
@@ -746,6 +747,7 @@ Archive and restore without changing identity or policy:
 curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: pause-agent-123" \
   -d '{"reason":"paused"}' \
   "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/archive"
 
@@ -757,6 +759,43 @@ curl -fsS -X POST \
 
 Agent restore accepts **no options** (empty body or `{}`); policy or force
 options return `400 invalid_request` before provider resume.
+
+Agent archival uses a **native-close write-ahead operation**. Before contacting
+the provider, the runtime persists immutable operator/agent/input identity,
+the original native session references, session timestamp, agent revision and
+an exclusive native-effect claim. A successful archive requires a strong
+provider-close acknowledgement or verified native-process termination for the
+exact attachment; updating an SQLite lifecycle field alone never proves that
+the provider was closed. The native proof, session closure, roster/lead change,
+membership notice, revision and exact operation result are committed in one
+transaction. Exact caller-key retries return the same JSON, `ETag` and
+`X-Operation-ID` without another provider call. An already archived agent
+accepts a new key as a journaled no-effect operation, **not** new evidence
+of historical native closure.
+
+If the close acknowledgement is lost, the provider returns mismatching proof,
+the atomic receipt fails, or the runtime crashes, the original operation is
+quarantined in `manual_review` with its exclusive claim. The request returns
+`409 outcome_unresolved` with `error.details.operation_id`; inspection through
+`GET /v2/operations/{operation_id}` is required. Startup does not redispatch
+the original close or implicitly resume its uncertain native attachment.
+
+To reconcile independently verified provider state, use
+`POST /v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve`
+with `resolution` (`closed` or `not_closed`), 8–2048 bytes of explanatory
+`evidence`, `provider`, the exact `original_provider_session_ref`, nullable
+`original_canonical_provider_session_ref`, `expected_revision`, and
+`session_updated_at` from the admitted operation. For `not_closed`, also
+supply the independently observed `observed_provider_session_ref` and
+nullable `observed_canonical_provider_session_ref`; omit both for `closed`.
+This review endpoint never calls the provider; it accepts an optional matching
+strong `If-Match` but not `Idempotency-Key`, and identical reviews return the
+same durable receipt. Verified `closed` settles the original archive without
+another native request. Verified `not_closed` consumes the original key with
+nonretryable `409 operator_verified_not_closed`, preserves the active agent,
+and sets `archive_recovery_required`: only a new startup that reattaches to
+the independently observed native identity may reenable native work. A failed
+or changed reattachment remains fenced until corrected.
 
 Agent restoration is a provider-native operation protected by a **pre-dispatch
 durable intent**, an exact per-agent resource claim, and a single SQLite

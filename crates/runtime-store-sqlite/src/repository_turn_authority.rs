@@ -126,6 +126,24 @@ impl SqliteRuntimeRepository {
                 "provider restore has an unresolved native outcome; no logical turn can be admitted",
             ));
         }
+        let archive_claim: Option<String> = transaction
+            .query_row(
+                "SELECT owner_operation_id FROM runtime_operation_resource_claims
+                 WHERE resource_kind=?1 AND resource_id=?2 AND claim_mode='exclusive'",
+                params![
+                    crate::repository_operator_agent_archive::CLAIM_KIND,
+                    session.id
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking native agent archive claim", error))?;
+        if let Some(operation_id) = archive_claim {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "provider archival has an unresolved native close; no logical turn can be admitted",
+            ));
+        }
         guard_process_completion_admission(&transaction, admission)?;
         let rebind_pending: i64 = transaction
             .query_row(
@@ -200,7 +218,7 @@ impl SqliteRuntimeRepository {
             .ok_or_else(|| RuntimeError::NotFound(format!("session {}", session.id)))?;
         if matches!(
             persisted.0.as_str(),
-            "policy_recovery_required" | "restore_recovery_required"
+            "policy_recovery_required" | "restore_recovery_required" | "archive_recovery_required"
         ) {
             return Err(RuntimeError::Conflict(format!(
                 "session {} has an independently reviewed native attachment requiring verified startup reattachment",
@@ -556,7 +574,7 @@ fn update_session_for_admission(
         .execute(
             "UPDATE sessions
              SET status = ?1, active_turn_id = ?2, updated_at = ?3
-             WHERE id = ?4 AND active_turn_id IS NULL AND status NOT IN ('closed', 'failed', 'policy_recovery_required', 'restore_recovery_required')",
+             WHERE id = ?4 AND active_turn_id IS NULL AND status NOT IN ('closed', 'failed', 'policy_recovery_required', 'restore_recovery_required', 'archive_recovery_required')",
             params![
                 record.status,
                 record.active_turn_id,

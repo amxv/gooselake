@@ -732,18 +732,45 @@ pub(super) async fn archive_workspace_agent(
     Path((workspace_id, agent_id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(request): Json<WorkspaceAgentArchiveRequest>,
-) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+) -> Result<Response, ApiError> {
     reject_unsupported_if_match(&headers, "workspace agent archival")?;
-    reject_unjournaled_idempotency_key(&headers, "workspace agent archive")?;
-    let archived = state
+    let idempotency_key = parse_idempotency_key(&headers)?
+        .unwrap_or_else(|| format!("server-archive-{:032x}", rand::random::<u128>()));
+    let (archived, operation_id) = state
         .runtime
-        .archive_workspace_agent(
+        .archive_workspace_agent_operator(
             workspace_id.trim(),
             agent_id.trim(),
             request.reason.as_deref(),
+            OperationActor::operator(OPERATOR_PRINCIPAL),
+            idempotency_key,
         )
         .await?;
-    Ok(Json(archived))
+    Ok(with_operation_id(
+        revisioned_response(archived.revision, archived),
+        &operation_id,
+    ))
+}
+
+pub(super) async fn resolve_workspace_agent_archive_review(
+    State(state): State<AppState>,
+    Path((workspace_id, agent_id, operation_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<runtime_core::OperatorAgentArchiveReviewInput>,
+) -> Result<Response, ApiError> {
+    check_if_match_revision(&headers, input.expected_revision)?;
+    reject_unjournaled_idempotency_key(&headers, "native archival evidence review")?;
+    let result = state
+        .runtime
+        .resolve_operator_agent_archive_review(
+            workspace_id.trim(),
+            agent_id.trim(),
+            operation_id.trim(),
+            input,
+            OperationActor::operator(OPERATOR_PRINCIPAL),
+        )
+        .await?;
+    Ok(with_operation_id(Json(result), operation_id.trim()))
 }
 
 pub(super) async fn restore_workspace_agent(

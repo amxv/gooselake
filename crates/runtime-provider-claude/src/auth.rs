@@ -724,6 +724,7 @@ pub(crate) fn is_missing_gg_mcp_server_bad_request(error: &RuntimeError) -> bool
         RuntimeError::OperationUnresolved { .. } => false,
         RuntimeError::OperatorPolicyNotApplied { .. } => false,
         RuntimeError::OperatorRestoreNotResumed { .. } => false,
+        RuntimeError::OperatorArchiveNotClosed { .. } => false,
         RuntimeError::OperatorTurnNotDispatched { .. } => false,
     }
 }

@@ -558,7 +558,11 @@ The old direct internal manager mutation methods are not exposed on these
 Provider-backed agent **archive and restore** still have no native-effect
 idempotency journal and reject `Idempotency-Key` with nonretryable
 `400 idempotency_not_supported` before native work. Those unkeyed lifecycle
-operations remain available with their documented guards.
+operations remain available with their documented guards. Both lifecycle
+transitions also check durable native provider-policy and operator-turn claims
+inside the SQLite write transaction. A reviewed native policy remains fenced
+until startup has verified reattachment to the exact provider session; a
+stale manager or direct persistence caller cannot bypass that gate.
 
 ```bash
 curl -fsS -H "Authorization: Bearer $TOKEN" \

@@ -14,6 +14,7 @@ mod agent_message_pages;
 mod operator_event_pages;
 mod operator_process_pages;
 mod process_completion_authority;
+mod workspace_agent_lifecycle_native_fences;
 mod workspace_notice_policy_idempotency;
 mod workspace_retirement;
 mod workspace_retirement_deliveries;

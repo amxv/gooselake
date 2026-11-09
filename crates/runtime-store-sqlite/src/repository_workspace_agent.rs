@@ -750,6 +750,43 @@ impl SqliteRuntimeRepository {
 }
 
 fn reject_unresolved_route(connection: &Connection, agent_id: &str) -> Result<(), RuntimeError> {
+    // Lifecycle transitions change the authoritative attachment state. A
+    // stale manager or a direct store caller must not archive/restore around
+    // an unresolved operator-native turn/policy intent, even if its in-memory
+    // session snapshot looks quiescent. This fence shares the same SQLite
+    // transaction as the lifecycle write.
+    let claim: Option<(String, String)> = connection
+        .query_row(
+            "SELECT resource_kind,owner_operation_id FROM runtime_operation_resource_claims
+             WHERE resource_id=?1 AND claim_mode='exclusive' AND resource_kind IN (?2,?3)
+             LIMIT 1",
+            params![
+                agent_id,
+                crate::repository_operator_native_policy::CLAIM_KIND,
+                crate::repository_turn_authority::OPERATOR_TURN_CLAIM
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| db_error("failed checking lifecycle native effect claims", error))?;
+    if let Some((kind, operation_id)) = claim {
+        return Err(RuntimeError::operation_unresolved(
+            operation_id,
+            format!("agent lifecycle is fenced by unresolved native effect {kind}"),
+        ));
+    }
+    let recovery_required: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1 AND status='policy_recovery_required')",
+            [agent_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed checking lifecycle provider reattachment", error))?;
+    if recovery_required {
+        return Err(RuntimeError::Conflict(
+            "agent lifecycle is frozen until independently reviewed native policy is reattached on startup".into(),
+        ));
+    }
     let count: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM workspace_agent_rebinds

@@ -5,6 +5,96 @@ use runtime_store_sqlite::SqliteRuntimeRepository;
 use super::durable_event_stream_routes::{new_event, observed_sse_ids, stream};
 
 #[tokio::test]
+async fn v2_subject_streams_catch_commits_during_handoff_without_parent_scope_leaks() {
+    let (router, token, temp, _, _, workspace_id) = super::operator_agent_create::fixture().await;
+    let path = temp.path().join("runtime.sqlite3");
+    let repository = SqliteRuntimeRepository::new(path.clone());
+    let subject_ids = [
+        ("turn", "turn_handoff_subject"),
+        ("message", "msg_handoff_subject"),
+        ("operation", "op_handoff_subject"),
+    ];
+    let mut seed = new_event(
+        "subject_handoff_seed",
+        RuntimeEventScope::Session,
+        "sess_subject_handoff",
+    );
+    seed.turn_id = Some(subject_ids[0].1.into());
+    seed.payload = serde_json::json!({
+        "message_id": subject_ids[1].1,
+        "operation_id": subject_ids[2].1,
+    });
+    let seed = repository.append_runtime_event(&seed).unwrap();
+
+    // All three filtered clients subscribe before the repository commits a
+    // second parent-scoped event. A delayed initial read makes subscribe/
+    // replay handoff deterministic rather than relying on wall-clock polling.
+    let mut handoffs = Vec::new();
+    for (scope, id) in subject_ids {
+        let router = router.clone();
+        let token = token.clone();
+        let uri = format!(
+            "/v2/events/stream?scope={scope}&scope_id={id}&after_seq={}&limit=1",
+            seed.row_id
+        );
+        handoffs.push(tokio::spawn(async move {
+            stream(&router, &token, &uri, Some(240), None).await
+        }));
+    }
+    tokio::time::sleep(Duration::from_millis(60)).await;
+
+    // Unrelated primary events may advance the global row ID, but they must
+    // not appear in any of the three subject-filtered SSE collections.
+    let unrelated = repository
+        .append_runtime_event(&new_event(
+            "subject_handoff_unrelated",
+            RuntimeEventScope::System,
+            "system_subject_handoff",
+        ))
+        .unwrap();
+    let mut second = new_event(
+        "subject_handoff_second",
+        RuntimeEventScope::Workspace,
+        &workspace_id,
+    );
+    second.turn_id = Some(subject_ids[0].1.into());
+    second.payload = serde_json::json!({
+        "message_id": subject_ids[1].1,
+        "operation_id": subject_ids[2].1,
+    });
+    let second = repository.append_runtime_event(&second).unwrap();
+    assert_eq!(second.row_id, unrelated.row_id + 1);
+    assert_ne!(second.seq, second.row_id);
+    for handoff in handoffs {
+        observed_sse_ids(handoff.await.unwrap(), &[second.row_id]).await;
+    }
+
+    // Reopen SQLite after the original subscribers are gone. Resuming from
+    // the *observed subject cursor* still yields only the unread parent event,
+    // not an unrelated global event or a duplicate of the boundary record.
+    let reopened = SqliteRuntimeRepository::new(path);
+    for (scope, id) in subject_ids {
+        let after_seed = reopened
+            .list_runtime_events(
+                Some((
+                    RuntimeEventScope::from_str(scope).expect("known subject scope"),
+                    id,
+                )),
+                Some(seed.row_id),
+                1,
+            )
+            .unwrap();
+        assert_eq!(after_seed, [second.clone()]);
+        let uri = format!("/v2/events/stream?scope={scope}&scope_id={id}&limit=1");
+        observed_sse_ids(
+            stream(&router, &token, &uri, None, Some(seed.row_id)).await,
+            &[second.row_id],
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
 async fn v2_subject_streams_replay_canonical_rows_across_parent_scopes_and_restart_cursor() {
     let (router, token, temp, _, _, workspace_id) = super::operator_agent_create::fixture().await;
     let repository = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));

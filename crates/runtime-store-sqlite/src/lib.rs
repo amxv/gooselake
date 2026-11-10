@@ -60,6 +60,7 @@ mod repository_workspace_retirement_turns;
 mod repository_workspace_worktree_creation;
 mod schema;
 mod store;
+mod store_context_limit;
 mod store_event_history;
 mod store_message_operator;
 mod store_operator_agent_archive;

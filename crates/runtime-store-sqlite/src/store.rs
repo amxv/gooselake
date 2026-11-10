@@ -11,13 +11,13 @@ use runtime_core::{
     OperationSummary, OperatorProcessSummary, ProcessCompletionUpdate, ProcessRecord,
     ProcessSchedulerSettings, ProviderCompactionObservation, ProviderWorkspaceRebindEvidence,
     RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, RuntimeStore,
-    SessionCompactionRun, SessionContextLimitSnapshot, SessionEditRerunOperation, SessionRecord,
-    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
-    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
-    WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
-    WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
-    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    SessionCompactionRun, SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord,
+    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
+    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState,
+    WorkspaceAgentRebindOperation, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
+    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse,
 };
 use runtime_core::{
     TeamHookApproval, TeamHookApprovalMutationCommand, TeamHookApprovalMutationResponse,
@@ -326,20 +326,7 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .resolve_session_compaction_review(run_id, phase, evidence, now_ms)
     }
-    fn record_session_context_limit(
-        &self,
-        snapshot: &SessionContextLimitSnapshot,
-        expected_session_updated_at: i64,
-    ) -> Result<bool, RuntimeError> {
-        self.repository
-            .record_session_context_limit(snapshot, expected_session_updated_at)
-    }
-    fn get_session_context_limit(
-        &self,
-        agent_id: &str,
-    ) -> Result<Option<SessionContextLimitSnapshot>, RuntimeError> {
-        self.repository.get_session_context_limit(agent_id)
-    }
+    crate::store_context_limit::delegate_context_limit_methods!();
     async fn initialize(&self) -> Result<(), RuntimeError> {
         Self::ensure_parent_dir(self.database_path()).await?;
         self.repository.initialize_schema()

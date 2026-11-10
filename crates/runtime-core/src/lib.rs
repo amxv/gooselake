@@ -17,6 +17,7 @@ pub mod repository_identity;
 pub mod runtime;
 pub mod scoped_mcp;
 pub mod services;
+mod services_context_limit;
 pub mod session_compaction;
 pub mod state;
 pub mod team_comms;

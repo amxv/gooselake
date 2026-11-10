@@ -1590,6 +1590,12 @@ contract and does not adopt the operator `/v2` request-ID envelope.
 
 The `gg_team` status response includes the optional friendly `lead_alias`, each active member's `alias`, `role`, `title_provenance`, creator provenance, activity and `context_remaining_pct`. The context field is `null` without a current provider-session-bound observation; it is never reconstructed from transcript estimates. Attached worktree name, branch and routing state are included where inventory can prove them. Eligible available worktrees are sorted deterministically and capped at 20, with `available_worktrees_total` and `available_worktrees_truncated` describing the full eligible set. The roster remains queryable when Git inventory is unavailable. Agent-message delivery context uses compact `<agent_msg>` envelopes (`dm|broadcast`, `workspace_team|global_direct`, attachment count), not a raw team-ID-bearing model prompt.
 
+Status renders at most 100 active member details. Their live session states are
+captured under one bounded runtime read lock and current context observations
+are fetched by a single indexed SQLite batch keyed by those agent IDs. The
+same persisted native provider identity, agent revision and lifecycle fences
+apply after a restart, so this optimization cannot revive stale context usage.
+
 The legacy **operator-authenticated** `GET /v1/mcp/capabilities` and `POST /v1/mcp/invoke` remain temporarily for existing automation. Their previous request format includes `caller_agent_id` and optional `invocation_id`; provider sessions no longer receive operator bearer credentials and use `v2` exclusively.
 
 Tool envelopes are compact and consistent:

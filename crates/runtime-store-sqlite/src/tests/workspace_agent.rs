@@ -449,6 +449,17 @@ fn provider_context_snapshot_rejects_late_identity_revision_and_observation_repl
         repository.get_session_context_limit(&session.id).unwrap(),
         Some(snapshot.clone())
     );
+    assert_eq!(
+        repository
+            .list_session_context_limits(&[
+                "missing_agent".into(),
+                session.id.clone(),
+                session.id.clone(),
+            ])
+            .unwrap(),
+        vec![snapshot.clone()],
+        "a status batch returns current snapshots once, not input duplicates"
+    );
 
     let mut equal_timestamp = snapshot.clone();
     equal_timestamp.observation.last_total_tokens += 1;
@@ -492,6 +503,10 @@ fn provider_context_snapshot_rejects_late_identity_revision_and_observation_repl
         .get_session_context_limit(&session.id)
         .unwrap()
         .is_none());
+    assert!(repository
+        .list_session_context_limits(&[session.id.clone()])
+        .unwrap()
+        .is_empty());
     assert!(!repository
         .record_session_context_limit(&snapshot, 100)
         .unwrap());
@@ -512,6 +527,13 @@ fn provider_context_snapshot_rejects_late_identity_revision_and_observation_repl
     assert_eq!(
         restarted.get_session_context_limit(&session.id).unwrap(),
         Some(fresh.clone())
+    );
+    assert_eq!(
+        restarted
+            .list_session_context_limits(&[session.id.clone()])
+            .unwrap(),
+        vec![fresh.clone()],
+        "a current indexed status projection must survive repository restart"
     );
 
     // A revisioned policy mutation invalidates the old projection without
@@ -540,7 +562,13 @@ fn provider_context_snapshot_rejects_late_identity_revision_and_observation_repl
         .unwrap());
     assert_eq!(
         restarted.get_session_context_limit(&session.id).unwrap(),
-        Some(fresh)
+        Some(fresh.clone())
+    );
+    assert_eq!(
+        restarted
+            .list_session_context_limits(&[session.id.clone()])
+            .unwrap(),
+        vec![fresh]
     );
 }
 

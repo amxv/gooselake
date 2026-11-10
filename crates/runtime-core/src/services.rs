@@ -48,16 +48,16 @@ use crate::{
     OperationSummary, ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
     ProviderCompactionObservation, ProviderRetirementCloseEvidence,
     ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
-    RuntimeHydratedState, SessionCompactionRun, SessionContextLimitSnapshot,
-    SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation,
-    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission,
-    WorkspaceInterruptCommand, WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand,
-    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterCommand,
-    WorkspaceRegisterResponse, WorkspaceRetirementAdmission, WorkspaceRetirementCloseAttempt,
-    WorkspaceRetirementCommand, WorkspaceRetirementPlan, WorkspaceRetirementPreflight,
-    WorkspaceRetirementResponse, WorkspaceRetirementTurnStep,
+    RuntimeHydratedState, SessionCompactionRun, SessionEditRerunOperation, SessionRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
+    WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
+    WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
+    WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
+    WorkspaceRecord, WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    WorkspaceRetirementAdmission, WorkspaceRetirementCloseAttempt, WorkspaceRetirementCommand,
+    WorkspaceRetirementPlan, WorkspaceRetirementPreflight, WorkspaceRetirementResponse,
+    WorkspaceRetirementTurnStep,
 };
 use crate::{
     TeamHookApproval, TeamHookApprovalMutationCommand, TeamHookApprovalMutationResponse,
@@ -597,22 +597,7 @@ pub trait RuntimeStore:
         Ok(None)
     }
 
-    fn record_session_context_limit(
-        &self,
-        _snapshot: &SessionContextLimitSnapshot,
-        _expected_session_updated_at: i64,
-    ) -> Result<bool, RuntimeError> {
-        unsupported_store(
-            "durable provider context snapshots are not implemented by this runtime store",
-        )
-    }
-
-    fn get_session_context_limit(
-        &self,
-        _agent_id: &str,
-    ) -> Result<Option<SessionContextLimitSnapshot>, RuntimeError> {
-        Ok(None)
-    }
+    crate::services_context_limit::default_context_limit_methods!();
 
     fn begin_workspace_agent_rebind(
         &self,

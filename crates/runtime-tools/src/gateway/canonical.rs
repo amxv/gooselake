@@ -1,7 +1,7 @@
 //! Canonical workspace-scoped model tools. Legacy split-tool handlers remain
 //! private to the operator migration surface, not model discovery.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use runtime_core::{
     normalized_json_hash, AgentBroadcastMessageRequest, AgentDirectMessageRequest,
@@ -460,12 +460,34 @@ impl RuntimeToolGateway {
                         .find(|member| &member.agent_id == id)
                         .map(|member| member.alias.clone())
                 });
+                let displayed_ids = members
+                    .iter()
+                    .take(STATUS_MEMBER_LIMIT)
+                    .map(|member| member.agent_id.clone())
+                    .collect::<Vec<_>>();
+                let sessions = runtime.session_snapshots_for_agents(&displayed_ids).await;
+                let context_by_id = store
+                    .list_session_context_limits(&displayed_ids)?
+                    .into_iter()
+                    .map(|snapshot| (snapshot.agent_id.clone(), snapshot))
+                    .collect::<HashMap<_, _>>();
+                let alias_by_id = members
+                    .iter()
+                    .map(|member| (member.agent_id.as_str(), member.alias.as_str()))
+                    .collect::<HashMap<_, _>>();
+                let mut worktree_by_agent_path = HashMap::new();
+                for (index, entry) in inventory.iter().enumerate() {
+                    for agent_id in &entry.attached_agent_ids {
+                        worktree_by_agent_path
+                            .entry((agent_id.as_str(), entry.worktree_path.as_str()))
+                            .or_insert(index);
+                    }
+                }
                 let mut rows = Vec::with_capacity(member_count.min(STATUS_MEMBER_LIMIT));
                 for member in members.iter().take(STATUS_MEMBER_LIMIT) {
-                    let session = runtime.get_session(&member.agent_id).await.ok();
-                    let latest_context = store.get_session_context_limit(&member.agent_id)?;
+                    let session = sessions.get(&member.agent_id);
+                    let latest_context = context_by_id.get(&member.agent_id);
                     let remaining = latest_context
-                        .as_ref()
                         .filter(|snapshot| {
                             snapshot.provider_session_ref
                                 == member.provider_session_ref.clone().unwrap_or_default()
@@ -474,12 +496,12 @@ impl RuntimeToolGateway {
                         .map(|snapshot| snapshot.observation.remaining_percentage);
                     let is_lead =
                         workspace.lead_agent_id.as_deref() == Some(member.agent_id.as_str());
-                    let worktree = inventory
-                        .iter()
-                        .find(|entry| {
-                            entry.worktree_path == member.recreation_policy.authoritative_cwd
-                                && entry.attached_agent_ids.contains(&member.agent_id)
-                        })
+                    let worktree = worktree_by_agent_path
+                        .get(&(
+                            member.agent_id.as_str(),
+                            member.recreation_policy.authoritative_cwd.as_str(),
+                        ))
+                        .and_then(|index| inventory.get(*index))
                         .map(|entry| {
                             json!({
                                 "name": entry.normalized_name,
@@ -490,10 +512,7 @@ impl RuntimeToolGateway {
                     let added_by_alias = if member.profile.added_by == "runtime_operator" {
                         Some("user")
                     } else {
-                        members
-                            .iter()
-                            .find(|creator| creator.agent_id == member.profile.added_by)
-                            .map(|creator| creator.alias.as_str())
+                        alias_by_id.get(member.profile.added_by.as_str()).copied()
                     };
                     rows.push(json!({
                         "agent_id": member.agent_id, "alias":member.alias,
@@ -501,8 +520,8 @@ impl RuntimeToolGateway {
                         "title_provenance":member.profile.title_provenance,
                         "is_lead":is_lead,
                         "role":if is_lead {"lead"} else {"member"},
-                        "state":status_state_for_session(session.as_ref()),
-                        "last_activity_at_ms":member.updated_at.max(session.as_ref().map_or(0, |s| s.updated_at)),
+                        "state":status_state_for_session(session),
+                        "last_activity_at_ms":member.updated_at.max(session.map_or(0, |s| s.updated_at)),
                         "context_window_remaining_percentage":remaining,
                         "context_remaining_pct":remaining,
                         "worktree_cwd":member.recreation_policy.authoritative_cwd,

@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::{
     ProviderAuthStatus, ProviderCloseSessionRequest, ProviderCreateSessionPolicyRequest,
@@ -23,6 +24,23 @@ impl RuntimeSessionManager {
             .get(session_id)
             .cloned()
             .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))
+    }
+
+    /// Capture a status page under one session read lock. The caller supplies
+    /// bounded agent IDs, so this never snapshots or sorts all runtime sessions.
+    pub async fn session_snapshots_for_agents(
+        &self,
+        agent_ids: &[String],
+    ) -> HashMap<String, SessionRecord> {
+        let sessions = self.sessions.read().await;
+        agent_ids
+            .iter()
+            .filter_map(|id| {
+                sessions
+                    .get(id)
+                    .map(|session| (id.clone(), session.clone()))
+            })
+            .collect()
     }
 
     pub async fn list_session_turns(

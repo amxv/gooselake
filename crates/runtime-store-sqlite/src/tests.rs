@@ -11,6 +11,7 @@ mod agent_delivery_cas;
 mod agent_delivery_retry;
 mod agent_message_cancellation;
 mod agent_message_pages;
+mod context_status_batch;
 mod event_commit_notifications;
 mod operator_event_pages;
 mod operator_process_pages;

@@ -75,6 +75,11 @@ The live runtime manages workspace member and messaging authority; the legacy `T
 
 `gg_team` status returns the active roster in stable alias order with friendly identities, `role` (`lead` or `member`), `title` and `title_provenance`, creator provenance (`added_by` and `added_by_alias`), activity and the current provider-bound context remaining percentage. A missing or stale context-limit observation is `null`, never an estimate from recent transcript usage. The workspace lead may be absent (`leadless=true`); `lead_alias` is then `null`. Attached managed worktrees are identified by name, branch and routing state when the authoritative inventory is available. Eligible unassigned worktrees are sorted by name, branch and durable ID and limited to 20 entries; `available_worktrees_total` and `available_worktrees_truncated` show whether more exist. Basic roster status still works when Git worktree inventory is unavailable.
 
+To avoid per-member database polling on a large roster, up to 100 displayed
+members share one runtime session snapshot and one indexed, provider-fenced
+SQLite context lookup. Stale observations are excluded after policy revision,
+provider reattachment, archive or workspace retirement, including on restart.
+
 Incoming canonical agent messages arrive as model transport context, not a human user message. The compact `<agent_msg>` envelope names the sender's friendly alias, `kind="dm"` or `kind="broadcast"`, `context="workspace_team"` or `context="global_direct"`, and an ordered image-attachment count. Legacy migration-only context uses `legacy_team`. The envelope does not require the recipient to parse raw team IDs to coordinate with another agent.
 
 ## MCP environment

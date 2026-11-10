@@ -524,6 +524,76 @@ fn workspace_registration_replays_exact_result_and_rejects_key_reuse_with_differ
 }
 
 #[test]
+fn registration_idempotency_identity_is_scoped_to_operator_principal_after_restart() {
+    let temp = tempfile::tempdir().expect("isolated runtime");
+    let path = temp.path().join("runtime.sqlite3");
+    let repository = SqliteRuntimeRepository::new(path.clone());
+    repository.initialize_schema().expect("migrate schema");
+    let first_root = temp.path().join("principal_one");
+    let second_root = temp.path().join("principal_two");
+    std::fs::create_dir(&first_root).unwrap();
+    std::fs::create_dir(&second_root).unwrap();
+    let command = |root: &std::path::Path, actor: &str| {
+        prepare_workspace_registration(
+            WorkspaceRegisterRequest {
+                canonical_root: root.display().to_string(),
+                display_name: Some(format!("{actor} workspace")),
+            },
+            OperationActor::operator(actor),
+            Some("same-client-idempotency-key".into()),
+        )
+        .unwrap()
+    };
+
+    let first = repository
+        .register_workspace(&command(&first_root, "operator_one"))
+        .unwrap();
+    let second = repository
+        .register_workspace(&command(&second_root, "operator_two"))
+        .unwrap();
+    assert_ne!(first.operation_id, second.operation_id);
+    assert_ne!(first.workspace.workspace_id, second.workspace.workspace_id);
+    let reopened = SqliteRuntimeRepository::new(path);
+    assert_eq!(
+        reopened
+            .register_workspace(&command(&first_root, "operator_one"))
+            .unwrap(),
+        first,
+        "same actor/key must replay only its original exact receipt"
+    );
+    assert_eq!(
+        reopened
+            .register_workspace(&command(&second_root, "operator_two"))
+            .unwrap(),
+        second,
+        "second actor/key must never replay the first actor's receipt"
+    );
+    assert!(matches!(
+        reopened.register_workspace(&command(&first_root, "operator_two")),
+        Err(runtime_core::RuntimeError::Conflict(_))
+    ));
+    assert_eq!(reopened.list_workspaces().unwrap().len(), 2);
+    assert_eq!(
+        reopened
+            .get_operation(&first.operation_id)
+            .unwrap()
+            .unwrap()
+            .operation
+            .actor,
+        OperationActor::operator("operator_one")
+    );
+    assert_eq!(
+        reopened
+            .get_operation(&second.operation_id)
+            .unwrap()
+            .unwrap()
+            .operation
+            .actor,
+        OperationActor::operator("operator_two")
+    );
+}
+
+#[test]
 fn failed_workspace_commit_leaves_no_half_operation_and_retry_succeeds() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let repository = repo(&temp_dir);

@@ -6,7 +6,12 @@ category: "Operators"
 summary: "Day-two commands and troubleshooting for real agent work."
 ---
 
-This runbook is for day-two operation: verifying health, inspecting sessions, replaying events, debugging providers, managing processes/worktrees, and recovering after restarts.
+This runbook is for day-two operation: verifying health, inspecting
+workspace-owned agents, replaying events, debugging providers, managing
+processes/worktrees, and recovering after restarts. **The canonical
+collaboration API is workspace-first `/v2`**; the independent `/v1`
+session/team commands further below remain useful only for legacy
+operator clients and migration.
 
 ## Baseline environment
 
@@ -26,6 +31,9 @@ curl -fsS "$BASE_URL/openapi.yaml" | head
 Protected checks:
 
 ```bash
+curl -fsS "${AUTH[@]}" "$BASE_URL/v2/capabilities"
+curl -fsS "${AUTH[@]}" "$BASE_URL/v2/workspaces?limit=50"
+curl -fsS "${AUTH[@]}" "$BASE_URL/v2/operations?limit=50"
 curl -fsS "${AUTH[@]}" "$BASE_URL/v1/health"
 curl -fsS "${AUTH[@]}" "$BASE_URL/v1/version"
 curl -fsS "${AUTH[@]}" "$BASE_URL/v1/diagnostics"
@@ -81,7 +89,49 @@ The recovery path scans sessions, turns, approvals, and providers. It can:
 
 A failed recovery note is usually a real operational signal: inspect provider status, runtime logs, and the durable session/turn records before retrying work.
 
-## Sessions and turns
+## Canonical workspace and agent operations
+
+Register an existing host project root, then create a provider-backed
+agent under that workspace (after confirming provider credentials).
+An agent automatically joins its workspace roster, and the workspace
+may be **leadless**; no separate team creation/join is required.
+
+```bash
+WORKSPACE_JSON=$(curl -fsS -X POST "${AUTH[@]}" \
+  "$BASE_URL/v2/workspaces" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: runbook-root-001" \
+  -d "$(jq -nc --arg root "$PWD" \
+    '{canonical_root:$root,display_name:"Runbook project"}')")
+WORKSPACE_ID=$(printf '%s' "$WORKSPACE_JSON" | jq -r '.workspace.workspace_id')
+
+curl -fsS "${AUTH[@]}" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents"
+
+AGENT_JSON=$(curl -fsS -X POST "${AUTH[@]}" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: runbook-agent-001" \
+  -d '{"provider":"codex","model":"gpt-6-astra","worktree":{"mode":"root"}}')
+AGENT_ID=$(printf '%s' "$AGENT_JSON" | jq -r '.agent_id')
+curl -fsS "${AUTH[@]}" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/onboarding"
+```
+
+Mandatory system onboarding must be safely delivered before a normal
+user turn. `POST /v2/agents/{agent_id}/turns` admits ordered
+`{"input":[{"type":"text","text":"..."}]}` blocks; the HTTP response
+is not terminal provider proof. Check `/v2/operations/{operation_id}`
+for durable native-effect state and use
+`/v2/workspaces/{workspace_id}/events/stream` or agent SSE to follow
+the journal. An ambiguous provider result needs **independent evidence**
+before retrying; a new idempotency key is not a recovery procedure.
+
+The model-facing GG tools are `gg_team`, `gg_message`, `gg_process`
+and use a **different per-agent scoped credential** or trusted Codex
+native identity; the operator token cannot call `/v2/mcp`.
+
+## Legacy `/v1` sessions and turns
 
 Create a session:
 
@@ -131,7 +181,13 @@ curl -fsS -X POST \
   "$BASE_URL/v1/sessions/$SESSION_ID/close"
 ```
 
-## Event replay and SSE
+## Legacy `/v1` event replay and SSE
+
+For current operator history, use `GET /v2/events?limit=50`
+(redacted index, conditional `X-Next-Cursor` header), or
+`GET /v2/events/{event_id}` for full detail. Global/workspace/agent/process
+`/v2` SSE streams use `after_seq` or `Last-Event-ID` for replay, not
+keyset list cursors.
 
 Global replay:
 
@@ -176,7 +232,7 @@ Common fixes:
 | ACP health fails. | Provider enabled without `command`, non-stdio transport, or command cannot execute. | Check `[providers.acp]` and service environment. |
 | MCP tools report backend unavailable. | Missing `GG_MCP_GATEWAY_URL` or `GG_MCP_GATEWAY_TOKEN` in sidecar env. | Usually provider injection issue or bad `public_base_url`. |
 
-## Processes
+## Operator process controls (legacy `/v1` management)
 
 Start a process:
 
@@ -226,7 +282,13 @@ Ownership rules:
 - MCP process completion is pushed automatically to the owning model session; do not poll status waiting for completion.
 - Queued cancellation is atomic, prevents launch, and intentionally does not inject a completion turn.
 
-## Worktrees
+## Legacy `/v1` worktree controls
+
+For canonical worktree inventory/create and provider-verified agent
+rebind, use `/v2/workspaces/{workspace_id}/worktrees` and
+`/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree`. Do not
+manually claim or set the cwd of a workspace agent through these
+legacy endpoints.
 
 Create a managed worktree:
 
@@ -263,7 +325,13 @@ curl -fsS -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
 
 Cleanup can delete the worktree path and branch depending on policy and active claims. Diagnostics are returned in the cleanup response; do not ignore them.
 
-## Teams and deliveries
+## Legacy `/v1` teams and deliveries
+
+New agents already form a workspace roster; `POST /v2/messages` sends
+global direct messages across workspaces or workspace-local broadcasts,
+with `GET /v2/messages/{message_id}/deliveries` for per-recipient
+status. The legacy example below is only for existing independent
+`TeamRecord` clients during migration.
 
 Create a team around an existing session:
 
@@ -321,4 +389,8 @@ make api-docs-status
 make api-docs-check
 ```
 
-Then update the human docs that explain the behavior. OpenAPI currently captures route/method/content-type coverage better than field-level JSON schemas.
+Then update the human docs that explain the behavior. OpenAPI is
+generated from Axum's shared declarative Rust route table and
+handler/core `JsonSchema` types, including typed `/v2` query/header/auth
+contracts. Only the two dynamic model MCP JSON response bodies remain
+intentionally broad.

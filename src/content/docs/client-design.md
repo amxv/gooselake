@@ -1,135 +1,77 @@
 ---
 title: "Client design guide"
-description: "Build thin frontends, local consoles, scripts, and future CLIs on top of Gooselake without duplicating runtime state."
+description: "Build workspace-first frontends and automation that render runtime authority rather than reconstructing it."
 order: 21
 category: "Client Builders"
-summary: "Patterns for UIs and automations that cooperate with the runtime instead of fighting it."
+summary: "UI patterns for workspaces, agents, events, approvals, deliveries, managed worktrees, and recovery."
 ---
 
-A Gooselake client should feel powerful, but it should stay thin. The runtime is the engine room; the client is the dashboard.
+A Gooselake client is a remote control and dashboard, **not an independent team manager or provider-session database**. The runtime owns canonical workspace identity, active rosters, native effect receipts, and durable event history.
 
-## Design principle
+## What belongs in client state
 
-The client should ask the runtime what is true instead of inventing truth locally.
+Keep selected workspace/agent IDs, last event cursors, in-progress editor text, UI filters and view preferences. Fetch all authoritative operation, lead, activity, session policy, message, process and worktree state from the runtime.
 
-Good client state:
+Never treat a provider-native session reference, process PID, friendly alias or checked-out Git path as an authorization credential or stable ownership key.
 
-- selected session ID
-- selected team ID
-- last processed event cursor
-- optimistic text currently being typed
-- local display preferences
+## First screen: workspaces and readiness
 
-Bad client state:
+A good operator landing page shows:
 
-- “this turn is probably complete”
-- “this process is still running” without checking the runtime
-- “this agent owns this worktree” without a claim record
-- “this provider is authenticated” without provider diagnostics
+- `GET /health` and `GET /v2/capabilities`
+- active/retired workspaces from `GET /v2/workspaces` (bounded pages)
+- each workspace's active agent roster, nullable lead and recent operation states
+- provider readiness and supported models/skills, where advertised
+- recovery or manual-review operations requiring investigation
 
-## First screen
+A workspace can be **leadless**; the UI should not invent a lead. New `/v2` agents appear automatically as roster members.
 
-A useful first screen should show:
+## Agent detail and turn input
 
-- protected `/v1/health`
-- provider list and auth status
-- recent sessions
-- startup recovery summary
-- diagnostics links
-
-This gives an operator a cockpit view before they start work.
-
-## Session screen
-
-A session screen should be built from records plus events:
-
-1. fetch the session record
-2. replay session events from the last cursor
-3. open the session stream
-4. render terminal state from persisted turn/session records
-5. show approvals when pending
-6. show provider errors as durable facts, not transient toast messages
-
-Do not rely on one long-lived browser connection as the only source of truth. It will eventually disconnect.
-
-## Turn submission
-
-When sending a turn, treat the response as “accepted for execution.” Then update the UI by following events and records.
-
-A simple flow:
+An agent view should load the actual workspace agent record, provider policy/revision, onboarding status, active logical turn, pending approvals and recent durable events.
 
 ```text
-POST /v1/sessions/{id}/turns
-  -> show accepted turn ID
-  -> follow /v1/sessions/{id}/events/stream
-  -> update when turn terminal event arrives
+POST /v2/workspaces/{workspace_id}/agents
+  -> stable agent ID / mandatory onboarding
+  -> GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding
+  -> POST /v2/agents/{agent_id}/turns
+  -> GET /v2/agents/{agent_id}/events/stream
 ```
 
-If the session already has an active turn, the runtime will reject the request. The UI should show the active turn rather than hiding the reason.
+A successful turn request **admits work** but does not imply completion. If onboarding is pending, show that state rather than retrying a blocked user turn. If another turn owns the session, show the existing turn. Use runtime-owned logical IDs, not native provider turn IDs, in UI routes and retry bookkeeping.
 
-## Event cursors
+Provide explicit approval and revision-conflict states. A provider-origin approval is a durable runtime record attached to an admitted turn; a lost response or uncertain provider dispatch may require review rather than resubmission.
 
-Persist cursors per stream. For example:
+## Events and reconnect
 
-- global events cursor
-- per-session cursor
-- per-team cursor
-- per-process cursor
+Persist the last event cursor **per selected stream**. Reconnect with `after_seq` or `Last-Event-ID`, replay backlog, then follow live events. Global stream IDs are journal row IDs; scoped workspace/agent/process streams use scoped sequence values. SSE streams do not paginate through `X-Next-Cursor`; keyset JSON list endpoints do.
 
-On reconnect, pass `after_seq` or `Last-Event-ID`. Render replay first, then live events.
+Build UI status from authoritative snapshot/list APIs plus the event tail. An event notification may be delayed or coalesced, but the journal replay closes the gap.
 
-## Teams UI
+## Teams and message delivery
 
-A team UI should show three different objects separately:
+Render the active workspace roster, optional lead, and messages with **per-recipient delivery states**. Direct messages may target an agent outside the sender's workspace; a broadcast never does. Operator `POST /v2/messages` accepts a sender ID because the operator is trusted; model `gg_message` obtains the sender from scoped provider authority.
 
-- the team itself
-- members and their session IDs
-- messages and deliveries
+Never collapse “message created,” “delivery enqueued” and “recipient turn admitted” into one checkmark. Busy agents can defer messages, and onboarding may take priority over message injection.
 
-Do not collapse “message sent” and “message delivered” into one state. A message can be created while delivery is pending, deferred, injected, failed, or cancelled.
+## Processes and worktrees
 
-## Process UI
+Managed processes have durable `proc_*` IDs, scheduler state, owner, exit/timeout classification, bounded live previews and **authoritative log files**. The model receives completion via push context; UI users can still inspect logs and history. Do not key a process by raw PID.
 
-For runtime processes, show both:
+Worktree inventory belongs to the workspace. Show canonical repo/branch/path, active agent attachments, retention and eligibility blockers separately. Rebinding an agent to an existing managed worktree is complete only after **native provider evidence** proves the destination, not merely after a SQLite route field changed.
 
-- lifecycle state from process records/events
-- logs from `/v1/processes/{process_id}/logs`
+## Provider-specific UI only where required
 
-Output events are sampled for live feedback. Logs are the source of truth for detailed output.
+Codex/Claude have curated supported model policy; ACP may expose **no catalog** because its configured agent owns model and skill choice. Present capability-gated controls for images, skills, thinking, permissions, compaction, edit-rerun and workspace rebinding. Never infer support from a provider name alone.
 
-## Worktree UI
+## Errors, authorization, and recovery
 
-Show worktrees and claims separately.
+Operator `/v2` errors have stable `error.code`, `retryable`, `details` and `request_id`. Display an operation's stable ID and provide inspection when `outcome_unresolved` or `manual_review` appears. Honor `If-Match` and the actual resource revision for conditional authority writes.
 
-A good worktree panel answers:
+The operator token is **not** a substitute for the agent-scoped Bearer protecting `/v2/mcp/*`. A frontend should not expose a model's internal GG MCP credential or let model-authored JSON impersonate another caller.
 
-- where is the worktree on disk?
-- which branch does it use?
-- who created it?
-- which sessions currently claim it?
-- what is the cleanup policy?
-- was cleanup blocked by active claims?
+## Legacy state
 
-## Provider UI
+Legacy `/v1/sessions` and independent `/v1/teams` remain transitional operator surfaces. Treat unresolved legacy ownership as an explicit migration diagnostic, not a reason to create two competing active roster models.
 
-Provider status should come from provider endpoints and diagnostics, not hardcoded assumptions.
-
-Model catalogs differ by provider. ACP may return an empty model list depending on the agent. Claude and Codex expose known model catalogs through their adapters.
-
-## Error handling
-
-Prefer errors that tell the user which runtime invariant fired:
-
-- missing bearer token
-- provider not registered
-- session already has active turn
-- approval not pending
-- process ownership mismatch
-- worktree has active claim
-- MCP caller session missing or inactive
-
-Generic “request failed” messages make a durable runtime feel unreliable even when it is doing the right thing.
-
-## Golden rule
-
-A good client can be killed, restarted, and reconnected without changing the runtime's understanding of the work.
+**Golden rule:** a client can be killed, restarted and reconnected without changing the runtime's understanding of the work.

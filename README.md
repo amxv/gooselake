@@ -148,12 +148,13 @@ Provider APIs change. Runtime contracts should not.
 It owns:
 
 - provider-backed sessions
+- canonical workspaces and their automatic agent rosters
 - turn execution
 - persistent event history
 - SSE fanout
 - auth staging and provider readiness
 - process execution
-- team messaging and deliveries
+- agent-first cross-workspace messages and per-recipient deliveries
 - worktree allocation and lifecycle
 - MCP tool plumbing
 
@@ -202,6 +203,28 @@ The important boundary is between the client and the runtime, not between the cl
 That sounds subtle, but it changes everything. Once that boundary is real, your frontend stops owning orchestration logic it was never meant to carry.
 
 Different engine rooms, same cockpit instruments.
+
+### Workspace-first coordination
+
+The canonical `/v2` API starts with a **workspace**, keyed by an existing
+canonical project root. Create agents inside it with
+`POST /v2/workspaces/{workspace_id}/agents`: each agent automatically joins
+the workspace's active team roster, with a stable opaque ID and friendly
+alias. A workspace is intentionally **leadless or has one active lead**;
+only an operator can assign or clear leadership.
+
+An active agent can **direct-message any active/routable runtime agent**,
+including agents in other workspaces. A broadcast snapshots only the
+sender's own workspace roster. The model sees exactly `gg_team`,
+`gg_message` and `gg_process` when those capabilities are enabled; a
+trusted provider bridge supplies caller identity rather than taking it
+from tool JSON. Process completion is pushed to the model instead of
+requiring polling.
+
+Existing `/v1/sessions` and `/v1/teams` endpoints remain for migration
+compatibility. They are not the recommended way to build new coordination
+clients, and a final legacy cutover still requires independent migration
+acceptance.
 
 ## What You Get
 
@@ -267,12 +290,12 @@ This is one of the most interesting parts of the repo.
 
 The runtime does not just let one user talk to one model. It has a native agent layer where agents can:
 
-- message other agents
-- supervise other agents
-- interrupt or defer messages based on policy
-- spawn teammates
-- claim worktrees
-- coordinate live work across one shared runtime
+- direct-message agents across workspaces
+- broadcast only within their own active workspace roster
+- manage teammates under explicit lead/leadless membership policy
+- create agents with automatic onboarding and workspace membership
+- rebind managed worktrees only after provider evidence
+- submit durable managed processes and receive completion automatically
 
 And it does that without caring whether a given agent is running on Codex, Claude, or ACP.
 
@@ -294,6 +317,9 @@ Agent-to-agent messaging is modeled like delivery infrastructure:
 So the system is not just "agents talking." It is agents talking with timing rules, interruption rules, delivery states, deferred injection, and receipts.
 
 That is how you turn multi-agent behavior from roleplay into operations.
+Provider-origin approvals and user/automation inputs are also admitted
+durably before provider dispatch; unknown native outcomes require
+reconciliation rather than blind replay.
 
 ### A deployable product boundary
 
@@ -302,6 +328,12 @@ The runtime ships as one bundle:
 - `bin/gg-runtime-server`
 - `sidecars/claude-bridge/claude-bridge`
 - `sidecars/gg-mcp-server/gg-mcp-server`
+- `openapi.yaml`, the generated typed API snapshot
+- `contracts/runtime-contracts.json`, the harness text and Codex model policy
+
+Release verification checks the real server binary's embedded contract
+against its packaged harness/model/tool assets. Installer and staged upgrade
+paths reject a malformed candidate before replacing an existing runtime.
 
 That bundle is the backend product. Your UI is not where the business logic has to live anymore.
 
@@ -439,6 +471,16 @@ Important routes:
 
 - `GET /health`
 - `GET /openapi.yaml`
+- `GET /v2/capabilities`
+- `POST /v2/workspaces` and `GET /v2/workspaces/{workspace_id}`
+- `POST /v2/workspaces/{workspace_id}/agents` and `GET /v2/workspaces/{workspace_id}/agents`
+- `POST /v2/agents/{agent_id}/turns`
+- `POST /v2/messages`, `GET /v2/messages` and delivery control
+- `GET /v2/events/stream` and scoped workspace/agent/process streams
+- `GET /v2/operations/{operation_id}`
+- `GET /v2/mcp/capabilities` and `POST /v2/mcp/invoke` (agent-scoped, not operator-token)
+- `/v2/providers/*` and `/v2/migrations/workspaces/*`
+- older `/v1/*` APIs below for migration compatibility
 - `GET /v1/openapi.yaml`
 - `/v1/providers/*`
 - `/v1/sessions/*`
@@ -447,10 +489,6 @@ Important routes:
 - `/v1/processes/*`
 - `/v1/worktrees/*`
 - `/v1/mcp/*`
-- `/v2/workspaces/*`
-- `/v2/providers/*`
-- `/v2/migrations/workspaces/*`
-- `/v2/operations/*`
 
 Simple shape:
 
@@ -461,21 +499,29 @@ sequenceDiagram
   participant P as Provider
   participant DB as SQLite
 
-  UI->>RT: POST /v1/sessions
-  RT->>DB: persist session
-  RT-->>UI: session created
-  UI->>RT: POST /v1/sessions/:id/turns
+  UI->>RT: POST /v2/workspaces
+  RT->>DB: canonical workspace + operation receipt
+  RT-->>UI: workspace and operation IDs
+  UI->>RT: POST /v2/workspaces/:id/agents
+  RT->>DB: durable native intent before provider startup
+  RT-->>UI: agent ID / onboarding status
+  UI->>RT: POST /v2/agents/:id/turns (after onboarding)
+  RT->>DB: commit logical turn + provenance
   RT->>P: execute turn
-  P-->>RT: events / final output
-  RT->>DB: persist events
-  RT-->>UI: SSE stream + final response
+  P-->>RT: provider events / final output
+  RT->>DB: persist outcomes + journal events
+  RT-->>UI: replayable SSE + authoritative state
 ```
 
 This is the design goal in one sentence: your application should talk to a runtime service, not directly to provider CLIs.
 
 That keeps your frontend simpler, your backend more honest, and your system much easier to evolve.
 
-Team orchestration is already a first-class runtime API here. The MCP-facing team/tool surface is still evolving toward full parity, and it is worth being honest about that. The right story is not "everything is magically unified already." The right story is "the runtime contract is real, and the remaining surface area is being pulled into it on purpose."
+The three model-facing GG tools are already exposed through Codex native
+dynamic tools and scoped MCP for Claude/ACP. Independent final live-provider
+acceptance and legacy-migration cutover are separate deployment gates; the
+presence of typed contracts alone is not evidence that every provider or
+every legacy database has been accepted.
 
 ## Auth Model
 
@@ -488,7 +534,16 @@ ACP first-release limits:
 - no streamable HTTP ACP transport; `transport = "stdio"` is the only supported mode
 - no runtime ACP logout/API-key/import routes
 - no runtime-managed ACP auth mutations
-- ACP permission requests are unsupported in v1 and fail the active turn clearly if the agent sends `session/request_permission`
+- ACP `session/request_permission` uses durable provider-origin approval
+  routing when the request can be bound to the admitted turn and an offered
+  choice. Malformed or unrouteable requests fail closed, not automatically
+  approved. Models, skills and private harness configuration remain owned
+  by the external ACP agent.
+
+The operator Bearer token protects `/v1` and operator `/v2` routes.
+`/v2/mcp/*` is protected by a distinct runtime-issued **per-agent scoped
+credential**; tokens are not interchangeable. Provider-native turn/session
+IDs never replace opaque Gooselake IDs in client state.
 
 ## OpenAPI
 
@@ -509,9 +564,13 @@ make api-docs-status
 make api-docs-check
 ```
 
-The OpenAPI file is generated from maintained source parsing in
-[`crates/runtime-server/src/openapi.rs`](crates/runtime-server/src/openapi.rs),
-not from runtime route introspection. That is a deliberate tradeoff and is documented honestly.
+The OpenAPI file is generated from the **same declarative Rust registration
+table as Axum** (`crates/runtime-server/src/http/route_table.rs`) and real
+`schemars::JsonSchema` derives on the handler/core request and response
+types. `crates/runtime-server/src/openapi.rs` assembles these contracts;
+it does not scrape route source or claim a hand-written generic schema
+for the operator API. The two dynamic scoped MCP JSON responses remain
+intentionally extensible, not fabricated into fixed DTOs.
 
 ## Source Install
 
@@ -559,16 +618,20 @@ This repo is already beyond the "prototype with ambition" stage.
 It includes:
 
 - provider-backed sessions
+- workspace-owned agents, automatic rosters and optional lead authority
 - durable event replay
-- team/comms flows
+- cross-workspace direct, workspace-local broadcasts and durable deliveries
+- three scoped/native model GG tools and push-based process completion
 - worktree lifecycle support
 - MCP sidecar support
-- real Codex, Claude, and ACP validation
+- deterministic Codex, Claude, and ACP protocol/adapter tests (separate from final live-provider acceptance)
 - release packaging
 - deploy docs
-- generated OpenAPI
+- Rust-derived typed `/v2` OpenAPI and verified runtime contract bundles
 
-The obvious next step is not "make another backend." The obvious next step is to build better clients on top of this one.
+Migration/irreversible removal of duplicate legacy coordination paths and
+independent live-provider/scale acceptance remain separate work. The next
+product direction is to build better clients on top of this one.
 
 If this project works, it should make future agent applications feel lighter, because the heavy machinery already lives here.
 

@@ -14,9 +14,9 @@ The important shift is that the UI is not the runtime. A desktop app, web consol
 
 If you are new, read in this order:
 
-1. [Setup](/docs/setup) — run the server and make the first authenticated request.
-2. [Core concepts](/docs/concepts) — learn the vocabulary: sessions, turns, events, providers, teams, processes, and worktrees.
-3. [Runtime lifecycle](/docs/runtime-lifecycle) — follow one turn through the system.
+1. [Setup](/docs/setup) — register an actual workspace root and inspect the provider-free operator API.
+2. [Core concepts](/docs/concepts) — learn workspace-owned agents, optional leads, direct/broadcast messages, turns, and provider capabilities.
+3. [Runtime lifecycle](/docs/runtime-lifecycle) — follow agent creation, onboarding, and a durably admitted turn through execution.
 4. [Events and recovery](/docs/events-and-recovery) — understand replay, cursors, and startup reconciliation.
 5. [CLI and command runner](/docs/cli) — learn what the current command-line surface actually is.
 
@@ -58,7 +58,7 @@ You are trying to change implementation without breaking the runtime contract.
 ### Runtime Services
 
 - [Provider guide](/docs/providers): Codex, Claude, and ACP behind the shared provider contract.
-- [Teams and comms](/docs/teams): legacy-team coordination plus durable message/delivery concepts used by the runtime.
+- [Workspace teams and messages](/docs/teams): automatic agent rosters, optional leads, global direct messages and workspace-local broadcasts.
 - [Processes](/docs/processes): runtime-managed host commands and logs.
 - [Worktrees](/docs/worktrees): managed Git workspaces, claims, and cleanup.
 - [MCP and sidecars](/docs/mcp-and-sidecars): Claude bridge and the bundled MCP sidecar.
@@ -90,16 +90,16 @@ Gooselake owns these responsibilities because clients are poor places to keep th
 
 - canonical workspace identity, deterministic legacy-authority migration, and durable operation/idempotency records for workspace mutations
 - agent-first direct messaging across workspaces plus immutable workspace-local broadcast recipient snapshots
-- provider-backed sessions and opaque provider references
-- one-active-turn session coordination
-- durable turns, approvals, and terminal states
-- replayable session/team/process/global events
+- workspace-owned public agents with friendly aliases, immutable ownership and exact provider recreation policy
+- one-active-turn session coordination, mandatory onboarding and separate provider-native identity
+- durable logical-turn admission before provider dispatch, provenance, snapshots, approvals and terminal states
+- replayable system/workspace/agent/process events plus legacy team scopes
 - provider auth staging and provider readiness checks
 - durable process admission, scheduling, bounded per-stream log capture, restart reconciliation, and model completion delivery
 - durable agent messages and per-recipient delivery/retry/cancellation state, with legacy team compatibility during migration
 - managed worktree creation, claims, release, and cleanup
 - diagnostics and startup recovery summaries
-- MCP gateway calls that are tied back to an active runtime session
+- three canonical GG model tools bound to authenticated active agent identity through native Codex or scoped MCP
 
 ## What it does not try to be
 

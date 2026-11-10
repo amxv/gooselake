@@ -1,140 +1,92 @@
 ---
 title: "Runtime lifecycle"
-description: "Follow sessions, turns, approvals, provider dispatch, terminal states, and close/resume behavior through the runtime."
+description: "Follow workspace agent creation, onboarding, durable turn admission, provider approvals, terminal state, and recovery."
 order: 11
 category: "Mental Model"
-summary: "The end-to-end path from HTTP request to durable runtime state."
+summary: "What the runtime actually commits before and after a provider performs work."
 ---
 
-This page follows the core execution path. It is the best place to understand what happens after a client presses “send”.
+The normal public lifecycle begins with a **workspace**, not a free-floating provider session. A client registers an existing project root, creates an agent inside its active workspace roster, observes mandatory onboarding, and then sends logical turns. The runtime owns every durable identity and decision; the provider is an execution adapter.
 
-## The short version
+## Register the workspace
 
-A normal turn moves like this:
+`POST /v2/workspaces` canonicalizes an existing root and stores the workspace/operation identity transactionally. The same canonical root converges on one workspace ID. A retired root may reactivate that identity after its previous retirement has proven terminal and its outstanding resource obligations allow it.
 
-```text
-client request
-  -> HTTP handler
-  -> runtime session manager
-  -> SQLite records
-  -> provider adapter
-  -> event append
-  -> SSE/replay
-  -> provider terminal result
-  -> durable terminal state
+Workspace leadership is optional. Only a trusted operator may set/clear the lead with revision protection, not a model tool or automatic member election.
+
+## Create a workspace agent
+
+`POST /v2/workspaces/{workspace_id}/agents` specifies provider, optional model and exact recreation preferences, and optional root/managed-worktree selection. The runtime:
+
+1. Validates workspace, provider policy, resource eligibility and the caller's operation identity.
+2. Persists the **native creation intent**, frozen launch policy, claims and reserved `sess_*` agent identity before creating a provider session or Git checkout.
+3. Performs allowed native/hook effects, recording their evidence without guessing success after a transport error.
+4. Transactionally commits the provider-backed session, immutable workspace ownership, friendly alias, active roster profile, approved route, exact recreation policy and mandatory onboarding notice.
+5. Returns the stable agent ID and operation receipt. A lost response can be recovered with the same eligible `Idempotency-Key`.
+
+An unknown provider-create outcome remains in `manual_review` with its durable operation coordinate, **not** a silently created agent or a second provider attempt.
+
+## Mandatory onboarding comes before user input
+
+Each new workspace agent receives a deterministic system onboarding notice identifying its alias, workspace and current lead or leadless state, plus approved optional task/image/skill context. Onboarding is recorded as `automation_context` provenance, never a fabricated human prompt.
+
+Onboarding may remain `pending`, `injecting` or `manual_review` until exact provider evidence exists. An ordinary user turn sent ahead of mandatory onboarding can receive `409 onboarding_pending`. Query `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding`; do not assume creation means the model has already seen its instructions.
+
+## Admit a logical turn before provider work
+
+`POST /v2/agents/{agent_id}/turns` accepts ordered structured input. Before native provider dispatch, the runtime commits:
+
+- a runtime-owned logical turn ID and owning agent
+- canonical input, source provenance and optional durable user-input snapshot
+- policy/turn preference snapshot, expected-parent/correlation state and dispatch recovery classification
+- the session's single active-turn authority
+
+Provider-native turn IDs are mapped separately after actual native evidence. Models and providers cannot substitute their own native IDs for the public runtime ID.
+
+```mermaid
+sequenceDiagram
+  participant Client
+  participant Runtime
+  participant Store as SQLite
+  participant Provider
+  Client->>Runtime: POST /v2/agents/:id/turns
+  Runtime->>Store: Commit logical input and turn admission
+  Runtime->>Provider: Dispatch structured native input
+  Provider-->>Runtime: Native ack / approval / observations / terminal
+  Runtime->>Store: Persist provider evidence and state
+  Runtime-->>Client: Accepted logical turn ID
 ```
 
-The analogy is a workshop job ticket. The client writes a ticket, the runtime assigns it to a worker, the worker reports progress, and the runtime stamps the final result into the ledger.
+**Accepted means admitted, not finished.** Follow durable records/events until a terminal result; the same agent cannot own two conflicting active normal turns.
 
-## Create a session
+## Approvals and preference controls
 
-A client creates a session with a provider name, optional model, optional working directory, optional permission mode, and optional metadata.
+Provider-native command/file/permission approvals are attached to an **already-admitted** logical turn. Requests, choices and resolution are durable, deduplicated and routed to the exact provider approval reference. They are separate from any optional runtime pre-dispatch approval gate. Do not auto-approve malformed, ambiguous or unrouteable requests.
 
-The runtime then:
+Supported explicit thinking/permission/compaction controls mutate authoritative policy or create their own durable correlation; unsupported provider controls return capability errors. Codex collaboration mode is turn-scoped rather than a recreated session permission.
 
-1. looks up the provider adapter
-2. allocates a runtime session ID
-3. asks the provider to create its native session
-4. stores provider references opaquely
-5. persists the `SessionRecord`
-6. appends `session.created`
+## Dispatch uncertainty is not a retry signal
 
-The runtime ID is the stable public identity. Provider session references are private adapter details.
+If a provider proves dispatch **did not** occur, a bounded safe retry may be possible. If the call *may* have reached the provider but local acknowledgement is missing, the turn enters reconciliation/recovery instead of replaying the input. A client must inspect its durable operation/turn evidence rather than issue a new request key to “try again.”
 
-## Send a turn
+This rule applies equally to native agent creation/rebind, workspace retirement, and other external effects.
 
-A client sends a turn to an existing session.
+## Terminal state, interrupts and automatic context
 
-The runtime checks:
+A provider reports terminal `completed`, `failed` or `interrupted` evidence tied to the logical turn. The runtime persists that outcome, releases active-turn authority, stores usage/context observations if current, and appends events; duplicate agreeing observations converge.
 
-- the session exists
-- the session is not closed or failed
-- no active turn already owns the session
-- the provider is registered
-- approval requirements can be represented
+Direct/broadcast message deliveries, managed-process completion, onboarding, membership/worktree notices and hook results are separate **automation/transport** inputs. Process termination and completion delivery are different durable facts: completion is pushed into the owner agent's context exactly once, including after restart, not polled by the model.
 
-If the request is accepted, the runtime persists a `TurnRecord`, updates the session's active turn, appends a start or approval event, and returns an accepted response. It does not wait synchronously for the model to finish.
+An operator can interrupt an active agent or a workspace roster. Idle/non-interruptible members are reported as skipped rather than inventing turns for them.
 
-## The one-active-turn rule
+## Resume, archive and retirement
 
-Every session has at most one active turn. This is one of the most important design decisions in the codebase.
+Resume/recreation uses the **current authoritative** provider/model/tool/permission/setting-source/harness policy and preserves the same public agent ID. Provider-native attachment identity and current revision fence stale context observations and rebind evidence.
 
-Without it, the runtime would need to solve ambiguous cases like:
+Archiving makes an agent non-routable but preserves its history; restoring it does not restore former leadership. Workspace retirement is an operation across native attachments, active turns, processes, deliveries, worktrees and notices. It is not equivalent to a bare flag update; unresolved native effects need evidence-based review before declaring it complete.
 
-- Which turn owns a tool call?
-- Which message should receive a team delivery?
-- Which process belongs to which in-flight job?
-- Which interruption should win?
+## Legacy and client boundaries
 
-The one-active-turn rule keeps ownership tractable.
+`/v1/sessions` and independent `/v1/teams` still exist for migration compatibility, but the canonical normal workflow is workspace-owned `/v2` agents. An unresolved generation-1 session stays a classified migration subject rather than becoming a guessed workspace member.
 
-## Provider dispatch and fallback
-
-Provider adapters implement the shared `RuntimeProvider` trait. After the runtime records the turn, it calls the provider's `send_turn` behavior.
-
-There is an important reliability detail: when provider dispatch reports a missing provider-side session but the runtime has stored provider references, the runtime attempts to resume the provider session and retry dispatch. This lets the runtime heal from some provider process/session loss at the dispatch boundary.
-
-## Approval flow
-
-When a turn requires approval, the runtime records an `ApprovalRecord` and marks the turn/session as waiting for approval.
-
-If the approval is accepted:
-
-1. the approval becomes resolved
-2. the turn moves to `in_progress`
-3. the session moves to `turn_running`
-4. the runtime appends `turn.started`
-5. the provider waiter is spawned
-
-If the approval is declined:
-
-1. the approval becomes resolved
-2. the turn is interrupted
-3. the session becomes ready again
-4. the runtime appends `turn.interrupted`
-
-The important point is that approval state is durable. It is not just an in-memory prompt.
-
-## Waiting for terminal result
-
-After dispatch, the runtime spawns a background waiter for the provider's terminal result.
-
-The provider eventually reports one of the runtime terminal outcomes:
-
-- completed
-- interrupted
-- failed
-
-The runtime then updates the turn, clears the session active turn, updates session status, stores usage/error data when present, and appends the terminal event.
-
-Duplicate terminal results are treated idempotently when they agree. Conflicting terminal results are treated as protocol violations and fail the session closed instead of guessing.
-
-## Interrupt a turn
-
-Interrupt requests go through the runtime. The runtime delegates to the provider adapter and records the resulting state through the same durable path. Team delivery policies can also trigger interruptions when a message needs to be injected into a busy recipient.
-
-## Resume a session
-
-Session resume is explicit. A provider may return updated provider references. The runtime keeps its own session ID stable while refreshing provider details underneath it.
-
-Startup recovery also uses provider resume to reconcile nonterminal sessions after a process restart.
-
-## Close a session
-
-Closing a session is different from forgetting it. The runtime persists closed state so later diagnostics and event replay can still explain what happened.
-
-## Failure stance
-
-Gooselake generally prefers to **fail closed into durable state**.
-
-For example, if provider send fails after a turn request has been accepted internally, the runtime records a failed turn, restores or fails session state as appropriate, and appends a failure event. That is better than leaving the user with a spinner and no record.
-
-## What clients should assume
-
-Clients should assume:
-
-- `POST /v1/sessions/{id}/turns` is an acceptance boundary, not a completion boundary.
-- terminal information arrives through events and records.
-- a session with an active turn cannot accept another normal turn.
-- reconnecting clients should replay first, then follow live streams.
-- provider-specific details should not be stored as client truth.
+For complete route fields, see [API guide](/docs/api). For event cursors and crash recovery, see [Events and recovery](/docs/events-and-recovery).

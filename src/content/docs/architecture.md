@@ -1,286 +1,139 @@
 ---
 title: "Architecture"
-description: "Understand the runtime control-plane boundary, core crates, provider adapters, sidecars, persistence, events, and recovery model."
+description: "Understand Gooselake's workspace authority, durable operation journal, provider adapters, scoped GG tools, event streams, and release boundary."
 order: 13
 category: "Mental Model"
-summary: "A deeper system map for contributors and operators."
+summary: "How the runtime separates canonical host-side state from provider execution and thin clients."
 ---
 
-Gooselake is a host-side control plane for machine agents. The core architectural decision is that clients talk to the runtime, not directly to provider CLIs or provider SDKs.
+Gooselake is a host-side control plane for agent work. Its core boundary is between **clients and the runtime**, not between clients and provider SDKs. A desktop UI, web console, script or CLI sends commands over HTTP, then renders durable records and event replay. SQLite and runtime services remain the source of truth when the client disconnects.
 
 ```mermaid
 flowchart LR
-  Client[Desktop UI / Web UI / CLI / Ops Console]
-  API[HTTP + SSE API]
-  Server[gg-runtime-server]
-  Core[runtime-core]
-  Store[(SQLite store)]
-  Providers[Provider adapters]
-  Tools[Runtime tools]
-  Sidecars[Sidecars]
-  Host[Host filesystem / processes / git worktrees]
+  Clients[Desktop / Web / CLI / Operator]
+  Server[gg-runtime-server HTTP + SSE]
+  Core[Runtime services and operation authority]
+  Store[(SQLite journal and projections)]
+  Codex[Codex app-server adapter]
+  Claude[Claude bridge adapter]
+  ACP[ACP stdio adapter]
+  Tools[Scoped GG tools]
+  Host[Host processes / Git worktrees]
 
-  Client --> API --> Server --> Core
+  Clients --> Server --> Core
   Core <--> Store
-  Core --> Providers
+  Core --> Codex
+  Core --> Claude
+  Core --> ACP
   Core --> Tools
-  Providers --> Sidecars
   Tools --> Host
-  Providers --> Host
-  Sidecars --> Host
+  Codex --> Host
+  Claude --> Host
+  ACP --> Host
 ```
-
-The frontend is a remote control. The runtime is the engine room.
 
 ## Composition root
 
-`crates/runtime-server/src/bootstrap.rs` wires the runtime together:
+`crates/runtime-server/src/bootstrap.rs` composes configuration, local secrets, SQLite migrations, provider adapters, the session manager, workspace/message/worktree services, process scheduling, tool gateway, recovery, and Axum HTTP routes. Provider startup is optional and configuration-dependent; operator workspace and migration inspection does not depend on live model execution.
 
-1. load config and ensure data directories
-2. bootstrap bearer auth
-3. initialize SQLite store
-4. create Codex, Claude, and ACP provider adapters based on config
-5. stage Codex auth if host auth exists
-6. build Claude bridge/MCP sidecar configuration
-7. register enabled providers
-8. hydrate runtime state and run startup recovery
-9. create process manager, team comms, worktree service, and tool gateway
-10. expose everything through `RuntimeApp` and Axum routes
+Repository responsibilities:
 
-The result is a single `BootstrappedRuntime` containing the app, session manager, auth token, bind address, public base URL, and startup recovery summary.
-
-## Crate responsibilities
-
-| Crate | Responsibility |
+| Location | Authority or adapter |
 | --- | --- |
-| `runtime-core` | Provider trait, provider registry, runtime session manager, event model, shared records, service traits, team comms implementation. |
-| `runtime-server` | Config, bootstrap, HTTP/SSE routes, auth middleware, diagnostics, OpenAPI generation, binary CLI. |
-| `runtime-store-sqlite` | Durable state implementation. |
-| `runtime-provider-codex` | Codex adapter, model catalog, auth status, session/turn execution. |
-| `runtime-provider-claude` | Claude adapter, bridge lifecycle, auth import/status, model catalog, GG MCP injection. |
-| `runtime-provider-acp` | ACP stdio adapter, agent-managed auth status, session/turn mapping. |
-| `runtime-tools` | Process manager, MCP tool gateway, worktree service, team member spawn workflow. |
+| `crates/runtime-core` | Workspace/agent identity, durable operations, turns, approvals, provider contracts, agent messages, lifecycle and recovery |
+| `crates/runtime-store-sqlite` | Ordered migrations, transactional authority, indexed status, journal and query/replay implementation |
+| `crates/runtime-server` | Bootstrap, auth, operator/scoped HTTP routes, SSE, generated OpenAPI |
+| `crates/runtime-provider-codex` | Persistent app-server, structured input, approvals, native GG tools and provider evidence |
+| `crates/runtime-provider-claude` | Claude bridge policy, sessions, native approval/context behavior and scoped MCP injection |
+| `crates/runtime-provider-acp` | Configured external ACP stdio agent, negotiated capabilities and durable permission handoff |
+| `crates/runtime-tools` | Worktree management, managed process scheduling, GG tool semantics |
+| `sidecars/claude-bridge` | Isolated Claude SDK/bridge execution |
+| `sidecars/gg-mcp-server` | Scoped tool transport for Claude and ACP |
 
-## Runtime data model
+## Workspace-first data model
 
-Durable runtime records include:
+A **workspace** is keyed by the canonical filesystem root and records its lifecycle, revision, optional lead and repository identity. Every normal `/v2` public agent is created **within one workspace**; its active roster is that workspace's team, not an independent `TeamRecord`. The agent's opaque `sess_*` ID remains stable across restarts and archive/restore, alongside immutable ownership, friendly alias, title provenance, exact recreation policy and optional verified managed-worktree route.
 
-- `SessionRecord`
-- `TurnRecord`
-- `ApprovalRecord`
-- `RuntimeEventRecord`
-- `TeamRecord`
-- `TeamMemberRecord`
-- `TeamMessageRecord`
-- `TeamDeliveryRecord`
-- `ManagedWorktreeRecord`
-- `ManagedWorktreeClaimRecord`
-- `ProcessRecord`
-- `TeamOperationJournalRecord`
-- `TeamOperationDiagnosticRecord`
-- `CredentialRecord`
+Leadership is nullable and revision-checked. A lead must be an active member of the same workspace. Removing a lead leaves the workspace leadless unless an operator explicitly assigns another. An archived agent is not automatically re-promoted on restore.
 
-The runtime keeps provider-native references, but client-facing identity is runtime-owned. For example, `SessionRecord.id` is the API identity, while `provider_session_ref` and `canonical_provider_session_ref` are adapter details.
+A deterministic generation-1 migration classifies legacy sessions, teams and worktrees into mapped or **unresolved** authority without guessing ownership. Legacy `TeamRecord`/`TeamMessageRecord` and `/v1` routes remain readable during the migration window, but are not the canonical final write authority for new workspace coordination.
 
-## Session lifecycle
+## Durable operations and provider effects
+
+Multi-resource mutations have runtime-generated operation IDs, normalized input, principal, claims, phase transitions, effect intents and exact receipts. **Native effects are preceded by durable intent**, not by an optimistic success response. Identity claims prevent a second request from racing an unknown Git/provider outcome.
+
+An operator can replay the same eligible `Idempotency-Key` and normalized request safely; different input conflicts. If a provider call may have crossed a boundary but the receipt is unknown, the effect stays in manual review instead of calling the provider again. Independent provider/session/effect evidence is required for recovery.
+
+Workspace retirement follows this same pattern across agents, active turns, processes, deliveries, worktrees, provider attachments, hooks and notices. A retired workspace is reactivated only when its existing canonical identity and outstanding recovery obligations permit it.
+
+## Admitted logical turns and provider approvals
 
 ```mermaid
 sequenceDiagram
-  participant Client
-  participant HTTP as runtime-server HTTP
-  participant Runtime as RuntimeSessionManager
-  participant Provider
-  participant Store as SQLite
-  participant SSE as SSE consumers
+  participant UI as Operator/Client
+  participant HTTP as Runtime HTTP
+  participant DB as SQLite authority
+  participant P as Provider
+  participant SSE as Event subscriber
 
-  Client->>HTTP: POST /v1/sessions
-  HTTP->>Runtime: create_session(input)
-  Runtime->>Provider: create_session(provider request)
-  Provider-->>Runtime: provider_session_ref
-  Runtime->>Store: upsert SessionRecord + append session.created
-  Runtime-->>HTTP: SessionRecord
-  HTTP-->>Client: JSON
-  Runtime-->>SSE: runtime event
-
-  Client->>HTTP: POST /v1/sessions/:id/turns
-  HTTP->>Runtime: send_turn(input)
-  Runtime->>Store: upsert TurnRecord
-  Runtime->>Provider: send_turn(provider request)
-  Provider-->>Runtime: ProviderTurnAck
-  Runtime->>Store: append turn.started
-  Runtime-->>HTTP: SendTurnAccepted
-  Runtime-->>SSE: turn/event updates
+  UI->>HTTP: POST /v2/agents/:id/turns
+  HTTP->>DB: Commit logical turn + input/provenance/policy
+  HTTP->>P: Dispatch structured input after admission
+  P-->>HTTP: Native turn mapping/events/approval/terminal outcome
+  HTTP->>DB: Commit observations, approval and terminal state
+  HTTP-->>UI: Accepted turn ID (not completion)
+  DB-->>SSE: Committed event notifications
+  SSE-->>UI: Replay then live events
 ```
 
-Terminal turn state is applied centrally. Providers report `completed`, `failed`, or `interrupted`; the runtime updates turn/session records and emits durable events.
+The public logical turn is runtime-owned; provider-native turn IDs are correlated separately. User-input snapshots preserve text, durable images and optional skill invocation. Model messages, onboarding, process completion, hooks and lifecycle notices are distinct **automation/transport provenance**, not human user text.
 
-## Event model
+Provider-native approval requests and decisions are persisted against an admitted turn. A runtime pre-dispatch approval gate is distinct. Known-not-dispatched input can be retried; ambiguous native dispatch cannot.
 
-Events are persisted as `RuntimeEventRecord` and scoped to one of:
+## Provider differences are capability-gated
 
-- `session`
-- `team`
-- `process`
-- `worktree`
-- `system`
+Codex uses a persistent app-server with structured text/image/skill inputs, native dynamic tools and current provider session identity. Claude uses its bridge with exact current recreation/permission/setting-source policy, scoped MCP and provider observations. ACP launches a configured external agent over stdio and negotiates optional lifecycle/input/model behavior. ACP may legitimately manage its own model catalog, skills and private system harness.
 
-Each event has:
+Common runtime identity, turns, approvals, process and message semantics do **not** imply every adapter supports image input, native skills, workspace rebinding, manual compaction or hard-fork/edit-and-rerun. Operator `/v2/capabilities` and provider discovery report what is supported, unavailable or agent-managed.
 
-- global row ID
-- scoped sequence number
-- event kind
-- criticality (`critical` or `droppable`)
-- payload
-- optional provider/provider sequence
-- optional session/team/turn references
+## Three model GG tools and messaging authority
 
-SSE streams are replay-first. Stream handlers subscribe before replay handoff for session/process streams to reduce lost events during reconnect windows.
+When enabled, the model-facing contract is exactly `gg_team`, `gg_message` and `gg_process`. Codex receives their native dynamic-tool definitions. Claude/ACP receive a per-agent MCP sidecar, which calls the `/v2/mcp` gateway using a **runtime-issued agent-scoped Bearer**, distinct from operator credentials. A trusted invocation header identifies one tool request; the model cannot choose or forge its own caller/workspace/sender in JSON.
 
-Cursor behavior:
+`gg_message direct` routes to active agents across workspaces. `broadcast` snapshots recipients only from the authenticated sender's current workspace. Durable agent-first messages own per-recipient delivery rows; the provider receives compact `<agent_msg>` context rather than legacy team bookkeeping. Workspace membership and agent title/role notices use the same durable automation-input layer.
 
-- `after_seq` query param takes precedence.
-- otherwise `Last-Event-ID` is used when present.
-- invalid `Last-Event-ID` returns `400`.
-- replay page limits clamp to protect the server.
-- keepalive pings are sent every 10 seconds.
+`gg_process run` admits managed work before host spawn; completed processes **push** one owner-model completion input. Scheduler limits, process identities, authoritative log files and safe restart classification are separate from bounded live previews.
 
-## Startup recovery
+## Worktrees and hot projections
 
-Startup recovery is intentionally part of the runtime, not an operator script.
+Managed worktree identity is tied to the workspace's canonical repository root/common Git directory. Git creation, claims, eligibility and cleanup have durable operation safeguards. Reassigning an existing agent requires a **provider-proven effective cwd/rebind**; changing the SQLite cwd alone cannot finalize it.
 
-At boot, the session manager hydrates SQLite state and reconciles:
+High-frequency roster, worktree, context, process, operation and message list APIs use bounded/index-backed projections where implemented. They remain derived from authoritative records, never a second write authority. Context percentages are tied to the current provider attachment and hidden if stale.
 
-- sessions that were active before restart
-- active turns
-- waiting approvals
-- provider resume status
-- stale active turn pointers
-- deferred team deliveries
-- previously running process records
+## Event journal and streaming
 
-Provider health is recorded in the recovery summary. Sessions can be marked failed when provider resume fails or when required provider refs are missing. This is better than silently presenting stale active work to clients.
+The durable event journal includes `session` (public agent), `workspace`, legacy `team`, `process`, `worktree` and `system` scopes. A row has a global journal ID and a per-scope sequence. Operator `GET /v2/events` is a bounded, redacted **history list**; `GET /v2/events/{event_id}` is full detail. Operator global/workspace/agent/process SSE streams expose `after_seq` and `Last-Event-ID` cursor replay. Agent streams use the canonical `session` scope.
 
-## Providers
+Streams **subscribe to committed SQLite notifications before replay**, catch up with indexed journal reads and do not idle-poll the database every 250 ms. A lagged notification is a wakeup to replay from the last delivered durable cursor, not an alternate event source. The notification bus is in-process, not cross-host replication. See [Events and recovery](/docs/events-and-recovery) for cursor semantics and retained journal limits.
 
-Providers are adapters behind one contract.
+## API, docs and release boundary
 
-```mermaid
-flowchart TD
-  Runtime[RuntimeSessionManager]
-  Trait[RuntimeProvider trait]
-  Codex[CodexProvider]
-  Claude[ClaudeProvider]
-  ACP[AcpProvider]
+Operator `/v2` requires one runtime Bearer header and produces stable error/request IDs. Model `/v2/mcp` uses a distinct per-agent scoped credential; `/v1` operator routes remain transitional. Public `/health` and `/openapi.yaml` require no token.
 
-  Runtime --> Trait
-  Trait --> Codex
-  Trait --> Claude
-  Trait --> ACP
-```
+`crates/runtime-server/src/http/route_table.rs` is the **same declarative route manifest** used by Axum and the OpenAPI operation catalog. Real Rust/serde `JsonSchema` derives supply typed `/v2` bodies, enums, nullability, query bounds, headers and auth metadata. The dynamic MCP gateway result values remain intentionally open-ended. `make api-docs-refresh/status/check` enforces the checked-in OpenAPI/docs relationship.
 
-The runtime currently supports:
-
-- Codex: host-machine CLI/auth, staged provider home, Codex model catalog.
-- Claude: bridge sidecar, host or runtime-managed auth, Claude model catalog, GG MCP injection.
-- ACP: configured external stdio agent, agent-managed auth, session-scoped model behavior.
-
-Provider-specific differences should stay inside provider crates unless they are intentional runtime contract changes.
-
-## Team communication
-
-Team comms turn multi-agent coordination into runtime state rather than prompt theater.
-
-Core concepts:
-
-- teams have a lead agent and members
-- messages can be direct or broadcast
-- deliveries are explicit records
-- delivery policy controls interruption/defer behavior
-- messages can be retried or cancelled
-- snapshots combine team, messages, delivery map, and cursors
-- team events are replayable and streamable
-
-This makes coordination auditable. Clients can render the state without inventing hidden delivery rules.
-
-## Worktrees
-
-The worktree service manages git worktree lifecycle for sessions and spawned teammates.
-
-It records:
-
-- source repo root
-- managed worktree root/path
-- branch name
-- worktree name
-- unified workspace path
-- deletion policy
-- claims by session
-
-Claims are separate from creation. Cleanup respects active claims and deletion policy. Team member removal performs best-effort worktree release/cleanup while preserving the membership removal outcome.
-
-## Processes
-
-The process manager provides runtime-owned background process execution:
-
-- command string execution
-- optional cwd and timeout
-- concurrency limiting
-- stdout/stderr log files
-- sampled output events
-- authoritative log reads
-- process status and kill APIs
-- startup recovery that marks pre-restart running records failed
-
-Process tools exposed through MCP still call this same runtime process manager, so host process work remains durable and inspectable.
-
-## Sidecars
-
-Sidecars are integration boundaries, not separate sources of truth.
-
-- Claude bridge isolates Claude SDK/CLI behavior from the Rust server.
-- GG MCP server exposes tools to providers, then calls back into the runtime gateway.
-- ACP does not ship a runtime-owned sidecar; the configured ACP command is launched directly over stdio.
-
-For details, see [MCP and Sidecars](/docs/mcp-and-sidecars).
-
-## API server
-
-`crates/runtime-server/src/http/` exposes:
-
-- public health/OpenAPI routes
-- protected `/v1` routes
-- bearer auth middleware
-- provider/model/auth endpoints
-- sessions, turns, approvals
-- global/session/team/process event replay and streams
-- teams and deliveries
-- processes and logs
-- worktrees
-- diagnostics
-- MCP gateway
-
-OpenAPI route/method discovery uses the server router in
-`crates/runtime-server/src/openapi.rs`. Operator workspace, operation,
-message/delivery, provider discovery and error schemas are derived from the actual Rust/serde
-DTOs through `openapi_contracts.rs`; remaining endpoint JSON shapes are still
-broad and should be checked against their handler contracts.
-
-## Deployment boundary
-
-The deployable product boundary is the release bundle plus durable state root:
+Replaceable installed assets include:
 
 ```text
-release bundle, replaceable:
-  bin/gg-runtime-server
-  sidecars/claude-bridge/claude-bridge
-  sidecars/gg-mcp-server/gg-mcp-server
-  deploy/systemd/*
-
-durable state, not replaceable:
-  runtime-server.toml
-  runtime.env
-  data.root_dir
-  generated token file or configured token secret
+bin/gg-runtime-server
+sidecars/claude-bridge/claude-bridge
+sidecars/gg-mcp-server/gg-mcp-server
+openapi.yaml
+contracts/runtime-contracts.json
+contracts/gooselake-harness-v1.md
+contracts/codex-model-policy.json
 ```
 
-That split enables staged upgrades and rollback without moving SQLite state, logs, provider directories, or managed worktrees.
+SQLite state, configured secrets, provider homes, process logs and managed Git worktrees are **durable host state**, not bundle contents. Release verification compares packaged contract assets with the actual embedded runtime contract, and isolated install/staged upgrade validation rejects corrupted candidates without overwriting the valid installation. These offline checks do not claim authenticated provider or device acceptance.
+
+For executable examples, see [Setup](/docs/setup), [API guide](/docs/api), [Providers](/docs/providers), and [Install](/docs/install).

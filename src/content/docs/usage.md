@@ -1,96 +1,56 @@
 ---
 title: "Usage model"
-description: "Learn how clients, operators, scripts, and provider sessions interact with the runtime during daily use."
+description: "Operate the workspace-first runtime through durable HTTP operations, scoped model tools, and replayable events."
 order: 20
 category: "Client Builders"
-summary: "A practical view of how consumers talk to the runtime and what the runtime owns."
+summary: "How thin clients register workspaces, manage agents, handle accepted work, and recover after reconnect."
 ---
 
-Gooselake usage has two halves:
+Gooselake has two complementary channels: **HTTP operations** admit intent, and **durable records/events** tell a client what really happened. A successful request is not proof that a native provider effect or queued message delivery has finished.
 
-- clients send commands over HTTP
-- clients learn what happened through records and replayable events
+## Canonical workspace workflow
 
-That split is the core product shape. HTTP is the steering wheel. Events are the dashboard and black-box recorder.
+1. Register an existing canonical directory with `POST /v2/workspaces`. Repeating the same root converges on one workspace ID.
+2. Create agents through `POST /v2/workspaces/{workspace_id}/agents`. Each agent is automatically on that workspace's team roster, with a stable `sess_*` ID and friendly alias; there is no manual join.
+3. Check the new agent's mandatory onboarding via `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding`. Normal user turns cannot bypass an onboarding admission fence.
+4. Send an ordered user input array via `POST /v2/agents/{agent_id}/turns` after onboarding. Track its runtime-owned logical turn ID, not the provider's native turn reference.
+5. Rebuild status from GET/history pages, then follow `/v2/events/stream` or workspace/agent/process event streams; preserve the returned cursor across reconnects.
 
-## Thin clients
+For concrete `curl` commands and credentials, begin with [Setup](/docs/setup) and the [API guide](/docs/api).
 
-A healthy Gooselake client focuses on presentation and user intent:
+## Operator HTTP versus model-facing tools
 
-- list sessions
-- create sessions
-- send turns
-- render event streams
-- show approvals
-- display process logs
-- show worktree state
-- surface team messages and deliveries
-- expose diagnostics
+An operator Bearer token can manage workspace authority: nullable lead, provider/agent lifecycle, messages/deliveries, process history, worktree inventory, revisioned policy and manual-review recovery. Operator commands that can outlive the response return an operation coordinate; inspect `GET /v2/operations/{operation_id}` before retrying an uncertain native effect.
 
-The runtime should own the hard state: active turns, provider refs, event cursors, delivery state, process status, and cleanup policy.
+An agent's model sees only the enabled `gg_team`, `gg_message`, `gg_process` control plane. The trusted runtime binds its identity; model JSON cannot supply `sender_agent_id`, caller token, workspace or team authority. Direct messages can cross workspaces; broadcasts cannot. Process completions are injected automatically, so model-side process polling is unnecessary.
 
-## HTTP for commands, SSE for flow
+Claude/ACP reach these tools through per-agent scoped GG MCP; Codex uses native app-server dynamic-tool calls. `/v2/mcp/*` credentials and operator `/v2/*` tokens are **not interchangeable**.
 
-Commands are ordinary HTTP requests:
+## Design for asynchronous work
 
-```bash
-curl -X POST "$BASE_URL/v1/sessions"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{"provider":"codex","model":"gpt-6-astra"}'
-```
+A native-effect mutation can be `requested`, `in_progress`, `completed` or in an explicit reconciliation state. A retry with the same valid `Idempotency-Key` and normalized body returns the original receipt; a changed request conflicts. A lost response **after** an uncertain provider dispatch must not be treated like a harmless network retry. Check operation/effect evidence and follow the documented manual-review route.
 
-Flow comes from events:
+Provider-originated approvals attach to admitted turns, separately from optional runtime pre-dispatch gates. Treat approvals, onboarding, messages, process completions and compaction as durable state with distinct input provenance.
 
-```bash
-curl -N "$BASE_URL/v1/events/stream" "${AUTH[@]}"
-```
+## Build a thin client
 
-A client should not assume a `POST` response is the final story. It is usually the start of a durable workflow.
+A well-behaved client:
 
-## Provider readiness before product work
+- Keeps workspace IDs, opaque agent IDs, operation IDs and event cursors; does **not** persist provider-native session refs as its own authority.
+- Lists and paginates canonical `/v2` records; respects `X-Next-Cursor` for keyset list responses and JSON `next_cursor` for the message-list response.
+- Displays messages **with per-recipient delivery state** and separate retry/cancel results; never assumes “message created” means “recipient saw it.”
+- Shows provider-supported capabilities from `GET /v2/capabilities` rather than assuming every provider has native image/skill input, model discovery, edit-rerun, compaction or rebind.
+- Reads authoritative process log files for complete stdout/stderr; streaming previews can be bounded.
+- Exposes recovery/manual-review states instead of silently replaying dangerous external work.
 
-Before creating product UI around a provider, check:
+`GET /v2/workspaces/{workspace_id}/agents` and `gg_team status` have bounded results; missing provider-bound context observations are `null`, not a guess. Worktree reassignment completes only with provider evidence of the effective cwd.
 
-```bash
-curl "$BASE_URL/v1/providers" "${AUTH[@]}"
-curl "$BASE_URL/v1/diagnostics/providers" "${AUTH[@]}"
-```
+## Reconnect and legacy compatibility
 
-Then check provider-specific auth status when needed:
+SSE uses `after_seq` or `Last-Event-ID` to replay from the durable journal before live events. Global stream cursors are journal row IDs; scoped streams use per-resource sequence. Streams are **not** keyset list pages. In-process commit wakeups do not by themselves promise cross-process replication.
 
-```bash
-curl "$BASE_URL/v1/providers/codex/auth/status" "${AUTH[@]}"
-curl "$BASE_URL/v1/providers/claude/auth/status" "${AUTH[@]}"
-curl "$BASE_URL/v1/providers/acp/auth/status" "${AUTH[@]}"
-```
+The historical `/v1/sessions`, `/v1/teams`, and related tools are operator-facing compatibility surfaces during migration; new clients should not build a second independent team authority around them. Legacy unresolved sessions stay explicit until mapped/archived.
 
-## The frontend question
+**Design test:** if your UI disappears, could a second client reconstruct what happened from runtime records and cursor replay? If not, keep less authoritative state in the UI.
 
-Ask this for every feature:
-
-> If the UI disappears right now, can the runtime still explain what happened?
-
-If the answer is no, move more responsibility into runtime records/events or fetch more state from the runtime.
-
-## Good usage
-
-- Create a session, then store only the runtime session ID in the client.
-- Send a turn, then follow events until terminal state.
-- Replay events after reconnect before opening a live stream.
-- Show pending approvals as durable runtime objects.
-- Treat team deliveries as separate from messages.
-- Read process logs for exact output.
-- Inspect diagnostics before retrying failed operations.
-
-## Bad usage
-
-- Store provider-native session references in client state.
-- Treat a turn request as completed just because the HTTP request returned.
-- Hide runtime errors behind generic toast messages.
-- Assume process output events contain full logs.
-- Delete worktrees without checking active claims.
-- Build one-off provider behavior into clients instead of using the provider abstraction.
-
-## Client examples
-
-A shell script, desktop UI, web dashboard, and future first-party CLI should all use the same runtime contract. That is the point of the control-plane boundary.
-
-For design patterns, see [Client design guide](/docs/client-design). For route details, see [API guide](/docs/api) and [Endpoint catalog](/docs/endpoint-catalog).
+See [Client design](/docs/client-design), [Teams](/docs/teams), [Events and recovery](/docs/events-and-recovery), and [Security](/docs/security).

@@ -8,6 +8,13 @@ summary: "Failure playbooks for the runtime's most common sharp edges."
 
 When Gooselake feels confusing, start with the runtime's own explanation before guessing. Most important state is inspectable through health, diagnostics, records, events, and logs.
 
+**New work is workspace-first `/v2`.** The `/v1/sessions`,
+`/v1/teams`, `/v1/worktrees` and `/v1/processes` instructions below
+remain valid for legacy operator clients and low-level controls, but
+new agents are owned by a registered workspace and join its roster
+automatically. Start with `GET /v2/capabilities` and
+`GET /v2/workspaces` before debugging independent legacy teams.
+
 ## Baseline commands
 
 ```bash
@@ -33,6 +40,57 @@ Check:
 - are you accidentally calling `/v1/**` through a proxy that strips auth headers?
 
 Public `/health` working only proves the process is alive. It does not prove protected auth is correct.
+
+The operator routes (`/v1/**` and operator `/v2/**`) require exactly
+one valid operator Bearer header. Duplicate `Authorization` headers
+return 401 even if one is correct. The `/v2/mcp/**` gateway is
+**agent-scoped**, not operator-authenticated: a model's Claude/ACP
+sidecar uses a per-agent credential and trusted invocation header.
+Codex uses trusted native tool-call identity. Do not paste the
+operator token into a model MCP sidecar to “fix” a 401.
+
+## `409 onboarding_pending` on the first agent turn
+
+Creating `POST /v2/workspaces/{workspace_id}/agents` commits mandatory
+system onboarding with the new agent's workspace/alias and lead or
+leadless state. The creation receipt means the notice is queued,
+**not that it has reached the provider**. Inspect
+`GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding`.
+The state may be `pending`, `injecting`, `delivered`,
+`manual_review` or `cancelled`.
+
+Do not send normal user turns, duplicate onboarding, or other input
+to bypass this fence. Safe pending notices resume after restart;
+ambiguous provider dispatch requires review rather than replay.
+
+## `409 outcome_unresolved` or `manual_review`
+
+This signals an external provider/Git/process effect that may have
+occurred but whose authoritative result has not been observed.
+Read `GET /v2/operations/{operation_id}`, the relevant workspace
+agent/rebind/process/worktree record, and the frozen native identity
+and effect claims. Do **not** retry with a fresh idempotency key or
+edit the database to force completion.
+
+Each native-effect family has a separate evidence-backed resolution
+endpoint; unsupported guessed success must remain unresolved.
+For a revisioned write, `412 revision_precondition_failed` means
+the optional `If-Match` did not match the current strong ETag.
+Re-read the actual resource revision before proposing a new change.
+
+## Agent message created but recipient has not seen it
+
+`POST /v2/messages` records the agent-first message, not proof of
+delivery. Inspect `GET /v2/messages/{message_id}/deliveries` for
+each recipient's authoritative status; a busy recipient may defer
+and mandatory onboarding takes priority. Use the guarded
+`POST /v2/deliveries/{delivery_id}/retry` or
+`POST /v2/messages/{message_id}/cancel` only when eligible. Direct
+messages may cross workspaces, but broadcasts are snapshots of the
+sender's **own** active workspace members.
+
+The `/v1/teams/*` debugging section below applies to legacy team
+rows, not new workspace messages.
 
 ## Provider not registered
 
@@ -99,7 +157,8 @@ Remember:
 
 ## Team message created but not delivered
 
-A message and a delivery are different. Inspect deliveries:
+For legacy `/v1/teams` clients, a message and a delivery are
+different. Inspect their legacy delivery records:
 
 ```bash
 curl "$BASE_URL/v1/teams/$TEAM_ID/deliveries" "${AUTH[@]}"

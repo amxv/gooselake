@@ -254,8 +254,12 @@ single-event lookup. Hook approval accepts only revision and fingerprinted
 selections, never shell commands; effective hook introspection and detailed
 effect inspection are operator-only, not model-facing.
 
-**Other** endpoints still use broad `JsonObject` request/response placeholders
-until their real Rust DTOs are connected.
+The two deliberately extensible scoped MCP response bodies (`GET
+/v2/mcp/capabilities` and `POST /v2/mcp/invoke`) still use broad
+`JsonObject` schemas because their actual handlers return dynamic
+`serde_json::Value`. All other canonical `/v2` request/response paths
+are wired to their Rust/serde-derived DTO schemas; do not invent static
+tool-result payload DTOs for the model gateway.
 The operator process list schema contains only its redacted eight-field
 summary, while the process detail schema intentionally includes diagnostic
 fields. A typed schema describes serde

@@ -90,9 +90,26 @@ Run the service as the least-privileged user that still has the project access y
 
 ## MCP caller identity
 
-The MCP gateway requires a caller session identity. A provider-originated tool call should be attributable to an active runtime session.
+The **model-facing `/v2/mcp` gateway** does not accept a body-supplied
+caller identity. Its runtime-issued scoped Bearer token binds one active
+canonical agent and its allowed GG tools; the gateway derives the
+workspace and caller from that credential. Model-authored JSON may only
+select the advertised `gg_team`, `gg_message` or `gg_process` mode and
+its allowed fields, never `sender_agent_id`, `workspace_id`, `team_id`
+or a custom principal. Archived agents, closed native sessions and
+retired workspaces are not routable.
 
-This matters because tool calls are not anonymous. Runtime services can enforce ownership, such as process access tied to a session.
+For MCP-backed providers the sidecar forwards an independently minted
+`x-gg-tool-invocation-id` header; native Codex tooling binds the provider
+tool-call identity inside the trusted runtime. Mutating requests without
+one valid trusted invocation ID fail before admission. Duplicate headers
+are rejected rather than choosing an arbitrary value. Exact invocation
+identity enables idempotent result replay; an ambiguous effect returns
+`outcome_unresolved`, not an instruction to retry blindly.
+
+`/v1/mcp` still exists for operator-authenticated legacy compatibility.
+The operator token cannot impersonate an agent at `/v2/mcp`, and an
+agent-scoped MCP token cannot authorize workspace administration.
 
 ## Worktree safety
 

@@ -2,12 +2,32 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use runtime_core::{ManagedWorktreeRecord, ManagedWorktreeStatusProjection, RuntimeError};
-use rusqlite::{params_from_iter, TransactionBehavior};
+use rusqlite::{params_from_iter, OptionalExtension, Row, TransactionBehavior};
 
 use crate::db::{collect_rows, db_error, open_connection};
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
+    /// Point lookup for native worktree route and post-provider evidence
+    /// validation. Missing rows remain distinct from storage failure.
+    pub fn get_managed_worktree(
+        &self,
+        worktree_id: &str,
+    ) -> Result<Option<ManagedWorktreeRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        connection
+            .query_row(
+                "SELECT id, repo_root, worktree_root, worktree_cwd, branch_name,
+                        worktree_name, unified_workspace_path, deletion_policy,
+                        created_by_session_id, created_by_operation_id, created_at, updated_at
+                 FROM managed_worktrees WHERE id=?1",
+                [worktree_id],
+                worktree_from_row,
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading managed worktree by ID", error))
+    }
+
     /// Read only worktrees belonging to this canonical Git repository. Legacy
     /// records may contain a symlink/`..` spelling of repo_root, so enumerate
     /// indexed *distinct roots* rather than assuming old paths were canonical.
@@ -85,23 +105,7 @@ impl SqliteRuntimeRepository {
                 .map_err(|error| db_error("failed preparing scoped worktree status", error))?;
             let rows = statement
                 .query_map(params_from_iter(chunk), |row| {
-                    Ok((
-                        ManagedWorktreeRecord {
-                            id: row.get(0)?,
-                            repo_root: row.get(1)?,
-                            worktree_root: row.get(2)?,
-                            worktree_cwd: row.get(3)?,
-                            branch_name: row.get(4)?,
-                            worktree_name: row.get(5)?,
-                            unified_workspace_path: row.get(6)?,
-                            deletion_policy: row.get(7)?,
-                            created_by_session_id: row.get(8)?,
-                            created_by_operation_id: row.get(9)?,
-                            created_at: row.get(10)?,
-                            updated_at: row.get(11)?,
-                        },
-                        row.get::<_, i64>(12)?,
-                    ))
+                    Ok((worktree_from_row(row)?, row.get::<_, i64>(12)?))
                 })
                 .map_err(|error| db_error("failed querying scoped worktree status", error))?;
             for (worktree, revision) in collect_rows(rows)? {
@@ -127,4 +131,21 @@ impl SqliteRuntimeRepository {
         });
         Ok(output)
     }
+}
+
+fn worktree_from_row(row: &Row<'_>) -> rusqlite::Result<ManagedWorktreeRecord> {
+    Ok(ManagedWorktreeRecord {
+        id: row.get(0)?,
+        repo_root: row.get(1)?,
+        worktree_root: row.get(2)?,
+        worktree_cwd: row.get(3)?,
+        branch_name: row.get(4)?,
+        worktree_name: row.get(5)?,
+        unified_workspace_path: row.get(6)?,
+        deletion_policy: row.get(7)?,
+        created_by_session_id: row.get(8)?,
+        created_by_operation_id: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
 }

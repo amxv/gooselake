@@ -73,6 +73,18 @@ fn indexed_worktree_status_projects_only_target_repo_and_live_claims_after_resta
     updated.updated_at += 1;
     repository.upsert_managed_worktree(&updated).unwrap();
 
+    assert_eq!(
+        repository.get_managed_worktree("wt_a").unwrap(),
+        Some(updated.clone()),
+        "native route uses the current authoritative worktree record"
+    );
+    assert_eq!(
+        repository.get_managed_worktree("wt_alias").unwrap(),
+        Some(alias.clone()),
+        "point lookup must preserve historical repository-root spelling"
+    );
+    assert_eq!(repository.get_managed_worktree("wt_missing").unwrap(), None);
+
     let projected = repository
         .list_managed_worktree_status_for_root(&root.display().to_string())
         .unwrap();
@@ -95,6 +107,11 @@ fn indexed_worktree_status_projects_only_target_repo_and_live_claims_after_resta
     assert_eq!(by_id["wt_alias"].worktree.repo_root, raw_alias);
 
     let restarted = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    assert_eq!(
+        restarted.get_managed_worktree("wt_a").unwrap(),
+        Some(updated.clone()),
+        "point lookup must recover after a new SQLite store opens"
+    );
     assert_eq!(
         restarted
             .list_managed_worktree_status_for_root(&root.display().to_string())
@@ -127,6 +144,18 @@ fn indexed_worktree_status_projects_only_target_repo_and_live_claims_after_resta
     assert!(
         worktrees.contains("SEARCH managed_worktrees USING INDEX"),
         "repository-scoped worktree search must use the repo_root index: {worktrees}"
+    );
+    let point = plan(
+        "EXPLAIN QUERY PLAN SELECT id, repo_root, worktree_root, worktree_cwd
+         FROM managed_worktrees WHERE id='wt_a'",
+    );
+    assert!(
+        point.contains("SEARCH managed_worktrees USING INDEX"),
+        "native route must use the worktree ID primary-key index: {point}"
+    );
+    assert!(
+        !point.contains("SCAN managed_worktrees"),
+        "point scan: {point}"
     );
     let claims = plan(
         "EXPLAIN QUERY PLAN SELECT c.worktree_id, c.session_id

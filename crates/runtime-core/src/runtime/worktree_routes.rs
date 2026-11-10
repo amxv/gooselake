@@ -22,10 +22,7 @@ impl RuntimeSessionManager {
         let identity = resolve_repository_identity(Path::new(&workspace.canonical_root))?;
         let record = self
             .store
-            .hydrate_runtime_state()?
-            .managed_worktrees
-            .into_iter()
-            .find(|row| row.id == worktree_id)
+            .get_managed_worktree(worktree_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("managed worktree {worktree_id}")))?;
         eligible_managed_route(&identity, &record).map_err(RuntimeError::Conflict)?;
         Ok(record.worktree_cwd)
@@ -244,13 +241,11 @@ impl RuntimeSessionManager {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
         let destination_cwd = if let Some(target) = destination_worktree_id.as_deref() {
-            let state = self.store.hydrate_runtime_state()?;
-            let record = state
-                .managed_worktrees
-                .iter()
-                .find(|record| record.id == target)
+            let record = self
+                .store
+                .get_managed_worktree(target)?
                 .ok_or_else(|| RuntimeError::NotFound(format!("managed worktree {target}")))?;
-            eligible_managed_route(&identity, record).map_err(RuntimeError::Conflict)?;
+            eligible_managed_route(&identity, &record).map_err(RuntimeError::Conflict)?;
             record.worktree_cwd.clone()
         } else {
             identity.canonical_root.clone()
@@ -375,13 +370,11 @@ impl RuntimeSessionManager {
                             evidence.canonical_provider_session_ref.as_deref() != Some(old)
                         })))
             || (destination_worktree_id.as_deref().is_some_and(|target| {
-                self.store.hydrate_runtime_state().ok().is_none_or(|state| {
-                    state
-                        .managed_worktrees
-                        .iter()
-                        .find(|row| row.id == target)
-                        .is_none_or(|row| eligible_managed_route(&identity, row).is_err())
-                })
+                self.store
+                    .get_managed_worktree(target)
+                    .ok()
+                    .flatten()
+                    .is_none_or(|row| eligible_managed_route(&identity, &row).is_err())
             }))
         {
             let _ = self.store.classify_workspace_agent_rebind(

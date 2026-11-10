@@ -35,3 +35,23 @@ macro_rules! default_worktree_status_query {
 }
 
 pub(crate) use default_worktree_status_query;
+
+// Legacy stores without a point-read projection retain the historical lookup.
+// SQLite uses the managed_worktrees primary-key index instead of hydrating
+// unrelated agents, turns, events, processes and worktrees.
+macro_rules! default_managed_worktree_lookup {
+    () => {
+        fn get_managed_worktree(
+            &self,
+            worktree_id: &str,
+        ) -> Result<Option<crate::ManagedWorktreeRecord>, crate::RuntimeError> {
+            Ok(self
+                .hydrate_runtime_state()?
+                .managed_worktrees
+                .into_iter()
+                .find(|worktree| worktree.id == worktree_id))
+        }
+    };
+}
+
+pub(crate) use default_managed_worktree_lookup;

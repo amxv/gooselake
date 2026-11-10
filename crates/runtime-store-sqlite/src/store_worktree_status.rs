@@ -9,6 +9,13 @@ macro_rules! delegate_worktree_status {
             self.repository.upsert_managed_worktree(record)
         }
 
+        fn get_managed_worktree(
+            &self,
+            worktree_id: &str,
+        ) -> Result<Option<runtime_core::ManagedWorktreeRecord>, runtime_core::RuntimeError> {
+            self.repository.get_managed_worktree(worktree_id)
+        }
+
         fn list_managed_worktree_status_for_root(
             &self,
             canonical_repo_root: &str,

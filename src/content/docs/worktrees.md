@@ -16,6 +16,8 @@ Normal agents belong to one workspace. Use `GET /v2/workspaces/{workspace_id}/wo
 
 The SQLite inventory reads only matching repository worktrees and their live claims in one database snapshot, while native Git checks still determine whether each route is actually usable. Historical aliases of the repository root remain visible; a released claim cannot block assignment, but a live claim outside the active roster can.
 
+When assigning a single managed checkout or revalidating a provider's rebinding evidence, the runtime looks up that exact persisted worktree ID rather than scanning unrelated runtime history. This indexed read is not a substitute for native Git identity verification: missing, stale or foreign-repository routes still fail closed.
+
 ```bash
 curl -X POST "$BASE_URL/v2/workspaces/$WORKSPACE_ID/worktrees" \
   "${AUTH[@]}" -H 'Content-Type: application/json' \

@@ -26,7 +26,8 @@ use runtime_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
+use tokio_stream::wrappers::ReceiverStream;
+#[cfg(test)]
 use tokio_stream::StreamExt;
 
 mod agent_controls;

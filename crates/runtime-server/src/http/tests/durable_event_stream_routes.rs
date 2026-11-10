@@ -229,3 +229,116 @@ async fn committed_event_during_replay_handoff_is_delivered_exactly_once() {
     let response = handoff.await.unwrap();
     observed_sse_ids(response, &[during_handoff.row_id]).await;
 }
+
+#[tokio::test]
+async fn process_sse_preserves_owner_visibility_and_catches_commits_during_handoff() {
+    let (router, token, temp) = build_test_router().await;
+    let owner = create_test_session(router.clone(), &token, "process-sse-owner").await;
+    let other = create_test_session(router.clone(), &token, "process-sse-other").await;
+    let start = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/processes")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({"command":"printf process-sse", "session_id":owner})
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+    let result: serde_json::Value =
+        serde_json::from_slice(&to_bytes(start.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let process_id = result["process"]["process_id"].as_str().unwrap().to_owned();
+
+    // Wait for terminal authority so no scheduler events can race the exact
+    // cursor in this deterministic post-commit/handoff test.
+    let mut completed = false;
+    for _ in 0..100 {
+        let get = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v1/processes/{process_id}?session_id={owner}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get.status(), StatusCode::OK);
+        let status: serde_json::Value =
+            serde_json::from_slice(&to_bytes(get.into_body(), usize::MAX).await.unwrap()).unwrap();
+        if matches!(
+            status["process"]["status"].as_str(),
+            Some("completed" | "failed" | "timed_out" | "killed")
+        ) {
+            completed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(completed, "local process did not settle");
+    let repository = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    let cursor = repository
+        .list_runtime_events(Some((RuntimeEventScope::Process, &process_id)), None, 1_000)
+        .unwrap()
+        .last()
+        .unwrap()
+        .seq;
+    let rejected = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v1/processes/{process_id}/events/stream?session_id={other}&after_seq={cursor}"
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+
+    let delayed_router = router.clone();
+    let delayed_token = token.clone();
+    let delayed_id = process_id.clone();
+    let delayed_owner = owner.clone();
+    let handoff = tokio::spawn(async move {
+        stream(
+            &delayed_router,
+            &delayed_token,
+            &format!(
+                "/v1/processes/{delayed_id}/events/stream?session_id={delayed_owner}&after_seq={cursor}&limit=1"
+            ),
+            Some(240),
+            None,
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    let mut event = new_event(
+        "process_sse_committed",
+        RuntimeEventScope::Process,
+        &process_id,
+    );
+    event.session_id = Some(owner);
+    let inserted = repository.append_runtime_event(&event).unwrap();
+    observed_sse_ids(handoff.await.unwrap(), &[inserted.seq]).await;
+
+    let resume = stream(
+        &router,
+        &token,
+        &format!("/v1/processes/{process_id}/events/stream?limit=1"),
+        None,
+        Some(cursor),
+    )
+    .await;
+    observed_sse_ids(resume, &[inserted.seq]).await;
+}

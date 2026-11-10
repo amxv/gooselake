@@ -54,9 +54,9 @@ A robust client reconnects like this:
 3. render the replayed backlog
 4. follow the live stream
 
-Session, global, and team streams now subscribe to **committed SQLite event notifications** before reading the first replay page. Each stream reads ordered event rows from the durable journal in bounded pages, then waits for a commit notification instead of polling SQLite every 250 ms while idle. Notifications contain no event payload or authority: a delayed, coalesced, or lagged notification triggers an indexed catch-up query from the last delivered cursor. SQLite writes that roll back never wake subscribers.
+Session, global, team, and process streams now subscribe to **committed SQLite event notifications** before reading the first replay page. Each stream reads ordered event rows from the durable journal in bounded pages, then waits for a commit notification instead of polling SQLite every 250 ms while idle. Notifications contain no event payload or authority: a delayed, coalesced, or lagged notification triggers an indexed catch-up query from the last delivered cursor. SQLite writes that roll back never wake subscribers. The process stream verifies process visibility through the process manager before accessing the scoped journal.
 
-The in-process commit notification channel is scoped to one runtime database and is not a cross-process replication bus. Clients must preserve the last received event ID and reconnect to replay after network/server failure. A journal-read error closes the SSE stream with a retryable `stream.error` event that does **not** advance the cursor. Process SSE still uses its separate live-process event bus and replay handoff; all streams retain their existing cursor contracts.
+The in-process commit notification channel is scoped to one runtime database and is not a cross-process replication bus. Clients must preserve the last received event ID and reconnect to replay after network/server failure. A journal-read error closes the SSE stream with a retryable `stream.error` event that does **not** advance the cursor. All streams retain their existing cursor contracts.
 
 ## Cursor rules
 

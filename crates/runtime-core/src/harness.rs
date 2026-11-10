@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{semantic_tool_contract_manifest, ProviderKind, RuntimeError};
@@ -5,7 +6,7 @@ use crate::{semantic_tool_contract_manifest, ProviderKind, RuntimeError};
 pub const HARNESS_VERSION: &str = "gooselake-harness-v1";
 const HARNESS_TEXT: &str = include_str!("../assets/gooselake-harness-v1.md");
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HarnessInjectionMode {
     DeveloperInstructions,
@@ -13,7 +14,7 @@ pub enum HarnessInjectionMode {
     ScopedMcpOnly,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HarnessContractMetadata {
     pub version: String,
     pub content_hash: String,

@@ -1,4 +1,5 @@
 use super::*;
+use schemars::JsonSchema;
 
 pub(super) async fn openapi_yaml() -> impl IntoResponse {
     (
@@ -71,15 +72,15 @@ pub(super) async fn list_provider_models(
     }))
 }
 
-#[derive(Debug, Serialize)]
-pub(super) struct ProviderCapabilitiesResponse {
+#[derive(Debug, Serialize, JsonSchema)]
+pub(crate) struct ProviderCapabilitiesResponse {
     provider: runtime_core::ProviderKind,
     capabilities: runtime_core::ProviderCapabilities,
     harness: runtime_core::HarnessContractMetadata,
 }
 
-#[derive(Debug, Serialize)]
-pub(super) struct RuntimeCapabilitiesResponse {
+#[derive(Debug, Serialize, JsonSchema)]
+pub(crate) struct RuntimeCapabilitiesResponse {
     runtime_version: &'static str,
     api_version: &'static str,
     harness_version: &'static str,
@@ -92,7 +93,7 @@ pub(super) struct RuntimeCapabilitiesResponse {
     providers: Vec<RuntimeProviderCapabilities>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub(super) struct RuntimeProviderCapabilities {
     metadata: runtime_core::ProviderMetadata,
     capabilities: runtime_core::ProviderCapabilities,

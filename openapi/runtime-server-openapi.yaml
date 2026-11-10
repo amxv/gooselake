@@ -35,6 +35,12 @@ components:
     AgentDeliveryRecord: {"title":"AgentDeliveryRecord","type":"object","properties":{"created_at":{"type":"integer","format":"int64"},"effective_policy":{"type":["string","null"]},"id":{"type":"string"},"injected_turn_id":{"type":["string","null"]},"injection_strategy":{"type":["string","null"]},"last_error_code":{"type":["string","null"]},"last_error_message":{"type":["string","null"]},"message_id":{"type":"string"},"provider":{"type":"string"},"recipient_agent_id":{"type":"string"},"status":{"type":"string"},"updated_at":{"type":"integer","format":"int64"}},"required":["id","message_id","recipient_agent_id","provider","status","effective_policy","injection_strategy","injected_turn_id","last_error_code","last_error_message","created_at","updated_at"]}
     AgentDeliveryRecordList: {"title":"Array_of_AgentDeliveryRecord","type":"array","items":{"type":"object","properties":{"created_at":{"type":"integer","format":"int64"},"effective_policy":{"type":["string","null"]},"id":{"type":"string"},"injected_turn_id":{"type":["string","null"]},"injection_strategy":{"type":["string","null"]},"last_error_code":{"type":["string","null"]},"last_error_message":{"type":["string","null"]},"message_id":{"type":"string"},"provider":{"type":"string"},"recipient_agent_id":{"type":"string"},"status":{"type":"string"},"updated_at":{"type":"integer","format":"int64"}},"required":["id","message_id","recipient_agent_id","provider","status","effective_policy","injection_strategy","injected_turn_id","last_error_code","last_error_message","created_at","updated_at"]}}
     OperatorErrorResponse: {"title":"OperatorErrorResponse","description":"Canonical operator error JSON; this is also the Rust-owned OpenAPI source.\nThe agent-scoped MCP gateway intentionally has a separate error contract.","type":"object","properties":{"error":{"type":"object","properties":{"code":{"type":"string"},"details":true,"message":{"type":"string"},"retryable":{"type":"boolean"}},"required":["code","message","retryable","details"]},"request_id":{"type":"string"}},"required":["error","request_id"]}
+    RuntimeCapabilitiesResponse: {"title":"RuntimeCapabilitiesResponse","type":"object","properties":{"api_version":{"type":"string"},"harness_version":{"type":"string"},"managed_processes":{"type":"boolean"},"managed_worktrees":{"type":"boolean"},"providers":{"type":"array","items":{"type":"object","properties":{"capabilities":{"type":"object","properties":{"approvals":{"type":"string","enum":["supported","agent_managed","unsupported"]},"context_limit_observation":{"type":"string","enum":["supported","agent_managed","unsupported"]},"hard_fork_edit_rerun":{"type":"string","enum":["supported","agent_managed","unsupported"]},"images":{"type":"string","enum":["supported","agent_managed","unsupported"]},"interrupt":{"type":"string","enum":["supported","agent_managed","unsupported"]},"manual_compact":{"type":"string","enum":["supported","agent_managed","unsupported"]},"model_discovery":{"type":"string","enum":["catalog","agent_managed","unsupported"]},"permission_mutation":{"type":"string","default":"unsupported","enum":["supported","agent_managed","unsupported"]},"session_preferences":{"type":"string","default":"unsupported","enum":["supported","agent_managed","unsupported"]},"session_resume":{"type":"string","enum":["supported","agent_managed","unsupported"]},"setting_sources":{"type":"string","enum":["supported","agent_managed","unsupported"]},"skill_discovery":{"type":"string","enum":["catalog","agent_managed","unsupported"]},"streaming":{"type":"string","enum":["supported","agent_managed","unsupported"]},"structured_output":{"type":"string","enum":["supported","agent_managed","unsupported"]},"tools":{"type":"string","enum":["supported","agent_managed","unsupported"]},"workspace_rebind":{"type":"string","enum":["supported","agent_managed","unsupported"]}},"required":["model_discovery","skill_discovery","session_resume","streaming","approvals","permission_mutation","session_preferences","interrupt","tools","images","structured_output","setting_sources","context_limit_observation","workspace_rebind","manual_compact","hard_fork_edit_rerun"]},"harness":{"type":"object","properties":{"content_hash":{"type":"string"},"injection_mode":{"type":"string","enum":["developer_instructions","system_prompt_append","scoped_mcp_only"]},"tool_manifest_hash":{"type":"string"},"tool_manifest_version":{"type":"string"},"version":{"type":"string"}},"required":["version","content_hash","tool_manifest_version","tool_manifest_hash","injection_mode"]},"metadata":{"type":"object","properties":{"display_name":{"type":"string"},"enabled":{"type":"boolean"},"kind":{"type":"string","enum":["codex","claude","acp"]}},"required":["kind","display_name","enabled"]}},"required":["metadata","capabilities","harness"]}},"runtime_version":{"type":"string"},"tool_contract_version":{"type":"string"},"tool_manifest_hash":{"type":"string"},"tools":{"description":"Exactly the model-visible tools enabled by current runtime policy.","type":"array","items":{"type":"string"}}},"required":["runtime_version","api_version","harness_version","tool_contract_version","tool_manifest_hash","tools","managed_processes","managed_worktrees","providers"]}
+    ProviderCapabilitiesResponse: {"title":"ProviderCapabilitiesResponse","type":"object","properties":{"capabilities":{"type":"object","properties":{"approvals":{"type":"string","enum":["supported","agent_managed","unsupported"]},"context_limit_observation":{"type":"string","enum":["supported","agent_managed","unsupported"]},"hard_fork_edit_rerun":{"type":"string","enum":["supported","agent_managed","unsupported"]},"images":{"type":"string","enum":["supported","agent_managed","unsupported"]},"interrupt":{"type":"string","enum":["supported","agent_managed","unsupported"]},"manual_compact":{"type":"string","enum":["supported","agent_managed","unsupported"]},"model_discovery":{"type":"string","enum":["catalog","agent_managed","unsupported"]},"permission_mutation":{"type":"string","default":"unsupported","enum":["supported","agent_managed","unsupported"]},"session_preferences":{"type":"string","default":"unsupported","enum":["supported","agent_managed","unsupported"]},"session_resume":{"type":"string","enum":["supported","agent_managed","unsupported"]},"setting_sources":{"type":"string","enum":["supported","agent_managed","unsupported"]},"skill_discovery":{"type":"string","enum":["catalog","agent_managed","unsupported"]},"streaming":{"type":"string","enum":["supported","agent_managed","unsupported"]},"structured_output":{"type":"string","enum":["supported","agent_managed","unsupported"]},"tools":{"type":"string","enum":["supported","agent_managed","unsupported"]},"workspace_rebind":{"type":"string","enum":["supported","agent_managed","unsupported"]}},"required":["model_discovery","skill_discovery","session_resume","streaming","approvals","permission_mutation","session_preferences","interrupt","tools","images","structured_output","setting_sources","context_limit_observation","workspace_rebind","manual_compact","hard_fork_edit_rerun"]},"harness":{"type":"object","properties":{"content_hash":{"type":"string"},"injection_mode":{"type":"string","enum":["developer_instructions","system_prompt_append","scoped_mcp_only"]},"tool_manifest_hash":{"type":"string"},"tool_manifest_version":{"type":"string"},"version":{"type":"string"}},"required":["version","content_hash","tool_manifest_version","tool_manifest_hash","injection_mode"]},"provider":{"type":"string","enum":["codex","claude","acp"]}},"required":["provider","capabilities","harness"]}
+    ProviderModelDiscoveryRequest: {"title":"ProviderModelDiscoveryRequest","type":"object","properties":{"cwd":{"type":["string","null"]},"force_refresh":{"type":"boolean","default":false},"setting_sources_intent":{"anyOf":[{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"standard"}},"additionalProperties":false,"required":["kind"]},{"type":"object","properties":{"kind":{"type":"string","const":"explicit"},"sources":{"type":"array","items":{"type":"string","enum":["user","project","local"]}}},"additionalProperties":false,"required":["kind","sources"]},{"type":"object","properties":{"kind":{"type":"string","const":"isolated"}},"additionalProperties":false,"required":["kind"]}]},{"type":"array","items":{"type":"string"}}],"default":{"kind":"standard"}},"startup_mode":{"type":"string","default":"cold","enum":["cold","start_runtime"]}},"additionalProperties":false}
+    ProviderModelDiscoveryResponse: {"title":"ProviderModelDiscoveryResponse","type":"object","properties":{"mode":{"type":"string","enum":["catalog","agent_managed","unsupported"]},"models":{"type":"array","items":{"type":"object","properties":{"capabilities":{"type":"object","properties":{"supported_thinking_efforts":{"type":"array","items":{"type":"string","enum":["low","medium","high","xhigh","max"]}},"supports_reasoning":{"type":"boolean","default":false},"supports_thinking_effort":{"type":"boolean","default":false},"supports_tool_calling":{"type":"boolean","default":false},"supports_vision":{"type":"boolean","default":false}},"required":["supports_reasoning","supports_thinking_effort","supports_tool_calling","supports_vision"]},"display_label":{"type":"string"},"family":{"type":["string","null"]},"model_key":{"type":"string"},"provider":{"type":"string","enum":["codex","claude","acp"]},"provider_name":{"type":["string","null"]}},"required":["provider","model_key","display_label","capabilities"]}},"provider":{"type":"string","enum":["codex","claude","acp"]}},"required":["provider","mode","models"]}
+    ProviderSkillDiscoveryRequest: {"title":"ProviderSkillDiscoveryRequest","type":"object","properties":{"cwd":{"type":["string","null"]},"force_refresh":{"type":"boolean","default":false},"setting_sources_intent":{"anyOf":[{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"standard"}},"additionalProperties":false,"required":["kind"]},{"type":"object","properties":{"kind":{"type":"string","const":"explicit"},"sources":{"type":"array","items":{"type":"string","enum":["user","project","local"]}}},"additionalProperties":false,"required":["kind","sources"]},{"type":"object","properties":{"kind":{"type":"string","const":"isolated"}},"additionalProperties":false,"required":["kind"]}]},{"type":"array","items":{"type":"string"}}],"default":{"kind":"standard"}}},"additionalProperties":false}
+    ProviderSkillDiscoveryResponse: {"title":"ProviderSkillDiscoveryResponse","type":"object","properties":{"mode":{"type":"string","enum":["catalog","agent_managed","unsupported"]},"provider":{"type":"string","enum":["codex","claude","acp"]},"skills":{"type":"array","items":{"type":"object","properties":{"argument_hint":{"type":["string","null"]},"description":{"type":"string"},"display_name":{"type":["string","null"]},"name":{"type":"string"},"path":{"type":["string","null"]},"provider":{"type":"string","enum":["codex","claude","acp"]}},"required":["provider","name","description"]}}},"required":["provider","mode","skills"]}
 paths:
   /health:
     get:
@@ -1634,7 +1640,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/RuntimeCapabilitiesResponse"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2186,7 +2192,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/ProviderCapabilitiesResponse"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2206,13 +2212,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderModelDiscoveryRequest"
       responses:
         "200":
           description: JSON response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/ProviderModelDiscoveryResponse"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2232,13 +2244,19 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderSkillDiscoveryRequest"
       responses:
         "200":
           description: JSON response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/ProviderSkillDiscoveryResponse"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:

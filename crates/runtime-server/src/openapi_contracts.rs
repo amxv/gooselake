@@ -1,10 +1,14 @@
-use crate::http::{AgentMessageCreateInput, OperatorErrorResponse};
+use crate::http::{
+    AgentMessageCreateInput, OperatorErrorResponse, ProviderCapabilitiesResponse,
+    RuntimeCapabilitiesResponse,
+};
 use runtime_core::{
     AgentDeliveryRecord, AgentMessageAck, AgentMessageListResponse, OperationDetails,
-    OperationSummary, WorkspaceInterruptResponse, WorkspaceLeadTransitionRequest,
-    WorkspaceLeadTransitionResponse, WorkspaceRecord, WorkspaceRegisterRequest,
-    WorkspaceRegisterResponse, WorkspaceRetirementPreflight, WorkspaceRetirementRequest,
-    WorkspaceRetirementResponse,
+    OperationSummary, ProviderModelDiscoveryRequest, ProviderModelDiscoveryResponse,
+    ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse, WorkspaceInterruptResponse,
+    WorkspaceLeadTransitionRequest, WorkspaceLeadTransitionResponse, WorkspaceRecord,
+    WorkspaceRegisterRequest, WorkspaceRegisterResponse, WorkspaceRetirementPreflight,
+    WorkspaceRetirementRequest, WorkspaceRetirementResponse,
 };
 use schemars::generate::{Contract, SchemaSettings};
 use schemars::JsonSchema;
@@ -77,6 +81,36 @@ pub(super) fn append_schema_components(out: &mut String) {
         Contract::Serialize,
     );
     append_component::<OperatorErrorResponse>(out, "OperatorErrorResponse", Contract::Serialize);
+    append_component::<RuntimeCapabilitiesResponse>(
+        out,
+        "RuntimeCapabilitiesResponse",
+        Contract::Serialize,
+    );
+    append_component::<ProviderCapabilitiesResponse>(
+        out,
+        "ProviderCapabilitiesResponse",
+        Contract::Serialize,
+    );
+    append_component::<ProviderModelDiscoveryRequest>(
+        out,
+        "ProviderModelDiscoveryRequest",
+        Contract::Deserialize,
+    );
+    append_component::<ProviderModelDiscoveryResponse>(
+        out,
+        "ProviderModelDiscoveryResponse",
+        Contract::Serialize,
+    );
+    append_component::<ProviderSkillDiscoveryRequest>(
+        out,
+        "ProviderSkillDiscoveryRequest",
+        Contract::Deserialize,
+    );
+    append_component::<ProviderSkillDiscoveryResponse>(
+        out,
+        "ProviderSkillDiscoveryResponse",
+        Contract::Serialize,
+    );
 }
 
 fn append_component<T: JsonSchema>(out: &mut String, name: &str, contract: Contract) {
@@ -98,6 +132,12 @@ pub(super) fn request_schema_name(path: &str, method: HttpMethod) -> Option<&'st
             Some("WorkspaceLeadTransitionRequest")
         }
         (HttpMethod::Post, "/v2/messages") => Some("AgentMessageCreateInput"),
+        (HttpMethod::Post, "/v2/providers/{provider}/models/discover") => {
+            Some("ProviderModelDiscoveryRequest")
+        }
+        (HttpMethod::Post, "/v2/providers/{provider}/skills/discover") => {
+            Some("ProviderSkillDiscoveryRequest")
+        }
         _ => None,
     }
 }
@@ -129,6 +169,16 @@ pub(super) fn response_schema_name(path: &str, method: HttpMethod) -> Option<&'s
         (HttpMethod::Get, "/v2/messages/{message_id}/deliveries")
         | (HttpMethod::Post, "/v2/messages/{message_id}/cancel") => Some("AgentDeliveryRecordList"),
         (HttpMethod::Post, "/v2/deliveries/{delivery_id}/retry") => Some("AgentDeliveryRecord"),
+        (HttpMethod::Get, "/v2/capabilities") => Some("RuntimeCapabilitiesResponse"),
+        (HttpMethod::Get, "/v2/providers/{provider}/capabilities") => {
+            Some("ProviderCapabilitiesResponse")
+        }
+        (HttpMethod::Post, "/v2/providers/{provider}/models/discover") => {
+            Some("ProviderModelDiscoveryResponse")
+        }
+        (HttpMethod::Post, "/v2/providers/{provider}/skills/discover") => {
+            Some("ProviderSkillDiscoveryResponse")
+        }
         _ => None,
     }
 }
@@ -333,6 +383,102 @@ mod tests {
         assert!(retired.contains("        \"202\":\n"));
         assert!(retired.contains("        \"412\":\n"));
         assert!(!retired.contains("#/components/schemas/JsonObject"));
+    }
+
+    #[test]
+    fn provider_discovery_schema_tracks_real_wire_compatibility_and_capabilities() {
+        let model_request: serde_json::Value =
+            serde_json::from_str(&schema_json::<ProviderModelDiscoveryRequest>(
+                Contract::Deserialize,
+            ))
+            .unwrap();
+        assert_eq!(model_request["additionalProperties"], false);
+        assert!(model_request.get("required").is_none());
+        assert_eq!(
+            model_request["properties"]["startup_mode"]["enum"],
+            serde_json::json!(["cold", "start_runtime"])
+        );
+        let wire = &model_request["properties"]["setting_sources_intent"];
+        // The custom Deserialize type recognizes both tagged canonical source
+        // objects and legacy arrays. A schema built only from its serializer
+        // would silently exclude the backward-compatible array form.
+        for token in [
+            "standard", "isolated", "explicit", "user", "project", "local", "array",
+        ] {
+            assert!(
+                wire.to_string().contains(token),
+                "wire schema missing {token}"
+            );
+        }
+        assert!(
+            serde_json::from_value::<runtime_core::ProviderModelDiscoveryRequest>(
+                serde_json::json!({"setting_sources_intent":["user","project"]})
+            )
+            .is_ok()
+        );
+        assert!(serde_json::from_value::<runtime_core::ProviderModelDiscoveryRequest>(
+            serde_json::json!({"setting_sources_intent":{"kind":"isolated"},"force_refresh":true})
+        ).is_ok());
+        assert!(
+            serde_json::from_value::<runtime_core::ProviderModelDiscoveryRequest>(
+                serde_json::json!({"setting_sources_intent":{"kind":"standard","force":true}})
+            )
+            .is_err()
+        );
+
+        let models: serde_json::Value = serde_json::from_str(&schema_json::<
+            ProviderModelDiscoveryResponse,
+        >(Contract::Serialize))
+        .unwrap();
+        assert!(models["properties"]["mode"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("agent_managed")));
+        assert_eq!(
+            models["properties"]["models"]["items"]["properties"]["capabilities"]["properties"]
+                ["supports_vision"]["type"],
+            "boolean"
+        );
+        let capabilities: serde_json::Value = serde_json::from_str(&schema_json::<
+            RuntimeCapabilitiesResponse,
+        >(Contract::Serialize))
+        .unwrap();
+        assert_eq!(capabilities["properties"]["tools"]["type"], "array");
+        assert_eq!(
+            capabilities["properties"]["providers"]["items"]["properties"]["harness"]["properties"]
+                ["injection_mode"]["enum"],
+            serde_json::json!([
+                "developer_instructions",
+                "system_prompt_append",
+                "scoped_mcp_only"
+            ])
+        );
+
+        let yaml = super::super::generated_openapi_yaml();
+        for (path, method, schema) in [
+            (
+                "/v2/providers/{provider}/models/discover",
+                "post",
+                "ProviderModelDiscoveryRequest",
+            ),
+            (
+                "/v2/providers/{provider}/skills/discover",
+                "post",
+                "ProviderSkillDiscoveryRequest",
+            ),
+            ("/v2/capabilities", "get", "RuntimeCapabilitiesResponse"),
+            (
+                "/v2/providers/{provider}/capabilities",
+                "get",
+                "ProviderCapabilitiesResponse",
+            ),
+        ] {
+            assert!(
+                route_operation(yaml, path, method)
+                    .contains(&format!("#/components/schemas/{schema}")),
+                "{path}"
+            );
+        }
     }
 
     fn route_operation<'a>(yaml: &'a str, path: &str, method: &str) -> &'a str {

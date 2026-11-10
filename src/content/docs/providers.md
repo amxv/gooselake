@@ -50,6 +50,13 @@ Capability values are `supported`, `agent_managed`, or `unsupported`. Discovery 
 
 Setting-source intent is typed. `standard` resolves to the user source and, when a working directory is present, the project/local sources as well. `explicit` names an ordered subset of `user`, `project`, and `local`; project/local sources require a cwd. `isolated` selects no ambient setting sources. Model discovery also accepts `startup_mode: "cold"` (default) or `"start_runtime"` so dynamic adapters can distinguish cache-only discovery from discovery that may start provider machinery.
 
+Generated OpenAPI 3.1 types these capability and discovery request/response
+bodies from the real Rust/serde definitions. To preserve migration compatibility,
+`setting_sources_intent` also accepts legacy arrays such as `["user", "project"]`
+instead of only canonical tagged objects. Explicit source ordering, duplicate
+choices, current cwd and provider-mode restrictions still undergo runtime
+semantic validation; the generated schema does not replace these checks.
+
 ## Provider IDs
 
 Provider IDs accepted by the runtime:

@@ -261,7 +261,7 @@ For details, see [MCP and Sidecars](/docs/mcp-and-sidecars).
 
 OpenAPI route/method discovery uses the server router in
 `crates/runtime-server/src/openapi.rs`. Operator workspace, operation,
-message/delivery and error schemas are derived from the actual Rust/serde
+message/delivery, provider discovery and error schemas are derived from the actual Rust/serde
 DTOs through `openapi_contracts.rs`; remaining endpoint JSON shapes are still
 broad and should be checked against their handler contracts.
 

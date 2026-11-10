@@ -148,8 +148,9 @@ Top-level groups:
 The generated OpenAPI combines route/method discovery with **Rust/serde-derived
 OpenAPI 3.1 JSON Schemas** for the workspace registration, workspace list/get,
 lead and retirement requests/results, retirement preflight, workspace
-interruption, durable operation inspection/list, and agent message/delivery
-contracts. These schemas preserve the actual `serde` field names, required
+interruption, durable operation inspection/list, agent message/delivery and
+runtime/provider capability/model/skill discovery contracts. These schemas
+preserve the actual `serde` field names, required
 properties, enums, nullability, nested records and unknown-field behavior.
 For example, registration and lead/retirement requests reject unknown JSON
 fields, while an optional lead may explicitly be `null`. Workspace and
@@ -164,6 +165,13 @@ and `request_id`. Typed `409` and revision-precondition `412` errors use this
 schema; other application/framework failures are described by the operator
 `default` error response. The model-facing `/v2/mcp` gateway is a separate
 authentication and tool-result contract.
+
+Provider discovery request schemas are derived from their actual custom
+deserializer, including both canonical tagged `setting_sources_intent`
+objects and still-accepted legacy arrays. Model discovery's `startup_mode`
+enum and the response's supported/agent-managed/unsupported distinctions
+are also typed. Both `/v2/providers/{provider}/models/discover` and
+`skills/discover` publish a JSON request body in OpenAPI.
 
 **Other** endpoints still use broad `JsonObject` request/response placeholders
 until their real Rust DTOs are connected. A typed schema describes serde

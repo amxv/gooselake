@@ -101,8 +101,10 @@ Docs-signal files:
 - basic request content type for known POST endpoints
 - SSE vs JSON response content type
 - public vs bearer-protected grouping via route placement
-- Rust-derived schemas for workspace authority/operations and operator
-  messages/deliveries, including required fields, nullable fields and enums
+- Rust-derived schemas for workspace authority/operations, operator
+  messages/deliveries and provider capability/model/skill discovery, including
+  required fields, nullable fields, custom backward-compatible input forms
+  and enums
 - typed operator `/v2` error responses (including conflict and revision error
   envelopes); `/v2/mcp` has its own agent-facing contract
 

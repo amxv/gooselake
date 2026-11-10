@@ -1,9 +1,10 @@
+use schemars::{generate::SchemaGenerator, JsonSchema, Schema};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 use crate::{ProviderKind, ProviderModel, RuntimeError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderCapabilitySupport {
     Supported,
@@ -12,7 +13,7 @@ pub enum ProviderCapabilitySupport {
     Unsupported,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderDiscoveryMode {
     Catalog,
@@ -21,7 +22,7 @@ pub enum ProviderDiscoveryMode {
     Unsupported,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderModelDiscoveryStartupMode {
     #[default]
@@ -29,7 +30,7 @@ pub enum ProviderModelDiscoveryStartupMode {
     StartRuntime,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderThinkingEffort {
     Low,
@@ -94,7 +95,7 @@ impl ProviderThinkingEffort {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderSettingSource {
     User,
@@ -209,7 +210,7 @@ impl Default for ProviderSettingSourcesIntent {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum StructuredSettingSourcesIntent {
     Standard {},
@@ -217,11 +218,24 @@ enum StructuredSettingSourcesIntent {
     Isolated {},
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum SettingSourcesWire {
     Structured(StructuredSettingSourcesIntent),
     Legacy(Vec<String>),
+}
+
+// The public type has a custom backward-compatible Deserializer rather than
+// deriving Deserialize. Drive its input schema from that *same* wire enum,
+// including legacy source arrays, never from the canonical Serialize enum.
+impl JsonSchema for ProviderSettingSourcesIntent {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ProviderSettingSourcesIntent".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        <SettingSourcesWire as JsonSchema>::json_schema(generator)
+    }
 }
 
 impl<'de> Deserialize<'de> for ProviderSettingSourcesIntent {
@@ -409,7 +423,7 @@ impl ProviderSessionLaunchPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct ProviderModelCapabilities {
     #[serde(default)]
     pub supports_reasoning: bool,
@@ -423,7 +437,7 @@ pub struct ProviderModelCapabilities {
     pub supported_thinking_efforts: Vec<ProviderThinkingEffort>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderModelDescriptor {
     pub provider: ProviderKind,
     pub model_key: String,
@@ -459,7 +473,7 @@ impl ProviderModelDescriptor {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderSkillDescriptor {
     pub provider: ProviderKind,
     pub name: String,
@@ -472,7 +486,7 @@ pub struct ProviderSkillDescriptor {
     pub argument_hint: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderModelDiscoveryRequest {
     pub cwd: Option<String>,
@@ -484,7 +498,7 @@ pub struct ProviderModelDiscoveryRequest {
     pub startup_mode: ProviderModelDiscoveryStartupMode,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderSkillDiscoveryRequest {
     pub cwd: Option<String>,
@@ -494,14 +508,14 @@ pub struct ProviderSkillDiscoveryRequest {
     pub force_refresh: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderModelDiscoveryResponse {
     pub provider: ProviderKind,
     pub mode: ProviderDiscoveryMode,
     pub models: Vec<ProviderModelDescriptor>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderSkillDiscoveryResponse {
     pub provider: ProviderKind,
     pub mode: ProviderDiscoveryMode,
@@ -582,7 +596,7 @@ pub struct ProviderHardForkEditRerunRequest {
     pub edited_input: Vec<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 pub struct ProviderCapabilities {
     pub model_discovery: ProviderDiscoveryMode,
     pub skill_discovery: ProviderDiscoveryMode,

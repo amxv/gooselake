@@ -340,7 +340,9 @@ The generated OpenAPI has Rust/serde-derived schemas for workspace registration,
 lead/retirement, operation history and agent message/delivery requests/results;
 it also has a typed operator error envelope and `default` error response on
 regular operator JSON routes. Other endpoint bodies may remain broad
-`JsonObject` schemas. Treat this catalog + code as the reliable source for:
+`JsonObject` schemas. The provider capability/model/skill discovery requests and
+responses also have Rust-derived schemas, including tagged and legacy
+setting-source input forms. Treat this catalog + code as the reliable source for:
 - endpoint existence and grouping
 - auth requirements
 - stream vs replay endpoints

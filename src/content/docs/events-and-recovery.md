@@ -69,6 +69,10 @@ Session, global, team, workspace, agent, and process streams now subscribe to **
 
 The in-process commit notification channel is scoped to one runtime database and is not a cross-process replication bus. Clients must preserve the last received event ID and reconnect to replay after network/server failure. A journal-read error closes the SSE stream with a retryable `stream.error` event that does **not** advance the cursor. All streams retain their existing cursor contracts.
 
+A deterministic injected journal-read fault regression proves `stream.error`
+has no event ID, closes the failed subscription, and allows a new SQLite
+stream to replay the unread committed event from the last acknowledged ID.
+
 The idle behavior is covered by an instrumented real SQLite-store SSE test:
 one initial journal read, **no further SELECT across an idle interval
 longer than the former 250 ms polling cadence**, then exactly one indexed

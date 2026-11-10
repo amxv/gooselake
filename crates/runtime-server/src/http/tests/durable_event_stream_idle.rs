@@ -9,7 +9,7 @@ use runtime_core::{
 };
 use runtime_store_sqlite::{SqliteRuntimeRepository, SqliteRuntimeStore, SqliteStoreConfig};
 use serde_json::Value;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 
@@ -19,6 +19,7 @@ use tokio_stream::StreamExt;
 struct CountingEventStore {
     sqlite: Arc<SqliteRuntimeStore>,
     reads: AtomicUsize,
+    fail_next_read: AtomicBool,
 }
 
 impl runtime_core::WorkspaceWorktreeCreationStore for CountingEventStore {}
@@ -52,6 +53,11 @@ impl RuntimeStore for CountingEventStore {
         limit: usize,
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
+        if self.fail_next_read.swap(false, Ordering::SeqCst) {
+            return Err(RuntimeError::Bootstrap(
+                "test-injected durable journal read failure".into(),
+            ));
+        }
         self.sqlite.list_runtime_events(scope, after_seq, limit)
     }
 
@@ -138,6 +144,7 @@ async fn idle_durable_sse_does_not_requery_sqlite_until_a_commit_wakes_replay() 
     let store = Arc::new(CountingEventStore {
         sqlite,
         reads: AtomicUsize::new(0),
+        fail_next_read: AtomicBool::new(false),
     });
     let runtime_store: Arc<dyn RuntimeStore> = store.clone();
 
@@ -205,4 +212,83 @@ async fn idle_durable_sse_does_not_requery_sqlite_until_a_commit_wakes_replay() 
         "exactly one indexed catchup query per committed wakeup"
     );
     drop(chunks);
+}
+
+#[tokio::test]
+async fn journal_read_failure_emits_unsequenced_retryable_error_before_durable_reconnect() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("runtime.sqlite3");
+    let sqlite = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: path.clone(),
+    }));
+    sqlite.initialize().await.unwrap();
+    let repository = SqliteRuntimeRepository::new(path.clone());
+    let seed = repository
+        .append_runtime_event(&super::durable_event_stream_routes::new_event(
+            "fault_seed",
+            RuntimeEventScope::System,
+            "global",
+        ))
+        .unwrap();
+    let store = Arc::new(CountingEventStore {
+        sqlite,
+        reads: AtomicUsize::new(0),
+        fail_next_read: AtomicBool::new(false),
+    });
+    let observed: Arc<dyn RuntimeStore> = store.clone();
+    let sse = durable_event_stream(observed, None, Some(0), 10, &HeaderMap::new())
+        .await
+        .unwrap();
+    let mut chunks = sse.into_response().into_body().into_data_stream();
+    let first = timeout(Duration::from_secs(3), chunks.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&first).contains(&format!("id: {}\n", seed.row_id)));
+
+    // Fail only the next real journal catch-up SELECT. The committed row
+    // remains readable by a new connection after this stream terminates.
+    store.fail_next_read.store(true, Ordering::SeqCst);
+    let unread = repository
+        .append_runtime_event(&super::durable_event_stream_routes::new_event(
+            "fault_unread",
+            RuntimeEventScope::System,
+            "global",
+        ))
+        .unwrap();
+    let failure = timeout(Duration::from_secs(3), chunks.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let failure = String::from_utf8_lossy(&failure);
+    assert!(failure.contains("event: stream.error\n"), "{failure}");
+    assert!(failure.contains("journal_unavailable"), "{failure}");
+    assert!(failure.contains(r#""retryable":true"#), "{failure}");
+    assert!(
+        !failure.lines().any(|line| line.starts_with("id:")),
+        "a failed read must never advance Last-Event-ID: {failure}"
+    );
+    assert!(
+        timeout(Duration::from_secs(3), chunks.next())
+            .await
+            .unwrap()
+            .is_none(),
+        "failed stream must close and force durable reconnect"
+    );
+    assert_eq!(store.reads.load(Ordering::SeqCst), 2);
+
+    let reopened: Arc<dyn RuntimeStore> = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: path,
+    }));
+    let reconnected =
+        durable_event_stream(reopened, None, Some(seed.row_id), 10, &HeaderMap::new())
+            .await
+            .unwrap();
+    super::durable_event_stream_routes::observed_sse_ids(
+        reconnected.into_response(),
+        &[unread.row_id],
+    )
+    .await;
 }

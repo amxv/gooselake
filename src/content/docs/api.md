@@ -1442,9 +1442,10 @@ Behavior:
 - duplicate `Last-Event-ID` headers also return HTTP `400`, including with
   an explicit `after_seq`, rather than silently choosing a resume position
 - keepalive pings are sent every 10 seconds
-- stream journal failures emit a retryable `stream.error`
-  event without advancing the SSE ID and close; reconnect with the last
-  successfully processed `Last-Event-ID`
+- stream journal failures emit a retryable `stream.error` without a
+  replacement event ID, then close; reconnecting with the last successfully
+  processed `Last-Event-ID` replays unread retained rows rather than skipping
+  them (verified with an injected SQLite read fault)
 
 The runtime currently **does not prune committed event-journal rows**. This is
 intentional: pending operations, delivery recovery, audit history, and SSE

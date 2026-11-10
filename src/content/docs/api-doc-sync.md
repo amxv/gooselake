@@ -117,7 +117,9 @@ Docs-signal files:
   worktree create/inventory/rebind requests, notice policy, onboarding notice,
   process list/detail, user-turn admission, provider context observations,
   compaction lifecycle/review, and revisioned agent preference/permission
-  mutation contracts, including
+  mutation contracts, workspace-agent roster/recreation/create/archive/restore,
+  provider-rebind composite results, edit-rerun and native-effect operator
+  reviews, including
   required fields, nullable fields, custom backward-compatible input forms
   and enums
 - typed operator `/v2` error responses (including conflict and revision error

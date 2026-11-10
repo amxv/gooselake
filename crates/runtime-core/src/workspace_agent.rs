@@ -7,7 +7,7 @@ use crate::{
     ProviderSessionPreferences, ProviderSettingSourcesIntent, ProviderWorkspaceRebindEvidence,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceAgentLifecycleState {
     Active,
@@ -31,7 +31,7 @@ impl WorkspaceAgentLifecycleState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceAgentRecreationPolicy {
     pub provider: ProviderKind,
     pub model: Option<String>,
@@ -63,7 +63,7 @@ impl WorkspaceAgentRecreationPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceAgentProfile {
     pub title: Option<String>,
     pub title_provenance: String,
@@ -73,7 +73,7 @@ pub struct WorkspaceAgentProfile {
     pub joined_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceAgentRecord {
     pub agent_id: String,
     pub workspace_id: String,
@@ -91,7 +91,7 @@ pub struct WorkspaceAgentRecord {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceAgentCreateRequest {
     pub provider: ProviderKind,
@@ -119,7 +119,7 @@ pub struct WorkspaceAgentCreateRequest {
 
 /// The initial provider cwd is selected from trusted workspace/repository
 /// authority, never inferred from an arbitrary named checkout path.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkspaceAgentInitialRoute {
     Root,
@@ -207,7 +207,7 @@ pub struct WorkspaceAgentRebindOperation {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceAgentRebindResponse {
     pub operation: WorkspaceAgentRebindOperation,
     pub agent: Option<WorkspaceAgentRecord>,

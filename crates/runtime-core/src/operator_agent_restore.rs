@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -57,14 +58,14 @@ impl OperatorAgentRestoreAdmission {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OperatorAgentRestoreResolution {
     Resumed,
     NotResumed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorAgentRestoreReviewInput {
     pub resolution: OperatorAgentRestoreResolution,
@@ -90,7 +91,7 @@ pub struct OperatorAgentRestoreReviewCommand {
     pub reviewed_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperatorAgentRestoreReviewResponse {
     pub operation_id: String,
     pub agent_id: String,

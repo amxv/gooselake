@@ -1,10 +1,11 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{PersistedUserInputSnapshot, ProviderKind, RuntimeError};
 
 /// An operator-owned hard fork and replacement-turn request. The original
 /// admitted user input and its provider identity remain historical evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionEditRerunOperation {
     pub operation_id: String,
     pub agent_id: String,
@@ -67,7 +68,7 @@ impl SessionEditRerunOperation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EditAndRerunRequest {
     pub edited_snapshot: PersistedUserInputSnapshot,

@@ -107,7 +107,7 @@ pub fn prepare_workspace_notice_policy_mutation(
 
 /// User-authored task context is a field of trusted workspace creation, not
 /// permission to impersonate the new agent's lead or the runtime itself.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceAgentOnboardingRequest {
     #[serde(default)]

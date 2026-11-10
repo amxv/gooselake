@@ -158,7 +158,11 @@ revisioned notice policy, and redacted operator process history/detail now
 also use the real Rust DTOs. Operator user-turn submission/acceptance,
 nullable provider context snapshots and explicit refresh, durable compaction
 status/review, and revisioned current-preference/permission writes are typed
-from their actual public handler and runtime contracts. These schemas
+from their actual public handler and runtime contracts. Workspace-agent
+creation, list/get, archive/restore, provider-rebind results, operator reviews
+of ambiguous create/archive/restore/policy effects, and historical
+edit-and-rerun input/operation inspection now use those same Rust-derived
+schemas. These schemas
 preserve the actual `serde` field names, required
 properties, enums, nullability, nested records and unknown-field behavior.
 For example, registration and lead/retirement requests reject unknown JSON
@@ -195,9 +199,24 @@ typed result. The permission-intent request schema retains the real parser's
 canonical tagged object, legacy string and explicit null compatibility; it
 does not claim legacy forms have been removed.
 
+For workspace-agent creation, `provider` is required; the optional `worktree`
+selector has `mode: root|existing|new` and mode-specific fields. The
+`workspace_id` comes from the trusted URL path, not the request body.
+Onboarding can contain user prompt, ordered image paths and typed
+skill/invocation metadata. List/Get/Archive/Restore return the same durable
+agent record shape (a list response is a JSON array, with pagination via
+`X-Next-Cursor`). A provider-backed rebind returns a composite of the
+durable rebind operation and an optional verified agent; the internal-only
+`newly_completed` switch is never part of public JSON. The independent
+creation/archive/restore/native-policy review inputs require the exact
+evidence and provider identity fields documented in the endpoint catalog.
+Historical edit-and-rerun accepts a strict `edited_snapshot` containing
+`prompt_text`, persisted `image_refs` and optional skill `invocation`, not
+an arbitrary transcript rewrite. Its durable result is inspectable by
+operation ID and remains a distinct historical record.
+
 **Other** endpoints still use broad `JsonObject` request/response placeholders
-until their real Rust DTOs are connected. In particular, a typed worktree rebind
-*request* does not imply that its composite mutation response is typed yet.
+until their real Rust DTOs are connected.
 The operator process list schema contains only its redacted eight-field
 summary, while the process detail schema intentionally includes diagnostic
 fields. A typed schema describes serde

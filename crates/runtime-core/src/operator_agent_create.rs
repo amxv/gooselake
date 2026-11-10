@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -72,14 +73,14 @@ pub struct OperatorAgentCreateLaunchSnapshot {
     pub worktree_operation_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OperatorAgentCreateResolution {
     Created,
     NotCreated,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorAgentCreateReviewInput {
     pub resolution: OperatorAgentCreateResolution,
@@ -101,7 +102,7 @@ pub struct OperatorAgentCreateReviewCommand {
     pub reviewed_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperatorAgentCreateReviewResponse {
     pub operation_id: String,
     pub reserved_agent_id: String,

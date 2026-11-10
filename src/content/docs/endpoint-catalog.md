@@ -351,7 +351,12 @@ now use real Rust-derived DTOs too. User-turn input/accepted receipt, context
 observation or null, compaction lifecycle/review, and revisioned preference
 and permission mutation contracts are also Rust-derived, including the
 permission parser's canonical tagged, legacy-string and null input forms.
-The composite rebind mutation response is still unconverted. Treat this
+Workspace-agent create/list/get/archive/restore and composite rebind responses,
+typed independent review requests/results for ambiguous native create/archive/
+restore/policy effects, and historical edit-and-rerun request/operation
+inspection are also linked to real Rust/serde DTOs. The agent list remains
+an array with `X-Next-Cursor`, and a rebind response contains both an
+operation and an optional verified agent, not merely the agent record. Treat this
 catalog + code as the reliable source for:
 - endpoint existence and grouping
 - auth requirements

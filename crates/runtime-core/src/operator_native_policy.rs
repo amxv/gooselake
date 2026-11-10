@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -87,7 +88,7 @@ impl OperatorNativePolicyAdmission {
 }
 
 /// Operator-verified native state, not a request to invoke the provider again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OperatorNativePolicyReviewResolution {
     Applied,
@@ -105,7 +106,7 @@ impl OperatorNativePolicyReviewResolution {
 
 /// The operator must verify the *exact* immutable native attachment recorded
 /// in the original operation, rather than asserting that any session changed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorNativePolicyReviewInput {
     pub resolution: OperatorNativePolicyReviewResolution,
@@ -126,7 +127,7 @@ pub struct OperatorNativePolicyReviewCommand {
     pub reviewed_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperatorNativePolicyReviewResponse {
     pub operation_id: String,
     pub agent_id: String,

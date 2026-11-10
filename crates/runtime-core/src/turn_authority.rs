@@ -1,4 +1,5 @@
 use crate::ProviderTurnSettings;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -30,7 +31,7 @@ impl TurnInputProjectionSource {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PersistedUserInputSnapshotImageRef {
     pub media_type: String,
@@ -38,7 +39,7 @@ pub struct PersistedUserInputSnapshotImageRef {
     pub persisted_display_path: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PersistedUserInputSnapshotInvocation {
     pub provider: String,
@@ -47,7 +48,7 @@ pub struct PersistedUserInputSnapshotInvocation {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PersistedUserInputSnapshot {
     pub prompt_text: String,

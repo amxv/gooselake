@@ -342,7 +342,11 @@ it also has a typed operator error envelope and `default` error response on
 regular operator JSON routes. Other endpoint bodies may remain broad
 `JsonObject` schemas. The provider capability/model/skill discovery requests and
 responses also have Rust-derived schemas, including tagged and legacy
-setting-source input forms. Treat this catalog + code as the reliable source for:
+setting-source input forms. Managed-worktree creation/inventory, rebind
+request and operation-detail inspection, agent archive request and onboarding
+notice, notice-policy GET/PUT and redacted process history/full process detail
+now use real Rust-derived DTOs too; the composite rebind mutation response
+is still unconverted. Treat this catalog + code as the reliable source for:
 - endpoint existence and grouping
 - auth requirements
 - stream vs replay endpoints

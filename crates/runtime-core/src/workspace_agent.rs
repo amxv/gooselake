@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -134,7 +135,7 @@ pub enum WorkspaceAgentInitialRoute {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceAgentArchiveRequest {
     pub reason: Option<String>,
@@ -142,7 +143,7 @@ pub struct WorkspaceAgentArchiveRequest {
 
 /// An operator-selected route. `None` means the canonical workspace root.
 /// Managed worktree IDs, not arbitrary filesystem paths, select linked checkouts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceAgentRebindRequest {
     pub worktree_id: Option<String>,
@@ -153,7 +154,7 @@ pub struct WorkspaceAgentRebindRequest {
     pub cleanup_previous_worktree: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceWorktreeInventory {
     pub workspace_id: String,
     pub canonical_repository_root: String,
@@ -162,7 +163,7 @@ pub struct WorkspaceWorktreeInventory {
     pub worktrees: Vec<WorkspaceWorktreeInventoryEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceWorktreeInventoryEntry {
     pub worktree_id: String,
     /// Durable monotone record revision (including recovery/upsert writes).
@@ -180,7 +181,7 @@ pub struct WorkspaceWorktreeInventoryEntry {
 
 /// Persisted before provider dispatch. An unresolved entry is a durable
 /// do-not-retry fence for any further turns or workspace route changes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceAgentRebindOperation {
     pub operation_id: String,
     pub workspace_id: String,

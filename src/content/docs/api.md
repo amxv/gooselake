@@ -149,7 +149,11 @@ The generated OpenAPI combines route/method discovery with **Rust/serde-derived
 OpenAPI 3.1 JSON Schemas** for the workspace registration, workspace list/get,
 lead and retirement requests/results, retirement preflight, workspace
 interruption, durable operation inspection/list, agent message/delivery and
-runtime/provider capability/model/skill discovery contracts. These schemas
+runtime/provider capability/model/skill discovery contracts. Worktree
+creation (including its workspace-scoped input), worktree inventory and rebind
+request/operation inspection, agent archive input and onboarding notices,
+revisioned notice policy, and redacted operator process history/detail now
+also use the real Rust DTOs. These schemas
 preserve the actual `serde` field names, required
 properties, enums, nullability, nested records and unknown-field behavior.
 For example, registration and lead/retirement requests reject unknown JSON
@@ -174,7 +178,11 @@ are also typed. Both `/v2/providers/{provider}/models/discover` and
 `skills/discover` publish a JSON request body in OpenAPI.
 
 **Other** endpoints still use broad `JsonObject` request/response placeholders
-until their real Rust DTOs are connected. A typed schema describes serde
+until their real Rust DTOs are connected. In particular, a typed worktree rebind
+*request* does not imply that its composite mutation response is typed yet.
+The operator process list schema contains only its redacted eight-field
+summary, while the process detail schema intentionally includes diagnostic
+fields. A typed schema describes serde
 serialization/deserialization, not every semantic validation rule: for example,
 the message `mode` is accepted as a string and normalized/validated by its
 handler, and retirement must pass durable state and revision checks. Refer to

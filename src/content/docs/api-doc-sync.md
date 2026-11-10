@@ -102,7 +102,9 @@ Docs-signal files:
 - SSE vs JSON response content type
 - public vs bearer-protected grouping via route placement
 - Rust-derived schemas for workspace authority/operations, operator
-  messages/deliveries and provider capability/model/skill discovery, including
+  messages/deliveries and provider capability/model/skill discovery, managed
+  worktree create/inventory/rebind requests, notice policy, onboarding notice,
+  and process list/detail, including
   required fields, nullable fields, custom backward-compatible input forms
   and enums
 - typed operator `/v2` error responses (including conflict and revision error

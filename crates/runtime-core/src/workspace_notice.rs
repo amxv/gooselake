@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -9,7 +10,7 @@ use crate::{
 
 /// Operator-owned, durable delivery policy. These flags affect new lifecycle
 /// events only; changing them never rewrites already-admitted notices.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct WorkspaceNoticePolicy {
     pub lead_transitions: bool,
@@ -39,14 +40,14 @@ impl Default for WorkspaceNoticePolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceNoticePolicyRecord {
     pub workspace_id: String,
     pub revision: u64,
     pub policy: WorkspaceNoticePolicy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceNoticePolicyUpdate {
     pub expected_revision: u64,
@@ -119,7 +120,7 @@ pub struct WorkspaceAgentOnboardingRequest {
     pub creator_compaction_subscription: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSystemNoticeRecord {
     pub notice_id: String,
     pub workspace_id: String,

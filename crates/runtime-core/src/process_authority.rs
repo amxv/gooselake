@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -73,7 +74,7 @@ pub struct ManagedProcessRecord {
 /// Bounded operator history projection. Commands, native PIDs, log paths,
 /// invocation identities, and diagnostic errors stay in the single-process
 /// detail endpoint rather than being materialized in list responses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperatorProcessSummary {
     pub process_id: String,
     pub workspace_id: Option<String>,

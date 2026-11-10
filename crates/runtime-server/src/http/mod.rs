@@ -55,6 +55,7 @@ mod workspaces;
 pub(crate) use auth::{ProviderCapabilitiesResponse, RuntimeCapabilitiesResponse};
 pub(crate) use messages::AgentMessageCreateInput;
 pub(crate) use v2_contract::OperatorErrorResponse;
+pub(crate) use workspaces::WorkspaceWorktreeCreateInput;
 mod worktrees;
 
 use agent_controls::*;

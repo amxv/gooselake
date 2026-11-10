@@ -566,7 +566,7 @@ pub struct ProviderWorkspaceRebindRequest {
     pub cwd: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderWorkspaceRebindEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_generation: Option<u64>,

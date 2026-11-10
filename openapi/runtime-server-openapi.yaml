@@ -41,6 +41,17 @@ components:
     ProviderModelDiscoveryResponse: {"title":"ProviderModelDiscoveryResponse","type":"object","properties":{"mode":{"type":"string","enum":["catalog","agent_managed","unsupported"]},"models":{"type":"array","items":{"type":"object","properties":{"capabilities":{"type":"object","properties":{"supported_thinking_efforts":{"type":"array","items":{"type":"string","enum":["low","medium","high","xhigh","max"]}},"supports_reasoning":{"type":"boolean","default":false},"supports_thinking_effort":{"type":"boolean","default":false},"supports_tool_calling":{"type":"boolean","default":false},"supports_vision":{"type":"boolean","default":false}},"required":["supports_reasoning","supports_thinking_effort","supports_tool_calling","supports_vision"]},"display_label":{"type":"string"},"family":{"type":["string","null"]},"model_key":{"type":"string"},"provider":{"type":"string","enum":["codex","claude","acp"]},"provider_name":{"type":["string","null"]}},"required":["provider","model_key","display_label","capabilities"]}},"provider":{"type":"string","enum":["codex","claude","acp"]}},"required":["provider","mode","models"]}
     ProviderSkillDiscoveryRequest: {"title":"ProviderSkillDiscoveryRequest","type":"object","properties":{"cwd":{"type":["string","null"]},"force_refresh":{"type":"boolean","default":false},"setting_sources_intent":{"anyOf":[{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"standard"}},"additionalProperties":false,"required":["kind"]},{"type":"object","properties":{"kind":{"type":"string","const":"explicit"},"sources":{"type":"array","items":{"type":"string","enum":["user","project","local"]}}},"additionalProperties":false,"required":["kind","sources"]},{"type":"object","properties":{"kind":{"type":"string","const":"isolated"}},"additionalProperties":false,"required":["kind"]}]},{"type":"array","items":{"type":"string"}}],"default":{"kind":"standard"}}},"additionalProperties":false}
     ProviderSkillDiscoveryResponse: {"title":"ProviderSkillDiscoveryResponse","type":"object","properties":{"mode":{"type":"string","enum":["catalog","agent_managed","unsupported"]},"provider":{"type":"string","enum":["codex","claude","acp"]},"skills":{"type":"array","items":{"type":"object","properties":{"argument_hint":{"type":["string","null"]},"description":{"type":"string"},"display_name":{"type":["string","null"]},"name":{"type":"string"},"path":{"type":["string","null"]},"provider":{"type":"string","enum":["codex","claude","acp"]}},"required":["provider","name","description"]}}},"required":["provider","mode","skills"]}
+    WorkspaceWorktreeCreateInput: {"title":"WorkspaceWorktreeCreateInput","type":"object","properties":{"base_ref":{"type":["string","null"]},"branch_prefix":{"type":["string","null"]},"deletion_policy":{"type":["string","null"]},"run_init_script":{"type":["boolean","null"]},"worktree_name":{"type":"string"}},"additionalProperties":false,"required":["worktree_name"]}
+    WorktreeCreateResponse: {"title":"WorktreeCreateResponse","type":"object","properties":{"created":{"type":"boolean"},"init_script_status":{"type":"string"},"worktree":{"type":"object","properties":{"branch_name":{"type":"string"},"created_at":{"type":"integer","format":"int64"},"created_by_operation_id":{"type":["string","null"]},"created_by_session_id":{"type":["string","null"]},"deletion_policy":{"type":"string"},"id":{"type":"string"},"repo_root":{"type":"string"},"unified_workspace_path":{"type":"string"},"updated_at":{"type":"integer","format":"int64"},"worktree_cwd":{"type":"string"},"worktree_name":{"type":"string"},"worktree_root":{"type":"string"}},"required":["id","repo_root","worktree_root","worktree_cwd","branch_name","worktree_name","unified_workspace_path","deletion_policy","created_by_session_id","created_by_operation_id","created_at","updated_at"]}},"required":["worktree","created","init_script_status"]}
+    WorkspaceWorktreeInventory: {"title":"WorkspaceWorktreeInventory","type":"object","properties":{"canonical_repository_root":{"type":"string"},"git_common_dir":{"type":"string"},"repository_fingerprint":{"type":"string"},"workspace_id":{"type":"string"},"worktrees":{"type":"array","items":{"type":"object","properties":{"attached_agent_ids":{"type":"array","items":{"type":"string"}},"branch_name":{"type":"string"},"eligibility_blockers":{"type":"array","items":{"type":"string"}},"eligible_for_assignment":{"type":"boolean"},"lifecycle_state":{"type":"string"},"normalized_name":{"type":"string"},"retention_policy":{"type":"string"},"revision":{"description":"Durable monotone record revision (including recovery/upsert writes).","type":"integer","format":"uint64","minimum":0},"routing_state":{"type":"string"},"worktree_id":{"type":"string"},"worktree_path":{"type":"string"}},"required":["worktree_id","revision","normalized_name","branch_name","worktree_path","retention_policy","lifecycle_state","routing_state","attached_agent_ids","eligible_for_assignment","eligibility_blockers"]}}},"required":["workspace_id","canonical_repository_root","git_common_dir","repository_fingerprint","worktrees"]}
+    WorkspaceAgentRebindRequest: {"title":"WorkspaceAgentRebindRequest","description":"An operator-selected route. `None` means the canonical workspace root.\nManaged worktree IDs, not arbitrary filesystem paths, select linked checkouts.","type":"object","properties":{"cleanup_previous_worktree":{"description":"Defaults to preserving the previous managed checkout. If true, a\nseparate recoverable cleanup follows the verified provider rebind.","type":"boolean","default":false},"expected_revision":{"type":"integer","format":"uint64","minimum":0},"worktree_id":{"type":["string","null"]}},"additionalProperties":false,"required":["expected_revision"]}
+    WorkspaceAgentRebindOperation: {"title":"WorkspaceAgentRebindOperation","description":"Persisted before provider dispatch. An unresolved entry is a durable\ndo-not-retry fence for any further turns or workspace route changes.","type":"object","properties":{"agent_id":{"type":"string"},"cleanup_previous_worktree":{"type":"boolean","default":false},"created_at":{"type":"integer","format":"int64"},"destination_cwd":{"type":"string"},"destination_worktree_id":{"type":["string","null"]},"error_code":{"type":["string","null"]},"expected_revision":{"type":"integer","format":"uint64","minimum":0},"idempotency_key":{"type":["string","null"]},"operation_id":{"type":"string"},"phase":{"type":"string"},"previous_cleanup_diagnostic":{"type":["string","null"],"default":null},"previous_cleanup_status":{"description":"`pending`, `deleted`, `retained_by_policy`, `skipped_live_claims`, or\n`preserved`; cleanup never rolls back an already verified cwd change.","type":["string","null"],"default":null},"previous_cwd":{"type":"string"},"previous_worktree_id":{"type":["string","null"]},"provider_evidence":{"type":["object","null"],"properties":{"binding_generation":{"type":["integer","null"],"format":"uint64","minimum":0},"canonical_provider_session_ref":{"type":["string","null"]},"cwd":{"type":"string"},"provider_session_ref":{"type":["string","null"]},"runtime_session_id":{"type":"string"}},"required":["runtime_session_id","cwd","provider_session_ref"]},"updated_at":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"required":["operation_id","workspace_id","agent_id","idempotency_key","expected_revision","previous_worktree_id","destination_worktree_id","previous_cwd","destination_cwd","cleanup_previous_worktree","previous_cleanup_status","previous_cleanup_diagnostic","phase","provider_evidence","error_code","created_at","updated_at"]}
+    WorkspaceAgentArchiveRequest: {"title":"WorkspaceAgentArchiveRequest","type":"object","properties":{"reason":{"type":["string","null"]}},"additionalProperties":false}
+    WorkspaceNoticePolicyUpdate: {"title":"WorkspaceNoticePolicyUpdate","type":"object","properties":{"expected_revision":{"type":"integer","format":"uint64","minimum":0},"policy":{"description":"Operator-owned, durable delivery policy. These flags affect new lifecycle\nevents only; changing them never rewrites already-admitted notices.","type":"object","properties":{"compaction_to_lead":{"description":"Creator notices additionally respect each member's subscription.","type":"boolean","default":true},"compaction_to_team":{"description":"Optional team-wide compaction notices. Defaults off to avoid noise.","type":"boolean","default":false},"lead_transitions":{"type":"boolean","default":true},"membership_to_lead":{"type":"boolean","default":true},"workspace_interrupt":{"type":"boolean","default":true},"workspace_retirement":{"description":"Retain retirement notices as cancelled history because the freeze\nprevents admitting any new model input to retiring members.","type":"boolean","default":true},"worktree_reassignment":{"type":"boolean","default":true}},"additionalProperties":false}},"additionalProperties":false,"required":["expected_revision","policy"]}
+    WorkspaceNoticePolicyRecord: {"title":"WorkspaceNoticePolicyRecord","type":"object","properties":{"policy":{"description":"Operator-owned, durable delivery policy. These flags affect new lifecycle\nevents only; changing them never rewrites already-admitted notices.","type":"object","properties":{"compaction_to_lead":{"description":"Creator notices additionally respect each member's subscription.","type":"boolean","default":true},"compaction_to_team":{"description":"Optional team-wide compaction notices. Defaults off to avoid noise.","type":"boolean","default":false},"lead_transitions":{"type":"boolean","default":true},"membership_to_lead":{"type":"boolean","default":true},"workspace_interrupt":{"type":"boolean","default":true},"workspace_retirement":{"description":"Retain retirement notices as cancelled history because the freeze\nprevents admitting any new model input to retiring members.","type":"boolean","default":true},"worktree_reassignment":{"type":"boolean","default":true}},"additionalProperties":false,"required":["lead_transitions","membership_to_lead","worktree_reassignment","workspace_interrupt","workspace_retirement","compaction_to_lead","compaction_to_team"]},"revision":{"type":"integer","format":"uint64","minimum":0},"workspace_id":{"type":"string"}},"required":["workspace_id","revision","policy"]}
+    WorkspaceSystemNoticeRecord: {"title":"WorkspaceSystemNoticeRecord","type":"object","properties":{"attempt_count":{"type":"integer","format":"uint32","minimum":0},"correlation_id":{"type":"string"},"created_at_ms":{"type":"integer","format":"int64"},"input":{"type":"array","items":true},"kind":{"type":"string"},"last_error":{"type":["string","null"]},"notice_id":{"type":"string"},"recipient_agent_id":{"type":"string"},"state":{"type":"string"},"turn_id":{"type":["string","null"]},"updated_at_ms":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"required":["notice_id","workspace_id","recipient_agent_id","kind","correlation_id","input","state","turn_id","attempt_count","last_error","created_at_ms","updated_at_ms"]}
+    OperatorProcessSummaryList: {"title":"Array_of_OperatorProcessSummary","type":"array","items":{"description":"Bounded operator history projection. Commands, native PIDs, log paths,\ninvocation identities, and diagnostic errors stay in the single-process\ndetail endpoint rather than being materialized in list responses.","type":"object","properties":{"admitted_at":{"type":"integer","format":"int64"},"completion_state":{"type":"string"},"ended_at":{"type":["integer","null"],"format":"int64"},"owner_agent_id":{"type":["string","null"]},"process_id":{"type":"string"},"started_at":{"type":["integer","null"],"format":"int64"},"status":{"type":"string"},"workspace_id":{"type":["string","null"]}},"required":["process_id","workspace_id","owner_agent_id","status","admitted_at","started_at","ended_at","completion_state"]}}
+    ProcessDetails: {"title":"ProcessDetails","type":"object","properties":{"exit_code":{"type":["integer","null"],"format":"int64"},"process":{"type":"object","properties":{"command":true,"cwd":{"type":["string","null"]},"ended_at":{"type":["integer","null"],"format":"int64"},"pid":{"type":["integer","null"],"format":"int64"},"process_id":{"type":"string"},"session_id":{"type":["string","null"]},"started_at":{"type":"integer","format":"int64"},"status":{"type":"string"}},"required":["process_id","session_id","pid","status","command","cwd","started_at","ended_at"]},"signal":{"type":["integer","null"],"format":"int64"},"stderr_bytes":{"type":"integer","format":"uint","minimum":0},"stderr_path":{"type":["string","null"]},"stderr_truncated":{"type":"boolean"},"stdout_bytes":{"type":"integer","format":"uint","minimum":0},"stdout_path":{"type":["string","null"]},"stdout_truncated":{"type":"boolean"},"timeout_ms":{"type":["integer","null"],"format":"int64"}},"required":["process","exit_code","signal","timeout_ms","stdout_path","stderr_path","stdout_bytes","stderr_bytes","stdout_truncated","stderr_truncated"]}
 paths:
   /health:
     get:
@@ -2103,7 +2114,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorProcessSummaryList"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2129,7 +2140,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/ProcessDetails"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2539,7 +2550,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/WorkspaceAgentArchiveRequest"
       responses:
         "200":
           description: JSON response
@@ -2655,7 +2666,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceSystemNoticeRecord"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2691,7 +2702,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceAgentRebindOperation"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2876,6 +2887,12 @@ paths:
           required: false
           schema:
             type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceAgentRebindRequest"
       responses:
         "200":
           description: JSON response
@@ -3262,7 +3279,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceNoticePolicyRecord"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -3296,7 +3313,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/WorkspaceNoticePolicyUpdate"
       responses:
         "200":
           description: JSON response
@@ -3312,7 +3329,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceNoticePolicyRecord"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
           content:
@@ -3534,7 +3551,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceWorktreeInventory"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -3563,7 +3580,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/WorkspaceWorktreeCreateInput"
       responses:
         "200":
           description: JSON response
@@ -3575,7 +3592,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorktreeCreateResponse"
         "409":
           description: Conflict or unresolved native effect; inspect the operation without retrying the effect
           headers:

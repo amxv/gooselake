@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -42,7 +43,7 @@ pub struct WorkspaceWorktreeCreateRequest {
     pub run_init_script: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WorktreeCreateResponse {
     pub worktree: ManagedWorktreeRecord,
     pub created: bool,

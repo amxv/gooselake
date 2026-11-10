@@ -586,6 +586,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/workspaces/{workspace_id}/notice-policy"
             | "/v2/workspaces/{workspace_id}/hooks/approval"
             | "/v2/workspaces/{workspace_id}/worktrees"
+            | "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree"
             | "/v2/workspaces/{workspace_id}/agents"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
             | "/v2/messages"

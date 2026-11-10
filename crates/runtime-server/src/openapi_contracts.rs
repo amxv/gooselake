@@ -1,14 +1,17 @@
 use crate::http::{
     AgentMessageCreateInput, OperatorErrorResponse, ProviderCapabilitiesResponse,
-    RuntimeCapabilitiesResponse,
+    RuntimeCapabilitiesResponse, WorkspaceWorktreeCreateInput,
 };
 use runtime_core::{
     AgentDeliveryRecord, AgentMessageAck, AgentMessageListResponse, OperationDetails,
-    OperationSummary, ProviderModelDiscoveryRequest, ProviderModelDiscoveryResponse,
-    ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse, WorkspaceInterruptResponse,
-    WorkspaceLeadTransitionRequest, WorkspaceLeadTransitionResponse, WorkspaceRecord,
+    OperationSummary, OperatorProcessSummary, ProcessDetails, ProviderModelDiscoveryRequest,
+    ProviderModelDiscoveryResponse, ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse,
+    WorkspaceAgentArchiveRequest, WorkspaceAgentRebindOperation, WorkspaceAgentRebindRequest,
+    WorkspaceInterruptResponse, WorkspaceLeadTransitionRequest, WorkspaceLeadTransitionResponse,
+    WorkspaceNoticePolicyRecord, WorkspaceNoticePolicyUpdate, WorkspaceRecord,
     WorkspaceRegisterRequest, WorkspaceRegisterResponse, WorkspaceRetirementPreflight,
-    WorkspaceRetirementRequest, WorkspaceRetirementResponse,
+    WorkspaceRetirementRequest, WorkspaceRetirementResponse, WorkspaceSystemNoticeRecord,
+    WorkspaceWorktreeInventory, WorktreeCreateResponse,
 };
 use schemars::generate::{Contract, SchemaSettings};
 use schemars::JsonSchema;
@@ -111,6 +114,53 @@ pub(super) fn append_schema_components(out: &mut String) {
         "ProviderSkillDiscoveryResponse",
         Contract::Serialize,
     );
+    append_component::<WorkspaceWorktreeCreateInput>(
+        out,
+        "WorkspaceWorktreeCreateInput",
+        Contract::Deserialize,
+    );
+    append_component::<WorktreeCreateResponse>(out, "WorktreeCreateResponse", Contract::Serialize);
+    append_component::<WorkspaceWorktreeInventory>(
+        out,
+        "WorkspaceWorktreeInventory",
+        Contract::Serialize,
+    );
+    append_component::<WorkspaceAgentRebindRequest>(
+        out,
+        "WorkspaceAgentRebindRequest",
+        Contract::Deserialize,
+    );
+    append_component::<WorkspaceAgentRebindOperation>(
+        out,
+        "WorkspaceAgentRebindOperation",
+        Contract::Serialize,
+    );
+    append_component::<WorkspaceAgentArchiveRequest>(
+        out,
+        "WorkspaceAgentArchiveRequest",
+        Contract::Deserialize,
+    );
+    append_component::<WorkspaceNoticePolicyUpdate>(
+        out,
+        "WorkspaceNoticePolicyUpdate",
+        Contract::Deserialize,
+    );
+    append_component::<WorkspaceNoticePolicyRecord>(
+        out,
+        "WorkspaceNoticePolicyRecord",
+        Contract::Serialize,
+    );
+    append_component::<WorkspaceSystemNoticeRecord>(
+        out,
+        "WorkspaceSystemNoticeRecord",
+        Contract::Serialize,
+    );
+    append_component::<Vec<OperatorProcessSummary>>(
+        out,
+        "OperatorProcessSummaryList",
+        Contract::Serialize,
+    );
+    append_component::<ProcessDetails>(out, "ProcessDetails", Contract::Serialize);
 }
 
 fn append_component<T: JsonSchema>(out: &mut String, name: &str, contract: Contract) {
@@ -137,6 +187,18 @@ pub(super) fn request_schema_name(path: &str, method: HttpMethod) -> Option<&'st
         }
         (HttpMethod::Post, "/v2/providers/{provider}/skills/discover") => {
             Some("ProviderSkillDiscoveryRequest")
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/worktrees") => {
+            Some("WorkspaceWorktreeCreateInput")
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree") => {
+            Some("WorkspaceAgentRebindRequest")
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive") => {
+            Some("WorkspaceAgentArchiveRequest")
+        }
+        (HttpMethod::Put, "/v2/workspaces/{workspace_id}/notice-policy") => {
+            Some("WorkspaceNoticePolicyUpdate")
         }
         _ => None,
     }
@@ -179,6 +241,25 @@ pub(super) fn response_schema_name(path: &str, method: HttpMethod) -> Option<&'s
         (HttpMethod::Post, "/v2/providers/{provider}/skills/discover") => {
             Some("ProviderSkillDiscoveryResponse")
         }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/worktrees") => {
+            Some("WorkspaceWorktreeInventory")
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/worktrees") => {
+            Some("WorktreeCreateResponse")
+        }
+        (
+            HttpMethod::Get,
+            "/v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}",
+        ) => Some("WorkspaceAgentRebindOperation"),
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/notice-policy")
+        | (HttpMethod::Put, "/v2/workspaces/{workspace_id}/notice-policy") => {
+            Some("WorkspaceNoticePolicyRecord")
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding") => {
+            Some("WorkspaceSystemNoticeRecord")
+        }
+        (HttpMethod::Get, "/v2/processes") => Some("OperatorProcessSummaryList"),
+        (HttpMethod::Get, "/v2/processes/{process_id}") => Some("ProcessDetails"),
         _ => None,
     }
 }
@@ -476,6 +557,142 @@ mod tests {
             assert!(
                 route_operation(yaml, path, method)
                     .contains(&format!("#/components/schemas/{schema}")),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn worktree_notice_and_process_contracts_follow_handler_dtos() {
+        let create: serde_json::Value = serde_json::from_str(&schema_json::<
+            WorkspaceWorktreeCreateInput,
+        >(Contract::Deserialize))
+        .unwrap();
+        assert_eq!(create["additionalProperties"], false);
+        assert_eq!(create["required"], serde_json::json!(["worktree_name"]));
+        assert!(create["properties"].get("workspace_id").is_none());
+
+        let rebind: serde_json::Value = serde_json::from_str(&schema_json::<
+            WorkspaceAgentRebindRequest,
+        >(Contract::Deserialize))
+        .unwrap();
+        assert_eq!(rebind["additionalProperties"], false);
+        assert_eq!(rebind["required"], serde_json::json!(["expected_revision"]));
+        assert_eq!(
+            rebind["properties"]["cleanup_previous_worktree"]["type"],
+            "boolean"
+        );
+
+        let notice_update: serde_json::Value =
+            serde_json::from_str(&schema_json::<WorkspaceNoticePolicyUpdate>(
+                Contract::Deserialize,
+            ))
+            .unwrap();
+        assert_eq!(
+            notice_update["required"],
+            serde_json::json!(["expected_revision", "policy"])
+        );
+        assert_eq!(
+            notice_update["properties"]["policy"]["additionalProperties"],
+            false
+        );
+
+        let inventory: serde_json::Value = serde_json::from_str(&schema_json::<
+            WorkspaceWorktreeInventory,
+        >(Contract::Serialize))
+        .unwrap();
+        assert_eq!(inventory["properties"]["worktrees"]["type"], "array");
+        assert_eq!(
+            inventory["properties"]["worktrees"]["items"]["properties"]["eligible_for_assignment"]
+                ["type"],
+            "boolean"
+        );
+        let process: serde_json::Value =
+            serde_json::from_str(&schema_json::<ProcessDetails>(Contract::Serialize)).unwrap();
+        assert_eq!(
+            process["properties"]["process"]["properties"]["status"]["type"],
+            "string"
+        );
+        assert!(process["properties"].get("stdout_truncated").is_some());
+
+        let yaml = super::super::generated_openapi_yaml();
+        for (path, method, schema) in [
+            (
+                "/v2/workspaces/{workspace_id}/worktrees",
+                "post",
+                "WorkspaceWorktreeCreateInput",
+            ),
+            (
+                "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree",
+                "post",
+                "WorkspaceAgentRebindRequest",
+            ),
+            (
+                "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive",
+                "post",
+                "WorkspaceAgentArchiveRequest",
+            ),
+            (
+                "/v2/workspaces/{workspace_id}/notice-policy",
+                "put",
+                "WorkspaceNoticePolicyUpdate",
+            ),
+        ] {
+            let operation = route_operation(yaml, path, method);
+            assert!(
+                operation.contains(&format!("#/components/schemas/{schema}")),
+                "{path}"
+            );
+            let request_body = operation
+                .split("      responses:\n")
+                .next()
+                .expect("operation request metadata");
+            assert!(
+                !request_body.contains("#/components/schemas/JsonObject"),
+                "{path}"
+            );
+        }
+        for (path, method, schema) in [
+            (
+                "/v2/workspaces/{workspace_id}/worktrees",
+                "get",
+                "WorkspaceWorktreeInventory",
+            ),
+            (
+                "/v2/workspaces/{workspace_id}/worktrees",
+                "post",
+                "WorktreeCreateResponse",
+            ),
+            (
+                "/v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}",
+                "get",
+                "WorkspaceAgentRebindOperation",
+            ),
+            (
+                "/v2/workspaces/{workspace_id}/notice-policy",
+                "get",
+                "WorkspaceNoticePolicyRecord",
+            ),
+            (
+                "/v2/workspaces/{workspace_id}/notice-policy",
+                "put",
+                "WorkspaceNoticePolicyRecord",
+            ),
+            (
+                "/v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding",
+                "get",
+                "WorkspaceSystemNoticeRecord",
+            ),
+            ("/v2/processes", "get", "OperatorProcessSummaryList"),
+            ("/v2/processes/{process_id}", "get", "ProcessDetails"),
+        ] {
+            let operation = route_operation(yaml, path, method);
+            assert!(
+                operation.contains(&format!("#/components/schemas/{schema}")),
+                "{path}"
+            );
+            assert!(
+                !operation.contains("#/components/schemas/JsonObject"),
                 "{path}"
             );
         }

@@ -337,9 +337,9 @@ pub(super) async fn list_workspace_worktree_inventory(
     paged_worktree_inventory(inventory, limit, cursor)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WorkspaceWorktreeCreateInput {
+pub(crate) struct WorkspaceWorktreeCreateInput {
     worktree_name: String,
     branch_prefix: Option<String>,
     base_ref: Option<String>,

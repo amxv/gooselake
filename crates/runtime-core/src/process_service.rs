@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast;
@@ -43,7 +44,7 @@ pub struct ProcessKillRequest {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProcessSummary {
     pub process_id: String,
     pub session_id: Option<String>,
@@ -55,7 +56,7 @@ pub struct ProcessSummary {
     pub ended_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProcessDetails {
     pub process: ProcessSummary,
     pub exit_code: Option<i64>,

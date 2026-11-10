@@ -124,6 +124,18 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         }
         (HttpMethod::Get, "/v1/events") => "Replay runtime events".to_string(),
         (HttpMethod::Get, "/v1/events/stream") => "Stream runtime events (SSE)".to_string(),
+        (HttpMethod::Get, "/v2/events/stream") => {
+            "Stream all committed runtime events for the operator (SSE)".to_string()
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/events/stream") => {
+            "Stream committed workspace-scoped events for the operator (SSE)".to_string()
+        }
+        (HttpMethod::Get, "/v2/agents/{agent_id}/events/stream") => {
+            "Stream committed agent/session events for the operator (SSE)".to_string()
+        }
+        (HttpMethod::Get, "/v2/processes/{process_id}/events/stream") => {
+            "Stream committed process events for the operator (SSE)".to_string()
+        }
         (HttpMethod::Post, "/v1/sessions") => "Create session".to_string(),
         (HttpMethod::Get, "/v1/sessions") => "List sessions".to_string(),
         (HttpMethod::Get, "/v1/sessions/{session_id}") => "Get session".to_string(),
@@ -412,8 +424,21 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/messages"
                 | "/v2/messages/{message_id}/deliveries"
         );
+    let v2_event_stream = method == HttpMethod::Get
+        && matches!(
+            path,
+            "/v2/events/stream"
+                | "/v2/workspaces/{workspace_id}/events/stream"
+                | "/v2/agents/{agent_id}/events/stream"
+                | "/v2/processes/{process_id}/events/stream"
+        );
     let accepts_if_match = revision::accepts_revision_precondition(path, method);
-    if params.is_empty() && !accepts_idempotency_key && !has_query_parameters && !accepts_if_match {
+    if params.is_empty()
+        && !accepts_idempotency_key
+        && !has_query_parameters
+        && !accepts_if_match
+        && !v2_event_stream
+    {
         return;
     }
     out.push_str("      parameters:\n");
@@ -472,6 +497,21 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("          required: false\n");
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
+    }
+    if v2_event_stream {
+        out.push_str("        - name: after_seq\n");
+        out.push_str("          in: query\n");
+        out.push_str("          required: false\n");
+        out.push_str("          description: Global event row ID or scoped event sequence; overrides Last-Event-ID.\n");
+        out.push_str("          schema:\n            type: integer\n            minimum: 0\n");
+        out.push_str("        - name: limit\n");
+        out.push_str("          in: query\n");
+        out.push_str("          required: false\n");
+        out.push_str("          schema:\n            type: integer\n            minimum: 1\n            maximum: 10000\n            default: 2000\n");
+        out.push_str("        - name: Last-Event-ID\n");
+        out.push_str("          in: header\n");
+        out.push_str("          required: false\n");
+        out.push_str("          schema:\n            type: integer\n            minimum: 0\n");
     }
     if accepts_idempotency_key {
         out.push_str("        - name: Idempotency-Key\n");

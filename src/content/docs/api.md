@@ -1240,6 +1240,10 @@ assuming the decision succeeded or retrying it blindly.
 
 SSE endpoints:
 
+- `GET /v2/events/stream` (operator bearer, global committed journal)
+- `GET /v2/workspaces/{workspace_id}/events/stream` (operator bearer, workspace scope)
+- `GET /v2/agents/{agent_id}/events/stream` (operator bearer, canonical session scope)
+- `GET /v2/processes/{process_id}/events/stream` (operator bearer, process scope)
 - `GET /v1/events/stream`
 - `GET /v1/sessions/{session_id}/events/stream`
 - `GET /v1/teams/{team_id}/events/stream`
@@ -1271,15 +1275,22 @@ Each summary includes only `row_id`, `event_id`, `scope`, `scope_id`, `seq`,
 `kind`, `criticality`, and `created_at`. Payloads, provider/native metadata,
 and per-session/turn IDs are not selected for list pages. Inspect the complete
 authenticated event, including its payload, with
-`GET /v2/events/{event_id}`. This is a read-only history contract; `/v2` does
-not yet claim new unified SSE streams. Legacy `/v1` replay/SSE contracts and
-their respective cursor conventions remain unchanged while live fan-out is
-separately hardened.
+`GET /v2/events/{event_id}`. This is a read-only history contract, separate
+from the four operator-only `/v2` SSE routes above. **History page `cursor` is
+not an SSE resume token.** The global `/v2/events/stream` accepts `after_seq`
+as a global row ID; resource streams use `after_seq` as their scoped sequence,
+where an agent stream maps to the canonical session event scope. All four
+allow `Last-Event-ID` when `after_seq` is omitted, require nonnegative cursors
+and a stream page `limit` between 1 and 10000 (default 2000), and reject
+unknown query fields or duplicate `Last-Event-ID` headers. They check the
+referenced workspace, agent or managed process exists before opening a stream;
+the operator bearer credential is required even for archived/terminal history.
+Legacy `/v1` contracts remain unchanged during migration.
 
 Behavior:
 
 - stream endpoints replay first, then deliver live events
-- session/global/team/process streams subscribe before journal replay, read bounded
+- session/global/team/process streams (including `/v2` global/workspace/agent/process) subscribe before journal replay, read bounded
   durable pages, and wake on committed SQLite event inserts instead of
   periodically polling while idle; lagged notifications catch up from the last
   delivered cursor without re-emitting it

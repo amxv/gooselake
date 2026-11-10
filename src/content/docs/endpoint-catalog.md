@@ -218,6 +218,19 @@ Session event query parameters:
 
 ## Global Runtime Events
 
+- `GET /v2/events/stream` (Bearer; global durable SSE, global SQLite row ID cursor)
+- `GET /v2/workspaces/{workspace_id}/events/stream` (Bearer; workspace-scoped durable SSE, requires workspace record)
+- `GET /v2/agents/{agent_id}/events/stream` (Bearer; agent/session-scoped durable SSE, requires workspace-owned agent)
+- `GET /v2/processes/{process_id}/events/stream` (Bearer; process-scoped durable SSE, requires managed process)
+
+The `/v2` streams accept optional `after_seq` (nonnegative), `limit=1..10000`
+(default 2000), and `Last-Event-ID` fallback. The global stream ID is the
+durable event row ID; the three resource streams use their own scoped event
+sequence. Do **not** feed the paginated `GET /v2/events` `cursor` into a scoped
+SSE stream; unknown query options, duplicate/invalid `Last-Event-ID` and
+nonexistent resource IDs fail before the stream opens. The operator bearer is
+required. The older `/v1` routes remain during migration.
+
 - `GET /v2/events` (Bearer; indexed global-row-ID ascending, optional paired `scope` and `scope_id`, numeric `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for next page, eight-field redacted rows; positive cursor must identify an existing row in the selected global/scoped collection; zero starts from the beginning)
 - `GET /v2/events/{event_id}` (Bearer; full event payload/provider diagnostic metadata, exact immutable event ID)
 - `GET /v1/events` (Bearer)

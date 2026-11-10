@@ -2,7 +2,7 @@ use super::*;
 use runtime_core::{NewRuntimeEvent, RuntimeEventCriticality};
 use runtime_store_sqlite::SqliteRuntimeRepository;
 
-fn new_event(id: &str, scope: RuntimeEventScope, scope_id: &str) -> NewRuntimeEvent {
+pub(super) fn new_event(id: &str, scope: RuntimeEventScope, scope_id: &str) -> NewRuntimeEvent {
     NewRuntimeEvent {
         event_id: id.to_owned(),
         scope,
@@ -19,7 +19,7 @@ fn new_event(id: &str, scope: RuntimeEventScope, scope_id: &str) -> NewRuntimeEv
     }
 }
 
-async fn stream(
+pub(super) async fn stream(
     router: &Router,
     token: &str,
     uri: &str,
@@ -44,7 +44,7 @@ async fn stream(
     response
 }
 
-async fn observed_sse_ids(response: Response, expected: &[i64]) -> String {
+pub(super) async fn observed_sse_ids(response: Response, expected: &[i64]) -> String {
     let mut chunks = response.into_body().into_data_stream();
     let mut output = String::new();
     for _ in 0..(expected.len() + 20) {

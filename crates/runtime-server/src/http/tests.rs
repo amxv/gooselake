@@ -56,6 +56,7 @@ mod operator_agent_create_contract;
 mod operator_agent_restore;
 mod operator_contract_routes;
 mod operator_event_pages;
+mod operator_event_stream_routes;
 mod operator_hook_approval_idempotency;
 mod operator_hook_effect_pages;
 mod operator_lead_inputs;

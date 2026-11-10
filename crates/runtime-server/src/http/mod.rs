@@ -37,6 +37,7 @@ mod durable_event_stream;
 mod events;
 mod mcp;
 mod messages;
+mod operator_event_streams;
 mod operator_events;
 mod operator_hook_effects;
 mod operator_processes;
@@ -57,6 +58,7 @@ use durable_event_stream::*;
 use events::*;
 use mcp::*;
 use messages::*;
+use operator_event_streams::*;
 use operator_events::*;
 use operator_hook_effects::*;
 use operator_processes::*;
@@ -202,6 +204,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/capabilities", get(runtime_capabilities_v2))
         .route("/agents/{agent_id}", get(get_agent_by_id))
         .route(
+            "/agents/{agent_id}/events/stream",
+            get(stream_operator_agent_events),
+        )
+        .route(
             "/agents/{agent_id}/turns/{turn_id}/edit-rerun",
             post(edit_agent_turn_and_rerun),
         )
@@ -257,6 +263,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/workspaces", post(register_workspace).get(list_workspaces))
         .route("/workspaces/{workspace_id}", get(get_workspace))
+        .route(
+            "/workspaces/{workspace_id}/events/stream",
+            get(stream_operator_workspace_events),
+        )
         .route("/workspaces/{workspace_id}/retire", post(retire_workspace))
         .route(
             "/workspaces/{workspace_id}/retirement/advance",
@@ -372,8 +382,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/operations", get(list_operations))
         .route("/operations/{operation_id}", get(get_operation))
         .route("/events", get(list_operator_events))
+        .route("/events/stream", get(stream_operator_global_events))
         .route("/events/{event_id}", get(get_operator_event))
         .route("/processes", get(list_operator_processes))
+        .route(
+            "/processes/{process_id}/events/stream",
+            get(stream_operator_process_events),
+        )
         .route("/processes/{process_id}", get(get_operator_process))
         .route_layer(middleware::from_fn_with_state(
             state.bearer_token.clone(),

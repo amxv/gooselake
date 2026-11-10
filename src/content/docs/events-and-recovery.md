@@ -37,6 +37,17 @@ with `GET /v2/events/{event_id}` to retrieve its full record and payload.
 The v2 collection uses database indexes, not memory scans; it does not replace
 the `/v1` SSE streams or change their sequence-number contract.
 
+The operator can subscribe to the same committed journal through
+`GET /v2/events/stream`, `/v2/workspaces/{workspace_id}/events/stream`,
+`/v2/agents/{agent_id}/events/stream`, and
+`/v2/processes/{process_id}/events/stream`. These routes require the operator
+bearer credential and an existing workspace/agent/process for resource
+streams; archived agents and terminal processes remain inspectable. Use
+`after_seq` (or the `Last-Event-ID` header) rather than the **history list's**
+`cursor`. On the global stream it is a SQLite event row ID; on resource
+streams it is a scoped sequence. Agent events use the canonical session scope.
+`/v1` and `/v2` SSE clients preserve their last received IDs across reconnects.
+
 ## Critical and droppable events
 
 Events have criticality.
@@ -54,7 +65,7 @@ A robust client reconnects like this:
 3. render the replayed backlog
 4. follow the live stream
 
-Session, global, team, and process streams now subscribe to **committed SQLite event notifications** before reading the first replay page. Each stream reads ordered event rows from the durable journal in bounded pages, then waits for a commit notification instead of polling SQLite every 250 ms while idle. Notifications contain no event payload or authority: a delayed, coalesced, or lagged notification triggers an indexed catch-up query from the last delivered cursor. SQLite writes that roll back never wake subscribers. The process stream verifies process visibility through the process manager before accessing the scoped journal.
+Session, global, team, workspace, agent, and process streams now subscribe to **committed SQLite event notifications** before reading the first replay page. Each stream reads ordered event rows from the durable journal in bounded pages, then waits for a commit notification instead of polling SQLite every 250 ms while idle. Notifications contain no event payload or authority: a delayed, coalesced, or lagged notification triggers an indexed catch-up query from the last delivered cursor. SQLite writes that roll back never wake subscribers. Legacy process streams verify process visibility through the process manager; operator streams verify bearer identity and resource existence before accessing a scoped journal.
 
 The in-process commit notification channel is scoped to one runtime database and is not a cross-process replication bus. Clients must preserve the last received event ID and reconnect to replay after network/server failure. A journal-read error closes the SSE stream with a retryable `stream.error` event that does **not** advance the cursor. All streams retain their existing cursor contracts.
 

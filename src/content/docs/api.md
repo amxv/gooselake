@@ -694,6 +694,8 @@ response, inspect the corresponding GET resource before deciding next steps.
 
 With SQLite storage, inventory reads one repository-scoped worktree/revision/active-claim snapshot instead of loading the full runtime history or querying each worktree revision separately. Historical repository-root path aliases are resolved to the same canonical Git root; released claims are excluded from the conflict check. Attached agent IDs remain derived from the **active workspace roster**, not claim ownership alone. The index-backed projection is read-only; Git identity and routing eligibility are reverified when inventory is requested.
 
+The inventory's active-agent attachment map reads only indexed member IDs and durable routing CWDs; archived agents, unrelated workspace memberships, and unnecessary provider/profile metadata do not enter this projection. Native route eligibility and any conflicting live claim are still evaluated against the full authoritative attached-ID set, rather than just the `gg_team status` 100-member display page.
+
 Inventory output is bounded with `limit=1..100` (default 50) and an optional
 opaque `cursor`. When more records remain, follow the response's
 `X-Next-Cursor` as `?cursor=...` on the next request. Ordering uses the stable

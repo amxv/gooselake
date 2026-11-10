@@ -569,6 +569,7 @@ pub trait RuntimeStore:
         unsupported_store("workspace agent authority is not implemented by this runtime store")
     }
     crate::services_workspace_status_trait::default_workspace_status_roster!();
+    crate::services_workspace_status_trait::default_workspace_active_agent_routes!();
     fn list_workspace_agents_page(
         &self,
         _workspace_id: &str,

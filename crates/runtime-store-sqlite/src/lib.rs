@@ -41,6 +41,7 @@ mod repository_team_hooks;
 mod repository_turn_authority;
 mod repository_upserts;
 mod repository_workspace;
+mod repository_workspace_active_agent_routes;
 mod repository_workspace_agent;
 mod repository_workspace_agent_lifecycle;
 mod repository_workspace_control;

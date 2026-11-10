@@ -36,6 +36,27 @@ fn workspace_status_roster_is_indexed_bounded_and_preserves_out_of_page_creator_
         .list_workspace_status_roster(&workspace.workspace_id, Some("sess_status_134"), 100)
         .unwrap();
     assert_eq!(projection.total_active_members, 135);
+    let route_projection = repository
+        .list_workspace_active_agent_routes(&workspace.workspace_id)
+        .unwrap();
+    let full_active = repository
+        .list_workspace_agents(
+            &workspace.workspace_id,
+            Some(runtime_core::WorkspaceAgentLifecycleState::Active),
+        )
+        .unwrap()
+        .into_iter()
+        .map(|agent| runtime_core::WorkspaceActiveAgentRoute {
+            agent_id: agent.agent_id,
+            authoritative_cwd: agent.recreation_policy.authoritative_cwd,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(route_projection, full_active);
+    assert_eq!(route_projection.len(), 135);
+    assert!(route_projection
+        .iter()
+        .all(|route| route.agent_id.starts_with("sess_status_")
+            && !route.authoritative_cwd.is_empty()));
     assert_eq!(projection.members.len(), 100);
     assert_eq!(projection.members[0].alias, "friendly-roster-000");
     assert_eq!(projection.members[99].alias, "friendly-roster-099");
@@ -75,6 +96,13 @@ fn workspace_status_roster_is_indexed_bounded_and_preserves_out_of_page_creator_
     let reopened = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
     assert_eq!(
         reopened
+            .list_workspace_active_agent_routes(&workspace.workspace_id)
+            .unwrap(),
+        route_projection,
+        "active worktree attachment routes must be reconstructible after restart"
+    );
+    assert_eq!(
+        reopened
             .list_workspace_status_roster(&workspace.workspace_id, Some("sess_status_134"), 100)
             .unwrap(),
         projection,
@@ -103,6 +131,27 @@ fn workspace_status_roster_is_indexed_bounded_and_preserves_out_of_page_creator_
         "bounded status must use alias order index: {ordered}"
     );
     assert!(!ordered.contains("USE TEMP B-TREE"), "sort: {ordered}");
+    let active_routes = plan(
+        "EXPLAIN QUERY PLAN SELECT a.session_id, a.recreation_policy_json
+         FROM workspace_agents a
+         JOIN workspace_agent_profiles p
+           ON p.session_id=a.session_id AND p.workspace_id=a.workspace_id
+         JOIN sessions s ON s.id=a.session_id
+         WHERE a.workspace_id='workspace' AND a.lifecycle_state='active'
+         ORDER BY a.created_at ASC, a.session_id ASC",
+    );
+    assert!(
+        active_routes.contains("idx_workspace_agents_workspace_lifecycle"),
+        "thin route projection must use workspace+active+creation index: {active_routes}"
+    );
+    assert!(
+        !active_routes.contains("SCAN a"),
+        "full agent scan: {active_routes}"
+    );
+    assert!(
+        !active_routes.contains("USE TEMP B-TREE"),
+        "sort: {active_routes}"
+    );
     let count = plan(
         "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM workspace_agents
          WHERE workspace_id='workspace' AND lifecycle_state='active'",

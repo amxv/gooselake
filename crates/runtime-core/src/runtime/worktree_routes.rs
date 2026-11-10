@@ -40,16 +40,15 @@ impl RuntimeSessionManager {
         let scoped = self
             .store
             .list_managed_worktree_status_for_root(&identity.canonical_root)?;
-        let agents = self.store.list_workspace_agents(workspace_id, None)?;
+        let active_routes = self
+            .store
+            .list_workspace_active_agent_routes(workspace_id)?;
         let mut attached_by_cwd: HashMap<&str, Vec<String>> = HashMap::new();
-        for agent in agents
-            .iter()
-            .filter(|agent| agent.lifecycle_state == WorkspaceAgentLifecycleState::Active)
-        {
+        for route in &active_routes {
             attached_by_cwd
-                .entry(agent.recreation_policy.authoritative_cwd.as_str())
+                .entry(route.authoritative_cwd.as_str())
                 .or_default()
-                .push(agent.agent_id.clone());
+                .push(route.agent_id.clone());
         }
         for attached in attached_by_cwd.values_mut() {
             attached.sort();

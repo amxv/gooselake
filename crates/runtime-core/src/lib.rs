@@ -132,7 +132,9 @@ pub use services::{
     WorktreeMemberRemovedRequest, WorktreeMemberRemovedResponse, WorktreeReleaseRequest,
     WorktreeReleaseResponse, WorktreeService,
 };
-pub use services_workspace_status_trait::WorkspaceStatusRosterSnapshot;
+pub use services_workspace_status_trait::{
+    WorkspaceActiveAgentRoute, WorkspaceStatusRosterSnapshot,
+};
 pub use session_compaction::{
     CompactionObservationReceipt, ProviderCompactionObservation, SessionCompactionRun,
 };

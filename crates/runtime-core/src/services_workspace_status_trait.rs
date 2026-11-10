@@ -1,5 +1,13 @@
 use std::collections::HashMap;
 
+/// The only two fields worktree inventory needs from an active workspace
+/// agent. It is a derived read projection, never independent route authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceActiveAgentRoute {
+    pub agent_id: String,
+    pub authoritative_cwd: String,
+}
+
 /// Bounded active roster plus the complete active-member count and only the
 /// aliases needed for displayed creator and lead provenance. This read model
 /// never owns workspace membership or alias authority.
@@ -45,3 +53,28 @@ macro_rules! default_workspace_status_roster {
 }
 
 pub(crate) use default_workspace_status_roster;
+
+// Other backends may only support the existing full roster query. SQLite
+// overrides this to avoid decoding provider sessions and agent profiles.
+macro_rules! default_workspace_active_agent_routes {
+    () => {
+        fn list_workspace_active_agent_routes(
+            &self,
+            workspace_id: &str,
+        ) -> Result<Vec<crate::WorkspaceActiveAgentRoute>, crate::RuntimeError> {
+            Ok(self
+                .list_workspace_agents(
+                    workspace_id,
+                    Some(crate::WorkspaceAgentLifecycleState::Active),
+                )?
+                .into_iter()
+                .map(|agent| crate::WorkspaceActiveAgentRoute {
+                    agent_id: agent.agent_id,
+                    authoritative_cwd: agent.recreation_policy.authoritative_cwd,
+                })
+                .collect())
+        }
+    };
+}
+
+pub(crate) use default_workspace_active_agent_routes;

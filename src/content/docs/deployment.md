@@ -21,6 +21,18 @@ For the current architecture, the recommended production shape is a host install
 
 Detailed config behavior is documented in [Configuration Reference](/docs/configuration). Provider setup is documented in [Provider Guide](/docs/providers). Day-two checks are documented in [Operations Runbook](/docs/operations).
 
+Release bundles include the runtime, compiled Claude and GG MCP sidecars, a
+generated OpenAPI snapshot, documentation/deployment templates, and a
+`contracts/` asset group exported from the *built binary*: an exact harness
+text, Codex model policy, and three-tool semantic manifest with provider
+injection-mode metadata. Packaging verifies these assets against the binary
+before archiving, and the installer verifies them before updating an existing
+prefix. The source-tree offline fixture is `make check-release-layout`; a
+successful fixture is not evidence of authenticated provider/device behavior.
+The staged `make upgrade` path validates the new extracted bundle and its
+embedded semantic contracts before switching the `current` symlink; the
+offline fixture also tests a rejected staged upgrade without switching it.
+
 ## Deployment Modes
 
 ### Host Install (Recommended)

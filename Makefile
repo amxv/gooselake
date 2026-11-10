@@ -68,6 +68,11 @@ api-docs-check: ## Fail if API files changed without corresponding docs changes
 lint-rust-file-lines: ## Fail if any Rust file exceeds 1000 lines
 	./scripts/check-rust-file-lines.sh 1000
 
+.PHONY: check-release-layout
+check-release-layout: ## Validate source-derived release assets and offline isolated installation
+	cargo build -p runtime-server --bin gg-runtime-server
+	./scripts/test-release-layout.sh
+
 .PHONY: check
 check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tests
 	$(MAKE) lint-rust-file-lines
@@ -77,6 +82,7 @@ check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tes
 	cargo check --manifest-path sidecars/gg-mcp-server/Cargo.toml
 	cargo test --manifest-path sidecars/gg-mcp-server/Cargo.toml
 	$(MAKE) api-docs-check
+	$(MAKE) check-release-layout
 
 .PHONY: vps-deploy
 vps-deploy: ## One-command VPS deploy (upgrade + preflight + systemd enable/start)

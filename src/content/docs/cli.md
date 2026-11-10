@@ -50,6 +50,24 @@ gg-runtime-server --write-openapi /tmp/runtime-server-openapi.yaml
 
 The CLI intentionally rejects unknown arguments and rejects invalid flag combinations such as `--check-config` with `--write-openapi`.
 
+Export the release harness, built-in model policy, and **actual Rust-generated**
+three-tool semantic contract as a self-contained asset group:
+
+```bash
+gg-runtime-server --write-contracts ./contracts/runtime-contracts.json
+gg-runtime-server --verify-contracts ./contracts/runtime-contracts.json
+```
+
+`--write-contracts` creates the parent directory if needed, then writes
+`runtime-contracts.json`, `gooselake-harness-v1.md`, and
+`codex-model-policy.json` from the exact compiled binary. Verification compares
+both embedded source assets and the complete typed semantic manifest with the
+binary, failing on missing/tampered copies. It is a **binary-to-bundle parity
+check**, not a signed provenance or cryptographic publisher-authenticity claim.
+Like OpenAPI generation, these commands do **not** start a server or contact a
+provider. All config-check, OpenAPI-generation, write-contract, and
+verify-contract modes are mutually exclusive.
+
 ## Make targets
 
 The repo uses `make` as the human-friendly command runner. The most useful targets are:
@@ -61,6 +79,7 @@ make upgrade
 make preflight
 make preflight-http
 make check-config
+make check-release-layout
 make api-docs-refresh
 make api-docs-status
 make api-docs-check

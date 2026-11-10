@@ -116,6 +116,14 @@ for path in "${CLAUDE_BRIDGE_BIN}" "${MCP_BIN}"; do
   fi
 done
 
+CONTRACT_ARTIFACT="${EXPECTED_ROOT}/contracts/runtime-contracts.json"
+if [[ -f "${CONTRACT_ARTIFACT}" ]]; then
+  echo "      Verifying installed harness and semantic tool contracts"
+  "${EXPECTED_BIN}" --verify-contracts "${CONTRACT_ARTIFACT}"
+else
+  echo "      No separate contract artifact in legacy install; skipping contract parity check"
+fi
+
 if [[ "${SKIP_HTTP}" -eq 1 || -z "${BASE_URL}" ]]; then
   echo "[3/4] HTTP checks skipped"
   echo "[4/4] Preflight passed"

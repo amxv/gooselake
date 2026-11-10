@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 use runtime_server::{
-    bootstrap_runtime, build_router, write_openapi_artifact, AppState, AuthBootstrapSource,
-    RuntimeServerConfig,
+    bootstrap_runtime, build_router, verify_contract_artifact, write_contract_artifact,
+    write_openapi_artifact, AppState, AuthBootstrapSource, RuntimeServerConfig,
 };
 
 #[tokio::main]
@@ -32,6 +32,16 @@ async fn main() -> Result<()> {
                 token_source = %describe_auth_source(&auth.source),
                 "config check passed"
             );
+            return Ok(());
+        }
+        CliCommand::WriteContracts { path } => {
+            write_contract_artifact(path.as_path())?;
+            tracing::info!(path = %path.display(), "wrote runtime contract artifact");
+            return Ok(());
+        }
+        CliCommand::VerifyContracts { path } => {
+            verify_contract_artifact(path.as_path())?;
+            tracing::info!(path = %path.display(), "runtime contract artifact matches binary");
             return Ok(());
         }
         CliCommand::Serve { config_path } => config_path,
@@ -85,6 +95,8 @@ fn init_tracing() {
 enum CliCommand {
     Serve { config_path: Option<PathBuf> },
     WriteOpenApi { path: PathBuf },
+    WriteContracts { path: PathBuf },
+    VerifyContracts { path: PathBuf },
     CheckConfig { config_path: Option<PathBuf> },
 }
 
@@ -92,6 +104,8 @@ fn parse_cli() -> Result<CliCommand> {
     let mut args = std::env::args().skip(1);
     let mut config_path = None;
     let mut write_openapi_path = None;
+    let mut write_contracts_path = None;
+    let mut verify_contracts_path = None;
     let mut check_config = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -107,6 +121,19 @@ fn parse_cli() -> Result<CliCommand> {
                 });
                 write_openapi_path = Some(path);
             }
+            "--write-contracts" => {
+                let path = args
+                    .next()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("contracts").join("runtime-contracts.json"));
+                write_contracts_path = Some(path);
+            }
+            "--verify-contracts" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| anyhow!("--verify-contracts requires an artifact path"))?;
+                verify_contracts_path = Some(PathBuf::from(path));
+            }
             "--check-config" => {
                 check_config = true;
             }
@@ -115,13 +142,23 @@ fn parse_cli() -> Result<CliCommand> {
             }
         }
     }
-    if check_config && write_openapi_path.is_some() {
+    let mode_count = usize::from(check_config)
+        + usize::from(write_openapi_path.is_some())
+        + usize::from(write_contracts_path.is_some())
+        + usize::from(verify_contracts_path.is_some());
+    if mode_count > 1 {
         return Err(anyhow!(
-            "--check-config cannot be combined with --write-openapi"
+            "check-config and artifact modes cannot be combined"
         ));
     }
     if let Some(path) = write_openapi_path {
         return Ok(CliCommand::WriteOpenApi { path });
+    }
+    if let Some(path) = write_contracts_path {
+        return Ok(CliCommand::WriteContracts { path });
+    }
+    if let Some(path) = verify_contracts_path {
+        return Ok(CliCommand::VerifyContracts { path });
     }
     if check_config {
         return Ok(CliCommand::CheckConfig { config_path });

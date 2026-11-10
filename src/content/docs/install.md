@@ -41,6 +41,28 @@ Install a pinned version:
 make install VERSION=v0.1.2
 ```
 
+For an already-downloaded package, skip GitHub access and install it from an
+explicit local archive into a chosen prefix:
+
+```bash
+GG_RUNTIME_ARCHIVE_PATH=/path/to/gg-runtime-linux-x86_64.tar.gz \
+GG_RUNTIME_INSTALL_ROOT=/path/to/isolated/prefix \
+  ./scripts/install-runtime.sh latest
+```
+
+The installer checks the expected platform-specific archive root, rejects
+traversal and symbolic-link members, verifies required sidecars and embedded
+harness/model/tool contract parity **before writing into the install prefix**.
+Existing installed binaries are not changed when a candidate fails contract
+verification. This does not authenticate the GitHub release publisher; verify
+archive provenance separately when that matters.
+
+The staged upgrade path supports the same local archive override through
+`GG_RUNTIME_ARCHIVE_PATH` and uses `GG_RUNTIME_RELEASES_ROOT` to control the
+staged release destination. The candidate's harness and semantic tool
+contracts are checked **before switching** `current`; a failed contract check
+does not change the active release symlink.
+
 Only set `GG_RUNTIME_REPO` if you want to install from a fork or alternate repo. The default repo is `amxv/gooselake`:
 
 ```bash
@@ -58,6 +80,19 @@ claude login
 gg-runtime-server --check-config --config ./runtime-server.toml
 gg-runtime-server --config ./runtime-server.toml
 ```
+
+New packages include a `contracts/` directory containing
+`runtime-contracts.json`, `gooselake-harness-v1.md`, and
+`codex-model-policy.json`. The runtime binary can independently verify all
+three against its embedded harness and three-tool semantic contract:
+
+```bash
+gg-runtime-server --verify-contracts "$HOME/.local/contracts/runtime-contracts.json"
+```
+
+Run `make check-release-layout` in a source checkout for an offline,
+isolated install/tamper smoke. That test uses the compiled runtime CLI and
+inert stand-in sidecar *files*; it does **not** validate live provider startup.
 
 Codex command resolution checks `GG_CODEX_COMMAND`, then `~/.local/bin/codex`, `~/.volta/bin/codex`, `~/.bun/bin/codex`, then `PATH`. Set `GG_CODEX_COMMAND` to an absolute executable path when a service environment cannot see the host install.
 
@@ -80,7 +115,9 @@ ACP install notes:
 - only stdio transport is supported in v1; streamable HTTP ACP transport is not supported
 - ACP auth is agent-managed in v1; there is no runtime ACP login, API-key import, JSON import, or logout flow
 - `GET /v1/providers/acp/models` may return an empty list because ACP model selection can be session-scoped inside the configured agent
-- ACP permission requests are unsupported in v1 and fail the active turn if the agent sends `session/request_permission`
+- ACP `session/request_permission` routes through the durable operator approval
+  workflow when it can be bound to an admitted turn and a safe offered choice;
+  malformed or unrouteable requests fail closed instead of being auto-approved
 
 ## Staged Install for VPS (Recommended for Always-On)
 

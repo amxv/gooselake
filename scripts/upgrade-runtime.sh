@@ -19,6 +19,7 @@ Environment:
   GG_RUNTIME_SYSTEMD_SERVICE Optional systemd service name to restart
                              after activation (example: gg-runtime.service).
   GG_RUNTIME_SYSTEMD_SCOPE   "user" (default) or "system".
+  GG_RUNTIME_ARCHIVE_PATH   Optional existing local release archive; skips GitHub download.
 
 Examples:
   ./scripts/upgrade-runtime.sh latest
@@ -86,13 +87,71 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Downloading ${DOWNLOAD_URL}"
-curl -fsSL "${DOWNLOAD_URL}" -o "${TMP_DIR}/runtime.tar.gz"
-tar -xzf "${TMP_DIR}/runtime.tar.gz" -C "${TMP_DIR}"
+if [[ -n "${GG_RUNTIME_ARCHIVE_PATH:-}" ]]; then
+  if [[ ! -f "${GG_RUNTIME_ARCHIVE_PATH}" ]]; then
+    echo "Local release archive not found: ${GG_RUNTIME_ARCHIVE_PATH}" >&2
+    exit 1
+  fi
+  echo "Loading local release archive: ${GG_RUNTIME_ARCHIVE_PATH}"
+  cp "${GG_RUNTIME_ARCHIVE_PATH}" "${TMP_DIR}/runtime.tar.gz"
+else
+  echo "Downloading ${DOWNLOAD_URL}"
+  curl -fsSL "${DOWNLOAD_URL}" -o "${TMP_DIR}/runtime.tar.gz"
+fi
 
-PACKAGE_DIR="$(find "${TMP_DIR}" -maxdepth 1 -type d -name 'gg-runtime-*' | head -n 1)"
-if [[ -z "${PACKAGE_DIR}" ]]; then
-  echo "Invalid archive layout: package directory not found." >&2
+PACKAGE_NAME="gg-runtime-${PLATFORM}-${ARCH_SLUG}"
+tar -tzf "${TMP_DIR}/runtime.tar.gz" > "${TMP_DIR}/archive-members.txt"
+if [[ ! -s "${TMP_DIR}/archive-members.txt" ]]; then
+  echo "Release archive is empty" >&2
+  exit 1
+fi
+while IFS= read -r entry; do
+  case "${entry}" in
+    "${PACKAGE_NAME}"|"${PACKAGE_NAME}/"|"${PACKAGE_NAME}/"*) ;;
+    *) echo "Release archive has an unexpected member: ${entry}" >&2; exit 1 ;;
+  esac
+  normalized_entry="${entry%/}"
+  case "/${normalized_entry}/" in
+    *"/../"*|*"/./"*|*"//"*)
+      echo "Release archive contains an unsafe member: ${entry}" >&2
+      exit 1
+      ;;
+  esac
+done < "${TMP_DIR}/archive-members.txt"
+
+tar -xzf "${TMP_DIR}/runtime.tar.gz" -C "${TMP_DIR}"
+PACKAGE_DIR="${TMP_DIR}/${PACKAGE_NAME}"
+if [[ ! -d "${PACKAGE_DIR}" ]]; then
+  echo "Invalid archive layout: expected ${PACKAGE_NAME} directory." >&2
+  exit 1
+fi
+if [[ -n "$(find "${PACKAGE_DIR}" -type l -print -quit)" ]]; then
+  echo "Release archive contains links; refusing to upgrade" >&2
+  exit 1
+fi
+for executable in \
+  bin/gg-runtime-server \
+  sidecars/claude-bridge/claude-bridge \
+  sidecars/gg-mcp-server/gg-mcp-server; do
+  if [[ ! -x "${PACKAGE_DIR}/${executable}" ]]; then
+    echo "Missing or non-executable release binary: ${executable}" >&2
+    exit 1
+  fi
+done
+for asset in \
+  contracts/runtime-contracts.json \
+  contracts/gooselake-harness-v1.md \
+  contracts/codex-model-policy.json openapi.yaml; do
+  if [[ ! -f "${PACKAGE_DIR}/${asset}" ]]; then
+    echo "Missing release asset: ${asset}" >&2
+    exit 1
+  fi
+done
+"${PACKAGE_DIR}/bin/gg-runtime-server" \
+  --verify-contracts "${PACKAGE_DIR}/contracts/runtime-contracts.json"
+
+if [[ -e "${CURRENT_LINK}" && ! -L "${CURRENT_LINK}" ]]; then
+  echo "Refusing to replace non-symlink runtime current path: ${CURRENT_LINK}" >&2
   exit 1
 fi
 
@@ -105,6 +164,8 @@ if [[ -e "${TARGET_DIR}" ]]; then
 fi
 
 /bin/cp -R "${PACKAGE_DIR}" "${TARGET_DIR}"
+"${TARGET_DIR}/bin/gg-runtime-server" \
+  --verify-contracts "${TARGET_DIR}/contracts/runtime-contracts.json"
 PREVIOUS_TARGET=""
 if [[ -L "${CURRENT_LINK}" ]]; then
   PREVIOUS_TARGET="$(readlink "${CURRENT_LINK}" || true)"

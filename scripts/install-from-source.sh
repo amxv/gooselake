@@ -59,34 +59,42 @@ case "${PLATFORM}-${ARCH_SLUG}" in
 esac
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP_OUTPUT="${ROOT_DIR}/tmp/release-local"
-
-mkdir -p "${TMP_OUTPUT}"
+mkdir -p "${ROOT_DIR}/tmp"
+TMP_OUTPUT="$(mktemp -d "${ROOT_DIR}/tmp/.gg-release-local.XXXXXXXX")"
+trap '/bin/rm -rf "${TMP_OUTPUT}"' EXIT
+REL_OUTPUT="${TMP_OUTPUT#"${ROOT_DIR}/"}"
 chmod +x "${ROOT_DIR}/scripts/package-release.sh"
 "${ROOT_DIR}/scripts/package-release.sh" \
   --platform "${PLATFORM}" \
   --arch "${ARCH_SLUG}" \
   --bun-target "${BUN_TARGET}" \
-  --output "tmp/release-local"
+  --output "${REL_OUTPUT}"
 
-ARCHIVE_PATH="${ROOT_DIR}/tmp/release-local/gg-runtime-${PLATFORM}-${ARCH_SLUG}.tar.gz"
+ARCHIVE_PATH="${TMP_OUTPUT}/gg-runtime-${PLATFORM}-${ARCH_SLUG}.tar.gz"
 TMP_EXTRACT="$(mktemp -d)"
-trap '/bin/rm -rf "${TMP_EXTRACT}"' EXIT
+trap '/bin/rm -rf "${TMP_EXTRACT}" "${TMP_OUTPUT}"' EXIT
 tar -xzf "${ARCHIVE_PATH}" -C "${TMP_EXTRACT}"
 
 PACKAGE_DIR="${TMP_EXTRACT}/gg-runtime-${PLATFORM}-${ARCH_SLUG}"
+"${ROOT_DIR}/scripts/verify-release-bundle.sh" "${PACKAGE_DIR}"
 mkdir -p "${INSTALL_ROOT}/bin"
 mkdir -p "${INSTALL_ROOT}/sidecars/claude-bridge"
 mkdir -p "${INSTALL_ROOT}/sidecars/gg-mcp-server"
 mkdir -p "${INSTALL_ROOT}/docs"
+mkdir -p "${INSTALL_ROOT}/contracts"
 
 install -m 0755 "${PACKAGE_DIR}/bin/gg-runtime-server" "${INSTALL_ROOT}/bin/gg-runtime-server"
 install -m 0755 "${PACKAGE_DIR}/sidecars/claude-bridge/claude-bridge" "${INSTALL_ROOT}/sidecars/claude-bridge/claude-bridge"
 install -m 0755 "${PACKAGE_DIR}/sidecars/gg-mcp-server/gg-mcp-server" "${INSTALL_ROOT}/sidecars/gg-mcp-server/gg-mcp-server"
 install -m 0644 "${PACKAGE_DIR}/runtime-server.toml.example" "${INSTALL_ROOT}/runtime-server.toml.example"
 install -m 0644 "${PACKAGE_DIR}/openapi.yaml" "${INSTALL_ROOT}/openapi.yaml"
+install -m 0644 "${PACKAGE_DIR}/contracts/runtime-contracts.json" "${INSTALL_ROOT}/contracts/runtime-contracts.json"
+install -m 0644 "${PACKAGE_DIR}/contracts/gooselake-harness-v1.md" "${INSTALL_ROOT}/contracts/gooselake-harness-v1.md"
+install -m 0644 "${PACKAGE_DIR}/contracts/codex-model-policy.json" "${INSTALL_ROOT}/contracts/codex-model-policy.json"
 install -m 0644 "${PACKAGE_DIR}/README.md" "${INSTALL_ROOT}/README.md"
 /bin/cp -R "${PACKAGE_DIR}/docs/." "${INSTALL_ROOT}/docs/"
+"${INSTALL_ROOT}/bin/gg-runtime-server" \
+  --verify-contracts "${INSTALL_ROOT}/contracts/runtime-contracts.json"
 if [[ -d "${PACKAGE_DIR}/deploy" ]]; then
   mkdir -p "${INSTALL_ROOT}/deploy"
   /bin/cp -R "${PACKAGE_DIR}/deploy/." "${INSTALL_ROOT}/deploy/"

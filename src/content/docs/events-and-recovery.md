@@ -78,6 +78,13 @@ is a network heartbeat, not a periodic database scan. This proof covers
 the in-process committed-journal wakeup architecture, not cross-process
 or cross-host event replication.
 
+Concurrency/recovery regression exercises independent SQLite connections
+contending for the same workspace/process scope, verifies unique gap-free
+global and per-scope cursors after restart, and reopens fresh stream stores
+to replay and reconnect across global, workspace, agent and process streams.
+The append transaction serializes scope-sequence allocation; retained journal
+rows remain the authority after restart, not the former stream's memory.
+
 ## Cursor rules
 
 The runtime supports both explicit query cursors and the SSE `Last-Event-ID` header.

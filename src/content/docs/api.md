@@ -1430,6 +1430,10 @@ Behavior:
   the old 250 ms polling cadence**, and one catch-up query after each
   independently committed event; 10-second network keepalives do not
   poll the database
+- deterministic concurrency/restart tests prove independent SQLite writers
+  cannot duplicate global or scope-local cursors, and fresh runtime stores
+  can resume global, workspace, agent and process SSE streams after restart
+  without replaying the last acknowledged event
 - process streams check owner/workspace visibility through the process manager
   before opening their scoped journal stream
 - `after_seq` query param takes precedence

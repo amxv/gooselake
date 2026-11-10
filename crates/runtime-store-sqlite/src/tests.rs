@@ -13,6 +13,7 @@ mod agent_message_cancellation;
 mod agent_message_pages;
 mod context_status_batch;
 mod event_commit_notifications;
+mod event_cursor_concurrency;
 mod event_cursor_recovery_scale;
 mod operator_event_pages;
 mod operator_process_pages;

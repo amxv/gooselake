@@ -69,6 +69,15 @@ Session, global, team, workspace, agent, and process streams now subscribe to **
 
 The in-process commit notification channel is scoped to one runtime database and is not a cross-process replication bus. Clients must preserve the last received event ID and reconnect to replay after network/server failure. A journal-read error closes the SSE stream with a retryable `stream.error` event that does **not** advance the cursor. All streams retain their existing cursor contracts.
 
+The idle behavior is covered by an instrumented real SQLite-store SSE test:
+one initial journal read, **no further SELECT across an idle interval
+longer than the former 250 ms polling cadence**, then exactly one indexed
+catch-up read for each separately committed event. The stream returns to
+the same no-query idle state after delivery; its 10-second SSE keepalive
+is a network heartbeat, not a periodic database scan. This proof covers
+the in-process committed-journal wakeup architecture, not cross-process
+or cross-host event replication.
+
 ## Cursor rules
 
 The runtime supports both explicit query cursors and the SSE `Last-Event-ID` header.

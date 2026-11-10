@@ -1425,6 +1425,11 @@ Behavior:
   durable pages, and wake on committed SQLite event inserts instead of
   periodically polling while idle; lagged notifications catch up from the last
   delivered cursor without re-emitting it
+- an instrumented real-SQLite stream regression verifies a single initial
+  journal query, **zero additional reads across idle intervals longer than
+  the old 250 ms polling cadence**, and one catch-up query after each
+  independently committed event; 10-second network keepalives do not
+  poll the database
 - process streams check owner/workspace visibility through the process manager
   before opening their scoped journal stream
 - `after_seq` query param takes precedence

@@ -55,7 +55,7 @@ fn build_openapi_yaml() -> String {
     out.push_str("  title: GG Standalone Agent Runtime API\n");
     out.push_str("  version: 0.1.2\n");
     out.push_str(
-        "  summary: Single-user hosted runtime for Codex/Claude/ACP sessions, teams, processes, worktrees, and SSE streams\n",
+        "  summary: Host-owned workspace agents, Codex/Claude/ACP execution, durable operations, three GG tools, and replayable events\n",
     );
     out.push_str("servers:\n");
     out.push_str("  - url: http://localhost:8080\n");
@@ -579,7 +579,36 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
     }
 }
 
+fn start_response_headers(out: &mut String, started: &mut bool) {
+    if !*started {
+        out.push_str("          headers:\n");
+        *started = true;
+    }
+}
+
+fn append_request_id_header(out: &mut String) {
+    out.push_str("            X-Request-ID:\n");
+    out.push_str(
+        "              description: Server-minted request correlation ID on every operator v2 response\n",
+    );
+    out.push_str("              schema:\n");
+    out.push_str("                type: string\n");
+}
+
+fn append_operator_default_error(out: &mut String) {
+    out.push_str("        default:\n");
+    out.push_str("          description: Typed operator API error response (4xx or 5xx)\n");
+    out.push_str("          headers:\n");
+    append_request_id_header(out);
+    out.push_str("          content:\n");
+    out.push_str("            application/json:\n");
+    out.push_str("              schema:\n");
+    out.push_str("                $ref: \"#/components/schemas/OperatorErrorResponse\"\n");
+}
+
 fn append_response(out: &mut String, path: &str, method: HttpMethod) {
+    let operator_v2 = path.starts_with("/v2/") && !path.starts_with("/v2/mcp/");
+    let mut headers_started = false;
     let status = if method == HttpMethod::Delete {
         "204"
     } else {
@@ -596,10 +625,17 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
     }
     if path.ends_with("/events/stream") || path == "/v1/events/stream" {
         out.push_str("SSE stream\n");
+        if operator_v2 {
+            start_response_headers(out, &mut headers_started);
+            append_request_id_header(out);
+        }
         out.push_str("          content:\n");
         out.push_str("            text/event-stream:\n");
         out.push_str("              schema:\n");
         out.push_str("                type: string\n");
+        if operator_v2 {
+            append_operator_default_error(out);
+        }
         return;
     }
     if path == "/openapi.yaml" || path == "/v1/openapi.yaml" {
@@ -611,11 +647,15 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         return;
     }
     out.push_str("JSON response\n");
+    if operator_v2 {
+        start_response_headers(out, &mut headers_started);
+        append_request_id_header(out);
+    }
     if queries::returns_next_cursor(path, method) {
         // Each listed response emits this only when another keyset page
         // exists. The cursor remains an HTTP header, never a fake JSON
         // wrapper around the real array/object return type.
-        out.push_str("          headers:\n");
+        start_response_headers(out, &mut headers_started);
         out.push_str("            X-Next-Cursor:\n");
         out.push_str("              description: Present when a following keyset page exists; pass as cursor on the next request\n");
         out.push_str("              schema:\n");
@@ -628,7 +668,7 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         ))
         && revision::returns_revision_etag(path, method)
     {
-        out.push_str("          headers:\n");
+        start_response_headers(out, &mut headers_started);
         revision::append_etag_header(out);
     }
     if method == HttpMethod::Post
@@ -645,7 +685,7 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve"
         )
     {
-        out.push_str("          headers:\n");
+        start_response_headers(out, &mut headers_started);
         out.push_str("            X-Operation-ID:\n");
         out.push_str("              description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions\n");
         out.push_str("              schema:\n");
@@ -655,14 +695,14 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         }
     }
     if method == HttpMethod::Post && path == "/v2/messages/{message_id}/cancel" {
-        out.push_str("          headers:\n");
+        start_response_headers(out, &mut headers_started);
         out.push_str("            X-Operation-ID:\n");
         out.push_str("              description: Durable atomic message cancellation operation\n");
         out.push_str("              schema:\n");
         out.push_str("                type: string\n");
     }
     if method == HttpMethod::Post && path == "/v2/deliveries/{delivery_id}/retry" {
-        out.push_str("          headers:\n");
+        start_response_headers(out, &mut headers_started);
         out.push_str("            X-Operation-ID:\n");
         out.push_str("              description: Durable exact retry admission receipt, present only when Idempotency-Key is supplied; not a provider delivery acknowledgment\n");
         out.push_str("              schema:\n");
@@ -691,7 +731,7 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
                     | "/v2/workspaces/{workspace_id}/hooks/approval"
             ))
     {
-        out.push_str("          headers:\n");
+        start_response_headers(out, &mut headers_started);
         out.push_str("            X-Operation-ID:\n");
         out.push_str("              description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route\n");
         out.push_str("              schema:\n");
@@ -721,6 +761,7 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("        \"409\":\n");
         out.push_str("          description: Conflict or unresolved native effect; inspect the operation without retrying the effect\n");
         out.push_str("          headers:\n");
+        append_request_id_header(out);
         out.push_str("            X-Operation-ID:\n");
         out.push_str(
             "              description: Present when the native outcome requires durable review\n",
@@ -738,6 +779,7 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
             "          description: Retirement remains requested or requires manual review\n",
         );
         out.push_str("          headers:\n");
+        append_request_id_header(out);
         out.push_str("            X-Operation-ID:\n");
         out.push_str("              description: Durable frozen retirement operation, not proof of native provider settlement\n");
         out.push_str("              schema:\n");
@@ -750,17 +792,8 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
     if revision::accepts_revision_precondition(path, method) {
         revision::append_revision_precondition_failure(out);
     }
-    if path.starts_with("/v2/") && !path.starts_with("/v2/mcp/") {
-        out.push_str("        default:\n");
-        out.push_str("          description: Typed operator API error response (4xx or 5xx)\n");
-        out.push_str("          headers:\n");
-        out.push_str("            X-Request-ID:\n");
-        out.push_str("              schema:\n");
-        out.push_str("                type: string\n");
-        out.push_str("          content:\n");
-        out.push_str("            application/json:\n");
-        out.push_str("              schema:\n");
-        out.push_str("                $ref: \"#/components/schemas/OperatorErrorResponse\"\n");
+    if operator_v2 {
+        append_operator_default_error(out);
     }
 }
 

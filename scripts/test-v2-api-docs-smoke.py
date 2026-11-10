@@ -151,12 +151,21 @@ class OfflineRuntime:
 
 def run(runtime: OfflineRuntime) -> None:
     runtime.start()
-    caps, _ = runtime.call("GET", "/v2/capabilities")
+    caps, caps_headers = runtime.call("GET", "/v2/capabilities")
     require(isinstance(caps, dict) and "api_version" in caps and "providers" in caps,
             "runtime capability payload missing canonical keys")
-    unauthorized, _ = runtime.call("GET", "/v2/workspaces", auth=False, status=401)
+    require(bool(caps_headers.get("X-Request-ID")),
+            "operator GET success must carry server-minted request ID")
+    snapshot, _ = runtime.call("GET", "/openapi.yaml", auth=False)
+    require(snapshot == (ROOT / "openapi/runtime-server-openapi.yaml").read_text(),
+            "running binary OpenAPI differs from committed generated artifact")
+    unauthorized, denied_headers = runtime.call(
+        "GET", "/v2/workspaces", auth=False, status=401,
+    )
     require(isinstance(unauthorized, dict) and unauthorized["error"]["code"] == "unauthorized",
             "operator unauthorized error envelope drift")
+    require(denied_headers.get("X-Request-ID") == unauthorized["request_id"],
+            "operator error request ID header/body mismatch")
     runtime.duplicate_operator_auth_is_rejected()
     runtime.call("GET", "/v2/mcp/capabilities", status=401)  # Operator != scoped MCP.
 
@@ -199,6 +208,8 @@ def run(runtime: OfflineRuntime) -> None:
     require(second["workspace"]["workspace_id"] != workspace_a, "distinct roots merged")
     page1, page1_headers = runtime.call("GET", "/v2/workspaces?limit=1")
     require(isinstance(page1, list) and len(page1) == 1, "list must be bounded JSON array")
+    require(bool(page1_headers.get("X-Request-ID")),
+            "paged successful operator GET missing request ID")
     cursor = page1_headers.get("X-Next-Cursor")
     require(bool(cursor), "missing first-page keyset response header")
     page2, page2_headers = runtime.call(
@@ -214,19 +225,28 @@ def run(runtime: OfflineRuntime) -> None:
             "strong workspace revision ETag drift")
     roster, _ = runtime.call("GET", f"/v2/workspaces/{workspace_a}/agents")
     require(roster == [], "new workspace must have no independent legacy team members")
-    stale, _ = runtime.call(
+    stale, stale_headers = runtime.call(
         "POST", f"/v2/workspaces/{workspace_a}/lead",
         data={"expected_revision": 0, "lead_agent_id": None},
         headers={"If-Match": '"999"'}, status=412,
     )
     require(stale["error"]["code"] == "revision_precondition_failed",
             "stale workspace If-Match error drift")
+    require(stale_headers.get("X-Request-ID") == stale["request_id"],
+            "stale If-Match request ID header/body mismatch")
 
     history, _ = runtime.call("GET", "/v2/events?limit=1")
     require(isinstance(history, list), "event history must return JSON array")
     runtime.call("GET", "/v2/events?limit=0", status=400)
     runtime.call("GET", f"/v2/workspaces/{workspace_a}/events/stream?after_seq=-1",
                  status=400)
+    sse_request = Request(
+        runtime.url + f"/v2/workspaces/{workspace_a}/events/stream?after_seq=0",
+        headers={"Authorization": f"Bearer {runtime.token}"},
+    )
+    with urlopen(sse_request, timeout=5) as stream:
+        require(stream.status == 200 and bool(stream.headers.get("X-Request-ID")),
+                "successful scoped SSE response missing operator request ID")
     require(not runtime.marker.exists(), "API smoke accidentally spawned ACP provider")
 
     runtime.stop()

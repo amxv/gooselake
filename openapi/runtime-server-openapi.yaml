@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: GG Standalone Agent Runtime API
   version: 0.1.2
-  summary: Single-user hosted runtime for Codex/Claude/ACP sessions, teams, processes, worktrees, and SSE streams
+  summary: Host-owned workspace agents, Codex/Claude/ACP execution, durable operations, three GG tools, and replayable events
 servers:
   - url: http://localhost:8080
 security:
@@ -1159,6 +1159,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             ETag:
               description: Strong quoted revision of the returned authority
               schema:
@@ -1171,6 +1175,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1194,6 +1199,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1202,6 +1212,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1225,6 +1236,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1233,6 +1249,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1262,6 +1279,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1270,6 +1292,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1288,6 +1311,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1296,6 +1324,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1314,6 +1343,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1322,6 +1356,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1345,6 +1380,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1353,6 +1393,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1383,6 +1424,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -1395,6 +1440,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1428,10 +1474,26 @@ paths:
       responses:
         "200":
           description: SSE stream
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             text/event-stream:
               schema:
                 type: string
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/native-policy/{operation_id}/resolve:
     post:
       summary: Resolve exact uncertain native policy outcome using independent operator evidence
@@ -1461,6 +1523,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
               schema:
@@ -1471,6 +1537,11 @@ paths:
                 $ref: "#/components/schemas/OperatorNativePolicyReviewResponse"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1479,6 +1550,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1509,6 +1581,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             ETag:
               description: Strong quoted revision of the returned authority
               schema:
@@ -1519,6 +1595,11 @@ paths:
                 $ref: "#/components/schemas/ProviderPermissionMutationResult"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1527,6 +1608,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1557,6 +1639,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             ETag:
               description: Strong quoted revision of the returned authority
               schema:
@@ -1567,6 +1653,11 @@ paths:
                 $ref: "#/components/schemas/ProviderSessionPreferencesMutationResult"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1575,6 +1666,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1605,6 +1697,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
               schema:
@@ -1616,6 +1712,10 @@ paths:
         "409":
           description: Conflict or unresolved native effect; inspect the operation without retrying the effect
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Present when the native outcome requires durable review
               schema:
@@ -1628,6 +1728,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1663,6 +1764,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -1675,6 +1780,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1687,6 +1793,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1695,6 +1806,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1719,6 +1831,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable exact retry admission receipt, present only when Idempotency-Key is supplied; not a provider delivery acknowledgment
               schema:
@@ -1731,6 +1847,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1761,6 +1878,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -1773,6 +1894,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1801,10 +1923,26 @@ paths:
       responses:
         "200":
           description: SSE stream
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             text/event-stream:
               schema:
                 type: string
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/events/{event_id}:
     get:
       summary: GET /v2/events/{event_id}
@@ -1817,6 +1955,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1825,6 +1968,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1891,6 +2035,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1899,6 +2048,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1922,6 +2072,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1930,6 +2085,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1954,6 +2110,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable atomic message cancellation operation
               schema:
@@ -1966,6 +2126,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -1997,6 +2158,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -2009,6 +2174,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2031,6 +2197,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -2043,6 +2213,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2062,6 +2233,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -2074,6 +2249,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2096,6 +2272,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -2108,6 +2288,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2143,6 +2324,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -2155,6 +2340,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2181,6 +2367,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -2193,6 +2383,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2211,6 +2402,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2219,6 +2415,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2245,6 +2442,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -2257,6 +2458,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2275,6 +2477,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2283,6 +2490,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2316,10 +2524,26 @@ paths:
       responses:
         "200":
           description: SSE stream
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             text/event-stream:
               schema:
                 type: string
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/providers/{provider}/capabilities:
     get:
       summary: Get provider capability contract
@@ -2332,6 +2556,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2340,6 +2569,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2364,6 +2594,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2372,6 +2607,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2396,6 +2632,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2404,6 +2645,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2426,6 +2668,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -2438,6 +2684,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2462,6 +2709,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -2474,6 +2725,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2493,6 +2745,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             ETag:
               description: Strong quoted revision of the returned authority
               schema:
@@ -2505,6 +2761,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2536,6 +2793,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -2548,6 +2809,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2577,6 +2839,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
               schema:
@@ -2592,6 +2858,10 @@ paths:
         "409":
           description: Conflict or unresolved native effect; inspect the operation without retrying the effect
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Present when the native outcome requires durable review
               schema:
@@ -2604,6 +2874,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2634,6 +2905,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
               schema:
@@ -2646,6 +2921,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2670,6 +2946,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             ETag:
               description: Strong quoted revision of the returned authority
               schema:
@@ -2682,6 +2962,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2712,6 +2993,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
               schema:
@@ -2727,6 +3012,10 @@ paths:
         "409":
           description: Conflict or unresolved native effect; inspect the operation without retrying the effect
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Present when the native outcome requires durable review
               schema:
@@ -2739,6 +3028,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2779,6 +3069,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
               schema:
@@ -2789,6 +3083,11 @@ paths:
                 $ref: "#/components/schemas/OperatorAgentArchiveReviewResponse"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2797,6 +3096,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2820,6 +3120,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2828,6 +3133,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2856,6 +3162,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2864,6 +3175,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2893,6 +3205,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -2905,6 +3221,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2929,6 +3246,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
               schema:
@@ -2944,6 +3265,10 @@ paths:
         "409":
           description: Conflict or unresolved native effect; inspect the operation without retrying the effect
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Present when the native outcome requires durable review
               schema:
@@ -2956,6 +3281,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -2996,6 +3322,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
               schema:
@@ -3006,6 +3336,11 @@ paths:
                 $ref: "#/components/schemas/OperatorAgentRestoreReviewResponse"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3014,6 +3349,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3054,6 +3390,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -3069,6 +3409,10 @@ paths:
         "409":
           description: Conflict or unresolved native effect; inspect the operation without retrying the effect
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Present when the native outcome requires durable review
               schema:
@@ -3079,6 +3423,11 @@ paths:
                 $ref: "#/components/schemas/OperatorErrorResponse"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3087,6 +3436,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3120,10 +3470,26 @@ paths:
       responses:
         "200":
           description: SSE stream
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             text/event-stream:
               schema:
                 type: string
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/hooks:
     get:
       summary: Inspect effective user/project team hooks (execution disabled)
@@ -3140,6 +3506,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3148,6 +3519,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3167,6 +3539,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             ETag:
               description: Strong quoted revision of the returned authority
               schema:
@@ -3179,6 +3555,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3213,6 +3590,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -3227,6 +3608,11 @@ paths:
                 $ref: "#/components/schemas/TeamHookApproval"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3235,6 +3621,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3262,6 +3649,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -3274,6 +3665,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3307,6 +3699,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3315,6 +3712,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3339,6 +3737,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -3351,6 +3753,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3386,6 +3789,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -3400,6 +3807,11 @@ paths:
                 $ref: "#/components/schemas/WorkspaceLeadTransitionResponse"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3408,6 +3820,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3427,6 +3840,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             ETag:
               description: Strong quoted revision of the returned authority
               schema:
@@ -3439,6 +3856,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3473,6 +3891,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -3487,6 +3909,11 @@ paths:
                 $ref: "#/components/schemas/WorkspaceNoticePolicyRecord"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3495,6 +3922,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3530,6 +3958,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -3540,6 +3972,11 @@ paths:
                 $ref: "#/components/schemas/WorkspaceRetirementResponse"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3548,6 +3985,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3566,6 +4004,11 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3574,6 +4017,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3609,6 +4053,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -3620,6 +4068,10 @@ paths:
         "202":
           description: Retirement remains requested or requires manual review
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable frozen retirement operation, not proof of native provider settlement
               schema:
@@ -3630,6 +4082,11 @@ paths:
                 $ref: "#/components/schemas/OperationDetails"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
+          headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3638,6 +4095,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3673,6 +4131,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Exact durable operation identifier returned with this mutation; inspect through the matching operation or resource-detail route
               schema:
@@ -3685,6 +4147,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3712,6 +4175,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Next-Cursor:
               description: Present when a following keyset page exists; pass as cursor on the next request
               schema:
@@ -3724,6 +4191,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:
@@ -3753,6 +4221,10 @@ paths:
         "200":
           description: JSON response
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
               schema:
@@ -3764,6 +4236,10 @@ paths:
         "409":
           description: Conflict or unresolved native effect; inspect the operation without retrying the effect
           headers:
+            X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
+              schema:
+                type: string
             X-Operation-ID:
               description: Present when the native outcome requires durable review
               schema:
@@ -3776,6 +4252,7 @@ paths:
           description: Typed operator API error response (4xx or 5xx)
           headers:
             X-Request-ID:
+              description: Server-minted request correlation ID on every operator v2 response
               schema:
                 type: string
           content:

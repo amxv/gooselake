@@ -64,6 +64,8 @@ pub(super) fn append_etag_header(out: &mut String) {
 pub(super) fn append_revision_precondition_failure(out: &mut String) {
     out.push_str("        \"412\":\n");
     out.push_str("          description: If-Match does not equal the strong ETag of the body expected_revision\n");
+    out.push_str("          headers:\n");
+    super::append_request_id_header(out);
     out.push_str("          content:\n");
     out.push_str("            application/json:\n");
     out.push_str("              schema:\n");

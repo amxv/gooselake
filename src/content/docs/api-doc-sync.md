@@ -133,6 +133,9 @@ Docs-signal files:
 - path parameters
 - Rust handler-derived `/v2` query parameter names, types and bounded ranges
 - conditional `X-Next-Cursor` keyset response headers (not SSE/message JSON cursors)
+- server-minted operator `X-Request-ID` across success, 202/409/412/default
+  error and SSE responses, without duplicate header maps or claiming it
+  for agent-scoped MCP
 - distinct operator and agent-scoped MCP bearer schemes from router groups
 - basic request content type for known POST endpoints
 - SSE vs JSON response content type

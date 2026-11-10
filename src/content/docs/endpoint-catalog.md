@@ -370,12 +370,19 @@ limited to genuine keyset page handlers, not message JSON-body cursors or
 SSE. OpenAPI declares separate `bearerAuth` owner/operator and
 `agentScopedBearerAuth` model-scoped schemes; only `/v2/mcp/*` uses the
 latter, and its invoke operation documents the trusted sidecar invocation-ID
-header rather than admitting caller identity in JSON.
+header rather than admitting caller identity in JSON. The generated response
+header catalog also includes server-minted `X-Request-ID` on successful
+operator JSON and SSE, explicit 202/409/412 branches and default errors.
+It shares a single header map with applicable page cursors, resource ETags
+and operation IDs; scoped model MCP does not advertise this operator header.
 Treat this catalog + code as the reliable source for:
 - endpoint existence and grouping
 - auth requirements
 - stream vs replay endpoints
 - query parameter behavior
 
-For unconverted endpoints, consult the exact Rust handler input structs and
-runtime-core models rather than inferring field constraints from `JsonObject`.
+For the two intentionally extensible `/v2/mcp` response bodies, use the
+advertised scoped tool capabilities and runtime result contract rather than
+inventing fixed fields from `JsonObject`. All other canonical `/v2` response
+methods use Rust-derived schemas; semantic validation and authorization
+rules remain defined by the handlers.

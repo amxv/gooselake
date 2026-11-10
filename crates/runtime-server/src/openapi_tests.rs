@@ -126,7 +126,10 @@ fn generated_openapi_includes_core_surface() {
         .next()
         .unwrap();
     assert!(advance.contains("        \"202\":\n"));
-    assert!(advance.contains("Retirement remains requested or requires manual review\n          headers:\n            X-Operation-ID:\n"));
+    assert!(advance.contains(
+        "Retirement remains requested or requires manual review\n          headers:\n            X-Request-ID:\n"
+    ));
+    assert!(advance.contains("            X-Operation-ID:\n"));
     for path in [
         "/v2/workspaces/{workspace_id}/lead",
         "/v2/workspaces/{workspace_id}/notice-policy",
@@ -364,6 +367,132 @@ fn agent_scoped_mcp_and_operator_bearer_contracts_do_not_confuse_authority() {
         super::collect_routes()["/v2/workspaces"].agent_scoped_auth,
         false
     );
+}
+
+#[test]
+fn operator_v2_success_stream_and_error_headers_match_request_id_middleware() {
+    let yaml = generated_openapi_yaml();
+    assert!(yaml.contains("summary: Host-owned workspace agents"));
+    for (path, spec) in super::collect_routes() {
+        if !path.starts_with("/v2/") || path.starts_with("/v2/mcp/") {
+            continue;
+        }
+        for method in spec.methods {
+            let op = route_method(yaml, &path, method.as_str());
+            let success = response_code_block(op, "200");
+            assert_eq!(
+                success.matches("          headers:\n").count(),
+                1,
+                "duplicate/missing header map on {method:?} {path}"
+            );
+            assert_eq!(
+                success.matches("            X-Request-ID:\n").count(),
+                1,
+                "server-minted success correlation missing on {method:?} {path}"
+            );
+            let default = op
+                .split("        default:\n")
+                .nth(1)
+                .unwrap_or_else(|| panic!("missing operator default error for {path}"));
+            assert!(default.contains("            X-Request-ID:\n"), "{path}");
+            assert!(
+                default.contains("$ref: \"#/components/schemas/OperatorErrorResponse\""),
+                "{path}"
+            );
+        }
+    }
+    for (path, method, code, extra_header) in [
+        (
+            "/v2/workspaces/{workspace_id}/agents",
+            "post",
+            "409",
+            "X-Operation-ID",
+        ),
+        (
+            "/v2/workspaces/{workspace_id}/retirement/advance",
+            "post",
+            "202",
+            "X-Operation-ID",
+        ),
+        (
+            "/v2/workspaces/{workspace_id}/lead",
+            "post",
+            "412",
+            "X-Request-ID",
+        ),
+    ] {
+        let response = response_code_block(route_method(yaml, path, method), code);
+        assert_eq!(
+            response.matches("          headers:\n").count(),
+            1,
+            "{path}"
+        );
+        assert_eq!(
+            response.matches("            X-Request-ID:\n").count(),
+            1,
+            "{path}"
+        );
+        assert!(response.contains(&format!("            {extra_header}:\n")));
+    }
+
+    let keyset = response_code_block(route_method(yaml, "/v2/workspaces", "get"), "200");
+    assert!(keyset.contains("            X-Next-Cursor:\n"));
+    let revision = response_code_block(
+        route_method(yaml, "/v2/workspaces/{workspace_id}", "get"),
+        "200",
+    );
+    assert!(revision.contains("            ETag:\n"));
+    let async_retirement = response_code_block(
+        route_method(
+            yaml,
+            "/v2/workspaces/{workspace_id}/retirement/advance",
+            "post",
+        ),
+        "202",
+    );
+    assert!(async_retirement.contains("#/components/schemas/OperationDetails"));
+
+    for path in [
+        "/v2/events/stream",
+        "/v2/workspaces/{workspace_id}/events/stream",
+        "/v2/agents/{agent_id}/events/stream",
+        "/v2/processes/{process_id}/events/stream",
+    ] {
+        let stream = route_method(yaml, path, "get");
+        assert!(
+            stream.contains("            text/event-stream:\n"),
+            "{path}"
+        );
+        assert!(stream.contains("        default:\n"), "{path}");
+    }
+    for (path, method) in [
+        ("/v2/mcp/capabilities", "get"),
+        ("/v2/mcp/invoke", "post"),
+        ("/health", "get"),
+        ("/v1/events/stream", "get"),
+    ] {
+        assert!(
+            !route_method(yaml, path, method).contains("X-Request-ID"),
+            "public, legacy, and agent-scoped contracts must not claim operator headers: {path}"
+        );
+    }
+}
+
+fn response_code_block<'a>(operation: &'a str, status: &str) -> &'a str {
+    let marker = format!("        \"{status}\":\n");
+    let following = operation
+        .split(&marker)
+        .nth(1)
+        .unwrap_or_else(|| panic!("response status {status} missing"));
+    let end = [
+        following.find("\n        \""),
+        following.find("\n        default:\n"),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(following.len());
+    &following[..end]
 }
 
 fn route_method<'a>(yaml: &'a str, path: &str, method: &str) -> &'a str {

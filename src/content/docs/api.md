@@ -67,6 +67,12 @@ and unsupported methods. For example, `401`:
 Every `/v2` operator response, including success responses, carries
 `X-Request-ID`; error responses repeat the same ID in `request_id`. The server
 creates these IDs and never trusts an incoming `X-Request-ID` as authority.
+Generated OpenAPI now publishes that response header on ordinary 200s,
+SSE stream handshakes, 202 recoverable retirement, typed 409 native conflicts,
+412 revision conflicts and default operator errors. Keyset
+`X-Next-Cursor`, resource `ETag` and durable `X-Operation-ID` coexist
+within the same response header map when applicable. The separate
+agent-scoped `/v2/mcp` gateway does **not** claim an operator request ID.
 When a supported operator mutation creates, updates, or replays a durable
 operation, its successful response also carries `X-Operation-ID` matching the
 operation identifier in the JSON result. This includes registration, lead

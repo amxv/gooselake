@@ -89,9 +89,9 @@ pub(super) async fn mcp_invoke(
     Ok(Json(result))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ScopedMcpInvokeRequest {
+pub(crate) struct ScopedMcpInvokeRequest {
     namespace: Option<String>,
     tool_name: String,
     #[serde(default)]

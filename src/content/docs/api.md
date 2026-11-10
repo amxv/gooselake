@@ -162,9 +162,14 @@ from their actual public handler and runtime contracts. Workspace-agent
 creation, list/get, archive/restore, provider-rebind results, operator reviews
 of ambiguous create/archive/restore/policy effects, and historical
 edit-and-rerun input/operation inspection now use those same Rust-derived
-schemas. These schemas
-preserve the actual `serde` field names, required
-properties, enums, nullability, nested records and unknown-field behavior.
+schemas. The migration status/preview/apply/resolution contracts, workspace
+retirement manual-review request/receipt, redacted operator event list/full
+event detail, effective hook inspection/approval, and operator hook effect
+summary/full detail are also generated from their exact Rust DTOs. Scoped
+model-facing `POST /v2/mcp/invoke` uses its strict, caller-free handler
+request contract; tool result payloads remain intentionally extensible.
+These schemas preserve the actual `serde` field names, required properties,
+enums, nullability, nested records and unknown-field behavior.
 For example, registration and lead/retirement requests reject unknown JSON
 fields, while an optional lead may explicitly be `null`. Workspace and
 operation lists return arrays; messages return a response object with a
@@ -214,6 +219,21 @@ Historical edit-and-rerun accepts a strict `edited_snapshot` containing
 `prompt_text`, persisted `image_refs` and optional skill `invocation`, not
 an arbitrary transcript rewrite. Its durable result is inspectable by
 operation ID and remains a distinct historical record.
+
+Migration status and preview return the **same diagnostic shape**:
+the complete classified totals plus a bounded page of per-subject evidence,
+not proof that a later `apply` succeeded. Preview refreshes and persists
+planning evidence but does not apply mappings; neither preview nor apply
+accepts a JSON request body. Apply is a separate journaled operator mutation,
+and a subject resolution body accepts only its typed `action` and optional
+`workspace_id`.
+The retirement reconcile endpoint requires independent effect/attachment
+evidence and returns a durable review receipt; it does not accept prose as a
+shortcut to delete outstanding resources. Operator event history returns an
+indexed, redacted summary array, while full event payloads require explicit
+single-event lookup. Hook approval accepts only revision and fingerprinted
+selections, never shell commands; effective hook introspection and detailed
+effect inspection are operator-only, not model-facing.
 
 **Other** endpoints still use broad `JsonObject` request/response placeholders
 until their real Rust DTOs are connected.

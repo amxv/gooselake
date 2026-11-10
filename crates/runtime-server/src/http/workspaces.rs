@@ -133,8 +133,8 @@ pub(super) struct WorkspaceHooksQuery {
     event: Option<runtime_core::TeamHookEventName>,
 }
 
-#[derive(Debug, Serialize)]
-pub(super) struct WorkspaceHooksResponse {
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct WorkspaceHooksResponse {
     workspace_id: String,
     config_version: u32,
     execution_enabled: bool,
@@ -142,8 +142,8 @@ pub(super) struct WorkspaceHooksResponse {
     hooks: Vec<WorkspaceHookDisplayEntry>,
 }
 
-#[derive(Debug, Serialize)]
-pub(super) struct WorkspaceHookDisplayEntry {
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct WorkspaceHookDisplayEntry {
     #[serde(flatten)]
     hook: runtime_core::TeamHookResolvedEntry,
     fingerprint: String,
@@ -197,9 +197,9 @@ pub(super) async fn get_workspace_hooks(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WorkspaceHookApprovalInput {
+pub(crate) struct WorkspaceHookApprovalInput {
     expected_revision: u64,
     hooks: Vec<runtime_core::TeamHookSelection>,
 }

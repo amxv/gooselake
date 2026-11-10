@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -10,7 +11,9 @@ use crate::{
     RuntimeHydratedState, SessionRecord, TeamMemberRecord, TeamRecord, WorkspaceRecord,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum LegacyWorkspaceMigrationSubjectKind {
     Session,
@@ -43,7 +46,7 @@ impl LegacyWorkspaceMigrationSubjectKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegacyWorkspaceMigrationClassification {
     Mapped,
@@ -70,7 +73,7 @@ impl LegacyWorkspaceMigrationClassification {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegacyWorkspaceMigrationResolutionSource {
     Deterministic,
@@ -97,7 +100,7 @@ impl LegacyWorkspaceMigrationResolutionSource {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct LegacyWorkspaceMigrationSubject {
     pub subject_kind: LegacyWorkspaceMigrationSubjectKind,
     pub subject_id: String,
@@ -113,7 +116,7 @@ pub struct LegacyWorkspaceMigrationSubject {
     pub updated_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct LegacyWorkspaceMigrationStatus {
     pub subjects: Vec<LegacyWorkspaceMigrationSubject>,
     pub mapped_subjects: usize,
@@ -175,7 +178,7 @@ pub struct LegacyWorkspaceMigrationApplyCommand {
     pub requested_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct LegacyWorkspaceMigrationApplyResponse {
     pub operation_id: String,
     pub created_workspaces: usize,
@@ -186,14 +189,14 @@ pub struct LegacyWorkspaceMigrationApplyResponse {
     pub cutover_blocked: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegacyWorkspaceMigrationResolutionAction {
     Map,
     Archive,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegacyWorkspaceMigrationResolutionRequest {
     pub action: LegacyWorkspaceMigrationResolutionAction,
@@ -214,7 +217,7 @@ pub struct LegacyWorkspaceMigrationResolutionCommand {
     pub requested_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct LegacyWorkspaceMigrationResolutionResponse {
     pub operation_id: String,
     pub subject: LegacyWorkspaceMigrationSubject,

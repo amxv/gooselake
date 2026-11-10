@@ -58,10 +58,13 @@ pub(crate) use agent_controls::{
     UpdateAgentPreferencesInput,
 };
 pub(crate) use auth::{ProviderCapabilitiesResponse, RuntimeCapabilitiesResponse};
+pub(crate) use mcp::ScopedMcpInvokeRequest;
 pub(crate) use messages::AgentMessageCreateInput;
 pub(crate) use sessions::PublicSendTurnInput;
 pub(crate) use v2_contract::OperatorErrorResponse;
-pub(crate) use workspaces::WorkspaceWorktreeCreateInput;
+pub(crate) use workspaces::{
+    WorkspaceHookApprovalInput, WorkspaceHooksResponse, WorkspaceWorktreeCreateInput,
+};
 mod worktrees;
 
 use agent_controls::*;

@@ -804,6 +804,164 @@ fn workspace_agent_create_roster_recovery_and_edit_rerun_follow_real_serde() {
     }
 }
 
+#[test]
+fn migration_retirement_event_hook_and_scoped_mcp_contracts_follow_handlers() {
+    let migration: serde_json::Value = serde_json::from_str(&schema_json::<
+        LegacyWorkspaceMigrationStatus,
+    >(Contract::Serialize))
+    .unwrap();
+    assert_eq!(
+        migration["properties"]["cutover_blocked"]["type"],
+        "boolean"
+    );
+    assert_eq!(migration["properties"]["subjects"]["type"], "array");
+    assert_eq!(
+        migration["properties"]["subjects"]["items"]["properties"]["classification"]["enum"],
+        serde_json::json!(["mapped", "archived_history", "unresolved"])
+    );
+    let resolution: serde_json::Value = serde_json::from_str(&schema_json::<
+        LegacyWorkspaceMigrationResolutionRequest,
+    >(Contract::Deserialize))
+    .unwrap();
+    assert_eq!(resolution["additionalProperties"], false);
+    assert_eq!(resolution["required"], serde_json::json!(["action"]));
+    assert_eq!(
+        resolution["properties"]["action"]["enum"],
+        serde_json::json!(["map", "archive"])
+    );
+    assert!(
+        serde_json::from_value::<LegacyWorkspaceMigrationResolutionRequest>(serde_json::json!({
+            "action":"map", "workspace_id":"ws_1", "force":true
+        }))
+        .is_err()
+    );
+    let retirement: serde_json::Value = serde_json::from_str(&schema_json::<
+        WorkspaceRetirementReviewRequest,
+    >(Contract::Deserialize))
+    .unwrap();
+    assert_eq!(retirement["additionalProperties"], false);
+    assert_eq!(
+        retirement["required"],
+        serde_json::json!(["effect_id", "evidence", "resolution"])
+    );
+    let tagged = retirement["properties"]["resolution"].to_string();
+    assert!(tagged.contains("provider_closed") && tagged.contains("recheck_settled"));
+    assert!(tagged.contains("provider_session_ref") && tagged.contains("agent_revision"));
+
+    let events: serde_json::Value = serde_json::from_str(
+        &schema_json::<Vec<OperatorEventSummary>>(Contract::Serialize),
+    )
+    .unwrap();
+    assert_eq!(events["type"], "array");
+    assert!(events["items"]["properties"].get("payload").is_none());
+    assert!(events["items"]["properties"].get("event_id").is_some());
+    let detail: serde_json::Value =
+        serde_json::from_str(&schema_json::<RuntimeEventRecord>(Contract::Serialize)).unwrap();
+    assert!(detail["properties"].get("payload").is_some());
+    let hooks: serde_json::Value =
+        serde_json::from_str(&schema_json::<WorkspaceHooksResponse>(Contract::Serialize)).unwrap();
+    assert!(hooks["properties"]["hooks"]["items"]["properties"]
+        .get("fingerprint")
+        .is_some());
+    assert!(hooks["properties"]["hooks"]["items"]["properties"]
+        .get("command")
+        .is_some());
+    let approval: serde_json::Value = serde_json::from_str(&schema_json::<
+        WorkspaceHookApprovalInput,
+    >(Contract::Deserialize))
+    .unwrap();
+    assert_eq!(approval["additionalProperties"], false);
+    assert_eq!(
+        approval["required"],
+        serde_json::json!(["expected_revision", "hooks"])
+    );
+    assert!(approval["properties"]["hooks"]["items"]["properties"]
+        .get("command")
+        .is_none());
+    assert!(approval["properties"]["hooks"]["items"]["properties"]
+        .get("fingerprint")
+        .is_some());
+    let effects: serde_json::Value = serde_json::from_str(
+        &schema_json::<Vec<TeamHookEffectSummary>>(Contract::Serialize),
+    )
+    .unwrap();
+    assert!(effects["items"]["properties"].get("input").is_none());
+    assert!(effects["items"]["properties"].get("hook").is_none());
+    let scoped: serde_json::Value = serde_json::from_str(&schema_json::<ScopedMcpInvokeRequest>(
+        Contract::Deserialize,
+    ))
+    .unwrap();
+    assert_eq!(scoped["additionalProperties"], false);
+    assert_eq!(scoped["required"], serde_json::json!(["tool_name"]));
+    assert!(scoped["properties"].get("caller_agent_id").is_none());
+    assert!(scoped["properties"].get("invocation_id").is_none());
+    assert!(
+        serde_json::from_value::<ScopedMcpInvokeRequest>(serde_json::json!({
+            "tool_name":"gg_process", "args":{"mode":"status"}, "caller_agent_id":"impostor"
+        }))
+        .is_err()
+    );
+
+    let yaml = super::super::generated_openapi_yaml();
+    for (path, method, schema) in [
+        ("/v2/migrations/workspaces", "get", "LegacyWorkspaceMigrationStatus"),
+        ("/v2/migrations/workspaces/preview", "post", "LegacyWorkspaceMigrationStatus"),
+        ("/v2/migrations/workspaces/apply", "post", "LegacyWorkspaceMigrationApplyResponse"),
+        ("/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}", "post", "LegacyWorkspaceMigrationResolutionResponse"),
+        ("/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile", "post", "WorkspaceRetirementReviewReceipt"),
+        ("/v2/events", "get", "OperatorEventSummaryList"),
+        ("/v2/events/{event_id}", "get", "RuntimeEventRecord"),
+        ("/v2/workspaces/{workspace_id}/hooks", "get", "WorkspaceHooksResponse"),
+        ("/v2/workspaces/{workspace_id}/hooks/approval", "get", "TeamHookApproval"),
+        ("/v2/workspaces/{workspace_id}/hooks/approval", "put", "TeamHookApproval"),
+        ("/v2/workspaces/{workspace_id}/hooks/effects", "get", "TeamHookEffectSummaryList"),
+        ("/v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}", "get", "TeamHookEffectRecord"),
+    ] {
+        let operation = route_operation(yaml, path, method);
+        assert!(operation.contains(&format!("#/components/schemas/{schema}")), "{path}");
+        assert!(!operation.contains("#/components/schemas/JsonObject"), "{path}");
+    }
+    for (path, method, schema) in [
+        (
+            "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}",
+            "post",
+            "LegacyWorkspaceMigrationResolutionRequest",
+        ),
+        (
+            "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile",
+            "post",
+            "WorkspaceRetirementReviewRequest",
+        ),
+        (
+            "/v2/workspaces/{workspace_id}/hooks/approval",
+            "put",
+            "WorkspaceHookApprovalInput",
+        ),
+        ("/v2/mcp/invoke", "post", "ScopedMcpInvokeRequest"),
+    ] {
+        let operation = route_operation(yaml, path, method);
+        let request = operation.split("      responses:\n").next().unwrap();
+        assert!(
+            request.contains(&format!("#/components/schemas/{schema}")),
+            "{path}"
+        );
+    }
+    for path in [
+        "/v2/migrations/workspaces/preview",
+        "/v2/migrations/workspaces/apply",
+    ] {
+        assert!(
+            !route_operation(yaml, path, "post").contains("requestBody:"),
+            "{path}"
+        );
+    }
+    // The tool-gateway handler returns a dynamic serde_json::Value for its
+    // variable result payload; do not advertise an invented fixed DTO.
+    assert!(
+        route_operation(yaml, "/v2/mcp/invoke", "post").contains("#/components/schemas/JsonObject")
+    );
+}
+
 fn route_operation<'a>(yaml: &'a str, path: &str, method: &str) -> &'a str {
     let route = yaml
         .split(&format!("  {path}:\n"))

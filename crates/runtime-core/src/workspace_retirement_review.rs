@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -9,7 +10,7 @@ use crate::{
 
 /// The exact attachment inspected by the operator. A restore, rebind, archive,
 /// or concurrent session settlement invalidates an older assertion.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRetirementNativeIdentity {
     pub agent_id: String,
@@ -21,7 +22,7 @@ pub struct WorkspaceRetirementNativeIdentity {
     pub active_turn_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkspaceRetirementReviewResolution {
     /// Explicit operator assertion about an independently verified native
@@ -33,7 +34,7 @@ pub enum WorkspaceRetirementReviewResolution {
     RecheckSettled,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRetirementReviewRequest {
     pub effect_id: String,
@@ -54,7 +55,7 @@ pub struct WorkspaceRetirementReviewCommand {
     pub reviewed_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceRetirementReviewReceipt {
     pub review_id: String,
     pub workspace_id: String,

@@ -77,6 +77,20 @@ components:
     OperatorNativePolicyReviewResponse: {"title":"OperatorNativePolicyReviewResponse","type":"object","properties":{"agent_id":{"type":"string"},"agent_revision":{"type":"integer","format":"uint64","minimum":0},"operation_id":{"type":"string"},"resolution":{"description":"Operator-verified native state, not a request to invoke the provider again.","type":"string","enum":["applied","not_applied"]},"restart_required":{"description":"Fresh provider reattachment must consume the reconciled durable policy\nbefore any additional native effects or user turns are permitted.","type":"boolean"},"reviewed_at_ms":{"type":"integer","format":"int64"}},"required":["operation_id","agent_id","resolution","agent_revision","restart_required","reviewed_at_ms"]}
     EditAndRerunRequest: {"title":"EditAndRerunRequest","type":"object","properties":{"edited_snapshot":{"type":"object","properties":{"image_refs":{"type":"array","default":[],"items":{"type":"object","properties":{"media_type":{"type":"string"},"persisted_absolute_path":{"type":["string","null"]},"persisted_display_path":{"type":["string","null"]}},"additionalProperties":false,"required":["media_type"]}},"invocation":{"type":["object","null"],"properties":{"display_name":{"type":["string","null"]},"name":{"type":"string"},"path":{"type":["string","null"]},"provider":{"type":"string"}},"additionalProperties":false,"required":["provider","name"]},"prompt_text":{"type":"string"}},"additionalProperties":false,"required":["prompt_text"]}},"additionalProperties":false,"required":["edited_snapshot"]}
     SessionEditRerunOperation: {"title":"SessionEditRerunOperation","description":"An operator-owned hard fork and replacement-turn request. The original\nadmitted user input and its provider identity remain historical evidence.","type":"object","properties":{"agent_id":{"type":"string"},"agent_revision":{"type":"integer","format":"uint64","minimum":0},"child_canonical_provider_session_ref":{"type":["string","null"]},"child_provider_session_ref":{"type":["string","null"]},"created_at_ms":{"type":"integer","format":"int64"},"edited_snapshot":{"type":"object","properties":{"image_refs":{"type":"array","default":[],"items":{"type":"object","properties":{"media_type":{"type":"string"},"persisted_absolute_path":{"type":["string","null"]},"persisted_display_path":{"type":["string","null"]}},"additionalProperties":false,"required":["media_type","persisted_absolute_path","persisted_display_path"]}},"invocation":{"type":["object","null"],"properties":{"display_name":{"type":["string","null"]},"name":{"type":"string"},"path":{"type":["string","null"]},"provider":{"type":"string"}},"additionalProperties":false,"required":["provider","name","display_name","path"]},"prompt_text":{"type":"string"}},"additionalProperties":false,"required":["prompt_text","image_refs","invocation"]},"error_code":{"type":["string","null"]},"expected_session_updated_at":{"type":"integer","format":"int64"},"idempotency_key":{"type":["string","null"]},"operation_id":{"type":"string"},"phase":{"description":"intended -> native_started -> fork_observed -> completed. An unknown\nnative or commit outcome is manual_review and cannot be re-dispatched.","type":"string"},"provider":{"type":"string","enum":["codex","claude","acp"]},"replacement_turn_id":{"type":["string","null"]},"request_hash":{"type":"string"},"review_evidence":{"type":["string","null"]},"source_canonical_provider_session_ref":{"type":["string","null"]},"source_provider_session_ref":{"type":"string"},"target_turn_id":{"type":"string"},"updated_at_ms":{"type":"integer","format":"int64"}},"required":["operation_id","agent_id","target_turn_id","provider","source_provider_session_ref","source_canonical_provider_session_ref","agent_revision","expected_session_updated_at","request_hash","idempotency_key","edited_snapshot","phase","child_provider_session_ref","child_canonical_provider_session_ref","replacement_turn_id","error_code","review_evidence","created_at_ms","updated_at_ms"]}
+    LegacyWorkspaceMigrationStatus: {"title":"LegacyWorkspaceMigrationStatus","type":"object","properties":{"archived_subjects":{"type":"integer","format":"uint","minimum":0},"cutover_blocked":{"type":"boolean"},"mapped_subjects":{"type":"integer","format":"uint","minimum":0},"subjects":{"type":"array","items":{"type":"object","properties":{"applied_at":{"type":["integer","null"],"format":"int64"},"canonical_root":{"type":["string","null"]},"classification":{"type":"string","enum":["mapped","archived_history","unresolved"]},"evidence":true,"git_common_dir":{"type":["string","null"]},"reason_code":{"type":"string"},"repository_fingerprint":{"type":["string","null"]},"resolution_source":{"type":"string","enum":["deterministic","operator_map","operator_archive"]},"subject_id":{"type":"string"},"subject_kind":{"type":"string","enum":["session","team","team_member","managed_worktree","worktree_claim"]},"updated_at":{"type":["integer","null"],"format":"int64"},"workspace_id":{"type":["string","null"]}},"required":["subject_kind","subject_id","classification","workspace_id","canonical_root","git_common_dir","repository_fingerprint","reason_code","evidence","resolution_source","applied_at","updated_at"]}},"unresolved_active_sessions":{"type":"integer","format":"uint","minimum":0},"unresolved_subjects":{"type":"integer","format":"uint","minimum":0}},"required":["subjects","mapped_subjects","archived_subjects","unresolved_subjects","unresolved_active_sessions","cutover_blocked"]}
+    LegacyWorkspaceMigrationApplyResponse: {"title":"LegacyWorkspaceMigrationApplyResponse","type":"object","properties":{"archived_subjects_applied":{"type":"integer","format":"uint","minimum":0},"created_workspaces":{"type":"integer","format":"uint","minimum":0},"cutover_blocked":{"type":"boolean"},"mapped_subjects_applied":{"type":"integer","format":"uint","minimum":0},"operation_id":{"type":"string"},"owned_sessions_created":{"type":"integer","format":"uint","minimum":0},"unresolved_subjects":{"type":"integer","format":"uint","minimum":0}},"required":["operation_id","created_workspaces","mapped_subjects_applied","archived_subjects_applied","owned_sessions_created","unresolved_subjects","cutover_blocked"]}
+    LegacyWorkspaceMigrationResolutionRequest: {"title":"LegacyWorkspaceMigrationResolutionRequest","type":"object","properties":{"action":{"type":"string","enum":["map","archive"]},"workspace_id":{"type":["string","null"]}},"additionalProperties":false,"required":["action"]}
+    LegacyWorkspaceMigrationResolutionResponse: {"title":"LegacyWorkspaceMigrationResolutionResponse","type":"object","properties":{"operation_id":{"type":"string"},"subject":{"type":"object","properties":{"applied_at":{"type":["integer","null"],"format":"int64"},"canonical_root":{"type":["string","null"]},"classification":{"type":"string","enum":["mapped","archived_history","unresolved"]},"evidence":true,"git_common_dir":{"type":["string","null"]},"reason_code":{"type":"string"},"repository_fingerprint":{"type":["string","null"]},"resolution_source":{"type":"string","enum":["deterministic","operator_map","operator_archive"]},"subject_id":{"type":"string"},"subject_kind":{"type":"string","enum":["session","team","team_member","managed_worktree","worktree_claim"]},"updated_at":{"type":["integer","null"],"format":"int64"},"workspace_id":{"type":["string","null"]}},"required":["subject_kind","subject_id","classification","workspace_id","canonical_root","git_common_dir","repository_fingerprint","reason_code","evidence","resolution_source","applied_at","updated_at"]}},"required":["operation_id","subject"]}
+    WorkspaceRetirementReviewRequest: {"title":"WorkspaceRetirementReviewRequest","type":"object","properties":{"effect_id":{"type":"string"},"evidence":{"type":"string"},"resolution":{"oneOf":[{"description":"Explicit operator assertion about an independently verified native\nclose. This never invokes a provider adapter or repeats a close request.","type":"object","properties":{"identity":{"description":"The exact attachment inspected by the operator. A restore, rebind, archive,\nor concurrent session settlement invalidates an older assertion.","type":"object","properties":{"active_turn_id":{"type":["string","null"]},"agent_id":{"type":"string"},"agent_revision":{"type":["integer","null"],"format":"uint64","minimum":0},"canonical_provider_session_ref":{"type":["string","null"]},"provider":{"type":"string","enum":["codex","claude","acp"]},"provider_session_ref":{"type":"string"},"session_updated_at":{"type":"integer","format":"int64"}},"additionalProperties":false,"required":["agent_id","provider","provider_session_ref","session_updated_at"]},"kind":{"type":"string","const":"provider_closed"}},"additionalProperties":false,"required":["kind","identity"]},{"description":"Inspect current durable terminal facts; prose alone cannot settle work.","type":"object","properties":{"kind":{"type":"string","const":"recheck_settled"}},"additionalProperties":false,"required":["kind"]}]}},"additionalProperties":false,"required":["effect_id","evidence","resolution"]}
+    WorkspaceRetirementReviewReceipt: {"title":"WorkspaceRetirementReviewReceipt","type":"object","properties":{"effect_id":{"type":"string"},"operation_id":{"type":"string"},"operation_phase":{"type":"string","enum":["requested","manual_review","completed","failed"]},"review_id":{"type":"string"},"reviewed_at":{"type":"integer","format":"int64"},"settled":{"type":"boolean"},"unresolved_effect_ids":{"type":"array","items":{"type":"string"}},"workspace_id":{"type":"string"}},"required":["review_id","workspace_id","operation_id","effect_id","settled","operation_phase","unresolved_effect_ids","reviewed_at"]}
+    OperatorEventSummaryList: {"title":"Array_of_OperatorEventSummary","type":"array","items":{"description":"Indexed operator history projection. Large event payloads and provider\ndiagnostics are only read by explicit single-event inspection.","type":"object","properties":{"created_at":{"type":"integer","format":"int64"},"criticality":{"type":"string","enum":["critical","droppable"]},"event_id":{"type":"string"},"kind":{"type":"string"},"row_id":{"type":"integer","format":"int64"},"scope":{"type":"string","enum":["session","workspace","team","process","worktree","system"]},"scope_id":{"type":"string"},"seq":{"type":"integer","format":"int64"}},"required":["row_id","event_id","scope","scope_id","seq","kind","criticality","created_at"]}}
+    RuntimeEventRecord: {"title":"RuntimeEventRecord","type":"object","properties":{"created_at":{"type":"integer","format":"int64"},"criticality":{"type":"string","enum":["critical","droppable"]},"event_id":{"type":"string"},"kind":{"type":"string"},"payload":true,"provider":{"type":["string","null"]},"provider_seq":{"type":["integer","null"],"format":"int64"},"row_id":{"type":"integer","format":"int64"},"scope":{"type":"string","enum":["session","workspace","team","process","worktree","system"]},"scope_id":{"type":"string"},"seq":{"type":"integer","format":"int64"},"session_id":{"type":["string","null"]},"team_id":{"type":["string","null"]},"turn_id":{"type":["string","null"]}},"required":["row_id","event_id","scope","scope_id","session_id","team_id","turn_id","seq","kind","criticality","payload","provider","provider_seq","created_at"]}
+    WorkspaceHooksResponse: {"title":"WorkspaceHooksResponse","type":"object","properties":{"config_version":{"type":"integer","format":"uint32","minimum":0},"executable_events":{"type":"array","items":{"type":"string","enum":["pre_teammate_add","post_teammate_add","post_teammate_remove","post_direct_message_send","post_broadcast_message_send","post_compaction"]}},"execution_enabled":{"type":"boolean"},"hooks":{"type":"array","items":{"type":"object","properties":{"command":{"type":"string"},"event_name":{"type":"string","enum":["pre_teammate_add","post_teammate_add","post_teammate_remove","post_direct_message_send","post_broadcast_message_send","post_compaction"]},"fingerprint":{"type":"string"},"name":{"type":"string"},"scope":{"type":"string","enum":["user","project"]},"timeout_ms":{"type":"integer","format":"uint64","minimum":0}},"required":["event_name","name","command","timeout_ms","scope","fingerprint"]}},"workspace_id":{"type":"string"}},"required":["workspace_id","config_version","execution_enabled","executable_events","hooks"]}
+    WorkspaceHookApprovalInput: {"title":"WorkspaceHookApprovalInput","type":"object","properties":{"expected_revision":{"type":"integer","format":"uint64","minimum":0},"hooks":{"type":"array","items":{"type":"object","properties":{"event_name":{"type":"string","enum":["pre_teammate_add","post_teammate_add","post_teammate_remove","post_direct_message_send","post_broadcast_message_send","post_compaction"]},"fingerprint":{"description":"SHA-256 of the exact entry returned by effective-hook discovery.\nRequired to detect edits between inspection and operator approval.","type":"string"},"name":{"type":"string"}},"additionalProperties":false,"required":["event_name","name","fingerprint"]}}},"additionalProperties":false,"required":["expected_revision","hooks"]}
+    TeamHookApproval: {"title":"TeamHookApproval","type":"object","properties":{"approved_at_ms":{"type":["integer","null"],"format":"int64"},"hooks":{"type":"array","items":{"type":"object","properties":{"command":{"type":"string"},"event_name":{"type":"string","enum":["pre_teammate_add","post_teammate_add","post_teammate_remove","post_direct_message_send","post_broadcast_message_send","post_compaction"]},"name":{"type":"string"},"scope":{"type":"string","enum":["user","project"]},"timeout_ms":{"type":"integer","format":"uint64","minimum":0}},"required":["event_name","name","command","timeout_ms","scope"]}},"revision":{"type":"integer","format":"uint64","minimum":0},"workspace_id":{"type":"string"}},"additionalProperties":false,"required":["workspace_id","revision","hooks","approved_at_ms"]}
+    TeamHookEffectSummaryList: {"title":"Array_of_TeamHookEffectSummary","type":"array","items":{"description":"Bounded operator-list projection. Commands, inputs and execution receipts\nrequire explicit inspection of the exact effect instead of list retrieval.","type":"object","properties":{"application_error_code":{"type":["string","null"]},"application_state":{"type":"string"},"applied_at_ms":{"type":["integer","null"],"format":"int64"},"attempt_count":{"type":"integer","format":"uint32","minimum":0},"created_at_ms":{"type":"integer","format":"int64"},"event_name":{"type":"string","enum":["pre_teammate_add","post_teammate_add","post_teammate_remove","post_direct_message_send","post_broadcast_message_send","post_compaction"]},"hook_name":{"type":"string"},"parent_event_id":{"type":"string"},"phase":{"type":"string","enum":["intended","started","succeeded","failed","timed_out","manual_review"]},"updated_at_ms":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"additionalProperties":false,"required":["workspace_id","parent_event_id","event_name","hook_name","phase","attempt_count","created_at_ms","updated_at_ms","application_state","application_error_code","applied_at_ms"]}}
+    TeamHookEffectRecord: {"title":"TeamHookEffectRecord","type":"object","properties":{"application_error_code":{"type":["string","null"]},"application_state":{"description":"Separate durable receipt for application of scoped model context.","type":"string"},"applied_at_ms":{"type":["integer","null"],"format":"int64"},"attempt_count":{"type":"integer","format":"uint32","minimum":0},"created_at_ms":{"type":"integer","format":"int64"},"hook":{"type":"object","properties":{"command":{"type":"string"},"event_name":{"type":"string","enum":["pre_teammate_add","post_teammate_add","post_teammate_remove","post_direct_message_send","post_broadcast_message_send","post_compaction"]},"name":{"type":"string"},"scope":{"type":"string","enum":["user","project"]},"timeout_ms":{"type":"integer","format":"uint64","minimum":0}},"required":["event_name","name","command","timeout_ms","scope"]},"input":true,"parent_event_id":{"type":"string"},"phase":{"type":"string","enum":["intended","started","succeeded","failed","timed_out","manual_review"]},"receipt":{"type":["object","null"],"properties":{"error_code":{"description":"Machine-readable and bounded. Never include raw stdout, stderr or env.","type":["string","null"]},"validated_output":{"description":"Structured script output may only be admitted after separate strict\noutput-contract and scoped-recipient validation."}},"additionalProperties":false,"required":["validated_output","error_code"]},"updated_at_ms":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"additionalProperties":false,"required":["workspace_id","parent_event_id","hook","input","phase","attempt_count","receipt","created_at_ms","updated_at_ms","application_state","application_error_code","applied_at_ms"]}
+    ScopedMcpInvokeRequest: {"title":"ScopedMcpInvokeRequest","type":"object","properties":{"args":{"default":null},"namespace":{"type":["string","null"]},"tool_name":{"type":"string"}},"additionalProperties":false,"required":["tool_name"]}
 paths:
   /health:
     get:
@@ -1732,7 +1746,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorEventSummaryList"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -1790,7 +1804,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/RuntimeEventRecord"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -1819,7 +1833,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/ScopedMcpInvokeRequest"
       responses:
         "200":
           description: JSON response
@@ -1975,7 +1989,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/LegacyWorkspaceMigrationStatus"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2006,7 +2020,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/LegacyWorkspaceMigrationApplyResponse"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2026,7 +2040,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/LegacyWorkspaceMigrationStatus"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -2061,7 +2075,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/LegacyWorkspaceMigrationResolutionRequest"
       responses:
         "200":
           description: JSON response
@@ -2073,7 +2087,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/LegacyWorkspaceMigrationResolutionResponse"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -3019,7 +3033,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceHooksResponse"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -3050,7 +3064,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/TeamHookApproval"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -3084,7 +3098,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/WorkspaceHookApprovalInput"
       responses:
         "200":
           description: JSON response
@@ -3100,7 +3114,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/TeamHookApproval"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
           content:
@@ -3139,7 +3153,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/TeamHookEffectSummaryList"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -3180,7 +3194,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/TeamHookEffectRecord"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -3538,7 +3552,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/WorkspaceRetirementReviewRequest"
       responses:
         "200":
           description: JSON response
@@ -3550,7 +3564,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceRetirementReviewReceipt"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:

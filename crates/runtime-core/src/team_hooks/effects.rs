@@ -2,6 +2,7 @@
 //! project configuration. An admitted effect never re-reads a shell command.
 
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -9,7 +10,7 @@ use super::{TeamHookEventName, TeamHookResolvedEntry};
 use crate::workspace::{normalize_idempotency_key, opaque_id, unix_time_ms};
 use crate::{normalized_json_hash, OperationActor, RuntimeError};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TeamHookSelection {
     pub event_name: TeamHookEventName,
@@ -34,7 +35,7 @@ pub fn team_hook_fingerprint(hook: &TeamHookResolvedEntry) -> String {
     encoded
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TeamHookApproval {
     pub workspace_id: String,
@@ -125,7 +126,7 @@ pub fn prepare_team_hook_approval_mutation(
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TeamHookEffectPhase {
     Intended,
@@ -206,7 +207,7 @@ pub trait RuntimeTeamHookExecutor: Send + Sync {
     ) -> Result<TeamHookEffectRecord, RuntimeError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TeamHookEffectRecord {
     pub workspace_id: String,
@@ -236,7 +237,7 @@ pub struct TeamHookEffectPageCursor {
 
 /// Bounded operator-list projection. Commands, inputs and execution receipts
 /// require explicit inspection of the exact effect instead of list retrieval.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TeamHookEffectSummary {
     pub workspace_id: String,
@@ -252,7 +253,7 @@ pub struct TeamHookEffectSummary {
     pub applied_at_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TeamHookEffectReceipt {
     /// Structured script output may only be admitted after separate strict

@@ -1,26 +1,30 @@
 use crate::http::{
     AgentMessageCreateInput, EditReviewInput, ManualCompactionReviewInput, OperatorErrorResponse,
     ProviderCapabilitiesResponse, PublicSendTurnInput, RuntimeCapabilitiesResponse,
-    UpdateAgentPermissionInput, UpdateAgentPreferencesInput, WorkspaceWorktreeCreateInput,
+    ScopedMcpInvokeRequest, UpdateAgentPermissionInput, UpdateAgentPreferencesInput,
+    WorkspaceHookApprovalInput, WorkspaceHooksResponse, WorkspaceWorktreeCreateInput,
 };
 use runtime_core::{
     AgentDeliveryRecord, AgentMessageAck, AgentMessageListResponse, EditAndRerunRequest,
-    OperationDetails, OperationSummary, OperatorAgentArchiveReviewInput,
-    OperatorAgentArchiveReviewResponse, OperatorAgentCreateReviewInput,
-    OperatorAgentCreateReviewResponse, OperatorAgentRestoreReviewInput,
-    OperatorAgentRestoreReviewResponse, OperatorNativePolicyReviewInput,
-    OperatorNativePolicyReviewResponse, OperatorProcessSummary, ProcessDetails,
-    ProviderModelDiscoveryRequest, ProviderModelDiscoveryResponse,
+    LegacyWorkspaceMigrationApplyResponse, LegacyWorkspaceMigrationResolutionRequest,
+    LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus, OperationDetails,
+    OperationSummary, OperatorAgentArchiveReviewInput, OperatorAgentArchiveReviewResponse,
+    OperatorAgentCreateReviewInput, OperatorAgentCreateReviewResponse,
+    OperatorAgentRestoreReviewInput, OperatorAgentRestoreReviewResponse, OperatorEventSummary,
+    OperatorNativePolicyReviewInput, OperatorNativePolicyReviewResponse, OperatorProcessSummary,
+    ProcessDetails, ProviderModelDiscoveryRequest, ProviderModelDiscoveryResponse,
     ProviderPermissionMutationResult, ProviderSessionPreferencesMutationResult,
-    ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse, SendTurnAccepted,
-    SessionCompactionRun, SessionContextLimitSnapshot, SessionEditRerunOperation,
-    WorkspaceAgentArchiveRequest, WorkspaceAgentCreateRequest, WorkspaceAgentRebindOperation,
-    WorkspaceAgentRebindRequest, WorkspaceAgentRebindResponse, WorkspaceAgentRecord,
-    WorkspaceInterruptResponse, WorkspaceLeadTransitionRequest, WorkspaceLeadTransitionResponse,
-    WorkspaceNoticePolicyRecord, WorkspaceNoticePolicyUpdate, WorkspaceRecord,
-    WorkspaceRegisterRequest, WorkspaceRegisterResponse, WorkspaceRetirementPreflight,
-    WorkspaceRetirementRequest, WorkspaceRetirementResponse, WorkspaceSystemNoticeRecord,
-    WorkspaceWorktreeInventory, WorktreeCreateResponse,
+    ProviderSkillDiscoveryRequest, ProviderSkillDiscoveryResponse, RuntimeEventRecord,
+    SendTurnAccepted, SessionCompactionRun, SessionContextLimitSnapshot, SessionEditRerunOperation,
+    TeamHookApproval, TeamHookEffectRecord, TeamHookEffectSummary, WorkspaceAgentArchiveRequest,
+    WorkspaceAgentCreateRequest, WorkspaceAgentRebindOperation, WorkspaceAgentRebindRequest,
+    WorkspaceAgentRebindResponse, WorkspaceAgentRecord, WorkspaceInterruptResponse,
+    WorkspaceLeadTransitionRequest, WorkspaceLeadTransitionResponse, WorkspaceNoticePolicyRecord,
+    WorkspaceNoticePolicyUpdate, WorkspaceRecord, WorkspaceRegisterRequest,
+    WorkspaceRegisterResponse, WorkspaceRetirementPreflight, WorkspaceRetirementRequest,
+    WorkspaceRetirementResponse, WorkspaceRetirementReviewReceipt,
+    WorkspaceRetirementReviewRequest, WorkspaceSystemNoticeRecord, WorkspaceWorktreeInventory,
+    WorktreeCreateResponse,
 };
 use schemars::generate::{Contract, SchemaSettings};
 use schemars::JsonSchema;
@@ -271,6 +275,60 @@ pub(super) fn append_schema_components(out: &mut String) {
         "SessionEditRerunOperation",
         Contract::Serialize,
     );
+    append_component::<LegacyWorkspaceMigrationStatus>(
+        out,
+        "LegacyWorkspaceMigrationStatus",
+        Contract::Serialize,
+    );
+    append_component::<LegacyWorkspaceMigrationApplyResponse>(
+        out,
+        "LegacyWorkspaceMigrationApplyResponse",
+        Contract::Serialize,
+    );
+    append_component::<LegacyWorkspaceMigrationResolutionRequest>(
+        out,
+        "LegacyWorkspaceMigrationResolutionRequest",
+        Contract::Deserialize,
+    );
+    append_component::<LegacyWorkspaceMigrationResolutionResponse>(
+        out,
+        "LegacyWorkspaceMigrationResolutionResponse",
+        Contract::Serialize,
+    );
+    append_component::<WorkspaceRetirementReviewRequest>(
+        out,
+        "WorkspaceRetirementReviewRequest",
+        Contract::Deserialize,
+    );
+    append_component::<WorkspaceRetirementReviewReceipt>(
+        out,
+        "WorkspaceRetirementReviewReceipt",
+        Contract::Serialize,
+    );
+    append_component::<Vec<OperatorEventSummary>>(
+        out,
+        "OperatorEventSummaryList",
+        Contract::Serialize,
+    );
+    append_component::<RuntimeEventRecord>(out, "RuntimeEventRecord", Contract::Serialize);
+    append_component::<WorkspaceHooksResponse>(out, "WorkspaceHooksResponse", Contract::Serialize);
+    append_component::<WorkspaceHookApprovalInput>(
+        out,
+        "WorkspaceHookApprovalInput",
+        Contract::Deserialize,
+    );
+    append_component::<TeamHookApproval>(out, "TeamHookApproval", Contract::Serialize);
+    append_component::<Vec<TeamHookEffectSummary>>(
+        out,
+        "TeamHookEffectSummaryList",
+        Contract::Serialize,
+    );
+    append_component::<TeamHookEffectRecord>(out, "TeamHookEffectRecord", Contract::Serialize);
+    append_component::<ScopedMcpInvokeRequest>(
+        out,
+        "ScopedMcpInvokeRequest",
+        Contract::Deserialize,
+    );
 }
 
 fn append_component<T: JsonSchema>(out: &mut String, name: &str, contract: Contract) {
@@ -344,6 +402,16 @@ pub(super) fn request_schema_name(path: &str, method: HttpMethod) -> Option<&'st
         (HttpMethod::Post, "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun") => {
             Some("EditAndRerunRequest")
         }
+        (HttpMethod::Post, "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}") => {
+            Some("LegacyWorkspaceMigrationResolutionRequest")
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile") => {
+            Some("WorkspaceRetirementReviewRequest")
+        }
+        (HttpMethod::Put, "/v2/workspaces/{workspace_id}/hooks/approval") => {
+            Some("WorkspaceHookApprovalInput")
+        }
+        (HttpMethod::Post, "/v2/mcp/invoke") => Some("ScopedMcpInvokeRequest"),
         _ => None,
     }
 }
@@ -458,6 +526,34 @@ pub(super) fn response_schema_name(path: &str, method: HttpMethod) -> Option<&'s
         | (HttpMethod::Get, "/v2/agents/{agent_id}/edits/{operation_id}")
         | (HttpMethod::Post, "/v2/agents/{agent_id}/edits/{operation_id}/resolve") => {
             Some("SessionEditRerunOperation")
+        }
+        (HttpMethod::Get, "/v2/migrations/workspaces")
+        | (HttpMethod::Post, "/v2/migrations/workspaces/preview") => {
+            Some("LegacyWorkspaceMigrationStatus")
+        }
+        (HttpMethod::Post, "/v2/migrations/workspaces/apply") => {
+            Some("LegacyWorkspaceMigrationApplyResponse")
+        }
+        (HttpMethod::Post, "/v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}") => {
+            Some("LegacyWorkspaceMigrationResolutionResponse")
+        }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile") => {
+            Some("WorkspaceRetirementReviewReceipt")
+        }
+        (HttpMethod::Get, "/v2/events") => Some("OperatorEventSummaryList"),
+        (HttpMethod::Get, "/v2/events/{event_id}") => Some("RuntimeEventRecord"),
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/hooks") => {
+            Some("WorkspaceHooksResponse")
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/hooks/approval")
+        | (HttpMethod::Put, "/v2/workspaces/{workspace_id}/hooks/approval") => {
+            Some("TeamHookApproval")
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/hooks/effects") => {
+            Some("TeamHookEffectSummaryList")
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}") => {
+            Some("TeamHookEffectRecord")
         }
         _ => None,
     }

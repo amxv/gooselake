@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeEventScope {
     Session,
@@ -38,7 +38,7 @@ impl RuntimeEventScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeEventCriticality {
     Critical,
@@ -246,7 +246,7 @@ pub struct TeamOperationDiagnosticRecord {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RuntimeEventRecord {
     pub row_id: i64,
     pub event_id: String,
@@ -266,7 +266,7 @@ pub struct RuntimeEventRecord {
 
 /// Indexed operator history projection. Large event payloads and provider
 /// diagnostics are only read by explicit single-event inspection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperatorEventSummary {
     pub row_id: i64,
     pub event_id: String,

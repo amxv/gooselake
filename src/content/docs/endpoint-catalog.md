@@ -356,8 +356,14 @@ typed independent review requests/results for ambiguous native create/archive/
 restore/policy effects, and historical edit-and-rerun request/operation
 inspection are also linked to real Rust/serde DTOs. The agent list remains
 an array with `X-Next-Cursor`, and a rebind response contains both an
-operation and an optional verified agent, not merely the agent record. Treat this
-catalog + code as the reliable source for:
+operation and an optional verified agent, not merely the agent record.
+Migration status/preview, apply receipts and typed subject resolutions, full
+retirement reconciliation identity/evidence requests and receipts, redacted
+operator event summaries versus full single-event records, workspace effective
+hook/approval/effect DTOs, and the caller-free scoped MCP invocation *request*
+now derive directly from their Rust handlers. MCP capability and tool-result
+payloads are intentionally dynamic JSON, not invented fixed response DTOs.
+Treat this catalog + code as the reliable source for:
 - endpoint existence and grouping
 - auth requirements
 - stream vs replay endpoints

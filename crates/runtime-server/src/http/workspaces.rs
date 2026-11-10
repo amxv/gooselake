@@ -593,9 +593,29 @@ pub(super) async fn create_workspace_agent(
     Path(workspace_id): Path<String>,
     headers: HeaderMap,
     Json(mut request): Json<WorkspaceAgentCreateRequest>,
-) -> Result<Json<runtime_core::WorkspaceAgentRecord>, ApiError> {
+) -> Result<Response, ApiError> {
     reject_unsupported_if_match(&headers, "workspace agent creation")?;
-    reject_unjournaled_idempotency_key(&headers, "workspace agent creation")?;
+    let key = parse_idempotency_key(&headers)?
+        .unwrap_or_else(|| format!("server-agent-create-{:032x}", rand::random::<u128>()));
+    let (admission, command) = state
+        .runtime
+        .admit_workspace_agent_create_operator(
+            workspace_id.trim(),
+            &request,
+            OperationActor::operator(OPERATOR_PRINCIPAL),
+            key,
+        )
+        .await?;
+    let mut command = match command {
+        Some(command) => command,
+        None => {
+            let (agent, operation_id) = admission.into_replay_result()?;
+            return Ok(with_operation_id(
+                revisioned_response(agent.revision, agent),
+                &operation_id,
+            ));
+        }
+    };
     if let Some(WorkspaceAgentInitialRoute::New {
         worktree_name,
         branch_prefix,
@@ -605,16 +625,17 @@ pub(super) async fn create_workspace_agent(
     }) = request.worktree.clone()
     {
         if !state.app.worktree_settings.enabled {
-            return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
+            return Err(state
+                .runtime
+                .quarantine_operator_agent_create(
+                    &command.operation_id,
+                    "managed worktrees are disabled after provider create intent admission",
+                )
+                .into());
         }
-        // The native Git checkout must not be created for an agent whose
-        // other deterministic inputs will fail provider creation. Recheck
-        // all of these inputs in the manager at authoritative admission.
-        state.runtime.preflight_workspace_agent_creation_inputs(
-            workspace_id.trim(),
-            &request,
-            OPERATOR_PRINCIPAL,
-        )?;
+        // The parent agent operation is durable BEFORE child Git creation.
+        // Its derived child key is stable across recovery and inspection;
+        // a failure cannot be repaired by rerunning either native effect.
         let result = state
             .app
             .services
@@ -634,9 +655,16 @@ pub(super) async fn create_workspace_agent(
                     run_init_script,
                 },
                 OperationActor::operator(OPERATOR_PRINCIPAL),
-                format!("implicit-agent-wt-{:032x}", rand::random::<u128>()),
+                format!("agent-create-wt:{}", command.operation_id),
             )
-            .await?;
+            .await
+            .map_err(|error| {
+                state.runtime.quarantine_operator_agent_create(
+                    &command.operation_id,
+                    &format!("native child worktree outcome is unverified: {error}"),
+                )
+            })?;
+        command.worktree_operation_id = Some(result.operation_id);
         request.worktree = Some(WorkspaceAgentInitialRoute::Existing {
             worktree_id: result.response.worktree.id,
         });
@@ -647,13 +675,45 @@ pub(super) async fn create_workspace_agent(
             Some(WorkspaceAgentInitialRoute::Existing { .. })
         )
     {
-        return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
+        return Err(state
+            .runtime
+            .quarantine_operator_agent_create(
+                &command.operation_id,
+                "managed worktrees disabled before reserved provider creation",
+            )
+            .into());
     }
-    let agent = state
+    let (agent, operation_id) = state
         .runtime
-        .create_workspace_agent(workspace_id.trim(), request, OPERATOR_PRINCIPAL)
+        .execute_workspace_agent_create_operator(command, request)
         .await?;
-    Ok(Json(agent))
+    Ok(with_operation_id(
+        revisioned_response(agent.revision, agent),
+        &operation_id,
+    ))
+}
+
+/// Native creation cannot be retried from a lost HTTP reply. Independent
+/// operator evidence settles the original reserved agent ID without touching
+/// the provider, filesystem, or Git again.
+pub(super) async fn resolve_workspace_agent_create_review(
+    State(state): State<AppState>,
+    Path((workspace_id, operation_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(input): Json<runtime_core::OperatorAgentCreateReviewInput>,
+) -> Result<Response, ApiError> {
+    reject_unsupported_if_match(&headers, "native agent creation evidence review")?;
+    reject_unjournaled_idempotency_key(&headers, "native agent creation evidence review")?;
+    let result = state
+        .runtime
+        .resolve_operator_agent_create_review(
+            workspace_id.trim(),
+            operation_id.trim(),
+            input,
+            OperationActor::operator(OPERATOR_PRINCIPAL),
+        )
+        .await?;
+    Ok(with_operation_id(Json(result), operation_id.trim()))
 }
 
 pub(super) async fn list_workspace_agents(

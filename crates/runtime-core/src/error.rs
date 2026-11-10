@@ -63,6 +63,9 @@ pub enum RuntimeError {
     )]
     OperatorArchiveNotClosed { operation_id: String },
 
+    #[error("operator agent creation {operation_id} was verified not created; its original retry key is consumed")]
+    OperatorAgentNotCreated { operation_id: String },
+
     /// The exact canonical turn was admitted but the provider confirmed that
     /// its native dispatch did not occur. The original key replays this error
     /// without sending the user input again.

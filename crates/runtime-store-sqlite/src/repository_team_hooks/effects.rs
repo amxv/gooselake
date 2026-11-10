@@ -355,7 +355,19 @@ impl SqliteRuntimeRepository {
         tx.execute(
             "UPDATE workspace_hook_effects SET application_state='rejected',
                application_error_code='pre_add_provider_outcome_unknown',updated_at_ms=?1
-             WHERE event_name='pre_teammate_add' AND application_state='pending'",
+             WHERE event_name='pre_teammate_add' AND application_state='pending'
+               AND NOT EXISTS (
+                 SELECT 1 FROM runtime_operations op
+                   JOIN runtime_operation_effects effect
+                     ON effect.operation_id=op.operation_id
+                 WHERE op.kind='operator_agent_create'
+                   AND op.workspace_id=workspace_hook_effects.workspace_id
+                   AND op.phase IN ('requested','manual_review')
+                   AND effect.effect_kind='provider_session_create'
+                   AND effect.phase IN ('intended','uncertain')
+                   AND effect.target_id=json_extract(
+                     workspace_hook_effects.input_json,'$.subject.member_agent_id')
+               )",
             [at_ms],
         )
         .map_err(|error| db_error("failed classifying unapplied pre-add outputs", error))?;

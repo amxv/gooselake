@@ -218,7 +218,10 @@ impl SqliteRuntimeRepository {
             .ok_or_else(|| RuntimeError::NotFound(format!("session {}", session.id)))?;
         if matches!(
             persisted.0.as_str(),
-            "policy_recovery_required" | "restore_recovery_required" | "archive_recovery_required"
+            "policy_recovery_required"
+                | "restore_recovery_required"
+                | "archive_recovery_required"
+                | "create_recovery_required"
         ) {
             return Err(RuntimeError::Conflict(format!(
                 "session {} has an independently reviewed native attachment requiring verified startup reattachment",
@@ -574,7 +577,7 @@ fn update_session_for_admission(
         .execute(
             "UPDATE sessions
              SET status = ?1, active_turn_id = ?2, updated_at = ?3
-             WHERE id = ?4 AND active_turn_id IS NULL AND status NOT IN ('closed', 'failed', 'policy_recovery_required', 'restore_recovery_required', 'archive_recovery_required')",
+             WHERE id = ?4 AND active_turn_id IS NULL AND status NOT IN ('closed', 'failed', 'policy_recovery_required', 'restore_recovery_required', 'archive_recovery_required', 'create_recovery_required')",
             params![
                 record.status,
                 record.active_turn_id,

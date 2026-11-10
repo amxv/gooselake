@@ -44,6 +44,7 @@ pub(super) fn returns_revision_etag(path: &str, method: HttpMethod) -> bool {
                     | "/v2/agents/{agent_id}/permission"
                     | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore"
                     | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
+                    | "/v2/workspaces/{workspace_id}/agents"
             ))
         || (method == HttpMethod::Put
             && matches!(
@@ -110,6 +111,7 @@ mod tests {
             "/v2/agents/{agent_id}/permission",
             "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore",
             "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive",
+            "/v2/workspaces/{workspace_id}/agents",
         ] {
             let content = yaml
                 .split(&format!("  {path}:\n"))

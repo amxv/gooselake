@@ -196,6 +196,7 @@ impl SqliteRuntimeRepository {
                     | "policy_recovery_required"
                     | "restore_recovery_required"
                     | "archive_recovery_required"
+                    | "create_recovery_required"
             )
             || active_turn.is_some()
             || revision

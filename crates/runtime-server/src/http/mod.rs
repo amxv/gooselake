@@ -298,6 +298,10 @@ pub fn build_router(state: AppState) -> Router {
             post(create_workspace_agent).get(list_workspace_agents),
         )
         .route(
+            "/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve",
+            post(resolve_workspace_agent_create_review),
+        )
+        .route(
             "/workspaces/{workspace_id}/agents/{agent_id}",
             get(get_workspace_agent),
         )

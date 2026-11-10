@@ -5,6 +5,7 @@ pub mod error;
 pub mod harness;
 pub mod model_policy;
 pub mod operator_agent_archive;
+pub mod operator_agent_create;
 pub mod operator_agent_restore;
 pub mod operator_native_policy;
 pub mod process_authority;
@@ -53,6 +54,11 @@ pub use operator_agent_archive::{
     OperatorAgentArchiveAdmission, OperatorAgentArchiveCommand, OperatorAgentArchiveResolution,
     OperatorAgentArchiveReviewCommand, OperatorAgentArchiveReviewInput,
     OperatorAgentArchiveReviewResponse,
+};
+pub use operator_agent_create::{
+    OperatorAgentCreateAdmission, OperatorAgentCreateCommand, OperatorAgentCreateLaunchSnapshot,
+    OperatorAgentCreateResolution, OperatorAgentCreateReviewCommand,
+    OperatorAgentCreateReviewInput, OperatorAgentCreateReviewResponse,
 };
 pub use operator_agent_restore::{
     OperatorAgentRestoreAdmission, OperatorAgentRestoreCommand, OperatorAgentRestoreResolution,

@@ -1892,6 +1892,11 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -1901,6 +1906,58 @@ paths:
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Operation-ID:
+              description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
+              schema:
+                type: string
+            ETag:
+              description: Strong quoted revision of the returned authority
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+        "409":
+          description: Conflict or unresolved native effect; inspect the operation without retrying the effect
+          headers:
+            X-Operation-ID:
+              description: Present when the native outcome requires durable review
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
+  /v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve:
+    post:
+      summary: Resolve quarantined native agent creation with independent provider-session evidence
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JsonObject"
+      responses:
+        "200":
+          description: JSON response
+          headers:
+            X-Operation-ID:
+              description: Durable native operation, including one-shot unkeyed lifecycle intents and independent manual-review resolutions
+              schema:
+                type: string
           content:
             application/json:
               schema:

@@ -412,6 +412,7 @@ Normal `/v2` agent creation is always scoped to a registered workspace:
 ```bash
 AGENT_RESULT=$(curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: create-builder-123" \
   -H "Content-Type: application/json" \
   -d '{
     "provider":"claude",
@@ -430,6 +431,49 @@ AGENT_RESULT=$(curl -fsS -X POST \
 
 AGENT_ID=$(echo "$AGENT_RESULT" | jq -r '.agent_id')
 ```
+
+**Agent creation is an operator-native, write-ahead operation**, not a best-
+effort provider session launch. Pass `Idempotency-Key` to retry the same exact
+request safely: the runtime atomically reserves the operator, normalized
+request hash, durable `op_agent_create_*` coordinate and one stable `sess_*`
+agent identity **before any new Git checkout, approved pre-add hook or
+provider session creation**. A newly created managed worktree has a separate
+durable Git operation, whose derived child key/ID is linked to that parent's
+frozen launch policy. After native provider acknowledgement, one SQLite
+transaction commits the original session/profile/ownership, recreation policy,
+worktree claim, pre-add hook application, mandatory onboarding snapshot,
+exact operation receipt and claim release. The response includes the agent
+revision `ETag` and `X-Operation-ID`. Reusing the exact caller key never
+starts a second provider session or Git checkout, even after a crash or
+lost HTTP reply; changing its request or target workspace returns `409`.
+An omitted key still gets a server-generated, one-shot operation, but an
+unkeyed HTTP retry cannot identify the original result.
+
+If Git, native provider creation or the atomic receipt has an ambiguous
+outcome, the original operation retains its exclusive native identity claim
+and returns `409 outcome_unresolved`, including
+`error.details.operation_id`. An unknown provider result **does not** create
+an authoritative agent from a guessed session reference. Startup quarantines
+unreceipted native create intents to `manual_review` and never re-executes
+Git/hooks/provider calls for them. Inspect
+`GET /v2/operations/{operation_id}` for the reserved agent ID, effect evidence
+and frozen original launch snapshot.
+
+For an independently verified provider outcome, resolve that exact intent via
+`POST /v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve`.
+Supply `resolution` (`created` or `not_created`), substantive `evidence` (8–2048
+bytes), the original `reserved_agent_id` and `provider`. For `created`, also
+supply the independently observed `observed_provider_session_ref` and nullable
+`observed_canonical_provider_session_ref`: a **durably frozen pre-provider
+launch snapshot is required** to reconstruct approved session/agent/onboarding
+authority, with no provider call. The restored agent stays in
+`create_recovery_required` until a fresh startup successfully reattaches the
+exact observed native identity. A mismatched/failed reattachment leaves it
+fenced. Verified `not_created` permanently consumes the original key with
+`409 operator_verified_not_created`, preserves any previously created Git
+checkout for separate audited cleanup, and permits a distinct caller key for
+a new creation. The evidence-only review rejects `Idempotency-Key`, `If-Match`
+and extra JSON fields, and an identical review replays its stored receipt.
 
 The agent creation and archive requests reject unknown fields before native
 provider or lifecycle effects. Nested `current_preferences` and onboarding

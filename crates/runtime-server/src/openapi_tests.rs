@@ -17,6 +17,9 @@ fn generated_openapi_includes_core_surface() {
     assert!(yaml.contains("  /v2/workspaces/{workspace_id}/notice-policy:"));
     assert!(yaml.contains("  /v2/workspaces/{workspace_id}/interrupt:"));
     assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents:"));
+    assert!(
+        yaml.contains("  /v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve:")
+    );
     assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}:"));
     assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}/archive:"));
     assert!(yaml.contains("  /v2/workspaces/{workspace_id}/agents/{agent_id}/restore:"));
@@ -101,6 +104,28 @@ fn generated_openapi_includes_core_surface() {
     assert!(yaml.contains("  /v2/migrations/workspaces/apply:"));
     assert!(yaml.contains("  /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}:"));
     assert!(yaml.contains("  /v2/operations/{operation_id}:"));
+    let creation = yaml
+        .split("  /v2/workspaces/{workspace_id}/agents:\n")
+        .nth(1)
+        .unwrap()
+        .split("\n  /")
+        .next()
+        .unwrap();
+    assert!(creation.contains("        - name: Idempotency-Key\n"));
+    assert!(creation.contains("            X-Operation-ID:\n"));
+    assert!(creation.contains("            ETag:\n"));
+    assert!(creation.contains("        \"409\":\n"));
+    let review = yaml
+        .split("  /v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve:\n")
+        .nth(1)
+        .unwrap()
+        .split("\n  /")
+        .next()
+        .unwrap();
+    assert!(review.contains("      requestBody:\n"));
+    assert!(review.contains("            X-Operation-ID:\n"));
+    assert!(!review.contains("        - name: Idempotency-Key\n"));
+    assert!(!review.contains("        - name: If-Match\n"));
     assert!(yaml.contains("        - name: Idempotency-Key"));
     let user_turn = yaml
         .split("  /v2/agents/{agent_id}/turns:\n")

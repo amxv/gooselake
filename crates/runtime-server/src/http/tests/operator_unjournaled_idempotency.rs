@@ -1,21 +1,8 @@
 use super::workspace_worktree_routes::{call, fixture};
 use super::*;
 
-fn assert_unjournaled_key_rejected(status: StatusCode, body: &serde_json::Value) {
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body:?}");
-    assert_eq!(body["error"]["code"], "idempotency_not_supported");
-    assert_eq!(body["error"]["retryable"], false);
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("no durable provider mutation was admitted"));
-    assert!(body["request_id"]
-        .as_str()
-        .is_some_and(|id| id.starts_with("req_")));
-}
-
 #[tokio::test]
-async fn unjournaled_provider_mutations_cannot_silently_accept_idempotency_keys() {
+async fn native_agent_lifecycle_replay_is_durable_and_unsupported_policies_admit_nothing() {
     let (router, token, temp, _, workspace, _, _) = fixture().await;
     let base = format!("/v2/workspaces/{}/agents", workspace.workspace_id);
     let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
@@ -27,24 +14,39 @@ async fn unjournaled_provider_mutations_cannot_silently_accept_idempotency_keys(
     };
     let agent_count = count("workspace_agents");
     let worktree_count = count("managed_worktrees");
-    let operation_count = count("runtime_operations");
+    let input = serde_json::json!({
+        "provider":"codex", "model":"test-model",
+        "worktree":{"mode":"new","worktree_name":"no-false-replay"}
+    });
 
     let (status, body) = call(
         &router,
         &token,
         "POST",
         &base,
-        Some(serde_json::json!({
-            "provider":"codex", "model":"test-model",
-            "worktree":{"mode":"new","worktree_name":"no-false-replay"}
-        })),
+        Some(input.clone()),
         Some("caller-believes-agent-create-is-idempotent"),
     )
     .await;
-    assert_unjournaled_key_rejected(status, &body);
-    assert_eq!(count("workspace_agents"), agent_count);
-    assert_eq!(count("managed_worktrees"), worktree_count);
-    assert_eq!(count("runtime_operations"), operation_count);
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(body["lifecycle_state"], "active");
+    assert_eq!(count("workspace_agents"), agent_count + 1);
+    assert_eq!(count("managed_worktrees"), worktree_count + 1);
+    let after_first = count("runtime_operations");
+    let (status, exact) = call(
+        &router,
+        &token,
+        "POST",
+        &base,
+        Some(input),
+        Some("caller-believes-agent-create-is-idempotent"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{exact:?}");
+    assert_eq!(exact, body);
+    assert_eq!(count("workspace_agents"), agent_count + 1);
+    assert_eq!(count("managed_worktrees"), worktree_count + 1);
+    assert_eq!(count("runtime_operations"), after_first);
 
     let (status, agent) = call(
         &router,
@@ -58,10 +60,9 @@ async fn unjournaled_provider_mutations_cannot_silently_accept_idempotency_keys(
     assert_eq!(status, StatusCode::OK, "{agent:?}");
     let agent_id = agent["agent_id"].as_str().unwrap();
     let revision = agent["revision"].as_u64().unwrap();
-    // Provider creation remains unjournaled; archive/restore now both accept
-    // exact operator keys, so they must not be tested as unsupported here.
-    // Policy edits also understand an exact
-    // operator retry key. Here the fake provider has no native capability,
+    let operation_count = count("runtime_operations");
+    // Native agent creation/archive/restore now accept exact durable keys.
+    // Provider policy edits do as well. Here the fake provider has no capability,
     // so neither operation admission nor provider mutation is permitted.
     for (path, input) in [
         (

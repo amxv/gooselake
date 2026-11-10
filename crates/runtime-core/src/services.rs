@@ -25,6 +25,8 @@ use serde_json::Value;
 
 #[path = "services_operator_archive_store_trait.rs"]
 mod operator_archive_store_trait;
+#[path = "services_operator_create_store_trait.rs"]
+mod operator_create_store_trait;
 #[path = "services_operator_policy_store_trait.rs"]
 mod operator_policy_store_trait;
 #[path = "services_operator_restore_store_trait.rs"]
@@ -73,6 +75,7 @@ pub trait RuntimeStore:
 
     operator_policy_store_trait::operator_native_policy_store_methods!();
     operator_restore_store_trait::operator_agent_restore_store_methods!();
+    operator_create_store_trait::operator_agent_create_store_methods!();
     operator_archive_store_trait::operator_agent_archive_store_methods!();
 
     /// Admission precedes native pre-add hooks and provider creation.
@@ -181,13 +184,11 @@ pub trait RuntimeStore:
     ) -> Result<TeamHookEffectRecord, RuntimeError> {
         unsupported_store("team-hook effect receipt unavailable")
     }
-    /// Reconcile ambiguous shell dispatch at startup. A started hook is never
-    /// blindly retried because the child might already have modified state.
+    /// Never blindly retry uncertain native hook execution after restart.
     fn quarantine_started_team_hook_effects(&self, _at_ms: i64) -> Result<usize, RuntimeError> {
         Ok(0)
     }
-    /// Admission is committed before any native spawn, archive, or worktree
-    /// mutation. A previously admitted but unreceipted call fails closed.
+    /// Commit admission before any native effect, and fail closed on ambiguity.
     fn begin_agent_tool_mutation(
         &self,
         _command: &AgentToolMutationCommand,
@@ -511,8 +512,7 @@ pub trait RuntimeStore:
         Ok(Vec::new())
     }
 
-    /// Page in immutable creation order, including notices whose recipients
-    /// are busy or whose admitted provider turn is awaiting reconciliation.
+    /// Page notices in immutable order, including busy recipients.
     fn list_workspace_system_notices_after(
         &self,
         after: Option<&WorkspaceSystemNoticeRecord>,

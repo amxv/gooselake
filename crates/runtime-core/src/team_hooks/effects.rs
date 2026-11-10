@@ -190,7 +190,7 @@ pub struct TeamHookPreAddAdmission {
 
 /// Private output applied with agent/session/onboarding persistence. Public
 /// HTTP JSON cannot fabricate either the internal caller or the model notice.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamHookPreAddContext {
     pub parent_event_id: String,
     pub completed_hook_names: Vec<String>,

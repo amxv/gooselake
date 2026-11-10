@@ -39,6 +39,14 @@ impl RuntimeSessionManager {
                 "operator native agent archive {operation_id} became manual_review after restart; no provider close was retried"
             ));
         }
+        let native_create_intents = self
+            .store
+            .quarantine_started_operator_agent_creates(started_at)?;
+        for operation_id in native_create_intents {
+            summary.notes.push(format!(
+                "operator native agent create {operation_id} became manual_review after restart; no Git, hook or provider create was retried"
+            ));
+        }
         let ambiguous_hooks = self
             .store
             .quarantine_started_team_hook_effects(started_at)?;
@@ -187,6 +195,7 @@ impl RuntimeSessionManager {
                                     "policy_recovery_required"
                                         | "restore_recovery_required"
                                         | "archive_recovery_required"
+                                        | "create_recovery_required"
                                 );
                                 if reviewed_attachment && !policy_identity_matches {
                                     // The review attested one precise native
@@ -201,6 +210,9 @@ impl RuntimeSessionManager {
                                             }
                                             "archive_recovery_required" => {
                                                 "startup_archive_identity_changed"
+                                            }
+                                            "create_recovery_required" => {
+                                                "startup_create_identity_changed"
                                             }
                                             _ => "startup_restore_identity_changed",
                                         }
@@ -232,6 +244,7 @@ impl RuntimeSessionManager {
                                         match session.status.as_str() {
                                             "policy_recovery_required" => "policy",
                                             "archive_recovery_required" => "archive",
+                                            "create_recovery_required" => "create",
                                             _ => "restore",
                                         }
                                     ));
@@ -296,6 +309,7 @@ impl RuntimeSessionManager {
                                     "policy_recovery_required"
                                         | "restore_recovery_required"
                                         | "archive_recovery_required"
+                                        | "create_recovery_required"
                                 ) {
                                     // Keep the session fenced but retry its
                                     // exact attachment on a future startup.
@@ -306,6 +320,9 @@ impl RuntimeSessionManager {
                                             }
                                             "archive_recovery_required" => {
                                                 "startup_archive_reattachment_failed"
+                                            }
+                                            "create_recovery_required" => {
+                                                "startup_create_reattachment_failed"
                                             }
                                             _ => "startup_restore_reattachment_failed",
                                         }
@@ -340,6 +357,7 @@ impl RuntimeSessionManager {
                         "policy_recovery_required"
                             | "restore_recovery_required"
                             | "archive_recovery_required"
+                            | "create_recovery_required"
                     ) {
                         updated_session.failure_code = Some(
                             match session.status.as_str() {
@@ -347,6 +365,7 @@ impl RuntimeSessionManager {
                                 "archive_recovery_required" => {
                                     "startup_missing_archive_provider_ref"
                                 }
+                                "create_recovery_required" => "startup_missing_create_provider_ref",
                                 _ => "startup_missing_restore_provider_ref",
                             }
                             .into(),

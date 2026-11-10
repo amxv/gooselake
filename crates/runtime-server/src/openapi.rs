@@ -280,6 +280,9 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore") => {
             "Restore workspace agent".to_string()
         }
+        (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve") => {
+            "Resolve quarantined native agent creation with independent provider-session evidence".to_string()
+        }
         (HttpMethod::Post, "/v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve") => {
             "Resolve a quarantined provider archive using independent native-close evidence without redispatch".to_string()
         }
@@ -386,6 +389,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/agents/{agent_id}/turns"
                 | "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree"
+                | "/v2/workspaces/{workspace_id}/agents"
                 | "/v2/workspaces/{workspace_id}/interrupt"
                 | "/v2/messages"
                 | "/v2/messages/{message_id}/cancel"
@@ -528,6 +532,7 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
             | "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve"
             | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve"
+            | "/v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve"
             | "/v2/agents/{agent_id}/turns"
             | "/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun"
             | "/v2/agents/{agent_id}/edits/{operation_id}/resolve"
@@ -613,6 +618,8 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve"
+                | "/v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve"
+                | "/v2/workspaces/{workspace_id}/agents"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve"
         )
     {
@@ -683,6 +690,7 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/restore"
                 | "/v2/workspaces/{workspace_id}/agents/{agent_id}/archive"
+                | "/v2/workspaces/{workspace_id}/agents"
         )
     {
         out.push_str("        \"409\":\n");

@@ -234,7 +234,7 @@ fn reject_unresolved_route_with_lifecycle_claim(
     }
     let recovery_required: bool = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1 AND status IN ('policy_recovery_required','restore_recovery_required','archive_recovery_required'))",
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1 AND status IN ('policy_recovery_required','restore_recovery_required','archive_recovery_required','create_recovery_required'))",
             [agent_id],
             |row| row.get(0),
         )

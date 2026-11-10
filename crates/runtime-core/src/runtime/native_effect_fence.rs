@@ -69,6 +69,14 @@ impl RuntimeSessionManager {
                 "operator-reviewed native archive requires runtime restart and verified native reattachment before further provider work".into(),
             ));
         }
+        if self
+            .store
+            .operator_agent_create_reattachment_pending(agent_id)?
+        {
+            return Err(RuntimeError::Conflict(
+                "operator-reviewed native creation requires exact provider reattachment after runtime restart before further native work".into(),
+            ));
+        }
         Ok(())
     }
 }

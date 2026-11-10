@@ -1,9 +1,10 @@
 use runtime_core::{
-    ProviderKind, RuntimeError, SessionRecord, TeamHookEffectPhase, TeamHookPreAddContext,
-    WorkspaceAgentLifecycleState, WorkspaceAgentOnboardingRequest, WorkspaceAgentProfile,
-    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceSystemNoticeRecord,
+    OperatorAgentCreateCommand, ProviderKind, RuntimeError, SessionRecord, TeamHookEffectPhase,
+    TeamHookPreAddContext, WorkspaceAgentLifecycleState, WorkspaceAgentOnboardingRequest,
+    WorkspaceAgentProfile, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+    WorkspaceSystemNoticeRecord,
 };
-use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
 
 use crate::db::{collect_rows, db_error, json_to_string, open_connection, string_to_json};
 use crate::repository_team_hooks::effect_grant_is_current;
@@ -28,7 +29,7 @@ impl SqliteRuntimeRepository {
         session: &SessionRecord,
         agent: &WorkspaceAgentRecord,
     ) -> Result<(), RuntimeError> {
-        self.create_workspace_agent_with_optional_onboarding(session, agent, None, None)
+        self.create_workspace_agent_with_optional_onboarding(session, agent, None, None, None)
     }
 
     pub fn create_workspace_agent_with_onboarding(
@@ -37,7 +38,13 @@ impl SqliteRuntimeRepository {
         agent: &WorkspaceAgentRecord,
         onboarding: &WorkspaceAgentOnboardingRequest,
     ) -> Result<(), RuntimeError> {
-        self.create_workspace_agent_with_optional_onboarding(session, agent, Some(onboarding), None)
+        self.create_workspace_agent_with_optional_onboarding(
+            session,
+            agent,
+            Some(onboarding),
+            None,
+            None,
+        )
     }
 
     pub fn create_workspace_agent_with_hook_context(
@@ -52,6 +59,24 @@ impl SqliteRuntimeRepository {
             agent,
             Some(onboarding),
             hooks,
+            None,
+        )
+    }
+
+    pub fn create_workspace_agent_with_operator_receipt(
+        &self,
+        command: &OperatorAgentCreateCommand,
+        session: &SessionRecord,
+        agent: &WorkspaceAgentRecord,
+        onboarding: &WorkspaceAgentOnboardingRequest,
+        hooks: Option<&TeamHookPreAddContext>,
+    ) -> Result<(), RuntimeError> {
+        self.create_workspace_agent_with_optional_onboarding(
+            session,
+            agent,
+            Some(onboarding),
+            hooks,
+            Some(command),
         )
     }
 
@@ -61,19 +86,62 @@ impl SqliteRuntimeRepository {
         agent: &WorkspaceAgentRecord,
         onboarding: Option<&WorkspaceAgentOnboardingRequest>,
         hooks: Option<&TeamHookPreAddContext>,
+        command: Option<&OperatorAgentCreateCommand>,
+    ) -> Result<(), RuntimeError> {
+        let mut connection = open_connection(&self.database_path)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| {
+                db_error("failed starting workspace agent create transaction", error)
+            })?;
+        self.persist_workspace_agent_create_tx(
+            &tx,
+            session,
+            agent,
+            onboarding,
+            hooks,
+            command.map(|command| command.operation_id.as_str()),
+        )?;
+        if let Some(command) = command {
+            crate::repository_operator_agent_create_receipt::finalize_agent_create_receipt_tx(
+                &tx,
+                command,
+                session,
+                agent,
+                onboarding.ok_or_else(|| {
+                    RuntimeError::ProtocolViolation(
+                        "operator agent creation requires exact durable onboarding".into(),
+                    )
+                })?,
+                hooks,
+            )?;
+        }
+        tx.commit()
+            .map_err(|error| db_error("failed committing workspace agent create", error))?;
+        Ok(())
+    }
+
+    /// All roster, session ownership, managed worktree claims, onboarding and
+    /// hook application are written into the caller's IMMEDIATE transaction.
+    /// Both normal creation and independently reviewed provider creation use
+    /// this same atomic authority, never a parallel simplified insertion.
+    pub(crate) fn persist_workspace_agent_create_tx(
+        &self,
+        tx: &Transaction<'_>,
+        session: &SessionRecord,
+        agent: &WorkspaceAgentRecord,
+        onboarding: Option<&WorkspaceAgentOnboardingRequest>,
+        hooks: Option<&TeamHookPreAddContext>,
+        source_operation_id: Option<&str>,
     ) -> Result<(), RuntimeError> {
         if session.id != agent.agent_id
             || session.provider != agent.recreation_policy.provider.as_str()
             || session.cwd.as_deref() != Some(agent.recreation_policy.authoritative_cwd.as_str())
         {
             return Err(RuntimeError::ProtocolViolation(
-                "workspace agent session does not match recreation policy".to_string(),
+                "workspace agent session does not match recreation policy".into(),
             ));
         }
-        let mut connection = open_connection(&self.database_path)?;
-        let tx = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| db_error("failed starting workspace agent transaction", error))?;
         let lifecycle = tx
             .query_row(
                 "SELECT lifecycle_state FROM workspaces WHERE workspace_id = ?1",
@@ -149,7 +217,7 @@ impl SqliteRuntimeRepository {
                     serde_json::from_str(hook_json).map_err(|error| {
                         RuntimeError::Bootstrap(format!("corrupt approved pre-add hook: {error}"))
                     })?;
-                if !effect_grant_is_current(&tx, &agent.workspace_id, &exact_hook)? {
+                if !effect_grant_is_current(tx, &agent.workspace_id, &exact_hook)? {
                     return Err(RuntimeError::Conflict(
                         "pre-add hook approval was revoked before member creation".into(),
                     ));
@@ -205,12 +273,17 @@ impl SqliteRuntimeRepository {
             }
         }
 
-        insert_session(&tx, session)?;
+        insert_session(tx, session)?;
         tx.execute(
             "INSERT INTO workspace_session_ownership (
                 session_id, workspace_id, source, source_operation_id, created_at
-             ) VALUES (?1, ?2, 'v2_workspace_agent_create', NULL, ?3)",
-            params![agent.agent_id, agent.workspace_id, agent.created_at],
+             ) VALUES (?1, ?2, 'v2_workspace_agent_create', ?4, ?3)",
+            params![
+                agent.agent_id,
+                agent.workspace_id,
+                agent.created_at,
+                source_operation_id
+            ],
         )
         .map_err(|error| db_error("failed inserting workspace session ownership", error))?;
         tx.execute(
@@ -306,7 +379,7 @@ impl SqliteRuntimeRepository {
                 onboarding,
                 hooks.and_then(|hooks| hooks.onboarding_context_append_text.as_deref()),
             )?;
-            Self::insert_workspace_system_notice_tx(&tx, &notice)?;
+            Self::insert_workspace_system_notice_tx(tx, &notice)?;
             if let (Some(hooks), Some(actor), Some(text)) = (
                 hooks,
                 verified_pre_add_actor.as_deref(),
@@ -333,10 +406,10 @@ impl SqliteRuntimeRepository {
                     format!("Operator-approved pre-add hook context (not user-authored):\n{text}"),
                     agent.created_at,
                 );
-                Self::insert_workspace_system_notice_tx(&tx, &caller_notice)?;
+                Self::insert_workspace_system_notice_tx(tx, &caller_notice)?;
             }
             queue_membership_lead_notice_tx(
-                &tx,
+                tx,
                 &agent.workspace_id,
                 &agent.agent_id,
                 &agent.alias,
@@ -347,7 +420,7 @@ impl SqliteRuntimeRepository {
             )?;
         }
         queue_team_hook_trigger_tx(
-            &tx,
+            tx,
             &agent.workspace_id,
             runtime_core::TeamHookEventName::PostTeammateAdd,
             &format!("workspace-hook:joined:{}", agent.agent_id),
@@ -356,7 +429,7 @@ impl SqliteRuntimeRepository {
                 "kind": "member", "action": "joined", "member_agent_id": agent.agent_id,
                 "member_alias": agent.alias,
             }),
-            &active_workspace_hook_targets_tx(&tx, &agent.workspace_id)?,
+            &active_workspace_hook_targets_tx(tx, &agent.workspace_id)?,
             agent.created_at,
         )?;
         if let Some(hooks) = hooks {
@@ -376,8 +449,6 @@ impl SqliteRuntimeRepository {
                 ));
             }
         }
-        tx.commit()
-            .map_err(|error| db_error("failed committing workspace agent create", error))?;
         Ok(())
     }
 

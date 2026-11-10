@@ -92,12 +92,13 @@ pub(super) async fn create_agent_message(
     Ok(Json(ack))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct AgentMessageListQuery {
+pub(crate) struct AgentMessageListQuery {
     workspace_id: Option<String>,
     sender_agent_id: Option<String>,
     cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     limit: Option<usize>,
 }
 
@@ -137,11 +138,12 @@ pub(super) async fn list_agent_messages(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct AgentDeliveryListQuery {
+pub(crate) struct AgentDeliveryListQuery {
     recipient_agent_id: Option<String>,
     cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     limit: Option<usize>,
 }
 

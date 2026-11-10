@@ -127,9 +127,9 @@ pub(super) async fn advance_workspace_retirement(
     Ok(with_operation_id((status, Json(result)), &id))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WorkspaceHooksQuery {
+pub(crate) struct WorkspaceHooksQuery {
     event: Option<runtime_core::TeamHookEventName>,
 }
 
@@ -580,11 +580,12 @@ pub(super) async fn interrupt_workspace_turns(
     Ok(with_operation_id(Json(result), &id))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WorkspaceAgentListQuery {
+pub(crate) struct WorkspaceAgentListQuery {
     lifecycle: Option<String>,
     cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     limit: Option<usize>,
 }
 
@@ -895,11 +896,12 @@ pub(super) async fn get_operation(
     Ok(Json(operation))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct OperationListQuery {
+pub(crate) struct OperationListQuery {
     workspace_id: Option<String>,
     cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     limit: Option<usize>,
 }
 

@@ -176,6 +176,25 @@ operation lists return arrays; messages return a response object with a
 `messages` array and `next_cursor`. Pagination still uses `X-Next-Cursor`
 where documented, not an invented response wrapper.
 
+The OpenAPI query catalog now derives parameter names, scalar/enum types,
+accepted `limit` bounds and defaults from the real Axum `Query<T>` structs,
+not handwritten copies of the handler inputs. Optional query parameters are
+absent when omitted; JSON `null` is not a valid URL query value. The keyset
+list operations for workspaces, managed worktrees, agents, operations,
+processes, operator events, migration status/preview, hook effects and message
+deliveries advertise the conditional `X-Next-Cursor` **response header**.
+`GET /v2/messages` instead returns `next_cursor` in its JSON body. Event SSE
+streams are not keyset lists: they expose `after_seq`, bounded `limit`, and
+the optional `Last-Event-ID` header fallback, never `X-Next-Cursor`.
+
+Two Bearer schemes are intentionally distinct in OpenAPI: `bearerAuth` is
+the owner/operator token on operator and legacy routes, whereas
+`agentScopedBearerAuth` is the runtime-issued per-agent credential for
+`/v2/mcp/capabilities` and `/v2/mcp/invoke` only. Model-facing MCP cannot
+borrow the operator credential. The invocation endpoint documents the
+sidecar-supplied `x-gg-tool-invocation-id` header, with an exact identity
+required for mutating tool modes; request JSON cannot impersonate a caller.
+
 The `/v2` operator middleware serializes its error envelope from the same
 Rust type used by the OpenAPI `OperatorErrorResponse` schema, including
 `error.code`, `error.message`, `error.retryable`, nullable `error.details`,

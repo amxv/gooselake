@@ -12,7 +12,13 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: API token
+      bearerFormat: Operator API token
+      description: Owner/operator credential; not an agent-scoped MCP token
+    agentScopedBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Runtime-issued agent MCP token
+      description: Agent-scoped credential tied to an active canonical workspace agent
   schemas:
     JsonObject:
       type: object
@@ -1407,21 +1413,15 @@ paths:
         - name: after_seq
           in: query
           required: false
-          description: Global event row ID or scoped event sequence; overrides Last-Event-ID.
-          schema:
-            type: integer
-            minimum: 0
+          schema: {"format":"int64","minimum":0,"type":"integer"}
         - name: limit
           in: query
           required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 10000
-            default: 2000
+          schema: {"default":2000,"format":"uint","maximum":10000,"minimum":1,"type":"integer"}
         - name: Last-Event-ID
           in: header
           required: false
+          description: Durable event cursor, overridden by after_seq when both are present
           schema:
             type: integer
             minimum: 0
@@ -1740,9 +1740,31 @@ paths:
   /v2/events:
     get:
       summary: GET /v2/events
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
+        - name: scope
+          in: query
+          required: false
+          schema: {"description":"Scope and scope_id must be supplied together","enum":["session","workspace","team","process","worktree","system"],"type":"string"}
+        - name: scope_id
+          in: query
+          required: false
+          schema: {"description":"Scope and scope_id must be supplied together","type":"string"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1764,21 +1786,15 @@ paths:
         - name: after_seq
           in: query
           required: false
-          description: Global event row ID or scoped event sequence; overrides Last-Event-ID.
-          schema:
-            type: integer
-            minimum: 0
+          schema: {"format":"int64","minimum":0,"type":"integer"}
         - name: limit
           in: query
           required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 10000
-            default: 2000
+          schema: {"default":2000,"format":"uint","maximum":10000,"minimum":1,"type":"integer"}
         - name: Last-Event-ID
           in: header
           required: false
+          description: Durable event cursor, overridden by after_seq when both are present
           schema:
             type: integer
             minimum: 0
@@ -1818,6 +1834,8 @@ paths:
   /v2/mcp/capabilities:
     get:
       summary: Agent-scoped MCP capabilities
+      security:
+        - agentScopedBearerAuth: []
       responses:
         "200":
           description: JSON response
@@ -1828,6 +1846,15 @@ paths:
   /v2/mcp/invoke:
     post:
       summary: Invoke agent-scoped MCP tool
+      security:
+        - agentScopedBearerAuth: []
+      parameters:
+        - name: x-gg-tool-invocation-id
+          in: header
+          required: false
+          description: Sidecar-issued invocation identity, mandatory for mutating tool modes and never accepted from an untrusted JSON body
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -1845,26 +1872,22 @@ paths:
     get:
       summary: List canonical agent messages
       parameters:
-        - name: workspace_id
-          in: query
-          required: false
-          schema:
-            type: string
-        - name: sender_agent_id
-          in: query
-          required: false
-          schema:
-            type: string
         - name: cursor
           in: query
           required: false
-          schema:
-            type: string
+          schema: {"type":"string"}
         - name: limit
           in: query
           required: false
-          schema:
-            type: integer
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
+        - name: sender_agent_id
+          in: query
+          required: false
+          schema: {"type":"string"}
+        - name: workspace_id
+          in: query
+          required: false
+          schema: {"type":"string"}
       responses:
         "200":
           description: JSON response
@@ -1958,14 +1981,26 @@ paths:
           required: true
           schema:
             type: string
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
         - name: recipient_agent_id
           in: query
           required: false
-          schema:
-            type: string
+          schema: {"type":"string"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -1983,9 +2018,23 @@ paths:
   /v2/migrations/workspaces:
     get:
       summary: Get legacy workspace migration status
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2034,9 +2083,23 @@ paths:
   /v2/migrations/workspaces/preview:
     post:
       summary: Preview and persist legacy workspace migration
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2101,9 +2164,27 @@ paths:
   /v2/operations:
     get:
       summary: GET /v2/operations
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
+        - name: workspace_id
+          in: query
+          required: false
+          schema: {"type":"string"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2147,9 +2228,27 @@ paths:
   /v2/processes:
     get:
       summary: GET /v2/processes
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
+        - name: workspace_id
+          in: query
+          required: false
+          schema: {"type":"string"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2202,21 +2301,15 @@ paths:
         - name: after_seq
           in: query
           required: false
-          description: Global event row ID or scoped event sequence; overrides Last-Event-ID.
-          schema:
-            type: integer
-            minimum: 0
+          schema: {"format":"int64","minimum":0,"type":"integer"}
         - name: limit
           in: query
           required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 10000
-            default: 2000
+          schema: {"default":2000,"format":"uint","maximum":10000,"minimum":1,"type":"integer"}
         - name: Last-Event-ID
           in: header
           required: false
+          description: Durable event cursor, overridden by after_seq when both are present
           schema:
             type: integer
             minimum: 0
@@ -2320,9 +2413,23 @@ paths:
   /v2/workspaces:
     get:
       summary: List workspaces
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2413,15 +2520,26 @@ paths:
           required: true
           schema:
             type: string
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
         - name: lifecycle
           in: query
           required: false
-          schema:
-            type: string
-            enum: [active, archived, all]
+          schema: {"enum":["active","archived","all"],"type":"string"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -2987,21 +3105,15 @@ paths:
         - name: after_seq
           in: query
           required: false
-          description: Global event row ID or scoped event sequence; overrides Last-Event-ID.
-          schema:
-            type: integer
-            minimum: 0
+          schema: {"format":"int64","minimum":0,"type":"integer"}
         - name: limit
           in: query
           required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 10000
-            default: 2000
+          schema: {"default":2000,"format":"uint","maximum":10000,"minimum":1,"type":"integer"}
         - name: Last-Event-ID
           in: header
           required: false
+          description: Durable event cursor, overridden by after_seq when both are present
           schema:
             type: integer
             minimum: 0
@@ -3024,9 +3136,7 @@ paths:
         - name: event
           in: query
           required: false
-          schema:
-            type: string
-            enum: [pre_teammate_add, post_teammate_add, post_teammate_remove, post_direct_message_send, post_broadcast_message_send, post_compaction]
+          schema: {"enum":["pre_teammate_add","post_teammate_add","post_teammate_remove","post_direct_message_send","post_broadcast_message_send","post_compaction"],"type":"string"}
       responses:
         "200":
           description: JSON response
@@ -3140,16 +3250,22 @@ paths:
           required: true
           schema:
             type: string
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
         - name: limit
           in: query
           required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -3584,9 +3700,22 @@ paths:
           required: true
           schema:
             type: string
+        - name: cursor
+          in: query
+          required: false
+          schema: {"type":"string"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
       responses:
         "200":
           description: JSON response
+          headers:
+            X-Next-Cursor:
+              description: Present when a following keyset page exists; pass as cursor on the next request
+              schema:
+                type: string
           content:
             application/json:
               schema:

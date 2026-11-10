@@ -55,10 +55,11 @@ pub(super) fn parse_last_event_id_header(headers: &HeaderMap) -> Result<Option<i
 
 /// Resource lists use a stable `(created_at, id)` keyset rather than offset
 /// pages, which can skip rows when new records arrive between requests.
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ResourcePageQuery {
+pub(crate) struct ResourcePageQuery {
     pub(super) cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     pub(super) limit: Option<usize>,
 }
 

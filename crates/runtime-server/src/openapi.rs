@@ -4,6 +4,8 @@ use std::sync::OnceLock;
 
 #[path = "openapi_contracts.rs"]
 mod contracts;
+#[path = "openapi_queries.rs"]
+mod queries;
 #[path = "openapi_revision.rs"]
 mod revision;
 
@@ -30,6 +32,7 @@ impl HttpMethod {
 struct RouteSpec {
     methods: std::collections::BTreeSet<HttpMethod>,
     requires_auth: bool,
+    agent_scoped_auth: bool,
 }
 
 pub fn generated_openapi_yaml() -> &'static str {
@@ -63,7 +66,15 @@ fn build_openapi_yaml() -> String {
     out.push_str("    bearerAuth:\n");
     out.push_str("      type: http\n");
     out.push_str("      scheme: bearer\n");
-    out.push_str("      bearerFormat: API token\n");
+    out.push_str("      bearerFormat: Operator API token\n");
+    out.push_str("      description: Owner/operator credential; not an agent-scoped MCP token\n");
+    out.push_str("    agentScopedBearerAuth:\n");
+    out.push_str("      type: http\n");
+    out.push_str("      scheme: bearer\n");
+    out.push_str("      bearerFormat: Runtime-issued agent MCP token\n");
+    out.push_str(
+        "      description: Agent-scoped credential tied to an active canonical workspace agent\n",
+    );
     out.push_str("  schemas:\n");
     out.push_str("    JsonObject:\n");
     out.push_str("      type: object\n");
@@ -78,6 +89,9 @@ fn build_openapi_yaml() -> String {
             out.push_str(&format!("      summary: {summary}\n"));
             if !route.requires_auth {
                 out.push_str("      security: []\n");
+            } else if route.agent_scoped_auth {
+                out.push_str("      security:\n");
+                out.push_str("        - agentScopedBearerAuth: []\n");
             }
             append_parameters(&mut out, &path, method);
             append_request_body(&mut out, &path, method);
@@ -418,15 +432,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
                 "/v2/workspaces/{workspace_id}/notice-policy"
                     | "/v2/workspaces/{workspace_id}/hooks/approval"
             ));
-    let has_query_parameters = method == HttpMethod::Get
-        && matches!(
-            path,
-            "/v2/workspaces/{workspace_id}/agents"
-                | "/v2/workspaces/{workspace_id}/hooks"
-                | "/v2/workspaces/{workspace_id}/hooks/effects"
-                | "/v2/messages"
-                | "/v2/messages/{message_id}/deliveries"
-        );
+    let query_fields = queries::fields(path, method);
     let v2_event_stream = method == HttpMethod::Get
         && matches!(
             path,
@@ -436,11 +442,13 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
                 | "/v2/processes/{process_id}/events/stream"
         );
     let accepts_if_match = revision::accepts_revision_precondition(path, method);
+    let accepts_tool_invocation_id = method == HttpMethod::Post && path == "/v2/mcp/invoke";
     if params.is_empty()
         && !accepts_idempotency_key
-        && !has_query_parameters
+        && query_fields.is_none()
         && !accepts_if_match
         && !v2_event_stream
+        && !accepts_tool_invocation_id
     {
         return;
     }
@@ -454,67 +462,22 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
     }
-    if method == HttpMethod::Get && path == "/v2/workspaces/{workspace_id}/agents" {
-        out.push_str("        - name: lifecycle\n");
-        out.push_str("          in: query\n");
-        out.push_str("          required: false\n");
-        out.push_str("          schema:\n");
-        out.push_str("            type: string\n");
-        out.push_str("            enum: [active, archived, all]\n");
-    }
-    if method == HttpMethod::Get && path == "/v2/workspaces/{workspace_id}/hooks" {
-        out.push_str("        - name: event\n");
-        out.push_str("          in: query\n");
-        out.push_str("          required: false\n");
-        out.push_str("          schema:\n");
-        out.push_str("            type: string\n");
-        out.push_str("            enum: [pre_teammate_add, post_teammate_add, post_teammate_remove, post_direct_message_send, post_broadcast_message_send, post_compaction]\n");
-    }
-    if method == HttpMethod::Get && path == "/v2/workspaces/{workspace_id}/hooks/effects" {
-        out.push_str("        - name: limit\n");
-        out.push_str("          in: query\n");
-        out.push_str("          required: false\n");
-        out.push_str("          schema:\n");
-        out.push_str("            type: integer\n");
-        out.push_str("            minimum: 1\n");
-        out.push_str("            maximum: 100\n");
-    }
-    if method == HttpMethod::Get && path == "/v2/messages" {
-        for name in ["workspace_id", "sender_agent_id", "cursor", "limit"] {
-            out.push_str("        - name: ");
-            out.push_str(name);
-            out.push('\n');
-            out.push_str("          in: query\n");
-            out.push_str("          required: false\n");
-            out.push_str("          schema:\n");
-            out.push_str(if name == "limit" {
-                "            type: integer\n"
-            } else {
-                "            type: string\n"
-            });
-        }
-    }
-    if method == HttpMethod::Get && path == "/v2/messages/{message_id}/deliveries" {
-        out.push_str("        - name: recipient_agent_id\n");
-        out.push_str("          in: query\n");
-        out.push_str("          required: false\n");
-        out.push_str("          schema:\n");
-        out.push_str("            type: string\n");
+    if let Some(fields) = query_fields.as_deref() {
+        queries::append(out, fields);
     }
     if v2_event_stream {
-        out.push_str("        - name: after_seq\n");
-        out.push_str("          in: query\n");
-        out.push_str("          required: false\n");
-        out.push_str("          description: Global event row ID or scoped event sequence; overrides Last-Event-ID.\n");
-        out.push_str("          schema:\n            type: integer\n            minimum: 0\n");
-        out.push_str("        - name: limit\n");
-        out.push_str("          in: query\n");
-        out.push_str("          required: false\n");
-        out.push_str("          schema:\n            type: integer\n            minimum: 1\n            maximum: 10000\n            default: 2000\n");
         out.push_str("        - name: Last-Event-ID\n");
         out.push_str("          in: header\n");
         out.push_str("          required: false\n");
+        out.push_str("          description: Durable event cursor, overridden by after_seq when both are present\n");
         out.push_str("          schema:\n            type: integer\n            minimum: 0\n");
+    }
+    if accepts_tool_invocation_id {
+        out.push_str("        - name: x-gg-tool-invocation-id\n");
+        out.push_str("          in: header\n");
+        out.push_str("          required: false\n");
+        out.push_str("          description: Sidecar-issued invocation identity, mandatory for mutating tool modes and never accepted from an untrusted JSON body\n");
+        out.push_str("          schema:\n            type: string\n");
     }
     if accepts_idempotency_key {
         out.push_str("        - name: Idempotency-Key\n");
@@ -648,6 +611,16 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         return;
     }
     out.push_str("JSON response\n");
+    if queries::returns_next_cursor(path, method) {
+        // Each listed response emits this only when another keyset page
+        // exists. The cursor remains an HTTP header, never a fake JSON
+        // wrapper around the real array/object return type.
+        out.push_str("          headers:\n");
+        out.push_str("            X-Next-Cursor:\n");
+        out.push_str("              description: Present when a following keyset page exists; pass as cursor on the next request\n");
+        out.push_str("              schema:\n");
+        out.push_str("                type: string\n");
+    }
     if (method == HttpMethod::Get
         || matches!(
             path,
@@ -809,6 +782,15 @@ macro_rules! route_http_method {
     };
 }
 
+macro_rules! agent_scoped_route_group {
+    (scoped_mcp) => {
+        true
+    };
+    ($other:ident) => {
+        false
+    };
+}
+
 fn collect_routes() -> BTreeMap<String, RouteSpec> {
     macro_rules! collect_declared_routes {
         (
@@ -830,7 +812,13 @@ fn collect_routes() -> BTreeMap<String, RouteSpec> {
                     // string rather than a fragile extracted source span.
                     let path = concat!($prefix, $path);
                     let entry = routes.entry(path.to_string()).or_default();
+                    let scoped_auth = agent_scoped_route_group!($group);
+                    assert!(
+                        entry.methods.is_empty() || entry.agent_scoped_auth == scoped_auth,
+                        "a route must never mix operator and agent-scoped Bearer authentication: {path}"
+                    );
                     entry.requires_auth |= $auth;
+                    entry.agent_scoped_auth |= scoped_auth;
                     assert!(
                         entry.methods.insert(route_http_method!($method)),
                         "duplicate HTTP method registration: {path}"

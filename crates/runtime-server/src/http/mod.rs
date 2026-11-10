@@ -59,11 +59,18 @@ pub(crate) use agent_controls::{
 };
 pub(crate) use auth::{ProviderCapabilitiesResponse, RuntimeCapabilitiesResponse};
 pub(crate) use mcp::ScopedMcpInvokeRequest;
-pub(crate) use messages::AgentMessageCreateInput;
+pub(crate) use messages::{AgentDeliveryListQuery, AgentMessageCreateInput, AgentMessageListQuery};
+pub(crate) use operator_event_streams::OperatorEventStreamQuery;
+pub(crate) use operator_events::OperatorEventHistoryQuery;
+pub(crate) use operator_hook_effects::WorkspaceHookEffectsQuery;
+pub(crate) use operator_processes::OperatorProcessListQuery;
 pub(crate) use sessions::PublicSendTurnInput;
-pub(crate) use v2_contract::OperatorErrorResponse;
+pub(crate) use shared::ResourcePageQuery;
+pub(crate) use v2_contract::{OperatorErrorResponse, WorktreeInventoryPageQuery};
+pub(crate) use workspace_migrations::MigrationSubjectPageQuery;
 pub(crate) use workspaces::{
-    WorkspaceHookApprovalInput, WorkspaceHooksResponse, WorkspaceWorktreeCreateInput,
+    OperationListQuery, WorkspaceAgentListQuery, WorkspaceHookApprovalInput, WorkspaceHooksQuery,
+    WorkspaceHooksResponse, WorkspaceWorktreeCreateInput,
 };
 mod worktrees;
 

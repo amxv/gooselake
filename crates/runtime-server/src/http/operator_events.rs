@@ -1,11 +1,12 @@
 use super::*;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct OperatorEventHistoryQuery {
+pub(crate) struct OperatorEventHistoryQuery {
     scope: Option<RuntimeEventScope>,
     scope_id: Option<String>,
     cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     limit: Option<usize>,
 }
 

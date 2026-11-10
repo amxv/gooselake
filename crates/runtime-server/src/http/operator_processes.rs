@@ -1,10 +1,11 @@
 use super::*;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct OperatorProcessListQuery {
+pub(crate) struct OperatorProcessListQuery {
     workspace_id: Option<String>,
     cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     limit: Option<usize>,
 }
 

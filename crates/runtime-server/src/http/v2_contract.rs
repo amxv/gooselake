@@ -95,10 +95,11 @@ pub(super) async fn v2_operator_response_contract(request: Request<Body>, next: 
 /// Name/ID and kind/ID collection cursors use hex-encoded JSON pairs rather
 /// than timestamps. This is URL-safe even for legacy names with punctuation or
 /// Unicode, and the codec rejects corrupt or oversized cursors.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WorktreeInventoryPageQuery {
+pub(crate) struct WorktreeInventoryPageQuery {
     pub(super) cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     pub(super) limit: Option<usize>,
 }
 

@@ -27,10 +27,11 @@ pub(super) async fn get_workspace_migration_status(
     paged_migration_status(status, limit, cursor)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct MigrationSubjectPageQuery {
+pub(crate) struct MigrationSubjectPageQuery {
     cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     limit: Option<usize>,
 }
 

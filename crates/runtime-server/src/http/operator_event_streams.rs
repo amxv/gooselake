@@ -3,10 +3,12 @@ use super::*;
 /// Operator-only live projections use the same committed journal as `/v1`,
 /// without exposing a separate per-workspace or per-agent event bus. An agent
 /// ID is the canonical runtime session ID for its event scope.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct OperatorEventStreamQuery {
+pub(crate) struct OperatorEventStreamQuery {
+    #[schemars(range(min = 0))]
     after_seq: Option<i64>,
+    #[schemars(range(min = 1, max = 10000))]
     limit: Option<usize>,
 }
 

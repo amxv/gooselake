@@ -363,6 +363,14 @@ operator event summaries versus full single-event records, workspace effective
 hook/approval/effect DTOs, and the caller-free scoped MCP invocation *request*
 now derive directly from their Rust handlers. MCP capability and tool-result
 payloads are intentionally dynamic JSON, not invented fixed response DTOs.
+Query parameters are projected from the actual Axum `Query<T>` DTOs with
+their accepted scalar/enum types and the handler's 1–100 (or stream 1–10000)
+limit ranges and defaults. The generated `X-Next-Cursor` response header is
+limited to genuine keyset page handlers, not message JSON-body cursors or
+SSE. OpenAPI declares separate `bearerAuth` owner/operator and
+`agentScopedBearerAuth` model-scoped schemes; only `/v2/mcp/*` uses the
+latter, and its invoke operation documents the trusted sidecar invocation-ID
+header rather than admitting caller identity in JSON.
 Treat this catalog + code as the reliable source for:
 - endpoint existence and grouping
 - auth requirements

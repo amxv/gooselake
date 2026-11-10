@@ -18,8 +18,18 @@ scraper failed to recognize formatting in `http/mod.rs`. For selected
 operator `/v2` endpoints, request/response shapes and the operator error
 envelope are now generated from the actual `schemars::JsonSchema` derives on
 serde-backed Rust DTOs (`crates/runtime-server/src/openapi_contracts.rs`).
-Unconverted endpoints retain broad `JsonObject` placeholders. API docs sync
-therefore still requires both:
+Unconverted endpoints retain broad `JsonObject` placeholders.
+
+The OpenAPI generator also projects actual Axum `Query<T>` handler DTOs via
+`crates/runtime-server/src/openapi_queries.rs` to publish query names,
+accepted enum/scalar types and bounded pagination defaults without separate
+JSON-body request copies. Only real keyset-page response handlers advertise
+`X-Next-Cursor`; JSON-body message cursors and SSE use their separate
+contracts. The route table's `scoped_mcp` group carries a distinct agent
+Bearer scheme, never the operator token; sidecar-supplied MCP invocation
+identity is an optional HTTP header (required for mutating modes).
+
+API docs sync therefore still requires both:
 
 - regenerating `openapi/runtime-server-openapi.yaml`
 - updating human docs when behavior changes are not fully captured by schema detail
@@ -109,6 +119,9 @@ Docs-signal files:
 - route path coverage
 - HTTP method coverage
 - path parameters
+- Rust handler-derived `/v2` query parameter names, types and bounded ranges
+- conditional `X-Next-Cursor` keyset response headers (not SSE/message JSON cursors)
+- distinct operator and agent-scoped MCP bearer schemes from router groups
 - basic request content type for known POST endpoints
 - SSE vs JSON response content type
 - public vs bearer-protected grouping via route placement

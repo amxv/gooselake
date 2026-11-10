@@ -2,10 +2,11 @@ use super::*;
 use runtime_core::{TeamHookEffectPageCursor, TeamHookEffectSummary, TeamHookEventName};
 use std::fmt::Write;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct WorkspaceHookEffectsQuery {
+pub(crate) struct WorkspaceHookEffectsQuery {
     cursor: Option<String>,
+    #[schemars(range(min = 1, max = 100))]
     limit: Option<usize>,
 }
 

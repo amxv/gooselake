@@ -157,7 +157,8 @@ impl SqliteRuntimeRepository {
         &self,
         run_id: &str,
     ) -> Result<Option<SessionCompactionRun>, RuntimeError> {
-        load(&open_connection(&self.database_path)?, run_id)
+        let connection = open_connection(&self.database_path)?;
+        load(&connection, run_id)
     }
 
     pub fn get_session_compaction_by_key(

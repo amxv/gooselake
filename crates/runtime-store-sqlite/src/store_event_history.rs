@@ -1,5 +1,8 @@
 macro_rules! delegate_event_history {
     () => {
+        fn subscribe_event_commits(&self) -> Option<tokio::sync::broadcast::Receiver<()>> {
+            Some(self.event_commits.subscribe())
+        }
         fn list_operator_events_page(
             &self,
             scope: Option<(runtime_core::RuntimeEventScope, &str)>,

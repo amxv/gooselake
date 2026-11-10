@@ -154,7 +154,8 @@ impl SqliteRuntimeRepository {
         &self,
         operation_id: &str,
     ) -> Result<Option<WorkspaceAgentRebindOperation>, RuntimeError> {
-        get(&open_connection(&self.database_path)?, operation_id)
+        let connection = open_connection(&self.database_path)?;
+        get(&connection, operation_id)
     }
 
     pub fn unresolved_workspace_agent_rebind(&self, agent_id: &str) -> Result<bool, RuntimeError> {

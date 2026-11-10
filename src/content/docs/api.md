@@ -1279,13 +1279,21 @@ separately hardened.
 Behavior:
 
 - stream endpoints replay first, then deliver live events
-- session/process streams subscribe before replay handoff to reduce missed events
+- session/global/team streams subscribe before journal replay, read bounded
+  durable pages, and wake on committed SQLite event inserts instead of
+  periodically polling while idle; lagged notifications catch up from the last
+  delivered cursor without re-emitting it
+- process streams use their separate event bus with subscribe-before-replay
+  handoff
 - `after_seq` query param takes precedence
 - otherwise stream endpoints use the `Last-Event-ID` header
 - invalid `Last-Event-ID` returns HTTP `400`
 - duplicate `Last-Event-ID` headers also return HTTP `400`, including with
   an explicit `after_seq`, rather than silently choosing a resume position
 - keepalive pings are sent every 10 seconds
+- session/global/team stream journal failures emit a retryable `stream.error`
+  event without advancing the SSE ID and close; reconnect with the last
+  successfully processed `Last-Event-ID`
 
 SSE event envelope:
 

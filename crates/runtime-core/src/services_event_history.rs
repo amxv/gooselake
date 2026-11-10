@@ -2,6 +2,10 @@
 // existing event APIs without expanding the oversized services.rs trait file.
 macro_rules! event_history_methods {
     () => {
+        /// Commit-only wakeups; consumers reread the durable event journal.
+        fn subscribe_event_commits(&self) -> Option<tokio::sync::broadcast::Receiver<()>> {
+            None
+        }
         fn list_operator_events_page(
             &self,
             _scope: Option<(crate::RuntimeEventScope, &str)>,

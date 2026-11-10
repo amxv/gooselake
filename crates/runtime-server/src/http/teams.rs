@@ -417,78 +417,16 @@ pub(super) async fn stream_team_events(
         .get_team(team_id.as_str())
         .await
         .map_err(ApiError::from)?;
-
     let last_event_id = parse_last_event_id_header(&headers)?;
     let cursor = query.after_seq.or(last_event_id);
-    let replay_page_limit = query.limit.unwrap_or(2_000).clamp(1, 10_000);
-    let mut replay_events = Vec::new();
-    let mut replay_cursor = cursor;
-
-    loop {
-        let page = state
-            .app
-            .services
-            .team_comms
-            .replay_team_events(team_id.as_str(), replay_cursor, replay_page_limit)
-            .map_err(ApiError::from)?;
-        if page.is_empty() {
-            break;
-        }
-        replay_cursor = page.last().map(|event| event.seq);
-        let page_len = page.len();
-        replay_events.extend(page);
-        if page_len < replay_page_limit {
-            break;
-        }
-    }
-
-    let replay_high_watermark_seq = replay_cursor.or(cursor).unwrap_or(0);
-    let replay_stream = tokio_stream::iter(replay_events.into_iter().filter_map(|event| {
-        let payload = serde_json::to_string(&event).ok()?;
-        Some(Ok(Event::default()
-            .id(event.seq.to_string())
-            .event(event.kind)
-            .data(payload)))
-    }));
-
-    let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(128);
-    let team_id_for_live = team_id.clone();
-    let store = state.app.services.store.clone();
-    tokio::spawn(async move {
-        let mut cursor = replay_high_watermark_seq;
-        loop {
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            let page = match store.list_runtime_events(
-                Some((RuntimeEventScope::Team, team_id_for_live.as_str())),
-                Some(cursor),
-                replay_page_limit,
-            ) {
-                Ok(page) => page,
-                Err(_) => continue,
-            };
-            if page.is_empty() {
-                continue;
-            }
-            for event in page {
-                cursor = cursor.max(event.seq);
-                let payload = match serde_json::to_string(&event) {
-                    Ok(payload) => payload,
-                    Err(_) => continue,
-                };
-                let sse = Event::default()
-                    .id(event.seq.to_string())
-                    .event(event.kind)
-                    .data(payload);
-                if tx.send(Ok(sse)).await.is_err() {
-                    return;
-                }
-            }
-        }
-    });
-
-    let live_stream = ReceiverStream::new(rx);
-    let stream = replay_stream.chain(live_stream);
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10))))
+    durable_event_stream(
+        state.app.services.store.clone(),
+        Some((RuntimeEventScope::Team, team_id)),
+        cursor,
+        query.limit.unwrap_or(2_000).clamp(1, 10_000),
+        &headers,
+    )
+    .await
 }
 
 pub(super) async fn interrupt_all_team_turns(

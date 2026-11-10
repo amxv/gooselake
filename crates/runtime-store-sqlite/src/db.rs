@@ -1,16 +1,53 @@
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use runtime_core::{
     migrate_retired_model, ProviderKind, RuntimeError, RuntimeEventCriticality, RuntimeEventRecord,
     RuntimeEventScope, WorkspaceAgentRecreationPolicy,
 };
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{
+    hooks::Action, params, Connection, OptionalExtension, Transaction, TransactionBehavior,
+};
 use serde_json::Value;
 
+use crate::event_notifications::{notifier_for, EventCommitNotifier};
 use crate::schema::{MIGRATIONS, SCHEMA_VERSION};
 
-pub(crate) fn open_connection(path: &Path) -> Result<Connection, RuntimeError> {
+/// Connections are short-lived per repository operation. Send a wakeup only
+/// *after* a connection with committed event inserts has left its transaction
+/// scope. This avoids treating uncommitted SQLite update hooks as event proof.
+pub(crate) struct JournalConnection {
+    connection: Connection,
+    notifier: Arc<EventCommitNotifier>,
+    committed_events: Arc<AtomicBool>,
+}
+
+impl Deref for JournalConnection {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        &self.connection
+    }
+}
+
+impl DerefMut for JournalConnection {
+    fn deref_mut(&mut self) -> &mut Connection {
+        &mut self.connection
+    }
+}
+
+impl Drop for JournalConnection {
+    fn drop(&mut self) {
+        if self.committed_events.load(Ordering::Acquire) {
+            self.notifier.wake();
+        }
+    }
+}
+
+pub(crate) fn open_connection(path: &Path) -> Result<JournalConnection, RuntimeError> {
     let connection = Connection::open(path).map_err(|error| {
         db_error(
             format!("failed to open sqlite database {}", path.display()),
@@ -27,7 +64,34 @@ pub(crate) fn open_connection(path: &Path) -> Result<Connection, RuntimeError> {
              PRAGMA synchronous = NORMAL;",
         )
         .map_err(|error| db_error("failed to configure sqlite pragmas", error))?;
-    Ok(connection)
+
+    let pending_events = Arc::new(AtomicBool::new(false));
+    let committed_events = Arc::new(AtomicBool::new(false));
+    let pending_on_insert = Arc::clone(&pending_events);
+    connection.update_hook(Some(
+        move |action: Action, _database: &str, table: &str, _rowid: i64| {
+            if action == Action::SQLITE_INSERT && table == "runtime_events" {
+                pending_on_insert.store(true, Ordering::Release);
+            }
+        },
+    ));
+    let pending_on_commit = Arc::clone(&pending_events);
+    let committed_on_commit = Arc::clone(&committed_events);
+    connection.commit_hook(Some(move || {
+        if pending_on_commit.swap(false, Ordering::AcqRel) {
+            committed_on_commit.store(true, Ordering::Release);
+        }
+        false
+    }));
+    connection.rollback_hook(Some(move || {
+        pending_events.store(false, Ordering::Release);
+    }));
+
+    Ok(JournalConnection {
+        connection,
+        notifier: notifier_for(path),
+        committed_events,
+    })
 }
 
 pub(crate) fn apply_schema(connection: &mut Connection) -> Result<(), RuntimeError> {

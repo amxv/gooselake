@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 mod db;
+mod event_notifications;
 mod operation_tx;
 mod repository;
 mod repository_agent_comms;

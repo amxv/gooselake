@@ -154,7 +154,8 @@ impl SqliteRuntimeRepository {
         &self,
         operation_id: &str,
     ) -> Result<Option<SessionEditRerunOperation>, RuntimeError> {
-        read(&open_connection(&self.database_path)?, operation_id)
+        let connection = open_connection(&self.database_path)?;
+        read(&connection, operation_id)
     }
 
     pub fn get_session_edit_rerun_by_key(

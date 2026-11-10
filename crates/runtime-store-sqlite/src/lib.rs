@@ -57,6 +57,7 @@ mod repository_workspace_retirement_review_settlement;
 mod repository_workspace_retirement_review_turns;
 mod repository_workspace_retirement_settlement;
 mod repository_workspace_retirement_turns;
+mod repository_workspace_status_roster;
 mod repository_workspace_worktree_creation;
 mod repository_worktree_status;
 mod schema;
@@ -71,6 +72,7 @@ mod store_operator_native_policy;
 mod store_operator_user_turn;
 mod store_pagination;
 mod store_retirement;
+mod store_workspace_status_roster;
 mod store_worktree_creation;
 mod store_worktree_status;
 

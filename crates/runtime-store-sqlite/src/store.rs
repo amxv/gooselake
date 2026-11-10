@@ -359,6 +359,7 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.register_workspace(command)
     }
     crate::store_pagination::delegate_workspace_listing!();
+    crate::store_workspace_status_roster::delegate_workspace_status_roster!();
     crate::store_retirement::delegate_workspace_retirement!();
     fn transition_workspace_lead(
         &self,

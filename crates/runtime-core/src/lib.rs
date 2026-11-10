@@ -18,6 +18,7 @@ pub mod runtime;
 pub mod scoped_mcp;
 pub mod services;
 mod services_context_limit;
+mod services_workspace_status_trait;
 mod services_worktree_status_trait;
 pub mod session_compaction;
 pub mod state;
@@ -131,6 +132,7 @@ pub use services::{
     WorktreeMemberRemovedRequest, WorktreeMemberRemovedResponse, WorktreeReleaseRequest,
     WorktreeReleaseResponse, WorktreeService,
 };
+pub use services_workspace_status_trait::WorkspaceStatusRosterSnapshot;
 pub use session_compaction::{
     CompactionObservationReceipt, ProviderCompactionObservation, SessionCompactionRun,
 };

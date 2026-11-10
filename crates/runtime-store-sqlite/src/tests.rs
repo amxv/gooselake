@@ -27,6 +27,7 @@ mod workspace_retirement_review;
 mod workspace_retirement_review_recovery;
 mod workspace_retirement_review_turns;
 mod workspace_retirement_routes;
+mod workspace_status_roster;
 mod worktree_status_projection;
 
 fn repo(temp_dir: &tempfile::TempDir) -> SqliteRuntimeRepository {

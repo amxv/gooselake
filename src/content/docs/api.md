@@ -1592,6 +1592,8 @@ contract and does not adopt the operator `/v2` request-ID envelope.
 
 The `gg_team` status response includes the optional friendly `lead_alias`, each active member's `alias`, `role`, `title_provenance`, creator provenance, activity and `context_remaining_pct`. The context field is `null` without a current provider-session-bound observation; it is never reconstructed from transcript estimates. Attached worktree name, branch and routing state are included where inventory can prove them. Eligible available worktrees are sorted deterministically and capped at 20, with `available_worktrees_total` and `available_worktrees_truncated` describing the full eligible set. The roster remains queryable when Git inventory is unavailable. Agent-message delivery context uses compact `<agent_msg>` envelopes (`dm|broadcast`, `workspace_team|global_direct`, attachment count), not a raw team-ID-bearing model prompt.
 
+With SQLite, the model-facing roster is read from an indexed **alias-ordered first page of 100 active members**, with a separate indexed full active count. Lead and displayed creator aliases are resolved in one bounded lookup even if their agents fall outside the page; archived or foreign-workspace agents do not supply active aliases. All three results share one read snapshot. `members_total` and `members_truncated` still reflect the entire active workspace roster, not just the page.
+
 Status renders at most 100 active member details. Their live session states are
 captured under one bounded runtime read lock and current context observations
 are fetched by a single indexed SQLite batch keyed by those agent IDs. The

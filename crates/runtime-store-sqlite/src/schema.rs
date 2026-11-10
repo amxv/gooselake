@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 25;
+pub(crate) const SCHEMA_VERSION: i64 = 26;
 
 #[path = "schema_chain.rs"]
 mod schema_chain;
@@ -997,3 +997,4 @@ const MIGRATION_22_SQL: &str = include_str!("schema_migration_22.sql");
 const MIGRATION_23_SQL: &str = include_str!("schema_migration_23.sql");
 const MIGRATION_24_SQL: &str = include_str!("schema_migration_24.sql");
 const MIGRATION_25_SQL: &str = include_str!("schema_migration_25.sql");
+const MIGRATION_26_SQL: &str = include_str!("schema_migration_26.sql");

@@ -279,6 +279,112 @@ async fn scoped_team_mutations_replay_exact_receipts_without_duplicating_agents(
 }
 
 #[tokio::test]
+async fn scoped_team_status_keeps_lead_and_creator_aliases_beyond_bounded_member_page() {
+    let (router, operator, temp, workspace_id, caller) = scoped_setup().await;
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let template = store
+        .get_workspace_agent(&workspace_id, &caller)
+        .unwrap()
+        .unwrap();
+    let add = |agent_id: String, alias: String, creator: &str| {
+        let native_ref = format!("native-{agent_id}");
+        let session = runtime_core::SessionRecord {
+            id: agent_id.clone(),
+            provider: template.recreation_policy.provider.as_str().into(),
+            status: "ready".into(),
+            cwd: Some(template.recreation_policy.authoritative_cwd.clone()),
+            model: template.recreation_policy.model.clone(),
+            permission_mode: None,
+            system_prompt: template.recreation_policy.system_prompt.clone(),
+            metadata: serde_json::json!({}),
+            provider_session_ref: Some(native_ref.clone()),
+            canonical_provider_session_ref: None,
+            active_turn_id: None,
+            worktree_id: None,
+            created_at: 100,
+            updated_at: 100,
+            closed_at: None,
+            failure_code: None,
+            failure_message: None,
+        };
+        let mut agent = template.clone();
+        agent.agent_id = agent_id;
+        agent.alias = alias;
+        agent.profile.added_by = creator.to_string();
+        agent.profile.creator_session_id = (creator != "runtime_operator").then(|| creator.into());
+        agent.provider_session_ref = Some(native_ref);
+        agent.canonical_provider_session_ref = None;
+        agent.metadata = session.metadata.clone();
+        agent.revision = 0;
+        agent.created_at = 100;
+        agent.updated_at = 100;
+        store.create_workspace_agent(&session, &agent).unwrap();
+    };
+    let lead_id = "sess_status_hidden_lead";
+    add(
+        lead_id.into(),
+        "zzzz-hidden-lead".into(),
+        "runtime_operator",
+    );
+    for index in (0..110).rev() {
+        add(
+            format!("sess_status_visible_{index:03}"),
+            format!("aaaa-visible-{index:03}"),
+            lead_id,
+        );
+    }
+
+    let revision = store
+        .get_workspace(&workspace_id)
+        .unwrap()
+        .unwrap()
+        .revision;
+    let lead_response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v2/workspaces/{workspace_id}/lead"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {operator}"))
+                .body(Body::from(
+                    serde_json::json!({
+                        "lead_agent_id": lead_id,
+                        "expected_revision": revision
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(lead_response.status(), StatusCode::OK);
+
+    let scoped = runtime_core::mint_scoped_mcp_token(&operator, &caller);
+    let (status, response) = scoped_call(
+        &router,
+        &scoped,
+        serde_json::json!({"tool_name":"gg_team","args":{"mode":"status"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let result = &response["result"];
+    assert_eq!(result["members_total"], 113);
+    assert_eq!(result["members_truncated"], true);
+    assert_eq!(result["lead_alias"], "zzzz-hidden-lead");
+    let members = result["members"].as_array().unwrap();
+    assert_eq!(members.len(), 100);
+    assert_eq!(members[0]["alias"], "aaaa-visible-000");
+    assert_eq!(members[99]["alias"], "aaaa-visible-099");
+    assert_eq!(members[0]["added_by_alias"], "zzzz-hidden-lead");
+    assert!(members
+        .iter()
+        .all(|row| row["added_by_alias"] == "zzzz-hidden-lead"));
+}
+
+#[tokio::test]
 async fn scoped_process_modes_preserve_durable_handle_and_owner_only_cancel() {
     let (router, operator, _temp, workspace, caller) = scoped_setup().await;
     let scoped = runtime_core::mint_scoped_mcp_token(&operator, &caller);

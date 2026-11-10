@@ -434,16 +434,13 @@ impl RuntimeToolGateway {
                 let workspace = store
                     .get_workspace(workspace_id)?
                     .ok_or_else(|| RuntimeError::NotFound("workspace".into()))?;
-                let mut members = runtime.list_workspace_agents(
+                let roster = store.list_workspace_status_roster(
                     workspace_id,
-                    Some(WorkspaceAgentLifecycleState::Active),
+                    workspace.lead_agent_id.as_deref(),
+                    STATUS_MEMBER_LIMIT,
                 )?;
-                members.sort_by(|one, two| {
-                    one.alias
-                        .cmp(&two.alias)
-                        .then(one.agent_id.cmp(&two.agent_id))
-                });
-                let member_count = members.len();
+                let members = roster.members;
+                let member_count = roster.total_active_members;
                 // Status uses the current provider-bound context observation;
                 // missing or stale observations remain explicitly unknown.
                 // Optional Git inventory must not make roster status fail.
@@ -454,15 +451,12 @@ impl RuntimeToolGateway {
                     };
                 let (eligible, eligible_total, eligible_truncated) =
                     bounded_available_worktrees(&inventory);
-                let lead_alias = workspace.lead_agent_id.as_ref().and_then(|id| {
-                    members
-                        .iter()
-                        .find(|member| &member.agent_id == id)
-                        .map(|member| member.alias.clone())
-                });
+                let lead_alias = workspace
+                    .lead_agent_id
+                    .as_ref()
+                    .and_then(|id| roster.alias_by_agent_id.get(id).cloned());
                 let displayed_ids = members
                     .iter()
-                    .take(STATUS_MEMBER_LIMIT)
                     .map(|member| member.agent_id.clone())
                     .collect::<Vec<_>>();
                 let sessions = runtime.session_snapshots_for_agents(&displayed_ids).await;
@@ -470,10 +464,6 @@ impl RuntimeToolGateway {
                     .list_session_context_limits(&displayed_ids)?
                     .into_iter()
                     .map(|snapshot| (snapshot.agent_id.clone(), snapshot))
-                    .collect::<HashMap<_, _>>();
-                let alias_by_id = members
-                    .iter()
-                    .map(|member| (member.agent_id.as_str(), member.alias.as_str()))
                     .collect::<HashMap<_, _>>();
                 let mut worktree_by_agent_path = HashMap::new();
                 for (index, entry) in inventory.iter().enumerate() {
@@ -484,7 +474,7 @@ impl RuntimeToolGateway {
                     }
                 }
                 let mut rows = Vec::with_capacity(member_count.min(STATUS_MEMBER_LIMIT));
-                for member in members.iter().take(STATUS_MEMBER_LIMIT) {
+                for member in &members {
                     let session = sessions.get(&member.agent_id);
                     let latest_context = context_by_id.get(&member.agent_id);
                     let remaining = latest_context
@@ -512,7 +502,10 @@ impl RuntimeToolGateway {
                     let added_by_alias = if member.profile.added_by == "runtime_operator" {
                         Some("user")
                     } else {
-                        alias_by_id.get(member.profile.added_by.as_str()).copied()
+                        roster
+                            .alias_by_agent_id
+                            .get(member.profile.added_by.as_str())
+                            .map(String::as_str)
                     };
                     rows.push(json!({
                         "agent_id": member.agent_id, "alias":member.alias,

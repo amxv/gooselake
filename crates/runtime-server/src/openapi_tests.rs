@@ -1,6 +1,45 @@
 use super::generated_openapi_yaml;
 
 #[test]
+fn declarative_route_table_preserves_methods_and_authentication_scopes() {
+    let routes = super::collect_routes();
+    assert_eq!(routes.len(), 124, "all original v1/v2 and public routes");
+    let method_count: usize = routes.values().map(|spec| spec.methods.len()).sum();
+    assert_eq!(method_count, 137, "multi-method routes retained");
+
+    let public = routes.get("/health").expect("public health route");
+    assert!(!public.requires_auth);
+    assert!(public.methods.contains(&super::HttpMethod::Get));
+
+    for path in [
+        "/v1/mcp/invoke",
+        "/v2/mcp/invoke",
+        "/v2/workspaces/{workspace_id}/worktrees",
+        "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree",
+        "/v2/agents/{agent_id}/native-policy/{operation_id}/resolve",
+    ] {
+        assert!(
+            routes.get(path).is_some_and(|route| route.requires_auth),
+            "{path}"
+        );
+    }
+    let worktrees = routes
+        .get("/v2/workspaces/{workspace_id}/worktrees")
+        .expect("workspace worktrees");
+    assert_eq!(
+        worktrees.methods,
+        [super::HttpMethod::Get, super::HttpMethod::Post].into()
+    );
+    let notice = routes
+        .get("/v2/workspaces/{workspace_id}/notice-policy")
+        .expect("notice policy");
+    assert_eq!(
+        notice.methods,
+        [super::HttpMethod::Get, super::HttpMethod::Put].into()
+    );
+}
+
+#[test]
 fn generated_openapi_includes_core_surface() {
     let yaml = generated_openapi_yaml();
     assert!(yaml.contains("openapi: 3.1.0"));

@@ -10,7 +10,11 @@ Use this when changing runtime API behavior.
 
 ## Why this exists
 
-Route/method coverage in OpenAPI is generated from source parsing. For selected
+Route/method coverage in OpenAPI comes from the shared **compile-time route
+table** in `crates/runtime-server/src/http/route_table.rs`. Both the real Axum
+registration and the generator expand this table: new routes, HTTP verbs and
+mounted authentication scopes cannot silently disappear because a text
+scraper failed to recognize formatting in `http/mod.rs`. For selected
 operator `/v2` endpoints, request/response shapes and the operator error
 envelope are now generated from the actual `schemars::JsonSchema` derives on
 serde-backed Rust DTOs (`crates/runtime-server/src/openapi_contracts.rs`).

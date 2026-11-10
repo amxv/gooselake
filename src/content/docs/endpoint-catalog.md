@@ -336,7 +336,9 @@ Codex registers those same three canonical tools as provider-native dynamic tool
 
 ## Notes on Contract Precision
 
-The generated OpenAPI has Rust/serde-derived schemas for workspace registration,
+OpenAPI route coverage is expanded from the same compile-time declaration table
+used by the Axum router, not scraped from route-builder source text. The
+generated OpenAPI has Rust/serde-derived schemas for workspace registration,
 lead/retirement, operation history and agent message/delivery requests/results;
 it also has a typed operator error envelope and `default` error response on
 regular operator JSON routes. Other endpoint bodies may remain broad

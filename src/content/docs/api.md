@@ -145,7 +145,9 @@ Top-level groups:
 
 ## Request/response precision
 
-The generated OpenAPI combines route/method discovery with **Rust/serde-derived
+The generated OpenAPI combines route/method metadata from the **same declarative
+Rust registration table as the live Axum router**
+(`crates/runtime-server/src/http/route_table.rs`) with **Rust/serde-derived
 OpenAPI 3.1 JSON Schemas** for the workspace registration, workspace list/get,
 lead and retirement requests/results, retirement preflight, workspace
 interruption, durable operation inspection/list, agent message/delivery and

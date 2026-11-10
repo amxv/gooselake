@@ -42,6 +42,7 @@ mod operator_events;
 mod operator_hook_effects;
 mod operator_processes;
 mod processes;
+mod route_table;
 mod sessions;
 mod shared;
 mod teams;
@@ -70,6 +71,7 @@ use operator_events::*;
 use operator_hook_effects::*;
 use operator_processes::*;
 use processes::*;
+pub(crate) use route_table::route_table;
 use sessions::*;
 use shared::*;
 use teams::*;
@@ -90,327 +92,67 @@ pub struct AppState {
     pub startup_recovery: Arc<StartupRecoverySummary>,
 }
 
-pub fn build_router(state: AppState) -> Router {
-    let mcp = Router::new()
-        .route("/capabilities", get(mcp_capabilities))
-        .route("/invoke", post(mcp_invoke))
-        .layer(DefaultBodyLimit::max(MCP_MAX_REQUEST_BODY_BYTES));
-
-    // Agent-scoped MCP is a separate principal from the operator API. This
-    // route intentionally does not inherit bearer_auth's operator credential.
-    let scoped_mcp = Router::new()
-        .route("/capabilities", get(scoped_mcp_capabilities))
-        .route("/invoke", post(scoped_mcp_invoke))
-        .layer(DefaultBodyLimit::max(MCP_MAX_REQUEST_BODY_BYTES));
-
-    let protected = Router::new()
-        .route("/health", get(protected_health))
-        .route("/providers", get(list_providers))
-        .route("/providers/{provider}/models", get(list_provider_models))
-        .route("/providers/codex/auth/status", get(codex_auth_status))
-        .route("/providers/acp/auth/status", get(acp_auth_status))
-        .route("/providers/claude/auth/status", get(claude_auth_status))
-        .route("/providers/claude/auth/api-key", post(claude_auth_api_key))
-        .route(
-            "/providers/claude/auth/import-json",
-            post(claude_auth_import_json),
-        )
-        .route(
-            "/providers/claude/auth/import-file",
-            post(claude_auth_import_file),
-        )
-        .route("/providers/claude/auth/logout", post(claude_auth_logout))
-        .route("/openapi.yaml", get(openapi_yaml))
-        .route("/version", get(version))
-        .route("/events", get(replay_global_events))
-        .route("/events/stream", get(stream_global_events))
-        .route("/sessions", post(create_session).get(list_sessions))
-        .route("/sessions/{session_id}", get(get_session))
-        .route("/sessions/{session_id}/resume", post(resume_session))
-        .route("/sessions/{session_id}/close", post(close_session))
-        .route("/sessions/{session_id}/turns", post(send_turn))
-        .route(
-            "/sessions/{session_id}/turns/{turn_id}/interrupt",
-            post(interrupt_turn),
-        )
-        .route(
-            "/sessions/{session_id}/approvals/{approval_id}",
-            post(respond_approval),
-        )
-        .route("/sessions/{session_id}/events", get(replay_session_events))
-        .route(
-            "/sessions/{session_id}/events/stream",
-            get(stream_session_events),
-        )
-        .route("/processes", post(start_process).get(list_processes))
-        .route(
-            "/processes/scheduler",
-            get(get_process_scheduler).post(update_process_scheduler),
-        )
-        .route("/processes/queue/reorder", post(reorder_process_queue))
-        .route("/processes/{process_id}", get(get_process))
-        .route("/processes/{process_id}/logs", get(get_process_logs))
-        .route("/processes/{process_id}/events", get(replay_process_events))
-        .route(
-            "/processes/{process_id}/events/stream",
-            get(stream_process_events),
-        )
-        .route("/processes/{process_id}/kill", post(kill_process))
-        .route("/worktrees", post(create_worktree).get(list_worktrees))
-        .route("/worktrees/{worktree_id}", get(get_worktree))
-        .route("/worktrees/{worktree_id}/claims", post(claim_worktree))
-        .route("/worktrees/{worktree_id}/release", post(release_worktree))
-        .route("/worktrees/{worktree_id}/cleanup", post(cleanup_worktree))
-        .route("/diagnostics", get(runtime_diagnostics))
-        .route("/diagnostics/providers", get(provider_diagnostics))
-        .route("/diagnostics/comms", get(comms_diagnostics))
-        .route("/diagnostics/processes", get(process_diagnostics))
-        .route("/diagnostics/worktrees", get(worktree_diagnostics))
-        .route("/diagnostics/recovery", get(recovery_diagnostics))
-        .route(
-            "/diagnostics/team-operations",
-            get(list_team_operation_diagnostics),
-        )
-        .route("/teams", post(create_team).get(list_teams))
-        .route("/teams/{team_id}", get(get_team).delete(delete_team))
-        .route("/teams/{team_id}/members", post(join_team_member))
-        .route("/teams/{team_id}/members/spawn", post(spawn_team_member))
-        .route(
-            "/teams/{team_id}/members/{agent_id}",
-            delete(remove_team_member),
-        )
-        .route("/teams/{team_id}/lead", post(set_team_lead))
-        .route(
-            "/teams/{team_id}/messages",
-            post(send_team_direct).get(list_team_messages),
-        )
-        .route("/teams/{team_id}/broadcasts", post(send_team_broadcast))
-        .route("/teams/{team_id}/deliveries", get(list_team_deliveries))
-        .route(
-            "/teams/{team_id}/deliveries/{delivery_id}/retry",
-            post(retry_team_delivery),
-        )
-        .route(
-            "/teams/{team_id}/messages/{message_id}/cancel",
-            post(cancel_team_message),
-        )
-        .route("/teams/{team_id}/view", get(get_team_view_snapshot))
-        .route("/teams/{team_id}/events", get(replay_team_events))
-        .route("/teams/{team_id}/events/stream", get(stream_team_events))
-        .route(
-            "/teams/{team_id}/interrupt-all",
-            post(interrupt_all_team_turns),
-        )
-        .nest("/mcp", mcp)
-        .route_layer(middleware::from_fn_with_state(
-            state.bearer_token.clone(),
-            bearer_auth,
-        ));
-
-    let protected_v2 = Router::new()
-        .route("/capabilities", get(runtime_capabilities_v2))
-        .route("/agents/{agent_id}", get(get_agent_by_id))
-        .route(
-            "/agents/{agent_id}/events/stream",
-            get(stream_operator_agent_events),
-        )
-        .route(
-            "/agents/{agent_id}/turns/{turn_id}/edit-rerun",
-            post(edit_agent_turn_and_rerun),
-        )
-        .route(
-            "/agents/{agent_id}/edits/{operation_id}",
-            get(get_agent_edit_operation),
-        )
-        .route(
-            "/agents/{agent_id}/edits/{operation_id}/resolve",
-            post(resolve_agent_edit_operation),
-        )
-        .route("/agents/{agent_id}/compact", post(compact_agent_session))
-        .route(
-            "/agents/{agent_id}/compactions/{run_id}",
-            get(get_agent_compaction_run),
-        )
-        .route(
-            "/agents/{agent_id}/compactions/{run_id}/resolve",
-            post(resolve_agent_compaction_review),
-        )
-        .route("/agents/{agent_id}/turns", post(send_agent_turn_v2))
-        .route(
-            "/agents/{agent_id}/context-limit",
-            get(get_agent_context_limit),
-        )
-        .route(
-            "/agents/{agent_id}/context-limit/refresh",
-            post(refresh_agent_context_limit),
-        )
-        .route(
-            "/agents/{agent_id}/preferences",
-            post(update_agent_preferences),
-        )
-        .route(
-            "/agents/{agent_id}/permission",
-            post(update_agent_permission),
-        )
-        .route(
-            "/agents/{agent_id}/native-policy/{operation_id}/resolve",
-            post(resolve_agent_native_policy_review).layer(DefaultBodyLimit::max(16 * 1024)),
-        )
-        .route(
-            "/providers/{provider}/capabilities",
-            get(provider_capabilities_v2),
-        )
-        .route(
-            "/providers/{provider}/models/discover",
-            post(discover_provider_models_v2),
-        )
-        .route(
-            "/providers/{provider}/skills/discover",
-            post(discover_provider_skills_v2),
-        )
-        .route("/workspaces", post(register_workspace).get(list_workspaces))
-        .route("/workspaces/{workspace_id}", get(get_workspace))
-        .route(
-            "/workspaces/{workspace_id}/events/stream",
-            get(stream_operator_workspace_events),
-        )
-        .route("/workspaces/{workspace_id}/retire", post(retire_workspace))
-        .route(
-            "/workspaces/{workspace_id}/retirement/advance",
-            post(advance_workspace_retirement),
-        )
-        .route(
-            "/workspaces/{workspace_id}/retirement/{operation_id}/reconcile",
-            post(reconcile_workspace_retirement).layer(DefaultBodyLimit::max(16 * 1024)),
-        )
-        .route(
-            "/workspaces/{workspace_id}/retirement-preflight",
-            get(workspace_retirement_preflight),
-        )
-        .route("/workspaces/{workspace_id}/hooks", get(get_workspace_hooks))
-        .route(
-            "/workspaces/{workspace_id}/hooks/approval",
-            get(get_workspace_hook_approval).put(update_workspace_hook_approval),
-        )
-        .route(
-            "/workspaces/{workspace_id}/hooks/effects",
-            get(list_workspace_hook_effects),
-        )
-        .route(
-            "/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}",
-            get(get_workspace_hook_effect),
-        )
-        .route(
-            "/workspaces/{workspace_id}/worktrees",
-            get(list_workspace_worktree_inventory).post(create_workspace_worktree),
-        )
-        .route("/workspaces/{workspace_id}/lead", post(set_workspace_lead))
-        .route(
-            "/workspaces/{workspace_id}/notice-policy",
-            get(get_workspace_notice_policy).put(update_workspace_notice_policy),
-        )
-        .route(
-            "/workspaces/{workspace_id}/interrupt",
-            post(interrupt_workspace_turns),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents",
-            post(create_workspace_agent).get(list_workspace_agents),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve",
-            post(resolve_workspace_agent_create_review),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/{agent_id}",
-            get(get_workspace_agent),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/{agent_id}/onboarding",
-            get(get_workspace_agent_onboarding),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/{agent_id}/worktree",
-            post(rebind_workspace_agent),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}",
-            get(get_workspace_agent_rebind),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup",
-            post(retry_workspace_agent_rebind_cleanup),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/{agent_id}/archive",
-            post(archive_workspace_agent),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve",
-            post(resolve_workspace_agent_archive_review),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/{agent_id}/restore",
-            post(restore_workspace_agent),
-        )
-        .route(
-            "/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve",
-            post(resolve_workspace_agent_restore_review),
-        )
-        .route(
-            "/messages",
-            post(create_agent_message).get(list_agent_messages),
-        )
-        .route(
-            "/messages/{message_id}/deliveries",
-            get(list_agent_deliveries),
-        )
-        .route("/messages/{message_id}/cancel", post(cancel_agent_message))
-        .route(
-            "/deliveries/{delivery_id}/retry",
-            post(retry_agent_delivery),
-        )
-        .route(
-            "/migrations/workspaces",
-            get(get_workspace_migration_status),
-        )
-        .route(
-            "/migrations/workspaces/preview",
-            post(preview_workspace_migration),
-        )
-        .route(
-            "/migrations/workspaces/apply",
-            post(apply_workspace_migration),
-        )
-        .route(
-            "/migrations/workspaces/resolutions/{subject_kind}/{subject_id}",
-            post(resolve_workspace_migration_subject),
-        )
-        .route("/operations", get(list_operations))
-        .route("/operations/{operation_id}", get(get_operation))
-        .route("/events", get(list_operator_events))
-        .route("/events/stream", get(stream_operator_global_events))
-        .route("/events/{event_id}", get(get_operator_event))
-        .route("/processes", get(list_operator_processes))
-        .route(
-            "/processes/{process_id}/events/stream",
-            get(stream_operator_process_events),
-        )
-        .route("/processes/{process_id}", get(get_operator_process))
-        .route_layer(middleware::from_fn_with_state(
-            state.bearer_token.clone(),
-            bearer_auth,
-        ))
-        .layer(middleware::from_fn(v2_operator_response_contract));
-
-    Router::new()
-        .route("/health", get(health))
-        .route("/openapi.yaml", get(openapi_yaml))
-        .nest("/v1", protected)
-        .nest("/v2", protected_v2)
-        .nest("/v2/mcp", scoped_mcp)
-        .with_state(state)
+// Every route is built from the same declarative table used for OpenAPI.
+// Handler and method types are checked by Rust rather than guessed by text
+// inspection; the nested scopes retain their original auth/body-size layers.
+macro_rules! router_group {
+    (
+        $(
+            $path:literal => $method:ident($handler:ident)
+            $(.$next_method:ident($next_handler:ident))*
+            $(@ $max_body:expr)?;
+        )*
+    ) => {
+        Router::new()
+            $(
+                .route(
+                    $path,
+                    $method($handler)
+                        $(.$next_method($next_handler))*
+                        $(.layer(DefaultBodyLimit::max($max_body)))?
+                )
+            )*
+    };
 }
+
+macro_rules! build_router_from_table {
+    (
+        $mcp:ident ($mcp_prefix:literal, $mcp_auth:literal) { $($mcp_route:tt)* }
+        $scoped_mcp:ident ($scoped_prefix:literal, $scoped_auth:literal) { $($scoped_route:tt)* }
+        $protected:ident ($v1_prefix:literal, $v1_auth:literal) { $($v1_route:tt)* }
+        $protected_v2:ident ($v2_prefix:literal, $v2_auth:literal) { $($v2_route:tt)* }
+        $root:ident ($root_prefix:literal, $root_auth:literal) { $($root_route:tt)* }
+    ) => {
+        pub fn build_router(state: AppState) -> Router {
+            let $mcp = router_group! { $($mcp_route)* }
+                .layer(DefaultBodyLimit::max(MCP_MAX_REQUEST_BODY_BYTES));
+            // Agent-scoped MCP uses a separate principal and never inherits
+            // the operator bearer credential.
+            let $scoped_mcp = router_group! { $($scoped_route)* }
+                .layer(DefaultBodyLimit::max(MCP_MAX_REQUEST_BODY_BYTES));
+            let $protected = router_group! { $($v1_route)* }
+                .nest("/mcp", $mcp)
+                .route_layer(middleware::from_fn_with_state(
+                    state.bearer_token.clone(),
+                    bearer_auth,
+                ));
+            let $protected_v2 = router_group! { $($v2_route)* }
+                .route_layer(middleware::from_fn_with_state(
+                    state.bearer_token.clone(),
+                    bearer_auth,
+                ))
+                .layer(middleware::from_fn(v2_operator_response_contract));
+
+            router_group! { $($root_route)* }
+                .nest($v1_prefix, $protected)
+                .nest($v2_prefix, $protected_v2)
+                .nest($scoped_prefix, $scoped_mcp)
+                .with_state(state)
+        }
+    };
+}
+
+route_table!(build_router_from_table);
 
 #[cfg(test)]
 mod tests;

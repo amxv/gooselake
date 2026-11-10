@@ -791,153 +791,62 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
     }
 }
 
+// Match a compile-time-checked method declared by the same registration
+// table as the Axum router; there is no source-string tokenization or
+// heuristic search for "get("/"post(" in handler bodies.
+macro_rules! route_http_method {
+    (get) => {
+        HttpMethod::Get
+    };
+    (post) => {
+        HttpMethod::Post
+    };
+    (put) => {
+        HttpMethod::Put
+    };
+    (delete) => {
+        HttpMethod::Delete
+    };
+}
+
 fn collect_routes() -> BTreeMap<String, RouteSpec> {
-    let source = include_str!("http/mod.rs");
-    let mcp_start = source.find("let mcp = Router::new()").unwrap_or(0);
-    let scoped_mcp_marker = "let scoped_mcp = Router::new()";
-    let protected_start = source
-        .find("let protected = Router::new()")
-        .unwrap_or(mcp_start);
-    let scoped_mcp_start = source[mcp_start..protected_start]
-        .find(scoped_mcp_marker)
-        .map(|offset| mcp_start + offset)
-        .unwrap_or(protected_start);
-    let protected_marker = "let protected = Router::new()";
-    let protected_body_start = protected_start + protected_marker.len();
-    let protected_v2_start = source[protected_body_start..]
-        .find("let protected_v2 = Router::new()")
-        .map(|offset| protected_body_start + offset)
-        .unwrap_or(source.len());
-    let protected_v2_marker = "let protected_v2 = Router::new()";
-    let protected_v2_body_start = protected_v2_start.saturating_add(protected_v2_marker.len());
-    let root_marker = "Router::new()\n        .route(\"/health\", get(health))";
-    let root_search_start = protected_v2_body_start.min(source.len());
-    let root_start = source[root_search_start..]
-        .find(root_marker)
-        .map(|offset| root_search_start + offset)
-        .unwrap_or(root_search_start);
-    let root_end = source[root_start..]
-        .find(".with_state(state)")
-        .map(|offset| root_start + offset)
-        .unwrap_or(source.len());
-
-    let mcp_body_start = mcp_start + "let mcp = Router::new()".len();
-    let mcp_block = if mcp_body_start <= scoped_mcp_start && scoped_mcp_start <= source.len() {
-        source[mcp_body_start..scoped_mcp_start].to_string()
-    } else {
-        String::new()
-    };
-    let scoped_mcp_body_start = scoped_mcp_start + scoped_mcp_marker.len();
-    let scoped_mcp_block =
-        if scoped_mcp_body_start <= protected_start && protected_start <= source.len() {
-            source[scoped_mcp_body_start..protected_start].to_string()
-        } else {
-            String::new()
-        };
-    let protected_block =
-        if protected_body_start <= protected_v2_start && protected_v2_start <= source.len() {
-            source[protected_body_start..protected_v2_start].to_string()
-        } else {
-            String::new()
-        };
-    let protected_v2_block = if protected_v2_body_start <= root_start && root_start <= source.len()
-    {
-        source[protected_v2_body_start..root_start].to_string()
-    } else {
-        String::new()
-    };
-    let root_body_start = root_start + "Router::new()".len();
-    let root_block = if root_body_start <= root_end && root_end <= source.len() {
-        source[root_body_start..root_end].to_string()
-    } else {
-        String::new()
-    };
-
-    let mut routes = BTreeMap::<String, RouteSpec>::new();
-    collect_block_routes(&mut routes, &mcp_block, "/v1/mcp", true);
-    collect_block_routes(&mut routes, &scoped_mcp_block, "/v2/mcp", true);
-    collect_block_routes(&mut routes, &protected_block, "/v1", true);
-    collect_block_routes(&mut routes, &protected_v2_block, "/v2", true);
-    collect_block_routes(&mut routes, &root_block, "", false);
-    routes
-}
-
-fn collect_block_routes(
-    routes: &mut BTreeMap<String, RouteSpec>,
-    block: &str,
-    prefix: &str,
-    requires_auth: bool,
-) {
-    let mut cursor = 0usize;
-    while let Some(found) = block[cursor..].find(".route(") {
-        let route_start = cursor + found + ".route(".len();
-        if let Some((path, methods, close_index)) = parse_route_call(block, route_start) {
-            let full_path = if prefix.is_empty() {
-                path
-            } else {
-                format!("{prefix}{path}")
-            };
-            let entry = routes.entry(full_path).or_default();
-            entry.requires_auth = entry.requires_auth || requires_auth;
-            for method in methods {
-                entry.methods.insert(method);
-            }
-            cursor = close_index;
-        } else {
-            cursor = route_start;
-        }
-    }
-}
-
-fn parse_route_call(block: &str, route_start: usize) -> Option<(String, Vec<HttpMethod>, usize)> {
-    let mut idx = route_start;
-    while idx < block.len() && block.as_bytes()[idx].is_ascii_whitespace() {
-        idx += 1;
-    }
-    if block.as_bytes().get(idx).copied()? != b'"' {
-        return None;
-    }
-    let path_start = idx + 1;
-    let path_end = block[path_start..].find('"')? + path_start;
-    let path = block[path_start..path_end].to_string();
-    let mut comma_index = path_end + 1;
-    while comma_index < block.len() && block.as_bytes()[comma_index].is_ascii_whitespace() {
-        comma_index += 1;
-    }
-    if block.as_bytes().get(comma_index).copied()? != b',' {
-        return None;
-    }
-    let args_start = comma_index + 1;
-    let mut depth = 1i32;
-    let mut i = args_start;
-    while i < block.len() {
-        match block.as_bytes()[i] {
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    let args = &block[args_start..i];
-                    let mut methods = Vec::new();
-                    if args.contains("get(") {
-                        methods.push(HttpMethod::Get);
-                    }
-                    if args.contains("post(") {
-                        methods.push(HttpMethod::Post);
-                    }
-                    if args.contains("put(") {
-                        methods.push(HttpMethod::Put);
-                    }
-                    if args.contains("delete(") {
-                        methods.push(HttpMethod::Delete);
-                    }
-                    return Some((path, methods, i + 1));
+    macro_rules! collect_declared_routes {
+        (
+            $(
+                $group:ident ($prefix:literal, $auth:literal) {
+                    $(
+                        $path:literal => $method:ident($handler:ident)
+                        $(.$next_method:ident($next_handler:ident))*
+                        $(@ $max_body:expr)?;
+                    )*
                 }
-            }
-            _ => {}
-        }
-        i += 1;
+            )*
+        ) => {{
+            let mut routes = BTreeMap::<String, RouteSpec>::new();
+            $(
+                $(
+                    // Both segments are literal tokens from the runtime
+                    // router manifest; the full path is a compile-time
+                    // string rather than a fragile extracted source span.
+                    let path = concat!($prefix, $path);
+                    let entry = routes.entry(path.to_string()).or_default();
+                    entry.requires_auth |= $auth;
+                    assert!(
+                        entry.methods.insert(route_http_method!($method)),
+                        "duplicate HTTP method registration: {path}"
+                    );
+                    $(
+                        assert!(
+                            entry.methods.insert(route_http_method!($next_method)),
+                            "duplicate HTTP method registration: {path}"
+                        );
+                    )*
+                )*
+            )*
+            routes
+        }};
     }
-    None
+    crate::http::route_table!(collect_declared_routes)
 }
 
 #[cfg(test)]

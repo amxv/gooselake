@@ -306,7 +306,7 @@ OPERATION_ID=$(echo "$WORKSPACE_RESULT" | jq -r '.operation_id')
 | `canonical_root` | yes | Must resolve to an existing directory. The runtime canonicalizes it before durable admission. |
 | `display_name` | no | Defaults to the canonical root's final path component. Re-registering an existing root does not rename it. |
 
-Unknown JSON fields are rejected with the typed `invalid_request` error,
+Unknown JSON fields are rejected with HTTP `422 invalid_request`,
 rather than silently ignored. For example, registration cannot set
 `lead_agent_id`; use the separately revisioned workspace lead endpoint.
 
@@ -1749,7 +1749,13 @@ Tool envelopes are compact and consistent:
 
 ## Error mapping
 
-Common behavior:
+The following legacy error shapes apply to `/v1` endpoints. Operator
+`/v2` routes instead return the typed `OperatorErrorResponse` envelope
+described above; malformed or unknown-field JSON rejected by Axum
+deserialization is HTTP `422 invalid_request`, while semantic validation
+failures often return HTTP `400 invalid_request`.
+
+Common legacy behavior:
 
 - validation errors: HTTP `400`, body `{"error":"..."}`
 - auth failures: HTTP `401`, body `{"error":"missing or invalid bearer token"}`
@@ -1780,5 +1786,21 @@ Fail fast when API files changed without docs:
 ```bash
 make api-docs-check
 ```
+
+Run a real, credential-free operator HTTP smoke against a disposable
+loopback runtime with its own SQLite database:
+
+```bash
+make check-api-docs-smoke
+```
+
+The smoke covers workspace registration, bounded keyset pagination and
+`X-Next-Cursor`, typed request errors, idempotent replay across restart,
+strong revision `ETag`/stale `If-Match`, operator-versus-agent Bearer
+separation, and event history/cursor rejection. The configured ACP
+executable is an inert tripwire; it must **never be launched**. No
+Codex/Claude/ACP session or device is exercised, and no installed
+runtime/database is changed. This is **not** authenticated live-provider
+acceptance.
 
 Workflow reference: [API Doc Sync Workflow](/docs/api-doc-sync)

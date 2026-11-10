@@ -73,6 +73,11 @@ check-release-layout: ## Validate source-derived release assets and offline isol
 	cargo build -p runtime-server --bin gg-runtime-server
 	./scripts/test-release-layout.sh
 
+.PHONY: check-api-docs-smoke
+check-api-docs-smoke: ## Exercise v2 operator docs against an isolated no-provider-call HTTP runtime
+	cargo build -p runtime-server --bin gg-runtime-server
+	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test-v2-api-docs-smoke.py
+
 .PHONY: check
 check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tests
 	$(MAKE) lint-rust-file-lines
@@ -82,6 +87,7 @@ check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tes
 	cargo check --manifest-path sidecars/gg-mcp-server/Cargo.toml
 	cargo test --manifest-path sidecars/gg-mcp-server/Cargo.toml
 	$(MAKE) api-docs-check
+	$(MAKE) check-api-docs-smoke
 	$(MAKE) check-release-layout
 
 .PHONY: vps-deploy

@@ -1308,6 +1308,16 @@ Behavior:
   event without advancing the SSE ID and close; reconnect with the last
   successfully processed `Last-Event-ID`
 
+The runtime currently **does not prune committed event-journal rows**. This is
+intentional: pending operations, delivery recovery, audit history, and SSE
+resume tokens depend on durable records; the per-scope sequence is derived from
+the persisted journal tail. Do not manually delete old event rows to manage
+storage. Any future retention policy must first persist monotone cursor
+high-water marks and prove that no recovery-required evidence or live reconnect
+cursor can be lost. A fresh runtime reconstructs global and per-scope replay
+from the same indexed journal, rather than treating an in-memory stream as
+history.
+
 SSE event envelope:
 
 - `id`: runtime sequence id

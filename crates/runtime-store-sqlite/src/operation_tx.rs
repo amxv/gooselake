@@ -45,6 +45,61 @@ impl<'a, 'connection> OperationAuthorityTransaction<'a, 'connection> {
                 ],
             )
             .map_err(|error| db_error("failed inserting durable operation", error))?;
+        self.publish_operation_event(
+            &operation.operation_id,
+            operation.workspace_id.as_deref(),
+            &format!("{}:event:admitted", operation.operation_id),
+            "operation.admitted",
+            serde_json::json!({
+                "operation_id": operation.operation_id,
+                "workspace_id": operation.workspace_id,
+                "kind": operation.kind,
+                "phase": operation.phase.as_str(),
+            }),
+            operation.created_at,
+        )?;
+        Ok(())
+    }
+
+    /// Commit the redacted operation event together with its actual authority
+    /// mutation, never as an after-commit best effort. Subject indexing is
+    /// maintained by the journal trigger in this same SQLite transaction.
+    fn publish_operation_event(
+        &self,
+        operation_id: &str,
+        workspace_id: Option<&str>,
+        event_id: &str,
+        kind: &str,
+        payload: serde_json::Value,
+        at_ms: i64,
+    ) -> Result<(), RuntimeError> {
+        let (scope, scope_id) = workspace_id
+            .map(|id| ("workspace", id))
+            .unwrap_or(("operation", operation_id));
+        let next_seq: i64 = self
+            .transaction
+            .query_row(
+                "SELECT COALESCE(MAX(seq),0)+1 FROM runtime_events WHERE scope=?1 AND scope_id=?2",
+                params![scope, scope_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed assigning operation event sequence", error))?;
+        self.transaction
+            .execute(
+                "INSERT INTO runtime_events
+                 (event_id,scope,scope_id,seq,kind,critical,payload_json,created_at)
+                 VALUES (?1,?2,?3,?4,?5,1,?6,?7)",
+                params![
+                    event_id,
+                    scope,
+                    scope_id,
+                    next_seq,
+                    kind,
+                    json_to_string(&payload)?,
+                    at_ms
+                ],
+            )
+            .map_err(|error| db_error("failed atomically publishing operation event", error))?;
         Ok(())
     }
 
@@ -156,6 +211,31 @@ impl<'a, 'connection> OperationAuthorityTransaction<'a, 'connection> {
                 ],
             )
             .map_err(|error| db_error("failed appending operation transition", error))?;
+        let workspace_id: Option<String> = self
+            .transaction
+            .query_row(
+                "SELECT workspace_id FROM runtime_operations WHERE operation_id=?1",
+                [&transition.operation_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed reading operation workspace for event", error))?;
+        self.publish_operation_event(
+            &transition.operation_id,
+            workspace_id.as_deref(),
+            &format!(
+                "{}:event:transition:{}",
+                transition.operation_id, transition.sequence
+            ),
+            "operation.transitioned",
+            serde_json::json!({
+                "operation_id": transition.operation_id,
+                "workspace_id": workspace_id,
+                "sequence": transition.sequence,
+                "from_phase": transition.from_phase.map(OperationPhase::as_str),
+                "to_phase": transition.to_phase.as_str(),
+            }),
+            transition.created_at,
+        )?;
         Ok(())
     }
 
@@ -420,5 +500,32 @@ mod tests {
         assert_eq!(details.outbox.len(), 1);
         assert_eq!(details.receipts.len(), 1);
         assert!(details.claims.is_empty());
+        let events = repository
+            .list_runtime_events(
+                Some((runtime_core::RuntimeEventScope::Operation, operation_id)),
+                None,
+                10,
+            )
+            .expect("operation event subject replay");
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "operation.admitted",
+                "operation.transitioned",
+                "operation.transitioned"
+            ]
+        );
+        assert!(events
+            .iter()
+            .all(|event| event.payload["operation_id"] == operation_id));
+        let rows = repository.list_runtime_events(None, None, 10).unwrap();
+        assert_eq!(
+            rows, events,
+            "subject projections must not duplicate journal rows"
+        );
     }
 }

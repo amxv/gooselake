@@ -1,9 +1,9 @@
 use super::HttpMethod;
 use crate::http::{
     AgentDeliveryListQuery, AgentMessageListQuery, MigrationSubjectPageQuery, OperationListQuery,
-    OperatorEventHistoryQuery, OperatorEventStreamQuery, OperatorProcessListQuery,
-    ResourcePageQuery, WorkspaceAgentListQuery, WorkspaceHookEffectsQuery, WorkspaceHooksQuery,
-    WorktreeInventoryPageQuery,
+    OperatorEventHistoryQuery, OperatorEventStreamQuery, OperatorGlobalEventStreamQuery,
+    OperatorProcessListQuery, ResourcePageQuery, WorkspaceAgentListQuery,
+    WorkspaceHookEffectsQuery, WorkspaceHooksQuery, WorktreeInventoryPageQuery,
 };
 use schemars::generate::{Contract, SchemaSettings};
 use schemars::JsonSchema;
@@ -38,8 +38,10 @@ pub(super) fn fields(path: &str, method: HttpMethod) -> Option<Vec<QueryField>> 
         | (HttpMethod::Post, "/v2/migrations/workspaces/preview") => {
             Some(schema_fields::<MigrationSubjectPageQuery>())
         }
-        (HttpMethod::Get, "/v2/events/stream")
-        | (HttpMethod::Get, "/v2/workspaces/{workspace_id}/events/stream")
+        (HttpMethod::Get, "/v2/events/stream") => {
+            Some(schema_fields::<OperatorGlobalEventStreamQuery>())
+        }
+        (HttpMethod::Get, "/v2/workspaces/{workspace_id}/events/stream")
         | (HttpMethod::Get, "/v2/agents/{agent_id}/events/stream")
         | (HttpMethod::Get, "/v2/processes/{process_id}/events/stream") => {
             Some(schema_fields::<OperatorEventStreamQuery>())

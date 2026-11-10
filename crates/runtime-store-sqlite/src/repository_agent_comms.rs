@@ -65,7 +65,43 @@ impl SqliteRuntimeRepository {
             )
             .optional()
             .map_err(|error| db_error("failed identifying hook message sender workspace", error))?;
-        if let Some(workspace_id) = sender_workspace {
+        // Publishing the redacted message event is part of the authoritative
+        // message + delivery commit, never an after-commit best effort. The
+        // sender workspace is the primary scope, while the subject projection
+        // makes it independently addressable under the message ID.
+        let (event_scope, event_scope_id) = sender_workspace
+            .as_deref()
+            .map(|id| ("workspace", id))
+            .unwrap_or(("message", message.id.as_str()));
+        let event_seq: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(seq),0)+1 FROM runtime_events WHERE scope=?1 AND scope_id=?2",
+                params![event_scope, event_scope_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed assigning message event sequence", error))?;
+        tx.execute(
+            "INSERT INTO runtime_events
+             (event_id,scope,scope_id,session_id,seq,kind,critical,payload_json,created_at)
+             VALUES (?1,?2,?3,?4,?5,'message.sent',1,?6,?7)",
+            params![
+                format!("agent-message:{}:sent", message.id),
+                event_scope,
+                event_scope_id,
+                message.sender_agent_id,
+                event_seq,
+                json_to_string(&serde_json::json!({
+                    "message_id": message.id,
+                    "workspace_id": sender_workspace,
+                    "scope": message.scope,
+                    "recipient_count": message.recipient_agent_ids.len(),
+                }))?,
+                message.created_at,
+            ],
+        )
+        .map_err(|error| db_error("failed atomically publishing message event", error))?;
+
+        if let Some(workspace_id) = sender_workspace.as_deref() {
             let event = match message.scope.as_str() {
                 "direct" => Some(runtime_core::TeamHookEventName::PostDirectMessageSend),
                 "broadcast" => Some(runtime_core::TeamHookEventName::PostBroadcastMessageSend),
@@ -74,7 +110,7 @@ impl SqliteRuntimeRepository {
             if let Some(event) = event {
                 queue_team_hook_trigger_tx(
                     &tx,
-                    &workspace_id,
+                    workspace_id,
                     event,
                     &format!("workspace-hook:message:{}", message.id),
                     Some(&message.sender_agent_id),

@@ -226,12 +226,17 @@ Session event query parameters:
 The `/v2` streams accept optional `after_seq` (nonnegative), `limit=1..10000`
 (default 2000), and `Last-Event-ID` fallback. The global stream ID is the
 durable event row ID; the three resource streams use their own scoped event
-sequence. Do **not** feed the paginated `GET /v2/events` `cursor` into a scoped
+sequence. The global `/v2/events/stream` additionally accepts optional paired
+`scope` and `scope_id` filters (including derived `turn`, `message`, and
+`operation` subjects); subject streams resume using the global row ID while
+primary scoped streams use their own sequence. A subject-filtered event still
+reports its original parent `scope` and `seq`, without a duplicate journal row.
+Resource streams reject scope overrides. Do **not** feed the paginated `GET /v2/events` `cursor` into a scoped
 SSE stream; unknown query options, duplicate/invalid `Last-Event-ID` and
 nonexistent resource IDs fail before the stream opens. The operator bearer is
 required. The older `/v1` routes remain during migration.
 
-- `GET /v2/events` (Bearer; indexed global-row-ID ascending, optional paired `scope` and `scope_id`, numeric `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for next page, eight-field redacted rows; positive cursor must identify an existing row in the selected global/scoped collection; zero starts from the beginning)
+- `GET /v2/events` (Bearer; indexed global-row-ID ascending, optional paired `scope` and `scope_id` including derived turn/message/operation subjects, numeric `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for next page, eight-field redacted rows; positive cursor must identify an existing row in the selected global/scoped collection; zero starts from the beginning)
 - `GET /v2/events/{event_id}` (Bearer; full event payload/provider diagnostic metadata, exact immutable event ID)
 - `GET /v1/events` (Bearer)
 - `GET /v1/events/stream` (Bearer, SSE)

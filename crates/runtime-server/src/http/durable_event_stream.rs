@@ -20,7 +20,12 @@ pub(super) async fn durable_event_stream(
             "durable event commit notifications are not supported by the runtime store".into(),
         ))
     })?;
-    let scoped = scope.is_some();
+    // Turn/message/operation are secondary subject views of canonical events.
+    // They need global row-ID cursors; pre-existing primary scoped SSE retains
+    // its independent `seq`/Last-Event-ID contract unchanged.
+    let use_row_id = scope
+        .as_ref()
+        .is_none_or(|(kind, _)| kind.is_subject_projection());
     let first_page = store.list_runtime_events(
         scope.as_ref().map(|(kind, id)| (*kind, id.as_str())),
         after,
@@ -50,7 +55,11 @@ pub(super) async fn durable_event_stream(
         loop {
             let count = page.len();
             for record in page {
-                let next = if scoped { record.seq } else { record.row_id };
+                let next = if use_row_id {
+                    record.row_id
+                } else {
+                    record.seq
+                };
                 if next <= cursor {
                     continue;
                 }

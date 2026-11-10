@@ -1393,7 +1393,7 @@ The new **operator-only** `GET /v2/events` lists lightweight, redacted event
 metadata in **global row ID ascending** order. It accepts `cursor` (a
 nonnegative global row ID), `limit` (1–100, default 50), and an optional
 **paired** `scope` / `scope_id` filter. Valid scopes are `session`, `workspace`,
-`team`, `process`, `worktree`, and `system`. The cursor is always the global
+`team`, `process`, `worktree`, `system`, `turn`, `message`, and `operation`. The cursor is always the global
 `row_id`, **including within scoped filters**; it is never the per-scope
 `seq`. The `X-Next-Cursor` response header is present when further rows exist.
 Positive cursors must identify a real event row in the selected global or
@@ -1401,6 +1401,13 @@ Positive cursors must identify a real event row in the selected global or
 HTTP `400` instead of silently skipping history. `cursor=0` is accepted as a
 beginning-of-history sentinel.
 Separate global and scoped SQLite indexes back the bounded reads.
+`turn`, `message`, and `operation` select indexed subject links to canonical
+parent-scoped journal rows rather than generating copies or new per-subject
+sequence numbers. The response retains the event's **original** primary
+`scope`, `scope_id`, and `seq`; these need not equal the requested subject
+filter. New message send and operation admission/transition records are
+published in the same durable transaction as the authority mutation. Earlier
+events are linked where they already carry validated subject metadata.
 
 Each summary includes only `row_id`, `event_id`, `scope`, `scope_id`, `seq`,
 `kind`, `criticality`, and `created_at`. Payloads, provider/native metadata,
@@ -1416,6 +1423,12 @@ and a stream page `limit` between 1 and 10000 (default 2000), and reject
 unknown query fields or duplicate `Last-Event-ID` headers. They check the
 referenced workspace, agent or managed process exists before opening a stream;
 the operator bearer credential is required even for archived/terminal history.
+The global `/v2/events/stream` additionally accepts paired `scope` and
+`scope_id` to follow a single subject or primary scope. For `turn`, `message`,
+and `operation` subjects the SSE event ID and resume cursor are global row IDs
+across the original parent scopes; for other primary scopes, the cursor
+remains the scope-local sequence. Resource-specific streams reject query-level
+scope overrides. Existing `/v1` cursor behavior is unchanged.
 Legacy `/v1` contracts remain unchanged during migration.
 
 Behavior:

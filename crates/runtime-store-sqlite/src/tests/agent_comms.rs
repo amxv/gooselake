@@ -181,6 +181,13 @@ fn new_agent_message_and_deliveries_commit_atomically() {
     let hydrated = repository.hydrate_runtime_state().expect("hydrate");
     assert!(hydrated.agent_messages.is_empty());
     assert!(hydrated.agent_deliveries.is_empty());
+    assert!(
+        repository
+            .list_runtime_events(Some((RuntimeEventScope::Message, &message.id)), None, 10)
+            .unwrap()
+            .is_empty(),
+        "aborted message admission must publish no event"
+    );
 }
 
 #[test]
@@ -238,6 +245,17 @@ fn indexed_delivery_pages_bound_fanout_preserve_equal_timestamp_order_and_filter
     repository
         .insert_agent_message_with_deliveries(&message, &deliveries)
         .expect("message and fanout");
+    let published = repository
+        .list_runtime_events(Some((RuntimeEventScope::Message, &message.id)), None, 10)
+        .expect("atomic message publication");
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0].kind, "message.sent");
+    assert_eq!(published[0].payload["message_id"], message.id);
+    assert_eq!(published[0].payload["recipient_count"], 180);
+    assert!(
+        published[0].payload.get("input").is_none(),
+        "must not leak message body"
+    );
     let connection = open_connection(&temp_dir.path().join("runtime.sqlite3")).expect("db");
     let query_plan: String = connection
         .query_row(

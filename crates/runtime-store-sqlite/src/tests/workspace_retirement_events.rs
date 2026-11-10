@@ -43,7 +43,12 @@ fn command(workspace: &WorkspaceRecord) -> WorkspaceRetirementCommand {
 
 fn event_count(db: &Connection, operation_id: &str) -> i64 {
     db.query_row(
-        "SELECT COUNT(*) FROM runtime_events WHERE json_extract(payload_json,'$.operation_id')=?1",
+        // Count only retirement *state* receipts. Canonical operation
+        // admission/transition metadata also references this operation ID,
+        // but cannot prove an agent was archived or a workspace retired.
+        "SELECT COUNT(*) FROM runtime_events
+         WHERE json_extract(payload_json,'$.operation_id')=?1
+           AND kind IN ('workspace.retirement_started','session.archived','workspace.retired')",
         [operation_id],
         |row| row.get(0),
     )
@@ -112,11 +117,23 @@ fn retirement_events_and_cancelled_notices_are_atomic_exact_and_survive_reopen()
             256,
         )
         .unwrap();
-    assert_eq!(workspace_events.len(), 2);
-    assert_eq!(workspace_events[0].kind, "workspace.retirement_started");
-    assert_eq!(workspace_events[1].kind, "workspace.retired");
+    let retirement_state_events = workspace_events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind.as_str(),
+                "workspace.retirement_started" | "workspace.retired"
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(retirement_state_events.len(), 2);
     assert_eq!(
-        serde_json::to_value(&workspace_events[0]).unwrap()["scope"],
+        retirement_state_events[0].kind,
+        "workspace.retirement_started"
+    );
+    assert_eq!(retirement_state_events[1].kind, "workspace.retired");
+    assert_eq!(
+        serde_json::to_value(retirement_state_events[0]).unwrap()["scope"],
         "workspace"
     );
     let archived = original_events

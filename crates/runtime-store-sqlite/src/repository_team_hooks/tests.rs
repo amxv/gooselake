@@ -593,7 +593,9 @@ fn message_hook_waits_for_delivery_and_terminal_script_before_context_applicatio
         let connection = open_connection(&repo.database_path).unwrap();
         connection.execute(
             "INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at)
-             VALUES('evt_pending_direct','workspace','ws_one',1,'workspace.hook_parent',0,?1,12)",
+             VALUES('evt_pending_direct','workspace','ws_one',
+               (SELECT COALESCE(MAX(seq),0)+1 FROM runtime_events WHERE scope='workspace' AND scope_id='ws_one'),
+               'workspace.hook_parent',0,?1,12)",
             [input.to_string()],
         ).unwrap();
         connection.execute_batch(

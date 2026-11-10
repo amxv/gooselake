@@ -20,8 +20,21 @@ Runtime events are scoped. A scope is the logbook a record belongs to.
 | `process` | runtime-managed command lifecycle and sampled output |
 | `worktree` | worktree creation, claim, release, cleanup |
 | `system` | runtime-level events such as startup recovery |
+| `turn` | indexed subject projection of events linked to a logical turn |
+| `message` | indexed subject projection of messages and linked lifecycle events |
+| `operation` | indexed subject projection of durable operation admission and transitions |
 
-Each scoped event has a scoped sequence number. Global event listing uses the database row ID as the cursor.
+Primary scopes (`session`, `workspace`, `team`, `process`, `worktree`,
+`system`) retain independent sequence numbers. `turn`, `message`, and
+`operation` are secondary **subject projections**, not duplicate journal
+events: their cursor is the stable global `row_id`, even for events originally
+published under several different parent scopes. Returned records retain
+their original `scope`, `scope_id`, `seq`, and `event_id`. SQLite indexes subject
+links in the same transaction as the journal append and versioned migration
+backfills older linked events without rewriting their primary history.
+Message publication and durable operation admission/transitions now append
+redacted events in their own authority transaction. Not every historical
+operation or transition necessarily generated a journal event.
 
 ## Operator history vs live replay
 
@@ -36,6 +49,8 @@ even for events with large/private diagnostic bodies. Inspect an exact event
 with `GET /v2/events/{event_id}` to retrieve its full record and payload.
 The v2 collection uses database indexes, not memory scans; it does not replace
 the `/v1` SSE streams or change their sequence-number contract.
+Subject-filtered summaries retain the original primary `scope` and may
+therefore display a different scope from the requested subject filter.
 
 The operator can subscribe to the same committed journal through
 `GET /v2/events/stream`, `/v2/workspaces/{workspace_id}/events/stream`,
@@ -46,6 +61,10 @@ streams; archived agents and terminal processes remain inspectable. Use
 `after_seq` (or the `Last-Event-ID` header) rather than the **history list's**
 `cursor`. On the global stream it is a SQLite event row ID; on resource
 streams it is a scoped sequence. Agent events use the canonical session scope.
+The global operator stream additionally accepts paired `scope` and `scope_id`.
+When following a `turn`, `message`, or `operation` subject, `after_seq` and
+`Last-Event-ID` are **global row IDs**, never parent-scoped sequence numbers;
+the resource-specific streams reject an overriding query scope.
 `/v1` and `/v2` SSE clients preserve their last received IDs across reconnects.
 
 ## Critical and droppable events

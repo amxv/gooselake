@@ -5,6 +5,98 @@ use runtime_store_sqlite::SqliteRuntimeRepository;
 use super::durable_event_stream_routes::{new_event, observed_sse_ids, stream};
 
 #[tokio::test]
+async fn v2_subject_streams_replay_canonical_rows_across_parent_scopes_and_restart_cursor() {
+    let (router, token, temp, _, _, workspace_id) = super::operator_agent_create::fixture().await;
+    let repository = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    let mut first = new_event(
+        "v2_subject_first",
+        RuntimeEventScope::Session,
+        "sess_parent_one",
+    );
+    first.turn_id = Some("turn_subject_sse".into());
+    first.payload =
+        serde_json::json!({"message_id":"msg_subject_sse", "operation_id":"op_subject_sse"});
+    let first = repository.append_runtime_event(&first).unwrap();
+    let mut second = new_event(
+        "v2_subject_second",
+        RuntimeEventScope::Workspace,
+        &workspace_id,
+    );
+    second.turn_id = Some("turn_subject_sse".into());
+    second.payload =
+        serde_json::json!({"message_id":"msg_subject_sse", "operation_id":"op_subject_sse"});
+    let second = repository.append_runtime_event(&second).unwrap();
+    assert_ne!(first.scope, second.scope);
+    assert!(first.row_id < second.row_id);
+    // The parent's sequence is NOT the derived subject cursor.
+    assert_ne!(second.row_id, second.seq);
+
+    for (scope, id) in [
+        ("turn", "turn_subject_sse"),
+        ("message", "msg_subject_sse"),
+        ("operation", "op_subject_sse"),
+    ] {
+        let uri = format!("/v2/events/stream?scope={scope}&scope_id={id}&limit=1&after_seq=0");
+        observed_sse_ids(
+            stream(&router, &token, &uri, None, None).await,
+            &[first.row_id, second.row_id],
+        )
+        .await;
+        let uri = format!("/v2/events/stream?scope={scope}&scope_id={id}&limit=1");
+        observed_sse_ids(
+            stream(&router, &token, &uri, None, Some(first.row_id)).await,
+            &[second.row_id],
+        )
+        .await;
+        // Redacted paginated list uses the same index and global row ID,
+        // without claiming the canonical event's primary scope changed.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/v2/events?scope={scope}&scope_id={id}&limit=10"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert_eq!(body.as_array().unwrap().len(), 2);
+        assert_eq!(body[0]["row_id"], first.row_id);
+        assert_eq!(body[1]["row_id"], second.row_id);
+        assert_eq!(body[0]["scope"], "session");
+        assert_eq!(body[1]["scope"], "workspace");
+    }
+
+    for uri in [
+        "/v2/events/stream?scope=turn",
+        "/v2/events/stream?scope_id=turn_subject_sse",
+        "/v2/events/stream?scope=turn&scope_id=%20bad",
+        "/v2/events/stream?scope=bogus&scope_id=turn_subject_sse",
+        &format!(
+            "/v2/workspaces/{workspace_id}/events/stream?scope=turn&scope_id=turn_subject_sse"
+        ),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+    }
+}
+
+#[tokio::test]
 async fn v2_global_workspace_agent_and_process_streams_follow_the_same_committed_journal() {
     let (router, token, temp, _provider, _runtime, workspace_id) =
         super::operator_agent_create::fixture().await;

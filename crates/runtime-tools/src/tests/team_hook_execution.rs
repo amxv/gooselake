@@ -508,7 +508,9 @@ async fn persisted_workspace_parent_dispatches_once_and_reconciles_after_restart
     let sql = rusqlite::Connection::open(store.database_path()).unwrap();
     sql.execute(
         "INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at)
-         VALUES(?1,'workspace','ws_hooks',1,'workspace.hook_parent',0,?2,1)",
+         VALUES(?1,'workspace','ws_hooks',
+           (SELECT COALESCE(MAX(seq),0)+1 FROM runtime_events WHERE scope='workspace' AND scope_id='ws_hooks'),
+           'workspace.hook_parent',0,?2,1)",
         rusqlite::params![admitted.parent_event_id, admitted.input.to_string()],
     ).unwrap();
     store.admit_team_hook_effect(&admitted).unwrap();

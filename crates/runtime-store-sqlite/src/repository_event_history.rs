@@ -34,6 +34,12 @@ impl SqliteRuntimeRepository {
         // skip results the caller never observed.
         if let Some(after_id) = after_id.filter(|value| *value > 0) {
             let present: i64 = match scope {
+                Some((kind, id)) if kind.is_subject_projection() => connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM runtime_event_subjects
+                     WHERE event_row_id = ?1 AND subject_scope = ?2 AND subject_id = ?3)",
+                    params![after_id, kind.as_str(), id],
+                    |row| row.get(0),
+                ),
                 Some((kind, id)) => connection.query_row(
                     "SELECT EXISTS(SELECT 1 FROM runtime_events
                      WHERE id = ?1 AND scope = ?2 AND scope_id = ?3)",
@@ -53,15 +59,32 @@ impl SqliteRuntimeRepository {
                 ));
             }
         }
-        let where_clause = match (scope.is_some(), after_id.is_some()) {
-            (true, true) => "WHERE scope = ?1 AND scope_id = ?2 AND id > ?3",
-            (true, false) => "WHERE scope = ?1 AND scope_id = ?2",
-            (false, true) => "WHERE id > ?3",
-            (false, false) => "",
+        let is_subject = scope.is_some_and(|(kind, _)| kind.is_subject_projection());
+        let (source, where_clause, order) = if is_subject {
+            (
+                "runtime_event_subjects s JOIN runtime_events e ON e.id = s.event_row_id",
+                if after_id.is_some() {
+                    "WHERE s.subject_scope = ?1 AND s.subject_id = ?2 AND s.event_row_id > ?3"
+                } else {
+                    "WHERE s.subject_scope = ?1 AND s.subject_id = ?2"
+                },
+                "s.event_row_id",
+            )
+        } else {
+            (
+                "runtime_events e",
+                match (scope.is_some(), after_id.is_some()) {
+                    (true, true) => "WHERE e.scope = ?1 AND e.scope_id = ?2 AND e.id > ?3",
+                    (true, false) => "WHERE e.scope = ?1 AND e.scope_id = ?2",
+                    (false, true) => "WHERE e.id > ?3",
+                    (false, false) => "",
+                },
+                "e.id",
+            )
         };
         let sql = format!(
-            "SELECT id, event_id, scope, scope_id, seq, kind, critical, created_at \
-             FROM runtime_events {where_clause} ORDER BY id ASC LIMIT ?4"
+            "SELECT e.id, e.event_id, e.scope, e.scope_id, e.seq, e.kind, e.critical, e.created_at \
+             FROM {source} {where_clause} ORDER BY {order} ASC LIMIT ?4"
         );
         let mut statement = connection
             .prepare(&sql)

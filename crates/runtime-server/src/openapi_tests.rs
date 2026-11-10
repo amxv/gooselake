@@ -291,7 +291,7 @@ fn v2_query_projection_matches_axum_handler_types_and_real_cursor_headers() {
     assert!(hooks.contains("\"post_direct_message_send\""));
     let events = route_method(yaml, "/v2/events", "get");
     assert!(events.contains(
-        "\"enum\":[\"session\",\"workspace\",\"team\",\"process\",\"worktree\",\"system\"]"
+        "\"enum\":[\"session\",\"workspace\",\"team\",\"process\",\"worktree\",\"system\",\"turn\",\"message\",\"operation\"]"
     ));
     assert!(events.contains("Scope and scope_id must be supplied together"));
 
@@ -311,6 +311,19 @@ fn v2_query_projection_matches_axum_handler_types_and_real_cursor_headers() {
             !op.contains("X-Next-Cursor:"),
             "SSE streams are not keyset lists"
         );
+        if path == "/v2/events/stream" {
+            assert!(op.contains("        - name: scope\n"));
+            assert!(op.contains("        - name: scope_id\n"));
+        } else {
+            assert!(
+                !op.contains("        - name: scope\n"),
+                "resource stream cannot override scope: {path}"
+            );
+            assert!(
+                !op.contains("        - name: scope_id\n"),
+                "resource stream cannot override scope_id: {path}"
+            );
+        }
     }
     for (path, method) in [
         ("/v2/workspaces", "get"),

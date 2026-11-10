@@ -195,7 +195,9 @@ fn operator_recheck_only_releases_independently_terminal_obligations_and_preserv
         VALUES('review-notice',?1,?2,'membership','review-notice-correlation','[]','injecting',101,101)",
         params![workspace.workspace_id,session.id]).unwrap();
     db.execute("INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at)
-        VALUES('review-parent','workspace',?1,1,'test',0,'{}',101)",[&workspace.workspace_id]).unwrap();
+        VALUES('review-parent','workspace',?1,
+          (SELECT COALESCE(MAX(seq),0)+1 FROM runtime_events WHERE scope='workspace' AND scope_id=?1),
+          'test',0,'{}',101)",[&workspace.workspace_id]).unwrap();
     db.execute("INSERT INTO workspace_hook_effects(workspace_id,parent_event_id,event_name,hook_name,
         hook_json,input_json,phase,attempt_count,created_at_ms,updated_at_ms)
         VALUES(?1,'review-parent','post_direct_message_send','review-hook','{}','{}','started',1,101,101)",

@@ -11,6 +11,9 @@ pub enum RuntimeEventScope {
     Process,
     Worktree,
     System,
+    Turn,
+    Message,
+    Operation,
 }
 
 impl RuntimeEventScope {
@@ -22,6 +25,9 @@ impl RuntimeEventScope {
             Self::Process => "process",
             Self::Worktree => "worktree",
             Self::System => "system",
+            Self::Turn => "turn",
+            Self::Message => "message",
+            Self::Operation => "operation",
         }
     }
 
@@ -33,8 +39,17 @@ impl RuntimeEventScope {
             "process" => Some(Self::Process),
             "worktree" => Some(Self::Worktree),
             "system" => Some(Self::System),
+            "turn" => Some(Self::Turn),
+            "message" => Some(Self::Message),
+            "operation" => Some(Self::Operation),
             _ => None,
         }
+    }
+
+    /// These identities are projections of canonical parent-scoped journal
+    /// rows; their cursor is the stable global row ID, never parent `seq`.
+    pub const fn is_subject_projection(self) -> bool {
+        matches!(self, Self::Turn | Self::Message | Self::Operation)
     }
 }
 

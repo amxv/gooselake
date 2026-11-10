@@ -60,7 +60,7 @@ pub(crate) use agent_controls::{
 pub(crate) use auth::{ProviderCapabilitiesResponse, RuntimeCapabilitiesResponse};
 pub(crate) use mcp::ScopedMcpInvokeRequest;
 pub(crate) use messages::{AgentDeliveryListQuery, AgentMessageCreateInput, AgentMessageListQuery};
-pub(crate) use operator_event_streams::OperatorEventStreamQuery;
+pub(crate) use operator_event_streams::{OperatorEventStreamQuery, OperatorGlobalEventStreamQuery};
 pub(crate) use operator_events::OperatorEventHistoryQuery;
 pub(crate) use operator_hook_effects::WorkspaceHookEffectsQuery;
 pub(crate) use operator_processes::OperatorProcessListQuery;

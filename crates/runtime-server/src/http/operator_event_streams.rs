@@ -12,6 +12,50 @@ pub(crate) struct OperatorEventStreamQuery {
     limit: Option<usize>,
 }
 
+/// The global route alone accepts an explicit scope. Resource SSE routes
+/// reject those fields at query decoding and do not advertise them in OpenAPI.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OperatorGlobalEventStreamQuery {
+    #[schemars(range(min = 0))]
+    after_seq: Option<i64>,
+    #[schemars(range(min = 1, max = 10000))]
+    limit: Option<usize>,
+    scope: Option<RuntimeEventScope>,
+    scope_id: Option<String>,
+}
+
+impl OperatorGlobalEventStreamQuery {
+    fn into_scope(
+        self,
+    ) -> Result<
+        (
+            Option<(RuntimeEventScope, String)>,
+            OperatorEventStreamQuery,
+        ),
+        ApiError,
+    > {
+        let scope = match (self.scope, self.scope_id) {
+            (Some(kind), Some(id)) if !id.is_empty() && id.trim() == id && id.len() <= 256 => {
+                Some((kind, id))
+            }
+            (None, None) => None,
+            _ => {
+                return Err(ApiError::bad_request(
+                    "scope and nonempty exact scope_id must be supplied together".into(),
+                ));
+            }
+        };
+        Ok((
+            scope,
+            OperatorEventStreamQuery {
+                after_seq: self.after_seq,
+                limit: self.limit,
+            },
+        ))
+    }
+}
+
 impl OperatorEventStreamQuery {
     fn parse(&self, headers: &HeaderMap) -> Result<(Option<i64>, usize), ApiError> {
         let last_event_id = parse_last_event_id_header(headers)?;
@@ -51,11 +95,12 @@ async fn operator_event_stream(
 
 pub(super) async fn stream_operator_global_events(
     State(state): State<AppState>,
-    Query(query): Query<OperatorEventStreamQuery>,
+    Query(query): Query<OperatorGlobalEventStreamQuery>,
     headers: HeaderMap,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError>
 {
-    operator_event_stream(state, None, query, headers).await
+    let (scope, query) = query.into_scope()?;
+    operator_event_stream(state, scope, query, headers).await
 }
 
 pub(super) async fn stream_operator_workspace_events(

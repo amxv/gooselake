@@ -15,6 +15,7 @@ mod context_status_batch;
 mod event_commit_notifications;
 mod event_cursor_concurrency;
 mod event_cursor_recovery_scale;
+mod event_subject_scopes;
 mod operator_event_pages;
 mod operator_process_pages;
 mod process_completion_authority;

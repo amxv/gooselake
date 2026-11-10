@@ -692,6 +692,8 @@ response, inspect the corresponding GET resource before deciding next steps.
 
 `GET /v2/workspaces/{workspace_id}/worktrees` lists persisted managed worktrees for the workspace's canonical Git repository. Each item includes its logical ID, monotonically increasing persisted-record `revision`, name, branch, path, retention policy, active attached agent IDs, and `eligible_for_assignment` plus explicit `eligibility_blockers`. The response includes the canonical repository root, Git common directory, and repository fingerprint. A stale/missing path, mismatched native branch/repository, or conflicting claim is **not** considered eligible. The worktree revision changes on persisted record updates; it is independent of the workspace-agent revision and Git commit.
 
+With SQLite storage, inventory reads one repository-scoped worktree/revision/active-claim snapshot instead of loading the full runtime history or querying each worktree revision separately. Historical repository-root path aliases are resolved to the same canonical Git root; released claims are excluded from the conflict check. Attached agent IDs remain derived from the **active workspace roster**, not claim ownership alone. The index-backed projection is read-only; Git identity and routing eligibility are reverified when inventory is requested.
+
 Inventory output is bounded with `limit=1..100` (default 50) and an optional
 opaque `cursor`. When more records remain, follow the response's
 `X-Next-Cursor` as `?cursor=...` on the next request. Ordering uses the stable

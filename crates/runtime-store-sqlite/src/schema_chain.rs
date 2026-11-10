@@ -97,4 +97,8 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 24,
         sql: MIGRATION_24_SQL,
     },
+    Migration {
+        version: 25,
+        sql: MIGRATION_25_SQL,
+    },
 ];

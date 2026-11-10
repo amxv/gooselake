@@ -7,7 +7,7 @@ use runtime_core::{
 
 use rusqlite::TransactionBehavior;
 
-fn apply_schema_through(database_path: &std::path::Path, version: i64) {
+pub(super) fn apply_schema_through(database_path: &std::path::Path, version: i64) {
     let mut connection = open_connection(database_path).expect("connection");
     for migration in crate::schema::MIGRATIONS
         .iter()

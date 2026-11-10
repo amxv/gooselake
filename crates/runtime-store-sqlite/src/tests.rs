@@ -27,6 +27,7 @@ mod workspace_retirement_review;
 mod workspace_retirement_review_recovery;
 mod workspace_retirement_review_turns;
 mod workspace_retirement_routes;
+mod worktree_status_projection;
 
 fn repo(temp_dir: &tempfile::TempDir) -> SqliteRuntimeRepository {
     SqliteRuntimeRepository::new(temp_dir.path().join("runtime.sqlite3"))

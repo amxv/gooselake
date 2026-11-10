@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -39,16 +40,26 @@ impl RuntimeSessionManager {
             .get_workspace(workspace_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace {workspace_id}")))?;
         let identity = resolve_repository_identity(Path::new(&workspace.canonical_root))?;
-        let state = self.store.hydrate_runtime_state()?;
+        let scoped = self
+            .store
+            .list_managed_worktree_status_for_root(&identity.canonical_root)?;
         let agents = self.store.list_workspace_agents(workspace_id, None)?;
+        let mut attached_by_cwd: HashMap<&str, Vec<String>> = HashMap::new();
+        for agent in agents
+            .iter()
+            .filter(|agent| agent.lifecycle_state == WorkspaceAgentLifecycleState::Active)
+        {
+            attached_by_cwd
+                .entry(agent.recreation_policy.authoritative_cwd.as_str())
+                .or_default()
+                .push(agent.agent_id.clone());
+        }
+        for attached in attached_by_cwd.values_mut() {
+            attached.sort();
+        }
         let mut worktrees = Vec::new();
-        for record in state.managed_worktrees {
-            let Ok(repository_root) = std::fs::canonicalize(&record.repo_root) else {
-                continue;
-            };
-            if repository_root != Path::new(&identity.canonical_root) {
-                continue;
-            }
+        for projection in scoped {
+            let record = projection.worktree;
             if record.worktree_cwd.starts_with("__gg_tombstoned__/") {
                 continue;
             }
@@ -59,20 +70,15 @@ impl RuntimeSessionManager {
             if let Err(reason) = eligible_managed_route(&identity, &record) {
                 blockers.push(reason);
             }
-            let mut attached_agent_ids = agents
+            let attached_agent_ids = attached_by_cwd
+                .get(record.worktree_cwd.as_str())
+                .cloned()
+                .unwrap_or_default();
+            if projection
+                .active_claim_session_ids
                 .iter()
-                .filter(|agent| {
-                    agent.lifecycle_state == WorkspaceAgentLifecycleState::Active
-                        && agent.recreation_policy.authoritative_cwd == record.worktree_cwd
-                })
-                .map(|agent| agent.agent_id.clone())
-                .collect::<Vec<_>>();
-            attached_agent_ids.sort();
-            if state.managed_worktree_claims.iter().any(|claim| {
-                claim.worktree_id == record.id
-                    && claim.released_at.is_none()
-                    && !attached_agent_ids.contains(&claim.session_id)
-            }) {
+                .any(|session_id| attached_agent_ids.binary_search(session_id).is_err())
+            {
                 blockers.push("claim_conflicts_with_workspace_roster".to_string());
             }
             let routing_state = if blockers.is_empty() {
@@ -80,10 +86,9 @@ impl RuntimeSessionManager {
             } else {
                 "blocked"
             };
-            let revision = self.store.managed_worktree_revision(&record.id)?;
             worktrees.push(WorkspaceWorktreeInventoryEntry {
                 worktree_id: record.id,
-                revision,
+                revision: projection.revision,
                 normalized_name: record.worktree_name,
                 branch_name: record.branch_name,
                 worktree_path: record.worktree_cwd,

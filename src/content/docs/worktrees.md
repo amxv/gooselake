@@ -14,6 +14,8 @@ That separation is the core idea: a worktree can exist independently, and one or
 
 Normal agents belong to one workspace. Use `GET /v2/workspaces/{workspace_id}/worktrees` to inspect managed checkouts for that workspace's canonical Git repository, including native Git identity, attached agents, retention policy, revision, and any assignment blockers. Create or reuse a named checkout with `POST /v2/workspaces/{workspace_id}/worktrees`:
 
+The SQLite inventory reads only matching repository worktrees and their live claims in one database snapshot, while native Git checks still determine whether each route is actually usable. Historical aliases of the repository root remain visible; a released claim cannot block assignment, but a live claim outside the active roster can.
+
 ```bash
 curl -X POST "$BASE_URL/v2/workspaces/$WORKSPACE_ID/worktrees" \
   "${AUTH[@]}" -H 'Content-Type: application/json' \

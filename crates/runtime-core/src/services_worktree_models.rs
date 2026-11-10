@@ -7,6 +7,16 @@ use crate::{
     TeamMemberRecord, TeamOperationDiagnosticRecord,
 };
 
+/// Durable, repository-scoped status snapshot. SQLite joins each worktree's
+/// revision and active claim identities without hydrating unrelated runtime
+/// history or issuing a point query per worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedWorktreeStatusProjection {
+    pub worktree: ManagedWorktreeRecord,
+    pub revision: u64,
+    pub active_claim_session_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorktreeCreateRequest {
     pub team_id: Option<String>,

@@ -797,6 +797,7 @@ pub trait RuntimeStore:
         unsupported_store("paged agent delivery reads unavailable")
     }
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError>;
+    crate::services_worktree_status_trait::default_worktree_status_query!();
     fn managed_worktree_revision(&self, _worktree_id: &str) -> Result<u64, RuntimeError> {
         unsupported_store("managed worktree revision unavailable")
     }

@@ -6,18 +6,17 @@ use runtime_core::{
     ApprovalRecord, CompactionObservationReceipt, LegacyWorkspaceMigrationApplyCommand,
     LegacyWorkspaceMigrationApplyResponse, LegacyWorkspaceMigrationResolutionCommand,
     LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
-    ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
-    ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
-    OperationSummary, OperatorProcessSummary, ProcessCompletionUpdate, ProcessRecord,
-    ProcessSchedulerSettings, ProviderCompactionObservation, ProviderWorkspaceRebindEvidence,
-    RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, RuntimeStore,
-    SessionCompactionRun, SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord,
-    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState,
-    WorkspaceAgentRebindOperation, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
-    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
-    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRegisterCommand,
-    WorkspaceRegisterResponse,
+    ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate, NewRuntimeEvent,
+    OperationDetails, OperationSummary, OperatorProcessSummary, ProcessCompletionUpdate,
+    ProcessRecord, ProcessSchedulerSettings, ProviderCompactionObservation,
+    ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
+    RuntimeHydratedState, RuntimeStore, SessionCompactionRun, SessionEditRerunOperation,
+    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
+    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
+    WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
+    WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
+    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
 };
 use runtime_core::{
     TeamHookApproval, TeamHookApprovalMutationCommand, TeamHookApprovalMutationResponse,
@@ -780,18 +779,7 @@ impl RuntimeStore for SqliteRuntimeStore {
             .list_agent_delivery_records_page(request, cursor, limit)
     }
 
-    fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError> {
-        self.repository.upsert_managed_worktree(record)
-    }
-    fn managed_worktree_revision(&self, worktree_id: &str) -> Result<u64, RuntimeError> {
-        self.repository.managed_worktree_revision(worktree_id)
-    }
-    fn upsert_managed_worktree_claim(
-        &self,
-        record: &ManagedWorktreeClaimRecord,
-    ) -> Result<(), RuntimeError> {
-        self.repository.upsert_managed_worktree_claim(record)
-    }
+    crate::store_worktree_status::delegate_worktree_status!();
     fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_process(record)
     }

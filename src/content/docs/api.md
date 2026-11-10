@@ -155,7 +155,10 @@ runtime/provider capability/model/skill discovery contracts. Worktree
 creation (including its workspace-scoped input), worktree inventory and rebind
 request/operation inspection, agent archive input and onboarding notices,
 revisioned notice policy, and redacted operator process history/detail now
-also use the real Rust DTOs. These schemas
+also use the real Rust DTOs. Operator user-turn submission/acceptance,
+nullable provider context snapshots and explicit refresh, durable compaction
+status/review, and revisioned current-preference/permission writes are typed
+from their actual public handler and runtime contracts. These schemas
 preserve the actual `serde` field names, required
 properties, enums, nullability, nested records and unknown-field behavior.
 For example, registration and lead/retirement requests reject unknown JSON
@@ -178,6 +181,19 @@ objects and still-accepted legacy arrays. Model discovery's `startup_mode`
 enum and the response's supported/agent-managed/unsupported distinctions
 are also typed. Both `/v2/providers/{provider}/models/discover` and
 `skills/discover` publish a JSON request body in OpenAPI.
+
+For `POST /v2/agents/{agent_id}/turns`, `input` is the required ordered
+provider-native JSON block array; optional `turn_settings` carries typed
+`thinking_effort` and per-turn `codex_collaboration_mode`. Internal provenance
+fields are deliberately rejected. `GET /v2/agents/{agent_id}/context-limit`
+returns either the exact current-provider observation or JSON `null`, never
+an inferred estimate. Compaction run responses include their durable phase,
+native result (accepted/not-performed where observed), and review metadata;
+explicit review accepts only its documented `phase` and `evidence`. Current
+preference/permission writes require `expected_revision` and return a revised
+typed result. The permission-intent request schema retains the real parser's
+canonical tagged object, legacy string and explicit null compatibility; it
+does not claim legacy forms have been removed.
 
 **Other** endpoints still use broad `JsonObject` request/response placeholders
 until their real Rust DTOs are connected. In particular, a typed worktree rebind

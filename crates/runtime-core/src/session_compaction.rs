@@ -1,10 +1,11 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{ProviderCompactSessionOutcome, ProviderKind, RuntimeError};
 
 /// Durable manager-owned compaction request. Accepted is not the same as a
 /// completed provider compaction; observed terminal evidence advances it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionCompactionRun {
     pub run_id: String,
     pub agent_id: String,

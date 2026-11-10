@@ -52,6 +52,17 @@ components:
     WorkspaceSystemNoticeRecord: {"title":"WorkspaceSystemNoticeRecord","type":"object","properties":{"attempt_count":{"type":"integer","format":"uint32","minimum":0},"correlation_id":{"type":"string"},"created_at_ms":{"type":"integer","format":"int64"},"input":{"type":"array","items":true},"kind":{"type":"string"},"last_error":{"type":["string","null"]},"notice_id":{"type":"string"},"recipient_agent_id":{"type":"string"},"state":{"type":"string"},"turn_id":{"type":["string","null"]},"updated_at_ms":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"required":["notice_id","workspace_id","recipient_agent_id","kind","correlation_id","input","state","turn_id","attempt_count","last_error","created_at_ms","updated_at_ms"]}
     OperatorProcessSummaryList: {"title":"Array_of_OperatorProcessSummary","type":"array","items":{"description":"Bounded operator history projection. Commands, native PIDs, log paths,\ninvocation identities, and diagnostic errors stay in the single-process\ndetail endpoint rather than being materialized in list responses.","type":"object","properties":{"admitted_at":{"type":"integer","format":"int64"},"completion_state":{"type":"string"},"ended_at":{"type":["integer","null"],"format":"int64"},"owner_agent_id":{"type":["string","null"]},"process_id":{"type":"string"},"started_at":{"type":["integer","null"],"format":"int64"},"status":{"type":"string"},"workspace_id":{"type":["string","null"]}},"required":["process_id","workspace_id","owner_agent_id","status","admitted_at","started_at","ended_at","completion_state"]}}
     ProcessDetails: {"title":"ProcessDetails","type":"object","properties":{"exit_code":{"type":["integer","null"],"format":"int64"},"process":{"type":"object","properties":{"command":true,"cwd":{"type":["string","null"]},"ended_at":{"type":["integer","null"],"format":"int64"},"pid":{"type":["integer","null"],"format":"int64"},"process_id":{"type":"string"},"session_id":{"type":["string","null"]},"started_at":{"type":"integer","format":"int64"},"status":{"type":"string"}},"required":["process_id","session_id","pid","status","command","cwd","started_at","ended_at"]},"signal":{"type":["integer","null"],"format":"int64"},"stderr_bytes":{"type":"integer","format":"uint","minimum":0},"stderr_path":{"type":["string","null"]},"stderr_truncated":{"type":"boolean"},"stdout_bytes":{"type":"integer","format":"uint","minimum":0},"stdout_path":{"type":["string","null"]},"stdout_truncated":{"type":"boolean"},"timeout_ms":{"type":["integer","null"],"format":"int64"}},"required":["process","exit_code","signal","timeout_ms","stdout_path","stderr_path","stdout_bytes","stderr_bytes","stdout_truncated","stderr_truncated"]}
+    PublicSendTurnInput: {"title":"PublicSendTurnInput","type":"object","properties":{"expected_turn_id":{"type":["string","null"]},"input":{"type":"array","items":true},"permission_mode":{"type":["string","null"]},"turn_settings":{"description":"Turn selection. Explicit thinking effort updates the revisioned current\nsession preference before logical admission; omission inherits the current\npreference. Codex collaboration stays specific to this one turn.","type":"object","properties":{"codex_collaboration_mode":{"description":"Codex collaboration is selected on a logical turn, not persisted as a\nsession permission or silently inferred from the current model.","type":["string","null"],"enum":["default","plan",null]},"thinking_effort":{"type":["string","null"],"enum":["low","medium","high","xhigh","max",null]}},"additionalProperties":false,"default":{}}},"additionalProperties":false,"required":["input"]}
+    SendTurnAccepted: {"title":"SendTurnAccepted","type":"object","properties":{"session_id":{"type":"string"},"status":{"type":"string"},"turn_id":{"type":"string"}},"required":["session_id","turn_id","status"]}
+    NullableSessionContextLimitSnapshot: {"title":"Nullable_SessionContextLimitSnapshot","description":"Provider-reported context usage for the exact active agent attachment.\nNo percentage is inferred from display history or retained turn messages.","type":["object","null"],"properties":{"agent_id":{"type":"string"},"agent_revision":{"type":"integer","format":"uint64","minimum":0},"canonical_provider_session_ref":{"type":["string","null"]},"last_total_tokens":{"type":"integer","format":"uint64","minimum":0},"model_context_window":{"type":"integer","format":"uint64","minimum":0},"observed_at_ms":{"type":"integer","format":"int64"},"observed_turn_id":{"type":["string","null"]},"provider":{"type":"string","enum":["codex","claude","acp"]},"provider_session_ref":{"type":"string"},"remaining_percentage":{"type":"integer","format":"uint8","maximum":255,"minimum":0}},"required":["agent_id","provider","provider_session_ref","canonical_provider_session_ref","agent_revision","observed_at_ms","observed_turn_id","model_context_window","last_total_tokens","remaining_percentage"]}
+    SessionContextLimitSnapshot: {"title":"SessionContextLimitSnapshot","description":"Provider-reported context usage for the exact active agent attachment.\nNo percentage is inferred from display history or retained turn messages.","type":"object","properties":{"agent_id":{"type":"string"},"agent_revision":{"type":"integer","format":"uint64","minimum":0},"canonical_provider_session_ref":{"type":["string","null"]},"last_total_tokens":{"type":"integer","format":"uint64","minimum":0},"model_context_window":{"type":"integer","format":"uint64","minimum":0},"observed_at_ms":{"type":"integer","format":"int64"},"observed_turn_id":{"type":["string","null"]},"provider":{"type":"string","enum":["codex","claude","acp"]},"provider_session_ref":{"type":"string"},"remaining_percentage":{"type":"integer","format":"uint8","maximum":255,"minimum":0}},"required":["agent_id","provider","provider_session_ref","canonical_provider_session_ref","agent_revision","observed_at_ms","observed_turn_id","model_context_window","last_total_tokens","remaining_percentage"]}
+    SessionCompactionRun: {"title":"SessionCompactionRun","description":"Durable manager-owned compaction request. Accepted is not the same as a\ncompleted provider compaction; observed terminal evidence advances it.","type":"object","properties":{"agent_id":{"type":"string"},"agent_revision":{"type":"integer","format":"uint64","minimum":0},"canonical_provider_session_ref":{"type":["string","null"]},"confidence":{"type":["string","null"]},"context_window_size":{"type":["integer","null"],"format":"uint64","minimum":0},"created_at_ms":{"type":"integer","format":"int64"},"error_code":{"type":["string","null"]},"expected_session_updated_at":{"type":"integer","format":"int64"},"idempotency_key":{"type":["string","null"]},"observed_turn_id":{"type":["string","null"]},"outcome":{"type":["string","null"],"enum":["accepted","not_performed",null]},"phase":{"type":"string"},"post_tokens":{"type":["integer","null"],"format":"uint64","minimum":0},"pre_tokens":{"type":["integer","null"],"format":"uint64","minimum":0},"provider":{"type":"string","enum":["codex","claude","acp"]},"provider_session_ref":{"type":"string"},"review_evidence":{"type":["string","null"]},"run_id":{"type":"string"},"source":{"description":"Manual requests and unsolicited provider observations share one\ndurable lifecycle. Missing source on old records means manual.","type":"string","default":"manual"},"trigger":{"type":["string","null"]},"updated_at_ms":{"type":"integer","format":"int64"}},"required":["run_id","agent_id","provider","provider_session_ref","canonical_provider_session_ref","agent_revision","expected_session_updated_at","idempotency_key","phase","outcome","error_code","source","created_at_ms","updated_at_ms"]}
+    ManualCompactionReviewInput: {"title":"ManualCompactionReviewInput","type":"object","properties":{"evidence":{"type":"string"},"phase":{"type":"string"}},"additionalProperties":false,"required":["phase","evidence"]}
+    EditReviewInput: {"title":"EditReviewInput","type":"object","properties":{"evidence":{"type":"string"}},"additionalProperties":false,"required":["evidence"]}
+    UpdateAgentPreferencesInput: {"title":"UpdateAgentPreferencesInput","type":"object","properties":{"current_preferences":{"type":"object","properties":{"thinking_effort":{"type":["string","null"],"enum":["low","medium","high","xhigh","max",null]}},"additionalProperties":false},"expected_revision":{"type":"integer","format":"uint64","minimum":0}},"additionalProperties":false,"required":["expected_revision","current_preferences"]}
+    ProviderSessionPreferencesMutationResult: {"title":"ProviderSessionPreferencesMutationResult","type":"object","properties":{"current_preferences":{"type":"object","properties":{"thinking_effort":{"type":["string","null"],"enum":["low","medium","high","xhigh","max",null]}},"additionalProperties":false},"revision":{"type":"integer","format":"uint64","minimum":0}},"required":["revision","current_preferences"]}
+    UpdateAgentPermissionInput: {"title":"UpdateAgentPermissionInput","type":"object","properties":{"expected_revision":{"type":"integer","format":"uint64","minimum":0},"permission_intent":{"anyOf":[{"anyOf":[{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"provider_default"}},"additionalProperties":false,"required":["kind"]},{"type":"object","properties":{"kind":{"type":"string","const":"inherit_provider_configuration"}},"additionalProperties":false,"required":["kind"]},{"type":"object","properties":{"kind":{"type":"string","const":"explicit"},"mode":{"type":"string"}},"additionalProperties":false,"required":["kind","mode"]}]},{"type":"string"}]},{"type":"null"}]}},"additionalProperties":false,"required":["expected_revision","permission_intent"]}
+    ProviderPermissionMutationResult: {"title":"ProviderPermissionMutationResult","type":"object","properties":{"permission_intent":{"anyOf":[{"anyOf":[{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"provider_default"}},"additionalProperties":false,"required":["kind"]},{"type":"object","properties":{"kind":{"type":"string","const":"inherit_provider_configuration"}},"additionalProperties":false,"required":["kind"]},{"type":"object","properties":{"kind":{"type":"string","const":"explicit"},"mode":{"type":"string"}},"additionalProperties":false,"required":["kind","mode"]}]},{"type":"string"}]},{"type":"null"}]},"revision":{"type":"integer","format":"uint64","minimum":0}},"required":["revision","permission_intent"]}
 paths:
   /health:
     get:
@@ -1152,7 +1163,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/SessionCompactionRun"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -1183,7 +1194,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/SessionCompactionRun"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -1213,14 +1224,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/ManualCompactionReviewInput"
       responses:
         "200":
           description: JSON response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/SessionCompactionRun"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -1246,7 +1257,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/NullableSessionContextLimitSnapshot"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -1272,7 +1283,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/SessionContextLimitSnapshot"
         default:
           description: Typed operator API error response (4xx or 5xx)
           headers:
@@ -1333,7 +1344,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/EditReviewInput"
       responses:
         "200":
           description: JSON response
@@ -1465,7 +1476,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/UpdateAgentPermissionInput"
       responses:
         "200":
           description: JSON response
@@ -1477,7 +1488,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/ProviderPermissionMutationResult"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
           content:
@@ -1513,7 +1524,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/UpdateAgentPreferencesInput"
       responses:
         "200":
           description: JSON response
@@ -1525,7 +1536,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/ProviderSessionPreferencesMutationResult"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
           content:
@@ -1561,7 +1572,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/PublicSendTurnInput"
       responses:
         "200":
           description: JSON response
@@ -1573,7 +1584,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/SendTurnAccepted"
         "409":
           description: Conflict or unresolved native effect; inspect the operation without retrying the effect
           headers:

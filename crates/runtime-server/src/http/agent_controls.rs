@@ -32,9 +32,9 @@ pub(super) async fn get_agent_edit_operation(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct EditReviewInput {
+pub(crate) struct EditReviewInput {
     evidence: String,
 }
 
@@ -80,9 +80,9 @@ pub(super) async fn get_agent_compaction_run(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ManualCompactionReviewInput {
+pub(crate) struct ManualCompactionReviewInput {
     phase: String,
     evidence: String,
 }
@@ -163,9 +163,9 @@ pub(super) async fn refresh_agent_context_limit(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct UpdateAgentPreferencesInput {
+pub(crate) struct UpdateAgentPreferencesInput {
     expected_revision: u64,
     current_preferences: ProviderSessionPreferences,
 }
@@ -198,9 +198,9 @@ pub(super) async fn update_agent_preferences(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct UpdateAgentPermissionInput {
+pub(crate) struct UpdateAgentPermissionInput {
     expected_revision: u64,
     permission_intent: ProviderPermissionIntent,
 }

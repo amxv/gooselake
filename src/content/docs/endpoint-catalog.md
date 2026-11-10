@@ -347,8 +347,12 @@ responses also have Rust-derived schemas, including tagged and legacy
 setting-source input forms. Managed-worktree creation/inventory, rebind
 request and operation-detail inspection, agent archive request and onboarding
 notice, notice-policy GET/PUT and redacted process history/full process detail
-now use real Rust-derived DTOs too; the composite rebind mutation response
-is still unconverted. Treat this catalog + code as the reliable source for:
+now use real Rust-derived DTOs too. User-turn input/accepted receipt, context
+observation or null, compaction lifecycle/review, and revisioned preference
+and permission mutation contracts are also Rust-derived, including the
+permission parser's canonical tagged, legacy-string and null input forms.
+The composite rebind mutation response is still unconverted. Treat this
+catalog + code as the reliable source for:
 - endpoint existence and grouping
 - auth requirements
 - stream vs replay endpoints

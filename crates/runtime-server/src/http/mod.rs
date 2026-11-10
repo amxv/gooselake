@@ -53,8 +53,13 @@ mod workspaces;
 
 // Expose the actual handler DTOs to the typed contract generator, not alternate
 // schema-only copies that might drift from serde behavior.
+pub(crate) use agent_controls::{
+    EditReviewInput, ManualCompactionReviewInput, UpdateAgentPermissionInput,
+    UpdateAgentPreferencesInput,
+};
 pub(crate) use auth::{ProviderCapabilitiesResponse, RuntimeCapabilitiesResponse};
 pub(crate) use messages::AgentMessageCreateInput;
+pub(crate) use sessions::PublicSendTurnInput;
 pub(crate) use v2_contract::OperatorErrorResponse;
 pub(crate) use workspaces::WorkspaceWorktreeCreateInput;
 mod worktrees;

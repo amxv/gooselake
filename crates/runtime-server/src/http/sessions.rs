@@ -68,9 +68,9 @@ pub(super) async fn close_session(
     Ok(Json(session))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct PublicSendTurnInput {
+pub(crate) struct PublicSendTurnInput {
     input: Vec<Value>,
     expected_turn_id: Option<String>,
     permission_mode: Option<String>,

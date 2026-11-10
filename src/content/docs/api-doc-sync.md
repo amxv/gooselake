@@ -115,7 +115,9 @@ Docs-signal files:
 - Rust-derived schemas for workspace authority/operations, operator
   messages/deliveries and provider capability/model/skill discovery, managed
   worktree create/inventory/rebind requests, notice policy, onboarding notice,
-  and process list/detail, including
+  process list/detail, user-turn admission, provider context observations,
+  compaction lifecycle/review, and revisioned agent preference/permission
+  mutation contracts, including
   required fields, nullable fields, custom backward-compatible input forms
   and enums
 - typed operator `/v2` error responses (including conflict and revision error

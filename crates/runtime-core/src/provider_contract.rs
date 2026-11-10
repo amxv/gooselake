@@ -42,7 +42,7 @@ pub enum ProviderThinkingEffort {
 
 /// Codex collaboration is selected on a logical turn, not persisted as a
 /// session permission or silently inferred from the current model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CodexCollaborationMode {
     Default,
@@ -61,7 +61,7 @@ impl CodexCollaborationMode {
 /// Turn selection. Explicit thinking effort updates the revisioned current
 /// session preference before logical admission; omission inherits the current
 /// preference. Codex collaboration stays specific to this one turn.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderTurnSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,7 +117,7 @@ impl Default for ProviderPermissionIntent {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum StructuredPermissionIntent {
     ProviderDefault {},
@@ -125,11 +125,24 @@ enum StructuredPermissionIntent {
     Explicit { mode: String },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 #[serde(untagged)]
 enum PermissionIntentWire {
     Structured(StructuredPermissionIntent),
     Legacy(String),
+}
+
+// Preserve the real deserializer's accepted tagged, legacy-string and null
+// forms in OpenAPI. A schema for only the canonical Serialize enum would
+// falsely reject accepted old requests and default/null inputs.
+impl JsonSchema for ProviderPermissionIntent {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ProviderPermissionIntent".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        <Option<PermissionIntentWire> as JsonSchema>::json_schema(generator)
+    }
 }
 
 impl<'de> Deserialize<'de> for ProviderPermissionIntent {
@@ -366,7 +379,7 @@ impl ProviderSettingSourcesIntent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderSessionPreferences {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -381,7 +394,7 @@ pub struct ProviderPermissionMutationRequest {
     pub permission_intent: ProviderPermissionIntent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderPermissionMutationResult {
     pub revision: u64,
     pub permission_intent: ProviderPermissionIntent,
@@ -395,7 +408,7 @@ pub struct ProviderSessionPreferencesMutationRequest {
     pub current_preferences: ProviderSessionPreferences,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderSessionPreferencesMutationResult {
     pub revision: u64,
     pub current_preferences: ProviderSessionPreferences,
@@ -522,7 +535,7 @@ pub struct ProviderSkillDiscoveryResponse {
     pub skills: Vec<ProviderSkillDescriptor>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderContextLimitObservation {
     pub model_context_window: u64,
     pub last_total_tokens: u64,
@@ -531,7 +544,7 @@ pub struct ProviderContextLimitObservation {
 
 /// Provider-reported context usage for the exact active agent attachment.
 /// No percentage is inferred from display history or retained turn messages.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionContextLimitSnapshot {
     pub agent_id: String,
     pub provider: ProviderKind,
@@ -582,7 +595,7 @@ pub struct ProviderCompactSessionRequest {
     pub runtime_session_id: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderCompactSessionOutcome {
     Accepted,

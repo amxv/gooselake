@@ -1434,6 +1434,9 @@ Behavior:
   cannot duplicate global or scope-local cursors, and fresh runtime stores
   can resume global, workspace, agent and process SSE streams after restart
   without replaying the last acknowledged event
+- a committed 320-event real SQLite burst proves a bounded SSE output queue
+  and an overrun in-process notification ring cannot lose or duplicate event
+  rows: the stream recovers all IDs in order from indexed journal pages
 - process streams check owner/workspace visibility through the process manager
   before opening their scoped journal stream
 - `after_seq` query param takes precedence

@@ -89,6 +89,12 @@ to replay and reconnect across global, workspace, agent and process streams.
 The append transaction serializes scope-sequence allocation; retained journal
 rows remain the authority after restart, not the former stream's memory.
 
+A bounded-output SSE lag stress regression holds back a client while 320
+independent events commit, proves a separate notification subscriber overran
+the 256-entry broadcast ring, then drains the stream and verifies all 320
+global row IDs arrived exactly once and in journal order. Coalesced or lost
+notification pulses never replace durable replay.
+
 ## Cursor rules
 
 The runtime supports both explicit query cursors and the SSE `Last-Event-ID` header.

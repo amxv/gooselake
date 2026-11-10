@@ -4,10 +4,11 @@ use runtime_core::{
     AgentDeliveryListRequest, AgentDirectMessageRequest, AgentMessageListRequest,
     AgentRetryDeliveryRequest, OperationActor,
 };
+use schemars::JsonSchema;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(super) struct AgentMessageCreateInput {
+pub(crate) struct AgentMessageCreateInput {
     mode: String,
     sender_agent_id: String,
     recipient_agent_id: Option<String>,

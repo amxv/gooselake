@@ -1,5 +1,22 @@
 use super::*;
 use axum::http::HeaderValue;
+use schemars::JsonSchema;
+
+/// Canonical operator error JSON; this is also the Rust-owned OpenAPI source.
+/// The agent-scoped MCP gateway intentionally has a separate error contract.
+#[derive(Debug, Serialize, JsonSchema)]
+pub(crate) struct OperatorErrorResponse {
+    error: OperatorErrorDetails,
+    request_id: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+struct OperatorErrorDetails {
+    code: String,
+    message: String,
+    retryable: bool,
+    details: Option<Value>,
+}
 
 /// Errors from application handlers carry typed facts through response
 /// extensions; framework rejections (JSON/query/method/path) are normalized
@@ -47,15 +64,15 @@ pub(super) async fn v2_operator_response_contract(request: Request<Body>, next: 
             .map(str::to_owned);
         (
             status,
-            Json(serde_json::json!({
-                "error": {
-                    "code":code,
-                    "message":message,
-                    "retryable":retryable,
-                    "details":details,
+            Json(OperatorErrorResponse {
+                error: OperatorErrorDetails {
+                    code,
+                    message,
+                    retryable,
+                    details,
                 },
-                "request_id": request_id,
-            })),
+                request_id: request_id.clone(),
+            }),
         )
             .into_response()
     } else {

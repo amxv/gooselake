@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
+#[path = "openapi_contracts.rs"]
+mod contracts;
 #[path = "openapi_revision.rs"]
 mod revision;
 
@@ -66,6 +68,7 @@ fn build_openapi_yaml() -> String {
     out.push_str("    JsonObject:\n");
     out.push_str("      type: object\n");
     out.push_str("      additionalProperties: true\n");
+    contracts::append_schema_components(&mut out);
     out.push_str("paths:\n");
     for (path, route) in routes {
         out.push_str(&format!("  {}:\n", path));
@@ -603,7 +606,10 @@ fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
     } else {
         out.push_str("          application/json:\n");
         out.push_str("            schema:\n");
-        out.push_str("              $ref: \"#/components/schemas/JsonObject\"\n");
+        let schema = contracts::request_schema_name(path, method).unwrap_or("JsonObject");
+        out.push_str(&format!(
+            "              $ref: \"#/components/schemas/{schema}\"\n"
+        ));
     }
 }
 
@@ -721,7 +727,10 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
     out.push_str("          content:\n");
     out.push_str("            application/json:\n");
     out.push_str("              schema:\n");
-    out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
+    let schema = contracts::response_schema_name(path, method).unwrap_or("JsonObject");
+    out.push_str(&format!(
+        "                $ref: \"#/components/schemas/{schema}\"\n"
+    ));
     if method == HttpMethod::Post
         && matches!(
             path,
@@ -745,7 +754,7 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("          content:\n");
         out.push_str("            application/json:\n");
         out.push_str("              schema:\n");
-        out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
+        out.push_str("                $ref: \"#/components/schemas/OperatorErrorResponse\"\n");
     }
     if method == HttpMethod::Post && path == "/v2/workspaces/{workspace_id}/retirement/advance" {
         out.push_str("        \"202\":\n");
@@ -760,10 +769,22 @@ fn append_response(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("          content:\n");
         out.push_str("            application/json:\n");
         out.push_str("              schema:\n");
-        out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
+        out.push_str("                $ref: \"#/components/schemas/OperationDetails\"\n");
     }
     if revision::accepts_revision_precondition(path, method) {
         revision::append_revision_precondition_failure(out);
+    }
+    if path.starts_with("/v2/") && !path.starts_with("/v2/mcp/") {
+        out.push_str("        default:\n");
+        out.push_str("          description: Typed operator API error response (4xx or 5xx)\n");
+        out.push_str("          headers:\n");
+        out.push_str("            X-Request-ID:\n");
+        out.push_str("              schema:\n");
+        out.push_str("                type: string\n");
+        out.push_str("          content:\n");
+        out.push_str("            application/json:\n");
+        out.push_str("              schema:\n");
+        out.push_str("                $ref: \"#/components/schemas/OperatorErrorResponse\"\n");
     }
 }
 

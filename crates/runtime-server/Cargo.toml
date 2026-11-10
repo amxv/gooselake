@@ -22,6 +22,7 @@ runtime-store-sqlite = { path = "../runtime-store-sqlite" }
 runtime-tools = { path = "../runtime-tools" }
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 tokio.workspace = true
 tokio-stream = { version = "0.1", features = ["sync"] }
 toml.workspace = true

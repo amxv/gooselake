@@ -10,7 +10,12 @@ Use this when changing runtime API behavior.
 
 ## Why this exists
 
-Route/method coverage in OpenAPI is generated from source parsing, while many request/response shapes remain intentionally broad (`JsonObject`). API docs sync therefore requires both:
+Route/method coverage in OpenAPI is generated from source parsing. For selected
+operator `/v2` endpoints, request/response shapes and the operator error
+envelope are now generated from the actual `schemars::JsonSchema` derives on
+serde-backed Rust DTOs (`crates/runtime-server/src/openapi_contracts.rs`).
+Unconverted endpoints retain broad `JsonObject` placeholders. API docs sync
+therefore still requires both:
 
 - regenerating `openapi/runtime-server-openapi.yaml`
 - updating human docs when behavior changes are not fully captured by schema detail
@@ -96,10 +101,15 @@ Docs-signal files:
 - basic request content type for known POST endpoints
 - SSE vs JSON response content type
 - public vs bearer-protected grouping via route placement
+- Rust-derived schemas for workspace authority/operations and operator
+  messages/deliveries, including required fields, nullable fields and enums
+- typed operator `/v2` error responses (including conflict and revision error
+  envelopes); `/v2/mcp` has its own agent-facing contract
 
 ## What human docs must still explain
 
-- concrete JSON request/response fields when the generated schema is broad
+- concrete JSON request/response fields on unconverted routes, and semantic
+  validation that cannot be expressed by the serde-derived schema alone
 - provider-specific auth/model behavior
 - ACP v1 limitations
 - SSE replay semantics and cursor precedence

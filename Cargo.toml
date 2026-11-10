@@ -25,6 +25,7 @@ rand = "0.8"
 ring = "0.17"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+schemars = { version = "1.2.1", features = ["derive"] }
 thiserror = "2.0"
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "sync", "time"] }
 toml = "0.8"

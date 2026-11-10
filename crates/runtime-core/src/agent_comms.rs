@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -6,7 +7,7 @@ use crate::workspace::{
 };
 use crate::RuntimeError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentMessageContextKind {
     WorkspaceTeam,
@@ -33,7 +34,7 @@ impl AgentMessageContextKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentMessageRecord {
     pub id: String,
     pub scope: String,
@@ -53,7 +54,7 @@ pub struct AgentMessageRecord {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentDeliveryRecord {
     pub id: String,
     pub message_id: String,
@@ -69,7 +70,7 @@ pub struct AgentDeliveryRecord {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentMessageAck {
     pub message: AgentMessageRecord,
     pub deliveries: Vec<AgentDeliveryRecord>,
@@ -110,7 +111,7 @@ pub struct AgentMessageListRequest {
     pub limit: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct AgentMessageListResponse {
     pub messages: Vec<AgentMessageRecord>,
     pub next_cursor: Option<String>,

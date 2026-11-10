@@ -1,12 +1,13 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::RuntimeError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceLifecycleState {
     Active,
@@ -30,7 +31,7 @@ impl WorkspaceLifecycleState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationActorKind {
     Operator,
@@ -57,7 +58,7 @@ impl OperationActorKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperationActor {
     pub kind: OperationActorKind,
     pub identifier: String,
@@ -72,7 +73,7 @@ impl OperationActor {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationPhase {
     Requested,
@@ -102,7 +103,7 @@ impl OperationPhase {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceRecord {
     pub workspace_id: String,
     pub canonical_root: String,
@@ -114,7 +115,7 @@ pub struct WorkspaceRecord {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperationRecord {
     pub operation_id: String,
     pub workspace_id: Option<String>,
@@ -133,7 +134,7 @@ pub struct OperationRecord {
 
 /// Bounded operator-list projection. The complete admission request and
 /// terminal result are deliberately available only through get_operation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperationSummary {
     pub operation_id: String,
     pub workspace_id: Option<String>,
@@ -167,7 +168,7 @@ pub enum AgentToolMutationAdmission {
     Unresolved { operation_id: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperationResourceClaimRecord {
     pub resource_kind: String,
     pub resource_id: String,
@@ -177,7 +178,7 @@ pub struct OperationResourceClaimRecord {
     pub acquired_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperationTransitionRecord {
     pub operation_id: String,
     pub sequence: u64,
@@ -187,7 +188,7 @@ pub struct OperationTransitionRecord {
     pub created_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperationEffectRecord {
     pub effect_id: String,
     pub operation_id: String,
@@ -202,7 +203,7 @@ pub struct OperationEffectRecord {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperationOutboxRecord {
     pub outbox_id: String,
     pub operation_id: String,
@@ -218,7 +219,7 @@ pub struct OperationOutboxRecord {
     pub delivered_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperationOutboxReceiptRecord {
     pub outbox_id: String,
     pub idempotency_key: String,
@@ -226,7 +227,7 @@ pub struct OperationOutboxReceiptRecord {
     pub receipt: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OperationDetails {
     pub operation: OperationRecord,
     pub claims: Vec<OperationResourceClaimRecord>,
@@ -236,7 +237,7 @@ pub struct OperationDetails {
     pub receipts: Vec<OperationOutboxReceiptRecord>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRegisterRequest {
     pub canonical_root: String,
@@ -256,7 +257,7 @@ pub struct WorkspaceRegisterCommand {
     pub requested_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceRegisterResponse {
     pub operation_id: String,
     pub workspace: WorkspaceRecord,

@@ -17,6 +17,24 @@ components:
     JsonObject:
       type: object
       additionalProperties: true
+    WorkspaceRegisterRequest: {"title":"WorkspaceRegisterRequest","type":"object","properties":{"canonical_root":{"type":"string"},"display_name":{"type":["string","null"]}},"additionalProperties":false,"required":["canonical_root"]}
+    WorkspaceRegisterResponse: {"title":"WorkspaceRegisterResponse","type":"object","properties":{"operation_id":{"type":"string"},"workspace":{"type":"object","properties":{"canonical_root":{"type":"string"},"created_at":{"type":"integer","format":"int64"},"display_name":{"type":"string"},"lead_agent_id":{"type":["string","null"]},"lifecycle_state":{"type":"string","enum":["active","retired"]},"revision":{"type":"integer","format":"uint64","minimum":0},"updated_at":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"required":["workspace_id","canonical_root","display_name","lifecycle_state","lead_agent_id","revision","created_at","updated_at"]}},"required":["operation_id","workspace"]}
+    WorkspaceRecord: {"title":"WorkspaceRecord","type":"object","properties":{"canonical_root":{"type":"string"},"created_at":{"type":"integer","format":"int64"},"display_name":{"type":"string"},"lead_agent_id":{"type":["string","null"]},"lifecycle_state":{"type":"string","enum":["active","retired"]},"revision":{"type":"integer","format":"uint64","minimum":0},"updated_at":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"required":["workspace_id","canonical_root","display_name","lifecycle_state","lead_agent_id","revision","created_at","updated_at"]}
+    WorkspaceRecordList: {"title":"Array_of_WorkspaceRecord","type":"array","items":{"type":"object","properties":{"canonical_root":{"type":"string"},"created_at":{"type":"integer","format":"int64"},"display_name":{"type":"string"},"lead_agent_id":{"type":["string","null"]},"lifecycle_state":{"type":"string","enum":["active","retired"]},"revision":{"type":"integer","format":"uint64","minimum":0},"updated_at":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"required":["workspace_id","canonical_root","display_name","lifecycle_state","lead_agent_id","revision","created_at","updated_at"]}}
+    WorkspaceRetirementRequest: {"title":"WorkspaceRetirementRequest","type":"object","properties":{"expected_revision":{"type":"integer","format":"uint64","minimum":0}},"additionalProperties":false,"required":["expected_revision"]}
+    WorkspaceRetirementResponse: {"title":"WorkspaceRetirementResponse","type":"object","properties":{"operation_id":{"type":"string"},"workspace":{"type":"object","properties":{"canonical_root":{"type":"string"},"created_at":{"type":"integer","format":"int64"},"display_name":{"type":"string"},"lead_agent_id":{"type":["string","null"]},"lifecycle_state":{"type":"string","enum":["active","retired"]},"revision":{"type":"integer","format":"uint64","minimum":0},"updated_at":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"required":["workspace_id","canonical_root","display_name","lifecycle_state","lead_agent_id","revision","created_at","updated_at"]}},"required":["operation_id","workspace"]}
+    WorkspaceRetirementPreflight: {"title":"WorkspaceRetirementPreflight","description":"Operator-facing snapshot of obligations requiring settlement before\nretirement. This is advisory: retirement rechecks every invariant within\nits own write transaction and must never trust a prior preview.","type":"object","properties":{"blockers":{"type":"array","items":{"type":"object","properties":{"code":{"type":"string"},"count":{"type":"integer","format":"uint64","minimum":0},"description":{"type":"string"}},"required":["code","count","description"]}},"eligible_for_quiescent_retirement":{"type":"boolean"},"workspace":{"type":"object","properties":{"canonical_root":{"type":"string"},"created_at":{"type":"integer","format":"int64"},"display_name":{"type":"string"},"lead_agent_id":{"type":["string","null"]},"lifecycle_state":{"type":"string","enum":["active","retired"]},"revision":{"type":"integer","format":"uint64","minimum":0},"updated_at":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"required":["workspace_id","canonical_root","display_name","lifecycle_state","lead_agent_id","revision","created_at","updated_at"]}},"required":["workspace","eligible_for_quiescent_retirement","blockers"]}
+    WorkspaceLeadTransitionRequest: {"title":"WorkspaceLeadTransitionRequest","type":"object","properties":{"expected_revision":{"type":"integer","format":"uint64","minimum":0},"lead_agent_id":{"type":["string","null"]}},"additionalProperties":false,"required":["expected_revision"]}
+    WorkspaceLeadTransitionResponse: {"title":"WorkspaceLeadTransitionResponse","type":"object","properties":{"operation_id":{"type":"string"},"workspace":{"type":"object","properties":{"canonical_root":{"type":"string"},"created_at":{"type":"integer","format":"int64"},"display_name":{"type":"string"},"lead_agent_id":{"type":["string","null"]},"lifecycle_state":{"type":"string","enum":["active","retired"]},"revision":{"type":"integer","format":"uint64","minimum":0},"updated_at":{"type":"integer","format":"int64"},"workspace_id":{"type":"string"}},"required":["workspace_id","canonical_root","display_name","lifecycle_state","lead_agent_id","revision","created_at","updated_at"]}},"required":["operation_id","workspace"]}
+    WorkspaceInterruptResponse: {"title":"WorkspaceInterruptResponse","type":"object","properties":{"interrupted_agent_ids":{"type":"array","items":{"type":"string"}},"operation_id":{"type":"string"},"skipped_agent_ids":{"type":"array","items":{"type":"string"}},"workspace_id":{"type":"string"}},"required":["operation_id","workspace_id","interrupted_agent_ids","skipped_agent_ids"]}
+    OperationDetails: {"title":"OperationDetails","type":"object","properties":{"claims":{"type":"array","items":{"type":"object","properties":{"acquired_at":{"type":"integer","format":"int64"},"claim_mode":{"type":"string"},"fence_generation":{"type":"integer","format":"uint64","minimum":0},"owner_operation_id":{"type":"string"},"resource_id":{"type":"string"},"resource_kind":{"type":"string"}},"required":["resource_kind","resource_id","claim_mode","owner_operation_id","fence_generation","acquired_at"]}},"effects":{"type":"array","items":{"type":"object","properties":{"attempt_count":{"type":"integer","format":"uint64","minimum":0},"created_at":{"type":"integer","format":"int64"},"effect_id":{"type":"string"},"effect_kind":{"type":"string"},"evidence":true,"idempotency_key":{"type":"string"},"operation_id":{"type":"string"},"phase":{"type":"string"},"target_id":{"type":"string"},"target_kind":{"type":"string"},"updated_at":{"type":"integer","format":"int64"}},"required":["effect_id","operation_id","effect_kind","target_kind","target_id","phase","idempotency_key","evidence","attempt_count","created_at","updated_at"]}},"operation":{"type":"object","properties":{"actor":{"type":"object","properties":{"identifier":{"type":"string"},"kind":{"type":"string","enum":["operator","agent","system"]}},"required":["kind","identifier"]},"created_at":{"type":"integer","format":"int64"},"error_code":{"type":["string","null"]},"error_message":{"type":["string","null"]},"exact_terminal_result":true,"idempotency_key":{"type":["string","null"]},"kind":{"type":"string"},"normalized_request":true,"normalized_request_hash":{"type":"string"},"operation_id":{"type":"string"},"phase":{"type":"string","enum":["requested","manual_review","completed","failed"]},"updated_at":{"type":"integer","format":"int64"},"workspace_id":{"type":["string","null"]}},"required":["operation_id","workspace_id","kind","actor","idempotency_key","normalized_request_hash","normalized_request","phase","exact_terminal_result","error_code","error_message","created_at","updated_at"]},"outbox":{"type":"array","items":{"type":"object","properties":{"attempt_count":{"type":"integer","format":"uint64","minimum":0},"created_at":{"type":"integer","format":"int64"},"delivered_at":{"type":["integer","null"],"format":"int64"},"delivery_kind":{"type":"string"},"idempotency_key":{"type":"string"},"last_error":true,"next_attempt_at":{"type":["integer","null"],"format":"int64"},"operation_id":{"type":"string"},"outbox_id":{"type":"string"},"payload":true,"state":{"type":"string"},"updated_at":{"type":"integer","format":"int64"}},"required":["outbox_id","operation_id","delivery_kind","idempotency_key","payload","state","attempt_count","next_attempt_at","last_error","created_at","updated_at","delivered_at"]}},"receipts":{"type":"array","items":{"type":"object","properties":{"idempotency_key":{"type":"string"},"outbox_id":{"type":"string"},"receipt":true,"received_at":{"type":"integer","format":"int64"}},"required":["outbox_id","idempotency_key","received_at","receipt"]}},"transitions":{"type":"array","items":{"type":"object","properties":{"created_at":{"type":"integer","format":"int64"},"evidence":true,"from_phase":{"type":["string","null"],"enum":["requested","manual_review","completed","failed",null]},"operation_id":{"type":"string"},"sequence":{"type":"integer","format":"uint64","minimum":0},"to_phase":{"type":"string","enum":["requested","manual_review","completed","failed"]}},"required":["operation_id","sequence","from_phase","to_phase","evidence","created_at"]}}},"required":["operation","claims","transitions","effects","outbox","receipts"]}
+    OperationSummaryList: {"title":"Array_of_OperationSummary","type":"array","items":{"description":"Bounded operator-list projection. The complete admission request and\nterminal result are deliberately available only through get_operation.","type":"object","properties":{"actor_kind":{"type":"string","enum":["operator","agent","system"]},"created_at":{"type":"integer","format":"int64"},"error_code":{"type":["string","null"]},"kind":{"type":"string"},"operation_id":{"type":"string"},"phase":{"type":"string","enum":["requested","manual_review","completed","failed"]},"updated_at":{"type":"integer","format":"int64"},"workspace_id":{"type":["string","null"]}},"required":["operation_id","workspace_id","kind","actor_kind","phase","error_code","created_at","updated_at"]}}
+    AgentMessageCreateInput: {"title":"AgentMessageCreateInput","type":"object","properties":{"correlation_id":{"type":["string","null"]},"image_paths":{"type":["array","null"],"items":{"type":"string"}},"input":true,"mode":{"type":"string"},"policy":{"type":["string","null"]},"priority":{"type":["string","null"]},"recipient_agent_id":{"type":["string","null"]},"reply_to_message_id":{"type":["string","null"]},"sender_agent_id":{"type":"string"}},"additionalProperties":false,"required":["mode","sender_agent_id","input"]}
+    AgentMessageAck: {"title":"AgentMessageAck","type":"object","properties":{"deliveries":{"type":"array","items":{"type":"object","properties":{"created_at":{"type":"integer","format":"int64"},"effective_policy":{"type":["string","null"]},"id":{"type":"string"},"injected_turn_id":{"type":["string","null"]},"injection_strategy":{"type":["string","null"]},"last_error_code":{"type":["string","null"]},"last_error_message":{"type":["string","null"]},"message_id":{"type":"string"},"provider":{"type":"string"},"recipient_agent_id":{"type":"string"},"status":{"type":"string"},"updated_at":{"type":"integer","format":"int64"}},"required":["id","message_id","recipient_agent_id","provider","status","effective_policy","injection_strategy","injected_turn_id","last_error_code","last_error_message","created_at","updated_at"]}},"disposition":{"type":"string"},"message":{"type":"object","properties":{"context_kind":{"type":"string","enum":["workspace_team","global_direct","legacy_team"]},"correlation_id":{"type":["string","null"]},"created_at":{"type":"integer","format":"int64"},"id":{"type":"string"},"idempotency_key":{"type":["string","null"]},"image_paths":{"type":"array","default":[],"items":{"type":"string"}},"input":true,"legacy_team_id":{"type":["string","null"]},"policy":{"type":"string"},"priority":{"type":"string"},"recipient_agent_ids":{"type":"array","items":{"type":"string"}},"reply_to_message_id":{"type":["string","null"]},"scope":{"type":"string"},"sender_agent_id":{"type":"string"},"workspace_id":{"type":["string","null"]}},"required":["id","scope","context_kind","workspace_id","legacy_team_id","sender_agent_id","recipient_agent_ids","input","image_paths","priority","policy","correlation_id","reply_to_message_id","idempotency_key","created_at"]}},"required":["message","deliveries","disposition"]}
+    AgentMessageListResponse: {"title":"AgentMessageListResponse","type":"object","properties":{"messages":{"type":"array","items":{"type":"object","properties":{"context_kind":{"type":"string","enum":["workspace_team","global_direct","legacy_team"]},"correlation_id":{"type":["string","null"]},"created_at":{"type":"integer","format":"int64"},"id":{"type":"string"},"idempotency_key":{"type":["string","null"]},"image_paths":{"type":"array","default":[],"items":{"type":"string"}},"input":true,"legacy_team_id":{"type":["string","null"]},"policy":{"type":"string"},"priority":{"type":"string"},"recipient_agent_ids":{"type":"array","items":{"type":"string"}},"reply_to_message_id":{"type":["string","null"]},"scope":{"type":"string"},"sender_agent_id":{"type":"string"},"workspace_id":{"type":["string","null"]}},"required":["id","scope","context_kind","workspace_id","legacy_team_id","sender_agent_id","recipient_agent_ids","input","image_paths","priority","policy","correlation_id","reply_to_message_id","idempotency_key","created_at"]}},"next_cursor":{"type":["string","null"]}},"required":["messages","next_cursor"]}
+    AgentDeliveryRecord: {"title":"AgentDeliveryRecord","type":"object","properties":{"created_at":{"type":"integer","format":"int64"},"effective_policy":{"type":["string","null"]},"id":{"type":"string"},"injected_turn_id":{"type":["string","null"]},"injection_strategy":{"type":["string","null"]},"last_error_code":{"type":["string","null"]},"last_error_message":{"type":["string","null"]},"message_id":{"type":"string"},"provider":{"type":"string"},"recipient_agent_id":{"type":"string"},"status":{"type":"string"},"updated_at":{"type":"integer","format":"int64"}},"required":["id","message_id","recipient_agent_id","provider","status","effective_policy","injection_strategy","injected_turn_id","last_error_code","last_error_message","created_at","updated_at"]}
+    AgentDeliveryRecordList: {"title":"Array_of_AgentDeliveryRecord","type":"array","items":{"type":"object","properties":{"created_at":{"type":"integer","format":"int64"},"effective_policy":{"type":["string","null"]},"id":{"type":"string"},"injected_turn_id":{"type":["string","null"]},"injection_strategy":{"type":["string","null"]},"last_error_code":{"type":["string","null"]},"last_error_message":{"type":["string","null"]},"message_id":{"type":"string"},"provider":{"type":"string"},"recipient_agent_id":{"type":"string"},"status":{"type":"string"},"updated_at":{"type":"integer","format":"int64"}},"required":["id","message_id","recipient_agent_id","provider","status","effective_policy","injection_strategy","injected_turn_id","last_error_code","last_error_message","created_at","updated_at"]}}
+    OperatorErrorResponse: {"title":"OperatorErrorResponse","description":"Canonical operator error JSON; this is also the Rust-owned OpenAPI source.\nThe agent-scoped MCP gateway intentionally has a separate error contract.","type":"object","properties":{"error":{"type":"object","properties":{"code":{"type":"string"},"details":true,"message":{"type":"string"},"retryable":{"type":"boolean"}},"required":["code","message","retryable","details"]},"request_id":{"type":"string"}},"required":["error","request_id"]}
 paths:
   /health:
     get:
@@ -1087,6 +1105,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/compact:
     post:
       summary: Durably admit manual context compaction before provider dispatch
@@ -1108,6 +1136,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/compactions/{run_id}:
     get:
       summary: Get current manager compaction status and native outcome
@@ -1129,6 +1167,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/compactions/{run_id}/resolve:
     post:
       summary: Resolve ambiguous native compaction with explicit operator evidence
@@ -1156,6 +1204,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/context-limit:
     get:
       summary: Get current provider-verified context snapshot
@@ -1172,6 +1230,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/context-limit/refresh:
     post:
       summary: Refresh context snapshot with provider attachment validation
@@ -1188,6 +1256,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/edits/{operation_id}:
     get:
       summary: Get historical edit operation and native fork/replacement status
@@ -1209,6 +1287,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/edits/{operation_id}/resolve:
     post:
       summary: Record explicit verified native edit outcome without replaying a fork
@@ -1241,6 +1329,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/events/stream:
     get:
       summary: Stream committed agent/session events for the operator (SSE)
@@ -1320,7 +1418,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/permission:
     post:
       summary: Update Claude permission selection using expected revision
@@ -1358,7 +1466,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/preferences:
     post:
       summary: Update durable current thinking preference using expected revision
@@ -1396,7 +1514,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/turns:
     post:
       summary: Admit a workspace agent turn with optional typed turn-scoped settings
@@ -1439,7 +1567,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/agents/{agent_id}/turns/{turn_id}/edit-rerun:
     post:
       summary: Durably fork a historical user turn and admit an edited replacement
@@ -1477,6 +1615,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/capabilities:
     get:
       summary: GET /v2/capabilities
@@ -1487,6 +1635,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/deliveries/{delivery_id}/retry:
     post:
       summary: Retry canonical agent delivery
@@ -1512,7 +1670,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/AgentDeliveryRecord"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/events:
     get:
       summary: GET /v2/events
@@ -1523,6 +1691,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/events/stream:
     get:
       summary: Stream all committed runtime events for the operator (SSE)
@@ -1571,6 +1749,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/mcp/capabilities:
     get:
       summary: Agent-scoped MCP capabilities
@@ -1627,7 +1815,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/AgentMessageListResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
     post:
       summary: Send agent direct message or workspace broadcast
       parameters:
@@ -1641,14 +1839,24 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/AgentMessageCreateInput"
       responses:
         "200":
           description: JSON response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/AgentMessageAck"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/messages/{message_id}/cancel:
     post:
       summary: Cancel outstanding canonical message deliveries
@@ -1674,7 +1882,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/AgentDeliveryRecordList"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/messages/{message_id}/deliveries:
     get:
       summary: List canonical message deliveries
@@ -1695,7 +1913,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/AgentDeliveryRecordList"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/migrations/workspaces:
     get:
       summary: Get legacy workspace migration status
@@ -1706,6 +1934,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/migrations/workspaces/apply:
     post:
       summary: Apply deterministic legacy workspace migration
@@ -1727,6 +1965,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/migrations/workspaces/preview:
     post:
       summary: Preview and persist legacy workspace migration
@@ -1737,6 +1985,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/migrations/workspaces/resolutions/{subject_kind}/{subject_id}:
     post:
       summary: Resolve legacy workspace migration subject
@@ -1774,6 +2032,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/operations:
     get:
       summary: GET /v2/operations
@@ -1783,7 +2051,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperationSummaryList"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/operations/{operation_id}:
     get:
       summary: Get durable operation
@@ -1799,7 +2077,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperationDetails"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/processes:
     get:
       summary: GET /v2/processes
@@ -1810,6 +2098,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/processes/{process_id}:
     get:
       summary: GET /v2/processes/{process_id}
@@ -1826,6 +2124,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/processes/{process_id}/events/stream:
     get:
       summary: Stream committed process events for the operator (SSE)
@@ -1879,6 +2187,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/providers/{provider}/models/discover:
     post:
       summary: Discover provider models
@@ -1895,6 +2213,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/providers/{provider}/skills/discover:
     post:
       summary: Discover provider skills
@@ -1911,6 +2239,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces:
     get:
       summary: List workspaces
@@ -1920,7 +2258,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceRecordList"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
     post:
       summary: Register workspace
       parameters:
@@ -1934,7 +2282,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/WorkspaceRegisterRequest"
       responses:
         "200":
           description: JSON response
@@ -1946,7 +2294,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceRegisterResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}:
     get:
       summary: Get workspace
@@ -1967,7 +2325,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceRecord"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents:
     get:
       summary: List workspace agents
@@ -1990,6 +2358,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
     post:
       summary: Create workspace-owned agent
       parameters:
@@ -2035,7 +2413,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve:
     post:
       summary: Resolve quarantined native agent creation with independent provider-session evidence
@@ -2068,6 +2456,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/{agent_id}:
     get:
       summary: Get workspace agent
@@ -2094,6 +2492,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/archive:
     post:
       summary: Archive workspace agent
@@ -2140,7 +2548,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve:
     post:
       summary: Resolve a quarantined provider archive using independent native-close evidence without redispatch
@@ -2188,7 +2606,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding:
     get:
       summary: Inspect durable workspace agent onboarding
@@ -2210,6 +2638,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}:
     get:
       summary: Inspect durable worktree rebind operation
@@ -2236,6 +2674,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup:
     post:
       summary: Retry safe cleanup after verified rebind
@@ -2267,6 +2715,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/restore:
     post:
       summary: Restore workspace agent
@@ -2307,7 +2765,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve:
     post:
       summary: Resolve a quarantined provider restoration using independent operator evidence without native redispatch
@@ -2355,7 +2823,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree:
     post:
       summary: Reassign agent using verified provider cwd evidence
@@ -2406,13 +2884,23 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/events/stream:
     get:
       summary: Stream committed workspace-scoped events for the operator (SSE)
@@ -2472,6 +2960,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/hooks/approval:
     get:
       summary: Inspect operator-approved hook command snapshot and revision
@@ -2493,6 +2991,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
     put:
       summary: Approve or revoke resolved hooks using revisioned operator authority
       parameters:
@@ -2538,7 +3046,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/hooks/effects:
     get:
       summary: Inspect durable workspace hook effect and recovery diagnostics
@@ -2562,6 +3080,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}:
     get:
       summary: GET /v2/workspaces/{workspace_id}/hooks/effects/{parent_event_id}/{event_name}/{hook_name}
@@ -2593,6 +3121,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/interrupt:
     post:
       summary: Interrupt active workspace turns
@@ -2618,7 +3156,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceInterruptResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/lead:
     post:
       summary: Set, reassign, or clear workspace lead
@@ -2643,7 +3191,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/WorkspaceLeadTransitionRequest"
       responses:
         "200":
           description: JSON response
@@ -2659,13 +3207,23 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceLeadTransitionResponse"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/notice-policy:
     get:
       summary: Get workspace lifecycle notification policy
@@ -2687,6 +3245,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
     put:
       summary: Compare-and-set workspace lifecycle notification policy
       parameters:
@@ -2732,7 +3300,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/retire:
     post:
       summary: Atomically retire a workspace with no outstanding resources
@@ -2757,7 +3335,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/WorkspaceRetirementRequest"
       responses:
         "200":
           description: JSON response
@@ -2769,13 +3347,23 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceRetirementResponse"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/retirement-preflight:
     get:
       summary: Inspect authoritative obligations before workspace retirement
@@ -2791,7 +3379,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/WorkspaceRetirementPreflight"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/retirement/advance:
     post:
       summary: Advance recoverable workspace retirement under durable ingress freeze
@@ -2816,7 +3414,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/JsonObject"
+              $ref: "#/components/schemas/WorkspaceRetirementRequest"
       responses:
         "200":
           description: JSON response
@@ -2828,7 +3426,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperationDetails"
         "202":
           description: Retirement remains requested or requires manual review
           headers:
@@ -2839,13 +3437,23 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperationDetails"
         "412":
           description: If-Match does not equal the strong ETag of the body expected_revision
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile:
     post:
       summary: Reconcile an exact quarantined retirement effect with operator evidence
@@ -2883,6 +3491,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
   /v2/workspaces/{workspace_id}/worktrees:
     get:
       summary: List eligible and blocked managed worktrees
@@ -2899,6 +3517,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"
     post:
       summary: Durably create or reuse managed worktree with native Git/init intent
       parameters:
@@ -2940,4 +3568,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: "#/components/schemas/OperatorErrorResponse"
+        default:
+          description: Typed operator API error response (4xx or 5xx)
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorErrorResponse"

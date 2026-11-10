@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -7,7 +8,7 @@ use crate::{
     WorkspaceRecord,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRetirementRequest {
     pub expected_revision: u64,
@@ -25,7 +26,7 @@ pub struct WorkspaceRetirementCommand {
     pub requested_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceRetirementResponse {
     pub operation_id: String,
     pub workspace: WorkspaceRecord,
@@ -73,14 +74,14 @@ pub enum WorkspaceRetirementTurnStep {
 /// Operator-facing snapshot of obligations requiring settlement before
 /// retirement. This is advisory: retirement rechecks every invariant within
 /// its own write transaction and must never trust a prior preview.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceRetirementPreflight {
     pub workspace: WorkspaceRecord,
     pub eligible_for_quiescent_retirement: bool,
     pub blockers: Vec<WorkspaceRetirementBlocker>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceRetirementBlocker {
     pub code: String,
     pub count: u64,
@@ -121,7 +122,7 @@ pub fn prepare_workspace_retirement(
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceLeadTransitionRequest {
     pub lead_agent_id: Option<String>,
@@ -141,7 +142,7 @@ pub struct WorkspaceLeadTransitionCommand {
     pub requested_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceLeadTransitionResponse {
     pub operation_id: String,
     pub workspace: WorkspaceRecord,
@@ -262,7 +263,7 @@ pub enum WorkspaceInterruptAdmission {
     Execute(WorkspaceInterruptPlan),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceInterruptResponse {
     pub operation_id: String,
     pub workspace_id: String,

@@ -67,7 +67,7 @@ pub(super) fn append_revision_precondition_failure(out: &mut String) {
     out.push_str("          content:\n");
     out.push_str("            application/json:\n");
     out.push_str("              schema:\n");
-    out.push_str("                $ref: \"#/components/schemas/JsonObject\"\n");
+    out.push_str("                $ref: \"#/components/schemas/OperatorErrorResponse\"\n");
 }
 
 #[cfg(test)]

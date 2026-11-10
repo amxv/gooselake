@@ -49,6 +49,11 @@ mod v2_contract;
 mod workspace_migrations;
 mod workspace_retirement_review;
 mod workspaces;
+
+// Expose the actual handler DTOs to the typed contract generator, not alternate
+// schema-only copies that might drift from serde behavior.
+pub(crate) use messages::AgentMessageCreateInput;
+pub(crate) use v2_contract::OperatorErrorResponse;
 mod worktrees;
 
 use agent_controls::*;

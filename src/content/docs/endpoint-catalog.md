@@ -336,10 +336,15 @@ Codex registers those same three canonical tools as provider-native dynamic tool
 
 ## Notes on Contract Precision
 
-The generated OpenAPI currently prioritizes endpoint/method coverage over strict schema typing. Treat this catalog + code as the reliable source for:
+The generated OpenAPI has Rust/serde-derived schemas for workspace registration,
+lead/retirement, operation history and agent message/delivery requests/results;
+it also has a typed operator error envelope and `default` error response on
+regular operator JSON routes. Other endpoint bodies may remain broad
+`JsonObject` schemas. Treat this catalog + code as the reliable source for:
 - endpoint existence and grouping
 - auth requirements
 - stream vs replay endpoints
 - query parameter behavior
 
-Treat exact JSON object field shapes as evolving unless typed in Rust handler input structs or runtime-core model definitions.
+For unconverted endpoints, consult the exact Rust handler input structs and
+runtime-core models rather than inferring field constraints from `JsonObject`.

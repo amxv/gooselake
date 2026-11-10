@@ -145,7 +145,32 @@ Top-level groups:
 
 ## Request/response precision
 
-The generated OpenAPI currently prioritizes route/method/content-type coverage. Many request and response bodies are represented as broad `JsonObject` schemas.
+The generated OpenAPI combines route/method discovery with **Rust/serde-derived
+OpenAPI 3.1 JSON Schemas** for the workspace registration, workspace list/get,
+lead and retirement requests/results, retirement preflight, workspace
+interruption, durable operation inspection/list, and agent message/delivery
+contracts. These schemas preserve the actual `serde` field names, required
+properties, enums, nullability, nested records and unknown-field behavior.
+For example, registration and lead/retirement requests reject unknown JSON
+fields, while an optional lead may explicitly be `null`. Workspace and
+operation lists return arrays; messages return a response object with a
+`messages` array and `next_cursor`. Pagination still uses `X-Next-Cursor`
+where documented, not an invented response wrapper.
+
+The `/v2` operator middleware serializes its error envelope from the same
+Rust type used by the OpenAPI `OperatorErrorResponse` schema, including
+`error.code`, `error.message`, `error.retryable`, nullable `error.details`,
+and `request_id`. Typed `409` and revision-precondition `412` errors use this
+schema; other application/framework failures are described by the operator
+`default` error response. The model-facing `/v2/mcp` gateway is a separate
+authentication and tool-result contract.
+
+**Other** endpoints still use broad `JsonObject` request/response placeholders
+until their real Rust DTOs are connected. A typed schema describes serde
+serialization/deserialization, not every semantic validation rule: for example,
+the message `mode` is accepted as a string and normalized/validated by its
+handler, and retirement must pass durable state and revision checks. Refer to
+the endpoint-specific guidance below for those constraints.
 
 For exact JSON fields, use:
 

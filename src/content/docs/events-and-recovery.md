@@ -178,3 +178,37 @@ curl "$BASE_URL/v1/diagnostics/team-operations" "${AUTH[@]}"
 ```
 
 The best operator habit is to read diagnostics before guessing.
+
+## Inspect a legacy SQLite snapshot without changing it
+
+Before considering a migration or removing compatibility paths, inventory a
+**consistently checkpointed, isolated copy** of the original SQLite database:
+
+```bash
+python3 ./scripts/audit-legacy-snapshot.py --snapshot /path/to/offline-copy.sqlite3
+```
+
+This is a counts-only preflight, **not** the migration preview/apply endpoint.
+It opens the snapshot with SQLite's immutable/read-only mode and explicitly
+enables query-only access, runs fixed aggregation queries, and never starts
+the runtime, providers, or native worktree/process actions. It refuses
+symbolic links and files with SQLite `-wal`, `-shm`, or `-journal`
+sidecars; create a *consistent SQLite backup* before using it rather than
+copying a live WAL database with a plain file copy. An immutable SQLite
+handle assumes the file cannot change while it is open, so **do not run
+this command against a live database**.
+
+The JSON report distinguishes observed counts from `null` (a schema table
+or required column is unavailable, **not** an observed zero). It inventories
+unresolved migration subjects, unowned live sessions, turns, approvals,
+dispatches, operations, effects/outbox, message deliveries, processes and
+completion notices, hook work, retirement fences, and worktree claims.
+It also reports the migration version and missing ordered migration steps.
+Only aggregate counts and metric names are printed, not prompts, credentials,
+file paths, or member identities.
+
+The report **always** sets `cutover_authorized: false`, including when every
+reported count is zero. Inspect the original data's ownership/legacy lineage,
+review every unknown or outstanding obligation, rehearse ordered migrations
+and restart on a separate writable copy, and obtain explicit cutover approval
+before irreversible changes. The snapshot audit cannot establish those proofs.

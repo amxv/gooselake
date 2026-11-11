@@ -227,6 +227,63 @@ async fn postcommit_turn_event_projection_failure_does_not_retry_or_strand_provi
 }
 
 #[tokio::test]
+async fn postcommit_approval_projection_failure_preserves_pending_authority_without_provider_send()
+{
+    let (manager, store, send_count) =
+        manager_with_observable_send_provider(MockSendBehavior::Success, None);
+    let session = manager
+        .create_session(CreateSessionInput {
+            provider: ProviderKind::Codex,
+            model: None,
+            cwd: None,
+            permission_mode: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    *store.fail_next_event_append_for_kind.lock().unwrap() = Some("approval.requested".into());
+    let admitted = manager
+        .send_turn(
+            &session.id,
+            SendTurnInput {
+                input: vec![serde_json::json!({"type":"text","text":"await human approval"})],
+                expected_turn_id: None,
+                permission_mode: Some("require_approval".into()),
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
+                turn_settings: Default::default(),
+            },
+        )
+        .await
+        .expect("committed waiting authority is not a retryable projection error");
+    assert_eq!(admitted.status, "waiting_for_approval");
+    assert_eq!(send_count.load(Ordering::SeqCst), 0);
+    let persisted = manager.get_session(&session.id).await.unwrap();
+    assert_eq!(persisted.status, "waiting_for_approval");
+    assert_eq!(
+        persisted.active_turn_id.as_deref(),
+        Some(admitted.turn_id.as_str())
+    );
+    assert_eq!(
+        store
+            .turns
+            .lock()
+            .unwrap()
+            .get(&admitted.turn_id)
+            .unwrap()
+            .status,
+        "waiting_for_approval"
+    );
+    assert!(store
+        .approvals
+        .lock()
+        .unwrap()
+        .values()
+        .any(|approval| approval.turn_id == admitted.turn_id && approval.status == "pending"));
+}
+
+#[tokio::test]
 async fn failed_durable_admission_never_calls_provider() {
     let (manager, store, send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);

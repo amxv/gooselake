@@ -270,6 +270,108 @@ fn forged_existing_turn_event_id_cannot_authorize_new_turn_admission() {
     assert_eq!(existing[0].kind, "forged");
 }
 
+#[test]
+fn pending_pre_dispatch_approval_journal_failure_rolls_back_waiting_turn_session_and_approval() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let base = admission_session();
+    repository.upsert_session(&base).unwrap();
+    let mut turn = admission_turn();
+    turn.status = "waiting_for_approval".into();
+    let mut waiting = base.clone();
+    waiting.status = "waiting_for_approval".into();
+    waiting.active_turn_id = Some(turn.id.clone());
+    waiting.updated_at = 11;
+    let mut admission = admission_record();
+    admission.dispatch_policy.pre_dispatch_approval_required = true;
+    admission.dispatch_policy.permission_mode = Some("require_approval".into());
+    let mut approval = admission_approval();
+    approval.origin = "runtime_pre_dispatch_policy".into();
+    approval.provider_approval_ref = None;
+
+    let db = open_connection(&repository.database_path).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_pending_approval_journal BEFORE INSERT ON runtime_events
+         WHEN NEW.kind='approval.requested'
+         BEGIN SELECT RAISE(ABORT,'forced predispatch approval event failure'); END;",
+    )
+    .unwrap();
+    assert!(repository
+        .admit_turn(&admission, &turn, &waiting, Some(&approval))
+        .is_err());
+    for table in ["turns", "turn_admissions", "approvals"] {
+        let count: i64 = db
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "{table} must roll back with pending approval event"
+        );
+    }
+    assert!(repository
+        .list_runtime_events(Some((RuntimeEventScope::Session, &base.id)), None, 10)
+        .unwrap()
+        .is_empty());
+    assert!(repository
+        .hydrate_runtime_state()
+        .unwrap()
+        .sessions
+        .iter()
+        .find(|session| session.id == base.id)
+        .unwrap()
+        .active_turn_id
+        .is_none());
+
+    db.execute_batch("DROP TRIGGER fail_pending_approval_journal;")
+        .unwrap();
+    drop(db);
+    repository
+        .admit_turn(&admission, &turn, &waiting, Some(&approval))
+        .unwrap();
+    let reopened = SqliteRuntimeRepository::new(repository.database_path.clone());
+    let hydrated = reopened.hydrate_runtime_state().unwrap();
+    assert_eq!(
+        hydrated
+            .sessions
+            .iter()
+            .find(|session| session.id == base.id)
+            .unwrap()
+            .status,
+        "waiting_for_approval"
+    );
+    assert_eq!(
+        hydrated
+            .turns
+            .iter()
+            .find(|row| row.id == turn.id)
+            .unwrap()
+            .status,
+        "waiting_for_approval"
+    );
+    assert!(hydrated
+        .approvals
+        .iter()
+        .any(|row| row.id == approval.id && row.status == "pending"));
+    let events = reopened
+        .list_runtime_events(Some((RuntimeEventScope::Session, &base.id)), None, 10)
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].kind, "turn.admitted");
+    assert_eq!(events[1].kind, "approval.requested");
+    assert_eq!(
+        events[1].event_id,
+        "evt_approval_approval_admission_requested"
+    );
+    assert_eq!(events[1].payload["origin"], "runtime_pre_dispatch_policy");
+    assert_eq!(events[1].seq, 2);
+    assert!(events
+        .iter()
+        .all(|event| event.criticality == RuntimeEventCriticality::Critical));
+}
+
 fn admission_session() -> SessionRecord {
     SessionRecord {
         id: "session_admission".to_string(),

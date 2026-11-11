@@ -1506,6 +1506,15 @@ Behavior:
   another journal row. A real authenticated operator lost-response/replay
   regression checks one canonical event per logical turn. Historical turns
   are not backfilled, and other turn/approval events are audited separately.
+- when policy requires approval *before* native turn dispatch, that same
+  admission transaction commits the `waiting_for_approval` session and turn,
+  pending approval and deterministic critical `approval.requested` receipt.
+  On failure to insert this event, **the entire turn/approval/operator intent
+  rolls back** before calling the provider. The in-process live bridge reuses
+  the committed receipt without converting a transient event-lookup failure
+  into a retryable admission. A real authenticated workspace interrupt/approval
+  test verifies exactly one ordered `turn.admitted` / `approval.requested`
+  pair for a waiting turn; provider-native approvals remain a separate audit.
 - `after_seq` query param takes precedence
 - otherwise stream endpoints use the `Last-Event-ID` header
 - invalid `Last-Event-ID` returns HTTP `400`

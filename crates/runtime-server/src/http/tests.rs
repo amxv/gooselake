@@ -75,6 +75,7 @@ mod operator_unjournaled_idempotency;
 mod operator_unsupported_preconditions;
 mod operator_user_turn_idempotency;
 mod operator_worktree_idempotency;
+mod pre_dispatch_approval_journal_assertions;
 mod process_lifecycle_journal_http;
 mod process_more;
 mod provider_contract_routes;

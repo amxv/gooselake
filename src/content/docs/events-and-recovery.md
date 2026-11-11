@@ -96,10 +96,17 @@ requests) its durable operation/effect/claim intent. A critical journal
 failure rolls back the whole admission **before provider dispatch**; it never
 returns an ambiguous success with a missing admission event. The subsequent
 in-memory broadcast resolves the same deterministic event ID, rather than
-creating a duplicate critical row. Old persisted turns are not backfilled
-with invented admission events. Other session/turn/approval lifecycle events
-retain their distinct authority/recovery boundaries; this is not a blanket
-claim that every legacy event source is transactionally journaled.
+creating a duplicate critical row. If policy requires **pre-dispatch manual
+approval**, the same transaction also commits the pending approval,
+`waiting_for_approval` turn/session state and its own deterministic critical
+`approval.requested` event. A journal failure rolls all of them back; a
+temporary postcommit live-projection lookup failure does not invite another
+provider send or admission. This applies to **pre-dispatch policy approval**,
+not every provider-originated approval callback. Old persisted turns are not
+backfilled with invented admission/approval events. Other session, native
+approval and turn-terminal event families retain distinct authority/recovery
+boundaries; this is not a blanket claim that every legacy event source is
+transactionally journaled.
 
 ## Replay before live
 

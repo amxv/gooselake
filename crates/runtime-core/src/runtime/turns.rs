@@ -283,7 +283,12 @@ impl RuntimeSessionManager {
             id: turn_id.clone(),
             session_id: session_id.to_string(),
             provider_turn_ref: None,
-            status: "admitted".to_string(),
+            status: if requires_approval {
+                "waiting_for_approval"
+            } else {
+                "admitted"
+            }
+            .to_string(),
             input: Value::Array(input.input.clone()),
             source: Some(source.to_string()),
             started_at: Some(now),
@@ -292,7 +297,12 @@ impl RuntimeSessionManager {
             error: None,
         };
         let mut updated_session = session.clone();
-        updated_session.status = "turn_admitted".to_string();
+        updated_session.status = if requires_approval {
+            "waiting_for_approval"
+        } else {
+            "turn_admitted"
+        }
+        .to_string();
         updated_session.active_turn_id = Some(turn_id.clone());
         updated_session.updated_at = now;
         let approval = approval_id.as_ref().map(|approval_id| ApprovalRecord {
@@ -389,36 +399,28 @@ impl RuntimeSessionManager {
         if requires_approval {
             let approval_id =
                 approval_id.expect("approval id must exist when approval is required");
+            // The approval, waiting turn/session state, and canonical
+            // approval.requested journal row are already one durable admission
+            // transaction. This ancillary live projection cannot be an error
+            // that invites re-admitting a previously committed logical turn.
+            if let Err(error) = self
+                .append_event(
+                    RuntimeEventScope::Session,
+                    session_id,
+                    Some(session_id),
+                    Some(turn_id.as_str()),
+                    "approval.requested",
+                    RuntimeEventCriticality::Critical,
+                    serde_json::json!({
+                        "approval_id": approval_id,
+                        "origin": "runtime_pre_dispatch_policy",
+                    }),
+                )
+                .await
             {
-                let mut turns = self.turns.write().await;
-                let turn = turns
-                    .get_mut(&turn_id)
-                    .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
-                turn.status = "waiting_for_approval".to_string();
-                self.store.upsert_turn(turn)?;
+                tracing::error!(session_id, turn_id, %error,
+                    "committed pre-dispatch approval event live projection unavailable");
             }
-            {
-                let mut sessions = self.sessions.write().await;
-                let session = sessions
-                    .get_mut(session_id)
-                    .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
-                session.status = "waiting_for_approval".to_string();
-                session.updated_at = now_ms();
-                self.store.upsert_session(session)?;
-            }
-            self.append_event(
-                RuntimeEventScope::Session,
-                session_id,
-                Some(session_id),
-                Some(turn_id.as_str()),
-                "approval.requested",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({
-                    "approval_id": approval_id,
-                    "origin": "runtime_pre_dispatch_policy",
-                }),
-            )
-            .await?;
             return Ok(SendTurnAccepted {
                 session_id: session_id.to_string(),
                 turn_id,

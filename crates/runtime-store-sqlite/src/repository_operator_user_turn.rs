@@ -626,6 +626,100 @@ mod tests {
     }
 
     #[test]
+    fn keyed_operator_pre_dispatch_approval_and_critical_events_commit_with_one_native_intent() {
+        let (temp, repository, mut command, mut admission, mut turn, mut session) = fixture();
+        let db = temp.path().join("runtime.sqlite3");
+        admission.dispatch_policy.permission_mode = Some("require_approval".into());
+        admission.dispatch_policy.pre_dispatch_approval_required = true;
+        command.normalized_request["permission_mode"] = serde_json::json!("require_approval");
+        command.normalized_request_hash =
+            normalized_json_hash(&command.normalized_request).unwrap();
+        turn.status = "waiting_for_approval".into();
+        session.status = "waiting_for_approval".into();
+        let approval = runtime_core::ApprovalRecord {
+            id: "approval_operator_one".into(),
+            session_id: session.id.clone(),
+            turn_id: turn.id.clone(),
+            origin: "runtime_pre_dispatch_policy".into(),
+            tool_call_id: None,
+            provider_approval_ref: None,
+            status: "pending".into(),
+            request: serde_json::json!({"reason":"manual approval before provider dispatch"}),
+            response: None,
+            created_at: 20,
+            resolved_at: None,
+        };
+        let connection = open_connection(&db).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER refuse_operator_approval_journal BEFORE INSERT ON runtime_events
+             WHEN NEW.kind='approval.requested'
+             BEGIN SELECT RAISE(ABORT,'forced approval request journal failure'); END;",
+            )
+            .unwrap();
+        assert!(repository
+            .admit_operator_user_turn(&command, &admission, &turn, &session, Some(&approval))
+            .is_err());
+        assert!(repository
+            .get_operation(&command.operation_id)
+            .unwrap()
+            .is_none());
+        assert!(repository
+            .unresolved_operator_user_turn_for_agent(&session.id)
+            .unwrap()
+            .is_none());
+        assert!(repository.list_turn_admissions().unwrap().is_empty());
+        assert!(repository.hydrate_runtime_state().unwrap().turns.is_empty());
+        connection
+            .execute_batch("DROP TRIGGER refuse_operator_approval_journal;")
+            .unwrap();
+        drop(connection);
+
+        repository
+            .admit_operator_user_turn(&command, &admission, &turn, &session, Some(&approval))
+            .unwrap();
+        let reopened = SqliteRuntimeRepository::new(db);
+        let events = reopened
+            .list_runtime_events(
+                Some((runtime_core::RuntimeEventScope::Session, &session.id)),
+                None,
+                100,
+            )
+            .unwrap();
+        let critical: Vec<_> = events
+            .iter()
+            .filter(|row| matches!(row.kind.as_str(), "turn.admitted" | "approval.requested"))
+            .collect();
+        assert_eq!(critical.len(), 2);
+        assert_eq!(critical[0].event_id, "evt_turn_turn_operator_one_admitted");
+        assert_eq!(
+            critical[1].event_id,
+            "evt_approval_approval_operator_one_requested"
+        );
+        assert_eq!(critical[1].seq, critical[0].seq + 1);
+        assert_eq!(critical[1].payload["origin"], "runtime_pre_dispatch_policy");
+        assert!(reopened
+            .get_operation(&command.operation_id)
+            .unwrap()
+            .is_some());
+        assert!(reopened
+            .unresolved_operator_user_turn_for_agent(&session.id)
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            reopened
+                .hydrate_runtime_state()
+                .unwrap()
+                .sessions
+                .into_iter()
+                .find(|row| row.id == session.id)
+                .unwrap()
+                .status,
+            "waiting_for_approval"
+        );
+    }
+
+    #[test]
     fn operator_turn_admission_and_exact_terminal_receipt_survive_restart_and_write_failures() {
         let (temp, repo, command, mut admission, turn, session) = fixture();
         let db = temp.path().join("runtime.sqlite3");

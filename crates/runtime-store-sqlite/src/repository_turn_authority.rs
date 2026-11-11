@@ -329,6 +329,50 @@ impl SqliteRuntimeRepository {
             },
         )?;
 
+        if admission.dispatch_policy.pre_dispatch_approval_required {
+            let approval = approval.ok_or_else(|| {
+                RuntimeError::InvalidState(
+                    "pre-dispatch approval authority requires a pending approval".into(),
+                )
+            })?;
+            if turn.status != "waiting_for_approval"
+                || session.status != "waiting_for_approval"
+                || approval.status != "pending"
+                || approval.origin != "runtime_pre_dispatch_policy"
+            {
+                return Err(RuntimeError::InvalidState(
+                    "pre-dispatch approval must commit with matching waiting turn/session authority"
+                        .into(),
+                ));
+            }
+            let event_id = format!("evt_approval_{}_requested", approval.id);
+            if fetch_runtime_event_by_event_id(&transaction, &event_id)?.is_some() {
+                return Err(RuntimeError::Conflict(
+                    "pre-dispatch approval event identity already used".into(),
+                ));
+            }
+            insert_runtime_event_in_transaction(
+                &transaction,
+                &NewRuntimeEvent {
+                    event_id,
+                    scope: RuntimeEventScope::Session,
+                    scope_id: session.id.clone(),
+                    session_id: Some(session.id.clone()),
+                    team_id: None,
+                    turn_id: Some(turn.id.clone()),
+                    kind: "approval.requested".into(),
+                    criticality: RuntimeEventCriticality::Critical,
+                    payload: serde_json::json!({
+                        "approval_id":approval.id,
+                        "origin":"runtime_pre_dispatch_policy",
+                    }),
+                    provider: None,
+                    provider_seq: None,
+                    created_at: approval.created_at,
+                },
+            )?;
+        }
+
         transaction
             .commit()
             .map_err(|error| db_error("failed committing turn admission", error))?;

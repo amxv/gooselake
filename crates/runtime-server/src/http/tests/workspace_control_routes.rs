@@ -1,3 +1,4 @@
+use super::pre_dispatch_approval_journal_assertions::assert_pre_dispatch_approval_events;
 use super::*;
 
 #[tokio::test]
@@ -681,6 +682,7 @@ async fn workspace_interrupt_targets_only_active_turns_in_authoritative_roster_a
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(invalid["error"]["code"], "invalid_request");
     assert!(runtime.get_session(&active.agent_id).await.unwrap().status == "waiting_for_approval");
+    assert_pre_dispatch_approval_events(&runtime, &temp_dir, &active.agent_id).await;
     let first = interrupt_workspace(
         &router,
         &token,
@@ -690,7 +692,6 @@ async fn workspace_interrupt_targets_only_active_turns_in_authoritative_roster_a
     .await;
     assert_eq!(first.interrupted_agent_ids, vec![active.agent_id.clone()]);
     assert_eq!(first.skipped_agent_ids, vec![idle.agent_id.clone()]);
-
     let replay = interrupt_workspace(
         &router,
         &token,
@@ -699,7 +700,6 @@ async fn workspace_interrupt_targets_only_active_turns_in_authoritative_roster_a
     )
     .await;
     assert_eq!(replay, first);
-
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp_dir.path().join("runtime.sqlite3"),
     });

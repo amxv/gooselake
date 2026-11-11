@@ -80,6 +80,11 @@ async fn codex_model_catalog_exposes_supported_models_and_reasoning_levels() {
         ("gpt-6-astra", "GPT 6 Astra", reasoning_levels.as_slice()),
         ("gpt-6.1-sol", "GPT 6.1 Sol", reasoning_levels.as_slice()),
         ("gpt-6-luna", "GPT 6 Luna", reasoning_levels.as_slice()),
+        (
+            "gpt-6.1-terra",
+            "GPT 6.1 Terra",
+            reasoning_levels.as_slice(),
+        ),
     ];
 
     assert_eq!(models.len(), expected.len());

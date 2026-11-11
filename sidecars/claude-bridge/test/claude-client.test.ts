@@ -181,8 +181,16 @@ describe('claude client bridge behavior', () => {
         supportsToolCalling: true,
       },
       {
-        value: 'claude-fable-5-1',
-        displayName: 'Claude Fable 5.1',
+        value: 'claude-fable-5-2',
+        displayName: 'Claude Fable 5.2',
+        supportsEffort: true,
+        supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+        supportsVision: true,
+        supportsToolCalling: true,
+      },
+      {
+        value: 'claude-haiku-5-5',
+        displayName: 'Claude Haiku 5.5',
         supportsEffort: true,
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
         supportsVision: true,
@@ -229,6 +237,36 @@ describe('claude client bridge behavior', () => {
         supportsVision: true,
         supportsToolCalling: undefined,
       },
+    ])
+  })
+
+  test('sdk discovery normalizes current Fable and Haiku advanced efforts', async () => {
+    const client = new ClaudeClient(() => undefined, {
+      mode: 'sdk',
+      sdkSupportedModels: async () => [
+        {
+          value: ' claude-fable-5-2 ',
+          displayName: ' Claude Fable 5.2 ',
+          supportsEffort: true,
+          supportedEffortLevels: ['HIGH'],
+        },
+        {
+          value: ' claude-haiku-5-5 ',
+          displayName: ' Claude Haiku 5.5 ',
+          supportsEffort: true,
+          supportedEffortLevels: [' medium '],
+        },
+      ],
+    })
+
+    const models = await client.supportedModels()
+    expect(models.map(model => model.value)).toEqual([
+      'claude-fable-5-2',
+      'claude-haiku-5-5',
+    ])
+    expect(models.map(model => model.supportedEffortLevels)).toEqual([
+      ['low', 'medium', 'high', 'xhigh', 'max'],
+      ['low', 'medium', 'high', 'xhigh', 'max'],
     ])
   })
 

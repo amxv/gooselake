@@ -865,7 +865,12 @@ async fn model_discovery_reports_current_catalog_and_known_vision_capability() {
         .collect::<Vec<_>>();
     assert_eq!(
         keys,
-        ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5"]
+        [
+            "claude-opus-5-5",
+            "claude-fable-5-2",
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+        ]
     );
     assert!(discovery
         .models

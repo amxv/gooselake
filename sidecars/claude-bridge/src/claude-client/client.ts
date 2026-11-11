@@ -62,7 +62,8 @@ function normalizeSupportedEffortLevels(
   if (
     modelValue === 'claude-sonnet-5-5' ||
     modelValue === 'claude-opus-5-5' ||
-    modelValue === 'claude-fable-5-1'
+    modelValue === 'claude-fable-5-2' ||
+    modelValue === 'claude-haiku-5-5'
   ) {
     return ['low', 'medium', 'high', 'xhigh', 'max']
   }
@@ -646,8 +647,16 @@ export class ClaudeClient {
           supportsToolCalling: true,
         },
         {
-          value: 'claude-fable-5-1',
-          displayName: 'Claude Fable 5.1',
+          value: 'claude-fable-5-2',
+          displayName: 'Claude Fable 5.2',
+          supportsEffort: true,
+          supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+          supportsVision: true,
+          supportsToolCalling: true,
+        },
+        {
+          value: 'claude-haiku-5-5',
+          displayName: 'Claude Haiku 5.5',
           supportsEffort: true,
           supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
           supportsVision: true,

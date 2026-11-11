@@ -2,7 +2,8 @@
   "models": [
     { "id": "gpt-6-astra", "label": "GPT 6 Astra" },
     { "id": "gpt-6.1-sol", "label": "GPT 6.1 Sol" },
-    { "id": "gpt-6-luna", "label": "GPT 6 Luna" }
+    { "id": "gpt-6-luna", "label": "GPT 6 Luna" },
+    { "id": "gpt-6.1-terra", "label": "GPT 6.1 Terra" }
   ],
   "defaults": {
     "runtime": "gpt-6-astra",

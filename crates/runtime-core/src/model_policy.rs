@@ -6,7 +6,8 @@ use serde::Deserialize;
 use crate::{ProviderKind, ProviderModel, ProviderThinkingEffort};
 
 pub const CLAUDE_OPUS_MODEL: &str = "claude-opus-5-5";
-pub const CLAUDE_FABLE_MODEL: &str = "claude-fable-5-1";
+pub const CLAUDE_FABLE_MODEL: &str = "claude-fable-5-2";
+pub const CLAUDE_HAIKU_MODEL: &str = "claude-haiku-5-5";
 pub const CLAUDE_SONNET_MODEL: &str = "claude-sonnet-5-5";
 
 const CLAUDE_ADVANCED_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
@@ -83,7 +84,8 @@ pub fn codex_model_catalog() -> Vec<ProviderModel> {
 pub fn claude_model_catalog() -> Vec<ProviderModel> {
     [
         (CLAUDE_OPUS_MODEL, "Claude Opus 5.5"),
-        (CLAUDE_FABLE_MODEL, "Claude Fable 5.1"),
+        (CLAUDE_FABLE_MODEL, "Claude Fable 5.2"),
+        (CLAUDE_HAIKU_MODEL, "Claude Haiku 5.5"),
         (CLAUDE_SONNET_MODEL, "Claude Sonnet 5.5"),
     ]
     .into_iter()
@@ -165,7 +167,9 @@ fn migrate_retired_claude_model(model: &str) -> Option<String> {
     if model == CLAUDE_OPUS_MODEL
         || model.starts_with("claude-opus-5-5-")
         || model == CLAUDE_FABLE_MODEL
-        || model.starts_with("claude-fable-5-1-")
+        || model.starts_with("claude-fable-5-2-")
+        || model == CLAUDE_HAIKU_MODEL
+        || model.starts_with("claude-haiku-5-5-")
         || model == CLAUDE_SONNET_MODEL
         || model.starts_with("claude-sonnet-5-5-")
     {
@@ -178,8 +182,13 @@ fn migrate_retired_claude_model(model: &str) -> Option<String> {
     {
         return Some(CLAUDE_OPUS_MODEL.to_string());
     }
+    // All retired 5.x Fable aliases (including 5.1 and dated 5.1 variants)
+    // converge to the current model after the current 5.2 guard above.
     if model == "claude-fable-5" || model.starts_with("claude-fable-5-") {
         return Some(CLAUDE_FABLE_MODEL.to_string());
+    }
+    if model == "claude-haiku-4-5" || model.starts_with("claude-haiku-4-5-") {
+        return Some(CLAUDE_HAIKU_MODEL.to_string());
     }
     if model == "claude-sonnet-5" || model.starts_with("claude-sonnet-5-") {
         return Some(CLAUDE_SONNET_MODEL.to_string());
@@ -210,14 +219,22 @@ mod tests {
         for preset in &policy.default_presets {
             assert!(current.contains(&preset.model.as_str()));
         }
-        assert_eq!(current, ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"]);
+        assert_eq!(
+            current,
+            ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "gpt-6.1-terra"]
+        );
         let claude = claude_model_catalog()
             .into_iter()
             .map(|model| model.id)
             .collect::<Vec<_>>();
         assert_eq!(
             claude,
-            [CLAUDE_OPUS_MODEL, CLAUDE_FABLE_MODEL, CLAUDE_SONNET_MODEL]
+            [
+                CLAUDE_OPUS_MODEL,
+                CLAUDE_FABLE_MODEL,
+                CLAUDE_HAIKU_MODEL,
+                CLAUDE_SONNET_MODEL
+            ]
         );
         assert!(default_model_presets()
             .iter()
@@ -246,6 +263,23 @@ mod tests {
             migrate_retired_model(ProviderKind::Claude, "claude-sonnet-5").as_deref(),
             Some(CLAUDE_SONNET_MODEL)
         );
+        for stale in [
+            "claude-fable-5",
+            "claude-fable-5-1",
+            "claude-fable-5-1-20261001",
+            " CLAUDE-FABLE-5-1-20261001 ",
+        ] {
+            assert_eq!(
+                migrate_retired_model(ProviderKind::Claude, stale).as_deref(),
+                Some(CLAUDE_FABLE_MODEL)
+            );
+        }
+        for stale in ["claude-haiku-4-5", "CLAUDE-HAIKU-4-5-20251001"] {
+            assert_eq!(
+                migrate_retired_model(ProviderKind::Claude, stale).as_deref(),
+                Some(CLAUDE_HAIKU_MODEL)
+            );
+        }
         assert_eq!(
             migrate_retired_model(ProviderKind::Claude, "claude-opus-4").as_deref(),
             Some(CLAUDE_OPUS_MODEL)
@@ -256,7 +290,8 @@ mod tests {
         );
         for current in [
             "claude-opus-5-5-20260928",
-            "claude-fable-5-1-20260928",
+            "claude-fable-5-2-20261109",
+            "claude-haiku-5-5-20261109",
             "claude-sonnet-5-5-20260928",
         ] {
             assert!(migrate_retired_model(ProviderKind::Claude, current).is_none());

@@ -1502,8 +1502,8 @@ Provider IDs:
 
 Model catalogs:
 
-- Codex: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`
-- Claude: `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`
+- Codex: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`, `gpt-6.1-terra`
+- Claude: `claude-opus-5-5`, `claude-fable-5-2`, `claude-haiku-5-5`, `claude-sonnet-5-5`
 - ACP: can return an empty list because model selection can be session-scoped inside the configured agent
 
 `GET /v1/providers/{provider}/models` returns `id`, `display_name`, and

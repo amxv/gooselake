@@ -1,10 +1,8 @@
 use std::path::Path;
 
 use runtime_core::{
-    resolve_repository_identity, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
-    NewRuntimeEvent, RuntimeError, RuntimeEventCriticality, RuntimeEventScope,
+    resolve_repository_identity, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, RuntimeError,
 };
-use serde_json::Value;
 
 use crate::now_ms;
 
@@ -64,37 +62,6 @@ impl RuntimeWorktreeService {
             "delete_on_last_claim" => "delete_on_last_claim".to_string(),
             _ => "retain_on_last_claim".to_string(),
         }
-    }
-
-    pub(super) async fn append_worktree_event(
-        &self,
-        worktree_id: &str,
-        kind: &str,
-        payload: Value,
-        session_id: Option<String>,
-        team_id: Option<String>,
-    ) {
-        let event_id = format!(
-            "evt_worktree_{}_{}_{}",
-            worktree_id,
-            self.event_id_nonce,
-            self.next_event_id
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        );
-        let _ = self.store.append_runtime_event(&NewRuntimeEvent {
-            event_id,
-            scope: RuntimeEventScope::Worktree,
-            scope_id: worktree_id.to_string(),
-            session_id,
-            team_id,
-            turn_id: None,
-            kind: kind.to_string(),
-            criticality: RuntimeEventCriticality::Critical,
-            payload,
-            provider: None,
-            provider_seq: None,
-            created_at: now_ms(),
-        });
     }
 
     pub(super) fn derive_unified_workspace_path(repo_root: &str) -> String {
@@ -233,6 +200,10 @@ impl RuntimeWorktreeService {
         deletion_policy: String,
         created_by_session_id: Option<String>,
         created_by_operation_id: Option<String>,
+        init_script_status: &str,
+        recovered: bool,
+        event_source_session_id: Option<&str>,
+        team_id: Option<&str>,
     ) -> Result<ManagedWorktreeRecord, RuntimeError> {
         let now = now_ms();
         let record = ManagedWorktreeRecord {
@@ -249,15 +220,13 @@ impl RuntimeWorktreeService {
             created_at: now,
             updated_at: now,
         };
-        self.store.upsert_managed_worktree(&record)?;
-        let hydrated = self.store.hydrate_runtime_state()?;
-        self.worktree_by_identity(&hydrated, planned)
-            .ok_or_else(|| {
-                RuntimeError::InvalidState(format!(
-                    "managed worktree logical upsert did not persist identity for {}",
-                    planned.worktree_cwd
-                ))
-            })
+        self.store.record_managed_worktree_event(
+            &record,
+            init_script_status,
+            recovered,
+            event_source_session_id,
+            team_id,
+        )
     }
 
     pub(super) fn get_worktree_from_hydrated(

@@ -118,6 +118,7 @@ pub use runtime::{
 };
 pub use scoped_mcp::{agent_from_scoped_mcp_token, mint_scoped_mcp_token};
 pub use services::{
+    ManagedWorktreeClaimTransition, ManagedWorktreeCleanupAdmission, ManagedWorktreeCleanupCommand,
     ManagedWorktreeStatusProjection, OperatorUserTurnCommand, OperatorUserTurnReplay,
     OperatorUserTurnStore, RuntimeStore, TeamBroadcastRequest, TeamCancelMessageRequest,
     TeamCommsService, TeamCreateRequest, TeamGetDeliveriesRequest, TeamInterruptAllRequest,

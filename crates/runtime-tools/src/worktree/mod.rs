@@ -21,7 +21,6 @@ pub struct RuntimeWorktreeService {
     pub(super) config: WorktreeServiceConfig,
     pub(super) next_worktree_id: AtomicU64,
     pub(super) next_operation_id: AtomicU64,
-    pub(super) next_event_id: AtomicU64,
     pub(super) event_id_nonce: String,
 }
 
@@ -72,7 +71,6 @@ impl RuntimeWorktreeService {
             config,
             next_worktree_id: AtomicU64::new(max_worktree_seq + 1),
             next_operation_id: AtomicU64::new(max_op_seq + 1),
-            next_event_id: AtomicU64::new(1),
             event_id_nonce: format!("{:032x}", rand::random::<u128>()),
         }))
     }

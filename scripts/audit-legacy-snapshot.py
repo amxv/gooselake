@@ -83,6 +83,8 @@ METRICS = (
      "SELECT COUNT(*) FROM workspace_retirement_fences WHERE phase!='retired'"),
     ("active_worktree_claims", {"managed_worktree_claims": ("released_at",)},
      "SELECT COUNT(*) FROM managed_worktree_claims WHERE released_at IS NULL"),
+    ("unsettled_worktree_cleanups", {"managed_worktree_cleanup_receipts": ("phase",)},
+     "SELECT COUNT(*) FROM managed_worktree_cleanup_receipts WHERE phase!='completed'"),
     ("unsettled_workspace_rebinds", {"workspace_agent_rebinds": ("phase",)},
      "SELECT COUNT(*) FROM workspace_agent_rebinds "
      "WHERE phase NOT IN ('completed','rejected')"),

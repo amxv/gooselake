@@ -847,6 +847,34 @@ curl -fsS -X POST \
 
 Its response includes a durable worktree ID, `created`, and init-script status. Repeating the same repository, name and branch selection converges on the existing managed worktree. Worktree names must be Git-safe slugs. Managed worktrees are kept when their retention policy says to retain; no external/unmanaged checkout is implicitly deleted. If an init script fails after creating local files, cleanup will not force-delete them. A later request can recover that exact verified Git checkout without repeating the failed initialization.
 
+Managed-worktree claim/release transitions write their critical `worktree.claimed`
+or `worktree.released` event **in the same SQLite transaction** as the claim;
+a journal-write failure rolls back the claim change, and a replay of an
+already-effective transition does not overwrite its original timestamp or
+append a duplicate event. A newly created or independently recovered Git
+checkout likewise commits its managed record and `worktree.created` or
+`worktree.recovered` event together. Git itself is a separate native effect:
+an unknown post-Git database result must not be interpreted as permission to
+run the same native operation again.
+
+Native managed-worktree **cleanup** (`delete_on_last_claim` only) now admits a
+durable system operation, checkout-path and branch reservations, and a
+`worktree.cleanup_admitted` event **before** removing the checkout or branch.
+The terminal receipt and `worktree.cleaned_up` event commit together, and a
+completed cleanup replays the exact original response without running Git.
+If a process dies or the terminal transaction fails after Git, the pending
+operation remains visible through `GET /v2/operations/{operation_id}` and
+subsequent calls **do not repeat Git**. When the exact checkout and Git branch
+can both be independently proven absent, the runtime can settle that existing
+operation from read-only evidence after restart; ambiguous, partial, foreign,
+dirty or unverified effects remain fenced for operator review. Incomplete
+native cleanup records `manual_review` and preserves reservations rather than
+automatically retrying deletion. A typed `409 outcome_unresolved` is
+non-retryable native authority, not a transient failure inviting a new key.
+Claims cannot be attached to a checkout whose generation has an admitted
+cleanup operation, even through another SQLite writer. This does **not**
+authorize removal of preserved legacy data or unresolved migration state.
+
 When creating an agent, choose one of these `worktree` selectors in the `POST /v2/workspaces/{workspace_id}/agents` JSON request:
 
 ```json

@@ -426,101 +426,13 @@ impl SqliteRuntimeRepository {
         let transaction = connection.transaction().map_err(|error| {
             db_error("failed to start managed worktree upsert transaction", error)
         })?;
-
-        let existing_id: Option<String> = transaction
-            .query_row(
-                "SELECT id
-                 FROM managed_worktrees
-                 WHERE repo_root = ?1
-                   AND worktree_cwd = ?2
-                   AND branch_name = ?3",
-                params![record.repo_root, record.worktree_cwd, record.branch_name],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|error| db_error("failed querying managed worktree by identity key", error))?;
-
-        if let Some(existing_id) = existing_id {
-            transaction
-                .execute(
-                    "UPDATE managed_worktrees
-                     SET repo_root = ?2,
-                         worktree_root = ?3,
-                         worktree_cwd = ?4,
-                         branch_name = ?5,
-                         worktree_name = ?6,
-                         unified_workspace_path = ?7,
-                         deletion_policy = ?8,
-                         created_by_session_id = ?9,
-                         created_by_operation_id = ?10,
-                         created_at = ?11,
-                         updated_at = ?12,
-                         revision = revision + 1
-                     WHERE id = ?1",
-                    params![
-                        existing_id,
-                        record.repo_root,
-                        record.worktree_root,
-                        record.worktree_cwd,
-                        record.branch_name,
-                        record.worktree_name,
-                        record.unified_workspace_path,
-                        record.deletion_policy,
-                        record.created_by_session_id,
-                        record.created_by_operation_id,
-                        record.created_at,
-                        record.updated_at,
-                    ],
-                )
-                .map_err(|error| {
-                    db_error("failed updating managed worktree by identity key", error)
-                })?;
-            transaction.commit().map_err(|error| {
-                db_error("failed committing managed worktree logical upsert", error)
-            })?;
-            return Ok(());
-        }
-
-        transaction
-            .execute(
-                "INSERT INTO managed_worktrees (
-                    id, repo_root, worktree_root, worktree_cwd, branch_name, worktree_name,
-                    unified_workspace_path, deletion_policy, created_by_session_id,
-                    created_by_operation_id, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-                 ON CONFLICT(id) DO UPDATE SET
-                    repo_root = excluded.repo_root,
-                    worktree_root = excluded.worktree_root,
-                    worktree_cwd = excluded.worktree_cwd,
-                    branch_name = excluded.branch_name,
-                    worktree_name = excluded.worktree_name,
-                    unified_workspace_path = excluded.unified_workspace_path,
-                    deletion_policy = excluded.deletion_policy,
-                    created_by_session_id = excluded.created_by_session_id,
-                    created_by_operation_id = excluded.created_by_operation_id,
-                    created_at = excluded.created_at,
-                    updated_at = excluded.updated_at,
-                    revision = managed_worktrees.revision + 1",
-                params![
-                    record.id,
-                    record.repo_root,
-                    record.worktree_root,
-                    record.worktree_cwd,
-                    record.branch_name,
-                    record.worktree_name,
-                    record.unified_workspace_path,
-                    record.deletion_policy,
-                    record.created_by_session_id,
-                    record.created_by_operation_id,
-                    record.created_at,
-                    record.updated_at,
-                ],
-            )
-            .map_err(|error| db_error("failed upserting managed worktree", error))?;
+        crate::repository_worktree_record_events::upsert_managed_worktree_in_transaction(
+            &transaction,
+            record,
+        )?;
         transaction
             .commit()
-            .map_err(|error| db_error("failed committing managed worktree upsert", error))?;
-        Ok(())
+            .map_err(|error| db_error("failed committing managed worktree upsert", error))
     }
 
     pub fn managed_worktree_revision(&self, worktree_id: &str) -> Result<u64, RuntimeError> {

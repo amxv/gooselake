@@ -215,31 +215,45 @@ impl RuntimeWorktreeService {
             if reuse_requested {
                 worktree_assignment_mode = "reused".to_string();
                 let hydrated = self.store.hydrate_runtime_state()?;
-                let existing =
-                    if let Some(existing) = self.worktree_by_identity(&hydrated, &planned) {
-                        let live_artifacts = Self::has_live_artifacts_for_record(&existing);
-                        if !live_artifacts {
-                            return Err(RuntimeError::NotFound(format!(
-                                "reused worktree identity exists but artifacts are missing: {}",
-                                planned.worktree_cwd
-                            )));
-                        }
-                        existing
-                    } else {
-                        if !std::path::Path::new(planned.worktree_cwd.as_str()).exists() {
-                            return Err(RuntimeError::NotFound(format!(
-                                "reused worktree path not found: {}",
-                                planned.worktree_cwd
-                            )));
-                        }
-                        self.upsert_worktree_record(
-                            self.allocate_worktree_id(),
+                let existing = if let Some(existing) =
+                    self.worktree_by_identity(&hydrated, &planned)
+                {
+                    let live_artifacts = Self::has_live_artifacts_for_record(&existing);
+                    if !live_artifacts {
+                        return Err(RuntimeError::NotFound(format!(
+                            "reused worktree identity exists but artifacts are missing: {}",
+                            planned.worktree_cwd
+                        )));
+                    }
+                    existing
+                } else {
+                    if !std::path::Path::new(planned.worktree_cwd.as_str()).exists() {
+                        return Err(RuntimeError::NotFound(format!(
+                            "reused worktree path not found: {}",
+                            planned.worktree_cwd
+                        )));
+                    }
+                    self.recover_native_checkout(
                             &planned,
-                            "retain_on_last_claim".to_string(),
-                            None,
-                            None,
+                            &runtime_core::WorktreeCreateRequest {
+                                team_id: Some(team_id.clone()),
+                                source_session_id: source_session.id.clone(),
+                                repo_root: Some(repo_root.clone()),
+                                worktree_name: worktree_name.to_string(),
+                                branch_prefix: worktree_input.branch_prefix.clone(),
+                                base_ref: worktree_input.base_ref.clone(),
+                                deletion_policy: Some("retain_on_last_claim".to_string()),
+                                run_init_script: Some(false),
+                                created_by_session_id: None,
+                                operation_id: None,
+                            },
+                            Some(&source_session.id),
                         )?
-                    };
+                        .ok_or_else(|| RuntimeError::Conflict(
+                            "existing native checkout cannot be verified as the intended repository and branch"
+                                .into(),
+                        ))?
+                };
                 worktree_record = Some(existing);
             } else {
                 worktree_assignment_mode = "created".to_string();
@@ -661,21 +675,27 @@ impl RuntimeWorktreeService {
                 released_at: Some(now_ms()),
                 ..claim.clone()
             };
-            if let Err(error) = self.store.upsert_managed_worktree_claim(&released) {
-                let diag = self.store.append_team_operation_diagnostic(
-                    None,
-                    Some(request.team_id.as_str()),
-                    "worktree_claim_release_failed",
-                    error.to_string().as_str(),
-                    &serde_json::json!({
-                        "worktree_id": claim.worktree_id,
-                        "session_id": claim.session_id
-                    }),
-                    now_ms(),
-                )?;
-                diagnostics.push(diag);
-                continue;
-            }
+            let released = match self.store.transition_managed_worktree_claim(
+                &released,
+                runtime_core::ManagedWorktreeClaimTransition::Release,
+            ) {
+                Ok(released) => released,
+                Err(error) => {
+                    let diag = self.store.append_team_operation_diagnostic(
+                        None,
+                        Some(request.team_id.as_str()),
+                        "worktree_claim_release_failed",
+                        error.to_string().as_str(),
+                        &serde_json::json!({
+                            "worktree_id": claim.worktree_id,
+                            "session_id": claim.session_id
+                        }),
+                        now_ms(),
+                    )?;
+                    diagnostics.push(diag);
+                    continue;
+                }
+            };
             released_claims.push(released.clone());
             match self
                 .cleanup_worktree(WorktreeCleanupRequest {

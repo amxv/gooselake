@@ -8,6 +8,8 @@ mod message_operator;
 mod team_comms_trait;
 #[path = "services_team_models.rs"]
 mod team_models;
+#[path = "services_worktree_journal_trait.rs"]
+mod worktree_journal_trait;
 #[path = "services_worktree_models.rs"]
 mod worktree_models;
 #[path = "services_worktree_store_trait.rs"]
@@ -799,6 +801,7 @@ pub trait RuntimeStore:
         unsupported_store("paged agent delivery reads unavailable")
     }
     fn upsert_managed_worktree(&self, record: &ManagedWorktreeRecord) -> Result<(), RuntimeError>;
+    crate::services::worktree_journal_trait::default_worktree_record_journal!();
     crate::services_worktree_status_trait::default_managed_worktree_lookup!();
     crate::services_worktree_status_trait::default_worktree_status_query!();
     fn managed_worktree_revision(&self, _worktree_id: &str) -> Result<u64, RuntimeError> {
@@ -808,6 +811,7 @@ pub trait RuntimeStore:
         &self,
         record: &ManagedWorktreeClaimRecord,
     ) -> Result<(), RuntimeError>;
+    crate::services::worktree_journal_trait::default_worktree_claim_cleanup_journal!();
     fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError>;
     fn admit_managed_process(
         &self,

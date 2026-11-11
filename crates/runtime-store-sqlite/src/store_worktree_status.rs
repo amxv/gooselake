@@ -9,6 +9,23 @@ macro_rules! delegate_worktree_status {
             self.repository.upsert_managed_worktree(record)
         }
 
+        fn record_managed_worktree_event(
+            &self,
+            record: &runtime_core::ManagedWorktreeRecord,
+            init_script_status: &str,
+            recovered: bool,
+            session_id: Option<&str>,
+            team_id: Option<&str>,
+        ) -> Result<runtime_core::ManagedWorktreeRecord, runtime_core::RuntimeError> {
+            self.repository.record_managed_worktree_event(
+                record,
+                init_script_status,
+                recovered,
+                session_id,
+                team_id,
+            )
+        }
+
         fn get_managed_worktree(
             &self,
             worktree_id: &str,
@@ -37,6 +54,47 @@ macro_rules! delegate_worktree_status {
             record: &runtime_core::ManagedWorktreeClaimRecord,
         ) -> Result<(), runtime_core::RuntimeError> {
             self.repository.upsert_managed_worktree_claim(record)
+        }
+
+        fn transition_managed_worktree_claim(
+            &self,
+            record: &runtime_core::ManagedWorktreeClaimRecord,
+            transition: runtime_core::ManagedWorktreeClaimTransition,
+        ) -> Result<runtime_core::ManagedWorktreeClaimRecord, runtime_core::RuntimeError> {
+            self.repository
+                .transition_managed_worktree_claim(record, transition)
+        }
+
+        fn replay_managed_worktree_cleanup(
+            &self,
+            worktree: &runtime_core::ManagedWorktreeRecord,
+        ) -> Result<Option<runtime_core::ManagedWorktreeCleanupAdmission>, runtime_core::RuntimeError> {
+            self.repository.replay_managed_worktree_cleanup(worktree)
+        }
+
+        fn admit_managed_worktree_cleanup(
+            &self,
+            command: &runtime_core::ManagedWorktreeCleanupCommand,
+        ) -> Result<runtime_core::ManagedWorktreeCleanupAdmission, runtime_core::RuntimeError> {
+            self.repository.admit_managed_worktree_cleanup(command)
+        }
+
+        fn complete_managed_worktree_cleanup(
+            &self,
+            operation_id: &str,
+            response: &runtime_core::WorktreeCleanupResponse,
+            completed_at: i64,
+        ) -> Result<(), runtime_core::RuntimeError> {
+            self.repository.complete_managed_worktree_cleanup(operation_id, response, completed_at)
+        }
+
+        fn native_worktree_cleanup_owner(
+            &self,
+            repo_root: &str,
+            checkout_path: &str,
+            branch_name: &str,
+        ) -> Result<Option<String>, runtime_core::RuntimeError> {
+            self.repository.native_worktree_cleanup_owner(repo_root, checkout_path, branch_name)
         }
     };
 }

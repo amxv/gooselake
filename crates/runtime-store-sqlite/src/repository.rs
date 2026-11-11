@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use runtime_core::{NewRuntimeEvent, RuntimeError, RuntimeEventRecord, RuntimeEventScope};
-use rusqlite::{params, TransactionBehavior};
+use rusqlite::{params, Transaction, TransactionBehavior};
 
 use crate::db::{
     apply_schema, collect_rows, db_error, fetch_runtime_event_by_event_id, json_to_string,
@@ -11,6 +11,50 @@ use crate::db::{
 #[derive(Debug, Clone)]
 pub struct SqliteRuntimeRepository {
     pub(crate) database_path: PathBuf,
+}
+
+/// Shared insertion primitive for an already-immediate SQLite transaction.
+/// Callers with associated authority mutations must commit both together;
+/// the connection hook wakes SSE subscribers only after a successful commit.
+pub(crate) fn insert_runtime_event_in_transaction(
+    transaction: &Transaction<'_>,
+    event: &NewRuntimeEvent,
+) -> Result<RuntimeEventRecord, RuntimeError> {
+    if let Some(existing) = fetch_runtime_event_by_event_id(transaction, &event.event_id)? {
+        return Ok(existing);
+    }
+    let next_seq = transaction
+        .query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM runtime_events WHERE scope = ?1 AND scope_id = ?2",
+            params![event.scope.as_str(), event.scope_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| db_error("failed computing next event sequence", error))?;
+    transaction
+        .execute(
+            "INSERT INTO runtime_events (
+                event_id, scope, scope_id, session_id, team_id, turn_id,
+                seq, kind, critical, payload_json, provider, provider_seq, created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                event.event_id,
+                event.scope.as_str(),
+                event.scope_id,
+                event.session_id,
+                event.team_id,
+                event.turn_id,
+                next_seq,
+                event.kind,
+                event.criticality.as_i64(),
+                json_to_string(&event.payload)?,
+                event.provider,
+                event.provider_seq,
+                event.created_at,
+            ],
+        )
+        .map_err(|error| db_error("failed inserting runtime event", error))?;
+    fetch_runtime_event_by_event_id(transaction, &event.event_id)?
+        .ok_or_else(|| RuntimeError::Bootstrap("inserted event missing after insert".to_string()))
 }
 
 impl SqliteRuntimeRepository {
@@ -38,50 +82,7 @@ impl SqliteRuntimeRepository {
                 )
             })?;
 
-        if let Some(existing) = fetch_runtime_event_by_event_id(&transaction, &event.event_id)? {
-            transaction
-                .commit()
-                .map_err(|error| db_error("failed committing idempotent event append", error))?;
-            return Ok(existing);
-        }
-
-        let next_seq = transaction
-            .query_row(
-                "SELECT COALESCE(MAX(seq), 0) + 1 FROM runtime_events WHERE scope = ?1 AND scope_id = ?2",
-                params![event.scope.as_str(), event.scope_id],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(|error| db_error("failed computing next event sequence", error))?;
-
-        let payload_json = json_to_string(&event.payload)?;
-        transaction
-            .execute(
-                "INSERT INTO runtime_events (
-                    event_id, scope, scope_id, session_id, team_id, turn_id,
-                    seq, kind, critical, payload_json, provider, provider_seq, created_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-                params![
-                    event.event_id,
-                    event.scope.as_str(),
-                    event.scope_id,
-                    event.session_id,
-                    event.team_id,
-                    event.turn_id,
-                    next_seq,
-                    event.kind,
-                    event.criticality.as_i64(),
-                    payload_json,
-                    event.provider,
-                    event.provider_seq,
-                    event.created_at,
-                ],
-            )
-            .map_err(|error| db_error("failed inserting runtime event", error))?;
-
-        let inserted =
-            fetch_runtime_event_by_event_id(&transaction, &event.event_id)?.ok_or_else(|| {
-                RuntimeError::Bootstrap("inserted event missing after insert".to_string())
-            })?;
+        let inserted = insert_runtime_event_in_transaction(&transaction, event)?;
 
         transaction
             .commit()

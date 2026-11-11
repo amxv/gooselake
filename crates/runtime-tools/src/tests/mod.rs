@@ -22,6 +22,7 @@ mod process;
 mod team_hook_execution;
 mod team_manage;
 mod worktree;
+mod worktree_cleanup_recovery;
 mod worktree_retirement;
 
 #[derive(Default)]

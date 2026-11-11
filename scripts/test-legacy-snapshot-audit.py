@@ -30,6 +30,30 @@ def digest(path: Path) -> str:
 
 
 class LegacySnapshotAuditTests(unittest.TestCase):
+    def test_pending_native_worktree_cleanup_is_a_nonlive_cutover_blocker(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gg-snapshot-cleanup-") as root:
+            snapshot = Path(root) / "consistent-schema28.sqlite3"
+            with sqlite3.connect(snapshot) as db:
+                db.executescript(
+                    "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);"
+                    "CREATE TABLE managed_worktree_cleanup_receipts(phase TEXT);"
+                    "INSERT INTO managed_worktree_cleanup_receipts VALUES"
+                    "('pending'),('completed');"
+                )
+                db.executemany(
+                    "INSERT INTO schema_migrations VALUES (?)", [(i,) for i in range(1, 29)]
+                )
+            original = digest(snapshot)
+            report_result = run_audit(snapshot)
+            self.assertEqual(report_result.returncode, 0, report_result.stderr)
+            report = json.loads(report_result.stdout)
+            self.assertEqual(report["schema"]["snapshot_version"], 28)
+            self.assertEqual(report["schema"]["source_version"], 28)
+            self.assertEqual(report["counts"]["unsettled_worktree_cleanups"], 1)
+            self.assertIn("unsettled_worktree_cleanups", report["observed_outstanding_obligations"])
+            self.assertFalse(report["cutover_authorized"])
+            self.assertEqual(digest(snapshot), original)
+
     def test_populated_snapshot_reports_counts_only_and_cannot_authorize_cutover(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-snapshot-audit-") as root:
             snapshot = Path(root) / "consistent-copy.sqlite3"
@@ -84,8 +108,8 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertFalse(report["cutover_authorized"])
             self.assertEqual(report["source_mode"], "immutable_read_only")
             self.assertEqual(report["schema"]["snapshot_version"], 27)
-            self.assertEqual(report["schema"]["source_version"], 27)
-            self.assertEqual(report["schema"]["missing_applied_versions"], [])
+            self.assertEqual(report["schema"]["source_version"], 28)
+            self.assertEqual(report["schema"]["missing_applied_versions"], [28])
             self.assertTrue(report["schema"]["workspace_migration_preview_recorded"])
             for name in [
                 "unresolved_legacy_subjects", "unapplied_classified_legacy_subjects",
@@ -102,6 +126,8 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertNotIn("legacy_teams", report["observed_outstanding_obligations"])
             self.assertIsNone(report["counts"]["unsettled_legacy_deliveries"])
             self.assertIn("unsettled_legacy_deliveries", report["unknown_obligation_checks"])
+            self.assertIsNone(report["counts"]["unsettled_worktree_cleanups"])
+            self.assertIn("unsettled_worktree_cleanups", report["unknown_obligation_checks"])
             self.assertEqual(digest(snapshot), before_digest)
             self.assertEqual(
                 sorted(p.name for p in snapshot.parent.iterdir()), before_names,

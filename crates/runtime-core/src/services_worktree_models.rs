@@ -101,6 +101,15 @@ pub struct WorktreeClaimResponse {
     pub claim: ManagedWorktreeClaimRecord,
 }
 
+/// A claim transition and its critical lifecycle event are one DB authority
+/// change. A retry of an already-effective transition is a read, not a new
+/// event or a reset of the original claim timestamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedWorktreeClaimTransition {
+    Claim,
+    Release,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorktreeReleaseRequest {
     pub worktree_id: String,
@@ -131,6 +140,30 @@ pub struct WorktreeCleanupResponse {
     pub worktree_path_deleted: bool,
     pub branch_deleted: bool,
     pub diagnostics: Vec<String>,
+}
+
+/// One immutable native cleanup intent per managed checkout generation. A
+/// pending receipt fences retries until independent native evidence is read.
+#[derive(Debug, Clone)]
+pub struct ManagedWorktreeCleanupCommand {
+    pub operation_id: String,
+    pub worktree: ManagedWorktreeRecord,
+    pub reason: Option<String>,
+    pub requested_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub enum ManagedWorktreeCleanupAdmission {
+    Execute {
+        operation_id: String,
+    },
+    Unresolved {
+        operation_id: String,
+    },
+    Replay {
+        operation_id: String,
+        response: WorktreeCleanupResponse,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

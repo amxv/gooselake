@@ -11,11 +11,11 @@ use crate::repository_workspace::{operation_by_id, operation_by_idempotency, wor
 use crate::SqliteRuntimeRepository;
 
 const CREATE_KIND: &str = "workspace_worktree_create";
-const CLAIM_KIND: &str = "managed_worktree_native_checkout";
-const BRANCH_CLAIM_KIND: &str = "managed_worktree_native_branch";
+pub(crate) const CLAIM_KIND: &str = "managed_worktree_native_checkout";
+pub(crate) const BRANCH_CLAIM_KIND: &str = "managed_worktree_native_branch";
 const EFFECT_KIND: &str = "git_worktree_create";
 
-fn branch_resource_id(repository_root: &str, branch_name: &str) -> String {
+pub(crate) fn branch_resource_id(repository_root: &str, branch_name: &str) -> String {
     serde_json::json!([repository_root, branch_name]).to_string()
 }
 

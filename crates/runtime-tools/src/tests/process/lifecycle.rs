@@ -529,3 +529,64 @@ async fn capture_limit_is_per_stream_and_persisted_as_authoritative_truncation_m
     assert_eq!(logs.len(), 1);
     assert!(logs[0].truncated);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn failed_running_journal_prevents_native_command_and_records_one_terminal_event() {
+    let temp = tempfile::tempdir().expect("temp");
+    let database_path = temp.path().join("runtime.sqlite3");
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: database_path.clone(),
+    }));
+    store.initialize().await.expect("initialize store");
+    let db = rusqlite::Connection::open(&database_path).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER reject_running_journal BEFORE INSERT ON runtime_events
+         WHEN NEW.kind = 'process.started'
+         BEGIN SELECT RAISE(ABORT, 'injected started journal failure'); END;",
+    )
+    .unwrap();
+
+    let manager = RuntimeProcessManager::new(store.clone(), process_config(&temp, 1, 1024))
+        .await
+        .expect("process manager");
+    let marker = temp.path().join("must-not-execute");
+    let admitted = manager
+        .run_process(runtime_core::ProcessRunRequest {
+            caller_session_id: Some("sess_owner".to_string()),
+            tool_call_id: Some("journal_failed_prelaunch".to_string()),
+            command: format!("printf unexpected > {}", marker.display()),
+            cwd: Some(temp.path().display().to_string()),
+            timeout_ms: None,
+        })
+        .await
+        .expect("durable admission");
+    let terminated = wait_for_terminal(&manager, &admitted.process.process_id).await;
+    assert_eq!(terminated.process.status, "failed");
+    assert!(
+        !marker.exists(),
+        "no command may pass an uncommitted launch receipt"
+    );
+    let events = store
+        .list_runtime_events(
+            Some((
+                runtime_core::RuntimeEventScope::Process,
+                &admitted.process.process_id,
+            )),
+            None,
+            30,
+        )
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.kind.as_str())
+            .collect::<Vec<_>>(),
+        ["process.queued", "process.failed"]
+    );
+    assert!(events[1].payload["reason"]
+        .as_str()
+        .unwrap()
+        .starts_with("launch_commit_failed:"));
+    assert_eq!(events[1].payload["before_launch"], true);
+}

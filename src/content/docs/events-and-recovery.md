@@ -75,6 +75,20 @@ Critical events describe state transitions that clients should not casually lose
 
 Droppable events are useful but less sacred. Process output samples are the clearest example. They help live UIs feel alive, but the process log files remain the authoritative output source.
 
+Managed-process **critical** lifecycle events (`process.queued`,
+`process.started`, `process.kill_requested` and terminal outcomes such as
+`process.completed` / `process.canceled`) are inserted in the **same SQLite
+transaction** as the corresponding durable managed-process state. Failed
+journal inserts roll back that state transition, so no process may pass its
+pre-execution launch gate without a committed `process.started` receipt.
+Critical IDs are deterministic per process and lifecycle transition;
+idempotent cancel/terminal retries never add duplicate journal rows. The
+older in-memory broadcast is best-effort; replayable SQLite journal rows,
+not broadcast delivery, are the authoritative source. Migration to this
+journal coupling does **not** invent historical lifecycle events for process
+states recorded before the migration. Sampled `process.output` remains
+droppable, and complete captured output is kept in the process log files.
+
 ## Replay before live
 
 A robust client reconnects like this:
@@ -151,7 +165,16 @@ Pending orphan approvals are declined during recovery because there is no safe o
 
 Runtime-managed processes are host OS processes. If the server restarts, it cannot assume an old child process is still safely owned by the current runtime instance.
 
-On startup, previously `running` or `queued` process records are marked failed and reported in startup recovery diagnostics.
+On startup, `queued` processes remain queued. An interrupted
+`launch_reserved` claim is safely requeued, using a distinct launch gate for
+the next claim generation so a stale pre-launch wrapper cannot run the
+command when a replacement attempt is authorized. On Unix, pre-launch shells
+also exit if their runtime parent disappears or their bounded gate wait
+expires. Previously `running` processes are reconciled only after verifying
+their recorded OS PID **and start identity** before signaling the process
+group; a mismatch fails closed, not by killing an unrelated reused PID.
+Successfully reconciled work is recorded as `interrupted` with a terminal
+journal event. Pending model completion delivery is recovered separately.
 
 ## Team delivery recovery
 

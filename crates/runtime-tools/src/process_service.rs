@@ -270,11 +270,23 @@ impl ProcessManager for RuntimeProcessManager {
         }
 
         if matches!(record.status.as_str(), "queued" | "launch_reserved") {
-            if let Some(canceled) = self.store.cancel_queued_managed_process(
+            let cancellation = match self.store.cancel_queued_managed_process(
                 &record.process_id,
                 request.caller_session_id.as_deref(),
                 now_ms(),
-            )? {
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    // A lost commit acknowledgment is not proof that the
+                    // cancellation failed. Resolve the durable terminal
+                    // receipt before exposing an error for a retry.
+                    match self.store.get_managed_process(&record.process_id) {
+                        Ok(Some(committed)) if committed.status == "canceled" => Some(committed),
+                        _ => return Err(error),
+                    }
+                }
+            };
+            if let Some(canceled) = cancellation {
                 self.append_process_event(
                     &record.process_id,
                     record.owner_session_id.clone(),
@@ -293,14 +305,34 @@ impl ProcessManager for RuntimeProcessManager {
             }
         }
 
-        let updated = self
-            .store
-            .request_managed_process_cancel(
-                &record.process_id,
-                request.caller_session_id.as_deref(),
-                now_ms(),
-            )?
-            .ok_or_else(|| RuntimeError::NotFound(format!("process {}", record.process_id)))?;
+        let updated = match self.store.request_managed_process_cancel(
+            &record.process_id,
+            request.caller_session_id.as_deref(),
+            now_ms(),
+        ) {
+            Ok(Some(updated)) => updated,
+            Ok(None) => {
+                return Err(RuntimeError::NotFound(format!(
+                    "process {}",
+                    record.process_id
+                )))
+            }
+            Err(error) => {
+                // The DB may have committed cancellation before the caller
+                // lost the receipt. Never omit the OS kill because of a
+                // retryable acknowledgement error: re-read committed state,
+                // then signal only with the already-verified live identity.
+                match self.store.get_managed_process(&record.process_id) {
+                    Ok(Some(committed))
+                        if process_status_is_terminal(&committed.status)
+                            || (committed.status == "running" && committed.cancel_requested) =>
+                    {
+                        committed
+                    }
+                    _ => return Err(error),
+                }
+            }
+        };
         if updated.status == "running" {
             if let Some(live) = self
                 .live_processes

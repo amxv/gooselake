@@ -142,6 +142,49 @@ async fn launch_reservation_is_requeued_after_restart_without_native_spawn() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn stale_prelaunch_wrapper_cannot_execute_when_later_claim_gate_opens() {
+    use crate::process_helpers::{build_process_command, launch_gate_path};
+
+    let temp = tempfile::tempdir().expect("temp");
+    let old_gate = launch_gate_path(temp.path(), "proc_reclaimed", 1);
+    let new_gate = launch_gate_path(temp.path(), "proc_reclaimed", 2);
+    assert_ne!(old_gate, new_gate);
+
+    let marker = temp.path().join("executions");
+    let old_command = format!("printf stale >> {}", marker.display());
+    let new_command = format!("printf current >> {}", marker.display());
+    let mut old_builder =
+        build_process_command(&old_command, temp.path().to_str().unwrap(), &old_gate, true)
+            .expect("old launch wrapper");
+    // The manager can restart without the parent OS PID changing; a stale
+    // prelaunch shell must still fail closed and never execute later.
+    old_builder.env("GG_PROCESS_LAUNCH_GATE_MAX_WAITS", "15");
+    let mut old_child = old_builder.spawn().expect("spawn stale gated wrapper");
+
+    let mut new_child =
+        build_process_command(&new_command, temp.path().to_str().unwrap(), &new_gate, true)
+            .expect("replacement wrapper")
+            .spawn()
+            .expect("spawn replacement");
+    tokio::fs::write(&new_gate, [])
+        .await
+        .expect("authorize new claim only");
+    let current_status = tokio::time::timeout(Duration::from_secs(5), new_child.wait())
+        .await
+        .expect("new wrapper timeout")
+        .expect("new wrapper wait");
+    assert!(current_status.success());
+    let stale_status = tokio::time::timeout(Duration::from_secs(5), old_child.wait())
+        .await
+        .expect("stale wrapper timeout")
+        .expect("stale wrapper wait");
+    assert_eq!(stale_status.code(), Some(125));
+    assert!(!old_gate.exists());
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), "current");
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn startup_matching_os_identity_is_safely_terminated_and_reconciled() {
     use std::os::unix::process::CommandExt;
 

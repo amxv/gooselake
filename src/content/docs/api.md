@@ -1486,6 +1486,12 @@ Behavior:
   rows: the stream recovers all IDs in order from indexed journal pages
 - process streams check owner/workspace visibility through the process manager
   before opening their scoped journal stream
+- process queued/running/cancel-request/terminal authority commits its critical
+  lifecycle journal event in the same SQLite transaction, with one deterministic
+  event ID per transition; failed journal writes roll back the state mutation,
+  and a legacy in-memory broadcast failure does not erase the durable SSE row.
+  `process.output` samples remain intentionally droppable. Migrating an old
+  database does not fabricate older lifecycle events.
 - `after_seq` query param takes precedence
 - otherwise stream endpoints use the `Last-Event-ID` header
 - invalid `Last-Event-ID` returns HTTP `400`

@@ -80,6 +80,15 @@ curl -fsS -X POST "$BASE_URL/v1/processes/queue/reorder" \
 
 Process output events are intentionally sampled and bounded. They are good for live feedback, not complete archival output. Each stdout/stderr stream is captured up to its persisted capture limit; truncation is reported truthfully when that limit is reached.
 
+Critical process lifecycle events (`process.queued`, `process.started`,
+`process.kill_requested`, and terminal outcomes) are recorded transactionally
+with the process authority row, using a deterministic ID for each transition.
+Queue/cancel/terminal retries do not create a second critical event; journal
+write failure rolls back the associated state mutation. Historical records
+predating this schema migration are preserved without inventing events that
+were not recorded at the time. Only sampled `process.output` events are
+droppable; SSE clients can replay all retained critical journal rows.
+
 For full output, read logs:
 
 ```bash
@@ -140,7 +149,7 @@ See [Configuration reference](/docs/configuration) for exact fields.
 
 ## Startup recovery
 
-Queued work remains queued across restart, and an interrupted launch reservation is safely re-queued. For a record that had reached `running`, the runtime only terminates the old process group after matching both the persisted PID and an OS start identity. A PID identity mismatch fails closed rather than risking termination of a reused PID. Successfully reconciled running work becomes `interrupted`, and its terminal completion is delivered through the same durable completion path.
+Queued work remains queued across restart, and an interrupted launch reservation is safely re-queued. Each launch claim uses its own generation-specific gate: an abandoned pre-launch shell cannot execute when the new claim is authorized. Unix launch wrappers also give up after a bounded wait or when their runtime parent dies. For a record that had reached `running`, the runtime only terminates the old process group after matching both the persisted PID and an OS start identity. A PID identity mismatch fails closed rather than risking termination of a reused PID. Successfully reconciled running work becomes `interrupted`, and its terminal completion is delivered through the same durable completion path.
 
 Completion delivery also recovers independently: pending delivery is retried, while an already-dispatched completion turn is recognized by its stable correlation ID and is not duplicated.
 

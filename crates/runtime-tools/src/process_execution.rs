@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use crate::process::{
     LiveProcess, ProcessControl, RuntimeProcessManager, WaitCause, LAUNCH_AUTH_RETRY_MAX,
 };
-use crate::process_helpers::{build_process_command, command_text, file_len};
+use crate::process_helpers::{build_process_command, command_text, file_len, launch_gate_path};
 use crate::{exit_status_signal, now_ms, os_process};
 
 const TERMINAL_PERSIST_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
@@ -30,10 +30,11 @@ impl RuntimeProcessManager {
             }
         };
         let cwd = claim.cwd.clone().unwrap_or_else(|| ".".to_string());
-        let launch_gate = self
-            .config
-            .log_dir
-            .join(format!("{}.launch", claim.process_id));
+        let launch_gate = launch_gate_path(
+            &self.config.log_dir,
+            &claim.process_id,
+            claim.claim_generation,
+        );
         let _ = tokio::fs::remove_file(&launch_gate).await;
         let mut command_builder =
             match build_process_command(&command, &cwd, &launch_gate, self.config.allow_shell) {
@@ -104,7 +105,12 @@ impl RuntimeProcessManager {
             }
         };
 
-        if let Err(error) = tokio::fs::write(&launch_gate, []).await {
+        if let Err(error) = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&launch_gate)
+            .await
+        {
             let _ = os_process::terminate_process_group(pid, &identity);
             let _ = child.wait().await;
             self.terminalize_running_failure(
@@ -571,8 +577,17 @@ impl RuntimeProcessManager {
         criticality: RuntimeEventCriticality,
         payload: Value,
     ) {
-        let event_id = format!("evt_proc_{}_{:032x}", process_id, rand::random::<u128>());
-        if let Ok(record) = self.store.append_runtime_event(&NewRuntimeEvent {
+        // The SQLite process authority commits critical lifecycle events in
+        // the SAME transaction as queued/running/cancel/terminal state. The
+        // deterministic ID returns that already-durable event for the legacy
+        // in-memory broadcast, rather than creating a second journal row.
+        // Output samples are deliberately droppable and keep unique IDs.
+        let event_id = if criticality == RuntimeEventCriticality::Critical {
+            format!("evt_proc_{process_id}_{kind}")
+        } else {
+            format!("evt_proc_{}_{:032x}", process_id, rand::random::<u128>())
+        };
+        match self.store.append_runtime_event(&NewRuntimeEvent {
             event_id,
             scope: RuntimeEventScope::Process,
             scope_id: process_id.to_string(),
@@ -586,7 +601,18 @@ impl RuntimeProcessManager {
             provider_seq: None,
             created_at: now_ms(),
         }) {
-            let _ = self.event_tx.send(record);
+            Ok(record) => {
+                let _ = self.event_tx.send(record);
+            }
+            Err(error) if criticality == RuntimeEventCriticality::Critical => {
+                // The native effect must NOT be replayed because the legacy
+                // broadcast's journal lookup failed. If the primary SQLite
+                // transaction succeeded, the canonical SSE journal already
+                // has this event; report the unexpected projection failure.
+                tracing::error!(process_id, kind, %error,
+                    "critical process event legacy broadcast unavailable; no native effect retry");
+            }
+            Err(_) => {} // Droppable output sampling never gates native work.
         }
     }
 }

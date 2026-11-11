@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use runtime_core::{ManagedProcessRecord, ProcessSummary, RuntimeError};
 use serde_json::{json, Value};
@@ -25,6 +25,12 @@ pub(crate) fn command_text(command: &Value) -> Result<String, RuntimeError> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| RuntimeError::InvalidState("process command payload is invalid".to_string()))
+}
+
+/// A claim requeued after a crash must NEVER release the previous attempt's
+/// waiting shell. Both may still be alive when a manager restarts in-process.
+pub(crate) fn launch_gate_path(log_dir: &Path, process_id: &str, generation: i64) -> PathBuf {
+    log_dir.join(format!("{process_id}.claim-{generation}.launch"))
 }
 
 pub(crate) fn completion_correlation(process_id: &str) -> String {
@@ -157,8 +163,11 @@ pub(crate) fn build_process_command(
 parent_pid="$GG_PROCESS_PARENT_PID"
 process_group="$$"
 launch_gate="$GG_PROCESS_LAUNCH_GATE"
+gate_waits=0
 while [ ! -e "$launch_gate" ]; do
   kill -0 "$parent_pid" 2>/dev/null || exit 125
+  gate_waits=$((gate_waits + 1))
+  [ "$gate_waits" -lt "$GG_PROCESS_LAUNCH_GATE_MAX_WAITS" ] || exit 125
   sleep 0.02
 done
 rm -f "$launch_gate"
@@ -186,6 +195,9 @@ fi
             .arg("gg-managed-process")
             .env("GG_PROCESS_PARENT_PID", std::process::id().to_string())
             .env("GG_PROCESS_LAUNCH_GATE", launch_gate)
+            // Fail closed if the manager is recreated in the same parent PID:
+            // an abandoned reserved shell must not wait indefinitely.
+            .env("GG_PROCESS_LAUNCH_GATE_MAX_WAITS", "1500")
             .env("GG_PROCESS_USE_SHELL", if allow_shell { "1" } else { "0" });
 
         if allow_shell {

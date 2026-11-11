@@ -113,6 +113,163 @@ fn turn_admission_round_trips_snapshot_provenance_and_native_mapping() {
     );
 }
 
+#[test]
+fn critical_turn_admission_event_rolls_back_authority_on_journal_failure_and_replays_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let session = admission_session();
+    repository.upsert_session(&session).unwrap();
+    let turn = admission_turn();
+    let mut admitted = session.clone();
+    admitted.status = "turn_admitted".into();
+    admitted.active_turn_id = Some(turn.id.clone());
+    admitted.updated_at = 11;
+    let admission = admission_record();
+    let approval = admission_approval();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: repository.database_path.clone(),
+    });
+    let mut commits = store.subscribe_event_commits().unwrap();
+
+    let connection = open_connection(&repository.database_path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_admission_event BEFORE INSERT ON runtime_events
+             WHEN NEW.kind = 'turn.admitted'
+             BEGIN SELECT RAISE(ABORT, 'injected critical turn journal failure'); END;",
+        )
+        .unwrap();
+    assert!(repository
+        .admit_turn(&admission, &turn, &admitted, Some(&approval))
+        .is_err());
+    for table in ["turns", "turn_admissions", "approvals"] {
+        let count: i64 = connection
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table} must roll back with failed event");
+    }
+    let active: Option<String> = connection
+        .query_row(
+            "SELECT active_turn_id FROM sessions WHERE id=?1",
+            [&session.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(active.is_none());
+    assert!(repository
+        .list_runtime_events(Some((RuntimeEventScope::Session, &session.id)), None, 10)
+        .unwrap()
+        .is_empty());
+    assert!(matches!(
+        commits.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+
+    connection
+        .execute_batch("DROP TRIGGER fail_admission_event;")
+        .unwrap();
+    drop(connection);
+    repository
+        .admit_turn(&admission, &turn, &admitted, Some(&approval))
+        .unwrap();
+    assert!(commits.try_recv().is_ok(), "only committed event wakes SSE");
+    let reopened = SqliteRuntimeRepository::new(repository.database_path.clone());
+    let events = reopened
+        .list_runtime_events(Some((RuntimeEventScope::Session, &session.id)), None, 10)
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_id, "evt_turn_turn_admission_admitted");
+    assert_eq!(events[0].kind, "turn.admitted");
+    assert_eq!(events[0].criticality, RuntimeEventCriticality::Critical);
+    assert_eq!(events[0].turn_id.as_deref(), Some(turn.id.as_str()));
+    assert_eq!(events[0].seq, 1);
+    assert_eq!(events[0].payload["projection_source"], "user_visible");
+    assert_eq!(events[0].payload["requires_approval"], false);
+
+    // The runtime's post-admission in-memory broadcast uses the identical
+    // deterministic ID. Its lookup must be read-only with respect to the
+    // canonical event journal and must not wake SSE a second time.
+    let same = reopened
+        .append_runtime_event(&NewRuntimeEvent {
+            event_id: events[0].event_id.clone(),
+            scope: RuntimeEventScope::Session,
+            scope_id: session.id.clone(),
+            session_id: Some(session.id.clone()),
+            team_id: None,
+            turn_id: Some(turn.id.clone()),
+            kind: "turn.admitted".into(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload: serde_json::json!({"noncanonical":"ignored"}),
+            provider: None,
+            provider_seq: None,
+            created_at: 999,
+        })
+        .unwrap();
+    assert_eq!(same, events[0]);
+    assert!(matches!(
+        commits.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+}
+
+#[test]
+fn forged_existing_turn_event_id_cannot_authorize_new_turn_admission() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    repository.upsert_session(&admission_session()).unwrap();
+    let turn = admission_turn();
+    let mut admitted = admission_session();
+    admitted.status = "turn_admitted".into();
+    admitted.active_turn_id = Some(turn.id.clone());
+    admitted.updated_at = 11;
+    repository
+        .append_runtime_event(&NewRuntimeEvent {
+            event_id: "evt_turn_turn_admission_admitted".into(),
+            scope: RuntimeEventScope::Session,
+            scope_id: "different_session".into(),
+            session_id: Some("different_session".into()),
+            team_id: None,
+            turn_id: Some(turn.id.clone()),
+            kind: "forged".into(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload: serde_json::json!({"wrong":"scope"}),
+            provider: None,
+            provider_seq: None,
+            created_at: 1,
+        })
+        .unwrap();
+    assert!(repository
+        .admit_turn(&admission_record(), &turn, &admitted, None)
+        .is_err());
+    assert!(repository.list_turn_admissions().unwrap().is_empty());
+    assert!(repository.hydrate_runtime_state().unwrap().turns.is_empty());
+    let restored = repository
+        .hydrate_runtime_state()
+        .unwrap()
+        .sessions
+        .into_iter()
+        .find(|row| row.id == admitted.id)
+        .unwrap();
+    assert!(restored.active_turn_id.is_none());
+    let existing = repository
+        .list_runtime_events(
+            Some((RuntimeEventScope::Session, "different_session")),
+            None,
+            10,
+        )
+        .unwrap();
+    assert_eq!(
+        existing.len(),
+        1,
+        "forged input must not be deleted or overwritten"
+    );
+    assert_eq!(existing[0].kind, "forged");
+}
+
 fn admission_session() -> SessionRecord {
     SessionRecord {
         id: "session_admission".to_string(),

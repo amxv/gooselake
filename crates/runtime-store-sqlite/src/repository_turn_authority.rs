@@ -1,15 +1,19 @@
 use runtime_core::{
-    ApprovalRecord, OperationActorKind, OperationEffectRecord, OperationPhase, OperationRecord,
-    OperationTransitionRecord, OperatorUserTurnCommand, RuntimeError, SessionRecord,
-    TurnAdmissionRecord, TurnDispatchState, TurnInputProjectionSource, TurnRecord,
+    ApprovalRecord, NewRuntimeEvent, OperationActorKind, OperationEffectRecord, OperationPhase,
+    OperationRecord, OperationTransitionRecord, OperatorUserTurnCommand, RuntimeError,
+    RuntimeEventCriticality, RuntimeEventScope, SessionRecord, TurnAdmissionRecord,
+    TurnDispatchState, TurnInputProjectionSource, TurnRecord,
 };
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::db::{db_error, json_to_string, open_connection, opt_json_to_string};
+use crate::db::{
+    db_error, fetch_runtime_event_by_event_id, json_to_string, open_connection, opt_json_to_string,
+};
 use crate::operation_tx::OperationAuthorityTransaction;
+use crate::repository::insert_runtime_event_in_transaction;
 use crate::repository_operator_native_policy::CLAIM_KIND as OPERATOR_POLICY_CLAIM;
 use crate::repository_workspace::operation_by_idempotency;
 use crate::SqliteRuntimeRepository;
@@ -293,6 +297,37 @@ impl SqliteRuntimeRepository {
             insert_approval(&transaction, approval)?;
         }
         update_session_for_admission(&transaction, session)?;
+
+        // A committed turn admission must always have a canonical critical
+        // event, including after a lost response or failed journal insert.
+        // Do not move this after commit: caller retries must not dispatch a
+        // second native provider turn when event publication fails.
+        let event_id = format!("evt_turn_{}_admitted", turn.id);
+        if fetch_runtime_event_by_event_id(&transaction, &event_id)?.is_some() {
+            return Err(RuntimeError::Conflict(
+                "new turn admission already has an event identity in use".into(),
+            ));
+        }
+        insert_runtime_event_in_transaction(
+            &transaction,
+            &NewRuntimeEvent {
+                event_id,
+                scope: RuntimeEventScope::Session,
+                scope_id: session.id.clone(),
+                session_id: Some(session.id.clone()),
+                team_id: None,
+                turn_id: Some(turn.id.clone()),
+                kind: "turn.admitted".into(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: serde_json::json!({
+                    "projection_source": admission.projection_source.as_str(),
+                    "requires_approval": admission.dispatch_policy.pre_dispatch_approval_required,
+                }),
+                provider: None,
+                provider_seq: None,
+                created_at: admission.admitted_at,
+            },
+        )?;
 
         transaction
             .commit()

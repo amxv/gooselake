@@ -28,6 +28,7 @@ pub(super) struct MockStore {
     pub(super) turn_admissions: Mutex<HashMap<String, TurnAdmissionRecord>>,
     pub(super) events: Mutex<Vec<RuntimeEventRecord>>,
     pub(super) fail_admission: Mutex<bool>,
+    pub(super) fail_next_event_append_for_kind: Mutex<Option<String>>,
     pub(super) fail_turn_write: Mutex<bool>,
     pub(super) fail_session_write: Mutex<bool>,
 }
@@ -49,6 +50,17 @@ impl RuntimeStore for MockStore {
         &self,
         event: &NewRuntimeEvent,
     ) -> Result<RuntimeEventRecord, RuntimeError> {
+        let mut failure = self
+            .fail_next_event_append_for_kind
+            .lock()
+            .expect("event failure mutex");
+        if failure.as_deref() == Some(event.kind.as_str()) {
+            failure.take();
+            return Err(RuntimeError::Io(
+                "injected postcommit projection failure".into(),
+            ));
+        }
+        drop(failure);
         let mut events = self.events.lock().expect("events mutex");
         let next_seq = events
             .iter()

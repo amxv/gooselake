@@ -363,19 +363,28 @@ impl RuntimeSessionManager {
             .await
             .insert(turn_id.clone(), admission);
         drop(policy_mutation_guard);
-        self.append_event(
-            RuntimeEventScope::Session,
-            session_id,
-            Some(session_id),
-            Some(turn_id.as_str()),
-            "turn.admitted",
-            RuntimeEventCriticality::Critical,
-            serde_json::json!({
-                "projection_source": projection_source.as_str(),
-                "requires_approval": requires_approval,
-            }),
-        )
-        .await?;
+        if let Err(error) = self
+            .append_event(
+                RuntimeEventScope::Session,
+                session_id,
+                Some(session_id),
+                Some(turn_id.as_str()),
+                "turn.admitted",
+                RuntimeEventCriticality::Critical,
+                serde_json::json!({
+                    "projection_source": projection_source.as_str(),
+                    "requires_approval": requires_approval,
+                }),
+            )
+            .await
+        {
+            // The authoritative SQLite admission and its critical event were
+            // committed together above. The legacy in-process notification is
+            // ancillary: a lost event lookup must not turn a committed turn
+            // admission into a retryable send failure or strand dispatch.
+            tracing::error!(session_id, turn_id, %error,
+                "committed turn admission event live projection unavailable");
+        }
 
         if requires_approval {
             let approval_id =

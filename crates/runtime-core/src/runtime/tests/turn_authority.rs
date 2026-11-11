@@ -165,6 +165,68 @@ async fn turn_admission_is_durable_before_provider_dispatch_and_preserves_proven
 }
 
 #[tokio::test]
+async fn postcommit_turn_event_projection_failure_does_not_retry_or_strand_provider_dispatch() {
+    let (manager, store, send_count) = manager_with_observable_send_provider(
+        MockSendBehavior::Success,
+        Some("native-once".into()),
+    );
+    let session = manager
+        .create_session(CreateSessionInput {
+            provider: ProviderKind::Codex,
+            model: None,
+            cwd: None,
+            permission_mode: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    *store
+        .fail_next_event_append_for_kind
+        .lock()
+        .expect("failure mutex") = Some("turn.admitted".into());
+
+    let result = manager
+        .send_turn(
+            &session.id,
+            SendTurnInput {
+                input: vec![serde_json::json!({"type":"text","text":"dispatch exactly once"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
+                turn_settings: Default::default(),
+            },
+        )
+        .await
+        .expect("an ancillary broadcast failure is not an ambiguous turn send");
+    assert_eq!(send_count.load(Ordering::SeqCst), 1);
+    assert!(store
+        .turn_admissions
+        .lock()
+        .unwrap()
+        .contains_key(&result.turn_id));
+    let authority = store
+        .turn_admissions
+        .lock()
+        .unwrap()
+        .get(&result.turn_id)
+        .unwrap()
+        .clone();
+    assert_eq!(authority.dispatch_state, TurnDispatchState::Dispatched);
+    // This mock deliberately fails its ancillary event append. Real SQLite
+    // stores already committed the canonical journal *with* the admission;
+    // the regression proves the postcommit in-process bridge cannot re-admit
+    // or suppress native dispatch when it loses the read receipt.
+    assert!(store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|event| event.kind != "turn.admitted"));
+}
+
+#[tokio::test]
 async fn failed_durable_admission_never_calls_provider() {
     let (manager, store, send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);

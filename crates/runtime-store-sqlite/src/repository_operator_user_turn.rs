@@ -551,6 +551,81 @@ mod tests {
     }
 
     #[test]
+    fn operator_turn_critical_journal_failure_rolls_back_native_intent_and_retry_commits_once() {
+        let (temp, repository, command, admission, turn, session) = fixture();
+        let db = temp.path().join("runtime.sqlite3");
+        let baseline = repository
+            .list_runtime_events(
+                Some((runtime_core::RuntimeEventScope::Session, &session.id)),
+                None,
+                100,
+            )
+            .unwrap();
+        let connection = open_connection(&db).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER refuse_operator_turn_journal BEFORE INSERT ON runtime_events
+                 WHEN NEW.kind='turn.admitted'
+                 BEGIN SELECT RAISE(ABORT,'forced operator turn event failure'); END;",
+            )
+            .unwrap();
+        assert!(repository
+            .admit_operator_user_turn(&command, &admission, &turn, &session, None)
+            .is_err());
+        assert!(repository
+            .get_operation(&command.operation_id)
+            .unwrap()
+            .is_none());
+        assert!(repository
+            .unresolved_operator_user_turn_for_agent(&session.id)
+            .unwrap()
+            .is_none());
+        assert!(repository.list_turn_admissions().unwrap().is_empty());
+        assert!(repository.hydrate_runtime_state().unwrap().turns.is_empty());
+        assert_eq!(
+            repository
+                .list_runtime_events(
+                    Some((runtime_core::RuntimeEventScope::Session, &session.id)),
+                    None,
+                    100,
+                )
+                .unwrap(),
+            baseline
+        );
+
+        connection
+            .execute_batch("DROP TRIGGER refuse_operator_turn_journal;")
+            .unwrap();
+        drop(connection);
+        repository
+            .admit_operator_user_turn(&command, &admission, &turn, &session, None)
+            .unwrap();
+        let reopened = SqliteRuntimeRepository::new(db);
+        let events = reopened
+            .list_runtime_events(
+                Some((runtime_core::RuntimeEventScope::Session, &session.id)),
+                None,
+                100,
+            )
+            .unwrap();
+        let admitted: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == "turn.admitted")
+            .collect();
+        assert_eq!(admitted.len(), 1);
+        assert_eq!(admitted[0].event_id, "evt_turn_turn_operator_one_admitted");
+        assert_eq!(admitted[0].payload["requires_approval"], false);
+        assert!(reopened
+            .get_operation(&command.operation_id)
+            .unwrap()
+            .is_some());
+        assert!(reopened
+            .unresolved_operator_user_turn_for_agent(&session.id)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
     fn operator_turn_admission_and_exact_terminal_receipt_survive_restart_and_write_failures() {
         let (temp, repo, command, mut admission, turn, session) = fixture();
         let db = temp.path().join("runtime.sqlite3");

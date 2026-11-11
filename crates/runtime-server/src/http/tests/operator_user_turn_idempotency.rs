@@ -90,7 +90,7 @@ async fn post_with_headers(
 
 #[tokio::test]
 async fn keyed_user_turn_replays_exact_logical_admission_after_completion_and_archive() {
-    let (router, token, _temp, provider, runtime, workspace_id, agent_id) = fixture().await;
+    let (router, token, temp, provider, runtime, workspace_id, agent_id) = fixture().await;
     let uri = format!("/v2/agents/{agent_id}/turns");
     let input = serde_json::json!({"input":[{"type":"text","text":"run once"}]});
     let first_count = prompt_count(&provider);
@@ -119,6 +119,30 @@ async fn keyed_user_turn_replays_exact_logical_admission_after_completion_and_ar
     let operation_id = operation_id.expect("durable operation response header");
     assert!(operation_id.starts_with("op_turn_"));
     assert_eq!(prompt_count(&provider), first_count + 1);
+    let admitted_turn_id = first["turn_id"].as_str().unwrap();
+    let repository =
+        runtime_store_sqlite::SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    let admitted_events = repository
+        .list_runtime_events(
+            Some((runtime_core::RuntimeEventScope::Session, &agent_id)),
+            None,
+            500,
+        )
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            event.kind == "turn.admitted" && event.turn_id.as_deref() == Some(admitted_turn_id)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(admitted_events.len(), 1);
+    assert_eq!(
+        admitted_events[0].event_id,
+        format!("evt_turn_{admitted_turn_id}_admitted")
+    );
+    assert_eq!(
+        admitted_events[0].payload["projection_source"],
+        "user_visible"
+    );
 
     timeout(Duration::from_secs(5), async {
         loop {
@@ -137,6 +161,21 @@ async fn keyed_user_turn_replays_exact_logical_admission_after_completion_and_ar
     assert_eq!(replay_operation.as_deref(), Some(operation_id.as_str()));
     assert_eq!(replay, first);
     assert_eq!(prompt_count(&provider), first_count + 1);
+    let replayed = repository
+        .list_runtime_events(
+            Some((runtime_core::RuntimeEventScope::Session, &agent_id)),
+            None,
+            500,
+        )
+        .unwrap();
+    assert_eq!(
+        replayed
+            .iter()
+            .filter(|event| event.event_id == admitted_events[0].event_id)
+            .count(),
+        1,
+        "operator lost-response replay must not publish turn.admitted twice"
+    );
 
     let (status, changed) = call(
         &router,

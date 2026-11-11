@@ -1497,6 +1497,15 @@ Behavior:
   process events in strictly increasing scoped order; `/v2` process SSE replay
   and `Last-Event-ID` resume deliver each committed row once, and an
   unauthenticated process stream is rejected.
+- ordinary and Idempotency-Key-bound operator turn admission commits the
+  `turn.admitted` critical event with the turn, admission snapshot, active
+  session claim and operator native-effect intent in the **same SQLite
+  transaction**; journal failure rolls back the whole admission before any
+  provider send. The runtime's post-admission broadcast reuses the committed
+  deterministic `evt_turn_<turn_id>_admitted` receipt rather than inserting
+  another journal row. A real authenticated operator lost-response/replay
+  regression checks one canonical event per logical turn. Historical turns
+  are not backfilled, and other turn/approval events are audited separately.
 - `after_seq` query param takes precedence
 - otherwise stream endpoints use the `Last-Event-ID` header
 - invalid `Last-Event-ID` returns HTTP `400`

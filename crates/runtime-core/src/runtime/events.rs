@@ -139,7 +139,18 @@ impl RuntimeSessionManager {
         payload: Value,
     ) -> Result<RuntimeEventRecord, RuntimeError> {
         let event = NewRuntimeEvent {
-            event_id: self.allocate_id("evt", scope.as_str()),
+            // SQLite admits `turn.admitted` and its critical journal event
+            // in one authority transaction. The post-admission live bridge
+            // must reuse that deterministic receipt, never insert a second
+            // critical row or turn a lost live pulse into a retryable send.
+            event_id: if kind == "turn.admitted" {
+                match turn_id {
+                    Some(id) => format!("evt_turn_{id}_admitted"),
+                    None => self.allocate_id("evt", scope.as_str()),
+                }
+            } else {
+                self.allocate_id("evt", scope.as_str())
+            },
             scope,
             scope_id: scope_id.to_string(),
             session_id: session_id.map(str::to_string),

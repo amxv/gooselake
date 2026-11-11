@@ -89,6 +89,18 @@ journal coupling does **not** invent historical lifecycle events for process
 states recorded before the migration. Sampled `process.output` remains
 droppable, and complete captured output is kept in the process log files.
 
+`turn.admitted` is likewise inserted in the **existing SQLite admission
+transaction** alongside the new turn, its immutable admission snapshot, the
+session's active-turn claim, any pending approval, and (for operator-keyed
+requests) its durable operation/effect/claim intent. A critical journal
+failure rolls back the whole admission **before provider dispatch**; it never
+returns an ambiguous success with a missing admission event. The subsequent
+in-memory broadcast resolves the same deterministic event ID, rather than
+creating a duplicate critical row. Old persisted turns are not backfilled
+with invented admission events. Other session/turn/approval lifecycle events
+retain their distinct authority/recovery boundaries; this is not a blanket
+claim that every legacy event source is transactionally journaled.
+
 ## Replay before live
 
 A robust client reconnects like this:

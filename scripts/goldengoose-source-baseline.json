@@ -1,0 +1,18 @@
+{
+  "reference_commit": "de57a33013339c3a8ee9a6eb1411bcb0963da805",
+  "source_fingerprints": {
+    "src-tauri/prompts/goldengoose-harness-instructions.md": "ee9ea8647250546c84989282b5f21ce58123f6b61b08d3ae63dd10ec2c329d52",
+    "src-tauri/src/agent_runtime/harness_instructions.rs": "8002aee047f8b5f9d97305c219c2ea553e149bd2d9841b5b3be107d12562fcd7",
+    "src-tauri/src/agent_runtime/control_plane/model.rs": "9b855c4348ce2316f525c181b21e68ac5d699eb165a0ec5531b2d8d0501e42b4",
+    "src-tauri/src/agent_runtime/mcp_tool_gateway/mod.rs": "8b5d645cf147315fdabfb57210f4defb0d64149b185858b5580e11c660a659ae",
+    "src-tauri/src/agent_runtime/runtime_model_catalog.rs": "17448ce9f36a86030ab97fbdb5433f8b5b1f964d6d86a380bb392e57958120ac",
+    "src-tauri/src/types/agents/models/core.rs": "f6317b49e216267b412130b1582323a4d0781c3aff40e12f854b568294d94db5"
+  },
+  "approved_divergences": [
+    "GooseLake has an independent authority store and provider adapters, not the Golden Goose desktop runtime.",
+    "GooseLake supports ACP; Golden Goose also has other provider implementations that are not automatically in scope.",
+    "GooseLake's model-facing gg_message uses a top-level mode and its own cross-workspace runtime trust-domain rules.",
+    "GooseLake retains legacy operator split MCP tools until the separately gated irreversible cutover; scoped provider tools are exactly three.",
+    "GooseLake's context observations require an exact session/agent revision and transactional freshness check; fields matching Golden Goose do not certify identical recovery semantics."
+  ]
+}

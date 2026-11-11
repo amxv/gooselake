@@ -228,6 +228,22 @@ Use Codex or Claude when you want the built-in provider integrations. Use ACP wh
 
 The best client design avoids branching deeply on provider. Branch for provider selection and provider-specific auth screens; rely on runtime sessions, turns, events, approvals, teams, processes, and worktrees everywhere else.
 
+## Golden Goose source-parity audit
+
+For cross-project model/tool/harness drift reviews, Gooselake has an **optional, read-only static source audit**. It operates on an already-available Golden Goose checkout; it does not clone code, authenticate to providers, start sessions, inspect databases or change source files.
+
+```bash
+# Fixture-only fail-closed tests (also included in make check):
+make check-goldengoose-parity-fixtures
+
+# Explicit, separate check against a local Golden Goose revision:
+make check-goldengoose-parity GOLDENGOOSE_ROOT=/absolute/path/to/goldengoose
+```
+
+The audit pins a complete Golden Goose commit SHA and SHA-256 fingerprints for six critical upstream files in `scripts/goldengoose-source-baseline.json`. It also compares Codex policy/default JSON, built-in Claude IDs and thinking-effort tokens, the three scoped GG tool names, team/process semantic modes, harness section structure and context observation field presence. It emits JSON with per-check pass/fail and returns nonzero for drift or missing source. **A new upstream revision, even with unchanged selected files, fails until manually reviewed and deliberately re-pinned.** Do not automatically refresh the baseline to silence a failure.
+
+This is an early-warning check, **not executable parity or final acceptance**: argument/result semantics, provider-native recovery/attachment freshness, approval/interrupt behavior, authenticated Codex/Claude/ACP sessions and irreversible legacy migration remain separate review requirements. The output explicitly leaves `provider_live_accepted`, `context_recovery_semantics_accepted` and `final_cutover_authorized` false. The allowed architecture divergences are recorded in the baseline.
+
 ## Diagnostics
 
 Useful endpoints:

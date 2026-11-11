@@ -6,6 +6,7 @@ SERVICE ?= gg-runtime.service
 SCOPE ?= user
 BASE_URL ?=
 TOKEN ?=
+GOLDENGOOSE_ROOT ?=
 
 RUNTIME_BIN ?= $(HOME)/.local/share/gg-runtime/current/bin/gg-runtime-server
 
@@ -21,6 +22,7 @@ help: ## Show available targets
 	@echo "  BASE_URL=<url>       (optional)"
 	@echo "  TOKEN=<bearer>       (optional)"
 	@echo "  RUNTIME_BIN=<path>   (default: $(HOME)/.local/share/gg-runtime/current/bin/gg-runtime-server)"
+	@echo "  GOLDENGOOSE_ROOT=<absolute checkout path>  (optional, for offline source parity)"
 	@echo ""
 	@awk 'BEGIN {FS = ":.*## "}; /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
@@ -82,6 +84,18 @@ check-api-docs-smoke: ## Exercise v2 operator docs against an isolated no-provid
 check-legacy-snapshot-audit: ## Test the immutable counts-only legacy SQLite snapshot audit (fixtures only)
 	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test-legacy-snapshot-audit.py -v
 
+.PHONY: check-goldengoose-parity-fixtures
+check-goldengoose-parity-fixtures: ## Test static GG parity audit drift and fail-closed behavior without a GG checkout
+	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test-goldengoose-source-parity.py -v
+
+.PHONY: check-goldengoose-parity
+check-goldengoose-parity: ## Audit a pinned GG source checkout (requires GOLDENGOOSE_ROOT)
+	@if [ -z "$(GOLDENGOOSE_ROOT)" ]; then \
+	  echo "GOLDENGOOSE_ROOT must point to a local Golden Goose checkout"; \
+	  exit 2; \
+	fi
+	@PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/goldengoose_source_parity.py --goldengoose-root "$(GOLDENGOOSE_ROOT)"
+
 .PHONY: check
 check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tests
 	$(MAKE) lint-rust-file-lines
@@ -92,6 +106,7 @@ check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tes
 	cargo test --manifest-path sidecars/gg-mcp-server/Cargo.toml
 	$(MAKE) api-docs-check
 	$(MAKE) check-legacy-snapshot-audit
+	$(MAKE) check-goldengoose-parity-fixtures
 	$(MAKE) check-api-docs-smoke
 	$(MAKE) check-release-layout
 

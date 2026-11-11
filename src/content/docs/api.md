@@ -1492,6 +1492,11 @@ Behavior:
   and a legacy in-memory broadcast failure does not erase the durable SSE row.
   `process.output` samples remain intentionally droppable. Migrating an old
   database does not fabricate older lifecycle events.
+  An authenticated native-process HTTP regression executes a disposable command,
+  reopens its SQLite journal, and checks `queued` / `started` / `completed`
+  process events in strictly increasing scoped order; `/v2` process SSE replay
+  and `Last-Event-ID` resume deliver each committed row once, and an
+  unauthenticated process stream is rejected.
 - `after_seq` query param takes precedence
 - otherwise stream endpoints use the `Last-Event-ID` header
 - invalid `Last-Event-ID` returns HTTP `400`

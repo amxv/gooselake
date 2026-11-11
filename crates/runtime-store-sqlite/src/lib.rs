@@ -39,6 +39,7 @@ mod repository_operator_user_turn;
 mod repository_process;
 mod repository_team_hooks;
 mod repository_turn_authority;
+mod repository_turn_terminal;
 mod repository_upserts;
 mod repository_workspace;
 mod repository_workspace_active_agent_routes;

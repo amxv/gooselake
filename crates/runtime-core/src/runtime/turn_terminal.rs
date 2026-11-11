@@ -1,5 +1,5 @@
 use crate::{
-    ProviderTurnResult, ProviderTurnStatus, RuntimeError, RuntimeEventCriticality,
+    NewRuntimeEvent, ProviderTurnResult, ProviderTurnStatus, RuntimeError, RuntimeEventCriticality,
     RuntimeEventScope, SessionRecord, TurnRecord,
 };
 
@@ -183,12 +183,12 @@ impl RuntimeSessionManager {
             })?;
         let current_attachment = session.status != "closed"
             && session.active_turn_id.as_deref() == Some(result.turn_id.as_str());
+        let previous_turn = turn.clone();
+        let previous_session = current_attachment.then(|| session.clone());
         turn.status = result.status.as_str().into();
         turn.completed_at = Some(now_ms());
         turn.usage = result.usage.clone();
         turn.error = result.error.clone();
-        self.store.upsert_turn(&turn)?;
-        turns.insert(turn.id.clone(), turn.clone());
 
         if current_attachment {
             session.active_turn_id = None;
@@ -211,34 +211,56 @@ impl RuntimeSessionManager {
                 }
             }
             session.updated_at = now_ms();
-            self.store.upsert_session(&session)?;
-            sessions.insert(session.id.clone(), session);
         }
-        drop(sessions);
-        drop(turns);
         let event_kind = match result.status {
             ProviderTurnStatus::Completed => "turn.completed",
             ProviderTurnStatus::Interrupted => "turn.interrupted",
             ProviderTurnStatus::Failed => "turn.failed",
-            ProviderTurnStatus::InProgress => "turn.in_progress",
+            ProviderTurnStatus::InProgress => {
+                return Err(RuntimeError::ProtocolViolation(
+                    "provider wait returned a nonterminal result".into(),
+                ))
+            }
         };
         let assistant_text = result
             .usage
             .as_ref()
             .and_then(extract_assistant_text_from_usage);
-        self.append_event(
-            RuntimeEventScope::Session,
-            &result.runtime_session_id,
-            Some(&result.runtime_session_id),
-            Some(&result.turn_id),
-            event_kind,
-            RuntimeEventCriticality::Critical,
-            serde_json::json!({
+        let event = NewRuntimeEvent {
+            event_id: format!("evt_turn_{}_terminal", result.turn_id),
+            scope: RuntimeEventScope::Session,
+            scope_id: result.runtime_session_id.clone(),
+            session_id: Some(result.runtime_session_id.clone()),
+            team_id: None,
+            turn_id: Some(result.turn_id.clone()),
+            kind: event_kind.into(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload: serde_json::json!({
                 "status":result.status.as_str(),"usage":result.usage,
                 "error":result.error,"assistant_text":assistant_text,
             }),
-        )
-        .await?;
+            provider: None,
+            provider_seq: None,
+            created_at: now_ms(),
+        };
+        // The provider has already finished. Commit its turn, attached
+        // session and critical event in one store transaction before touching
+        // the caches. A failed journal write must not leave partial terminal
+        // state or imply permission to resend native input.
+        let committed = self.store.commit_provider_turn_result(
+            &previous_turn,
+            &turn,
+            previous_session.as_ref(),
+            current_attachment.then_some(&session),
+            &event,
+        )?;
+        turns.insert(committed.turn.id.clone(), committed.turn);
+        if let Some(persisted_session) = committed.session {
+            sessions.insert(persisted_session.id.clone(), persisted_session);
+        }
+        drop(sessions);
+        drop(turns);
+        let _ = self.event_tx.send(committed.event);
         Ok(current_attachment)
     }
 

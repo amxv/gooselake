@@ -12,10 +12,11 @@ use crate::{
     ProcessRecord, ProviderApprovalResponseRequest, ProviderAuthStatus,
     ProviderCreateSessionRequest, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
     ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
-    ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
-    RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
-    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
-    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
+    ProviderTerminalCommit, ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus,
+    ProviderWaitTurnRequest, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeProvider,
+    RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
+    TurnRecord,
 };
 
 use super::RuntimeSessionManager;
@@ -188,6 +189,42 @@ impl RuntimeStore for MockStore {
             .expect("turns mutex")
             .insert(record.id.clone(), record.clone());
         Ok(())
+    }
+
+    fn commit_provider_turn_result(
+        &self,
+        previous_turn: &TurnRecord,
+        updated_turn: &TurnRecord,
+        previous_session: Option<&SessionRecord>,
+        updated_session: Option<&SessionRecord>,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderTerminalCommit, RuntimeError> {
+        if *self.fail_turn_write.lock().unwrap() {
+            return Err(RuntimeError::Io("forced turn write rejection".into()));
+        }
+        if updated_session.is_some() && *self.fail_session_write.lock().unwrap() {
+            return Err(RuntimeError::Io("forced session write rejection".into()));
+        }
+        let mut turns = self.turns.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap();
+        if turns.get(&previous_turn.id) != Some(previous_turn)
+            || previous_session.is_some_and(|old| sessions.get(&old.id) != Some(old))
+        {
+            return Err(RuntimeError::Conflict(
+                "mock terminal projection changed".into(),
+            ));
+        }
+        // Simulated journal failure is injected before any projection write.
+        let event = self.append_runtime_event(event)?;
+        turns.insert(updated_turn.id.clone(), updated_turn.clone());
+        if let Some(updated) = updated_session {
+            sessions.insert(updated.id.clone(), updated.clone());
+        }
+        Ok(ProviderTerminalCommit {
+            turn: updated_turn.clone(),
+            session: updated_session.cloned(),
+            event,
+        })
     }
 
     fn upsert_approval(&self, record: &ApprovalRecord) -> Result<(), RuntimeError> {

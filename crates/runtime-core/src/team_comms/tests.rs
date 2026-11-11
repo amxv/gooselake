@@ -11,14 +11,14 @@ use crate::{
     CreateSessionInput, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
     ProcessRecord, ProviderAuthStatus, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
     ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry, ProviderResumeSessionRequest,
-    ProviderSendTurnRequest, ProviderSession, ProviderTurnAck, ProviderTurnResult,
-    ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError, RuntimeEventRecord,
-    RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord, TeamCommsService,
-    TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TeamRemoveMemberRequest, TeamSendDirectRequest, TeamSetLeadRequest, TurnAdmissionRecord,
-    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState, WorkspaceRecord,
+    ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit, ProviderTurnAck,
+    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
+    RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
+    TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
+    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
+    TeamRecord, TeamRemoveMemberRequest, TeamSendDirectRequest, TeamSetLeadRequest,
+    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentProfile,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState, WorkspaceRecord,
 };
 
 #[derive(Default)]
@@ -177,6 +177,39 @@ impl RuntimeStore for TestStore {
         let mut hydrated = self.hydrated.lock().expect("hydrated lock");
         Self::upsert_with_key(&mut hydrated.turns, record.clone(), |row| row.id.clone());
         Ok(())
+    }
+
+    fn commit_provider_turn_result(
+        &self,
+        previous_turn: &TurnRecord,
+        updated_turn: &TurnRecord,
+        previous_session: Option<&SessionRecord>,
+        updated_session: Option<&SessionRecord>,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderTerminalCommit, RuntimeError> {
+        // Test-only in-memory store models the same all-or-nothing authority
+        // boundary as SQLite. The production trait never falls back to
+        // independent turn/session/event writes.
+        let mut hydrated = self.hydrated.lock().expect("hydrated lock");
+        if hydrated.turns.iter().find(|t| t.id == previous_turn.id) != Some(previous_turn)
+            || previous_session.is_some_and(|prior| {
+                hydrated.sessions.iter().find(|s| s.id == prior.id) != Some(prior)
+            })
+        {
+            return Err(RuntimeError::Conflict(
+                "test terminal authority changed".into(),
+            ));
+        }
+        let receipt = self.append_runtime_event(event)?;
+        Self::upsert_with_key(&mut hydrated.turns, updated_turn.clone(), |t| t.id.clone());
+        if let Some(updated) = updated_session {
+            Self::upsert_with_key(&mut hydrated.sessions, updated.clone(), |s| s.id.clone());
+        }
+        Ok(ProviderTerminalCommit {
+            turn: updated_turn.clone(),
+            session: updated_session.cloned(),
+            event: receipt,
+        })
     }
 
     fn upsert_approval(&self, record: &ApprovalRecord) -> Result<(), RuntimeError> {

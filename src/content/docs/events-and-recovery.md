@@ -104,9 +104,22 @@ temporary postcommit live-projection lookup failure does not invite another
 provider send or admission. This applies to **pre-dispatch policy approval**,
 not every provider-originated approval callback. Old persisted turns are not
 backfilled with invented admission/approval events. Other session, native
-approval and turn-terminal event families retain distinct authority/recovery
+approval and turn-transition event families retain distinct authority/recovery
 boundaries; this is not a blanket claim that every legacy event source is
 transactionally journaled.
+
+An observed **provider terminal result** (`turn.completed`, `turn.interrupted`,
+or `turn.failed`) now commits the terminal turn, the session's active-turn
+release and transcript update when that turn is still attached, and its
+critical session event in **one SQLite transaction**. Each logical turn has
+one deterministic terminal-event receipt. A failed event insert or an
+independently changed session rolls the full transition back; an ambiguous
+commit can be inspected by that durable receipt on restart without invoking
+the provider again. A late result for a superseded, no-longer-active turn may
+terminalize only that historical turn, never the newer active session.
+Provider wait failures, nonterminal dispatch transitions, provider-native
+approval callbacks/resolutions and older legacy team paths are **separate**
+event-authority cases and are not certified atomic by this result path.
 
 ## Replay before live
 

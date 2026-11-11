@@ -1338,6 +1338,16 @@ provider dispatch begins. If the provider cannot prove that a failed dispatch ne
 execution boundary, the runtime retains the turn for reconciliation instead of blindly sending it
 again.
 
+Once the provider reports a terminal result, the runtime commits the terminal
+turn, any still-attached session transition (including clearing the active turn
+and updating transcript context), and one critical `turn.completed`,
+`turn.interrupted`, or `turn.failed` journal event atomically in SQLite.
+The deterministic terminal receipt survives restart and SSE replay; a journal
+fault cannot leave a half-terminalized turn/session, and a lost receipt does
+not authorize resending native work. A result from an older detached turn
+cannot clear a newer active session. Provider wait errors and provider-native
+approval transitions have separate recovery paths, not this atomic receipt.
+
 The response is an accepted turn, not necessarily terminal output:
 
 ```json

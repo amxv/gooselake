@@ -228,3 +228,41 @@ async fn rejected_callback_writes_never_publish_uncommitted_cache_projections() 
         );
     }
 }
+
+#[tokio::test]
+async fn terminal_journal_failure_preserves_turn_and_session_caches_until_atomic_receipt() {
+    let (manager, store, session, turn) = fixture(false).await;
+    *store.fail_next_event_append_for_kind.lock().unwrap() = Some("turn.completed".into());
+    let result = callback(&manager, &session, &turn, 0).await;
+    assert!(result.is_err());
+    assert_eq!(manager.get_session(&session.id).await.unwrap(), session);
+    assert_eq!(manager.turns.read().await.get(&turn.id), Some(&turn));
+    assert_eq!(
+        store.sessions.lock().unwrap().get(&session.id),
+        Some(&session)
+    );
+    assert_eq!(store.turns.lock().unwrap().get(&turn.id), Some(&turn));
+    assert!(store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|event| event.kind != "turn.completed"));
+
+    assert!(callback(&manager, &session, &turn, 0).await.unwrap());
+    assert_eq!(manager.turns.read().await[&turn.id].status, "completed");
+    assert_eq!(
+        manager.get_session(&session.id).await.unwrap().status,
+        "ready"
+    );
+    assert_eq!(
+        store
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event.kind == "turn.completed")
+            .count(),
+        1,
+    );
+}

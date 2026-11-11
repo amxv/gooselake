@@ -39,7 +39,7 @@ async fn version_route_is_available() {
 
 #[tokio::test]
 async fn session_stream_replays_from_cursor_before_live_events() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, temp_dir) = build_test_router().await;
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -138,6 +138,11 @@ async fn session_stream_replays_from_cursor_before_live_events() {
         .expect("events payload");
     let events: Vec<runtime_core::RuntimeEventRecord> =
         serde_json::from_slice(&replay_payload).expect("events json");
+    super::session_terminal_journal_http::assert_terminal_receipts_match_reopened_sqlite(
+        &temp_dir,
+        &session_id,
+        &events,
+    );
     assert!(
         events.len() >= 5,
         "expected at least session.created + 2 turn start/terminal pairs"

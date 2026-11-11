@@ -4,6 +4,8 @@ mod event_history;
 mod message_history;
 #[path = "services_message_operator.rs"]
 mod message_operator;
+#[path = "services_provider_terminal.rs"]
+mod provider_terminal;
 #[path = "services_team_comms_trait.rs"]
 mod team_comms_trait;
 #[path = "services_team_models.rs"]
@@ -16,6 +18,7 @@ mod worktree_models;
 mod worktree_store_trait;
 #[path = "services_worktree_trait.rs"]
 mod worktree_trait;
+pub use provider_terminal::ProviderTerminalCommit;
 pub use team_comms_trait::*;
 pub use team_models::*;
 pub use worktree_models::*;
@@ -74,6 +77,7 @@ pub trait RuntimeStore:
     WorkspaceWorktreeCreationStore + OperatorUserTurnStore + Send + Sync
 {
     message_operator::message_operator_methods!();
+    provider_terminal::provider_terminal_methods!();
 
     operator_policy_store_trait::operator_native_policy_store_methods!();
     operator_restore_store_trait::operator_agent_restore_store_methods!();

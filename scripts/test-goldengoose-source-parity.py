@@ -114,7 +114,9 @@ class SourceParityTests(unittest.TestCase):
         destination.write_text(value)
 
     def inspect(self, commit: str = PINNED_SHA) -> dict[str, object]:
-        with patch.object(parity, "_git_commit", return_value=commit):
+        with patch.object(parity, "_git_commit", return_value=commit), patch.object(
+            parity, "_reference_checkout_clean", return_value=True
+        ):
             return parity.inspect(self.reference, self.local, self.baseline)
 
     def test_matching_synthetic_source_is_static_only_and_read_only(self) -> None:
@@ -125,7 +127,7 @@ class SourceParityTests(unittest.TestCase):
         before = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
         report = self.inspect()
         self.assertTrue(report["passed"], report["checks"])
-        self.assertEqual(len(report["checks"]), 15)
+        self.assertEqual(len(report["checks"]), 16)
         self.assertTrue(report["checked_only_read_only_source"])
         self.assertFalse(report["provider_live_accepted"])
         self.assertFalse(report["context_recovery_semantics_accepted"])
@@ -154,6 +156,36 @@ class SourceParityTests(unittest.TestCase):
         self.assertFalse(report["passed"])
         self.assertFalse(next(row["passed"] for row in report["checks"]
                               if row["check"] == "reference_revision"))
+
+    def test_dirty_upstream_contract_fails_even_when_pinned_commit_matches(self) -> None:
+        # A non-pinned mode-argument description could change without changing
+        # the semantic mode names. Such an uncommitted edit must not pass.
+        with patch.object(parity, "_git_commit", return_value=PINNED_SHA), patch.object(
+            parity, "_reference_checkout_clean", return_value=False
+        ):
+            report = parity.inspect(self.reference, self.local, self.baseline)
+        self.assertFalse(report["passed"])
+        self.assertTrue(next(row["passed"] for row in report["checks"]
+                             if row["check"] == "reference_revision"))
+        self.assertFalse(next(row["passed"] for row in report["checks"]
+                              if row["check"] == "reference_worktree_clean"))
+
+    def test_actual_git_checkout_staged_and_unstaged_changes_fail_closed(self) -> None:
+        subprocess.run(["git", "init", "-q", str(self.reference)],
+                       check=True, capture_output=True, text=True, timeout=10)
+        subprocess.run(["git", "-C", str(self.reference), "add", "-A"],
+                       check=True, capture_output=True, text=True, timeout=10)
+        subprocess.run([
+            "git", "-C", str(self.reference), "-c", "user.name=Fixture",
+            "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture",
+        ], check=True, capture_output=True, text=True, timeout=10)
+        self.assertTrue(parity._reference_checkout_clean(self.reference))
+        path = self.reference / parity.GG_PROCESS
+        path.write_text(path.read_text() + "\n")
+        self.assertFalse(parity._reference_checkout_clean(self.reference))
+        subprocess.run(["git", "-C", str(self.reference), "add", parity.GG_PROCESS],
+                       check=True, capture_output=True, text=True, timeout=10)
+        self.assertFalse(parity._reference_checkout_clean(self.reference))
 
     def test_local_model_policy_drift_is_detected(self) -> None:
         local_catalog = self.local / parity.GL_CODEX

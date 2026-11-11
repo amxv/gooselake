@@ -151,6 +151,20 @@ def _git_commit(root: Path) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def _reference_checkout_clean(root: Path) -> bool:
+    """A matching HEAD cannot certify changes to tracked but unpinned contracts."""
+    if not (root / ".git").exists():
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=no"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and not result.stdout.strip()
+
+
 def inspect(
     golden_goose_root: Path,
     gooselake_root: Path = GOOSELAKE_ROOT,
@@ -197,6 +211,14 @@ def inspect(
         actual_commit == reference_commit,
         "pinned Golden Goose revision" if actual_commit == reference_commit
         else "different or unverifiable revision; update baseline after manual review",
+    )
+    reference_clean = _reference_checkout_clean(golden_goose_root)
+    check(
+        "reference_worktree_clean",
+        reference_clean,
+        "no tracked source changes against pinned commit"
+        if reference_clean
+        else "tracked reference source has drift, or Git status is unavailable",
     )
 
     codex_equal = _json(golden_goose_root, GG_CODEX) == _json(gooselake_root, GL_CODEX)

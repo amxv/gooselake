@@ -1,9 +1,13 @@
-use runtime_core::{AgentDeliveryRecord, RuntimeError};
+use runtime_core::{
+    AgentDeliveryRecord, NewRuntimeEvent, RuntimeError, RuntimeEventCriticality, RuntimeEventScope,
+};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 use crate::db::{db_error, open_connection};
+use crate::repository::insert_runtime_event_in_transaction;
 use crate::repository_agent_comms::{decode_delivery, DELIVERY_COLUMNS};
 use crate::repository_agent_delivery_guard::require_active_delivery_owners;
+use crate::repository_legacy_team_messages::event_matches;
 use crate::SqliteRuntimeRepository;
 
 fn valid_transition(from: &str, to: &str) -> bool {
@@ -15,12 +19,74 @@ fn valid_transition(from: &str, to: &str) -> bool {
         ) | (
             "deferred",
             "pending" | "deferred" | "injecting" | "cancelled"
-        ) | ("injecting", "injected" | "failed" | "deferred")
+        )
     )
 }
 
+/// The exact previous status generation determines the Critical event ID.
+/// Native acknowledgement uses this same receipt shape, but only after
+/// correlated turn admission has been proved in the SQLite transaction.
+pub(crate) fn agent_delivery_transition_event(
+    tx: &rusqlite::Transaction<'_>,
+    before: &AgentDeliveryRecord,
+    after: &AgentDeliveryRecord,
+) -> Result<NewRuntimeEvent, RuntimeError> {
+    let workspace: Option<String> = tx
+        .query_row(
+            "SELECT COALESCE(message.workspace_id, sender.workspace_id)
+             FROM agent_messages message
+             LEFT JOIN workspace_agents sender ON sender.session_id=message.sender_agent_id
+             WHERE message.id=?1",
+            [&before.message_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| db_error("failed resolving delivery event workspace", error))?
+        .flatten();
+    let (scope, scope_id) = match workspace {
+        Some(workspace_id) => (RuntimeEventScope::Workspace, workspace_id),
+        None => (RuntimeEventScope::Message, before.message_id.clone()),
+    };
+    Ok(NewRuntimeEvent {
+        event_id: format!(
+            "evt_agent_delivery_{}_{}_{}",
+            before.id, after.status, before.updated_at
+        ),
+        scope,
+        scope_id,
+        session_id: Some(before.recipient_agent_id.clone()),
+        team_id: None,
+        turn_id: after.injected_turn_id.clone(),
+        kind: format!("agent_delivery.{}", after.status),
+        criticality: RuntimeEventCriticality::Critical,
+        payload: serde_json::json!({
+            "delivery": after,
+            "before_updated_at": before.updated_at,
+        }),
+        provider: None,
+        provider_seq: None,
+        created_at: after.updated_at,
+    })
+}
+
+pub(crate) fn insert_agent_delivery_receipt(
+    tx: &rusqlite::Transaction<'_>,
+    before: &AgentDeliveryRecord,
+    after: &AgentDeliveryRecord,
+) -> Result<(), RuntimeError> {
+    let event = agent_delivery_transition_event(tx, before, after)?;
+    let receipt = insert_runtime_event_in_transaction(tx, &event)?;
+    if !event_matches(&receipt, &event) {
+        return Err(RuntimeError::Conflict(format!(
+            "agent delivery {} Critical event identity collision",
+            before.id
+        )));
+    }
+    Ok(())
+}
+
 impl SqliteRuntimeRepository {
-    /// A durable, atomic status claim; two separate RuntimeTeamCommsService
+    /// A durable, Critical-journaled status claim; two separate RuntimeTeamCommsService
     /// instances sharing the DB cannot both enter native delivery dispatch
     /// from the same pending/deferred row. The legacy mirror is updated in
     /// the same transaction, so a failed second write cannot leave a claim.
@@ -41,6 +107,8 @@ impl SqliteRuntimeRepository {
         }
         if !valid_transition(&expected.status, &updated.status)
             || updated.updated_at <= expected.updated_at
+            || expected.injected_turn_id.is_some()
+            || updated.injected_turn_id.is_some()
         {
             return Err(RuntimeError::InvalidState(format!(
                 "invalid non-monotonic delivery transition {} -> {}",
@@ -149,6 +217,7 @@ impl SqliteRuntimeRepository {
                 )));
             }
         }
+        insert_agent_delivery_receipt(&tx, expected, updated)?;
         tx.commit()
             .map_err(|error| db_error("failed committing delivery status claim", error))?;
         Ok(true)

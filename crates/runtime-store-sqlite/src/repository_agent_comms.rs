@@ -137,6 +137,16 @@ impl SqliteRuntimeRepository {
         &self,
         delivery: &AgentDeliveryRecord,
     ) -> Result<(), RuntimeError> {
+        // Historical raw-upsert compatibility cannot claim a native effect
+        // or forge its correlated turn ID. Those statuses are exclusively
+        // written by Critical-journaled generation CAS/result authority.
+        if matches!(delivery.status.as_str(), "injecting" | "injected")
+            || delivery.injected_turn_id.is_some()
+        {
+            return Err(RuntimeError::Conflict(
+                "native delivery status requires the certified receipt path".into(),
+            ));
+        }
         let connection = open_connection(&self.database_path)?;
         let changed = connection
             .execute(
@@ -157,7 +167,7 @@ impl SqliteRuntimeRepository {
                     last_error_message = excluded.last_error_message,
                     created_at = excluded.created_at,
                     updated_at = excluded.updated_at
-                 WHERE agent_deliveries.status != 'cancelled'
+                 WHERE agent_deliveries.status NOT IN ('cancelled','injecting','injected')
                    AND excluded.updated_at >= agent_deliveries.updated_at
                    AND NOT (agent_deliveries.status='injecting'
                             AND excluded.status='pending')

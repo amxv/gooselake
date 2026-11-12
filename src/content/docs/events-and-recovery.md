@@ -73,6 +73,19 @@ Events have criticality.
 
 Critical events describe state transitions that clients should not casually lose: sessions created, turns completed, deliveries failed, processes started, and so on.
 
+Canonical agent-message creation commits its initial per-recipient delivery
+snapshot together with the Critical `message.sent` event. Subsequent
+pre-native delivery transitions persist Critical `agent_delivery.pending` /
+`agent_delivery.deferred` / `agent_delivery.injecting` /
+`agent_delivery.cancelled` generation receipts in the same SQLite transaction
+as the status and any legacy mirror. A positively acknowledged delivery also
+requires a matching admitted logical turn; its `injected` status, turn ID,
+mirror and `agent_delivery.injected` receipt commit together. Inserting the
+last event can fail without leaving partially acknowledged native results.
+Unknown native effects remain `injecting` for operator reconciliation rather
+than being automatically resent after restart. Old unjournaled generations
+are not retrospectively certified by newer code.
+
 Droppable events are useful but less sacred. Process output samples are the clearest example. They help live UIs feel alive, but the process log files remain the authoritative output source.
 
 Managed-process **critical** lifecycle events (`process.queued`,

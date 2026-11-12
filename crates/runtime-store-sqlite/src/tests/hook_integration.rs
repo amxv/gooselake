@@ -308,7 +308,9 @@ fn cross_workspace_direct_hook_keeps_immutable_recipient_scope() {
         "post-send hook must not outrun deferred/pending message delivery"
     );
     let mut settled_delivery = delivery;
-    settled_delivery.status = "injected".into();
+    // This hook tests terminal-delivery scheduling, not a provider-native
+    // acknowledgement. A raw upsert must not be allowed to forge `injected`.
+    settled_delivery.status = "failed".into();
     settled_delivery.updated_at = 205;
     repository.upsert_agent_delivery(&settled_delivery).unwrap();
     let effect = repository.list_dispatchable_team_hook_effects(10).unwrap();

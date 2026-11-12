@@ -64,20 +64,24 @@ fn independent_workers_compete_for_a_single_durable_native_dispatch_claim() {
         "injecting"
     );
     let injected = next(&injecting, "injected");
-    assert!(repository
-        .compare_and_swap_agent_delivery_status(&injecting, &injected)
-        .unwrap());
+    assert!(
+        matches!(
+            repository.compare_and_swap_agent_delivery_status(&injecting, &injected),
+            Err(RuntimeError::InvalidState(_))
+        ),
+        "an arbitrary status CAS is not a native turn acknowledgement"
+    );
     let mut stale = pending.clone();
     stale.status = "deferred".into();
-    stale.updated_at = injected.updated_at + 1;
+    stale.updated_at = injecting.updated_at + 1;
     assert!(matches!(
         repository.upsert_agent_delivery(&stale),
         Err(RuntimeError::Conflict(_))
     ));
     assert_eq!(
         repository.get_agent_delivery(&pending.id).unwrap(),
-        Some(injected),
-        "an injected native delivery is terminal against stale rewrites"
+        Some(injecting),
+        "an unacknowledged native delivery is fenced against stale rewrites"
     );
 }
 

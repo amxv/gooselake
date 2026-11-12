@@ -36,6 +36,21 @@ macro_rules! message_operator_methods {
                 "durable agent delivery transition CAS unavailable".into(),
             ))
         }
+
+        /// Positive native-turn acknowledgement is committed with the
+        /// correlated admitted turn ID, legacy mirror and Critical receipt.
+        /// An unsupported test store may use the in-memory fallback; SQLite
+        /// must never split these writes after an actual native effect.
+        fn commit_agent_delivery_injected(
+            &self,
+            _claim: &crate::AgentDeliveryRecord,
+            _turn_id: &str,
+            _updated_at: i64,
+        ) -> Result<crate::AgentDeliveryRecord, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic agent delivery acknowledgement unavailable".into(),
+            ))
+        }
     };
 }
 

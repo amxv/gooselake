@@ -79,28 +79,16 @@ impl RuntimeTeamCommsService {
                 .admitted_turn_for_correlation(&delivery.recipient_agent_id, &delivery.message_id)
                 .await
             {
-                let injected = self
-                    .transition_agent_delivery_status(
-                        &delivery,
-                        DELIVERY_STATUS_INJECTED,
-                        Some("startup_recovered_admitted_turn".to_string()),
-                        None,
-                        None,
-                    )
-                    .await?;
-                self.transition_agent_delivery_with_turn_id(&injected.id, turn_id)
-                    .await?;
-            } else {
-                self.transition_agent_delivery_status(
-                    &delivery,
-                    DELIVERY_STATUS_DEFERRED,
-                    None,
-                    Some("startup_requeue_before_turn_admission".to_string()),
-                    Some("no durable correlated turn admission exists".to_string()),
-                )
-                .await?;
+                // An admitted turn can be reconciled without a second send,
+                // but only SQLite's correlated native authority is proof.
+                // A missing/unknown admission must remain injecting, not
+                // become a retryable delivery after process loss.
+                match self.acknowledge_agent_delivery(&delivery, &turn_id).await {
+                    Ok(_) => recovered += 1,
+                    Err(RuntimeError::Conflict(_) | RuntimeError::InvalidState(_)) => {}
+                    Err(error) => return Err(error),
+                }
             }
-            recovered += 1;
         }
         Ok(recovered)
     }
@@ -309,42 +297,51 @@ impl RuntimeTeamCommsService {
 
         match result {
             Ok(ack) => {
+                self.acknowledge_agent_delivery(&injecting, &ack.turn_id)
+                    .await
+            }
+            Err(_) => {
+                // No proven-not-dispatched receipt is available at this
+                // boundary. Reclassifying an unknown native effect as
+                // deferred/failed would authorize a second provider turn.
+                Ok(injecting)
+            }
+        }
+    }
+
+    async fn acknowledge_agent_delivery(
+        &self,
+        claim: &AgentDeliveryRecord,
+        turn_id: &str,
+    ) -> Result<AgentDeliveryRecord, RuntimeError> {
+        let updated_at = now_ms().max(claim.updated_at.saturating_add(1));
+        match self
+            .store
+            .commit_agent_delivery_injected(claim, turn_id, updated_at)
+        {
+            Ok(committed) => {
+                self.cache_agent_delivery_records(std::slice::from_ref(&committed))
+                    .await;
+                Ok(committed)
+            }
+            Err(RuntimeError::Unsupported(_)) => {
+                // A test-only in-memory store has no transactional SQLite
+                // authority; production must use the atomic receipt.
                 let injected = self
                     .transition_agent_delivery_status(
-                        &injecting,
+                        claim,
                         DELIVERY_STATUS_INJECTED,
                         Some("runtime_send_turn".to_string()),
                         None,
                         None,
                     )
                     .await?;
-                self.transition_agent_delivery_with_turn_id(&injected.id, ack.turn_id)
+                self.transition_agent_delivery_with_turn_id(&injected.id, turn_id.to_string())
                     .await
             }
-            Err(error)
-                if matches!(
-                    error,
-                    RuntimeError::InvalidState(_) | RuntimeError::OnboardingPending(_)
-                ) =>
-            {
-                self.transition_agent_delivery_status(
-                    &injecting,
-                    DELIVERY_STATUS_DEFERRED,
-                    None,
-                    Some("turn_ownership_rejected".to_string()),
-                    Some(error.to_string()),
-                )
-                .await
-            }
             Err(error) => {
-                self.transition_agent_delivery_status(
-                    &injecting,
-                    DELIVERY_STATUS_FAILED,
-                    None,
-                    Some("provider_rejected".to_string()),
-                    Some(error.to_string()),
-                )
-                .await
+                let _ = self.refresh_current_agent_delivery(&claim.id).await;
+                Err(error)
             }
         }
     }

@@ -10,6 +10,7 @@ mod repository_agent_comms;
 mod repository_agent_delivery_cas;
 mod repository_agent_delivery_guard;
 mod repository_agent_delivery_operator;
+mod repository_agent_delivery_result;
 mod repository_agent_delivery_retry;
 mod repository_agent_message_pages;
 mod repository_agent_tool;

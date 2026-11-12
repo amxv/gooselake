@@ -1931,8 +1931,21 @@ Any late event failure rolls the entire result back: `injecting` stays as a
 manual-reconciliation fence, **not** a reason to resubmit a native turn.
 The matching state+event may be replayed without further native execution.
 An admitted turn waiting for user permission is not falsely described as
-having executed on the provider. Pre-native deferral/retry certification and
-team deletion remain separate incomplete Phase20 gates.
+having executed on the provider. **Before native execution**, a deferred or recipient-unavailable failed
+legacy delivery now advances its exact SQLite generation alongside a Critical
+`team_delivery.deferred` / `team_delivery.failed` receipt. Explicit
+failed/deferred retry similarly commits the `pending` generation and its
+Critical receipt before any new native claim. Failed last-recipient outcomes
+commit the immutable Critical `team_message.completed` snapshot in that
+same transaction. A late event fault leaves the old status and prior events
+unchanged, and a missing historical generation receipt blocks native claim
+instead of silently replaying a provider effect. No raw certified `/v1`
+status upsert can forge or rewrite that evidence. Retry of a failed recipient
+is only possible while the parent message has not already completed; a
+completed message needs a newly created message identity. This does not
+provide exactly-once transport semantics for unkeyed HTTP requests or
+unknown native results. Legacy team deletion and Windows process native
+launch gate parity remain distinct incomplete Phase20 gates.
 
 ## MCP gateway
 

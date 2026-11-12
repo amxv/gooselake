@@ -227,14 +227,38 @@ async fn startup_recovery_retries_deferred_delivery_for_ready_recipient() {
             &initial_events,
         )
         .expect("seed atomic legacy message admission before deferred state");
-    let mut seeded_deferred = seeded_pending;
+    let mut seeded_deferred = seeded_pending.clone();
     seeded_deferred.status = DELIVERY_STATUS_DEFERRED.into();
     seeded_deferred.updated_at = now.saturating_add(1);
-    seeded_deferred.last_error_code = Some("seed_restart_gap".into());
-    seeded_deferred.last_error_message = Some("seed deferred before restart".into());
+    let deferred_event = NewRuntimeEvent {
+        event_id: format!(
+            "evt_legacy_delivery_{}_deferred_{}",
+            seeded_deferred.id, seeded_deferred.updated_at
+        ),
+        scope: RuntimeEventScope::Team,
+        scope_id: seeded_deferred.team_id.clone(),
+        session_id: Some(seeded_deferred.recipient_agent_id.clone()),
+        team_id: Some(seeded_deferred.team_id.clone()),
+        turn_id: None,
+        kind: "team_delivery.deferred".into(),
+        criticality: crate::RuntimeEventCriticality::Critical,
+        payload: serde_json::json!({
+            "delivery":seeded_deferred,
+            "before_status":seeded_pending.status,
+            "before_updated_at":seeded_pending.updated_at,
+            "trigger":"queue"
+        }),
+        provider: None,
+        provider_seq: None,
+        created_at: seeded_deferred.updated_at,
+    };
     store
-        .upsert_team_delivery(&seeded_deferred)
-        .expect("seed deferred delivery");
+        .commit_legacy_team_delivery_pre_native_transition(
+            &seeded_pending,
+            &seeded_deferred,
+            &deferred_event,
+        )
+        .expect("seed Critical deferred generation before restart");
 
     let (_runtime, service) = build_runtime_and_service(store.clone(), 0);
     let before = service

@@ -128,7 +128,10 @@ fn verify_native_turn_admission(
     Ok(())
 }
 
-fn complete_recipient_snapshot(message: &TeamMessageRecord, rows: &[TeamDeliveryRecord]) -> bool {
+pub(crate) fn complete_recipient_snapshot(
+    message: &TeamMessageRecord,
+    rows: &[TeamDeliveryRecord],
+) -> bool {
     let Some(recipients) = message.recipient_agent_ids.as_array() else {
         return false;
     };
@@ -146,7 +149,10 @@ fn complete_recipient_snapshot(message: &TeamMessageRecord, rows: &[TeamDelivery
     })
 }
 
-fn completed_event(message: &TeamMessageRecord, rows: &[TeamDeliveryRecord]) -> NewRuntimeEvent {
+pub(crate) fn completed_event(
+    message: &TeamMessageRecord,
+    rows: &[TeamDeliveryRecord],
+) -> NewRuntimeEvent {
     NewRuntimeEvent {
         event_id: format!("evt_legacy_message_{}_completed_delivery", message.id),
         scope: RuntimeEventScope::Team,

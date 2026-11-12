@@ -452,6 +452,15 @@ impl RuntimeStore for TestStore {
         self.claim_legacy_injecting_test(previous, injecting, event)
     }
 
+    fn commit_legacy_team_delivery_pre_native_transition(
+        &self,
+        before: &TeamDeliveryRecord,
+        after: &TeamDeliveryRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<TeamDeliveryRecord, RuntimeError> {
+        self.commit_legacy_pre_native_test(before, after, event)
+    }
+
     fn commit_legacy_team_delivery_injected(
         &self,
         before: &TeamDeliveryRecord,
@@ -956,5 +965,6 @@ mod agent_messages;
 mod legacy_cancel_events;
 mod legacy_delivery;
 mod legacy_delivery_claim;
+mod legacy_delivery_transition;
 mod legacy_message_admission;
 mod legacy_roster_events;

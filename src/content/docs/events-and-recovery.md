@@ -235,8 +235,22 @@ event fault undoes every delivery/result event write. Lost result commit
 responses may be reconciled against the identical existing state and receipt,
 without re-executing a native send. An unproven native outcome remains
 durably `injecting`; an admitted waiting-for-approval turn is not evidence
-that provider execution already happened. Older pre-native deferrals,
-delivery retry and team deletion still require their own certified gates.
+that provider execution already happened. Pre-native legacy **deferral, recipient-unavailable failure, and explicit
+retry** now use a separate generation-specific SQLite immediate transaction.
+Each status/revision update and its deterministic Critical
+`team_delivery.deferred`, `team_delivery.failed` or `team_delivery.pending`
+receipt commit together. A last-recipient terminal failure also commits the
+Critical `team_message.completed` snapshot in that transaction; an event
+insertion fault rolls the status and every earlier event back. The native
+injection claim verifies the latest generation receipt, not only the initial
+pending admission, before granting dispatch. A stale/unjournaled historical
+`deferred`/`failed` row or direct upsert is not a retry token. Explicit retry
+may reopen a `deferred` recipient, or a `failed` recipient only while its
+message has not been terminally completed; after a completed message,
+operators must create a new message instead of rewriting its immutable
+completion. An uncertain native `injecting` row is **never** eligible for
+this pre-native retry path. Legacy team deletion remains a separate
+uncertified operation.
 
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical

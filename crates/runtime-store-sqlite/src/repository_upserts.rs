@@ -445,13 +445,14 @@ impl SqliteRuntimeRepository {
                         .into(),
                 ));
             }
-            // A certified *legacy* delivery may enter `injecting` only via
-            // claim_legacy_team_delivery_injection, and may enter `injected`
-            // only via commit_legacy_team_delivery_injected. Neither a
-            // premature injected upsert nor a subsequent same-status rewrite
-            // of its turn ID, error or revision is evidence of a native ack.
-            // A delayed status write must not downgrade an unproven claim.
-            // Canonical agent-owned mirrors use their own durable CAS.
+            // Every certified legacy pre-native deferral/failure/retry now
+            // requires its generation-specific Critical transaction. The
+            // pre-native/native-injecting/injected rows cannot be rewritten,
+            // including no-op status rewrites that alter error or turn IDs.
+            // Legacy team deletion is still a distinct pending/deferred ->
+            // cancelled path to certify separately; never authorize native
+            // work from a raw cancelled row. Canonical mirrors have a
+            // separate authoritative compare-and-swap.
             let canonical: bool = transaction
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM agent_deliveries WHERE id=?1)",
@@ -460,11 +461,11 @@ impl SqliteRuntimeRepository {
                 )
                 .map_err(|error| db_error("failed checking certified legacy owner", error))?;
             if !canonical
-                && (matches!(record.status.as_str(), "injecting" | "injected")
-                    || matches!(current_status.as_str(), "injecting" | "injected"))
+                && !(record.status == "cancelled"
+                    && matches!(current_status.as_str(), "pending" | "deferred"))
             {
                 return Err(RuntimeError::Conflict(
-                    "legacy native injection and acknowledged result require exact critical transactions; direct upsert cannot change their authority"
+                    "certified legacy pre-native/native delivery changes require Critical generation transactions; direct upsert has no authority"
                         .into(),
                 ));
             }

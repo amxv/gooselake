@@ -4,9 +4,8 @@ use super::{
     build_injected_input, is_terminal_status, is_valid_transition, normalize_policy, now_ms,
     DeliveryAttemptTrigger, RuntimeTeamCommsService, DELIVERY_POLICY_IMMEDIATE_INTERRUPT,
     DELIVERY_POLICY_INTERRUPT_AFTER_TOOL_BOUNDARY, DELIVERY_POLICY_NON_INTERRUPTING,
-    DELIVERY_POLICY_START_NEW_TURN_ONLY, DELIVERY_STATUS_CANCELLED, DELIVERY_STATUS_DEFERRED,
-    DELIVERY_STATUS_FAILED, DELIVERY_STATUS_INJECTED, DELIVERY_STATUS_INJECTING,
-    DELIVERY_STATUS_PENDING,
+    DELIVERY_POLICY_START_NEW_TURN_ONLY, DELIVERY_STATUS_DEFERRED, DELIVERY_STATUS_FAILED,
+    DELIVERY_STATUS_INJECTED, DELIVERY_STATUS_INJECTING, DELIVERY_STATUS_PENDING,
 };
 
 impl RuntimeTeamCommsService {
@@ -326,7 +325,7 @@ impl RuntimeTeamCommsService {
             .insert(committed.id.clone(), committed.clone());
         Ok(committed)
     }
-    async fn transition_delivery_status(
+    pub(super) async fn transition_delivery_status(
         &self,
         current: &TeamDeliveryRecord,
         next_status: &str,
@@ -335,99 +334,81 @@ impl RuntimeTeamCommsService {
         last_error_message: Option<String>,
         trigger: DeliveryAttemptTrigger,
     ) -> Result<TeamDeliveryRecord, RuntimeError> {
+        if current.status == next_status {
+            // No generation changed, so do not emit a duplicate Critical event.
+            return Ok(current.clone());
+        }
         if !is_valid_transition(current.status.as_str(), next_status) {
-            if current.status == next_status {
-                return Ok(current.clone());
-            }
             return Err(RuntimeError::InvalidState(format!(
                 "invalid delivery transition {} -> {}",
                 current.status, next_status
             )));
         }
-
-        let updated = {
-            let mut state = self.state.write().await;
-            let delivery = state
-                .deliveries
-                .get_mut(&current.id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("delivery {}", current.id)))?;
-            if delivery.status != current.status {
-                return Ok(delivery.clone());
-            }
-            delivery.status = next_status.to_string();
-            delivery.updated_at = now_ms();
-            if let Some(strategy) = injection_strategy {
-                delivery.injection_strategy = Some(strategy);
-            }
-            if next_status == DELIVERY_STATUS_FAILED {
-                delivery.last_error_code = last_error_code;
-                delivery.last_error_message = last_error_message;
-            } else {
-                delivery.last_error_code = None;
-                delivery.last_error_message = None;
-            }
-            if next_status != DELIVERY_STATUS_INJECTED {
-                delivery.injected_turn_id = None;
-            }
-            delivery.clone()
-        };
-
-        self.store.upsert_team_delivery(&updated)?;
-
-        let kind = match next_status {
-            DELIVERY_STATUS_PENDING => "team_delivery.pending",
-            DELIVERY_STATUS_DEFERRED => "team_delivery.deferred",
-            DELIVERY_STATUS_INJECTING => "team_delivery.injecting",
-            DELIVERY_STATUS_INJECTED => "team_delivery.injected",
-            DELIVERY_STATUS_FAILED => "team_delivery.failed",
-            DELIVERY_STATUS_CANCELLED => "team_delivery.cancelled",
-            _ => "team_delivery.updated",
-        };
-        let _ = self
-            .append_team_event(
-                updated.team_id.as_str(),
-                kind,
-                serde_json::json!({
-                    "delivery": updated,
-                    "trigger": format!("{:?}", trigger).to_ascii_lowercase(),
-                }),
-                Some(current.recipient_agent_id.clone()),
+        if injection_strategy.is_some()
+            || !matches!(
+                next_status,
+                DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED | DELIVERY_STATUS_FAILED
             )
-            .await;
-
-        let should_complete = self.message_terminal_state(&current.message_id).await;
-        if should_complete {
-            let _ = self
-                .append_team_event(
-                    current.team_id.as_str(),
-                    "team_message.completed",
-                    serde_json::json!({
-                        "message_id": current.message_id,
-                        "team_id": current.team_id,
-                    }),
-                    Some(current.recipient_agent_id.clone()),
-                )
-                .await;
+        {
+            return Err(RuntimeError::InvalidState(
+                "legacy pre-native status update cannot claim a native injection strategy".into(),
+            ));
         }
-
-        Ok(updated)
-    }
-
-    async fn message_terminal_state(&self, message_id: &str) -> bool {
-        let state = self.state.read().await;
-        let Some(delivery_ids) = state.message_delivery_ids.get(message_id) else {
-            return true;
-        };
-        if delivery_ids.is_empty() {
-            return true;
+        let mut state = self.state.write().await;
+        if state.deliveries.get(&current.id) != Some(current)
+            || state.agent_deliveries.contains_key(&current.id)
+        {
+            return Err(RuntimeError::Conflict(
+                "legacy pre-native transition lost in-process generation authority".into(),
+            ));
         }
-        delivery_ids.iter().all(|delivery_id| {
-            state
-                .deliveries
-                .get(delivery_id)
-                .map(|delivery| is_terminal_status(delivery.status.as_str()))
-                .unwrap_or(false)
-        })
+        let revision = current.updated_at.checked_add(1).ok_or_else(|| {
+            RuntimeError::InvalidState("legacy pre-native delivery revision exhausted".into())
+        })?;
+        let mut updated = current.clone();
+        updated.status = next_status.into();
+        updated.injection_strategy = None;
+        updated.injected_turn_id = None;
+        updated.updated_at = now_ms().max(revision);
+        if next_status == DELIVERY_STATUS_FAILED {
+            updated.last_error_code = last_error_code;
+            updated.last_error_message = last_error_message;
+        } else {
+            updated.last_error_code = None;
+            updated.last_error_message = None;
+        }
+        let trigger = format!("{trigger:?}").to_ascii_lowercase();
+        let mut event = self.new_team_event(
+            &current.team_id,
+            &format!("team_delivery.{next_status}"),
+            serde_json::json!({
+                "delivery":updated,
+                "before_status":current.status,
+                "before_updated_at":current.updated_at,
+                "trigger":trigger,
+            }),
+            Some(current.recipient_agent_id.clone()),
+        );
+        event.event_id = format!(
+            "evt_legacy_delivery_{}_{}_{}",
+            current.id, next_status, updated.updated_at
+        );
+        event.created_at = updated.updated_at;
+        // A failed Critical event or lost SQLite response never changes the
+        // cache. In particular a failed/deferred delivery does not become
+        // eligible for native dispatch without a committed generation.
+        let committed = self
+            .store
+            .commit_legacy_team_delivery_pre_native_transition(current, &updated, &event)?;
+        if committed != updated {
+            return Err(RuntimeError::Conflict(
+                "legacy pre-native Critical transition disagreed with proposed generation".into(),
+            ));
+        }
+        state
+            .deliveries
+            .insert(committed.id.clone(), committed.clone());
+        Ok(committed)
     }
 
     async fn find_recipient_queue_blocker(&self, delivery: &TeamDeliveryRecord) -> Option<String> {

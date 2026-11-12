@@ -541,11 +541,11 @@ impl TeamCommsService for RuntimeTeamCommsService {
                 .ok_or_else(|| RuntimeError::NotFound(format!("delivery {}", delivery_id)));
         }
 
-        let updated = {
-            let mut state = self.state.write().await;
+        let previous = {
+            let state = self.state.read().await;
             let delivery = state
                 .deliveries
-                .get_mut(&delivery_id)
+                .get(&delivery_id)
                 .ok_or_else(|| RuntimeError::NotFound(format!("delivery {}", delivery_id)))?;
             if delivery.team_id != team_id {
                 return Err(RuntimeError::InvalidState(format!(
@@ -562,25 +562,17 @@ impl TeamCommsService for RuntimeTeamCommsService {
                     delivery_id
                 )));
             }
-            delivery.status = DELIVERY_STATUS_PENDING.to_string();
-            delivery.injection_strategy = None;
-            delivery.injected_turn_id = None;
-            delivery.last_error_code = None;
-            delivery.last_error_message = None;
-            delivery.updated_at = now_ms();
             delivery.clone()
         };
-
-        self.store.upsert_team_delivery(&updated)?;
-        let _ = self
-            .append_team_event(
-                team_id.as_str(),
-                "team_delivery.pending",
-                serde_json::json!({ "delivery": updated }),
-                Some(updated.recipient_agent_id.clone()),
-            )
-            .await;
-
+        self.transition_delivery_status(
+            &previous,
+            DELIVERY_STATUS_PENDING,
+            None,
+            None,
+            None,
+            DeliveryAttemptTrigger::Retry,
+        )
+        .await?;
         self.inject_delivery(delivery_id.as_str(), DeliveryAttemptTrigger::Retry)
             .await
     }

@@ -73,6 +73,22 @@ macro_rules! legacy_team_event_methods {
             ))
         }
 
+        /// A legacy /v1 delivery which has not crossed its native injection
+        /// fence may be deferred, failed or explicitly retried only together
+        /// with its generation-bound Critical state event. A completed
+        /// message cannot silently reopen via retry, and an old status
+        /// without a verifiable Critical lineage cannot authorize dispatch.
+        fn commit_legacy_team_delivery_pre_native_transition(
+            &self,
+            _before: &crate::TeamDeliveryRecord,
+            _after: &crate::TeamDeliveryRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<crate::TeamDeliveryRecord, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic legacy team pre-native delivery transition unavailable".into(),
+            ))
+        }
+
         /// After the exact native turn has been accepted, commit its linked
         /// legacy delivery status/turn ID and Critical injected event in ONE
         /// transaction. If this receipt is uncertain, keep the pre-native

@@ -57,6 +57,29 @@ impl TestStore {
                     "mock legacy claim missing or consumed receipt".into(),
                 ));
             }
+            let initial = events
+                .iter()
+                .find(|row| row.event_id == pending_id)
+                .and_then(|row| {
+                    serde_json::from_value::<TeamDeliveryRecord>(row.payload["delivery"].clone())
+                        .ok()
+                });
+            if initial.as_ref() != Some(previous) {
+                let generation_id = format!(
+                    "evt_legacy_delivery_{}_{}_{}",
+                    previous.id, previous.status, previous.updated_at
+                );
+                if !events.iter().any(|row| {
+                    row.event_id == generation_id
+                        && row.kind == format!("team_delivery.{}", previous.status)
+                        && row.criticality == crate::RuntimeEventCriticality::Critical
+                        && row.payload["delivery"] == serde_json::json!(previous)
+                }) {
+                    return Err(RuntimeError::Conflict(
+                        "mock legacy delivery has no generation-specific Critical event".into(),
+                    ));
+                }
+            }
         }
         // The fake may append only once validation and the injected failure
         // are resolved, with no status publication on an event error.

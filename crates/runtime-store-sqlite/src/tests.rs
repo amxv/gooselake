@@ -20,6 +20,7 @@ mod event_subject_scopes;
 mod legacy_team_cancellation;
 mod legacy_team_delivery_claim;
 mod legacy_team_delivery_result;
+mod legacy_team_delivery_transition;
 mod legacy_team_events;
 mod legacy_team_messages;
 mod operator_event_pages;

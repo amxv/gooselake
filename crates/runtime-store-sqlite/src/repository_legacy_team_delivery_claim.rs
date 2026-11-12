@@ -11,6 +11,7 @@ use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::db::{db_error, fetch_runtime_event_by_event_id, open_connection};
 use crate::repository::insert_runtime_event_in_transaction;
+use crate::repository_legacy_team_delivery_transition::require_legacy_pre_native_lineage;
 use crate::repository_legacy_team_messages::{deliveries_by_message, message_by_id};
 use crate::SqliteRuntimeRepository;
 
@@ -213,6 +214,10 @@ impl SqliteRuntimeRepository {
                 "legacy delivery native claim admission receipt does not match identity".into(),
             ));
         }
+        // The immutable admission also pins every later pre-native status
+        // generation to an exact Critical transition. A direct-upserted old
+        // deferred row is not an automatic retry token.
+        require_legacy_pre_native_lineage(&tx, previous)?;
         let canonical: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM agent_deliveries WHERE id=?1)",

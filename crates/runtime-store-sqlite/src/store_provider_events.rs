@@ -96,6 +96,16 @@ macro_rules! delegate_provider_event_methods {
                 .claim_legacy_team_delivery_injection(previous, injecting, event)
         }
 
+        fn commit_legacy_team_delivery_pre_native_transition(
+            &self,
+            before: &runtime_core::TeamDeliveryRecord,
+            after: &runtime_core::TeamDeliveryRecord,
+            event: &runtime_core::NewRuntimeEvent,
+        ) -> Result<runtime_core::TeamDeliveryRecord, runtime_core::RuntimeError> {
+            self.repository
+                .commit_legacy_team_delivery_pre_native_transition(before, after, event)
+        }
+
         fn commit_legacy_team_delivery_injected(
             &self,
             before: &runtime_core::TeamDeliveryRecord,

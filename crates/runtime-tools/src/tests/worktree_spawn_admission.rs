@@ -434,6 +434,91 @@ async fn ignored_final_response_write_never_certifies_native_success() {
 }
 
 #[tokio::test]
+async fn original_onboarding_completion_rejects_extra_deliveries_at_bounded_fanout() {
+    let fixture = fixture().await;
+    let request = keyed_request(&fixture, "original-bounded-onboarding");
+    let first = fixture
+        .service
+        .spawn_team_member(request.clone())
+        .await
+        .unwrap();
+    let operation_id = &first.operation_id;
+    let message_id = first.onboarding["message_id"].as_str().unwrap();
+    let delivery_id = first.onboarding["delivery_ids"][0].as_str().unwrap();
+    let mut connection = rusqlite::Connection::open(&fixture.database_path).unwrap();
+    connection
+        .execute(
+            "UPDATE team_spawn_admissions SET completed_response_json=NULL WHERE operation_id=?1",
+            [operation_id],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE team_operation_journal SET stage='onboarding_sent',payload_json=?2
+             WHERE operation_id=?1",
+            rusqlite::params![operation_id, onboarding_stage_payload(&first).to_string()],
+        )
+        .unwrap();
+    let transaction = connection.transaction().unwrap();
+    // Synthetic corrupt historical fan-out: never contact the native
+    // provider/Git again just because one terminal response was lost.
+    for i in 0..2_048 {
+        transaction
+            .execute(
+                "INSERT INTO team_deliveries (
+                    id,message_id,team_id,recipient_agent_id,provider,status,created_at,updated_at
+                 ) SELECT ?1,message_id,team_id,recipient_agent_id,provider,status,
+                          created_at,updated_at FROM team_deliveries WHERE id=?2",
+                rusqlite::params![format!("extra_spawn_delivery_{i}"), delivery_id],
+            )
+            .unwrap();
+    }
+    transaction.commit().unwrap();
+    let plan: String = connection
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT id,team_id,recipient_agent_id
+             FROM team_deliveries WHERE message_id=?1 LIMIT 2",
+            [message_id],
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(plan.contains("idx_team_deliveries_by_message"), "{plan}");
+    assert!(matches!(
+        fixture
+            .store
+            .complete_team_member_spawn(operation_id, &first, 2000),
+        Err(RuntimeError::Conflict(_))
+    ));
+    assert_eq!(fixture.fresh_journal().stage, "onboarding_sent");
+    let native_count = fixture.provider.state.lock().await.sessions.len();
+    assert_eq!(native_count, 2); // original caller + one native spawn
+    connection
+        .execute(
+            "DELETE FROM team_deliveries WHERE id LIKE 'extra_spawn_delivery_%'",
+            [],
+        )
+        .unwrap();
+    fixture
+        .store
+        .complete_team_member_spawn(operation_id, &first, 2000)
+        .unwrap();
+    assert_eq!(fixture.fresh_journal().stage, "completed");
+    assert!(matches!(
+        fixture
+            .store
+            .replay_team_member_spawn(
+                &request.team_id,
+                &request.source_session_id,
+                request.idempotency_key.as_deref().unwrap(),
+                &runtime_core::normalized_json_hash(&serde_json::to_value(&request).unwrap())
+                    .unwrap(),
+            )
+            .unwrap(),
+        Some(runtime_core::TeamMemberSpawnAdmission::Replay { .. })
+    ));
+}
+
+#[tokio::test]
 async fn admission_sql_fault_rolls_back_planned_stage_before_native_session() {
     let fixture = fixture().await;
     let connection = rusqlite::Connection::open(&fixture.database_path).unwrap();

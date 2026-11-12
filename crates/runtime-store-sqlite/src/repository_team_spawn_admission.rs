@@ -420,7 +420,13 @@ fn validate_spawn_completion_lineage(
         return Err(mismatch());
     }
     let mut statement = transaction
-        .prepare("SELECT id,team_id,recipient_agent_id FROM team_deliveries WHERE message_id=?1")
+        // An onboarding message is direct, so at most one delivery can
+        // certify completion. Read only two rows to detect any forged or
+        // historical fan-out without enumerating its entire recipient set.
+        .prepare(
+            "SELECT id,team_id,recipient_agent_id
+             FROM team_deliveries WHERE message_id=?1 LIMIT 2",
+        )
         .map_err(|error| db_error("failed preparing spawn onboarding recipients", error))?;
     let actual_deliveries = statement
         .query_map([message_id], |row| {

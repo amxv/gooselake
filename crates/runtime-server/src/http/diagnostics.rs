@@ -337,3 +337,39 @@ pub(super) async fn list_team_operation_diagnostics(
         .map_err(ApiError::from)?;
     Ok(Json(rows))
 }
+
+#[derive(Debug, Serialize)]
+pub(super) struct TeamOperationRecoveryView {
+    operation: runtime_core::TeamOperationJournalRecord,
+    diagnostics: Vec<runtime_core::TeamOperationDiagnosticRecord>,
+    /// This endpoint never grants permission to repeat native side effects.
+    native_retry_authorized: bool,
+    requires_manual_review: bool,
+}
+
+/// Exact indexed recovery lookup, including the durable stage that the
+/// diagnostics-only list cannot expose. Auth is enforced by the /v1 scope.
+pub(super) async fn get_team_operation_recovery(
+    State(state): State<AppState>,
+    Path(operation_id): Path<String>,
+) -> Result<Json<TeamOperationRecoveryView>, ApiError> {
+    let operation_id = operation_id.trim();
+    let operation = state
+        .app
+        .services
+        .store
+        .get_team_operation_journal(operation_id)?
+        .ok_or_else(|| ApiError::not_found(format!("team operation {operation_id}")))?;
+    let diagnostics = state
+        .app
+        .services
+        .store
+        .list_team_operation_diagnostics(None, Some(operation_id))?;
+    let requires_manual_review = !matches!(operation.stage.as_str(), "completed" | "rolled_back");
+    Ok(Json(TeamOperationRecoveryView {
+        operation,
+        diagnostics,
+        native_retry_authorized: false,
+        requires_manual_review,
+    }))
+}

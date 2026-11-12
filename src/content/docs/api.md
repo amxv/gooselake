@@ -1877,9 +1877,15 @@ for manual inspection. An uncertain provider *creation* also preserves the
 possibly used worktree and records `session_create_review_required` rather than
 guessing that no native session exists. The legacy
 `GET /v1/diagnostics/team-operations?operation_id=...` endpoint exposes
-diagnostics only, **not** the authoritative journal stage; the team-operation
-journal currently requires inspection of the persisted SQLite record. A
-dedicated authenticated stage-inspection endpoint remains unfinished.
+diagnostics only, **not** the authoritative journal stage. Use the
+operator-authenticated
+`GET /v1/diagnostics/team-operations/{operation_id}` to inspect the original
+indexed journal row, exact stage/payload, associated diagnostics,
+`requires_manual_review` and `native_retry_authorized:false` after a lost
+response or server restart. An unknown/nonexistent ID returns 404 and no
+anonymous caller can inspect journal contents. Neither the inspection API nor
+the general `/v2/operations/{operation_id}` endpoint converts a legacy spawn
+intent into an executable or repeatable native operation.
 These statuses are **review coordinates**, not permission to rerun Git or
 provider effects. This compatibility route still lacks a caller-bound durable
 idempotency key and a fully automated cross-stage recovery/replay contract;

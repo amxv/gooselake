@@ -47,6 +47,26 @@ fn independent_stages_keep_first_admission_under_large_history_and_reopen() {
         lookup_plan.contains("sqlite_autoindex_team_operation_journal"),
         "operation identity must use primary-key lookup: {lookup_plan}"
     );
+    let exact_lookup_plan: String = connection.query_row(
+        "EXPLAIN QUERY PLAN SELECT operation_id,team_id,kind,stage,payload_json,created_at,updated_at
+         FROM team_operation_journal WHERE operation_id='spawn_1000'",
+        [], |row| row.get(3),
+    ).unwrap();
+    assert!(
+        exact_lookup_plan.contains("sqlite_autoindex_team_operation_journal"),
+        "recovery inspection must use exact primary-key lookup: {exact_lookup_plan}"
+    );
+    let exact = repository
+        .get_team_operation_journal("spawn_1000")
+        .unwrap()
+        .unwrap();
+    assert_eq!(exact.operation_id, "spawn_1000");
+    assert_eq!(exact.team_id, "team_a");
+    assert_eq!(exact.stage, "planned");
+    assert!(repository
+        .get_team_operation_journal("spawn_absent")
+        .unwrap()
+        .is_none());
 
     let mut updated = operation("spawn_1000", "team_a", "session_created", 900_000);
     repository.upsert_team_operation_journal(&updated).unwrap();

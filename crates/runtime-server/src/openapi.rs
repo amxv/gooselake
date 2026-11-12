@@ -208,6 +208,9 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Get, "/v1/diagnostics/team-operations") => {
             "Team operations diagnostics".to_string()
         }
+        (HttpMethod::Get, "/v1/diagnostics/team-operations/{operation_id}") => {
+            "Inspect exact legacy team operation recovery stage".to_string()
+        }
         (HttpMethod::Post, "/v1/teams") => "Create team".to_string(),
         (HttpMethod::Get, "/v1/teams") => "List teams".to_string(),
         (HttpMethod::Get, "/v1/teams/{team_id}") => "Get team".to_string(),

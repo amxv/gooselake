@@ -56,6 +56,7 @@ macro_rules! route_table {
                 "/diagnostics/worktrees" => get(worktree_diagnostics);
                 "/diagnostics/recovery" => get(recovery_diagnostics);
                 "/diagnostics/team-operations" => get(list_team_operation_diagnostics);
+                "/diagnostics/team-operations/{operation_id}" => get(get_team_operation_recovery);
                 "/teams" => post(create_team).get(list_teams);
                 "/teams/{team_id}" => get(get_team).delete(delete_team);
                 "/teams/{team_id}/members" => post(join_team_member);

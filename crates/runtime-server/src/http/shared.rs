@@ -286,10 +286,15 @@ impl From<RuntimeError> for ApiError {
                 operation_id,
                 message,
             } => {
+                let inspection_path = if operation_id.starts_with("op_spawn_") {
+                    format!("/v1/diagnostics/team-operations/{operation_id}")
+                } else {
+                    format!("/v2/operations/{operation_id}")
+                };
                 let mut error = Self::new(
                     StatusCode::CONFLICT,
                     "outcome_unresolved",
-                    format!("{message}; inspect /v2/operations/{operation_id}"),
+                    format!("{message}; inspect {inspection_path}"),
                 );
                 error.details = Some(serde_json::json!({"operation_id": operation_id}));
                 error

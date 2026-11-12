@@ -532,8 +532,7 @@ pub trait RuntimeStore:
         self.list_workspace_system_notices(limit)
     }
 
-    /// Only the oldest open notice for a recipient may be newly admitted.
-    /// Keyset fairness must not reorder one agent's lifecycle context.
+    /// Admit only the oldest open notice per recipient; preserve lifecycle order.
     fn is_workspace_system_notice_head(
         &self,
         _notice: &WorkspaceSystemNoticeRecord,
@@ -975,6 +974,8 @@ pub trait RuntimeStore:
         &self,
         team_id: Option<&str>,
     ) -> Result<Vec<TeamOperationJournalRecord>, RuntimeError>;
+
+    team_comms_trait::default_team_operation_lookup!();
 
     fn list_team_operation_diagnostics(
         &self,

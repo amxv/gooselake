@@ -962,6 +962,13 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.list_team_operation_journal(team_id)
     }
 
+    fn get_team_operation_journal(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<TeamOperationJournalRecord>, RuntimeError> {
+        self.repository.get_team_operation_journal(operation_id)
+    }
+
     fn list_team_operation_diagnostics(
         &self,
         team_id: Option<&str>,

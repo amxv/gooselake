@@ -3,9 +3,16 @@ use super::generated_openapi_yaml;
 #[test]
 fn declarative_route_table_preserves_methods_and_authentication_scopes() {
     let routes = super::collect_routes();
-    assert_eq!(routes.len(), 124, "all original v1/v2 and public routes");
+    assert_eq!(
+        routes.len(),
+        125,
+        "all v1/v2 and public routes, including exact recovery inspection"
+    );
     let method_count: usize = routes.values().map(|spec| spec.methods.len()).sum();
-    assert_eq!(method_count, 137, "multi-method routes retained");
+    assert_eq!(
+        method_count, 138,
+        "multi-method routes and operator recovery read retained"
+    );
 
     let public = routes.get("/health").expect("public health route");
     assert!(!public.requires_auth);
@@ -13,6 +20,7 @@ fn declarative_route_table_preserves_methods_and_authentication_scopes() {
 
     for path in [
         "/v1/mcp/invoke",
+        "/v1/diagnostics/team-operations/{operation_id}",
         "/v2/mcp/invoke",
         "/v2/workspaces/{workspace_id}/worktrees",
         "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree",
@@ -46,6 +54,7 @@ fn generated_openapi_includes_core_surface() {
     assert!(yaml.contains("  /v1/sessions:"));
     assert!(yaml.contains("  /v1/sessions/{session_id}/events/stream:"));
     assert!(yaml.contains("  /v1/teams/{team_id}/messages:"));
+    assert!(yaml.contains("  /v1/diagnostics/team-operations/{operation_id}:"));
     assert!(yaml.contains("  /v1/mcp/invoke:"));
     assert!(yaml.contains("  /v2/mcp/invoke:"));
     assert!(yaml.contains("  /v1/providers/acp/auth/status:"));

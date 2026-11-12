@@ -1,5 +1,23 @@
 use async_trait::async_trait;
 
+/// Non-SQLite stores can still expose an exact recovery record; SQLite
+/// implements the indexed lookup separately for production-scale history.
+macro_rules! default_team_operation_lookup {
+    () => {
+        fn get_team_operation_journal(
+            &self,
+            operation_id: &str,
+        ) -> Result<Option<crate::TeamOperationJournalRecord>, crate::RuntimeError> {
+            Ok(self
+                .list_team_operation_journal(None)?
+                .into_iter()
+                .find(|record| record.operation_id == operation_id))
+        }
+    };
+}
+
+pub(crate) use default_team_operation_lookup;
+
 macro_rules! legacy_team_event_methods {
     () => {
         /// /v1 team roster authority and its critical event must be committed

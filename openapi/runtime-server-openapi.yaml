@@ -180,6 +180,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v1/diagnostics/team-operations/{operation_id}:
+    get:
+      summary: Inspect exact legacy team operation recovery stage
+      parameters:
+        - name: operation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v1/diagnostics/worktrees:
     get:
       summary: Worktree diagnostics

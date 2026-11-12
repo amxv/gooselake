@@ -166,9 +166,26 @@ restart/replay; stale or competing roster generations and reused event IDs
 with different contents are rejected. Roster revisions advance strictly even
 when multiple mutations happen within one clock millisecond. This does **not**
 give the unkeyed `/v1` create HTTP request exactly-once transport semantics,
-nor certify legacy team **deletion**, message creation, delivery transitions
-or their separate post-native event emissions. Those remain independent
-recovery-sensitive event-authority boundaries and must not be blindly retried.
+nor certify legacy team **deletion**, delivery transitions or their separate
+post-native event emissions. Those remain independent recovery-sensitive
+event-authority boundaries and must not be blindly retried.
+
+Legacy `/v1` **direct/broadcast message admission** separately commits the
+complete message, immutable recipient snapshot, all initial `pending`
+deliveries and their critical `team_message.created` plus one
+`team_delivery.pending` event per recipient in one immediate SQLite
+transaction **before** native recipient injection. If even the last pending
+event insert fails, no message, deliveries or earlier journal events commit;
+the in-process cache is not advanced. A keyed duplicate with exactly the
+same intent reuses the persisted receipt across independent writers/restarts
+with disposition `existing`, without dispatching native delivery twice.
+Changed input against the same key, reused event IDs, missing members and
+historical unjournaled rows fail closed. Replaying admission after a delivery
+has been injected does **not** reset its status. This guarantees **initial
+pre-native admission** only: subsequent delivery retries, cancellation,
+team deletion, status event transitions and any already executed native
+effects require separate fencing and reconciliation; unkeyed HTTP POSTs do
+not have a lost-response exactly-once guarantee.
 
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical

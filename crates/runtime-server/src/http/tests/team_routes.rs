@@ -1,4 +1,6 @@
 use super::*;
+#[path = "team_routes_message_journal_proof.rs"]
+mod message_journal_proof;
 
 #[tokio::test]
 async fn team_routes_lifecycle_and_controls() {
@@ -246,6 +248,8 @@ async fn team_routes_lifecycle_and_controls() {
         .as_str()
         .expect("delivery id")
         .to_string();
+
+    message_journal_proof::assert_admission(temp_dir.path(), &team_id, &message_id, &delivery_id);
 
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 

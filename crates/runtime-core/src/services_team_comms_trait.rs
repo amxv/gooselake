@@ -13,6 +13,21 @@ macro_rules! legacy_team_event_methods {
                 "atomic legacy team roster event journal unavailable".into(),
             ))
         }
+
+        /// Legacy `/v1` message and all initial deliveries must be admitted
+        /// together with one critical message event and a critical pending
+        /// event per delivery, before any recipient injection/native effects.
+        /// Idempotent replay is a durable receipt, never an implicit resend.
+        fn commit_legacy_team_message_admission(
+            &self,
+            _message: &crate::TeamMessageRecord,
+            _deliveries: &[crate::TeamDeliveryRecord],
+            _events: &[crate::NewRuntimeEvent],
+        ) -> Result<crate::TeamMessageAck, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic legacy team message admission journal unavailable".into(),
+            ))
+        }
     };
 }
 pub(super) use legacy_team_event_methods;

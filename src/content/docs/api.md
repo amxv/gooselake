@@ -1868,9 +1868,21 @@ committed team/member row or advance the in-process roster cache. A previous
 exact durable receipt can be replayed after restart without a second event;
 conflicting writer generations or reused event IDs fail closed. `/v1` HTTP
 requests do **not** expose the keyed `/v2` operator idempotency contract, and
-this guarantee does **not** extend to legacy team deletion, messages, delivery
-transition notifications or native side effects; uncertain outcomes must
-not be treated as permission to retry potentially executed effects.
+this roster guarantee does **not** extend to legacy team deletion or native
+side effects.
+
+Legacy `/v1` direct/broadcast **message admission** now commits a message,
+its exact initial recipient/delivery snapshot, a Critical
+`team_message.created` event and one Critical `team_delivery.pending` event
+for each recipient in **one immediate SQLite transaction before native
+delivery**. The service cache updates only after the whole commit succeeds.
+An exact keyed retry reuses its original durable message/delivery receipt
+with disposition `existing`, never granting another native delivery attempt;
+same key with different intent, forged critical events and old unjournaled
+legacy rows fail closed. Subsequent delivery transitions, message cancellation
+and team deletion are **not** covered by this admission transaction; neither
+is exactly-once retry for unkeyed HTTP, nor any provider-native side effect.
+Uncertain post-native outcomes must not be retried blindly.
 
 ## MCP gateway
 

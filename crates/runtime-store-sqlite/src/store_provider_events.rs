@@ -57,6 +57,16 @@ macro_rules! delegate_provider_event_methods {
             self.repository.commit_legacy_team_mutation(mutation)
         }
 
+        fn commit_legacy_team_message_admission(
+            &self,
+            message: &runtime_core::TeamMessageRecord,
+            deliveries: &[runtime_core::TeamDeliveryRecord],
+            events: &[runtime_core::NewRuntimeEvent],
+        ) -> Result<runtime_core::TeamMessageAck, runtime_core::RuntimeError> {
+            self.repository
+                .commit_legacy_team_message_admission(message, deliveries, events)
+        }
+
         fn admit_provider_approval(
             &self,
             previous_turn: &runtime_core::TurnRecord,

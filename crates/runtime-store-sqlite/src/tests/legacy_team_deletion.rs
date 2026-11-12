@@ -281,3 +281,114 @@ fn competing_deletion_generations_converge_on_one_tombstone_and_one_critical_jou
         Err(RuntimeError::Conflict(_))
     ));
 }
+
+#[test]
+fn many_messages_publish_ordered_complete_critical_receipts_with_exact_restart_replay() {
+    let (_temp, repo, team) = fixture();
+    let mut all = Vec::new();
+    for i in 0..64 {
+        let message_id = format!("scale_message_{i:03}");
+        let admission = proposed(&team, &message_id, &["session_a", "session_b"], None);
+        commit(&repo, &admission).unwrap();
+        all.extend(admission.1);
+    }
+    all.sort_by(|a, b| (&a.message_id, &a.id).cmp(&(&b.message_id, &b.id)));
+    let plan = deletion_plan(&team, &all, 1400);
+    assert_eq!(plan.1.len(), 128);
+    assert_eq!(deletion(&repo, &team, &all, &plan).unwrap(), plan.0);
+
+    let reopened = SqliteRuntimeRepository::new(repo.database_path.clone());
+    assert_eq!(
+        deletion(&reopened, &team, &all, &deletion_plan(&team, &all, 1600)).unwrap(),
+        plan.0,
+        "fresh-clock replay may not fabricate a second terminal snapshot"
+    );
+    let events = reopened.list_runtime_events(None, None, 512).unwrap();
+    assert_eq!(events.len(), 385); // 64*(created+2 pending) + 128 cancelled + 64 completed + deleted
+    assert_eq!(
+        events.iter().map(|row| row.seq).collect::<Vec<_>>(),
+        (1..=385).collect::<Vec<_>>()
+    );
+    assert!(events[192..320]
+        .iter()
+        .all(|event| event.kind == "team_delivery.cancelled"));
+    assert!(events[320..384]
+        .iter()
+        .all(|event| event.kind == "team_message.completed"));
+    assert_eq!(events.last().unwrap().kind, "team.deleted");
+    assert!(events[192..]
+        .iter()
+        .all(|event| event.criticality == RuntimeEventCriticality::Critical));
+    let restarted = reopened.hydrate_runtime_state().unwrap();
+    assert_eq!(restarted.team_deliveries.len(), 128);
+    assert!(restarted
+        .team_deliveries
+        .iter()
+        .all(|delivery| delivery.status == "cancelled"));
+}
+
+#[test]
+fn competing_new_message_admission_invalidates_stale_team_deletion_snapshot() {
+    let (_temp, repo, team) = fixture();
+    let first = proposed(&team, "delete_snapshot_first", &["session_a"], None);
+    commit(&repo, &first).unwrap();
+    let stale_plan = deletion_plan(&team, &first.1, 1400);
+    let second = proposed(&team, "delete_snapshot_new", &["session_b"], None);
+    commit(&repo, &second).unwrap();
+    assert!(matches!(
+        deletion(&repo, &team, &first.1, &stale_plan),
+        Err(RuntimeError::Conflict(_))
+    ));
+    let snapshot = repo.hydrate_runtime_state().unwrap();
+    assert_eq!(snapshot.teams, vec![team]);
+    assert_eq!(snapshot.team_deliveries, [first.1, second.1].concat());
+    assert_eq!(repo.list_runtime_events(None, None, 20).unwrap().len(), 4);
+}
+
+#[test]
+fn independent_message_admission_and_deletion_race_never_lose_a_recipient_or_event() {
+    let (_temp, repo, team) = fixture();
+    let first = proposed(&team, "delete_race_first", &["session_a"], None);
+    commit(&repo, &first).unwrap();
+    let second = proposed(&team, "delete_race_second", &["session_b"], None);
+    let barrier = Arc::new(Barrier::new(2));
+    let delete_thread = {
+        let repo = repo.clone();
+        let team = team.clone();
+        let first_deliveries = first.1.clone();
+        let barrier = Arc::clone(&barrier);
+        std::thread::spawn(move || {
+            let plan = deletion_plan(&team, &first_deliveries, 1400);
+            barrier.wait();
+            deletion(&repo, &team, &first_deliveries, &plan)
+        })
+    };
+    let admit_thread = {
+        let repo = repo.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            commit(&repo, &second)
+        })
+    };
+    let deleted = delete_thread.join().unwrap().is_ok();
+    let admitted = admit_thread.join().unwrap().is_ok();
+    assert_ne!(deleted, admitted, "one exclusive SQLite writer must win");
+    let snapshot = repo.hydrate_runtime_state().unwrap();
+    let events = repo.list_runtime_events(None, None, 20).unwrap();
+    if deleted {
+        assert!(snapshot.teams[0].deleted_at.is_some());
+        assert_eq!(snapshot.team_deliveries.len(), 1);
+        assert_eq!(snapshot.team_deliveries[0].status, "cancelled");
+        assert_eq!(events.len(), 5);
+        assert_eq!(events.last().unwrap().kind, "team.deleted");
+    } else {
+        assert!(snapshot.teams[0].deleted_at.is_none());
+        assert_eq!(snapshot.team_deliveries.len(), 2);
+        assert!(snapshot
+            .team_deliveries
+            .iter()
+            .all(|row| row.status == "pending"));
+        assert_eq!(events.len(), 4);
+        assert!(events.iter().all(|row| row.kind != "team.deleted"));
+    }
+}

@@ -424,6 +424,79 @@ async fn stale_team_cache_cannot_admit_new_native_work_after_sqlite_deletion() {
 }
 
 #[tokio::test]
+async fn legacy_delete_service_keeps_cache_and_critical_tombstone_untouched_during_keyed_spawn() {
+    let fixture = fixture().await;
+    let request = keyed_request(&fixture, "delete-after-admit-service");
+    let hash =
+        runtime_core::normalized_json_hash(&serde_json::to_value(&request).unwrap()).unwrap();
+    let operation_id = "op_service_deletion_interlock";
+    assert!(matches!(
+        fixture
+            .store
+            .admit_team_member_spawn(operation_id, &request, &hash, 1234)
+            .unwrap(),
+        runtime_core::TeamMemberSpawnAdmission::Execute { .. }
+    ));
+    let failure = fixture
+        .comms
+        .delete_team(&fixture.team_id)
+        .await
+        .unwrap_err();
+    assert!(matches!(failure, RuntimeError::Conflict(ref msg) if msg.contains(operation_id)));
+    assert_eq!(
+        fixture
+            .comms
+            .get_team(&fixture.team_id)
+            .await
+            .unwrap()
+            .members
+            .len(),
+        1
+    );
+    assert!(fixture.store.hydrate_runtime_state().unwrap().teams[0]
+        .deleted_at
+        .is_none());
+    assert!(fixture
+        .store
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .iter()
+        .all(|event| event.kind != "team.deleted"));
+    assert_eq!(fixture.fresh_journal().stage, "planned");
+
+    // The test never created a native provider session. A confirmed rollback
+    // of the original reservation can subsequently allow the same service to
+    // commit the real deletion and its Critical journal atomically.
+    let mut journal = fixture.fresh_journal();
+    journal.stage = "rolled_back".into();
+    fixture
+        .store
+        .upsert_team_operation_journal(&journal)
+        .unwrap();
+    fixture.comms.delete_team(&fixture.team_id).await.unwrap();
+    assert!(matches!(
+        fixture.comms.get_team(&fixture.team_id).await,
+        Err(RuntimeError::NotFound(_))
+    ));
+    assert_eq!(
+        fixture.store.hydrate_runtime_state().unwrap().teams[0]
+            .deleted_at
+            .is_some(),
+        true
+    );
+    assert_eq!(
+        fixture
+            .store
+            .list_runtime_events(None, None, 10)
+            .unwrap()
+            .iter()
+            .filter(|event| event.kind == "team.deleted")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn real_disposable_git_checkout_and_fake_provider_replay_from_reopened_sqlite() {
     let fixture = fixture().await;
     let repo = fixture._temp.path();

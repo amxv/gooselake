@@ -652,7 +652,9 @@ impl SqliteRuntimeRepository {
             .execute(
                 "INSERT INTO team_operation_journal (
                     operation_id, team_id, kind, stage, payload_json, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+                   WHERE ?3!='spawn_member_with_worktree' OR ?4!='planned'
+                      OR EXISTS (SELECT 1 FROM teams WHERE id=?2 AND deleted_at IS NULL)
                  ON CONFLICT(operation_id) DO UPDATE SET
                     stage = excluded.stage,
                     payload_json = excluded.payload_json,
@@ -672,7 +674,7 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed upserting team operation journal row", error))?;
         if changed != 1 {
             return Err(RuntimeError::Conflict(format!(
-                "team operation {} cannot change its immutable team or kind",
+                "team operation {} cannot change its immutable team/kind or plan a spawn for a deleted team",
                 record.operation_id
             )));
         }

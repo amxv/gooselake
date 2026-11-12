@@ -135,6 +135,19 @@ fn failed_stage_update_does_not_overwrite_durable_prior_operation() {
     let temp = tempfile::tempdir().unwrap();
     let repository = repo(&temp);
     repository.initialize_schema().unwrap();
+    // A new native spawn plan now requires a live persisted team. This is
+    // deliberately a real roster fixture, not an orphan synthetic journal.
+    repository
+        .upsert_team(&runtime_core::TeamRecord {
+            id: "team_a".into(),
+            name: "Journal stage-fault team".into(),
+            lead_agent_id: "fixture_lead".into(),
+            created_by: "fixture".into(),
+            created_at: 100,
+            updated_at: 100,
+            deleted_at: None,
+        })
+        .unwrap();
     let initial = operation("spawn_fault", "team_a", "planned", 500);
     repository.upsert_team_operation_journal(&initial).unwrap();
     let connection = open_connection(&repository.database_path).unwrap();

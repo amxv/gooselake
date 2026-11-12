@@ -8,7 +8,7 @@ use runtime_core::{
     NewRuntimeEvent, RuntimeError, RuntimeEventCriticality, RuntimeEventScope, TeamDeliveryRecord,
     TeamMessageRecord, TeamRecord,
 };
-use rusqlite::{params, Transaction, TransactionBehavior};
+use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::db::{db_error, fetch_runtime_event_by_event_id, open_connection};
 use crate::repository::insert_runtime_event_in_transaction;
@@ -334,6 +334,56 @@ impl SqliteRuntimeRepository {
             return Err(RuntimeError::Conflict(
                 "legacy team changed before deletion Critical authority".into(),
             ));
+        }
+        // The tombstone and a new caller-bound spawn admission compete for
+        // the same SQLite IMMEDIATE write lock. Once native spawn has been
+        // admitted, deletion must not win until its exact response is
+        // committed or *all* native compensation is certified rolled back.
+        // An unknown/missing stage, including a forged `completed` stage
+        // without its original response, is not clearance to delete.
+        let unsettled_keyed: Option<String> = tx
+            .query_row(
+                "SELECT a.operation_id FROM team_spawn_admissions a
+                 LEFT JOIN team_operation_journal j
+                   ON j.operation_id=a.operation_id AND j.team_id=a.team_id
+                  AND j.kind='spawn_member_with_worktree'
+                 WHERE a.team_id=?1 AND (
+                     j.operation_id IS NULL OR
+                     (j.stage!='rolled_back' AND NOT (
+                         j.stage='completed' AND a.completed_response_json IS NOT NULL
+                     ))
+                 ) LIMIT 1",
+                [&before.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking keyed spawn deletion fence", error))?;
+        if let Some(operation_id) = unsettled_keyed {
+            return Err(RuntimeError::Conflict(format!(
+                "team deletion blocked by unresolved admitted spawn {operation_id}; inspect its original native outcome"
+            )));
+        }
+        // Historical unkeyed spawns still have a planned native journal,
+        // but no caller-bound retry identity. Never interpret their absence
+        // of a successful HTTP response as proof that no native work ran.
+        let unsettled_unkeyed: Option<String> = tx
+            .query_row(
+                "SELECT j.operation_id FROM team_operation_journal j
+                 WHERE j.team_id=?1 AND j.kind='spawn_member_with_worktree'
+                   AND j.stage NOT IN ('completed','rolled_back')
+                   AND NOT EXISTS (
+                       SELECT 1 FROM team_spawn_admissions a
+                       WHERE a.operation_id=j.operation_id
+                   ) LIMIT 1",
+                [&before.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking unkeyed spawn deletion fence", error))?;
+        if let Some(operation_id) = unsettled_unkeyed {
+            return Err(RuntimeError::Conflict(format!(
+                "team deletion blocked by unresolved legacy spawn {operation_id}; inspect its original native outcome"
+            )));
         }
         for cancelled in cancelled_deliveries {
             let canonical: bool = tx

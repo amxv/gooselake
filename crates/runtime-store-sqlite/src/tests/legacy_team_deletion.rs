@@ -4,6 +4,33 @@ use super::*;
 use runtime_core::RuntimeError;
 use std::sync::{Arc, Barrier};
 
+fn keyed_spawn(team: &TeamRecord, key: &str) -> runtime_core::TeamMemberSpawnRequest {
+    runtime_core::TeamMemberSpawnRequest {
+        team_id: team.id.clone(),
+        source_session_id: "session_lead".into(),
+        idempotency_key: Some(key.into()),
+        provider: None,
+        model: None,
+        title: None,
+        prompt: None,
+        permission_mode: None,
+        metadata: None,
+        worktree: None,
+        creator_agent_id: None,
+        creator_compaction_subscription: None,
+    }
+}
+
+fn admit_keyed_spawn(
+    repo: &SqliteRuntimeRepository,
+    team: &TeamRecord,
+    operation_id: &str,
+) -> Result<runtime_core::TeamMemberSpawnAdmission, RuntimeError> {
+    let request = keyed_spawn(team, operation_id);
+    let hash = runtime_core::normalized_json_hash(&serde_json::to_value(&request).unwrap())?;
+    repo.admit_team_member_spawn(operation_id, &request, &hash, 1100)
+}
+
 fn deletion_plan(
     team: &TeamRecord,
     deliveries: &[TeamDeliveryRecord],
@@ -391,4 +418,235 @@ fn independent_message_admission_and_deletion_race_never_lose_a_recipient_or_eve
         assert_eq!(events.len(), 4);
         assert!(events.iter().all(|row| row.kind != "team.deleted"));
     }
+}
+
+#[test]
+fn admitted_keyed_spawn_blocks_deletion_until_certified_rollback_even_after_restart() {
+    let (_temp, repo, team) = fixture();
+    let operation_id = "op_spawn_deletion_in_flight";
+    assert!(matches!(
+        admit_keyed_spawn(&repo, &team, operation_id).unwrap(),
+        runtime_core::TeamMemberSpawnAdmission::Execute { .. }
+    ));
+    let reopened = SqliteRuntimeRepository::new(repo.database_path.clone());
+    let plan = deletion_plan(&team, &[], 1400);
+    for stage in [
+        "planned",
+        "worktree_created",
+        "session_created",
+        "team_joined",
+        "rollback_pending",
+        "rollback_review_required",
+    ] {
+        let mut row = reopened
+            .get_team_operation_journal(operation_id)
+            .unwrap()
+            .unwrap();
+        row.stage = stage.into();
+        reopened.upsert_team_operation_journal(&row).unwrap();
+        let error = deletion(&reopened, &team, &[], &plan).unwrap_err();
+        assert!(
+            matches!(error, RuntimeError::Conflict(ref msg) if msg.contains(operation_id)),
+            "{stage}: {error:?}"
+        );
+        assert!(reopened.hydrate_runtime_state().unwrap().teams[0]
+            .deleted_at
+            .is_none());
+        assert!(reopened
+            .list_runtime_events(None, None, 10)
+            .unwrap()
+            .is_empty());
+    }
+    // A forged terminal stage without the atomic exact response cannot turn
+    // an unknown native outcome into deletion authority.
+    let mut row = reopened
+        .get_team_operation_journal(operation_id)
+        .unwrap()
+        .unwrap();
+    row.stage = "completed".into();
+    reopened.upsert_team_operation_journal(&row).unwrap();
+    assert!(matches!(
+        deletion(&reopened, &team, &[], &plan),
+        Err(RuntimeError::Conflict(_))
+    ));
+
+    // This fixture created no native resources. Mimic a confirmed full
+    // compensation verdict; unknown or partial rollback above stayed fenced.
+    row.stage = "rolled_back".into();
+    reopened.upsert_team_operation_journal(&row).unwrap();
+    assert_eq!(deletion(&reopened, &team, &[], &plan).unwrap(), plan.0);
+    assert_eq!(
+        reopened.list_runtime_events(None, None, 10).unwrap().len(),
+        1
+    );
+    let new_request = keyed_spawn(&team, "new-after-delete");
+    let new_hash =
+        runtime_core::normalized_json_hash(&serde_json::to_value(&new_request).unwrap()).unwrap();
+    assert!(matches!(
+        reopened.admit_team_member_spawn("op_spawn_after_delete", &new_request, &new_hash, 1500),
+        Err(RuntimeError::Conflict(_))
+    ));
+}
+
+#[test]
+fn old_unkeyed_native_plan_blocks_delete_and_cannot_be_created_after_tombstone() {
+    let (_temp, repo, team) = fixture();
+    let mut journal = runtime_core::TeamOperationJournalRecord {
+        operation_id: "op_unkeyed_original".into(),
+        team_id: team.id.clone(),
+        kind: "spawn_member_with_worktree".into(),
+        stage: "planned".into(),
+        payload: serde_json::json!({"source_session_id":"session_lead"}),
+        created_at: 1100,
+        updated_at: 1100,
+    };
+    repo.upsert_team_operation_journal(&journal).unwrap();
+    let plan = deletion_plan(&team, &[], 1400);
+    let reopened = SqliteRuntimeRepository::new(repo.database_path.clone());
+    assert!(matches!(
+        deletion(&reopened, &team, &[], &plan),
+        Err(RuntimeError::Conflict(ref msg)) if msg.contains("op_unkeyed_original")
+    ));
+    journal.stage = "session_create_review_required".into();
+    reopened.upsert_team_operation_journal(&journal).unwrap();
+    assert!(matches!(
+        deletion(&reopened, &team, &[], &plan),
+        Err(RuntimeError::Conflict(_))
+    ));
+    journal.stage = "rolled_back".into();
+    reopened.upsert_team_operation_journal(&journal).unwrap();
+    assert_eq!(deletion(&reopened, &team, &[], &plan).unwrap(), plan.0);
+    let mut newer = journal;
+    newer.operation_id = "op_unkeyed_after_delete".into();
+    newer.stage = "planned".into();
+    assert!(matches!(
+        reopened.upsert_team_operation_journal(&newer),
+        Err(RuntimeError::Conflict(_))
+    ));
+    assert!(reopened
+        .get_team_operation_journal(&newer.operation_id)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn independent_keyed_spawn_admission_and_team_deletion_have_exactly_one_sqlite_winner() {
+    for round in 0..8 {
+        let (_temp, repo, team) = fixture();
+        let barrier = Arc::new(Barrier::new(2));
+        let delete_thread = {
+            let repo = repo.clone();
+            let team = team.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let plan = deletion_plan(&team, &[], 1400);
+                barrier.wait();
+                deletion(&repo, &team, &[], &plan)
+            })
+        };
+        let admit_thread = {
+            let repo = repo.clone();
+            let team = team.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                admit_keyed_spawn(&repo, &team, &format!("op_race_{round}"))
+            })
+        };
+        let deleted = delete_thread.join().unwrap().is_ok();
+        let admitted = admit_thread.join().unwrap().is_ok();
+        assert_ne!(
+            deleted, admitted,
+            "round {round}: two native/deletion owners cannot win"
+        );
+        let state = repo.hydrate_runtime_state().unwrap();
+        let original_id = format!("op_race_{round}");
+        if admitted {
+            assert!(state.teams[0].deleted_at.is_none());
+            assert_eq!(
+                repo.get_team_operation_journal(&original_id)
+                    .unwrap()
+                    .unwrap()
+                    .stage,
+                "planned"
+            );
+            assert!(repo.list_runtime_events(None, None, 10).unwrap().is_empty());
+        } else {
+            assert!(state.teams[0].deleted_at.is_some());
+            assert!(repo
+                .get_team_operation_journal(&original_id)
+                .unwrap()
+                .is_none());
+            assert_eq!(repo.list_runtime_events(None, None, 10).unwrap().len(), 1);
+        }
+    }
+}
+
+#[test]
+fn schema_30_upgrade_indexes_sparse_unsettled_spawn_deletion_fence_at_scale() {
+    let (_temp, repo, team) = fixture();
+    let mut connection = open_connection(&repo.database_path).unwrap();
+    // A disposable v30 fixture with historical terminal rows. Migration 31
+    // may only add the sparse index, without rewriting past native receipts.
+    connection
+        .execute_batch(
+            "DROP INDEX idx_team_spawn_journal_unsettled;
+             DELETE FROM schema_migrations WHERE version=31;",
+        )
+        .unwrap();
+    let tx = connection.transaction().unwrap();
+    for i in 0..2_000 {
+        tx.execute(
+            "INSERT INTO team_operation_journal
+             (operation_id,team_id,kind,stage,payload_json,created_at,updated_at)
+             VALUES (?1,?2,'spawn_member_with_worktree','completed','{}',?3,?3)",
+            params![format!("old_spawn_{i}"), &team.id, i],
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+    drop(connection);
+    let upgraded = SqliteRuntimeRepository::new(repo.database_path.clone());
+    upgraded.initialize_schema().unwrap();
+    let connection = open_connection(&repo.database_path).unwrap();
+    let plan: String = connection
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT j.operation_id
+             FROM team_operation_journal j
+             WHERE j.team_id=?1 AND j.kind='spawn_member_with_worktree'
+               AND j.stage NOT IN ('completed','rolled_back')
+               AND NOT EXISTS (SELECT 1 FROM team_spawn_admissions a
+                               WHERE a.operation_id=j.operation_id) LIMIT 1",
+            [&team.id],
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(plan.contains("idx_team_spawn_journal_unsettled"), "{plan}");
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM team_operation_journal", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        2_000,
+        "v31 index upgrade may not discard any older worktree operation"
+    );
+    drop(connection);
+    let mut unsettled = runtime_core::TeamOperationJournalRecord {
+        operation_id: "scale_unkeyed_pending".into(),
+        team_id: team.id.clone(),
+        kind: "spawn_member_with_worktree".into(),
+        stage: "planned".into(),
+        payload: serde_json::json!({"source_session_id":"session_lead"}),
+        created_at: 1200,
+        updated_at: 1200,
+    };
+    upgraded.upsert_team_operation_journal(&unsettled).unwrap();
+    assert!(matches!(
+        deletion(&upgraded, &team, &[], &deletion_plan(&team, &[], 1400)),
+        Err(RuntimeError::Conflict(ref msg)) if msg.contains("scale_unkeyed_pending")
+    ));
+    unsettled.stage = "rolled_back".into();
+    upgraded.upsert_team_operation_journal(&unsettled).unwrap();
+    let plan = deletion_plan(&team, &[], 1400);
+    assert_eq!(deletion(&upgraded, &team, &[], &plan).unwrap(), plan.0);
 }

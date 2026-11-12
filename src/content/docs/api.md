@@ -1894,8 +1894,11 @@ source_session_id and full immutable request body**. The first call atomically
 commits the keyed admission and `planned` journal before any Git checkout,
 provider session or onboarding; a simultaneous second worker cannot execute
 the same key. Admission rejects an already-deleted legacy team even when an
-in-memory roster cache is stale, but a later racing deletion still requires
-independent native lifecycle reconciliation. An exact retry of a completed
+in-memory roster cache is stale. A concurrent team deletion now competes for
+that same SQLite write lock and cannot tombstone an admitted spawn until its
+exact completion receipt is committed or its native compensation is certified
+`rolled_back`. This is a deletion fence, **not** automatic native recovery.
+An exact retry of a completed
 spawn returns the original stored
 response and `operation_id` (including after a lost HTTP reply or restart),
 without contacting Git or a provider. An exact retry of a pending, failed,
@@ -2004,7 +2007,18 @@ the active team revision becomes a tombstone, all still-pre-native
 `team_delivery.cancelled` per recipient, each newly terminal message obtains
 its Critical `team_message.completed` snapshot, and one Critical
 `team.deleted` receipt seals the deletion. These mutations either all commit
-or all roll back. A late journal error does not delete the team from memory
+or all roll back. In the **same write transaction**, a deletion checks the
+original keyed admissions and historical unkeyed spawn journals. Any
+`planned`, native-in-progress, missing, or uncertain original spawn outcome
+returns `409` with its original operation ID; a forged keyed `completed`
+stage without its exact response is insufficient. A proven `rolled_back`
+stage or keyed atomic completion allows a later deletion to proceed, subject
+to the other team/delivery checks. A historical unkeyed spawn also cannot
+admit its initial `planned` journal *after* a committed tombstone. The
+non-destructive SQLite v31 migration adds a sparse index for unresolved
+spawn-journal checks at scale. These fences neither restore a lost unkeyed
+HTTP response nor prove provider-native exactly-once execution.
+A late journal error does not delete the team from memory
 or remove its recipient queues. Native `injecting` results, stale recipient
 generations, missing/forged Critical lineage and canonical-owned mirrors fail
 closed rather than admitting a false cancellation. After a lost response,

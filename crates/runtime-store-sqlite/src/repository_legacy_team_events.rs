@@ -15,7 +15,10 @@ use crate::db::{db_error, fetch_runtime_event_by_event_id, open_connection};
 use crate::repository::insert_runtime_event_in_transaction;
 use crate::SqliteRuntimeRepository;
 
-fn read_team(tx: &Transaction<'_>, team_id: &str) -> Result<Option<TeamRecord>, RuntimeError> {
+pub(crate) fn read_team(
+    tx: &Transaction<'_>,
+    team_id: &str,
+) -> Result<Option<TeamRecord>, RuntimeError> {
     tx.query_row(
         "SELECT id,name,lead_agent_id,created_by,created_at,updated_at,deleted_at
          FROM teams WHERE id=?1",

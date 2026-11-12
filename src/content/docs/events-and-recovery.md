@@ -166,9 +166,9 @@ restart/replay; stale or competing roster generations and reused event IDs
 with different contents are rejected. Roster revisions advance strictly even
 when multiple mutations happen within one clock millisecond. This does **not**
 give the unkeyed `/v1` create HTTP request exactly-once transport semantics,
-nor certify legacy team **deletion**, delivery transitions or their separate
-post-native event emissions. Those remain independent recovery-sensitive
-event-authority boundaries and must not be blindly retried.
+nor itself certify team **deletion**, delivery transitions or their separate
+post-native event emissions. These require their own guarded transactions;
+the implemented deletion and delivery boundaries are described below.
 
 Legacy `/v1` **direct/broadcast message admission** separately commits the
 complete message, immutable recipient snapshot, all initial `pending`
@@ -249,8 +249,28 @@ may reopen a `deferred` recipient, or a `failed` recipient only while its
 message has not been terminally completed; after a completed message,
 operators must create a new message instead of rewriting its immutable
 completion. An uncertain native `injecting` row is **never** eligible for
-this pre-native retry path. Legacy team deletion remains a separate
-uncertified operation.
+this pre-native retry path. Team deletion has its own separate Critical
+transaction described below.
+
+Legacy `/v1` **team deletion** commits the exact active team revision's
+durable tombstone, every still-`pending`/`deferred` legacy recipient's
+`cancelled` state, one Critical `team_delivery.cancelled` receipt per affected
+recipient, all newly-terminal `team_message.completed` snapshots, and one
+Critical `team.deleted` tombstone receipt in **one immediate SQLite
+transaction**. A failure at even the final event insert rolls back the entire
+state change; team, idempotency and delivery queue caches remain unchanged.
+Cancellation checks the original Critical pending admission and latest
+pre-native status generation and rejects unjournaled/forged transitions,
+stale revisions, missing recipients, and canonical-owned deliveries.
+`injecting` native outcomes are unresolved effects, so deleting a team with
+one fails closed rather than pretending a cancellation is safe. A lost
+commit reply or competing delete can verify the durable original timestamp,
+complete recipient snapshot and all immutable receipts after restart and
+converge on that one tombstone without new native work. This does not erase
+historical deliveries or prove exactly-once provider execution; unkeyed
+legacy HTTP create/message POSTs and Windows native process launch gating
+remain separate constraints. Certified team records also cannot be restored
+through the raw legacy SQLite team upsert.
 
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical

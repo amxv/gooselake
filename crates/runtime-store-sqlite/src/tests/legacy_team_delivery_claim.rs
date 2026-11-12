@@ -148,7 +148,20 @@ fn native_claim_refuses_cancelled_or_retargeted_or_unjournaled_delivery() {
     let mut cancelled = admission.1[0].clone();
     cancelled.status = "cancelled".into();
     cancelled.updated_at = 1200;
-    repo.upsert_team_delivery(&cancelled).unwrap();
+    assert!(matches!(
+        repo.upsert_team_delivery(&cancelled),
+        Err(RuntimeError::Conflict(_))
+    ));
+    // Simulate an uncertified historical/corrupted status, which must never
+    // authorize native injection. Certified cancellation uses its own
+    // Critical transaction rather than raw upsert.
+    open_connection(&repo.database_path)
+        .unwrap()
+        .execute(
+            "UPDATE team_deliveries SET status='cancelled',updated_at=?1 WHERE id=?2",
+            params![cancelled.updated_at, cancelled.id],
+        )
+        .unwrap();
     assert!(!repo
         .claim_legacy_team_delivery_injection(&admission.1[0], &injecting, &event)
         .unwrap());

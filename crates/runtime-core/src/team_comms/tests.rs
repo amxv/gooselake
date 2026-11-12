@@ -373,6 +373,23 @@ impl RuntimeStore for TestStore {
         Ok(())
     }
 
+    fn commit_legacy_team_deletion(
+        &self,
+        before: &TeamRecord,
+        after: &TeamRecord,
+        all_deliveries: &[TeamDeliveryRecord],
+        cancelled_deliveries: &[TeamDeliveryRecord],
+        events: &[NewRuntimeEvent],
+    ) -> Result<TeamRecord, RuntimeError> {
+        self.commit_legacy_team_deletion_test(
+            before,
+            after,
+            all_deliveries,
+            cancelled_deliveries,
+            events,
+        )
+    }
+
     fn commit_legacy_team_mutation(
         &self,
         mutation: &LegacyTeamMutation,
@@ -968,3 +985,4 @@ mod legacy_delivery_claim;
 mod legacy_delivery_transition;
 mod legacy_message_admission;
 mod legacy_roster_events;
+mod legacy_team_deletion;

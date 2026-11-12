@@ -57,6 +57,23 @@ macro_rules! delegate_provider_event_methods {
             self.repository.commit_legacy_team_mutation(mutation)
         }
 
+        fn commit_legacy_team_deletion(
+            &self,
+            before: &runtime_core::TeamRecord,
+            after: &runtime_core::TeamRecord,
+            all_deliveries: &[runtime_core::TeamDeliveryRecord],
+            cancelled_deliveries: &[runtime_core::TeamDeliveryRecord],
+            events: &[runtime_core::NewRuntimeEvent],
+        ) -> Result<runtime_core::TeamRecord, runtime_core::RuntimeError> {
+            self.repository.commit_legacy_team_deletion(
+                before,
+                after,
+                all_deliveries,
+                cancelled_deliveries,
+                events,
+            )
+        }
+
         fn commit_legacy_team_message_admission(
             &self,
             message: &runtime_core::TeamMessageRecord,

@@ -1,4 +1,34 @@
 //! Independent SQLite reopen of an authenticated /v1 message admission.
+pub(super) fn assert_deletion(temp_path: &std::path::Path, team_id: &str) {
+    let persisted =
+        runtime_store_sqlite::SqliteRuntimeRepository::new(temp_path.join("runtime.sqlite3"));
+    let deletion_events = persisted
+        .list_runtime_events(None, None, 300)
+        .expect("reopen certified team deletion journal")
+        .into_iter()
+        .filter(|event| event.kind == "team.deleted" && event.scope_id == team_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        deletion_events.len(),
+        1,
+        "exactly one durable team tombstone"
+    );
+    assert_eq!(
+        deletion_events[0].criticality,
+        runtime_core::RuntimeEventCriticality::Critical
+    );
+    assert_eq!(
+        deletion_events[0].payload["team"]["id"],
+        serde_json::json!(team_id)
+    );
+    assert!(persisted
+        .hydrate_runtime_state()
+        .unwrap()
+        .teams
+        .iter()
+        .any(|row| row.id == team_id && row.deleted_at.is_some()));
+}
+
 pub(super) fn assert_admission(
     temp_path: &std::path::Path,
     team_id: &str,

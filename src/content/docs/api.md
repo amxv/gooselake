@@ -1868,8 +1868,8 @@ committed team/member row or advance the in-process roster cache. A previous
 exact durable receipt can be replayed after restart without a second event;
 conflicting writer generations or reused event IDs fail closed. `/v1` HTTP
 requests do **not** expose the keyed `/v2` operator idempotency contract, and
-this roster guarantee does **not** extend to legacy team deletion or native
-side effects.
+this roster transaction itself does **not** cover team deletion or native
+side effects. Deletion has a separate Critical transaction below.
 
 Legacy `/v1` direct/broadcast **message admission** now commits a message,
 its exact initial recipient/delivery snapshot, a Critical
@@ -1944,8 +1944,24 @@ status upsert can forge or rewrite that evidence. Retry of a failed recipient
 is only possible while the parent message has not already completed; a
 completed message needs a newly created message identity. This does not
 provide exactly-once transport semantics for unkeyed HTTP requests or
-unknown native results. Legacy team deletion and Windows process native
-launch gate parity remain distinct incomplete Phase20 gates.
+unknown native results. Windows process native launch-generation parity and
+independent cross-platform acceptance remain incomplete Phase20 gates.
+
+Legacy `/v1` **team deletion** is a separate durable Critical transaction:
+the active team revision becomes a tombstone, all still-pre-native
+`pending`/`deferred` legacy deliveries become `cancelled` with one Critical
+`team_delivery.cancelled` per recipient, each newly terminal message obtains
+its Critical `team_message.completed` snapshot, and one Critical
+`team.deleted` receipt seals the deletion. These mutations either all commit
+or all roll back. A late journal error does not delete the team from memory
+or remove its recipient queues. Native `injecting` results, stale recipient
+generations, missing/forged Critical lineage and canonical-owned mirrors fail
+closed rather than admitting a false cancellation. After a lost response,
+independent processes can verify the exact persisted tombstone and recipient
+receipts and converge without inserting new events. A certified deletion
+cannot be resurrected through the historical SQLite `upsert_team` adapter.
+`DELETE /v1/teams/{team_id}` returns `204` only after that durable commit;
+unsafe or unresolved deletions return an error, not a misleading success.
 
 ## MCP gateway
 

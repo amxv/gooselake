@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 
@@ -17,10 +17,9 @@ use crate::{
 };
 
 use super::{
-    idempotency_index_key, normalize_non_empty, normalize_non_empty_input, normalized_non_empty,
-    now_ms, remove_delivery_from_recipient_index, DeliveryAttemptTrigger, RuntimeTeamCommsService,
-    DELIVERY_STATUS_CANCELLED, DELIVERY_STATUS_DEFERRED, DELIVERY_STATUS_FAILED,
-    DELIVERY_STATUS_PENDING,
+    normalize_non_empty, normalize_non_empty_input, now_ms, remove_delivery_from_recipient_index,
+    DeliveryAttemptTrigger, RuntimeTeamCommsService, DELIVERY_STATUS_CANCELLED,
+    DELIVERY_STATUS_DEFERRED, DELIVERY_STATUS_FAILED, DELIVERY_STATUS_PENDING,
 };
 
 #[async_trait]
@@ -83,127 +82,135 @@ impl TeamCommsService for RuntimeTeamCommsService {
     async fn delete_team(&self, team_id: &str) -> Result<(), RuntimeError> {
         self.ensure_enabled()?;
         let team_id = normalize_non_empty(team_id, "team_id")?;
-
-        let (deleted, cancelled_deliveries) = {
-            let mut state = self.state.write().await;
-            let mut team = state
-                .teams
-                .remove(&team_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("team {}", team_id)))?;
-            state.members_by_team.remove(&team_id);
-
-            let mut cancelled_deliveries = Vec::new();
-            let mut message_ids = state.team_message_ids.remove(&team_id).unwrap_or_default();
-            let team_delivery_ids = state.team_delivery_ids.remove(&team_id).unwrap_or_default();
-            for message_id in message_ids.clone() {
-                if let Some(message) = state.messages.remove(&message_id) {
-                    if let Some(idempotency_key) =
-                        normalized_non_empty(message.idempotency_key.as_deref())
-                    {
-                        state.idempotency_index.remove(&idempotency_index_key(
-                            message.team_id.as_str(),
-                            message.sender_agent_id.as_str(),
-                            message.scope.as_str(),
-                            idempotency_key.as_str(),
-                        ));
-                    }
-                }
-            }
-
-            let mut removed_delivery_ids = HashSet::new();
-            for delivery_id in team_delivery_ids {
-                removed_delivery_ids.insert(delivery_id);
-            }
-            for message_id in message_ids.drain(..) {
-                for delivery_id in state
-                    .message_delivery_ids
-                    .remove(&message_id)
-                    .unwrap_or_default()
-                {
-                    removed_delivery_ids.insert(delivery_id);
-                }
-            }
-
-            for delivery_id in removed_delivery_ids {
-                let Some(mut delivery) = state.deliveries.remove(&delivery_id) else {
-                    continue;
-                };
-                remove_delivery_from_recipient_index(
-                    &mut state.recipient_delivery_ids,
-                    delivery.recipient_agent_id.as_str(),
-                    delivery.id.as_str(),
-                );
-                if matches!(
-                    delivery.status.as_str(),
-                    DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED
-                ) {
-                    delivery.status = DELIVERY_STATUS_CANCELLED.to_string();
-                    delivery.updated_at = now_ms();
-                    cancelled_deliveries.push(delivery.clone());
-                }
-            }
-
-            state
-                .idempotency_index
-                .retain(|key, _| !key.starts_with(&format!("{}|", team_id)));
-            team.deleted_at = Some(now_ms());
-            team.updated_at = now_ms();
-            (team, cancelled_deliveries)
-        };
-
-        self.store.upsert_team(&deleted)?;
-        let mut canonical_recipients_to_resume = HashSet::new();
-        for delivery in &cancelled_deliveries {
-            self.store.upsert_team_delivery(delivery)?;
-            let canonical_cancel = {
-                let mut state = self.state.write().await;
-                state
-                    .agent_deliveries
-                    .get_mut(&delivery.id)
-                    .and_then(|canonical| {
-                        if matches!(
-                            canonical.status.as_str(),
-                            DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED
-                        ) {
-                            canonical.status = DELIVERY_STATUS_CANCELLED.to_string();
-                            canonical.updated_at = delivery.updated_at;
-                            Some(canonical.clone())
-                        } else {
-                            None
-                        }
-                    })
-            };
-            if let Some(canonical) = canonical_cancel {
-                self.store.upsert_agent_delivery(&canonical)?;
-                canonical_recipients_to_resume.insert(canonical.recipient_agent_id);
-            }
-            let _ = self
-                .append_team_event(
-                    team_id.as_str(),
-                    "team_delivery.cancelled",
-                    serde_json::json!({ "delivery": delivery }),
-                    Some(delivery.recipient_agent_id.clone()),
-                )
-                .await;
+        // Hold the local admission mutex until the durable tombstone and
+        // recipient Critical receipts have committed. Another process still
+        // competes through SQLite's immediate team/delivery generation CAS.
+        let mut state = self.state.write().await;
+        let before = state
+            .teams
+            .get(&team_id)
+            .cloned()
+            .ok_or_else(|| RuntimeError::NotFound(format!("team {}", team_id)))?;
+        let mut all = state
+            .deliveries
+            .values()
+            .filter(|row| row.team_id == team_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        all.sort_by(|a, b| (&a.message_id, &a.id).cmp(&(&b.message_id, &b.id)));
+        if all.iter().any(|row| row.status == "injecting") {
+            return Err(RuntimeError::Conflict(
+                "cannot delete a team with unresolved native injecting deliveries".into(),
+            ));
         }
-        for recipient_agent_id in canonical_recipients_to_resume {
-            let _ = self
-                .resume_deferred_agent_for_recipient(
-                    &recipient_agent_id,
-                    DeliveryAttemptTrigger::TurnCompletedBoundary,
-                )
-                .await;
+        // A canonical /v2 delivery owns its own cancellation authority. A
+        // legacy team tombstone must not rewrite that unrelated owner.
+        if all.iter().any(|row| {
+            matches!(
+                row.status.as_str(),
+                DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED
+            ) && state.agent_deliveries.contains_key(&row.id)
+        }) {
+            return Err(RuntimeError::Conflict(
+                "team deletion cannot cancel a canonical-owned recipient".into(),
+            ));
         }
-
-        let _ = self
-            .append_team_event(
-                team_id.as_str(),
-                "team.deleted",
-                serde_json::json!({ "team": deleted }),
-                Some(deleted.created_by.clone()),
+        let revision = before.updated_at.checked_add(1).ok_or_else(|| {
+            RuntimeError::InvalidState("legacy team deletion revision exhausted".into())
+        })?;
+        let max_delivery_revision = all
+            .iter()
+            .map(|row| row.updated_at.saturating_add(1))
+            .max()
+            .unwrap_or(revision);
+        let timestamp = now_ms().max(revision).max(max_delivery_revision);
+        let mut deleted = before.clone();
+        deleted.updated_at = timestamp;
+        deleted.deleted_at = Some(timestamp);
+        let mut cancelled = Vec::new();
+        let mut events = Vec::new();
+        for previous in all.iter().filter(|row| {
+            matches!(
+                row.status.as_str(),
+                DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED
             )
-            .await;
+        }) {
+            let mut row = previous.clone();
+            row.status = DELIVERY_STATUS_CANCELLED.into();
+            row.injection_strategy = None;
+            row.injected_turn_id = None;
+            row.last_error_code = None;
+            row.last_error_message = None;
+            row.updated_at = timestamp;
+            let mut event = self.new_team_event(
+                &team_id,
+                "team_delivery.cancelled",
+                serde_json::json!({
+                    "delivery":row,
+                    "before_status":previous.status,
+                    "before_updated_at":previous.updated_at,
+                }),
+                Some(previous.recipient_agent_id.clone()),
+            );
+            event.event_id = format!(
+                "evt_legacy_team_delete_{}_delivery_{}_cancelled_{}",
+                team_id, previous.id, previous.updated_at
+            );
+            event.created_at = timestamp;
+            cancelled.push(row);
+            events.push(event);
+        }
+        let mut tombstone_event = self.new_team_event(
+            &team_id,
+            "team.deleted",
+            serde_json::json!({"team":deleted}),
+            Some(deleted.created_by.clone()),
+        );
+        tombstone_event.event_id = format!("evt_team_{}_deleted", team_id);
+        tombstone_event.created_at = timestamp;
+        events.push(tombstone_event);
+        // An event trigger fault or a competing native-claim/admission leaves
+        // ALL in-memory team, delivery and recipient-queue state untouched.
+        let committed = self
+            .store
+            .commit_legacy_team_deletion(&before, &deleted, &all, &cancelled, &events)?;
+        // A lost SQLite commit reply can be reconciled against a previously
+        // committed exact tombstone with a different clock sample. The store
+        // has verified all Critical receipts and recipient generations.
+        let mut expected_committed = before.clone();
+        expected_committed.updated_at = committed.updated_at;
+        expected_committed.deleted_at = Some(committed.updated_at);
+        if committed != expected_committed || committed.updated_at <= before.updated_at {
+            return Err(RuntimeError::Conflict(
+                "legacy team deletion Critical receipt disagrees with tombstone".into(),
+            ));
+        }
 
+        for row in &all {
+            state.deliveries.remove(&row.id);
+            remove_delivery_from_recipient_index(
+                &mut state.recipient_delivery_ids,
+                &row.recipient_agent_id,
+                &row.id,
+            );
+        }
+        let message_ids = state
+            .messages
+            .values()
+            .filter(|message| message.team_id == team_id)
+            .map(|message| message.id.clone())
+            .collect::<Vec<_>>();
+        for id in message_ids {
+            state.messages.remove(&id);
+            state.message_delivery_ids.remove(&id);
+        }
+        state.team_delivery_ids.remove(&team_id);
+        state.team_message_ids.remove(&team_id);
+        state.members_by_team.remove(&team_id);
+        state.teams.remove(&team_id);
+        state
+            .idempotency_index
+            .retain(|key, _| !key.starts_with(&format!("{}|", team_id)));
         Ok(())
     }
 

@@ -14,6 +14,24 @@ macro_rules! legacy_team_event_methods {
             ))
         }
 
+        /// Tombstone one exact legacy team revision and cancel every still
+        /// pre-native team recipient together with its Critical cancellation
+        /// and completed-message receipts. Never remove in-memory queues
+        /// before this transaction; ambiguous native injecting deliveries
+        /// and canonical-owned pending mirrors must fail closed.
+        fn commit_legacy_team_deletion(
+            &self,
+            _before: &crate::TeamRecord,
+            _after: &crate::TeamRecord,
+            _all_deliveries: &[crate::TeamDeliveryRecord],
+            _cancelled_deliveries: &[crate::TeamDeliveryRecord],
+            _events: &[crate::NewRuntimeEvent],
+        ) -> Result<crate::TeamRecord, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic legacy team deletion journal unavailable".into(),
+            ))
+        }
+
         /// Legacy `/v1` message and all initial deliveries must be admitted
         /// together with one critical message event and a critical pending
         /// event per delivery, before any recipient injection/native effects.

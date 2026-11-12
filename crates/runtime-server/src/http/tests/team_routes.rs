@@ -394,6 +394,8 @@ async fn team_routes_lifecycle_and_controls() {
         .expect("delete team response");
     assert_eq!(delete_team_response.status(), StatusCode::NO_CONTENT);
 
+    message_journal_proof::assert_deletion(temp_dir.path(), &team_id);
+
     let get_deleted_team_response = router
         .clone()
         .oneshot(

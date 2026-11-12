@@ -181,8 +181,22 @@ impl SqliteRuntimeRepository {
     }
 
     pub fn upsert_team(&self, record: &TeamRecord) -> Result<(), RuntimeError> {
-        let connection = open_connection(&self.database_path)?;
-        connection
+        let mut connection = open_connection(&self.database_path)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| {
+                db_error("failed starting certified legacy team upsert guard", error)
+            })?;
+        if fetch_runtime_event_by_event_id(&tx, &format!("evt_team_{}_created", record.id))?
+            .is_some()
+            || fetch_runtime_event_by_event_id(&tx, &format!("evt_team_{}_deleted", record.id))?
+                .is_some()
+        {
+            return Err(RuntimeError::Conflict(
+                "certified legacy team roster/deletion requires atomic Critical transaction, not raw upsert".into(),
+            ));
+        }
+        tx
             .execute(
                 "INSERT INTO teams (id, name, lead_agent_id, created_by, created_at, updated_at, deleted_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -203,6 +217,8 @@ impl SqliteRuntimeRepository {
                 ],
             )
             .map_err(|error| db_error("failed upserting team", error))?;
+        tx.commit()
+            .map_err(|error| db_error("failed committing historical team upsert", error))?;
         Ok(())
     }
 
@@ -396,11 +412,11 @@ impl SqliteRuntimeRepository {
         // effect or manufacture a new row behind the critical receipt.
         let pending_id = format!("evt_legacy_delivery_{}_pending", record.id);
         if fetch_runtime_event_by_event_id(&transaction, &pending_id)?.is_some() {
-            let identity: Option<(String, String, String, String, Option<String>, i64, String)> =
+            let identity: Option<(String, String, String, String, Option<String>, i64)> =
                 transaction
                     .query_row(
                         "SELECT message_id,team_id,recipient_agent_id,provider,
-                                effective_policy,created_at,status
+                                effective_policy,created_at
                          FROM team_deliveries WHERE id=?1",
                         [&record.id],
                         |row| {
@@ -411,7 +427,6 @@ impl SqliteRuntimeRepository {
                                 row.get(3)?,
                                 row.get(4)?,
                                 row.get(5)?,
-                                row.get(6)?,
                             ))
                         },
                     )
@@ -426,7 +441,6 @@ impl SqliteRuntimeRepository {
                 provider,
                 effective_policy,
                 created_at,
-                current_status,
             )) = identity
             else {
                 return Err(RuntimeError::Conflict(
@@ -449,10 +463,9 @@ impl SqliteRuntimeRepository {
             // requires its generation-specific Critical transaction. The
             // pre-native/native-injecting/injected rows cannot be rewritten,
             // including no-op status rewrites that alter error or turn IDs.
-            // Legacy team deletion is still a distinct pending/deferred ->
-            // cancelled path to certify separately; never authorize native
-            // work from a raw cancelled row. Canonical mirrors have a
-            // separate authoritative compare-and-swap.
+            // Legacy team deletion now has its own atomic Critical tombstone
+            // transaction; raw cancellation is no longer an exception.
+            // Canonical mirrors have a separate authoritative compare-and-swap.
             let canonical: bool = transaction
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM agent_deliveries WHERE id=?1)",
@@ -460,10 +473,7 @@ impl SqliteRuntimeRepository {
                     |row| row.get(0),
                 )
                 .map_err(|error| db_error("failed checking certified legacy owner", error))?;
-            if !canonical
-                && !(record.status == "cancelled"
-                    && matches!(current_status.as_str(), "pending" | "deferred"))
-            {
+            if !canonical {
                 return Err(RuntimeError::Conflict(
                     "certified legacy pre-native/native delivery changes require Critical generation transactions; direct upsert has no authority"
                         .into(),

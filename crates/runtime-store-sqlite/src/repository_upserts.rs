@@ -446,11 +446,12 @@ impl SqliteRuntimeRepository {
                 ));
             }
             // A certified *legacy* delivery may enter `injecting` only via
-            // claim_legacy_team_delivery_injection, which atomically writes
-            // the Critical claim receipt before any native provider effect.
-            // In particular, never let a delayed status write downgrade an
-            // in-flight claim back to retryable deferred/failed. Canonical
-            // agent-owned mirrors have their separate authoritative CAS.
+            // claim_legacy_team_delivery_injection, and may enter `injected`
+            // only via commit_legacy_team_delivery_injected. Neither a
+            // premature injected upsert nor a subsequent same-status rewrite
+            // of its turn ID, error or revision is evidence of a native ack.
+            // A delayed status write must not downgrade an unproven claim.
+            // Canonical agent-owned mirrors use their own durable CAS.
             let canonical: bool = transaction
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM agent_deliveries WHERE id=?1)",
@@ -459,11 +460,11 @@ impl SqliteRuntimeRepository {
                 )
                 .map_err(|error| db_error("failed checking certified legacy owner", error))?;
             if !canonical
-                && (record.status == "injecting"
-                    || (current_status == "injecting" && record.status != "injected"))
+                && (matches!(record.status.as_str(), "injecting" | "injected")
+                    || matches!(current_status.as_str(), "injecting" | "injected"))
             {
                 return Err(RuntimeError::Conflict(
-                    "legacy native injection claim is reserved or unproven; direct upsert cannot retry it"
+                    "legacy native injection and acknowledged result require exact critical transactions; direct upsert cannot change their authority"
                         .into(),
                 ));
             }

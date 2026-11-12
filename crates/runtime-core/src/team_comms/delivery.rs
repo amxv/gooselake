@@ -206,22 +206,9 @@ impl RuntimeTeamCommsService {
             .await;
 
         match result {
-            Ok(ack) => {
-                let injected = self
-                    .transition_delivery_status(
-                        &injecting,
-                        DELIVERY_STATUS_INJECTED,
-                        Some("runtime_send_turn".to_string()),
-                        None,
-                        None,
-                        trigger,
-                    )
-                    .await?;
-                let _ = self
-                    .transition_delivery_with_turn_id(injected.id.as_str(), ack.turn_id)
-                    .await;
-                Ok(injected)
-            }
+            Ok(ack) => self
+                .commit_legacy_delivery_injected(&injecting, ack.turn_id, trigger)
+                .await,
             Err(error) => Err(RuntimeError::InvalidState(format!(
                 "legacy delivery {} native send outcome is unproven ({}); retained durable injecting claim for explicit reconciliation, not automatic retry",
                 injecting.id, error
@@ -282,34 +269,62 @@ impl RuntimeTeamCommsService {
         Ok(injecting)
     }
 
-    async fn transition_delivery_with_turn_id(
+    pub(super) async fn commit_legacy_delivery_injected(
         &self,
-        delivery_id: &str,
+        before: &TeamDeliveryRecord,
         turn_id: String,
-    ) -> Result<(), RuntimeError> {
-        let maybe_delivery = {
-            let mut state = self.state.write().await;
-            let Some(delivery) = state.deliveries.get_mut(delivery_id) else {
-                return Ok(());
-            };
-            delivery.injected_turn_id = Some(turn_id.clone());
-            delivery.updated_at = now_ms();
-            Some(delivery.clone())
-        };
-
-        if let Some(delivery) = maybe_delivery {
-            self.store.upsert_team_delivery(&delivery)?;
-            let _ = self
-                .append_team_event(
-                    delivery.team_id.as_str(),
-                    "team_delivery.injected",
-                    serde_json::json!({ "delivery": delivery }),
-                    Some(delivery.recipient_agent_id.clone()),
-                )
-                .await;
+        trigger: DeliveryAttemptTrigger,
+    ) -> Result<TeamDeliveryRecord, RuntimeError> {
+        let mut state = self.state.write().await;
+        if state.deliveries.get(&before.id) != Some(before)
+            || state.agent_deliveries.contains_key(&before.id)
+        {
+            return Err(RuntimeError::Conflict(
+                "legacy acknowledged native turn lost injecting cache authority; no redispatch"
+                    .into(),
+            ));
         }
-
-        Ok(())
+        let revision = before.updated_at.checked_add(1).ok_or_else(|| {
+            RuntimeError::InvalidState("legacy injected delivery revision exhausted".into())
+        })?;
+        let mut injected = before.clone();
+        injected.status = DELIVERY_STATUS_INJECTED.into();
+        injected.injection_strategy = Some("runtime_send_turn".into());
+        injected.injected_turn_id = Some(turn_id.clone());
+        injected.last_error_code = None;
+        injected.last_error_message = None;
+        injected.updated_at = now_ms().max(revision);
+        let mut event = self.new_team_event(
+            &before.team_id,
+            "team_delivery.injected",
+            serde_json::json!({
+                "delivery":injected,
+                "before_updated_at":before.updated_at,
+                "trigger":format!("{trigger:?}").to_ascii_lowercase(),
+            }),
+            Some(before.recipient_agent_id.clone()),
+        );
+        event.event_id = format!(
+            "evt_legacy_delivery_{}_injected_{}",
+            before.id, before.updated_at
+        );
+        event.created_at = injected.updated_at;
+        event.turn_id = Some(turn_id);
+        // Native acknowledgement has already happened. A failed/ambiguous
+        // journal result leaves injecting in memory and SQLite for explicit
+        // reconciliation, never a second native call or retryable failure.
+        let committed = self
+            .store
+            .commit_legacy_team_delivery_injected(before, &injected, &event)?;
+        if committed != injected {
+            return Err(RuntimeError::Conflict(
+                "legacy injected Critical receipt does not match native acknowledgement".into(),
+            ));
+        }
+        state
+            .deliveries
+            .insert(committed.id.clone(), committed.clone());
+        Ok(committed)
     }
     async fn transition_delivery_status(
         &self,

@@ -1,3 +1,4 @@
+use super::legacy_team_delivery_result::{accepted_turn, claimed, plan};
 use super::*;
 use runtime_core::{RuntimeError, TeamMessageAck};
 use std::sync::{Arc, Barrier};
@@ -333,18 +334,20 @@ fn replay_after_delivery_injected_never_rewinds_native_status_or_republishes_eve
     let (_temp, repo, team) = fixture();
     let admission = proposed(&team, "msg_native", &["session_a"], Some("native-key"));
     let created = commit(&repo, &admission).unwrap();
-    let mut delivery = created.deliveries[0].clone();
-    delivery.status = "injected".into();
-    delivery.injected_turn_id = Some("turn_1".into());
-    delivery.updated_at += 100;
-    repo.upsert_team_delivery(&delivery).unwrap();
+    // A certified native outcome must be committed through its exact
+    // pre-native claim, turn admission and Critical result transaction.
+    let injecting = claimed(&repo, &created.deliveries[0], 1300);
+    accepted_turn(&repo, &injecting, "turn_1");
+    let (delivery, event) = plan(&injecting, "turn_1", 1600);
+    repo.commit_legacy_team_delivery_injected(&injecting, &delivery, &event)
+        .unwrap();
     let reopened = SqliteRuntimeRepository::new(repo.database_path.clone());
     let replay = commit(&reopened, &admission).unwrap();
     assert_eq!(replay.disposition, "existing");
     assert_eq!(replay.deliveries, vec![delivery]);
     assert_eq!(
         reopened.list_runtime_events(None, None, 10).unwrap().len(),
-        2
+        5
     );
 }
 
@@ -454,11 +457,11 @@ fn historical_upsert_must_not_rewrite_certified_message_or_delivery_identity() {
         Err(RuntimeError::Conflict(_))
     ));
 
-    let mut injected = admission.1[0].clone();
-    injected.status = "injected".into();
-    injected.injected_turn_id = Some("native_turn_1".into());
-    injected.updated_at += 10;
-    repo.upsert_team_delivery(&injected).unwrap();
+    let injecting = claimed(&repo, &admission.1[0], 1300);
+    accepted_turn(&repo, &injecting, "native_turn_1");
+    let (injected, event) = plan(&injecting, "native_turn_1", 1600);
+    repo.commit_legacy_team_delivery_injected(&injecting, &injected, &event)
+        .unwrap();
     let reopened = SqliteRuntimeRepository::new(repo.database_path.clone());
     let state = reopened.hydrate_runtime_state().unwrap();
     assert_eq!(state.team_messages, vec![admission.0.clone()]);
@@ -469,7 +472,7 @@ fn historical_upsert_must_not_rewrite_certified_message_or_delivery_identity() {
     );
     assert_eq!(
         reopened.list_runtime_events(None, None, 10).unwrap().len(),
-        2
+        5
     );
 
     // The old direct-upsert/import path still operates for historical rows
@@ -485,5 +488,5 @@ fn historical_upsert_must_not_rewrite_certified_message_or_delivery_identity() {
     historical_delivery.updated_at += 1;
     repo.upsert_team_delivery(&historical_delivery).unwrap();
     assert_eq!(repo.hydrate_runtime_state().unwrap().team_messages.len(), 2);
-    assert_eq!(repo.list_runtime_events(None, None, 10).unwrap().len(), 2);
+    assert_eq!(repo.list_runtime_events(None, None, 10).unwrap().len(), 5);
 }

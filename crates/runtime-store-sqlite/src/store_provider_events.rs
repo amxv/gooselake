@@ -96,6 +96,16 @@ macro_rules! delegate_provider_event_methods {
                 .claim_legacy_team_delivery_injection(previous, injecting, event)
         }
 
+        fn commit_legacy_team_delivery_injected(
+            &self,
+            before: &runtime_core::TeamDeliveryRecord,
+            injected: &runtime_core::TeamDeliveryRecord,
+            event: &runtime_core::NewRuntimeEvent,
+        ) -> Result<runtime_core::TeamDeliveryRecord, runtime_core::RuntimeError> {
+            self.repository
+                .commit_legacy_team_delivery_injected(before, injected, event)
+        }
+
         fn admit_provider_approval(
             &self,
             previous_turn: &runtime_core::TurnRecord,

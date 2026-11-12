@@ -452,6 +452,15 @@ impl RuntimeStore for TestStore {
         self.claim_legacy_injecting_test(previous, injecting, event)
     }
 
+    fn commit_legacy_team_delivery_injected(
+        &self,
+        before: &TeamDeliveryRecord,
+        injected: &TeamDeliveryRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<TeamDeliveryRecord, RuntimeError> {
+        self.commit_legacy_injected_test(before, injected, event)
+    }
+
     fn upsert_team_member(&self, record: &TeamMemberRecord) -> Result<(), RuntimeError> {
         let mut hydrated = self.hydrated.lock().expect("hydrated lock");
         Self::upsert_with_key(&mut hydrated.team_members, record.clone(), |row| {

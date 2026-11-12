@@ -1918,8 +1918,21 @@ are not automatically injected as if the missing receipt were proven.
 An unproven error **after native send is attempted** retains `injecting` for
 explicit reconciliation rather than changing it to retryable `failed` or
 `deferred`. This claim guarantees at-most-one confirmed pre-native owner,
-**not** the success of a provider turn, a durable post-native result, or a
-certified team deletion/retry transaction. Those are separate Phase20 gates.
+**not** the success of a provider turn or a certified team deletion/retry
+transaction. On a **positive runtime turn acknowledgement**, a *separate*
+atomic SQLite transaction verifies that the accepted turn belongs to the
+recipient's `agent_message_delivery_transport` admission with the correct
+message correlation. It changes the exact claimed legacy generation from
+`injecting` to `injected`, stores its accepted `turn_id`, and appends one
+deterministic Critical `team_delivery.injected` event **together**. When that
+was the last terminal recipient, the same transaction appends one Critical
+`team_message.completed` event containing the full terminal delivery snapshot.
+Any late event failure rolls the entire result back: `injecting` stays as a
+manual-reconciliation fence, **not** a reason to resubmit a native turn.
+The matching state+event may be replayed without further native execution.
+An admitted turn waiting for user permission is not falsely described as
+having executed on the provider. Pre-native deferral/retry certification and
+team deletion remain separate incomplete Phase20 gates.
 
 ## MCP gateway
 

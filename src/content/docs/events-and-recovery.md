@@ -224,8 +224,19 @@ permission. Old unjournaled pending rows cannot fabricate initial receipts.
 The deterministic claim ID binds the delivery ID to its exact status revision;
 sender/recipient sessions and team membership, and any workspace ownership
 retirement fences, are verified under the same database lock.
-Subsequent positive native acknowledgments, legacy delivery retry and team
-deletion are separate, not-yet-certified atomic event boundaries.
+Following a **positive runtime native-turn acknowledgement**, a separate
+SQLite immediate transaction verifies the exact admitted turn's recipient,
+`agent_message_delivery_transport` source, provider and message correlation,
+then atomically changes the claimed delivery to `injected` with the accepted
+turn ID and deterministic Critical `team_delivery.injected` receipt. If this
+completed the entire recipient snapshot, the same commit emits one Critical
+`team_message.completed` event with those terminal delivery states. A last
+event fault undoes every delivery/result event write. Lost result commit
+responses may be reconciled against the identical existing state and receipt,
+without re-executing a native send. An unproven native outcome remains
+durably `injecting`; an admitted waiting-for-approval turn is not evidence
+that provider execution already happened. Older pre-native deferrals,
+delivery retry and team deletion still require their own certified gates.
 
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical

@@ -72,6 +72,21 @@ macro_rules! legacy_team_event_methods {
                 "atomic legacy team injection claim unavailable".into(),
             ))
         }
+
+        /// After the exact native turn has been accepted, commit its linked
+        /// legacy delivery status/turn ID and Critical injected event in ONE
+        /// transaction. If this receipt is uncertain, keep the pre-native
+        /// injecting fence; never redispatch the provider turn to repair it.
+        fn commit_legacy_team_delivery_injected(
+            &self,
+            _before: &crate::TeamDeliveryRecord,
+            _injected: &crate::TeamDeliveryRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<crate::TeamDeliveryRecord, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic legacy delivery accepted-turn receipt unavailable".into(),
+            ))
+        }
     };
 }
 pub(super) use legacy_team_event_methods;

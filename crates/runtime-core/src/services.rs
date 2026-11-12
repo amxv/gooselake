@@ -79,6 +79,7 @@ pub trait RuntimeStore:
     message_operator::message_operator_methods!();
     provider_terminal::provider_terminal_methods!();
     provider_terminal::provider_approval_methods!();
+    team_comms_trait::legacy_team_event_methods!();
 
     operator_policy_store_trait::operator_native_policy_store_methods!();
     operator_restore_store_trait::operator_agent_restore_store_methods!();

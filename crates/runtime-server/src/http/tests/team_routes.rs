@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn team_routes_lifecycle_and_controls() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, temp_dir) = build_test_router().await;
 
     let leader_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
     let member_one_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
@@ -157,6 +157,55 @@ async fn team_routes_lifecycle_and_controls() {
     assert_eq!(
         remove_member_json["members"].as_array().map(Vec::len),
         Some(2)
+    );
+
+    // These authenticated legacy HTTP mutations must expose one canonical
+    // critical event per committed durable roster revision, including after
+    // an independent SQLite reopen. They are not post-write best-effort logs.
+    let reopened =
+        runtime_store_sqlite::SqliteRuntimeRepository::new(temp_dir.path().join("runtime.sqlite3"));
+    let roster_events = reopened
+        .list_runtime_events(
+            Some((runtime_core::RuntimeEventScope::Team, team_id.as_str())),
+            None,
+            20,
+        )
+        .expect("reopen canonical legacy roster events");
+    assert_eq!(
+        roster_events
+            .iter()
+            .map(|event| event.kind.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "team.created",
+            "team.member_joined",
+            "team.lead_changed",
+            "team.member_left"
+        ]
+    );
+    assert!(roster_events.iter().enumerate().all(|(index, event)| {
+        event.seq == i64::try_from(index + 1).unwrap()
+            && event.criticality == runtime_core::RuntimeEventCriticality::Critical
+    }));
+    let persisted = reopened
+        .hydrate_runtime_state()
+        .expect("reopen legacy team");
+    assert_eq!(
+        persisted
+            .teams
+            .iter()
+            .find(|team| team.id == team_id)
+            .unwrap()
+            .lead_agent_id,
+        member_one_session_id
+    );
+    assert_eq!(
+        persisted
+            .team_members
+            .iter()
+            .filter(|member| member.team_id == team_id)
+            .count(),
+        2
     );
 
     let direct_response = router

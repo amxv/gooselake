@@ -17,6 +17,7 @@ mod event_cursor_concurrency;
 mod event_cursor_recovery_scale;
 mod event_subject_scale;
 mod event_subject_scopes;
+mod legacy_team_events;
 mod operator_event_pages;
 mod operator_process_pages;
 mod process_completion_authority;

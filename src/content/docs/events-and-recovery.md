@@ -156,6 +156,20 @@ critical lifecycle events**; they do not guarantee that native provider
 creation itself is exactly-once when a transport response is lost, or certify
 all legacy `/v1` team and nonterminal turn-transition event families.
 
+Legacy `/v1` **team creation, member join/removal and explicit lead change**
+now commit the exact roster state and its critical `team.created`,
+`team.member_joined`, `team.member_left` or `team.lead_changed` event in a
+single immediate SQLite transaction. A journal failure rolls back the roster
+and the in-process team cache is updated only after a confirmed commit.
+Each stored receipt is checked against the exact original mutation on a
+restart/replay; stale or competing roster generations and reused event IDs
+with different contents are rejected. Roster revisions advance strictly even
+when multiple mutations happen within one clock millisecond. This does **not**
+give the unkeyed `/v1` create HTTP request exactly-once transport semantics,
+nor certify legacy team **deletion**, message creation, delivery transitions
+or their separate post-native event emissions. Those remain independent
+recovery-sensitive event-authority boundaries and must not be blindly retried.
+
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical
 `approval.requested` event now form a separate **atomic SQLite commit**.

@@ -2,6 +2,7 @@ mod agent_delivery;
 mod agent_messages;
 mod delivery;
 mod helpers;
+mod legacy_roster;
 mod service_impl;
 mod state;
 
@@ -331,7 +332,18 @@ impl RuntimeTeamCommsService {
         payload: Value,
         session_id: Option<String>,
     ) -> Result<RuntimeEventRecord, RuntimeError> {
-        self.store.append_runtime_event(&NewRuntimeEvent {
+        self.store
+            .append_runtime_event(&self.new_team_event(team_id, kind, payload, session_id))
+    }
+
+    fn new_team_event(
+        &self,
+        team_id: &str,
+        kind: &str,
+        payload: Value,
+        session_id: Option<String>,
+    ) -> NewRuntimeEvent {
+        NewRuntimeEvent {
             event_id: format!(
                 "evt_team_{}_{}_{}",
                 team_id,
@@ -349,7 +361,7 @@ impl RuntimeTeamCommsService {
             provider: None,
             provider_seq: None,
             created_at: now_ms(),
-        })
+        }
     }
 
     fn allocate_team_id(&self, state: &TeamCommsState) -> String {

@@ -8,18 +8,18 @@ use tokio::time::{sleep, Duration};
 use crate::{
     AgentBroadcastMessageRequest, AgentDeliveryListRequest, AgentDeliveryRecord,
     AgentDirectMessageRequest, AgentMessageContextKind, AgentMessageRecord, ApprovalRecord,
-    CreateSessionInput, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    ProcessRecord, ProviderApprovalAdmission, ProviderApprovalDecisionReceipt, ProviderAuthStatus,
-    ProviderCreateSessionRequest, ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata,
-    ProviderModel, ProviderRegistry, ProviderResumeSessionRequest, ProviderSendTurnRequest,
-    ProviderSession, ProviderTerminalCommit, ProviderTurnAck, ProviderTurnResult,
-    ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError, RuntimeEventRecord,
-    RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord, TeamCommsService,
-    TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TeamRemoveMemberRequest, TeamSendDirectRequest, TeamSetLeadRequest, TurnAdmissionRecord,
-    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState, WorkspaceRecord,
+    CreateSessionInput, LegacyTeamMutation, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
+    NewRuntimeEvent, ProcessRecord, ProviderApprovalAdmission, ProviderApprovalDecisionReceipt,
+    ProviderAuthStatus, ProviderCreateSessionRequest, ProviderInterruptTurnRequest, ProviderKind,
+    ProviderMetadata, ProviderModel, ProviderRegistry, ProviderResumeSessionRequest,
+    ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit, ProviderTurnAck,
+    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
+    RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
+    TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
+    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
+    TeamRecord, TeamRemoveMemberRequest, TeamSendDirectRequest, TeamSetLeadRequest,
+    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentProfile,
+    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState, WorkspaceRecord,
 };
 
 #[derive(Default)]
@@ -27,6 +27,7 @@ struct TestStore {
     hydrated: std::sync::Mutex<crate::RuntimeHydratedState>,
     turn_admissions: std::sync::Mutex<Vec<TurnAdmissionRecord>>,
     events: std::sync::Mutex<Vec<RuntimeEventRecord>>,
+    fail_next_team_event_kind: std::sync::Mutex<Option<String>>,
     workspace_agents: std::sync::Mutex<Vec<WorkspaceAgentRecord>>,
 }
 
@@ -62,6 +63,17 @@ impl RuntimeStore for TestStore {
         &self,
         event: &NewRuntimeEvent,
     ) -> Result<RuntimeEventRecord, RuntimeError> {
+        let mut failure = self
+            .fail_next_team_event_kind
+            .lock()
+            .expect("event fault lock");
+        if failure.as_deref() == Some(event.kind.as_str()) {
+            failure.take();
+            return Err(RuntimeError::Io(
+                "forced legacy critical event append fault".into(),
+            ));
+        }
+        drop(failure);
         let mut events = self.events.lock().expect("events lock");
         if let Some(existing) = events.iter().find(|row| row.event_id == event.event_id) {
             return Ok(existing.clone());
@@ -359,6 +371,50 @@ impl RuntimeStore for TestStore {
         let mut hydrated = self.hydrated.lock().expect("hydrated lock");
         Self::upsert_with_key(&mut hydrated.teams, record.clone(), |row| row.id.clone());
         Ok(())
+    }
+
+    fn commit_legacy_team_mutation(
+        &self,
+        mutation: &LegacyTeamMutation,
+    ) -> Result<RuntimeEventRecord, RuntimeError> {
+        let mut hydrated = self.hydrated.lock().expect("hydrated lock");
+        let after = &mutation.after_team;
+        if hydrated.teams.iter().find(|row| row.id == after.id) != mutation.before_team.as_ref() {
+            return Err(RuntimeError::Conflict("mock legacy team changed".into()));
+        }
+        let member = mutation
+            .after_member
+            .as_ref()
+            .or(mutation.before_member.as_ref());
+        if let Some(member) = member {
+            if hydrated
+                .team_members
+                .iter()
+                .find(|row| row.team_id == member.team_id && row.agent_id == member.agent_id)
+                != mutation.before_member.as_ref()
+            {
+                return Err(RuntimeError::Conflict(
+                    "mock legacy membership changed".into(),
+                ));
+            }
+        }
+        let receipt = self.append_runtime_event(&mutation.event)?;
+        Self::upsert_with_key(&mut hydrated.teams, after.clone(), |row| row.id.clone());
+        for initial in &mutation.initial_members {
+            Self::upsert_with_key(&mut hydrated.team_members, initial.clone(), |row| {
+                format!("{}|{}", row.team_id, row.agent_id)
+            });
+        }
+        if let Some(member) = &mutation.after_member {
+            Self::upsert_with_key(&mut hydrated.team_members, member.clone(), |row| {
+                format!("{}|{}", row.team_id, row.agent_id)
+            });
+        } else if let Some(member) = &mutation.before_member {
+            hydrated
+                .team_members
+                .retain(|row| row.team_id != member.team_id || row.agent_id != member.agent_id);
+        }
+        Ok(receipt)
     }
 
     fn upsert_team_member(&self, record: &TeamMemberRecord) -> Result<(), RuntimeError> {
@@ -854,3 +910,4 @@ async fn add_workspace_agent(
 
 mod agent_messages;
 mod legacy_delivery;
+mod legacy_roster_events;

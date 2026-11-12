@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use async_trait::async_trait;
 
@@ -11,16 +11,16 @@ use crate::{
     RuntimeEventRecord, RuntimeEventScope, TeamBroadcastRequest, TeamCancelMessageRequest,
     TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
     TeamInterruptAllRequest, TeamInterruptAllResponse, TeamJoinRequest, TeamListMessagesRequest,
-    TeamListMessagesResponse, TeamMemberRecord, TeamMessageAck, TeamRecord,
-    TeamRemoveMemberRequest, TeamRetryDeliveryRequest, TeamSendDirectRequest, TeamSetLeadRequest,
-    TeamViewSnapshotRequest, TeamViewSnapshotResponse, TeamWithMembers,
+    TeamListMessagesResponse, TeamMessageAck, TeamRemoveMemberRequest, TeamRetryDeliveryRequest,
+    TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest, TeamViewSnapshotResponse,
+    TeamWithMembers,
 };
 
 use super::{
-    ensure_member, idempotency_index_key, normalize_non_empty, normalize_non_empty_input,
-    normalized_non_empty, now_ms, remove_delivery_from_recipient_index, DeliveryAttemptTrigger,
-    RuntimeTeamCommsService, DELIVERY_STATUS_CANCELLED, DELIVERY_STATUS_DEFERRED,
-    DELIVERY_STATUS_FAILED, DELIVERY_STATUS_PENDING,
+    idempotency_index_key, normalize_non_empty, normalize_non_empty_input, normalized_non_empty,
+    now_ms, remove_delivery_from_recipient_index, DeliveryAttemptTrigger, RuntimeTeamCommsService,
+    DELIVERY_STATUS_CANCELLED, DELIVERY_STATUS_DEFERRED, DELIVERY_STATUS_FAILED,
+    DELIVERY_STATUS_PENDING,
 };
 
 #[async_trait]
@@ -33,89 +33,7 @@ impl TeamCommsService for RuntimeTeamCommsService {
         &self,
         request: TeamCreateRequest,
     ) -> Result<TeamWithMembers, RuntimeError> {
-        self.ensure_enabled()?;
-        let name = normalize_non_empty(request.name.as_str(), "name")?;
-        let lead_agent_id = normalize_non_empty(request.lead_agent_id.as_str(), "lead_agent_id")?;
-        let created_by = request.created_by.unwrap_or_else(|| "user".to_string());
-        let now = now_ms();
-
-        self.require_session_active(&lead_agent_id).await?;
-        for member in &request.member_agent_ids {
-            self.require_session_active(member).await?;
-        }
-
-        let team = {
-            let mut state = self.state.write().await;
-            let team_id = self.allocate_team_id(&state);
-            let mut members = HashMap::new();
-
-            let lead_member = TeamMemberRecord {
-                team_id: team_id.clone(),
-                agent_id: lead_agent_id.clone(),
-                title: None,
-                joined_at: now,
-                added_by: created_by.clone(),
-                creator_agent_id: None,
-                creator_compaction_subscription: "auto".to_string(),
-                worktree_id: None,
-            };
-            members.insert(lead_member.agent_id.clone(), lead_member.clone());
-
-            for member_agent_id in &request.member_agent_ids {
-                if member_agent_id == &lead_agent_id {
-                    continue;
-                }
-                let member = TeamMemberRecord {
-                    team_id: team_id.clone(),
-                    agent_id: member_agent_id.clone(),
-                    title: None,
-                    joined_at: now,
-                    added_by: created_by.clone(),
-                    creator_agent_id: None,
-                    creator_compaction_subscription: "auto".to_string(),
-                    worktree_id: None,
-                };
-                members.insert(member.agent_id.clone(), member);
-            }
-
-            let team = TeamRecord {
-                id: team_id.clone(),
-                name,
-                lead_agent_id,
-                created_by,
-                created_at: now,
-                updated_at: now,
-                deleted_at: None,
-            };
-
-            state.teams.insert(team_id.clone(), team.clone());
-            state.members_by_team.insert(team_id, members);
-            team
-        };
-
-        self.store.upsert_team(&team)?;
-        let members = {
-            let state = self.state.read().await;
-            state
-                .members_by_team
-                .get(&team.id)
-                .map(|members| members.values().cloned().collect::<Vec<_>>())
-                .unwrap_or_default()
-        };
-        for member in &members {
-            self.store.upsert_team_member(member)?;
-        }
-
-        let _ = self
-            .append_team_event(
-                team.id.as_str(),
-                "team.created",
-                serde_json::json!({ "team": team, "members": members }),
-                Some(team.lead_agent_id.clone()),
-            )
-            .await;
-
-        self.team_with_members(team.id.as_str()).await
+        self.legacy_roster_create(request).await
     }
 
     async fn list_teams(&self) -> Result<Vec<TeamWithMembers>, RuntimeError> {
@@ -145,170 +63,21 @@ impl TeamCommsService for RuntimeTeamCommsService {
     }
 
     async fn join_team(&self, request: TeamJoinRequest) -> Result<TeamWithMembers, RuntimeError> {
-        self.ensure_enabled()?;
-        let team_id = normalize_non_empty(request.team_id.as_str(), "team_id")?;
-        let agent_id = normalize_non_empty(request.agent_id.as_str(), "agent_id")?;
-        self.require_session_active(agent_id.as_str()).await?;
-
-        let now = now_ms();
-        let updated_team = {
-            let mut state = self.state.write().await;
-            let lead_agent_id = state
-                .teams
-                .get(&team_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("team {}", team_id)))?;
-            let lead_for_added_by = lead_agent_id.lead_agent_id.clone();
-            let members = state.members_by_team.entry(team_id.clone()).or_default();
-            if members.contains_key(&agent_id) {
-                return Err(RuntimeError::InvalidState(format!(
-                    "agent {} is already a member of team {}",
-                    agent_id, team_id
-                )));
-            }
-            let member = TeamMemberRecord {
-                team_id: team_id.clone(),
-                agent_id: agent_id.clone(),
-                title: normalized_non_empty(request.title.as_deref()),
-                joined_at: now,
-                added_by: request.added_by.unwrap_or(lead_for_added_by),
-                creator_agent_id: request.creator_agent_id,
-                creator_compaction_subscription: request
-                    .creator_compaction_subscription
-                    .unwrap_or_else(|| "auto".to_string()),
-                worktree_id: request.worktree_id,
-            };
-            members.insert(agent_id.clone(), member.clone());
-            let team = state
-                .teams
-                .get_mut(&team_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("team {}", team_id)))?;
-            team.updated_at = now;
-            (team.clone(), member)
-        };
-
-        self.store.upsert_team(&updated_team.0)?;
-        self.store.upsert_team_member(&updated_team.1)?;
-
-        let _ = self
-            .append_team_event(
-                team_id.as_str(),
-                "team.member_joined",
-                serde_json::json!({ "team": updated_team.0, "member": updated_team.1 }),
-                Some(agent_id),
-            )
-            .await;
-
-        self.team_with_members(team_id.as_str()).await
+        self.legacy_roster_join(request).await
     }
 
     async fn remove_team_member(
         &self,
         request: TeamRemoveMemberRequest,
     ) -> Result<TeamWithMembers, RuntimeError> {
-        self.ensure_enabled()?;
-        let team_id = normalize_non_empty(request.team_id.as_str(), "team_id")?;
-        let agent_id = normalize_non_empty(request.agent_id.as_str(), "agent_id")?;
-
-        let (updated_team, removed_agent_id) = {
-            let mut state = self.state.write().await;
-            let team_snapshot = state
-                .teams
-                .get(&team_id)
-                .cloned()
-                .ok_or_else(|| RuntimeError::NotFound(format!("team {}", team_id)))?;
-            let team = state
-                .members_by_team
-                .get_mut(&team_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("team {} members", team_id)))?;
-            if !team.contains_key(&agent_id) {
-                return Err(RuntimeError::NotFound(format!(
-                    "agent {} not in team {}",
-                    agent_id, team_id
-                )));
-            }
-            if team_snapshot.lead_agent_id == agent_id {
-                return Err(RuntimeError::InvalidState(format!(
-                    "cannot remove legacy team lead {agent_id} from {team_id}; reassign the lead explicitly first"
-                )));
-            }
-            if team.len() <= 1 {
-                return Err(RuntimeError::InvalidState(format!(
-                    "cannot remove last member from team {}; delete team instead",
-                    team_id
-                )));
-            }
-            team.remove(&agent_id);
-            let team = state
-                .teams
-                .get_mut(&team_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("team {}", team_id)))?;
-            team.updated_at = now_ms();
-            (team.clone(), agent_id)
-        };
-
-        self.store.upsert_team(&updated_team)?;
-        self.store
-            .delete_team_member(team_id.as_str(), removed_agent_id.as_str())?;
-
-        let _ = self
-            .append_team_event(
-                team_id.as_str(),
-                "team.member_left",
-                serde_json::json!({
-                    "team": updated_team,
-                    "agent_id": removed_agent_id,
-                }),
-                Some(removed_agent_id),
-            )
-            .await;
-
-        self.team_with_members(team_id.as_str()).await
+        self.legacy_roster_remove(request).await
     }
 
     async fn set_team_lead(
         &self,
         request: TeamSetLeadRequest,
     ) -> Result<TeamWithMembers, RuntimeError> {
-        self.ensure_enabled()?;
-        let team_id = normalize_non_empty(request.team_id.as_str(), "team_id")?;
-        let lead_agent_id = normalize_non_empty(request.lead_agent_id.as_str(), "lead_agent_id")?;
-
-        let updated_team = {
-            let mut state = self.state.write().await;
-            ensure_member(
-                state.members_by_team.get(&team_id),
-                lead_agent_id.as_str(),
-                &team_id,
-            )?;
-            let team = state
-                .teams
-                .get_mut(&team_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("team {}", team_id)))?;
-            if team.lead_agent_id == lead_agent_id {
-                None
-            } else {
-                team.lead_agent_id = lead_agent_id.clone();
-                team.updated_at = now_ms();
-                Some(team.clone())
-            }
-        };
-
-        let Some(updated_team) = updated_team else {
-            return self.team_with_members(team_id.as_str()).await;
-        };
-
-        self.store.upsert_team(&updated_team)?;
-
-        let _ = self
-            .append_team_event(
-                team_id.as_str(),
-                "team.lead_changed",
-                serde_json::json!({ "team": updated_team, "lead_agent_id": lead_agent_id }),
-                Some(lead_agent_id),
-            )
-            .await;
-
-        self.team_with_members(team_id.as_str()).await
+        self.legacy_roster_set_lead(request).await
     }
 
     async fn delete_team(&self, team_id: &str) -> Result<(), RuntimeError> {

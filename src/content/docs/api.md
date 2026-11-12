@@ -1861,6 +1861,17 @@ Team delivery fields make multi-agent coordination inspectable: `pending`, `defe
 
 The `/v1/teams` HTTP routes and historical split MCP tools (`gg_team_status`, `gg_team_message`, `gg_team_manage`) are **operator-only compatibility surfaces** backed by the legacy team services. They remain available during migration but are not advertised to provider models. Current model agents instead use workspace-authoritative `gg_team` and `gg_message` operations through the scoped `/v2/mcp` endpoint or native Codex tools; the canonical workspace agent/message records are separate from legacy `TeamRecord` membership.
 
+Legacy team **create, join, member removal and lead change** now commit their
+roster mutation together with one Critical canonical team event in an atomic
+SQLite transaction. A failed journal insert does not leave a partially
+committed team/member row or advance the in-process roster cache. A previous
+exact durable receipt can be replayed after restart without a second event;
+conflicting writer generations or reused event IDs fail closed. `/v1` HTTP
+requests do **not** expose the keyed `/v2` operator idempotency contract, and
+this guarantee does **not** extend to legacy team deletion, messages, delivery
+transition notifications or native side effects; uncertain outcomes must
+not be treated as permission to retry potentially executed effects.
+
 ## MCP gateway
 
 The **model-facing** scoped MCP API is separate from operator authentication:

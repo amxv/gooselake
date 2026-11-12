@@ -50,6 +50,13 @@ macro_rules! delegate_provider_event_methods {
                 .commit_session_lifecycle(before, after, event)
         }
 
+        fn commit_legacy_team_mutation(
+            &self,
+            mutation: &runtime_core::LegacyTeamMutation,
+        ) -> Result<runtime_core::RuntimeEventRecord, runtime_core::RuntimeError> {
+            self.repository.commit_legacy_team_mutation(mutation)
+        }
+
         fn admit_provider_approval(
             &self,
             previous_turn: &runtime_core::TurnRecord,

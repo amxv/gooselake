@@ -1,5 +1,22 @@
 use async_trait::async_trait;
 
+macro_rules! legacy_team_event_methods {
+    () => {
+        /// /v1 team roster authority and its critical event must be committed
+        /// in the same durable transaction. There is no fallback to separate
+        /// upserts or silently discarded event journal errors.
+        fn commit_legacy_team_mutation(
+            &self,
+            _mutation: &crate::LegacyTeamMutation,
+        ) -> Result<crate::RuntimeEventRecord, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic legacy team roster event journal unavailable".into(),
+            ))
+        }
+    };
+}
+pub(super) use legacy_team_event_methods;
+
 use crate::{
     AgentBroadcastMessageRequest, AgentCancelMessageMutationCommand,
     AgentCancelMessageMutationResponse, AgentCancelMessageRequest, AgentDeliveryListRequest,

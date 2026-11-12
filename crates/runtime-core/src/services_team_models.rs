@@ -1,4 +1,4 @@
-use crate::{TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamRecord};
+use crate::{NewRuntimeEvent, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -16,6 +16,19 @@ pub struct ToolInvokeRequest {
 pub struct TeamWithMembers {
     pub team: TeamRecord,
     pub members: Vec<TeamMemberRecord>,
+}
+
+/// Authority boundary for an older /v1 team roster mutation. Native or
+/// asynchronous delivery effects are not part of this record. The team,
+/// optional member delta and one critical team event must commit together.
+#[derive(Debug, Clone)]
+pub struct LegacyTeamMutation {
+    pub before_team: Option<TeamRecord>,
+    pub after_team: TeamRecord,
+    pub initial_members: Vec<TeamMemberRecord>,
+    pub before_member: Option<TeamMemberRecord>,
+    pub after_member: Option<TeamMemberRecord>,
+    pub event: NewRuntimeEvent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

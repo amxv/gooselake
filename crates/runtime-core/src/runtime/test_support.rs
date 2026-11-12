@@ -9,14 +9,14 @@ use tokio::time::{sleep, Duration};
 
 use crate::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    ProcessRecord, ProviderApprovalAdmission, ProviderApprovalResponseRequest, ProviderAuthStatus,
-    ProviderCreateSessionRequest, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
-    ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
-    ProviderTerminalCommit, ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus,
-    ProviderWaitTurnRequest, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeProvider,
-    RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
-    TurnRecord,
+    ProcessRecord, ProviderApprovalAdmission, ProviderApprovalDecisionReceipt,
+    ProviderApprovalResponseRequest, ProviderAuthStatus, ProviderCreateSessionRequest,
+    ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry, ProviderResumeSessionRequest,
+    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit,
+    ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
+    RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
 };
 
 use super::RuntimeSessionManager;
@@ -288,6 +288,53 @@ impl RuntimeStore for MockStore {
             .expect("approvals mutex")
             .insert(record.id.clone(), record.clone());
         Ok(())
+    }
+
+    fn claim_provider_approval_decision(
+        &self,
+        pending: &ApprovalRecord,
+        reserved: &ApprovalRecord,
+        turn: &TurnRecord,
+        session: &SessionRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderApprovalDecisionReceipt, RuntimeError> {
+        let turns = self.turns.lock().unwrap();
+        let sessions = self.sessions.lock().unwrap();
+        let mut approvals = self.approvals.lock().unwrap();
+        if turns.get(&turn.id) != Some(turn)
+            || sessions.get(&session.id) != Some(session)
+            || approvals.get(&pending.id) != Some(pending)
+        {
+            return Err(RuntimeError::Conflict(
+                "mock provider decision claim already changed".into(),
+            ));
+        }
+        let receipt = self.append_runtime_event(event)?;
+        approvals.insert(reserved.id.clone(), reserved.clone());
+        Ok(ProviderApprovalDecisionReceipt {
+            approval: reserved.clone(),
+            event: Some(receipt),
+        })
+    }
+
+    fn release_unexecuted_provider_approval_decision(
+        &self,
+        reserved: &ApprovalRecord,
+        pending: &ApprovalRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderApprovalDecisionReceipt, RuntimeError> {
+        let mut approvals = self.approvals.lock().unwrap();
+        if approvals.get(&reserved.id) != Some(reserved) {
+            return Err(RuntimeError::Conflict(
+                "mock provider no-effect release lost reservation".into(),
+            ));
+        }
+        let receipt = self.append_runtime_event(event)?;
+        approvals.insert(pending.id.clone(), pending.clone());
+        Ok(ProviderApprovalDecisionReceipt {
+            approval: pending.clone(),
+            event: Some(receipt),
+        })
     }
 
     fn upsert_team(&self, _record: &TeamRecord) -> Result<(), RuntimeError> {

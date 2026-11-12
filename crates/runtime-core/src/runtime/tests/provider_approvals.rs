@@ -195,6 +195,103 @@ async fn native_approval_journal_failure_never_publishes_partial_caches_or_durab
 }
 
 #[tokio::test]
+async fn native_decision_reservation_event_fault_prevents_provider_side_effect_and_cache_replay() {
+    let (manager, store, _send_count) =
+        manager_with_observable_send_provider(MockSendBehavior::Success, None);
+    let session = manager
+        .create_session(CreateSessionInput {
+            provider: ProviderKind::Codex,
+            model: None,
+            cwd: None,
+            permission_mode: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    let accepted = manager
+        .send_turn(
+            &session.id,
+            SendTurnInput {
+                input: vec![serde_json::json!({"type":"text","text":"requires native approval"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
+                turn_settings: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let approval = manager
+        .record_provider_approval(
+            &session.id,
+            &accepted.turn_id,
+            "native-decision-gate",
+            Some("tool-gated".into()),
+            serde_json::json!({"command":"true"}),
+        )
+        .await
+        .unwrap();
+    *store.fail_next_event_append_for_kind.lock().unwrap() =
+        Some("approval.decision_reserved".into());
+    assert!(manager
+        .respond_approval(
+            &session.id,
+            &approval.id,
+            ApprovalResponseInput {
+                decision: "accept".into(),
+                payload: Some(serde_json::json!({"visible":"payload"})),
+            },
+        )
+        .await
+        .is_err());
+    assert_eq!(manager.approvals.read().await[&approval.id], approval);
+    assert_eq!(store.approvals.lock().unwrap()[&approval.id], approval);
+    assert_eq!(
+        manager.get_session(&session.id).await.unwrap().status,
+        "waiting_for_approval"
+    );
+    assert!(store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|e| { e.kind != "approval.decision_reserved" && e.kind != "approval.resolved" }));
+
+    let resolved = manager
+        .respond_approval(
+            &session.id,
+            &approval.id,
+            ApprovalResponseInput {
+                decision: "accept".into(),
+                payload: Some(serde_json::json!({"visible":"payload"})),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolved.status, "accept");
+    assert_eq!(
+        store
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == "approval.decision_reserved")
+            .count(),
+        1,
+    );
+    let journal = store.events.lock().unwrap();
+    let reserved = journal
+        .iter()
+        .find(|e| e.kind == "approval.decision_reserved")
+        .unwrap();
+    assert_eq!(reserved.payload["approval_id"], approval.id);
+    assert_eq!(reserved.payload["decision"], "accept");
+    assert!(reserved.payload["decision_attempt_id"].as_str().is_some());
+}
+
+#[tokio::test]
 async fn provider_approval_emitted_before_ack_is_durable_and_deduplicated() {
     let (manager, store, wait_count) = manager_with_provider_approval_events();
     let session = manager

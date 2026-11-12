@@ -20,6 +20,15 @@ pub struct ProviderApprovalAdmission {
     pub event: Option<RuntimeEventRecord>,
 }
 
+/// Critical pre-native decision reservation or a proven no-effect release.
+/// A committed reservation is intentionally NOT a native dispatch receipt;
+/// its exclusive durable status prevents another process from sending again.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderApprovalDecisionReceipt {
+    pub approval: ApprovalRecord,
+    pub event: Option<RuntimeEventRecord>,
+}
+
 macro_rules! provider_terminal_methods {
     () => {
         /// Atomically commit an already-observed provider terminal turn,
@@ -56,6 +65,35 @@ macro_rules! provider_approval_methods {
         ) -> Result<crate::ProviderApprovalAdmission, crate::RuntimeError> {
             Err(crate::RuntimeError::Unsupported(
                 "atomic provider-native approval admission unavailable".into(),
+            ))
+        }
+
+        /// Reserve one pending provider-native approval decision before any
+        /// native call. An ambiguous commit must fail closed, not return an
+        /// existing reservation as permission to call the provider again.
+        fn claim_provider_approval_decision(
+            &self,
+            _pending: &crate::ApprovalRecord,
+            _reserved: &crate::ApprovalRecord,
+            _turn: &crate::TurnRecord,
+            _session: &crate::SessionRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<crate::ProviderApprovalDecisionReceipt, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic provider-native approval decision claim unavailable".into(),
+            ))
+        }
+
+        /// Release a claimed decision only after the provider has proved it
+        /// could not have executed. Atomic state and event are required.
+        fn release_unexecuted_provider_approval_decision(
+            &self,
+            _reserved: &crate::ApprovalRecord,
+            _pending: &crate::ApprovalRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<crate::ProviderApprovalDecisionReceipt, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic provider-native approval no-effect release unavailable".into(),
             ))
         }
     };

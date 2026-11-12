@@ -38,6 +38,7 @@ mod repository_operator_native_policy_review;
 mod repository_operator_user_turn;
 mod repository_process;
 mod repository_provider_approval;
+mod repository_provider_approval_decision;
 mod repository_team_hooks;
 mod repository_turn_authority;
 mod repository_turn_terminal;

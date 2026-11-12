@@ -5,7 +5,7 @@ use runtime_core::{
 };
 use std::sync::{Arc, Barrier};
 
-fn fixture() -> (
+pub(super) fn fixture() -> (
     tempfile::TempDir,
     SqliteRuntimeRepository,
     SessionRecord,
@@ -47,7 +47,7 @@ fn fixture() -> (
     (temp, repository, session, turn)
 }
 
-fn native_request(
+pub(super) fn native_request(
     session: &SessionRecord,
     turn: &TurnRecord,
     id: &str,
@@ -91,7 +91,7 @@ fn native_request(
     (waiting_session, waiting_turn, approval, event)
 }
 
-fn submit(
+pub(super) fn submit(
     repository: &SqliteRuntimeRepository,
     session: &SessionRecord,
     turn: &TurnRecord,

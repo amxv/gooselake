@@ -11,6 +11,41 @@ use crate::{
 use super::helpers::{is_terminal_turn_status, now_ms};
 use super::{ApprovalResponseInput, RuntimeSessionManager};
 
+fn native_decision_event(
+    approval: &ApprovalRecord,
+    attempt_id: &str,
+    decision: ApprovalDecision,
+    proven_not_dispatched: bool,
+) -> NewRuntimeEvent {
+    let suffix = if proven_not_dispatched {
+        "not_dispatched"
+    } else {
+        "reserved"
+    };
+    NewRuntimeEvent {
+        event_id: format!(
+            "evt_approval_{}_decision_{suffix}_{attempt_id}",
+            approval.id
+        ),
+        scope: RuntimeEventScope::Session,
+        scope_id: approval.session_id.clone(),
+        session_id: Some(approval.session_id.clone()),
+        team_id: None,
+        turn_id: Some(approval.turn_id.clone()),
+        kind: format!("approval.decision_{suffix}"),
+        criticality: RuntimeEventCriticality::Critical,
+        payload: serde_json::json!({
+            "approval_id": approval.id,
+            "decision_attempt_id": attempt_id,
+            "decision": decision.as_str(),
+            "origin": "provider",
+        }),
+        provider: None,
+        provider_seq: None,
+        created_at: now_ms(),
+    }
+}
+
 impl RuntimeSessionManager {
     pub async fn respond_approval(
         self: &Arc<Self>,
@@ -261,17 +296,36 @@ impl RuntimeSessionManager {
             return Ok(resolved);
         }
 
+        // Unlike local sequence IDs, random attempt IDs also stay distinct
+        // when separate runtime processes are created in the same millisecond.
+        // SQLite CAS is still the actual cross-process authority.
+        let decision_attempt_id = format!("aprd_{:032x}", rand::random::<u128>());
         let mut decision_pending = existing.clone();
         decision_pending.status = "decision_pending".to_string();
         decision_pending.response = Some(serde_json::json!({
             "decision": normalized_decision.as_str(),
             "payload": input.payload.clone(),
+            "decision_attempt_id": decision_attempt_id,
         }));
-        self.store.upsert_approval(&decision_pending)?;
+        let reserved_event =
+            native_decision_event(&existing, &decision_attempt_id, normalized_decision, false);
+        // Before a provider is allowed to see the decision, reserve the
+        // approval with an exclusive CAS and a critical durable receipt.
+        // An ambiguous claim response is NOT permission to call again.
+        let reservation = self.store.claim_provider_approval_decision(
+            &existing,
+            &decision_pending,
+            &turn,
+            &session,
+            &reserved_event,
+        )?;
         self.approvals
             .write()
             .await
-            .insert(approval_id.to_string(), decision_pending.clone());
+            .insert(approval_id.to_string(), reservation.approval);
+        if let Some(event) = reservation.event {
+            let _ = self.event_tx.send(event);
+        }
 
         let provider_approval_id = existing
             .provider_approval_ref
@@ -292,11 +346,24 @@ impl RuntimeSessionManager {
             // so the operator can correct it. Only ambiguous post-dispatch
             // failures require approval/turn recovery quarantine.
             if error.provider_dispatch_outcome() == ProviderDispatchOutcome::NotDispatched {
-                self.store.upsert_approval(&existing)?;
+                let no_effect_event = native_decision_event(
+                    &existing,
+                    &decision_attempt_id,
+                    normalized_decision,
+                    true,
+                );
+                let released = self.store.release_unexecuted_provider_approval_decision(
+                    &decision_pending,
+                    &existing,
+                    &no_effect_event,
+                )?;
                 self.approvals
                     .write()
                     .await
-                    .insert(approval_id.to_string(), existing);
+                    .insert(approval_id.to_string(), released.approval);
+                if let Some(event) = released.event {
+                    let _ = self.event_tx.send(event);
+                }
                 return Err(error);
             }
             {

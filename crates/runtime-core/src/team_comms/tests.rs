@@ -9,16 +9,17 @@ use crate::{
     AgentBroadcastMessageRequest, AgentDeliveryListRequest, AgentDeliveryRecord,
     AgentDirectMessageRequest, AgentMessageContextKind, AgentMessageRecord, ApprovalRecord,
     CreateSessionInput, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    ProcessRecord, ProviderApprovalAdmission, ProviderAuthStatus, ProviderCreateSessionRequest,
-    ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
-    ProviderResumeSessionRequest, ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit,
-    ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
-    RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
-    TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
-    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TeamRemoveMemberRequest, TeamSendDirectRequest, TeamSetLeadRequest,
-    TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentProfile,
-    WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState, WorkspaceRecord,
+    ProcessRecord, ProviderApprovalAdmission, ProviderApprovalDecisionReceipt, ProviderAuthStatus,
+    ProviderCreateSessionRequest, ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata,
+    ProviderModel, ProviderRegistry, ProviderResumeSessionRequest, ProviderSendTurnRequest,
+    ProviderSession, ProviderTerminalCommit, ProviderTurnAck, ProviderTurnResult,
+    ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError, RuntimeEventRecord,
+    RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord, TeamCommsService,
+    TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamMemberRecord,
+    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
+    TeamRemoveMemberRequest, TeamSendDirectRequest, TeamSetLeadRequest, TurnAdmissionRecord,
+    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRecord,
+    WorkspaceAgentRecreationPolicy, WorkspaceLifecycleState, WorkspaceRecord,
 };
 
 #[derive(Default)]
@@ -286,6 +287,55 @@ impl RuntimeStore for TestStore {
             row.id.clone()
         });
         Ok(())
+    }
+
+    fn claim_provider_approval_decision(
+        &self,
+        pending: &ApprovalRecord,
+        reserved: &ApprovalRecord,
+        turn: &TurnRecord,
+        session: &SessionRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderApprovalDecisionReceipt, RuntimeError> {
+        let mut hydrated = self.hydrated.lock().unwrap();
+        if hydrated.approvals.iter().find(|row| row.id == pending.id) != Some(pending)
+            || hydrated.turns.iter().find(|row| row.id == turn.id) != Some(turn)
+            || hydrated.sessions.iter().find(|row| row.id == session.id) != Some(session)
+        {
+            return Err(RuntimeError::Conflict(
+                "test decision claim already changed".into(),
+            ));
+        }
+        let receipt = self.append_runtime_event(event)?;
+        Self::upsert_with_key(&mut hydrated.approvals, reserved.clone(), |row| {
+            row.id.clone()
+        });
+        Ok(ProviderApprovalDecisionReceipt {
+            approval: reserved.clone(),
+            event: Some(receipt),
+        })
+    }
+
+    fn release_unexecuted_provider_approval_decision(
+        &self,
+        reserved: &ApprovalRecord,
+        pending: &ApprovalRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderApprovalDecisionReceipt, RuntimeError> {
+        let mut hydrated = self.hydrated.lock().unwrap();
+        if hydrated.approvals.iter().find(|row| row.id == reserved.id) != Some(reserved) {
+            return Err(RuntimeError::Conflict(
+                "test no-effect release lost reservation".into(),
+            ));
+        }
+        let receipt = self.append_runtime_event(event)?;
+        Self::upsert_with_key(&mut hydrated.approvals, pending.clone(), |row| {
+            row.id.clone()
+        });
+        Ok(ProviderApprovalDecisionReceipt {
+            approval: pending.clone(),
+            event: Some(receipt),
+        })
     }
 
     fn upsert_team(&self, record: &TeamRecord) -> Result<(), RuntimeError> {

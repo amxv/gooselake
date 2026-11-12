@@ -133,6 +133,19 @@ invented request events. Native approval **resolution**, including unknown
 provider decision outcomes, is still a separate guarded recovery boundary
 and is not proven atomic by the request receipt.
 
+Before submitting any **provider-native approval decision**, an exclusive
+SQLite transaction updates the pending approval to \`decision_pending\` and
+commits the critical \`approval.decision_reserved\` receipt. This is a
+**pre-native reservation**, not evidence that the provider executed the
+decision. A failed journal insert means no reservation and no native call;
+concurrent or restarted callers cannot use an existing reservation as
+permission to submit a second native decision. Only an adapter that proves
+the decision **was not dispatched** may atomically release it to pending
+with \`approval.decision_not_dispatched\`. Lost/ambiguous native outcomes
+remain fenced; resolved decision and turn/session outcomes have their own
+pending journal-coupling audit. Historical approvals are not given
+fabricated reservation/no-effect events.
+
 ## Replay before live
 
 A robust client reconnects like this:

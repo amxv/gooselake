@@ -35,6 +35,28 @@ macro_rules! delegate_provider_event_methods {
                 event,
             )
         }
+
+        fn claim_provider_approval_decision(
+            &self,
+            pending: &runtime_core::ApprovalRecord,
+            reserved: &runtime_core::ApprovalRecord,
+            turn: &runtime_core::TurnRecord,
+            session: &runtime_core::SessionRecord,
+            event: &runtime_core::NewRuntimeEvent,
+        ) -> Result<runtime_core::ProviderApprovalDecisionReceipt, runtime_core::RuntimeError> {
+            self.repository
+                .claim_provider_approval_decision(pending, reserved, turn, session, event)
+        }
+
+        fn release_unexecuted_provider_approval_decision(
+            &self,
+            reserved: &runtime_core::ApprovalRecord,
+            pending: &runtime_core::ApprovalRecord,
+            event: &runtime_core::NewRuntimeEvent,
+        ) -> Result<runtime_core::ProviderApprovalDecisionReceipt, runtime_core::RuntimeError> {
+            self.repository
+                .release_unexecuted_provider_approval_decision(reserved, pending, event)
+        }
     };
 }
 pub(super) use delegate_provider_event_methods;

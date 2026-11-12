@@ -1359,6 +1359,21 @@ and legacy records are not given invented historical events. A later
 boundary and requires its own reconciliation; a request receipt never grants
 permission to retry that provider action.
 
+Before sending a provider-native **approval decision**, the runtime now makes
+an exclusive SQLite compare-and-swap from pending to \`decision_pending\`
+and writes one critical \`approval.decision_reserved\` event in the **same
+transaction**. That receipt means only **decision reserved**, not decision
+executed: if the journal insert or reservation fails, the provider is not
+called, and a lost reservation acknowledgement never authorizes resending.
+Competing processes and restart retries cannot claim the already-pending
+native effect again. Only a provider adapter's explicit **not dispatched**
+proof allows an atomic release back to pending with its own
+\`approval.decision_not_dispatched\` event. An ambiguous provider outcome
+remains quarantined for reconciliation. Known provider decision results,
+the \`approval.resolved\` event and resulting turn/session transitions still
+have a separate state/event atomicity boundary; they are **not** covered by
+this pre-native reservation.
+
 The response is an accepted turn, not necessarily terminal output:
 
 ```json

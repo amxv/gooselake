@@ -12,7 +12,7 @@ use crate::repository::insert_runtime_event_in_transaction;
 use crate::repository_turn_terminal::{read_session, read_turn};
 use crate::SqliteRuntimeRepository;
 
-fn existing_provider_approval(
+pub(crate) fn existing_provider_approval(
     tx: &Transaction<'_>,
     approval: &ApprovalRecord,
 ) -> Result<Option<ApprovalRecord>, RuntimeError> {

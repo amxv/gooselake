@@ -9,10 +9,10 @@ use crate::{
     AgentBroadcastMessageRequest, AgentDeliveryListRequest, AgentDeliveryRecord,
     AgentDirectMessageRequest, AgentMessageContextKind, AgentMessageRecord, ApprovalRecord,
     CreateSessionInput, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    ProcessRecord, ProviderAuthStatus, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
-    ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry, ProviderResumeSessionRequest,
-    ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit, ProviderTurnAck,
-    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
+    ProcessRecord, ProviderApprovalAdmission, ProviderAuthStatus, ProviderCreateSessionRequest,
+    ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
+    ProviderResumeSessionRequest, ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit,
+    ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
     RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
     TeamCommsService, TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest,
     TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
@@ -209,6 +209,74 @@ impl RuntimeStore for TestStore {
             turn: updated_turn.clone(),
             session: updated_session.cloned(),
             event: receipt,
+        })
+    }
+
+    fn admit_provider_approval(
+        &self,
+        previous_turn: &TurnRecord,
+        updated_turn: &TurnRecord,
+        previous_session: &SessionRecord,
+        updated_session: &SessionRecord,
+        approval: &ApprovalRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderApprovalAdmission, RuntimeError> {
+        let mut hydrated = self.hydrated.lock().expect("hydrated lock");
+        if let Some(existing) = hydrated.approvals.iter().find(|row| {
+            row.session_id == approval.session_id
+                && row.turn_id == approval.turn_id
+                && row.provider_approval_ref == approval.provider_approval_ref
+        }) {
+            if existing.request != approval.request
+                || existing.tool_call_id != approval.tool_call_id
+            {
+                return Err(RuntimeError::Conflict(
+                    "test approval identity mismatch".into(),
+                ));
+            }
+            return Ok(ProviderApprovalAdmission {
+                approval: existing.clone(),
+                turn: hydrated
+                    .turns
+                    .iter()
+                    .find(|row| row.id == previous_turn.id)
+                    .unwrap()
+                    .clone(),
+                session: hydrated
+                    .sessions
+                    .iter()
+                    .find(|row| row.id == previous_session.id)
+                    .unwrap()
+                    .clone(),
+                event: None,
+            });
+        }
+        if hydrated.turns.iter().find(|row| row.id == previous_turn.id) != Some(previous_turn)
+            || hydrated
+                .sessions
+                .iter()
+                .find(|row| row.id == previous_session.id)
+                != Some(previous_session)
+        {
+            return Err(RuntimeError::Conflict(
+                "test native approval projection changed".into(),
+            ));
+        }
+        let receipt = self.append_runtime_event(event)?;
+        Self::upsert_with_key(&mut hydrated.turns, updated_turn.clone(), |row| {
+            row.id.clone()
+        });
+        Self::upsert_with_key(&mut hydrated.sessions, updated_session.clone(), |row| {
+            row.id.clone()
+        });
+        Self::upsert_with_key(&mut hydrated.approvals, approval.clone(), |row| {
+            row.id.clone()
+        });
+        Ok(ProviderApprovalAdmission {
+            approval: approval.clone(),
+            turn: updated_turn.clone(),
+            session: updated_session.clone(),
+            event: Some(receipt),
         })
     }
 

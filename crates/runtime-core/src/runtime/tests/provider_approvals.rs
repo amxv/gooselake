@@ -17,7 +17,7 @@ use super::super::{ApprovalResponseInput, CreateSessionInput, SendTurnInput};
 
 #[tokio::test]
 async fn duplicate_provider_approval_event_converges_on_one_durable_record() {
-    let (manager, _store, _send_count) =
+    let (manager, store, _send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
         .create_session(CreateSessionInput {
@@ -78,6 +78,120 @@ async fn duplicate_provider_approval_event_converges_on_one_durable_record() {
         .filter(|approval| approval.provider_approval_ref.as_deref() == Some("provider-approval-7"))
         .count();
     assert_eq!(matching, 1);
+    let journal = store.events.lock().unwrap();
+    let requests = journal
+        .iter()
+        .filter(|row| row.kind == "approval.requested")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        requests.len(),
+        1,
+        "native callback must not emit a second critical event"
+    );
+    assert_eq!(
+        requests[0].event_id,
+        format!("evt_approval_{}_requested", first.id)
+    );
+    assert_eq!(
+        requests[0].payload["provider_approval_ref"],
+        "provider-approval-7"
+    );
+}
+
+#[tokio::test]
+async fn native_approval_journal_failure_never_publishes_partial_caches_or_durable_authority() {
+    let (manager, store, _send_count) =
+        manager_with_observable_send_provider(MockSendBehavior::Success, None);
+    let session = manager
+        .create_session(CreateSessionInput {
+            provider: ProviderKind::Codex,
+            model: None,
+            cwd: None,
+            permission_mode: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    let accepted = manager
+        .send_turn(
+            &session.id,
+            SendTurnInput {
+                input: vec![serde_json::json!({"type":"text","text":"approval request"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
+                turn_settings: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let previous_session = manager.get_session(&session.id).await.unwrap();
+    let previous_turn = manager.turns.read().await[&accepted.turn_id].clone();
+    *store.fail_next_event_append_for_kind.lock().unwrap() = Some("approval.requested".into());
+    assert!(manager
+        .record_provider_approval(
+            &session.id,
+            &accepted.turn_id,
+            "native-ref-failed-once",
+            Some("tool-req".into()),
+            serde_json::json!({"command":"true"}),
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        manager.get_session(&session.id).await.unwrap(),
+        previous_session
+    );
+    assert_eq!(manager.turns.read().await[&accepted.turn_id], previous_turn);
+    assert!(manager.approvals.read().await.is_empty());
+    assert_eq!(
+        store.sessions.lock().unwrap()[&session.id],
+        previous_session
+    );
+    assert_eq!(
+        store.turns.lock().unwrap()[&accepted.turn_id],
+        previous_turn
+    );
+    assert!(store.approvals.lock().unwrap().is_empty());
+    assert!(store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|row| row.kind != "approval.requested"));
+
+    let admitted = manager
+        .record_provider_approval(
+            &session.id,
+            &accepted.turn_id,
+            "native-ref-failed-once",
+            Some("tool-req".into()),
+            serde_json::json!({"command":"true"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        manager.get_session(&session.id).await.unwrap().status,
+        "waiting_for_approval"
+    );
+    assert_eq!(
+        manager.turns.read().await[&accepted.turn_id].status,
+        "waiting_for_approval"
+    );
+    assert_eq!(store.approvals.lock().unwrap().len(), 1);
+    assert_eq!(
+        store
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|row| row.kind == "approval.requested")
+            .count(),
+        1
+    );
+    assert_eq!(admitted.origin, "provider");
 }
 
 #[tokio::test]

@@ -121,6 +121,18 @@ Provider wait failures, nonterminal dispatch transitions, provider-native
 approval callbacks/resolutions and older legacy team paths are **separate**
 event-authority cases and are not certified atomic by this result path.
 
+A dispatched provider turn may also produce a **native approval request**.
+Its pending approval record, waiting turn/session projections and critical
+`approval.requested` event now form a separate **atomic SQLite commit**.
+Uniqueness on the native provider's approval reference (per session/turn)
+converges competing callbacks after a restart or a lost local response.
+An event insertion fault leaves no partial pending approval, and duplicate
+callbacks do not replay a second journal entry. Existing legacy approvals
+without a journal receipt remain historical rather than backfilled with
+invented request events. Native approval **resolution**, including unknown
+provider decision outcomes, is still a separate guarded recovery boundary
+and is not proven atomic by the request receipt.
+
 ## Replay before live
 
 A robust client reconnects like this:

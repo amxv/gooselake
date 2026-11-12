@@ -1348,6 +1348,17 @@ not authorize resending native work. A result from an older detached turn
 cannot clear a newer active session. Provider wait errors and provider-native
 approval transitions have separate recovery paths, not this atomic receipt.
 
+A **provider-native approval request** observed after turn dispatch now also
+commits its pending approval identity, the waiting turn/session state, and one
+critical `approval.requested` session event in a single SQLite transaction.
+The native provider reference is the cross-process deduplication key:
+repeated callbacks or a lost acknowledgement converge on the same approval
+without duplicating the event. Journal faults roll back all the local state,
+and legacy records are not given invented historical events. A later
+**approval decision** still crosses a separate native provider-effect
+boundary and requires its own reconciliation; a request receipt never grants
+permission to retry that provider action.
+
 The response is an accepted turn, not necessarily terminal output:
 
 ```json

@@ -11,7 +11,7 @@ use crate::db::{
 use crate::repository::insert_runtime_event_in_transaction;
 use crate::SqliteRuntimeRepository;
 
-fn read_turn(tx: &Transaction<'_>, id: &str) -> Result<TurnRecord, RuntimeError> {
+pub(crate) fn read_turn(tx: &Transaction<'_>, id: &str) -> Result<TurnRecord, RuntimeError> {
     tx.query_row(
         "SELECT id, session_id, provider_turn_ref, status, input_json, source,
                 started_at, completed_at, usage_json, error_json
@@ -37,7 +37,7 @@ fn read_turn(tx: &Transaction<'_>, id: &str) -> Result<TurnRecord, RuntimeError>
     .ok_or_else(|| RuntimeError::NotFound(format!("turn {id}")))
 }
 
-fn read_session(tx: &Transaction<'_>, id: &str) -> Result<SessionRecord, RuntimeError> {
+pub(crate) fn read_session(tx: &Transaction<'_>, id: &str) -> Result<SessionRecord, RuntimeError> {
     tx.query_row(
         "SELECT id, provider, status, cwd, model, permission_mode, system_prompt,
                 metadata_json, provider_session_ref, canonical_provider_session_ref,

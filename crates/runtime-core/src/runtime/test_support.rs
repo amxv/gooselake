@@ -9,7 +9,7 @@ use tokio::time::{sleep, Duration};
 
 use crate::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    ProcessRecord, ProviderApprovalResponseRequest, ProviderAuthStatus,
+    ProcessRecord, ProviderApprovalAdmission, ProviderApprovalResponseRequest, ProviderAuthStatus,
     ProviderCreateSessionRequest, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
     ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
     ProviderTerminalCommit, ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus,
@@ -224,6 +224,61 @@ impl RuntimeStore for MockStore {
             turn: updated_turn.clone(),
             session: updated_session.cloned(),
             event,
+        })
+    }
+
+    fn admit_provider_approval(
+        &self,
+        previous_turn: &TurnRecord,
+        updated_turn: &TurnRecord,
+        previous_session: &SessionRecord,
+        updated_session: &SessionRecord,
+        approval: &ApprovalRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderApprovalAdmission, RuntimeError> {
+        let mut turns = self.turns.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap();
+        let mut approvals = self.approvals.lock().unwrap();
+        if let Some(existing) = approvals.values().find(|row| {
+            row.session_id == approval.session_id
+                && row.turn_id == approval.turn_id
+                && row.provider_approval_ref == approval.provider_approval_ref
+        }) {
+            if existing.origin != "provider"
+                || existing.request != approval.request
+                || existing.tool_call_id != approval.tool_call_id
+            {
+                return Err(RuntimeError::Conflict(
+                    "mock approval identity mismatch".into(),
+                ));
+            }
+            return Ok(ProviderApprovalAdmission {
+                approval: existing.clone(),
+                turn: turns[&previous_turn.id].clone(),
+                session: sessions[&previous_session.id].clone(),
+                event: None,
+            });
+        }
+        if turns.get(&previous_turn.id) != Some(previous_turn)
+            || sessions.get(&previous_session.id) != Some(previous_session)
+            || *self.fail_turn_write.lock().unwrap()
+            || *self.fail_session_write.lock().unwrap()
+        {
+            return Err(RuntimeError::Conflict(
+                "mock native approval projection changed".into(),
+            ));
+        }
+        // Fault is checked inside the same exclusive in-memory authority
+        // section, before any approval/turn/session write.
+        let receipt = self.append_runtime_event(event)?;
+        turns.insert(updated_turn.id.clone(), updated_turn.clone());
+        sessions.insert(updated_session.id.clone(), updated_session.clone());
+        approvals.insert(approval.id.clone(), approval.clone());
+        Ok(ProviderApprovalAdmission {
+            approval: approval.clone(),
+            turn: updated_turn.clone(),
+            session: updated_session.clone(),
+            event: Some(receipt),
         })
     }
 

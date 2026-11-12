@@ -3,9 +3,9 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::{
-    ApprovalDecision, ApprovalRecord, ProviderApprovalResponseRequest, ProviderDispatchOutcome,
-    ProviderKind, ProviderSendTurnRequest, RuntimeError, RuntimeEventCriticality,
-    RuntimeEventScope, TurnDispatchState,
+    ApprovalDecision, ApprovalRecord, NewRuntimeEvent, ProviderApprovalResponseRequest,
+    ProviderDispatchOutcome, ProviderKind, ProviderSendTurnRequest, RuntimeError,
+    RuntimeEventCriticality, RuntimeEventScope, TurnDispatchState,
 };
 
 use super::helpers::{is_terminal_turn_status, now_ms};
@@ -489,7 +489,34 @@ impl RuntimeSessionManager {
             )));
         }
 
+        let mut turns = self.turns.write().await;
+        let mut sessions = self.sessions.write().await;
         let mut approvals = self.approvals.write().await;
+        // Serialize the observable provider callback with terminal turn
+        // commits; stale callbacks must not convert an already terminalized
+        // turn or reattach a session that has started newer work.
+        let previous_turn = turns
+            .get(turn_id)
+            .cloned()
+            .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
+        let previous_session = sessions
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+        if previous_session.active_turn_id.as_deref() != Some(turn_id)
+            || !matches!(
+                previous_session.status.as_str(),
+                "turn_admitted" | "turn_running" | "waiting_for_approval"
+            )
+            || !matches!(
+                previous_turn.status.as_str(),
+                "admitted" | "in_progress" | "waiting_for_approval"
+            )
+        {
+            return Err(RuntimeError::InvalidState(
+                "provider approval no longer targets an active turn".into(),
+            ));
+        }
         if let Some(existing) = approvals.values().find(|approval| {
             approval.session_id == session_id
                 && approval.turn_id == turn_id
@@ -511,39 +538,49 @@ impl RuntimeSessionManager {
             created_at: now,
             resolved_at: None,
         };
-        self.store.upsert_approval(&approval)?;
-        approvals.insert(approval.id.clone(), approval.clone());
-        drop(approvals);
-
-        {
-            let mut turns = self.turns.write().await;
-            if let Some(turn) = turns.get_mut(turn_id) {
-                turn.status = "waiting_for_approval".to_string();
-                self.store.upsert_turn(turn)?;
-            }
-        }
-        {
-            let mut sessions = self.sessions.write().await;
-            if let Some(session) = sessions.get_mut(session_id) {
-                session.status = "waiting_for_approval".to_string();
-                session.updated_at = now;
-                self.store.upsert_session(session)?;
-            }
-        }
-        self.append_event(
-            RuntimeEventScope::Session,
-            session_id,
-            Some(session_id),
-            Some(turn_id),
-            "approval.requested",
-            RuntimeEventCriticality::Critical,
-            serde_json::json!({
+        let mut updated_turn = previous_turn.clone();
+        updated_turn.status = "waiting_for_approval".into();
+        let mut updated_session = previous_session.clone();
+        updated_session.status = "waiting_for_approval".into();
+        updated_session.updated_at = now;
+        let event = NewRuntimeEvent {
+            event_id: format!("evt_approval_{}_requested", approval.id),
+            scope: RuntimeEventScope::Session,
+            scope_id: session_id.into(),
+            session_id: Some(session_id.into()),
+            team_id: None,
+            turn_id: Some(turn_id.into()),
+            kind: "approval.requested".into(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload: serde_json::json!({
                 "approval_id": approval.id,
                 "provider_approval_ref": provider_approval_ref,
                 "origin": "provider",
             }),
-        )
-        .await?;
-        Ok(approval)
+            provider: None,
+            provider_seq: None,
+            created_at: now,
+        };
+        // Provider-native approval already occurred. No native effect may
+        // be retried if this response or the SQLite commit acknowledgment
+        // is lost. The durable provider-ref uniqueness key resolves it.
+        let committed = self.store.admit_provider_approval(
+            &previous_turn,
+            &updated_turn,
+            &previous_session,
+            &updated_session,
+            &approval,
+            &event,
+        )?;
+        turns.insert(turn_id.into(), committed.turn);
+        sessions.insert(session_id.into(), committed.session);
+        approvals.insert(committed.approval.id.clone(), committed.approval.clone());
+        drop(approvals);
+        drop(sessions);
+        drop(turns);
+        if let Some(event) = committed.event {
+            let _ = self.event_tx.send(event);
+        }
+        Ok(committed.approval)
     }
 }

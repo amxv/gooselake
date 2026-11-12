@@ -18,7 +18,7 @@ mod worktree_models;
 mod worktree_store_trait;
 #[path = "services_worktree_trait.rs"]
 mod worktree_trait;
-pub use provider_terminal::ProviderTerminalCommit;
+pub use provider_terminal::{ProviderApprovalAdmission, ProviderTerminalCommit};
 pub use team_comms_trait::*;
 pub use team_models::*;
 pub use worktree_models::*;
@@ -78,6 +78,7 @@ pub trait RuntimeStore:
 {
     message_operator::message_operator_methods!();
     provider_terminal::provider_terminal_methods!();
+    provider_terminal::provider_approval_methods!();
 
     operator_policy_store_trait::operator_native_policy_store_methods!();
     operator_restore_store_trait::operator_agent_restore_store_methods!();

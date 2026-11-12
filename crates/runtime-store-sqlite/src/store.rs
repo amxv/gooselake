@@ -8,7 +8,7 @@ use runtime_core::{
     LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
     ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate, NewRuntimeEvent,
     OperationDetails, OperationSummary, OperatorProcessSummary, ProcessCompletionUpdate,
-    ProcessRecord, ProcessSchedulerSettings, ProviderCompactionObservation, ProviderTerminalCommit,
+    ProcessRecord, ProcessSchedulerSettings, ProviderCompactionObservation,
     ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
     RuntimeHydratedState, RuntimeStore, SessionCompactionRun, SessionEditRerunOperation,
     SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
@@ -74,6 +74,7 @@ impl RuntimeStore for SqliteRuntimeStore {
     crate::store_operator_agent_restore::delegate_operator_agent_restore_methods!();
     crate::store_operator_agent_archive::delegate_operator_agent_archive_methods!();
     crate::store_operator_agent_create::delegate_operator_agent_create_methods!();
+    crate::store_provider_events::delegate_provider_event_methods!();
 
     fn admit_pre_add_team_hooks(
         &self,
@@ -720,23 +721,6 @@ impl RuntimeStore for SqliteRuntimeStore {
 
     fn upsert_turn(&self, record: &TurnRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_turn(record)
-    }
-
-    fn commit_provider_turn_result(
-        &self,
-        previous_turn: &TurnRecord,
-        updated_turn: &TurnRecord,
-        previous_session: Option<&SessionRecord>,
-        updated_session: Option<&SessionRecord>,
-        event: &NewRuntimeEvent,
-    ) -> Result<ProviderTerminalCommit, RuntimeError> {
-        self.repository.commit_provider_turn_result(
-            previous_turn,
-            updated_turn,
-            previous_session,
-            updated_session,
-            event,
-        )
     }
 
     fn upsert_approval(&self, record: &ApprovalRecord) -> Result<(), RuntimeError> {

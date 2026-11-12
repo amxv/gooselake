@@ -42,6 +42,8 @@ mod workspace_pre_add_hooks;
 mod workspace_retirement_review;
 mod worktree_routes;
 
+pub use worktree_routes::WorkspaceWorktreeStatusSummary;
+
 #[cfg(test)]
 mod test_support;
 #[cfg(test)]

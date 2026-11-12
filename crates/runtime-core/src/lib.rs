@@ -115,6 +115,7 @@ pub use repository_identity::{
 pub use runtime::{
     ApprovalResponseInput, CreateSessionInput, ResumeSessionInput, RuntimeSessionManager,
     SendTurnAccepted, SendTurnInput, StartupRecoveryProviderStatus, StartupRecoverySummary,
+    WorkspaceWorktreeStatusSummary,
 };
 pub use scoped_mcp::{agent_from_scoped_mcp_token, mint_scoped_mcp_token};
 pub use services::{

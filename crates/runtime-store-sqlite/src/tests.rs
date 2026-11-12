@@ -57,6 +57,7 @@ mod worktree_claim_events;
 mod worktree_cleanup_receipts;
 mod worktree_record_events;
 mod worktree_status_projection;
+mod worktree_status_stream;
 
 fn repo(temp_dir: &tempfile::TempDir) -> SqliteRuntimeRepository {
     SqliteRuntimeRepository::new(temp_dir.path().join("runtime.sqlite3"))

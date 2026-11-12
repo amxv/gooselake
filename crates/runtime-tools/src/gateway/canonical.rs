@@ -9,7 +9,7 @@ use runtime_core::{
     ProcessListRequest, ProcessManager, ProcessRunRequest, ProviderThinkingEffort, RuntimeError,
     ToolInvokeRequest, WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute,
     WorkspaceAgentLifecycleState, WorkspaceAgentOnboardingRequest, WorkspaceAgentRebindRequest,
-    WorkspaceMembershipPolicy, WorkspaceWorktreeCreateRequest, WorkspaceWorktreeInventoryEntry,
+    WorkspaceMembershipPolicy, WorkspaceWorktreeCreateRequest,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -19,25 +19,6 @@ use super::RuntimeToolGateway;
 
 const STATUS_MEMBER_LIMIT: usize = 100;
 const STATUS_AVAILABLE_WORKTREE_LIMIT: usize = 20;
-
-fn bounded_available_worktrees(
-    inventory: &[WorkspaceWorktreeInventoryEntry],
-) -> (Vec<WorkspaceWorktreeInventoryEntry>, usize, bool) {
-    let mut eligible = inventory
-        .iter()
-        .filter(|entry| entry.eligible_for_assignment)
-        .cloned()
-        .collect::<Vec<_>>();
-    eligible.sort_by(|one, two| {
-        one.normalized_name
-            .cmp(&two.normalized_name)
-            .then(one.branch_name.cmp(&two.branch_name))
-            .then(one.worktree_id.cmp(&two.worktree_id))
-    });
-    let total = eligible.len();
-    eligible.truncate(STATUS_AVAILABLE_WORKTREE_LIMIT);
-    (eligible, total, total > STATUS_AVAILABLE_WORKTREE_LIMIT)
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
@@ -102,35 +83,6 @@ enum ProcessMode {
 #[cfg(test)]
 mod schema_tests {
     use super::*;
-
-    #[test]
-    fn worktree_status_is_stably_sorted_bounded_and_reports_full_eligible_count() {
-        let inventory = (0..27)
-            .rev()
-            .map(|index| WorkspaceWorktreeInventoryEntry {
-                worktree_id: format!("worktree_{index:02}"),
-                revision: 1,
-                normalized_name: format!("feature-{index:02}"),
-                branch_name: format!("gg/feature-{index:02}"),
-                worktree_path: format!("/repo/worktrees/feature-{index:02}"),
-                retention_policy: "preserve".into(),
-                lifecycle_state: "active".into(),
-                routing_state: "available".into(),
-                attached_agent_ids: Vec::new(),
-                eligible_for_assignment: index != 4 && index != 9,
-                eligibility_blockers: Vec::new(),
-            })
-            .collect::<Vec<_>>();
-        let (items, count, truncated) = bounded_available_worktrees(&inventory);
-        assert_eq!(count, 25);
-        assert!(truncated);
-        assert_eq!(items.len(), 20);
-        assert_eq!(items[0].normalized_name, "feature-00");
-        assert_eq!(items[4].normalized_name, "feature-05");
-        assert_eq!(items[19].normalized_name, "feature-21");
-        let (repeat, _, _) = bounded_available_worktrees(&inventory);
-        assert_eq!(repeat, items);
-    }
 
     #[test]
     fn status_and_list_modes_reject_forged_or_irrelevant_fields() {
@@ -444,13 +396,30 @@ impl RuntimeToolGateway {
                 // Status uses the current provider-bound context observation;
                 // missing or stale observations remain explicitly unknown.
                 // Optional Git inventory must not make roster status fail.
-                let (inventory, inventory_error) =
-                    match runtime.list_workspace_worktree_inventory(workspace_id) {
-                        Ok(inventory) => (inventory.worktrees, None),
-                        Err(error) => (Vec::new(), Some(error.to_string())),
-                    };
-                let (eligible, eligible_total, eligible_truncated) =
-                    bounded_available_worktrees(&inventory);
+                let displayed_routes = members
+                    .iter()
+                    .map(|member| {
+                        (
+                            member.agent_id.clone(),
+                            member.recreation_policy.authoritative_cwd.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let (eligible, eligible_total, worktree_by_agent, inventory_error) = match runtime
+                    .summarize_workspace_worktrees_for_status(
+                        workspace_id,
+                        &displayed_routes,
+                        STATUS_AVAILABLE_WORKTREE_LIMIT,
+                    ) {
+                    Ok(summary) => (
+                        summary.available,
+                        summary.eligible_total,
+                        summary.displayed_agent_worktrees,
+                        None,
+                    ),
+                    Err(error) => (Vec::new(), 0, HashMap::new(), Some(error.to_string())),
+                };
+                let eligible_truncated = eligible_total > STATUS_AVAILABLE_WORKTREE_LIMIT;
                 let lead_alias = workspace
                     .lead_agent_id
                     .as_ref()
@@ -465,14 +434,6 @@ impl RuntimeToolGateway {
                     .into_iter()
                     .map(|snapshot| (snapshot.agent_id.clone(), snapshot))
                     .collect::<HashMap<_, _>>();
-                let mut worktree_by_agent_path = HashMap::new();
-                for (index, entry) in inventory.iter().enumerate() {
-                    for agent_id in &entry.attached_agent_ids {
-                        worktree_by_agent_path
-                            .entry((agent_id.as_str(), entry.worktree_path.as_str()))
-                            .or_insert(index);
-                    }
-                }
                 let mut rows = Vec::with_capacity(member_count.min(STATUS_MEMBER_LIMIT));
                 for member in &members {
                     let session = sessions.get(&member.agent_id);
@@ -486,19 +447,13 @@ impl RuntimeToolGateway {
                         .map(|snapshot| snapshot.observation.remaining_percentage);
                     let is_lead =
                         workspace.lead_agent_id.as_deref() == Some(member.agent_id.as_str());
-                    let worktree = worktree_by_agent_path
-                        .get(&(
-                            member.agent_id.as_str(),
-                            member.recreation_policy.authoritative_cwd.as_str(),
-                        ))
-                        .and_then(|index| inventory.get(*index))
-                        .map(|entry| {
-                            json!({
-                                "name": entry.normalized_name,
-                                "branch": entry.branch_name,
-                                "state": entry.routing_state,
-                            })
-                        });
+                    let worktree = worktree_by_agent.get(&member.agent_id).map(|entry| {
+                        json!({
+                            "name": entry.normalized_name,
+                            "branch": entry.branch_name,
+                            "state": entry.routing_state,
+                        })
+                    });
                     let added_by_alias = if member.profile.added_by == "runtime_operator" {
                         Some("user")
                     } else {

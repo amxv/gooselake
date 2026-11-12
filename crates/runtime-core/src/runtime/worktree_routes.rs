@@ -3,15 +3,24 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::{
-    resolve_repository_identity, ProviderCapabilitySupport, ProviderKind,
-    ProviderWorkspaceRebindRequest, RuntimeError, WorkspaceAgentLifecycleState,
-    WorkspaceAgentRebindOperation, WorkspaceAgentRebindRequest, WorkspaceAgentRebindResponse,
-    WorkspaceLifecycleState, WorkspaceRecord, WorkspaceWorktreeInventory,
-    WorkspaceWorktreeInventoryEntry,
+    resolve_repository_identity, ManagedWorktreeStatusProjection, ProviderCapabilitySupport,
+    ProviderKind, ProviderWorkspaceRebindRequest, RepositoryIdentity, RuntimeError,
+    WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRebindRequest,
+    WorkspaceAgentRebindResponse, WorkspaceLifecycleState, WorkspaceRecord,
+    WorkspaceWorktreeInventory, WorkspaceWorktreeInventoryEntry,
 };
 
 use super::helpers::now_ms;
 use super::RuntimeSessionManager;
+
+/// A status-specific, source-derived read model. The complete eligible count
+/// is exact, but only the requested top worktrees and displayed agents stay
+/// resident while the store walks a single durable SQLite snapshot.
+pub struct WorkspaceWorktreeStatusSummary {
+    pub available: Vec<WorkspaceWorktreeInventoryEntry>,
+    pub eligible_total: usize,
+    pub displayed_agent_worktrees: HashMap<String, WorkspaceWorktreeInventoryEntry>,
+}
 
 impl RuntimeSessionManager {
     pub(super) fn eligible_workspace_worktree_cwd(
@@ -47,6 +56,85 @@ impl RuntimeSessionManager {
         limit: usize,
     ) -> Result<(WorkspaceWorktreeInventory, bool), RuntimeError> {
         self.build_workspace_worktree_inventory(workspace_id, Some((after, limit)))
+    }
+
+    /// Avoid expanding the entire Git inventory merely to display up to 20
+    /// eligible checkouts and the worktrees attached to up to 100 roster rows.
+    /// Counting routable worktrees still requires checking every source record
+    /// and its native Git identity; this bounds memory, not scan time.
+    pub fn summarize_workspace_worktrees_for_status(
+        &self,
+        workspace_id: &str,
+        displayed_agents: &[(String, String)],
+        available_limit: usize,
+    ) -> Result<WorkspaceWorktreeStatusSummary, RuntimeError> {
+        let workspace = self
+            .store
+            .get_workspace(workspace_id)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("workspace {workspace_id}")))?;
+        let identity = resolve_repository_identity(Path::new(&workspace.canonical_root))?;
+        let workspace_active = workspace.lifecycle_state == WorkspaceLifecycleState::Active;
+        let displayed_cwds = displayed_agents
+            .iter()
+            .map(|(id, cwd)| (id.as_str(), cwd.as_str()))
+            .collect::<HashMap<_, _>>();
+        let mut available = Vec::with_capacity(available_limit.min(20));
+        let mut eligible_total = 0;
+        // Preserve the old inventory's name/ID ordering when legacy aliases
+        // describe two worktrees attached at the same agent path.
+        let mut displayed = HashMap::<String, WorkspaceWorktreeInventoryEntry>::new();
+        self.store.visit_managed_worktree_status_for_root(
+            &identity.canonical_root,
+            workspace_id,
+            &mut |projection, attached| {
+                let Some(entry) = project_worktree_inventory_entry(
+                    &identity,
+                    workspace_active,
+                    projection,
+                    attached,
+                ) else {
+                    return Ok(());
+                };
+                for id in &entry.attached_agent_ids {
+                    if displayed_cwds.get(id.as_str()).copied()
+                        != Some(entry.worktree_path.as_str())
+                    {
+                        continue;
+                    }
+                    let replace = displayed.get(id).is_none_or(|old| {
+                        (&entry.normalized_name, &entry.worktree_id)
+                            < (&old.normalized_name, &old.worktree_id)
+                    });
+                    if replace {
+                        displayed.insert(id.clone(), entry.clone());
+                    }
+                }
+                if entry.eligible_for_assignment {
+                    eligible_total += 1;
+                    if available_limit != 0 {
+                        let pos =
+                            available.partition_point(|old: &WorkspaceWorktreeInventoryEntry| {
+                                (&old.normalized_name, &old.branch_name, &old.worktree_id)
+                                    <= (
+                                        &entry.normalized_name,
+                                        &entry.branch_name,
+                                        &entry.worktree_id,
+                                    )
+                            });
+                        if pos < available_limit {
+                            available.insert(pos, entry);
+                            available.truncate(available_limit);
+                        }
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        Ok(WorkspaceWorktreeStatusSummary {
+            available,
+            eligible_total,
+            displayed_agent_worktrees: displayed,
+        })
     }
 
     fn build_workspace_worktree_inventory(
@@ -99,46 +187,18 @@ impl RuntimeSessionManager {
         }
         let mut worktrees = Vec::new();
         for projection in scoped {
-            let record = projection.worktree;
-            if record.worktree_cwd.starts_with("__gg_tombstoned__/") {
-                continue;
-            }
-            let mut blockers = Vec::new();
-            if workspace.lifecycle_state != WorkspaceLifecycleState::Active {
-                blockers.push("workspace_not_active".to_string());
-            }
-            if let Err(reason) = eligible_managed_route(&identity, &record) {
-                blockers.push(reason);
-            }
             let attached_agent_ids = attached_by_cwd
-                .get(record.worktree_cwd.as_str())
+                .get(projection.worktree.worktree_cwd.as_str())
                 .cloned()
                 .unwrap_or_default();
-            if projection
-                .active_claim_session_ids
-                .iter()
-                .any(|session_id| attached_agent_ids.binary_search(session_id).is_err())
-            {
-                blockers.push("claim_conflicts_with_workspace_roster".to_string());
-            }
-            let routing_state = if blockers.is_empty() {
-                "routable"
-            } else {
-                "blocked"
-            };
-            worktrees.push(WorkspaceWorktreeInventoryEntry {
-                worktree_id: record.id,
-                revision: projection.revision,
-                normalized_name: record.worktree_name,
-                branch_name: record.branch_name,
-                worktree_path: record.worktree_cwd,
-                retention_policy: record.deletion_policy,
-                lifecycle_state: "active".into(),
-                routing_state: routing_state.into(),
+            if let Some(entry) = project_worktree_inventory_entry(
+                &identity,
+                workspace.lifecycle_state == WorkspaceLifecycleState::Active,
+                projection,
                 attached_agent_ids,
-                eligible_for_assignment: blockers.is_empty(),
-                eligibility_blockers: blockers,
-            });
+            ) {
+                worktrees.push(entry);
+            }
         }
         worktrees.sort_by(|a, b| {
             a.normalized_name
@@ -483,6 +543,46 @@ impl RuntimeSessionManager {
             newly_completed: true,
         })
     }
+}
+
+fn project_worktree_inventory_entry(
+    identity: &RepositoryIdentity,
+    workspace_active: bool,
+    projection: ManagedWorktreeStatusProjection,
+    attached_agent_ids: Vec<String>,
+) -> Option<WorkspaceWorktreeInventoryEntry> {
+    let record = projection.worktree;
+    if record.worktree_cwd.starts_with("__gg_tombstoned__/") {
+        return None;
+    }
+    let mut blockers = Vec::new();
+    if !workspace_active {
+        blockers.push("workspace_not_active".to_string());
+    }
+    if let Err(reason) = eligible_managed_route(identity, &record) {
+        blockers.push(reason);
+    }
+    if projection
+        .active_claim_session_ids
+        .iter()
+        .any(|session_id| attached_agent_ids.binary_search(session_id).is_err())
+    {
+        blockers.push("claim_conflicts_with_workspace_roster".to_string());
+    }
+    let eligible = blockers.is_empty();
+    Some(WorkspaceWorktreeInventoryEntry {
+        worktree_id: record.id,
+        revision: projection.revision,
+        normalized_name: record.worktree_name,
+        branch_name: record.branch_name,
+        worktree_path: record.worktree_cwd,
+        retention_policy: record.deletion_policy,
+        lifecycle_state: "active".into(),
+        routing_state: if eligible { "routable" } else { "blocked" }.into(),
+        attached_agent_ids,
+        eligible_for_assignment: eligible,
+        eligibility_blockers: blockers,
+    })
 }
 
 fn canonical_equal(left: &str, right: &str) -> bool {

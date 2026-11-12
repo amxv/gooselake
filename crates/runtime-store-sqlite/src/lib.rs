@@ -81,6 +81,7 @@ mod repository_worktree_claim_events;
 mod repository_worktree_cleanup;
 mod repository_worktree_record_events;
 mod repository_worktree_status;
+mod repository_worktree_status_stream;
 mod schema;
 mod store;
 mod store_context_limit;

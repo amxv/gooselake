@@ -124,3 +124,122 @@ async fn operator_worktree_inventory_preserves_alias_claim_blockers_and_restart_
         "workspace inventory must reconstruct identical eligibility and revisions on restart"
     );
 }
+
+#[tokio::test]
+async fn model_status_uses_bounded_one_snapshot_summary_with_full_inventory_parity() {
+    let (_, _, temp, provider, workspace, agent, linked) = fixture().await;
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let root = std::path::Path::new(&workspace.canonical_root);
+    // Every spelling resolves to the same canonical Git root, but is a
+    // distinct persisted original alias. Repeated names cross source batches.
+    for index in 0..25 {
+        let directory = root.join(format!("historical-{index:02}"));
+        fs::create_dir_all(&directory).unwrap();
+        store
+            .upsert_managed_worktree(&ManagedWorktreeRecord {
+                id: format!("alias_{index:02}"),
+                repo_root: directory.join("..").display().to_string(),
+                worktree_root: temp.path().display().to_string(),
+                worktree_cwd: linked.clone(),
+                branch_name: "gg/linked".into(),
+                worktree_name: if index % 4 == 0 {
+                    "early-tie".into()
+                } else {
+                    format!("feature-{index:02}")
+                },
+                unified_workspace_path: "status-projection".into(),
+                deletion_policy: "retain_on_last_claim".into(),
+                created_by_session_id: None,
+                created_by_operation_id: None,
+                created_at: index,
+                updated_at: index,
+            })
+            .unwrap();
+    }
+    // Archived checkout and a missing native path must not enter the count.
+    store
+        .upsert_managed_worktree(&ManagedWorktreeRecord {
+            id: "blocked_path".into(),
+            repo_root: workspace.canonical_root.clone(),
+            worktree_root: temp.path().display().to_string(),
+            worktree_cwd: root.join("no-checkout").display().to_string(),
+            branch_name: "gg/missing".into(),
+            worktree_name: "before-everything".into(),
+            unified_workspace_path: "status-projection".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: None,
+            created_by_operation_id: None,
+            created_at: 1,
+            updated_at: 1,
+        })
+        .unwrap();
+    let connection = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let original_policy: String = connection
+        .query_row(
+            "SELECT recreation_policy_json FROM workspace_agents WHERE session_id=?1",
+            [&agent.agent_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut policy: serde_json::Value = serde_json::from_str(&original_policy).unwrap();
+    policy["authoritative_cwd"] = serde_json::json!(linked);
+    connection
+        .execute(
+            "UPDATE workspace_agents SET recreation_policy_json=?1 WHERE session_id=?2",
+            rusqlite::params![policy.to_string(), agent.agent_id],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE sessions SET cwd=?1 WHERE id=?2",
+            rusqlite::params![linked, agent.agent_id],
+        )
+        .unwrap();
+    drop(connection);
+
+    let reopened = super::operator_agent_create::reopened_runtime(&temp, provider).await;
+    let full = reopened
+        .list_workspace_worktree_inventory(&workspace.workspace_id)
+        .unwrap();
+    let mut expected = full
+        .worktrees
+        .iter()
+        .filter(|entry| entry.eligible_for_assignment)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(expected.len(), 26);
+    expected.sort_by(|left, right| {
+        (&left.normalized_name, &left.branch_name, &left.worktree_id).cmp(&(
+            &right.normalized_name,
+            &right.branch_name,
+            &right.worktree_id,
+        ))
+    });
+    expected.truncate(20);
+    let full_attached = full
+        .worktrees
+        .iter()
+        .filter(|entry| entry.attached_agent_ids.contains(&agent.agent_id))
+        .min_by(|left, right| {
+            (&left.normalized_name, &left.worktree_id)
+                .cmp(&(&right.normalized_name, &right.worktree_id))
+        })
+        .unwrap();
+    let displayed = vec![(agent.agent_id.clone(), linked.clone())];
+    let summary = reopened
+        .summarize_workspace_worktrees_for_status(&workspace.workspace_id, &displayed, 20)
+        .unwrap();
+    assert_eq!(summary.eligible_total, 26);
+    assert_eq!(summary.available, expected);
+    assert_eq!(
+        summary.displayed_agent_worktrees[&agent.agent_id],
+        *full_attached
+    );
+    let repeated = reopened
+        .summarize_workspace_worktrees_for_status(&workspace.workspace_id, &displayed, 20)
+        .unwrap();
+    assert_eq!(repeated.available, summary.available);
+    assert_eq!(repeated.eligible_total, summary.eligible_total);
+}

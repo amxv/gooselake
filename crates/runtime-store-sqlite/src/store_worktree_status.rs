@@ -42,6 +42,22 @@ macro_rules! delegate_worktree_status {
                 .list_managed_worktree_status_for_root(canonical_repo_root)
         }
 
+        fn visit_managed_worktree_status_for_root(
+            &self,
+            canonical_repo_root: &str,
+            workspace_id: &str,
+            visitor: &mut dyn FnMut(
+                runtime_core::ManagedWorktreeStatusProjection,
+                Vec<String>,
+            ) -> Result<(), runtime_core::RuntimeError>,
+        ) -> Result<(), runtime_core::RuntimeError> {
+            self.repository.visit_managed_worktree_status_for_root(
+                canonical_repo_root,
+                workspace_id,
+                visitor,
+            )
+        }
+
         fn list_managed_worktree_status_for_root_page(
             &self,
             canonical_repo_root: &str,

@@ -31,6 +31,37 @@ macro_rules! default_worktree_status_query {
             }
             Ok(output)
         }
+        // Non-SQLite backends retain their existing complete inventory path.
+        // SQLite overrides this visitor with one bounded, read-snapshot walk.
+        fn visit_managed_worktree_status_for_root(
+            &self,
+            canonical_repo_root: &str,
+            workspace_id: &str,
+            visitor: &mut dyn FnMut(
+                crate::ManagedWorktreeStatusProjection,
+                Vec<String>,
+            ) -> Result<(), crate::RuntimeError>,
+        ) -> Result<(), crate::RuntimeError> {
+            let mut attached_by_cwd: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            for route in self.list_workspace_active_agent_routes(workspace_id)? {
+                attached_by_cwd
+                    .entry(route.authoritative_cwd)
+                    .or_default()
+                    .push(route.agent_id);
+            }
+            for attached in attached_by_cwd.values_mut() {
+                attached.sort();
+            }
+            for projection in self.list_managed_worktree_status_for_root(canonical_repo_root)? {
+                let attached = attached_by_cwd
+                    .get(&projection.worktree.worktree_cwd)
+                    .cloned()
+                    .unwrap_or_default();
+                visitor(projection, attached)?;
+            }
+            Ok(())
+        }
         crate::services_worktree_status_trait::default_worktree_status_page_query!();
     };
 }

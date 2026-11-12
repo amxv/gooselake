@@ -322,7 +322,7 @@ fn append_worktree_page_candidates(
     Ok(())
 }
 
-fn worktree_from_row(row: &Row<'_>) -> rusqlite::Result<ManagedWorktreeRecord> {
+pub(crate) fn worktree_from_row(row: &Row<'_>) -> rusqlite::Result<ManagedWorktreeRecord> {
     Ok(ManagedWorktreeRecord {
         id: row.get(0)?,
         repo_root: row.get(1)?,

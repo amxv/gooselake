@@ -85,7 +85,7 @@ impl SqliteRuntimeRepository {
     }
 }
 
-fn decode_active_route(
+pub(crate) fn decode_active_route(
     (agent_id, policy_json): (String, String),
 ) -> Result<WorkspaceActiveAgentRoute, RuntimeError> {
     let policy: WorkspaceAgentRecreationPolicy =

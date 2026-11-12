@@ -40,6 +40,7 @@ mod provider_terminal_events;
 mod session_lifecycle_events;
 mod team_operation_journal_scale;
 mod team_spawn_onboarding_scale;
+mod workspace_active_route_pages;
 mod workspace_agent_lifecycle_native_fences;
 mod workspace_notice_policy_idempotency;
 mod workspace_retirement;

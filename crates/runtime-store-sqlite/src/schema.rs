@@ -1,4 +1,4 @@
-pub(crate) const SCHEMA_VERSION: i64 = 34;
+pub(crate) const SCHEMA_VERSION: i64 = 35;
 
 #[path = "schema_chain.rs"]
 mod schema_chain;

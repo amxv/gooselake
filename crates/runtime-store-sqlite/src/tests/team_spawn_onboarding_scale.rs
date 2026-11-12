@@ -10,7 +10,8 @@ fn schema_31_upgrade_preserves_two_thousand_deliveries_and_indexes_original_onbo
     // Simulate an isolated v31 database, not a designated live user's DB.
     connection
         .execute_batch(
-            "DROP INDEX idx_managed_worktrees_repo_name_id;
+            "DROP INDEX idx_workspace_agents_active_route_cwd;
+             DROP INDEX idx_managed_worktrees_repo_name_id;
              DROP TRIGGER trg_spawn_deletion_fence_journal_insert;
              DROP TRIGGER trg_spawn_deletion_fence_journal_update;
              DROP TRIGGER trg_spawn_deletion_fence_journal_delete;
@@ -20,7 +21,7 @@ fn schema_31_upgrade_preserves_two_thousand_deliveries_and_indexes_original_onbo
              DROP VIEW team_spawn_deletion_fence_candidates;
              DROP TABLE team_spawn_deletion_fence;
              DROP INDEX idx_team_deliveries_by_message;
-             DELETE FROM schema_migrations WHERE version IN (32,33,34);",
+             DELETE FROM schema_migrations WHERE version IN (32,33,34,35);",
         )
         .unwrap();
     let transaction = connection.transaction().unwrap();

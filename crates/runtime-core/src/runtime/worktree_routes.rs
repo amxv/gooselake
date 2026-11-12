@@ -72,9 +72,21 @@ impl RuntimeSessionManager {
                 true,
             )
         };
-        let active_routes = self
-            .store
-            .list_workspace_active_agent_routes(workspace_id)?;
+        let active_routes = if page.is_some() {
+            // Only paths in this page can contribute an attached ID. The
+            // complete selected worktree claim sets still identify foreign
+            // or stale owners and must not be filtered by this optimization.
+            let selected_cwds = scoped
+                .iter()
+                .filter(|row| !row.worktree.worktree_cwd.starts_with("__gg_tombstoned__/"))
+                .map(|row| row.worktree.worktree_cwd.clone())
+                .collect::<Vec<_>>();
+            self.store
+                .list_workspace_active_agent_routes_for_cwds(workspace_id, &selected_cwds)?
+        } else {
+            self.store
+                .list_workspace_active_agent_routes(workspace_id)?
+        };
         let mut attached_by_cwd: HashMap<&str, Vec<String>> = HashMap::new();
         for route in &active_routes {
             attached_by_cwd

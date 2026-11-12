@@ -3,7 +3,7 @@ use super::*;
 
 #[tokio::test]
 async fn http_worktree_pages_match_full_authority_across_large_alias_catalog() {
-    let (router, token, temp, provider, workspace, _, _) = fixture().await;
+    let (router, token, temp, provider, workspace, source_agent, linked) = fixture().await;
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp.path().join("runtime.sqlite3"),
     });
@@ -57,6 +57,53 @@ async fn http_worktree_pages_match_full_authority_across_large_alias_catalog() {
         })
         .unwrap();
 
+    // More than one model-facing roster page of independent active agents
+    // must not be decoded for every 37-worktree HTTP page. Some are actually
+    // attached to selected routes, the rest have unrelated CWDs.
+    for index in 0..150 {
+        let agent_id = format!("inventory_agent_{index:03}");
+        let cwd = if index < 35 {
+            linked.clone()
+        } else if index < 70 {
+            temp.path().join("page_0000").display().to_string()
+        } else {
+            temp.path()
+                .join(format!("unrelated-agent-{index:03}"))
+                .display()
+                .to_string()
+        };
+        let session = runtime_core::SessionRecord {
+            id: agent_id.clone(),
+            provider: "codex".into(),
+            status: "ready".into(),
+            cwd: Some(cwd.clone()),
+            model: Some("test-model".into()),
+            permission_mode: Some("workspace_write".into()),
+            system_prompt: None,
+            metadata: serde_json::json!({}),
+            provider_session_ref: Some(format!("native-{agent_id}")),
+            canonical_provider_session_ref: None,
+            active_turn_id: None,
+            worktree_id: None,
+            created_at: 100,
+            updated_at: 100,
+            closed_at: None,
+            failure_code: None,
+            failure_message: None,
+        };
+        let mut agent = source_agent.clone();
+        agent.agent_id = agent_id.clone();
+        agent.alias = format!("inventory-{index:03}");
+        agent.profile.title = Some(format!("Inventory agent {index}"));
+        agent.profile.added_by = "runtime_operator".into();
+        agent.profile.creator_session_id = None;
+        agent.recreation_policy.authoritative_cwd = cwd;
+        agent.provider_session_ref = session.provider_session_ref.clone();
+        agent.canonical_provider_session_ref = None;
+        agent.metadata = session.metadata.clone();
+        store.create_workspace_agent(&session, &agent).unwrap();
+    }
+
     let uri = format!("/v2/workspaces/{}/worktrees", workspace.workspace_id);
     let mut cursor: Option<String> = None;
     let mut observed = Vec::new();
@@ -98,6 +145,24 @@ async fn http_worktree_pages_match_full_authority_across_large_alias_catalog() {
         .list_workspace_worktree_inventory(&workspace.workspace_id)
         .unwrap();
     assert_eq!(observed.len(), 216, "linked worktree plus 215 candidates");
+    assert_eq!(
+        observed
+            .iter()
+            .find(|entry| entry.worktree_id == "wt_linked")
+            .unwrap()
+            .attached_agent_ids
+            .len(),
+        35,
+    );
+    assert_eq!(
+        observed
+            .iter()
+            .find(|entry| entry.worktree_id == "page_0000")
+            .unwrap()
+            .attached_agent_ids
+            .len(),
+        35,
+    );
     assert_eq!(
         observed, complete.worktrees,
         "HTTP pages must exactly match the full authoritative projection"

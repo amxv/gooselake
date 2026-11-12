@@ -17,6 +17,15 @@ macro_rules! delegate_workspace_status_roster {
             self.repository
                 .list_workspace_active_agent_routes(workspace_id)
         }
+
+        fn list_workspace_active_agent_routes_for_cwds(
+            &self,
+            workspace_id: &str,
+            cwds: &[String],
+        ) -> Result<Vec<runtime_core::WorkspaceActiveAgentRoute>, runtime_core::RuntimeError> {
+            self.repository
+                .list_workspace_active_agent_routes_for_cwds(workspace_id, cwds)
+        }
     };
 }
 

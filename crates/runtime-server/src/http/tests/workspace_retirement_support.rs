@@ -19,6 +19,7 @@ pub(super) struct RetirementProvider {
     pub(super) interrupts: AtomicUsize,
     pub(super) approval_responses: AtomicUsize,
     pub(super) fail_close: AtomicBool,
+    pub(super) fail_next_wait: AtomicBool,
 }
 
 pub(super) struct RetirementInterruptGate {
@@ -50,6 +51,7 @@ impl RetirementProvider {
             interrupts: AtomicUsize::new(0),
             approval_responses: AtomicUsize::new(0),
             fail_close: AtomicBool::new(false),
+            fail_next_wait: AtomicBool::new(false),
         })
     }
 
@@ -205,6 +207,11 @@ impl RuntimeProvider for RetirementProvider {
         &self,
         request: ProviderWaitTurnRequest,
     ) -> Result<ProviderTurnResult, RuntimeError> {
+        if self.fail_next_wait.swap(false, Ordering::SeqCst) {
+            return Err(RuntimeError::Io(
+                "controlled native provider wait failure".into(),
+            ));
+        }
         loop {
             let changed = self.changed.notified();
             let status = self

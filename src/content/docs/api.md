@@ -1346,7 +1346,15 @@ The deterministic terminal receipt survives restart and SSE replay; a journal
 fault cannot leave a half-terminalized turn/session, and a lost receipt does
 not authorize resending native work. A result from an older detached turn
 cannot clear a newer active session. Provider wait errors and provider-native
-approval transitions have separate recovery paths, not this atomic receipt.
+approval transitions have **separate atomic recovery receipts**; the terminal
+result's event does not substitute for either of them. For an active provider
+wait error, the failed turn, detached session and critical `provider.error`
+event are committed together. An ambiguous provider event-stream observation
+instead preserves the active turn for recovery and commits its
+`turn_recovery_required` session and critical
+`provider.event_stream_unknown` receipt together. Journal failure rolls back
+all affected state; neither outcome can blindly resend possibly executed
+native work, and a later wait error cannot clear an existing quarantine.
 
 A **provider-native approval request** observed after turn dispatch now also
 commits its pending approval identity, the waiting turn/session state, and one
@@ -1378,8 +1386,8 @@ executed native action retryable. Journal faults roll back the outcome
 transaction, a duplicate/lost commit receipt is reconciled without a new
 provider decision, and a provider turn already completed concurrently is not
 resurrected or used to overwrite a newer session attachment. These rules do
-not claim atomicity for every other provider-wait/session or legacy `/v1`
-event family.
+not claim atomicity for other session lifecycle or legacy `/v1` event
+families.
 
 The response is an accepted turn, not necessarily terminal output:
 

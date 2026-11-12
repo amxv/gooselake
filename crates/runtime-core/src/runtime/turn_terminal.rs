@@ -56,6 +56,17 @@ fn stale_callback_reason(
     if session.active_turn_id.as_deref() != Some(turn_id) {
         return Some("turn_no_longer_active");
     }
+    // A provider error is not independent evidence that a quarantined native
+    // effect stopped. Never turn a previously ambiguous provider stream or
+    // approval decision into a retryable terminal failure by observation.
+    if session.status == "turn_recovery_required"
+        || matches!(
+            turn.status.as_str(),
+            "provider_event_recovery_required" | "approval_decision_unknown"
+        )
+    {
+        return Some("turn_recovery_quarantined");
+    }
     None
 }
 
@@ -83,21 +94,52 @@ impl RuntimeSessionManager {
         let session = sessions.get(session_id).cloned();
         let preserved = stale_callback_reason(turn.as_ref(), session.as_ref(), turn_id);
         if preserved.is_none() {
-            let mut turn = turn.expect("current callback turn");
-            turn.status = "provider_event_recovery_required".into();
-            turn.error = Some(serde_json::json!({"code":code,"message":message}));
-            self.store.upsert_turn(&turn)?;
-            turns.insert(turn.id.clone(), turn);
-            let mut session = session.expect("current callback session");
-            session.status = "turn_recovery_required".into();
-            session.failure_code = Some(code.into());
-            session.failure_message = Some(message.clone());
-            session.updated_at = now_ms();
-            self.store.upsert_session(&session)?;
-            sessions.insert(session.id.clone(), session);
+            let before_turn = turn.expect("current callback turn");
+            let before_session = session.expect("current callback session");
+            let mut updated_turn = before_turn.clone();
+            updated_turn.status = "provider_event_recovery_required".into();
+            updated_turn.error = Some(serde_json::json!({"code":code,"message":message}));
+            let mut updated_session = before_session.clone();
+            updated_session.status = "turn_recovery_required".into();
+            updated_session.failure_code = Some(code.into());
+            updated_session.failure_message = Some(message.clone());
+            updated_session.updated_at = now_ms();
+            let event = NewRuntimeEvent {
+                event_id: format!("evt_turn_{turn_id}_event_stream_unknown"),
+                scope: RuntimeEventScope::Session,
+                scope_id: session_id.to_string(),
+                session_id: Some(session_id.to_string()),
+                team_id: None,
+                turn_id: Some(turn_id.to_string()),
+                kind: "provider.event_stream_unknown".into(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: serde_json::json!({"code":code,"message":message}),
+                provider: None,
+                provider_seq: None,
+                created_at: now_ms(),
+            };
+            let committed = self.store.commit_provider_failure_result(
+                &before_turn,
+                &updated_turn,
+                &before_session,
+                &updated_session,
+                &event,
+            )?;
+            turns.insert(committed.turn.id.clone(), committed.turn);
+            if let Some(session) = committed.session {
+                sessions.insert(session.id.clone(), session);
+            }
+            drop(sessions);
+            drop(turns);
+            let _ = self.event_tx.send(committed.event);
+            return Ok(());
         }
         drop(sessions);
         drop(turns);
+        if preserved == Some("turn_recovery_quarantined") {
+            // First durable ambiguous-outcome receipt remains authoritative.
+            return Ok(());
+        }
         let mut payload = serde_json::json!({"code":code,"message":message});
         if let Some(reason) = preserved {
             payload["state_preserved"] = true.into();
@@ -284,20 +326,47 @@ impl RuntimeSessionManager {
         let session = sessions.get(session_id).cloned();
         let preserved = stale_callback_reason(turn.as_ref(), session.as_ref(), turn_id);
         if preserved.is_none() {
-            let mut turn = turn.expect("current callback turn");
-            turn.status = "failed".into();
-            turn.completed_at = Some(now_ms());
-            turn.error = Some(serde_json::json!({"message":error.to_string()}));
-            self.store.upsert_turn(&turn)?;
-            turns.insert(turn.id.clone(), turn);
-            let mut session = session.expect("current callback session");
-            session.active_turn_id = None;
-            session.status = "failed".into();
-            session.failure_code = Some("provider_wait_failure".into());
-            session.failure_message = Some(error.to_string());
-            session.updated_at = now_ms();
-            self.store.upsert_session(&session)?;
-            sessions.insert(session.id.clone(), session);
+            let before_turn = turn.expect("current callback turn");
+            let before_session = session.expect("current callback session");
+            let mut updated_turn = before_turn.clone();
+            updated_turn.status = "failed".into();
+            updated_turn.completed_at = Some(now_ms());
+            updated_turn.error = Some(serde_json::json!({"message":error.to_string()}));
+            let mut updated_session = before_session.clone();
+            updated_session.active_turn_id = None;
+            updated_session.status = "failed".into();
+            updated_session.failure_code = Some("provider_wait_failure".into());
+            updated_session.failure_message = Some(error.to_string());
+            updated_session.updated_at = now_ms();
+            let event = NewRuntimeEvent {
+                event_id: format!("evt_turn_{turn_id}_wait_failure"),
+                scope: RuntimeEventScope::Session,
+                scope_id: session_id.to_string(),
+                session_id: Some(session_id.to_string()),
+                team_id: None,
+                turn_id: Some(turn_id.to_string()),
+                kind: "provider.error".into(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: serde_json::json!({"error":error.to_string()}),
+                provider: None,
+                provider_seq: None,
+                created_at: now_ms(),
+            };
+            let committed = self.store.commit_provider_failure_result(
+                &before_turn,
+                &updated_turn,
+                &before_session,
+                &updated_session,
+                &event,
+            )?;
+            turns.insert(committed.turn.id.clone(), committed.turn);
+            if let Some(session) = committed.session {
+                sessions.insert(session.id.clone(), session);
+            }
+            drop(sessions);
+            drop(turns);
+            let _ = self.event_tx.send(committed.event);
+            return Ok(());
         }
         drop(sessions);
         drop(turns);

@@ -80,6 +80,7 @@ mod pre_dispatch_approval_journal_assertions;
 mod process_lifecycle_journal_http;
 mod process_more;
 mod provider_contract_routes;
+mod provider_failure_journal_http;
 mod scoped_mcp;
 mod session_basics;
 mod session_terminal_journal_http;

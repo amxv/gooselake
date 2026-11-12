@@ -56,6 +56,23 @@ macro_rules! provider_terminal_methods {
                 "atomic provider terminal result and event journal unavailable".into(),
             ))
         }
+
+        /// An unsuccessful provider wait or lost native event stream is
+        /// observed *after* a potentially dispatched turn. Its guarded turn
+        /// and session projections must commit together with the critical
+        /// recovery/error receipt. No journal fault can reopen native send.
+        fn commit_provider_failure_result(
+            &self,
+            _previous_turn: &crate::TurnRecord,
+            _updated_turn: &crate::TurnRecord,
+            _previous_session: &crate::SessionRecord,
+            _updated_session: &crate::SessionRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<crate::ProviderTerminalCommit, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic provider failure and critical event journal unavailable".into(),
+            ))
+        }
     };
 }
 pub(super) use provider_terminal_methods;

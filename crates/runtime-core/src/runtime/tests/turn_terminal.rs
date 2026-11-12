@@ -2,7 +2,170 @@ use std::sync::Arc;
 
 use super::super::test_support::MockStore;
 use super::*;
-use crate::RuntimeSessionManager;
+use crate::{RuntimeEventCriticality, RuntimeSessionManager};
+
+#[tokio::test]
+async fn failed_native_event_stream_journal_never_publishes_partial_recovery_state() {
+    let (manager, store, session, turn) = fixture(false).await;
+    *store.fail_next_event_append_for_kind.lock().unwrap() =
+        Some("provider.event_stream_unknown".into());
+    assert!(manager
+        .mark_provider_event_stream_unknown(
+            &session.id,
+            &turn.id,
+            "stream_lost",
+            "native stream disconnected".into(),
+        )
+        .await
+        .is_err());
+    assert_eq!(manager.sessions.read().await[&session.id], session);
+    assert_eq!(manager.turns.read().await[&turn.id], turn);
+    assert_eq!(store.sessions.lock().unwrap()[&session.id], session);
+    assert_eq!(store.turns.lock().unwrap()[&turn.id], turn);
+    assert!(store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|row| row.kind != "provider.event_stream_unknown"));
+
+    manager
+        .mark_provider_event_stream_unknown(
+            &session.id,
+            &turn.id,
+            "stream_lost",
+            "native stream disconnected".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        manager.sessions.read().await[&session.id].status,
+        "turn_recovery_required"
+    );
+    assert_eq!(
+        manager.turns.read().await[&turn.id].status,
+        "provider_event_recovery_required"
+    );
+    let events = store.events.lock().unwrap();
+    let result = events
+        .iter()
+        .find(|row| row.kind == "provider.event_stream_unknown")
+        .unwrap();
+    assert_eq!(
+        result.event_id,
+        format!("evt_turn_{}_event_stream_unknown", turn.id)
+    );
+    assert_eq!(result.criticality, RuntimeEventCriticality::Critical);
+    assert_eq!(result.payload["code"], "stream_lost");
+    drop(events);
+    manager
+        .mark_provider_event_stream_unknown(
+            &session.id,
+            &turn.id,
+            "another_error",
+            "different response".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|row| row.kind == "provider.event_stream_unknown")
+            .count(),
+        1,
+        "the first durable quarantine remains canonical"
+    );
+}
+
+#[tokio::test]
+async fn failed_native_wait_journal_never_partially_terminalizes_turn_or_session() {
+    let (manager, store, session, turn) = fixture(false).await;
+    *store.fail_next_event_append_for_kind.lock().unwrap() = Some("provider.error".into());
+    let err = RuntimeError::Io("native provider wait failed".into());
+    assert!(manager
+        .apply_terminal_failure(&session.id, &turn.id, err)
+        .await
+        .is_err());
+    assert_eq!(manager.sessions.read().await[&session.id], session);
+    assert_eq!(manager.turns.read().await[&turn.id], turn);
+    assert_eq!(store.sessions.lock().unwrap()[&session.id], session);
+    assert_eq!(store.turns.lock().unwrap()[&turn.id], turn);
+    assert!(store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|row| row.kind != "provider.error"));
+
+    manager
+        .apply_terminal_failure(
+            &session.id,
+            &turn.id,
+            RuntimeError::Io("native provider wait failed".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(manager.sessions.read().await[&session.id].status, "failed");
+    assert_eq!(
+        manager.sessions.read().await[&session.id].active_turn_id,
+        None
+    );
+    assert_eq!(manager.turns.read().await[&turn.id].status, "failed");
+    assert!(manager.turns.read().await[&turn.id].completed_at.is_some());
+    let events = store.events.lock().unwrap();
+    let result = events
+        .iter()
+        .find(|row| row.kind == "provider.error")
+        .unwrap();
+    assert_eq!(
+        result.event_id,
+        format!("evt_turn_{}_wait_failure", turn.id)
+    );
+    assert_eq!(result.criticality, RuntimeEventCriticality::Critical);
+    drop(events);
+}
+
+#[tokio::test]
+async fn late_wait_error_cannot_clear_previously_unknown_native_effect_quarantine() {
+    let (manager, store, session, turn) = fixture(false).await;
+    manager
+        .mark_provider_event_stream_unknown(
+            &session.id,
+            &turn.id,
+            "native_stream_ambiguous",
+            "read side disappeared".into(),
+        )
+        .await
+        .unwrap();
+    let before_session = manager.sessions.read().await[&session.id].clone();
+    let before_turn = manager.turns.read().await[&turn.id].clone();
+    manager
+        .apply_terminal_failure(
+            &session.id,
+            &turn.id,
+            RuntimeError::Io("follow-on wait error".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(manager.sessions.read().await[&session.id], before_session);
+    assert_eq!(manager.turns.read().await[&turn.id], before_turn);
+    assert_eq!(store.sessions.lock().unwrap()[&session.id], before_session);
+    assert_eq!(store.turns.lock().unwrap()[&turn.id], before_turn);
+    let errors = store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|row| row.kind == "provider.error")
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].payload["state_preserved"], true);
+    assert_eq!(errors[0].payload["reason"], "turn_recovery_quarantined");
+}
 
 async fn fixture(
     operator_closed: bool,

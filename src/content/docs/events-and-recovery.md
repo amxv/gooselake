@@ -118,9 +118,24 @@ commit can be inspected by that durable receipt on restart without invoking
 the provider again. A late result for a superseded, no-longer-active turn may
 terminalize only that historical turn, never the newer active session.
 Provider wait failures, nonterminal dispatch transitions and older legacy
-team paths are **separate** event-authority cases and are not certified atomic
-by this result path. Provider-native approval outcomes have their own separate
-receipts described below.
+team paths are **separate** event-authority cases; none is implied by this
+terminal-result transaction. Provider wait failures and native approval
+outcomes have their own receipts below.
+
+An **active provider wait failure** now commits the failed turn, detached
+failed session and deterministic critical `provider.error` journal receipt in
+one guarded SQLite transaction. A lost or ambiguous **provider event stream**
+instead commits a nonterminal `provider_event_recovery_required` turn, active
+`turn_recovery_required` session and deterministic critical
+`provider.event_stream_unknown` event in one transaction. Either critical
+event fault rolls back both projections; a restart/lost local reply uses the
+prior exact receipt rather than resending native work. Independently racing
+terminal/wait/stream outcomes or a stale session owner cannot overwrite one
+another. A later unsupported wait error cannot silently turn an **already
+quarantined unknown native effect** into a terminal failure or authorize a
+retry. Late callbacks for operator-closed, terminal or detached turns remain
+state-preserving audit observations. Other session-creation/closure/dispatch
+event families and legacy `/v1` team paths still need independent review.
 
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical
@@ -157,8 +172,8 @@ terminal state and the newer session attachment are preserved rather than
 reopened by the approval result. Missing/stale ownership fails closed; only
 the provider adapter's proven-not-dispatched response can release the exact
 attempt. These guarantees apply to new native approval outcomes, **not**
-legacy missing receipts, other provider wait/session lifecycle families or
-every `/v1` team event. Historical approvals are not given fabricated
+legacy missing receipts, other session lifecycle event families or every
+`/v1` team event. Historical approvals are not given fabricated
 reservation/no-effect/outcome events.
 
 ## Replay before live

@@ -38,6 +38,7 @@ mod provider_failure_events;
 mod provider_native_approval_events;
 mod provider_terminal_events;
 mod session_lifecycle_events;
+mod team_operation_journal_scale;
 mod workspace_agent_lifecycle_native_fences;
 mod workspace_notice_policy_idempotency;
 mod workspace_retirement;

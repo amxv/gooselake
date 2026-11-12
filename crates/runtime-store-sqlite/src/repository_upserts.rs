@@ -645,18 +645,20 @@ impl SqliteRuntimeRepository {
         record: &TeamOperationJournalRecord,
     ) -> Result<(), RuntimeError> {
         let connection = open_connection(&self.database_path)?;
-        connection
+        // The operation ID is the durable native-effect coordinate. The first
+        // writer owns its team/kind/creation time; later stage changes must
+        // not rewrite that evidence or require a whole-team history scan.
+        let changed = connection
             .execute(
                 "INSERT INTO team_operation_journal (
                     operation_id, team_id, kind, stage, payload_json, created_at, updated_at
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(operation_id) DO UPDATE SET
-                    team_id = excluded.team_id,
-                    kind = excluded.kind,
                     stage = excluded.stage,
                     payload_json = excluded.payload_json,
-                    created_at = excluded.created_at,
-                    updated_at = excluded.updated_at",
+                    updated_at = excluded.updated_at
+                 WHERE team_operation_journal.team_id = excluded.team_id
+                   AND team_operation_journal.kind = excluded.kind",
                 params![
                     record.operation_id,
                     record.team_id,
@@ -668,6 +670,12 @@ impl SqliteRuntimeRepository {
                 ],
             )
             .map_err(|error| db_error("failed upserting team operation journal row", error))?;
+        if changed != 1 {
+            return Err(RuntimeError::Conflict(format!(
+                "team operation {} cannot change its immutable team or kind",
+                record.operation_id
+            )));
+        }
         Ok(())
     }
 

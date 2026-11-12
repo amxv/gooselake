@@ -132,12 +132,8 @@ impl RuntimeWorktreeService {
         payload: serde_json::Value,
     ) -> Result<(), RuntimeError> {
         let now = now_ms();
-        let existing = self
-            .store
-            .list_team_operation_journal(Some(team_id))?
-            .into_iter()
-            .find(|row| row.operation_id == operation_id);
-        let created_at = existing.map(|row| row.created_at).unwrap_or(now);
+        // The store preserves the first admission's created_at on every
+        // stage update. Never load the team's entire journal on this hot path.
         self.store
             .upsert_team_operation_journal(&runtime_core::TeamOperationJournalRecord {
                 operation_id: operation_id.to_string(),
@@ -145,7 +141,7 @@ impl RuntimeWorktreeService {
                 kind: "spawn_member_with_worktree".to_string(),
                 stage: stage.to_string(),
                 payload,
-                created_at,
+                created_at: now,
                 updated_at: now,
             })
     }

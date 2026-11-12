@@ -174,62 +174,54 @@ impl SqliteRuntimeRepository {
             return Ok((Vec::new(), false));
         }
 
-        let roots = {
+        let page_size = i64::try_from(limit).expect("bounded worktree page fits i64");
+        let mut selected = Vec::new();
+        // A legacy alias may resolve differently after a filesystem symlink
+        // changes, so a stale persisted canonical-root lookup is not safe.
+        // Stream DISTINCT spellings rather than materializing a potentially
+        // enormous global root catalog (or even all matching aliases). Only
+        // 200 aliases and at most one page of candidates reside in memory.
+        {
             let mut statement = transaction
                 .prepare("SELECT DISTINCT repo_root FROM managed_worktrees ORDER BY repo_root")
                 .map_err(|error| db_error("failed preparing paged worktree roots", error))?;
-            let rows = statement
-                .query_map([], |row| row.get::<_, String>(0))
+            let mut rows = statement
+                .query([])
                 .map_err(|error| db_error("failed querying paged worktree roots", error))?;
-            collect_rows(rows)?
-        };
-        let matching_roots = roots
-            .into_iter()
-            .filter(|root| std::fs::canonicalize(root).ok().as_deref() == Some(requested_root))
-            .collect::<Vec<_>>();
-        let page_size = i64::try_from(limit).expect("bounded worktree page fits i64");
-        let mut selected = Vec::new();
-        // Per-root index walks stop after one page; a repository with many
-        // historical alias roots merges those bounded candidates, never all
-        // worktrees. The final claim query only touches winning IDs.
-        for chunk in matching_roots.chunks(200) {
-            let placeholders = vec!["?"; chunk.len()].join(", ");
-            let mut arguments: Vec<&dyn ToSql> =
-                chunk.iter().map(|root| root as &dyn ToSql).collect();
-            let after_clause = if let Some((name, id)) = after.as_ref() {
-                arguments.extend([name as &dyn ToSql, id as &dyn ToSql]);
-                "AND (worktree_name, id) > (?, ?)"
-            } else {
-                ""
-            };
-            arguments.push(&page_size);
-            let sql = format!(
-                "SELECT id, repo_root, worktree_root, worktree_cwd, branch_name,
-                        worktree_name, unified_workspace_path, deletion_policy,
-                        created_by_session_id, created_by_operation_id,
-                        created_at, updated_at, revision
-                 FROM managed_worktrees
-                 WHERE repo_root IN ({placeholders})
-                   AND worktree_cwd NOT GLOB '__gg_tombstoned__/*'
-                   {after_clause}
-                 ORDER BY worktree_name ASC, id ASC LIMIT ?"
-            );
-            let mut statement = transaction
-                .prepare(&sql)
-                .map_err(|error| db_error("failed preparing paged worktree records", error))?;
-            let rows = statement
-                .query_map(params_from_iter(arguments), |row| {
-                    Ok((worktree_from_row(row)?, row.get::<_, i64>(12)?))
-                })
-                .map_err(|error| db_error("failed querying paged worktree records", error))?;
-            selected.extend(collect_rows(rows)?);
-            selected.sort_by(|left: &(ManagedWorktreeRecord, i64), right| {
-                left.0
-                    .worktree_name
-                    .cmp(&right.0.worktree_name)
-                    .then(left.0.id.cmp(&right.0.id))
-            });
-            selected.truncate(limit);
+            let mut matching_roots = Vec::with_capacity(200);
+            while let Some(row) = rows
+                .next()
+                .map_err(|error| db_error("failed reading paged worktree roots", error))?
+            {
+                let root: String = row
+                    .get(0)
+                    .map_err(|error| db_error("failed decoding paged worktree root", error))?;
+                if std::fs::canonicalize(&root).ok().as_deref() != Some(requested_root) {
+                    continue;
+                }
+                matching_roots.push(root);
+                if matching_roots.len() == 200 {
+                    append_worktree_page_candidates(
+                        &transaction,
+                        &matching_roots,
+                        after,
+                        page_size,
+                        limit,
+                        &mut selected,
+                    )?;
+                    matching_roots.clear();
+                }
+            }
+            if !matching_roots.is_empty() {
+                append_worktree_page_candidates(
+                    &transaction,
+                    &matching_roots,
+                    after,
+                    page_size,
+                    limit,
+                    &mut selected,
+                )?;
+            }
         }
 
         let mut active_claims: HashMap<String, Vec<String>> = HashMap::new();
@@ -278,6 +270,56 @@ impl SqliteRuntimeRepository {
             .collect::<Result<Vec<_>, RuntimeError>>()?;
         Ok((page, true))
     }
+}
+
+// Per-alias-chunk indexed walks stop after one page; merge winning candidates
+// across all chunks before fetching only their live claims. This deliberately
+// does not cache filesystem alias identity or change cursor membership rules.
+fn append_worktree_page_candidates(
+    transaction: &rusqlite::Transaction<'_>,
+    roots: &[String],
+    after: Option<(&str, &str)>,
+    page_size: i64,
+    limit: usize,
+    selected: &mut Vec<(ManagedWorktreeRecord, i64)>,
+) -> Result<(), RuntimeError> {
+    let placeholders = vec!["?"; roots.len()].join(", ");
+    let mut arguments: Vec<&dyn ToSql> = roots.iter().map(|root| root as &dyn ToSql).collect();
+    let after_clause = if let Some((name, id)) = after.as_ref() {
+        arguments.extend([name as &dyn ToSql, id as &dyn ToSql]);
+        "AND (worktree_name, id) > (?, ?)"
+    } else {
+        ""
+    };
+    arguments.push(&page_size);
+    let sql = format!(
+        "SELECT id, repo_root, worktree_root, worktree_cwd, branch_name,
+                worktree_name, unified_workspace_path, deletion_policy,
+                created_by_session_id, created_by_operation_id,
+                created_at, updated_at, revision
+         FROM managed_worktrees
+         WHERE repo_root IN ({placeholders})
+           AND worktree_cwd NOT GLOB '__gg_tombstoned__/*'
+           {after_clause}
+         ORDER BY worktree_name ASC, id ASC LIMIT ?"
+    );
+    let mut statement = transaction
+        .prepare(&sql)
+        .map_err(|error| db_error("failed preparing paged worktree records", error))?;
+    let rows = statement
+        .query_map(params_from_iter(arguments), |row| {
+            Ok((worktree_from_row(row)?, row.get::<_, i64>(12)?))
+        })
+        .map_err(|error| db_error("failed querying paged worktree records", error))?;
+    selected.extend(collect_rows(rows)?);
+    selected.sort_by(|left, right| {
+        left.0
+            .worktree_name
+            .cmp(&right.0.worktree_name)
+            .then(left.0.id.cmp(&right.0.id))
+    });
+    selected.truncate(limit);
+    Ok(())
 }
 
 fn worktree_from_row(row: &Row<'_>) -> rusqlite::Result<ManagedWorktreeRecord> {

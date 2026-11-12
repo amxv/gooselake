@@ -418,3 +418,193 @@ fn migration_34_pages_two_thousand_worktrees_with_aliases_claims_and_exact_curso
         "{index_plan}"
     );
 }
+
+#[test]
+fn paged_worktree_inventory_preserves_all_aliases_across_bounded_root_batches() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("runtime.sqlite3");
+    let root = temp.path().join("repository");
+    let foreign = temp.path().join("foreign");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&foreign).unwrap();
+    let canonical = std::fs::canonicalize(&root).unwrap();
+    let canonical_text = canonical.display().to_string();
+    let repository = SqliteRuntimeRepository::new(path.clone());
+    repository.initialize_schema().unwrap();
+
+    // 245 distinct aliases point at the same real repo, and 900 additional
+    // distinct historical paths do not. Neither count may change the page
+    // membership, claim authority, cursor validity, or sorting on ties.
+    let mut connection = Connection::open(&path).unwrap();
+    let transaction = connection.transaction().unwrap();
+    for index in 0..245 {
+        let alias_dir = root.join(format!("old-spelling-{index:04}"));
+        std::fs::create_dir_all(&alias_dir).unwrap();
+        let id = format!("alias_{index:04}");
+        let name = if index % 4 == 0 {
+            "shared-name".to_string()
+        } else {
+            format!("name-{index:04}")
+        };
+        transaction
+            .execute(
+                "INSERT INTO managed_worktrees
+             (id,repo_root,worktree_root,worktree_cwd,branch_name,
+              worktree_name,unified_workspace_path,deletion_policy,created_at,updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,'managed','retain_on_last_claim',1,1)",
+                params![
+                    id,
+                    alias_dir.join("..").display().to_string(),
+                    temp.path().display().to_string(),
+                    temp.path()
+                        .join(format!("checkout-{index}"))
+                        .display()
+                        .to_string(),
+                    format!("gg/{index}"),
+                    name,
+                ],
+            )
+            .unwrap();
+    }
+    for index in 0..900 {
+        let id = format!("foreign_{index:04}");
+        transaction
+            .execute(
+                "INSERT INTO managed_worktrees
+             (id,repo_root,worktree_root,worktree_cwd,branch_name,
+              worktree_name,unified_workspace_path,deletion_policy,created_at,updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,'managed','retain_on_last_claim',1,1)",
+                params![
+                    id,
+                    foreign
+                        .join(format!("old-root-{index:04}"))
+                        .display()
+                        .to_string(),
+                    temp.path().display().to_string(),
+                    format!("/other/checkout-{index}"),
+                    format!("gg/foreign-{index}"),
+                    format!("name-{index:04}"),
+                ],
+            )
+            .unwrap();
+    }
+    transaction.commit().unwrap();
+    drop(connection);
+
+    repository.upsert_session(&sample_session()).unwrap();
+    repository
+        .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            worktree_id: "alias_0000".into(),
+            session_id: "session_1".into(),
+            claim_role: "owner".into(),
+            created_at: 2,
+            released_at: None,
+        })
+        .unwrap();
+    let full = repository
+        .list_managed_worktree_status_for_root(&canonical_text)
+        .unwrap();
+    assert_eq!(full.len(), 245);
+    let restarted = SqliteRuntimeRepository::new(path.clone());
+    let mut collected = Vec::new();
+    let mut cursor: Option<(String, String)> = None;
+    loop {
+        let (part, valid) = restarted
+            .list_managed_worktree_status_for_root_page(
+                &canonical_text,
+                cursor
+                    .as_ref()
+                    .map(|(name, id)| (name.as_str(), id.as_str())),
+                17,
+            )
+            .unwrap();
+        assert!(valid);
+        assert!(part.len() <= 17);
+        if part.is_empty() {
+            break;
+        }
+        cursor = part
+            .last()
+            .map(|row| (row.worktree.worktree_name.clone(), row.worktree.id.clone()));
+        collected.extend(part);
+    }
+    assert_eq!(
+        collected, full,
+        "aliased keyset pages must reproduce full authority"
+    );
+    assert_eq!(
+        collected
+            .iter()
+            .find(|row| row.worktree.id == "alias_0000")
+            .unwrap()
+            .active_claim_session_ids,
+        ["session_1"]
+    );
+    let (part, valid) = restarted
+        .list_managed_worktree_status_for_root_page(
+            &canonical_text,
+            Some(("name-0001", "foreign_0001")),
+            17,
+        )
+        .unwrap();
+    assert!(!valid);
+    assert!(part.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn paged_worktree_inventory_revalidates_symlink_alias_after_filesystem_retarget() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("runtime.sqlite3");
+    let root = temp.path().join("repository");
+    let other = temp.path().join("other");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let alias = temp.path().join("moving-alias");
+    symlink(&root, &alias).unwrap();
+
+    let repository = SqliteRuntimeRepository::new(path);
+    repository.initialize_schema().unwrap();
+    repository
+        .upsert_managed_worktree(&worktree(
+            "moving",
+            &alias.display().to_string(),
+            temp.path(),
+        ))
+        .unwrap();
+    let root_text = std::fs::canonicalize(&root).unwrap().display().to_string();
+    let (initial, valid) = repository
+        .list_managed_worktree_status_for_root_page(&root_text, None, 3)
+        .unwrap();
+    assert!(valid);
+    assert_eq!(initial.len(), 1);
+
+    std::fs::remove_file(&alias).unwrap();
+    symlink(&other, &alias).unwrap();
+    let (disappeared, valid) = repository
+        .list_managed_worktree_status_for_root_page(&root_text, None, 3)
+        .unwrap();
+    assert!(valid);
+    assert!(
+        disappeared.is_empty(),
+        "filesystem retarget must affect current alias membership"
+    );
+    let (missing_cursor, valid) = repository
+        .list_managed_worktree_status_for_root_page(&root_text, Some(("moving", "moving")), 3)
+        .unwrap();
+    assert!(!valid);
+    assert!(missing_cursor.is_empty());
+
+    std::fs::remove_file(&alias).unwrap();
+    symlink(&root, &alias).unwrap();
+    let (restored, valid) = repository
+        .list_managed_worktree_status_for_root_page(&root_text, None, 3)
+        .unwrap();
+    assert!(valid);
+    assert_eq!(
+        restored, initial,
+        "alias may recover without a SQLite write"
+    );
+}

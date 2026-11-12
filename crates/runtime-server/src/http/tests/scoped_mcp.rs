@@ -106,6 +106,125 @@ async fn scoped_mcp_rejects_duplicate_authorization_headers_on_both_routes() {
 }
 
 #[tokio::test]
+async fn scoped_agent_and_operator_credentials_never_cross_http_authority_boundaries() {
+    let (router, operator, temp, workspace, caller) = scoped_setup().await;
+    let scoped = runtime_core::mint_scoped_mcp_token(&operator, &caller);
+    let protected_routes = [
+        "/v1/sessions".to_string(),
+        "/v2/workspaces".to_string(),
+        format!("/v2/workspaces/{workspace}/worktrees"),
+        format!("/v2/workspaces/{workspace}/events/stream"),
+        format!("/v2/agents/{caller}/events/stream"),
+        "/v2/operations".to_string(),
+        "/v2/events".to_string(),
+        "/v2/events/evt_missing".to_string(),
+        "/v2/messages".to_string(),
+        "/v2/processes".to_string(),
+    ];
+    // Read/list/detail/SSE are all operator-owned. An agent-scoped token
+    // cannot become an operator credential because it was derived from the
+    // operator's signing secret. HTTP must reject it before any projections
+    // or stream subscriptions are inspected.
+    for uri in protected_routes {
+        for credential in [
+            format!("Bearer {scoped}"),
+            format!("Bearer {scoped}, Bearer {operator}"),
+            format!("Bearer {operator}, Bearer {scoped}"),
+        ] {
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(&uri)
+                        .header(header::AUTHORIZATION, credential)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                    .unwrap();
+            if uri.starts_with("/v2/") {
+                assert_eq!(body["error"]["code"], "unauthorized", "{uri}");
+                assert!(body["request_id"].as_str().is_some(), "{uri}");
+            } else {
+                assert!(body["error"].is_string(), "legacy auth format: {uri}");
+            }
+        }
+    }
+
+    // The operator token is likewise not a valid agent-scoped credential.
+    // Even a write-shaped MCP invocation must be denied before any delivery
+    // can be admitted; compressed/comma-joined bearer forms are rejected.
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let count_messages = || -> i64 {
+        db.query_row("SELECT COUNT(*) FROM agent_messages", [], |row| row.get(0))
+            .unwrap()
+    };
+    let before = count_messages();
+    for uri in ["/v2/mcp/capabilities", "/v2/mcp/invoke"] {
+        for credential in [
+            format!("Bearer {operator}"),
+            format!("Bearer {operator}, Bearer {scoped}"),
+            format!("Bearer {scoped}, Bearer {operator}"),
+        ] {
+            let mut builder = Request::builder()
+                .uri(uri)
+                .header(header::AUTHORIZATION, credential);
+            let body = if uri.ends_with("/invoke") {
+                builder = builder
+                    .method("POST")
+                    .header(header::CONTENT_TYPE, "application/json");
+                Body::from(
+                    serde_json::json!({
+                        "tool_name":"gg_message",
+                        "args":{"mode":"broadcast", "message":"never admit"}
+                    })
+                    .to_string(),
+                )
+            } else {
+                Body::empty()
+            };
+            let response = router
+                .clone()
+                .oneshot(builder.body(body).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+        }
+    }
+    assert_eq!(
+        count_messages(),
+        before,
+        "unauthorized MCP may not admit a message"
+    );
+
+    for (uri, credential) in [
+        ("/v2/events", operator.as_str()),
+        ("/v2/mcp/capabilities", scoped.as_str()),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "legitimate access to {uri}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn scoped_mcp_rejects_duplicate_invocation_ids_without_admitting_model_mutations() {
     let (router, operator, temp, _workspace, caller) = scoped_setup().await;
     let scoped = runtime_core::mint_scoped_mcp_token(&operator, &caller);

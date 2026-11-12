@@ -40,7 +40,12 @@ Protected routes:
 The operator bearer check requires exactly one `Authorization` header. Two
 headers are unauthorized even if one (or both) contains the valid token;
 `/v2` returns the typed `unauthorized` envelope and `/v1` keeps its legacy
-error shape.
+error shape. An agent-scoped MCP credential cannot substitute for the operator
+credential on `/v1` or operator `/v2` resources, including event history and
+SSE stream handshakes; conversely, an operator bearer token is not an agent
+principal for `/v2/mcp/capabilities` or `/v2/mcp/invoke`. Comma-joined bearer
+values cannot combine the two authorities. Each route requires its single,
+correctly scoped credential, including read-only calls.
 
 Legacy `/v1` auth failure returns HTTP `401` with:
 

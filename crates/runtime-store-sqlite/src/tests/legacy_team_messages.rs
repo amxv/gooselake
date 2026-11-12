@@ -413,3 +413,77 @@ fn mismatched_critical_event_or_delivery_snapshot_is_rejected_before_write() {
         .is_empty());
     assert!(repo.list_runtime_events(None, None, 10).unwrap().is_empty());
 }
+
+#[test]
+fn historical_upsert_must_not_rewrite_certified_message_or_delivery_identity() {
+    let (_temp, repo, team) = fixture();
+    let admission = proposed(&team, "msg_sealed", &["session_a"], Some("sealed-key"));
+    commit(&repo, &admission).unwrap();
+    let mut message = admission.0.clone();
+    message.input = serde_json::json!([{"type":"text","text":"forged"}]);
+    assert!(matches!(
+        repo.upsert_team_message(&message),
+        Err(RuntimeError::Conflict(_))
+    ));
+    let mut alias = admission.0.clone();
+    alias.id = "msg_alias".into();
+    assert!(matches!(
+        repo.upsert_team_message(&alias),
+        Err(RuntimeError::Conflict(_))
+    ));
+
+    let mut retarget = admission.1[0].clone();
+    retarget.recipient_agent_id = "session_b".into();
+    retarget.updated_at += 1;
+    assert!(matches!(
+        repo.upsert_team_delivery(&retarget),
+        Err(RuntimeError::Conflict(_))
+    ));
+    let mut change_provider = admission.1[0].clone();
+    change_provider.provider = "claude".into();
+    change_provider.updated_at += 2;
+    assert!(matches!(
+        repo.upsert_team_delivery(&change_provider),
+        Err(RuntimeError::Conflict(_))
+    ));
+    let mut change_policy = admission.1[0].clone();
+    change_policy.effective_policy = Some("immediate_interrupt".into());
+    change_policy.updated_at += 3;
+    assert!(matches!(
+        repo.upsert_team_delivery(&change_policy),
+        Err(RuntimeError::Conflict(_))
+    ));
+
+    let mut injected = admission.1[0].clone();
+    injected.status = "injected".into();
+    injected.injected_turn_id = Some("native_turn_1".into());
+    injected.updated_at += 10;
+    repo.upsert_team_delivery(&injected).unwrap();
+    let reopened = SqliteRuntimeRepository::new(repo.database_path.clone());
+    let state = reopened.hydrate_runtime_state().unwrap();
+    assert_eq!(state.team_messages, vec![admission.0.clone()]);
+    assert_eq!(state.team_deliveries, vec![injected.clone()]);
+    assert_eq!(
+        commit(&reopened, &admission).unwrap().disposition,
+        "existing"
+    );
+    assert_eq!(
+        reopened.list_runtime_events(None, None, 10).unwrap().len(),
+        2
+    );
+
+    // The old direct-upsert/import path still operates for historical rows
+    // without a critical receipt; this is not a silent data migration.
+    let old = proposed(&team, "msg_historical", &["session_b"], None);
+    repo.upsert_team_message(&old.0).unwrap();
+    let mut historical = old.0.clone();
+    historical.input = serde_json::json!([{"type":"text","text":"old rewrite"}]);
+    repo.upsert_team_message(&historical).unwrap();
+    repo.upsert_team_delivery(&old.1[0]).unwrap();
+    let mut historical_delivery = old.1[0].clone();
+    historical_delivery.provider = "claude".into();
+    historical_delivery.updated_at += 1;
+    repo.upsert_team_delivery(&historical_delivery).unwrap();
+    assert_eq!(repo.hydrate_runtime_state().unwrap().team_messages.len(), 2);
+    assert_eq!(repo.list_runtime_events(None, None, 10).unwrap().len(), 2);
+}

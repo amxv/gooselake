@@ -4,11 +4,12 @@ use runtime_core::{
     TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
     TurnRecord,
 };
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
 
 use crate::db::{
-    collect_rows, db_error, json_to_string, open_connection, opt_json_to_string, string_to_json,
+    collect_rows, db_error, fetch_runtime_event_by_event_id, json_to_string, open_connection,
+    opt_json_to_string, string_to_json,
 };
 use crate::SqliteRuntimeRepository;
 
@@ -250,8 +251,20 @@ impl SqliteRuntimeRepository {
     pub fn upsert_team_message(&self, record: &TeamMessageRecord) -> Result<(), RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         let transaction = connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed to start team message upsert transaction", error))?;
+
+        // Keep the historical import/upsert route available for rows that
+        // predate critical admission. It must NEVER rewrite a newly certified
+        // /v1 message (including through an idempotency-key alias) without
+        // a matching critical transaction; the dedicated admission method
+        // owns the only path that creates that immutable receipt.
+        let admission_id = format!("evt_legacy_message_{}_created", record.id);
+        if fetch_runtime_event_by_event_id(&transaction, &admission_id)?.is_some() {
+            return Err(RuntimeError::Conflict(
+                "certified legacy message may only be replayed through critical admission".into(),
+            ));
+        }
 
         if let Some(idempotency_key) = record.idempotency_key.as_deref() {
             let existing_id: Option<String> = transaction
@@ -279,6 +292,13 @@ impl SqliteRuntimeRepository {
                 })?;
 
             if let Some(existing_id) = existing_id {
+                let admission_id = format!("evt_legacy_message_{existing_id}_created");
+                if fetch_runtime_event_by_event_id(&transaction, &admission_id)?.is_some() {
+                    return Err(RuntimeError::Conflict(
+                        "certified legacy message key cannot be rewritten by unjournaled upsert"
+                            .into(),
+                    ));
+                }
                 transaction
                     .execute(
                         "UPDATE team_messages
@@ -365,8 +385,66 @@ impl SqliteRuntimeRepository {
     }
 
     pub fn upsert_team_delivery(&self, record: &TeamDeliveryRecord) -> Result<(), RuntimeError> {
-        let connection = open_connection(&self.database_path)?;
-        let changed = connection
+        let mut connection = open_connection(&self.database_path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| db_error("failed starting legacy delivery update guard", error))?;
+
+        // The pending event is the immutable recipient/provider snapshot.
+        // Status, error and injected-turn fields may legitimately advance,
+        // but a post-admission upsert cannot silently retarget a native
+        // effect or manufacture a new row behind the critical receipt.
+        let pending_id = format!("evt_legacy_delivery_{}_pending", record.id);
+        if fetch_runtime_event_by_event_id(&transaction, &pending_id)?.is_some() {
+            let identity: Option<(String, String, String, String, Option<String>, i64)> =
+                transaction
+                    .query_row(
+                        "SELECT message_id,team_id,recipient_agent_id,provider,
+                                effective_policy,created_at
+                         FROM team_deliveries WHERE id=?1",
+                        [&record.id],
+                        |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(|error| {
+                        db_error("failed reading certified legacy delivery identity", error)
+                    })?;
+            let Some((
+                message_id,
+                team_id,
+                recipient_agent_id,
+                provider,
+                effective_policy,
+                created_at,
+            )) = identity
+            else {
+                return Err(RuntimeError::Conflict(
+                    "certified legacy delivery cannot be recreated after deletion".into(),
+                ));
+            };
+            if message_id != record.message_id
+                || team_id != record.team_id
+                || recipient_agent_id != record.recipient_agent_id
+                || provider != record.provider
+                || effective_policy != record.effective_policy
+                || created_at != record.created_at
+            {
+                return Err(RuntimeError::Conflict(
+                    "certified legacy delivery recipient/provider identity cannot be rewritten"
+                        .into(),
+                ));
+            }
+        }
+        let changed = transaction
             .execute(
                 "INSERT INTO team_deliveries (
                     id, message_id, team_id, recipient_agent_id, provider, status,
@@ -415,6 +493,9 @@ impl SqliteRuntimeRepository {
                 record.id
             )));
         }
+        transaction
+            .commit()
+            .map_err(|error| db_error("failed committing guarded legacy delivery update", error))?;
         Ok(())
     }
 

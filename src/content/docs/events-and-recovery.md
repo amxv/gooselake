@@ -187,6 +187,14 @@ team deletion, status event transitions and any already executed native
 effects require separate fencing and reconciliation; unkeyed HTTP POSTs do
 not have a lost-response exactly-once guarantee.
 
+Historical low-level SQLite `upsert_team_message` calls cannot rewrite a
+message sealed by the critical admission receipt, even when addressed through
+its idempotency key. Low-level delivery updates can advance status/error/turn
+fields, but cannot retarget a sealed delivery to another message, team,
+recipient, provider or initial policy. Legacy **unjournaled** rows retain their
+historical upsert compatibility; sealing them retroactively would invent
+authority that was never committed.
+
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical
 `approval.requested` event now form a separate **atomic SQLite commit**.

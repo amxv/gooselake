@@ -1883,6 +1883,11 @@ legacy rows fail closed. Subsequent delivery transitions, message cancellation
 and team deletion are **not** covered by this admission transaction; neither
 is exactly-once retry for unkeyed HTTP, nor any provider-native side effect.
 Uncertain post-native outcomes must not be retried blindly.
+The historical direct SQLite upsert/import helpers cannot rewrite a message
+already sealed by its critical admission event (including key aliases).
+Status updates to a sealed delivery must retain the same immutable recipient,
+message, team, provider, initial policy and creation timestamp; older rows
+with no admission receipt keep their historical compatibility behavior.
 
 ## MCP gateway
 

@@ -86,6 +86,16 @@ macro_rules! delegate_provider_event_methods {
                 .get_legacy_team_message_cancellation_receipt(message)
         }
 
+        fn claim_legacy_team_delivery_injection(
+            &self,
+            previous: &runtime_core::TeamDeliveryRecord,
+            injecting: &runtime_core::TeamDeliveryRecord,
+            event: &runtime_core::NewRuntimeEvent,
+        ) -> Result<bool, runtime_core::RuntimeError> {
+            self.repository
+                .claim_legacy_team_delivery_injection(previous, injecting, event)
+        }
+
         fn admit_provider_approval(
             &self,
             previous_turn: &runtime_core::TurnRecord,

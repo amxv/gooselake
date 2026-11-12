@@ -57,6 +57,21 @@ macro_rules! legacy_team_event_methods {
                 "legacy team cancellation receipt verification unavailable".into(),
             ))
         }
+
+        /// Grant a *single* pre-native legacy recipient dispatch only if the
+        /// exact pending/deferred generation and its Critical injecting event
+        /// commit together. `false`, a failed journal, or an ambiguous error
+        /// NEVER authorizes another native send/interrupt.
+        fn claim_legacy_team_delivery_injection(
+            &self,
+            _previous: &crate::TeamDeliveryRecord,
+            _injecting: &crate::TeamDeliveryRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<bool, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic legacy team injection claim unavailable".into(),
+            ))
+        }
     };
 }
 pub(super) use legacy_team_event_methods;

@@ -443,6 +443,15 @@ impl RuntimeStore for TestStore {
         self.read_legacy_cancelled_test(message)
     }
 
+    fn claim_legacy_team_delivery_injection(
+        &self,
+        previous: &TeamDeliveryRecord,
+        injecting: &TeamDeliveryRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<bool, RuntimeError> {
+        self.claim_legacy_injecting_test(previous, injecting, event)
+    }
+
     fn upsert_team_member(&self, record: &TeamMemberRecord) -> Result<(), RuntimeError> {
         let mut hydrated = self.hydrated.lock().expect("hydrated lock");
         Self::upsert_with_key(&mut hydrated.team_members, record.clone(), |row| {
@@ -937,5 +946,6 @@ async fn add_workspace_agent(
 mod agent_messages;
 mod legacy_cancel_events;
 mod legacy_delivery;
+mod legacy_delivery_claim;
 mod legacy_message_admission;
 mod legacy_roster_events;

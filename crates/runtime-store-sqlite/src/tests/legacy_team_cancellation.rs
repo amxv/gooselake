@@ -155,17 +155,18 @@ fn competing_native_injection_generation_cannot_be_cancelled_as_stale_pending() 
     let admission = proposed(&team, "msg_cancel_native_race", &["session_a"], None);
     commit(&repo, &admission).unwrap();
     let (after, events) = cancel_plan(&admission.0, &admission.1, 1300);
-    let mut injecting = admission.1[0].clone();
-    injecting.status = "injecting".into();
-    injecting.updated_at += 1;
-    repo.upsert_team_delivery(&injecting).unwrap();
+    let (injecting, native_event) =
+        super::legacy_team_delivery_claim::claim_plan(&admission.1[0], 1200, "cancel_race");
+    assert!(repo
+        .claim_legacy_team_delivery_injection(&admission.1[0], &injecting, &native_event)
+        .unwrap());
     assert!(matches!(
         cancel(&repo, &admission.0, &admission.1, &after, &events),
         Err(RuntimeError::Conflict(_))
     ));
     let state = repo.hydrate_runtime_state().unwrap();
     assert_eq!(state.team_deliveries, vec![injecting]);
-    assert_eq!(repo.list_runtime_events(None, None, 20).unwrap().len(), 2);
+    assert_eq!(repo.list_runtime_events(None, None, 20).unwrap().len(), 3);
 }
 
 #[test]

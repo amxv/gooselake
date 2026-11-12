@@ -160,40 +160,81 @@ async fn startup_recovery_retries_deferred_delivery_for_ready_recipient() {
             worktree_id: None,
         })
         .expect("seed member");
-    store
-        .upsert_team_message(&TeamMessageRecord {
-            id: "msg_seed".to_string(),
-            team_id: "team_seed".to_string(),
-            scope: "direct".to_string(),
-            sender_agent_id: "sess_lead_seed".to_string(),
-            recipient_agent_ids: serde_json::json!(["sess_ready_seed"]),
-            input: serde_json::json!([{ "type": "text", "text": "seed deferred" }]),
-            image_paths: serde_json::json!([]),
-            priority: "normal".to_string(),
-            policy: "non_interrupting".to_string(),
-            correlation_id: None,
-            reply_to_message_id: None,
-            idempotency_key: Some("seed-idempotency".to_string()),
+    let seeded_message = TeamMessageRecord {
+        id: "msg_seed".to_string(),
+        team_id: "team_seed".to_string(),
+        scope: "direct".to_string(),
+        sender_agent_id: "sess_lead_seed".to_string(),
+        recipient_agent_ids: serde_json::json!(["sess_ready_seed"]),
+        input: serde_json::json!([{ "type": "text", "text": "seed deferred" }]),
+        image_paths: serde_json::json!([]),
+        priority: "normal".to_string(),
+        policy: "non_interrupting".to_string(),
+        correlation_id: None,
+        reply_to_message_id: None,
+        idempotency_key: Some("seed-idempotency".to_string()),
+        created_at: now,
+    };
+    let seeded_pending = TeamDeliveryRecord {
+        id: "dlv_seed".to_string(),
+        message_id: "msg_seed".to_string(),
+        team_id: "team_seed".to_string(),
+        recipient_agent_id: "sess_ready_seed".to_string(),
+        provider: "codex".to_string(),
+        status: DELIVERY_STATUS_PENDING.to_string(),
+        effective_policy: Some("non_interrupting".to_string()),
+        injection_strategy: None,
+        injected_turn_id: None,
+        last_error_code: None,
+        last_error_message: None,
+        created_at: now,
+        updated_at: now,
+    };
+    let initial_events = [
+        NewRuntimeEvent {
+            event_id: "evt_legacy_message_msg_seed_created".into(),
+            scope: RuntimeEventScope::Team,
+            scope_id: "team_seed".into(),
+            session_id: Some("sess_lead_seed".into()),
+            team_id: Some("team_seed".into()),
+            turn_id: None,
+            kind: "team_message.created".into(),
+            criticality: crate::RuntimeEventCriticality::Critical,
+            payload: serde_json::json!({"message":seeded_message,"deliveries":[seeded_pending]}),
+            provider: None,
+            provider_seq: None,
             created_at: now,
-        })
-        .expect("seed message");
-    store
-        .upsert_team_delivery(&TeamDeliveryRecord {
-            id: "dlv_seed".to_string(),
-            message_id: "msg_seed".to_string(),
-            team_id: "team_seed".to_string(),
-            recipient_agent_id: "sess_ready_seed".to_string(),
-            provider: "codex".to_string(),
-            status: DELIVERY_STATUS_DEFERRED.to_string(),
-            effective_policy: Some("non_interrupting".to_string()),
-            injection_strategy: None,
-            injected_turn_id: None,
-            last_error_code: Some("seed_restart_gap".to_string()),
-            last_error_message: Some("seed deferred before restart".to_string()),
+        },
+        NewRuntimeEvent {
+            event_id: "evt_legacy_delivery_dlv_seed_pending".into(),
+            scope: RuntimeEventScope::Team,
+            scope_id: "team_seed".into(),
+            session_id: Some("sess_ready_seed".into()),
+            team_id: Some("team_seed".into()),
+            turn_id: None,
+            kind: "team_delivery.pending".into(),
+            criticality: crate::RuntimeEventCriticality::Critical,
+            payload: serde_json::json!({"delivery":seeded_pending}),
+            provider: None,
+            provider_seq: None,
             created_at: now,
-            updated_at: now,
-        })
-        .expect("seed delivery");
+        },
+    ];
+    store
+        .commit_legacy_team_message_admission(
+            &seeded_message,
+            &[seeded_pending.clone()],
+            &initial_events,
+        )
+        .expect("seed atomic legacy message admission before deferred state");
+    let mut seeded_deferred = seeded_pending;
+    seeded_deferred.status = DELIVERY_STATUS_DEFERRED.into();
+    seeded_deferred.updated_at = now.saturating_add(1);
+    seeded_deferred.last_error_code = Some("seed_restart_gap".into());
+    seeded_deferred.last_error_message = Some("seed deferred before restart".into());
+    store
+        .upsert_team_delivery(&seeded_deferred)
+        .expect("seed deferred delivery");
 
     let (_runtime, service) = build_runtime_and_service(store.clone(), 0);
     let before = service

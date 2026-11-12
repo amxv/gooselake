@@ -212,6 +212,21 @@ effect. A missing/altered receipt does **not** certify an older unjournaled
 cancellation. This is **not** a guarantee for messages that have started
 native injection, post-native state transitions, team deletion or retry.
 
+Legacy delivery **native injection** now claims the exact pending/deferred
+SQLite generation and appends one Critical `team_delivery.injecting` event
+in a single immediate transaction, before any native interrupt or turn send.
+Distinct service processes cannot both win the same generation; stale
+direct-upsert paths cannot turn an outstanding injecting claim back into a
+retryable row. Event insertion fault or a stale cancellation winner grants
+no provider permission. If a native send returns an unproven error, the
+durable `injecting` status remains a review fence, not automatic retry
+permission. Old unjournaled pending rows cannot fabricate initial receipts.
+The deterministic claim ID binds the delivery ID to its exact status revision;
+sender/recipient sessions and team membership, and any workspace ownership
+retirement fences, are verified under the same database lock.
+Subsequent positive native acknowledgments, legacy delivery retry and team
+deletion are separate, not-yet-certified atomic event boundaries.
+
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical
 `approval.requested` event now form a separate **atomic SQLite commit**.

@@ -1903,6 +1903,24 @@ post-native cancellations, retries, team deletion or provider-native
 side effects. An unkeyed `/v1` message-creation POST still lacks transport
 exactly-once semantics.
 
+Before a legacy `/v1` recipient starts **any native interrupt or send**, it
+must acquire a generation-specific SQLite `pending`/`deferred` → `injecting`
+claim together with its Critical `team_delivery.injecting` event. A competing
+process, stale worker, failed event insert or lost commit response cannot use
+the prior status as permission to send another turn. Direct legacy upserts
+cannot create or downgrade an outstanding `injecting` claim; already-migrated
+canonical `/v2` delivery mirrors retain their separate atomic authority.
+The claim event ID includes the delivery ID and its exact committed revision,
+and sender/recipient session, team membership and workspace retirement fences
+are checked while that same SQLite transaction holds its write lock.
+Historical pending deliveries lacking the original Critical admission event
+are not automatically injected as if the missing receipt were proven.
+An unproven error **after native send is attempted** retains `injecting` for
+explicit reconciliation rather than changing it to retryable `failed` or
+`deferred`. This claim guarantees at-most-one confirmed pre-native owner,
+**not** the success of a provider turn, a durable post-native result, or a
+certified team deletion/retry transaction. Those are separate Phase20 gates.
+
 ## MCP gateway
 
 The **model-facing** scoped MCP API is separate from operator authentication:

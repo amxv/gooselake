@@ -396,11 +396,11 @@ impl SqliteRuntimeRepository {
         // effect or manufacture a new row behind the critical receipt.
         let pending_id = format!("evt_legacy_delivery_{}_pending", record.id);
         if fetch_runtime_event_by_event_id(&transaction, &pending_id)?.is_some() {
-            let identity: Option<(String, String, String, String, Option<String>, i64)> =
+            let identity: Option<(String, String, String, String, Option<String>, i64, String)> =
                 transaction
                     .query_row(
                         "SELECT message_id,team_id,recipient_agent_id,provider,
-                                effective_policy,created_at
+                                effective_policy,created_at,status
                          FROM team_deliveries WHERE id=?1",
                         [&record.id],
                         |row| {
@@ -411,6 +411,7 @@ impl SqliteRuntimeRepository {
                                 row.get(3)?,
                                 row.get(4)?,
                                 row.get(5)?,
+                                row.get(6)?,
                             ))
                         },
                     )
@@ -425,6 +426,7 @@ impl SqliteRuntimeRepository {
                 provider,
                 effective_policy,
                 created_at,
+                current_status,
             )) = identity
             else {
                 return Err(RuntimeError::Conflict(
@@ -440,6 +442,28 @@ impl SqliteRuntimeRepository {
             {
                 return Err(RuntimeError::Conflict(
                     "certified legacy delivery recipient/provider identity cannot be rewritten"
+                        .into(),
+                ));
+            }
+            // A certified *legacy* delivery may enter `injecting` only via
+            // claim_legacy_team_delivery_injection, which atomically writes
+            // the Critical claim receipt before any native provider effect.
+            // In particular, never let a delayed status write downgrade an
+            // in-flight claim back to retryable deferred/failed. Canonical
+            // agent-owned mirrors have their separate authoritative CAS.
+            let canonical: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM agent_deliveries WHERE id=?1)",
+                    [&record.id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| db_error("failed checking certified legacy owner", error))?;
+            if !canonical
+                && (record.status == "injecting"
+                    || (current_status == "injecting" && record.status != "injected"))
+            {
+                return Err(RuntimeError::Conflict(
+                    "legacy native injection claim is reserved or unproven; direct upsert cannot retry it"
                         .into(),
                 ));
             }

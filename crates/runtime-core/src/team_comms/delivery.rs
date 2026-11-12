@@ -120,22 +120,10 @@ impl RuntimeTeamCommsService {
                 .await;
         }
 
-        if let Some(active_turn_id) = recipient_session.active_turn_id.as_deref() {
-            match policy.as_str() {
-                DELIVERY_POLICY_NON_INTERRUPTING | DELIVERY_POLICY_START_NEW_TURN_ONLY => {
-                    return self
-                        .transition_delivery_status(
-                            &delivery,
-                            DELIVERY_STATUS_DEFERRED,
-                            None,
-                            None,
-                            None,
-                            trigger,
-                        )
-                        .await;
-                }
-                DELIVERY_POLICY_INTERRUPT_AFTER_TOOL_BOUNDARY => {
-                    if trigger != DeliveryAttemptTrigger::TurnCompletedBoundary {
+        let interrupt_active_turn =
+            if let Some(active_turn_id) = recipient_session.active_turn_id.as_deref() {
+                match policy.as_str() {
+                    DELIVERY_POLICY_NON_INTERRUPTING | DELIVERY_POLICY_START_NEW_TURN_ONLY => {
                         return self
                             .transition_delivery_status(
                                 &delivery,
@@ -147,58 +135,55 @@ impl RuntimeTeamCommsService {
                             )
                             .await;
                     }
-                    self.runtime
-                        .interrupt_turn(&recipient_session.id, active_turn_id)
-                        .await
-                        .map_err(|error| {
-                            RuntimeError::InvalidState(format!(
-                                "interrupt_after_tool_boundary failed for delivery {}: {}",
-                                delivery.id, error
-                            ))
-                        })?;
+                    DELIVERY_POLICY_INTERRUPT_AFTER_TOOL_BOUNDARY => {
+                        if trigger != DeliveryAttemptTrigger::TurnCompletedBoundary {
+                            return self
+                                .transition_delivery_status(
+                                    &delivery,
+                                    DELIVERY_STATUS_DEFERRED,
+                                    None,
+                                    None,
+                                    None,
+                                    trigger,
+                                )
+                                .await;
+                        }
+                        Some(active_turn_id.to_string())
+                    }
+                    DELIVERY_POLICY_IMMEDIATE_INTERRUPT => Some(active_turn_id.to_string()),
+                    _ => {
+                        return self
+                            .transition_delivery_status(
+                                &delivery,
+                                DELIVERY_STATUS_DEFERRED,
+                                None,
+                                None,
+                                None,
+                                trigger,
+                            )
+                            .await;
+                    }
                 }
-                DELIVERY_POLICY_IMMEDIATE_INTERRUPT => {
-                    self.runtime
-                        .interrupt_turn(&recipient_session.id, active_turn_id)
-                        .await
-                        .map_err(|error| {
-                            RuntimeError::InvalidState(format!(
-                                "immediate_interrupt failed for delivery {}: {}",
-                                delivery.id, error
-                            ))
-                        })?;
-                }
-                _ => {
-                    return self
-                        .transition_delivery_status(
-                            &delivery,
-                            DELIVERY_STATUS_DEFERRED,
-                            None,
-                            None,
-                            None,
-                            trigger,
-                        )
-                        .await;
-                }
-            }
-        }
+            } else {
+                None
+            };
 
+        // The recipient mutex is local to one process. Only the successful
+        // durable generation-specific Critical event/CAS transaction may
+        // release a native provider send *or* an interrupt side effect.
         let injecting = self
-            .transition_delivery_status(
-                &delivery,
-                DELIVERY_STATUS_INJECTING,
-                None,
-                None,
-                None,
-                trigger,
-            )
+            .claim_legacy_delivery_injection(&delivery, trigger)
             .await?;
-
-        // A concurrent cancellation or another delivery owner may have won
-        // the cache/SQLite state transition. Returning the winner's state is
-        // NOT a pre-native receipt authorizing a new provider turn.
-        if injecting.status != DELIVERY_STATUS_INJECTING {
-            return Ok(injecting);
+        if let Some(active_turn_id) = interrupt_active_turn {
+            self.runtime
+                .interrupt_turn(&recipient_session.id, &active_turn_id)
+                .await
+                .map_err(|error| {
+                    RuntimeError::InvalidState(format!(
+                        "legacy delivery {} reserved native injection; interrupt outcome requires review: {}",
+                        delivery.id, error
+                    ))
+                })?;
         }
 
         let injected_input = build_injected_input(&message, &recipient_session.id);
@@ -237,33 +222,64 @@ impl RuntimeTeamCommsService {
                     .await;
                 Ok(injected)
             }
-            Err(error) => {
-                if matches!(
-                    error,
-                    RuntimeError::InvalidState(_) | RuntimeError::OnboardingPending(_)
-                ) {
-                    return self
-                        .transition_delivery_status(
-                            &injecting,
-                            DELIVERY_STATUS_DEFERRED,
-                            None,
-                            Some("turn_ownership_rejected".to_string()),
-                            Some(error.to_string()),
-                            trigger,
-                        )
-                        .await;
-                }
-                self.transition_delivery_status(
-                    &injecting,
-                    DELIVERY_STATUS_FAILED,
-                    None,
-                    Some("provider_rejected".to_string()),
-                    Some(error.to_string()),
-                    trigger,
-                )
-                .await
-            }
+            Err(error) => Err(RuntimeError::InvalidState(format!(
+                "legacy delivery {} native send outcome is unproven ({}); retained durable injecting claim for explicit reconciliation, not automatic retry",
+                injecting.id, error
+            ))),
         }
+    }
+
+    async fn claim_legacy_delivery_injection(
+        &self,
+        previous: &TeamDeliveryRecord,
+        trigger: DeliveryAttemptTrigger,
+    ) -> Result<TeamDeliveryRecord, RuntimeError> {
+        let mut state = self.state.write().await;
+        if state.deliveries.get(&previous.id) != Some(previous)
+            || state.agent_deliveries.contains_key(&previous.id)
+        {
+            return Err(RuntimeError::Conflict(
+                "legacy injection lost in-process delivery ownership; no native dispatch".into(),
+            ));
+        }
+        let revision = previous.updated_at.checked_add(1).ok_or_else(|| {
+            RuntimeError::InvalidState("legacy injection delivery revision exhausted".into())
+        })?;
+        let mut injecting = previous.clone();
+        injecting.status = DELIVERY_STATUS_INJECTING.into();
+        injecting.updated_at = now_ms().max(revision);
+        let mut event = self.new_team_event(
+            &previous.team_id,
+            "team_delivery.injecting",
+            serde_json::json!({
+                "delivery":injecting,
+                "trigger":format!("{trigger:?}").to_ascii_lowercase(),
+            }),
+            Some(previous.recipient_agent_id.clone()),
+        );
+        // Generation-derived ID is also the lookup key for a later
+        // acknowledged native outcome. Do not depend on process-local event
+        // nonce or inspect a growing history for this authority.
+        event.event_id = format!(
+            "evt_legacy_delivery_{}_injecting_{}",
+            previous.id, injecting.updated_at
+        );
+        event.created_at = injecting.updated_at;
+        // `false` and an ambiguous SQLite error are *never* retryable native
+        // dispatch. The old cache remains unchanged until true is confirmed.
+        if !self
+            .store
+            .claim_legacy_team_delivery_injection(previous, &injecting, &event)?
+        {
+            return Err(RuntimeError::Conflict(
+                "another legacy delivery owner advanced the durable generation; no native dispatch"
+                    .into(),
+            ));
+        }
+        state
+            .deliveries
+            .insert(injecting.id.clone(), injecting.clone());
+        Ok(injecting)
     }
 
     async fn transition_delivery_with_turn_id(

@@ -15,11 +15,11 @@ fn valid_transition(from: &str, to: &str) -> bool {
         (from, to),
         (
             "pending",
-            "pending" | "deferred" | "injecting" | "cancelled"
+            "pending" | "deferred" | "failed" | "injecting" | "cancelled"
         ) | (
             "deferred",
-            "pending" | "deferred" | "injecting" | "cancelled"
-        )
+            "pending" | "deferred" | "failed" | "injecting" | "cancelled"
+        ) | ("failed", "pending")
     )
 }
 

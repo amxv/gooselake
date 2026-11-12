@@ -97,6 +97,32 @@ async fn keyed_retry_admits_once_replays_exact_pending_snapshot_and_preserves_le
         current[0].status, "deferred",
         "provider is still blocked by approval"
     );
+    let reopened = rusqlite::Connection::open(temp_dir.path().join("runtime.sqlite3"))
+        .expect("reopen canonical delivery journal");
+    let first_event_id = format!(
+        "evt_agent_delivery_{}_pending_{}",
+        snapshot.id, message.deliveries[0].updated_at
+    );
+    let (event_kind, event_critical, event_turn_id, event_payload): (
+        String,
+        i64,
+        Option<String>,
+        String,
+    ) = reopened
+        .query_row(
+            "SELECT kind,critical,turn_id,payload_json FROM runtime_events
+             WHERE event_id=?1",
+            [&first_event_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(event_kind, "agent_delivery.pending");
+    assert_eq!(event_critical, 1);
+    assert_eq!(event_turn_id, None, "retry admission is pre-native");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&event_payload).unwrap()["delivery"],
+        serde_json::json!(snapshot)
+    );
 
     let inspection = router
         .clone()
@@ -198,4 +224,16 @@ async fn keyed_retry_admits_once_replays_exact_pending_snapshot_and_preserves_le
     let live: runtime_core::AgentDeliveryRecord =
         serde_json::from_slice(&to_bytes(legacy.into_body(), usize::MAX).await.unwrap()).unwrap();
     assert_eq!(live.status, "deferred");
+    let count: i64 = reopened
+        .query_row(
+            "SELECT count(*) FROM runtime_events WHERE kind='agent_delivery.pending'
+             AND critical=1 AND json_extract(payload_json,'$.delivery.id')=?1",
+            [&snapshot.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        count, 2,
+        "keyed replay must not create an extra receipt; unkeyed retry journals its own generation"
+    );
 }

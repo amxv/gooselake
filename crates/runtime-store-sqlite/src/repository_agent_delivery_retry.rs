@@ -7,6 +7,7 @@ use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use crate::db::{db_error, open_connection};
 use crate::operation_tx::OperationAuthorityTransaction;
 use crate::repository_agent_comms::{decode_delivery, DELIVERY_COLUMNS};
+use crate::repository_agent_delivery_cas::insert_agent_delivery_receipt;
 use crate::repository_agent_delivery_guard::require_active_delivery_owners;
 use crate::repository_workspace::operation_by_idempotency;
 use crate::SqliteRuntimeRepository;
@@ -156,12 +157,18 @@ impl SqliteRuntimeRepository {
                 )));
             }
         }
+        let previous = delivery.clone();
         delivery.status = "pending".into();
         delivery.injection_strategy = None;
         delivery.injected_turn_id = None;
         delivery.last_error_code = None;
         delivery.last_error_message = None;
         delivery.updated_at = admitted_at;
+        // Admission is not native dispatch; it is nevertheless a Critical
+        // delivery generation and must not survive without its journal row.
+        // The operator's completed receipt and the optional legacy mirror
+        // share exactly the same SQLite commit.
+        insert_agent_delivery_receipt(&tx, &previous, &delivery)?;
 
         let result = AgentRetryDeliveryMutationResponse {
             operation_id: command.operation_id.clone(),

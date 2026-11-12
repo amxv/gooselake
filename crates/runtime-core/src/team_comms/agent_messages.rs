@@ -391,11 +391,12 @@ impl RuntimeTeamCommsService {
         self.ensure_enabled()?;
         let delivery_id = normalize_non_empty(&request.delivery_id, "delivery_id")?;
         self.refresh_current_agent_delivery(&delivery_id).await?;
-        let updated = {
-            let mut state = self.state.write().await;
+        let current = {
+            let state = self.state.read().await;
             let delivery = state
                 .agent_deliveries
-                .get_mut(&delivery_id)
+                .get(&delivery_id)
+                .cloned()
                 .ok_or_else(|| RuntimeError::NotFound(format!("delivery {}", delivery_id)))?;
             if !matches!(
                 delivery.status.as_str(),
@@ -406,15 +407,12 @@ impl RuntimeTeamCommsService {
                     delivery_id
                 )));
             }
-            delivery.status = DELIVERY_STATUS_PENDING.to_string();
-            delivery.injection_strategy = None;
-            delivery.injected_turn_id = None;
-            delivery.last_error_code = None;
-            delivery.last_error_message = None;
-            delivery.updated_at = now_ms().max(delivery.updated_at.saturating_add(1));
-            delivery.clone()
+            delivery
         };
-        self.persist_agent_delivery_with_legacy_mirror(&updated)
+        // Even the unkeyed compatibility route must advance through the
+        // SQLite generation CAS + Critical receipt before native dispatch;
+        // never mutate the in-memory cache and upsert an unjournaled retry.
+        self.transition_agent_delivery_status(&current, DELIVERY_STATUS_PENDING, None, None, None)
             .await?;
         self.inject_agent_delivery(&delivery_id, DeliveryAttemptTrigger::Retry)
             .await

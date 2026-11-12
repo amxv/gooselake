@@ -399,7 +399,7 @@ impl RuntimeTeamCommsService {
         Ok(())
     }
 
-    async fn transition_agent_delivery_status(
+    pub(super) async fn transition_agent_delivery_status(
         &self,
         current: &AgentDeliveryRecord,
         next_status: &str,
@@ -448,7 +448,9 @@ impl RuntimeTeamCommsService {
                 .checked_add(1)
                 .ok_or_else(|| RuntimeError::InvalidState("delivery timestamp overflow".into()))?,
         );
-        if let Some(strategy) = injection_strategy {
+        if next_status == DELIVERY_STATUS_PENDING {
+            updated.injection_strategy = None;
+        } else if let Some(strategy) = injection_strategy {
             updated.injection_strategy = Some(strategy);
         }
         if next_status == DELIVERY_STATUS_FAILED {

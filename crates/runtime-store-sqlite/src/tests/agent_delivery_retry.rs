@@ -21,6 +21,10 @@ fn command(id: &str, key: &str) -> AgentRetryDeliveryMutationCommand {
 #[test]
 fn exact_retry_admission_replays_after_restart_without_reverting_native_delivery_state() {
     let (temp, repository) = seed();
+    let original = repository
+        .get_agent_delivery("msg_cancel_b")
+        .unwrap()
+        .unwrap();
     let first = repository
         .retry_agent_delivery_operator(&command("msg_cancel_b", "retry-1"))
         .expect("admit deferred delivery");
@@ -38,6 +42,20 @@ fn exact_retry_admission_replays_after_restart_without_reverting_native_delivery
         Some(serde_json::to_value(&first).unwrap())
     );
     assert!(inspection.claims.is_empty());
+    let first_receipt = open_connection(&repository.database_path)
+        .unwrap()
+        .query_row(
+            "SELECT payload_json FROM runtime_events
+             WHERE event_id=?1 AND kind='agent_delivery.pending' AND critical=1",
+            [format!(
+                "evt_agent_delivery_{}_pending_{}",
+                first.delivery.id, original.updated_at
+            )],
+            |row| row.get::<_, String>(0),
+        );
+    // A keyed operator admission is now also its own Critical delivery
+    // generation, independently of the operator's terminal receipt.
+    assert!(first_receipt.is_ok());
 
     // A later provider attempt may fail or defer. The keyed retry receipt is
     // a stable admission snapshot, NOT its current mutable delivery status.
@@ -45,7 +63,9 @@ fn exact_retry_admission_replays_after_restart_without_reverting_native_delivery
     later.status = "deferred".into();
     later.last_error_code = Some("busy".into());
     later.updated_at += 100;
-    repository.upsert_agent_delivery(&later).unwrap();
+    assert!(repository
+        .compare_and_swap_agent_delivery_status(&first.delivery, &later)
+        .unwrap());
 
     let reopened = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
     assert_eq!(
@@ -77,6 +97,64 @@ fn exact_retry_admission_replays_after_restart_without_reverting_native_delivery
         ),
         Err(RuntimeError::Conflict(_))
     ));
+}
+
+#[test]
+fn keyed_retry_critical_event_fault_rolls_back_operation_and_pending_state() {
+    let (temp, repository) = seed();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_delivery_retry_journal BEFORE INSERT ON runtime_events
+         WHEN NEW.kind='agent_delivery.pending'
+         BEGIN SELECT RAISE(FAIL,'forced final retry receipt failure'); END;",
+    )
+    .unwrap();
+    let before = repository
+        .get_agent_delivery("msg_cancel_b")
+        .unwrap()
+        .unwrap();
+    let retry = command("msg_cancel_b", "journal-fault");
+    assert!(repository.retry_agent_delivery_operator(&retry).is_err());
+    assert_eq!(
+        repository.get_agent_delivery("msg_cancel_b").unwrap(),
+        Some(before.clone())
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM runtime_operations
+             WHERE kind='agent_delivery_retry_admission'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    db.execute_batch("DROP TRIGGER fail_delivery_retry_journal")
+        .unwrap();
+    let result = repository.retry_agent_delivery_operator(&retry).unwrap();
+    assert_eq!(result.delivery.status, "pending");
+    let event_id = format!(
+        "evt_agent_delivery_{}_pending_{}",
+        result.delivery.id, before.updated_at
+    );
+    let persisted_payload: String = db
+        .query_row(
+            "SELECT payload_json FROM runtime_events
+             WHERE event_id=?1 AND kind='agent_delivery.pending' AND critical=1",
+            [&event_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&persisted_payload).unwrap()["delivery"],
+        serde_json::json!(result.delivery)
+    );
+    assert_eq!(
+        SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"))
+            .retry_agent_delivery_operator(&retry)
+            .unwrap(),
+        result
+    );
 }
 
 #[test]

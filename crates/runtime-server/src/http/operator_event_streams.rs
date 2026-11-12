@@ -83,6 +83,34 @@ async fn operator_event_stream(
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError>
 {
     let (cursor, page_size) = query.parse(&headers)?;
+    // A positive SSE continuation must point to an event the caller could
+    // have observed in this exact collection. Otherwise a foreign/future
+    // cursor silently skips durable events (potentially indefinitely). The
+    // existing journal indexes can check this with one single-row seek; no
+    // event-history scan or second cursor authority is needed. Primary scopes
+    // retain their per-scope seq, while subjects/global use global row IDs.
+    if let Some(cursor) = cursor.filter(|value| *value > 0) {
+        let selected = state.app.services.store.list_runtime_events(
+            scope.as_ref().map(|(kind, id)| (*kind, id.as_str())),
+            Some(cursor - 1),
+            1,
+        )?;
+        let uses_global_row_id = scope
+            .as_ref()
+            .is_none_or(|(kind, _)| kind.is_subject_projection());
+        let valid = selected.first().is_some_and(|event| {
+            if uses_global_row_id {
+                event.row_id == cursor
+            } else {
+                event.seq == cursor
+            }
+        });
+        if !valid {
+            return Err(ApiError::bad_request(
+                "event stream cursor is not in the selected collection".into(),
+            ));
+        }
+    }
     durable_event_stream(
         state.app.services.store.clone(),
         scope,

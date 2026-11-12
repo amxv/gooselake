@@ -1528,7 +1528,16 @@ The global `/v2/events/stream` additionally accepts paired `scope` and
 and `operation` subjects the SSE event ID and resume cursor are global row IDs
 across the original parent scopes; for other primary scopes, the cursor
 remains the scope-local sequence. Resource-specific streams reject query-level
-scope overrides. Existing `/v1` cursor behavior is unchanged.
+scope overrides. **Positive `/v2` SSE resume cursors must belong to the exact
+selected event collection**: global and turn/message/operation cursors identify
+an existing global event row, while workspace/agent/process and other primary
+scope cursors identify an existing sequence in that scope. A nonexistent,
+future, or foreign-scope/subject cursor returns HTTP `400` at handshake rather
+than opening a stream that could silently skip events. `after_seq=0` remains a
+beginning-of-history sentinel, and `after_seq` takes precedence over the
+`Last-Event-ID` fallback. The check uses a single indexed journal lookup; it
+does not scan historical events or authorize event pruning. Existing `/v1`
+cursor behavior is unchanged.
 Legacy `/v1` contracts remain unchanged during migration.
 
 Behavior:

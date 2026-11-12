@@ -12,6 +12,7 @@ use runtime_core::{
 mod core;
 mod service;
 mod spawn;
+mod spawn_guard;
 mod workspace_create;
 
 pub struct RuntimeWorktreeService {

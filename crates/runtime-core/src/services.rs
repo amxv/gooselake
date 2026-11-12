@@ -18,15 +18,14 @@ mod worktree_models;
 mod worktree_store_trait;
 #[path = "services_worktree_trait.rs"]
 mod worktree_trait;
+use async_trait::async_trait;
 pub use provider_terminal::*;
+use serde_json::Value;
 pub use team_comms_trait::*;
 pub use team_models::*;
 pub use worktree_models::*;
 pub use worktree_store_trait::*;
 pub use worktree_trait::*;
-
-use async_trait::async_trait;
-use serde_json::Value;
 
 #[path = "services_operator_archive_store_trait.rs"]
 mod operator_archive_store_trait;
@@ -40,9 +39,6 @@ mod operator_restore_store_trait;
 mod operator_turn_models;
 #[path = "services_operator_turn_store_trait.rs"]
 mod operator_turn_store_trait;
-pub use operator_turn_models::*;
-pub use operator_turn_store_trait::*;
-
 use crate::{
     AgentDeliveryRecord, AgentMessageRecord, AgentToolMutationAdmission, AgentToolMutationCommand,
     ApprovalRecord, CompactionObservationReceipt, LegacyWorkspaceMigrationApplyCommand,
@@ -71,6 +67,8 @@ use crate::{
     TeamHookPreAddAdmission, TeamHookPreAddContext,
 };
 use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
+pub use operator_turn_models::*;
+pub use operator_turn_store_trait::*;
 
 #[async_trait]
 pub trait RuntimeStore:
@@ -959,6 +957,8 @@ pub trait RuntimeStore:
         &self,
         record: &TeamOperationJournalRecord,
     ) -> Result<(), RuntimeError>;
+
+    worktree_journal_trait::default_team_spawn_admission!();
 
     fn append_team_operation_diagnostic(
         &self,

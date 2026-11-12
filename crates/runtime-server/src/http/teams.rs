@@ -104,8 +104,29 @@ pub(super) struct TeamMemberSpawnInput {
 pub(super) async fn spawn_team_member(
     State(state): State<AppState>,
     Path(team_id): Path<String>,
+    headers: HeaderMap,
     Json(input): Json<TeamMemberSpawnInput>,
 ) -> Result<Json<TeamMemberSpawnResponse>, ApiError> {
+    let mut keys = headers.get_all("idempotency-key").iter();
+    let idempotency_key = if let Some(first) = keys.next() {
+        if keys.next().is_some() {
+            return Err(ApiError::bad_request(
+                "provide exactly one Idempotency-Key header".into(),
+            ));
+        }
+        Some(
+            first
+                .to_str()
+                .map_err(|_| {
+                    ApiError::bad_request(
+                        "Idempotency-Key must contain printable UTF-8 text".into(),
+                    )
+                })?
+                .to_string(),
+        )
+    } else {
+        None
+    };
     let response = state
         .app
         .services
@@ -113,6 +134,7 @@ pub(super) async fn spawn_team_member(
         .spawn_team_member(TeamMemberSpawnRequest {
             team_id,
             source_session_id: input.source_session_id,
+            idempotency_key,
             provider: input.provider,
             model: input.model,
             title: input.title,

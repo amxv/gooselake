@@ -936,6 +936,8 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.upsert_team_operation_journal(record)
     }
 
+    crate::store_team_spawn_admission::delegate_team_spawn_admission!();
+
     fn append_team_operation_diagnostic(
         &self,
         operation_id: Option<&str>,

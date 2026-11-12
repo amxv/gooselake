@@ -26,7 +26,7 @@ pub use stubs::{StubTeamCommsService, StubWorktreeService};
 
 #[cfg(test)]
 pub(crate) use presets::default_team_model_presets as test_default_team_model_presets;
-use presets::{default_team_model_presets, ManageAddIdempotencyEntry, ModelPresetCatalog};
+use presets::{default_team_model_presets, ModelPresetCatalog};
 
 pub struct RuntimeToolGateway {
     process_manager: Arc<RuntimeProcessManager>,
@@ -35,7 +35,6 @@ pub struct RuntimeToolGateway {
     worktrees: Arc<dyn WorktreeService>,
     team_policy: TeamMcpPolicy,
     team_model_presets: ModelPresetCatalog,
-    team_manage_add_idempotency: Arc<Mutex<HashMap<String, ManageAddIdempotencyEntry>>>,
     canonical_coordination_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
 }
 
@@ -57,7 +56,6 @@ impl RuntimeToolGateway {
             worktrees: deps.worktrees,
             team_policy: deps.team_policy,
             team_model_presets: ModelPresetCatalog::from_presets(deps.team_model_presets),
-            team_manage_add_idempotency: Arc::new(Mutex::new(HashMap::new())),
             canonical_coordination_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }

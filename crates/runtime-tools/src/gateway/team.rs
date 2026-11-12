@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use runtime_core::{
     TeamBroadcastRequest, TeamListMessagesRequest, TeamMemberRecord, TeamMessageRecord,
     TeamRemoveMemberRequest, TeamSendDirectRequest, TeamWithMembers, ToolInvokeRequest,
@@ -7,9 +5,7 @@ use runtime_core::{
 };
 use serde_json::{json, Value};
 
-use crate::{
-    now_ms, GG_TEAM_ADD_IDEMPOTENCY_CACHE_TTL_SECS, GG_TEAM_MANAGE, GG_TEAM_MESSAGE, GG_TEAM_STATUS,
-};
+use crate::{now_ms, GG_TEAM_MANAGE, GG_TEAM_MESSAGE, GG_TEAM_STATUS};
 
 use super::presets::ResolvedModelPreset;
 use super::team_helpers::{
@@ -270,42 +266,18 @@ impl RuntimeToolGateway {
                 .await;
         }
 
-        if let Some(invocation_id) = invocation_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        {
-            let cache_key = format!("v1:{caller_session_id}:{GG_TEAM_MANAGE}:{invocation_id}");
-            if let Some(cached) = self
-                .begin_manage_add_idempotent_execution(&cache_key)
-                .await?
-            {
-                return Ok(cached);
-            }
-            let result = self
-                .invoke_team_manage_add(caller_session_id, team_id, args)
-                .await;
-            match result {
-                Ok(value) => {
-                    self.complete_manage_add_idempotent_execution(&cache_key, &value)
-                        .await;
-                    Ok(value)
-                }
-                Err(error) => {
-                    self.abort_manage_add_idempotent_execution(&cache_key).await;
-                    Err(error)
-                }
-            }
-        } else {
-            self.invoke_team_manage_add(caller_session_id, team_id, args)
-                .await
-        }
+        // A process-local cache is not retry authority after a tool response
+        // is lost or a worker restarts. Let the shared SQLite store admit the
+        // invocation identity and reject different inputs under that key.
+        self.invoke_team_manage_add(caller_session_id, team_id, invocation_id, args)
+            .await
     }
 
     async fn invoke_team_manage_add(
         &self,
         caller_session_id: &str,
         team_id: String,
+        invocation_id: Option<String>,
         args: &serde_json::Map<String, Value>,
     ) -> Result<Value, TeamToolFailure> {
         self.ensure_caller_can_manage_membership(
@@ -370,6 +342,9 @@ impl RuntimeToolGateway {
             .spawn_team_member(runtime_core::TeamMemberSpawnRequest {
                 team_id: team_id.clone(),
                 source_session_id: caller_session_id.to_string(),
+                idempotency_key: invocation_id
+                    .filter(|id| !id.trim().is_empty())
+                    .map(|id| format!("gg_team_manage:{id}")),
                 provider: resolved_model_preset
                     .as_ref()
                     .map(|preset| preset.provider.as_str().to_string()),
@@ -587,46 +562,6 @@ impl RuntimeToolGateway {
             .find_map(context_remaining_percentage_from_usage)
             .map(|value| json!(value))
             .unwrap_or(Value::Null)
-    }
-
-    async fn begin_manage_add_idempotent_execution(
-        &self,
-        cache_key: &str,
-    ) -> Result<Option<Value>, TeamToolFailure> {
-        let now = Instant::now();
-        let ttl = Duration::from_secs(GG_TEAM_ADD_IDEMPOTENCY_CACHE_TTL_SECS);
-        let mut cache = self.team_manage_add_idempotency.lock().await;
-        cache.retain(|_, entry| now.duration_since(entry.inserted_at) <= ttl);
-        if let Some(existing) = cache.get(cache_key) {
-            if let Some(result) = existing.completed_success.clone() {
-                return Ok(Some(result));
-            }
-            return Err(TeamToolFailure::new(
-                "duplicate_tool_invocation_in_progress",
-                "Duplicate gg_team_manage add invocation is already in progress",
-            ));
-        }
-        cache.insert(
-            cache_key.to_string(),
-            super::ManageAddIdempotencyEntry {
-                inserted_at: now,
-                completed_success: None,
-            },
-        );
-        Ok(None)
-    }
-
-    async fn complete_manage_add_idempotent_execution(&self, cache_key: &str, result: &Value) {
-        let mut cache = self.team_manage_add_idempotency.lock().await;
-        if let Some(entry) = cache.get_mut(cache_key) {
-            entry.inserted_at = Instant::now();
-            entry.completed_success = Some(result.clone());
-        }
-    }
-
-    async fn abort_manage_add_idempotent_execution(&self, cache_key: &str) {
-        let mut cache = self.team_manage_add_idempotency.lock().await;
-        cache.remove(cache_key);
     }
 }
 

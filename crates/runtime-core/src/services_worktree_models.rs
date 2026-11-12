@@ -179,6 +179,9 @@ pub struct TeamMemberSpawnWorktreeInput {
 pub struct TeamMemberSpawnRequest {
     pub team_id: String,
     pub source_session_id: String,
+    /// Scoped to this original team and authenticated caller session. Once
+    /// admitted, an exact retry may replay a receipt but never native work.
+    pub idempotency_key: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub title: Option<String>,
@@ -201,6 +204,16 @@ pub struct TeamMemberSpawnResponse {
     pub worktree_created_by_operation: bool,
     pub onboarding: Value,
     pub journal_stage: String,
+}
+
+/// The only safe outcomes of consulting a durable legacy spawn admission.
+/// `Unresolved` includes both in-progress and uncertain native effects: it
+/// is never permission to spawn again, even after a process restart.
+#[derive(Debug, Clone)]
+pub enum TeamMemberSpawnAdmission {
+    Execute { operation_id: String },
+    Unresolved { operation_id: String },
+    Replay { response: TeamMemberSpawnResponse },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

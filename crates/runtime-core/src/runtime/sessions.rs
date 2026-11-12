@@ -33,6 +33,23 @@ fn lifecycle_event(
 }
 
 impl RuntimeSessionManager {
+    /// Deterministic /v1 provider-launch checks before an unrelated Git
+    /// checkout or init script. This is not native provider acceptance: the
+    /// actual create path still applies its locks and checks again.
+    pub fn preflight_legacy_session_create(
+        &self,
+        provider: ProviderKind,
+        permission_mode: Option<&str>,
+    ) -> Result<(), RuntimeError> {
+        self.providers
+            .get(provider)
+            .ok_or_else(|| RuntimeError::ProviderNotRegistered(provider.as_str().to_string()))?;
+        if let Some(mode) = permission_mode {
+            crate::ProviderPermissionIntent::explicit(mode.to_string())?;
+        }
+        Ok(())
+    }
+
     pub async fn list_sessions(&self) -> Vec<SessionRecord> {
         let sessions = self.sessions.read().await;
         let mut rows = sessions.values().cloned().collect::<Vec<_>>();

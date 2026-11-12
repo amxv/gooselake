@@ -85,6 +85,11 @@ METRICS = (
      "SELECT COUNT(*) FROM managed_worktree_claims WHERE released_at IS NULL"),
     ("unsettled_worktree_cleanups", {"managed_worktree_cleanup_receipts": ("phase",)},
      "SELECT COUNT(*) FROM managed_worktree_cleanup_receipts WHERE phase!='completed'"),
+    ("unsettled_team_spawn_journals", {"team_operation_journal": ("kind", "stage")},
+     "SELECT COUNT(*) FROM team_operation_journal "
+     "WHERE kind='spawn_member_with_worktree' AND stage NOT IN ('completed','rolled_back')"),
+    ("unsettled_keyed_team_spawns", {"team_spawn_admissions": ("completed_response_json",)},
+     "SELECT COUNT(*) FROM team_spawn_admissions WHERE completed_response_json IS NULL"),
     ("unsettled_workspace_rebinds", {"workspace_agent_rebinds": ("phase",)},
      "SELECT COUNT(*) FROM workspace_agent_rebinds "
      "WHERE phase NOT IN ('completed','rejected')"),

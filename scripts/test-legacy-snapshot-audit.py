@@ -48,8 +48,8 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertEqual(report_result.returncode, 0, report_result.stderr)
             report = json.loads(report_result.stdout)
             self.assertEqual(report["schema"]["snapshot_version"], 28)
-            self.assertEqual(report["schema"]["source_version"], 29)
-            self.assertEqual(report["schema"]["missing_applied_versions"], [29])
+            self.assertEqual(report["schema"]["source_version"], 30)
+            self.assertEqual(report["schema"]["missing_applied_versions"], [29, 30])
             self.assertEqual(report["counts"]["unsettled_worktree_cleanups"], 1)
             self.assertIn("unsettled_worktree_cleanups", report["observed_outstanding_obligations"])
             self.assertFalse(report["cutover_authorized"])
@@ -109,8 +109,8 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertFalse(report["cutover_authorized"])
             self.assertEqual(report["source_mode"], "immutable_read_only")
             self.assertEqual(report["schema"]["snapshot_version"], 27)
-            self.assertEqual(report["schema"]["source_version"], 29)
-            self.assertEqual(report["schema"]["missing_applied_versions"], [28, 29])
+            self.assertEqual(report["schema"]["source_version"], 30)
+            self.assertEqual(report["schema"]["missing_applied_versions"], [28, 29, 30])
             self.assertTrue(report["schema"]["workspace_migration_preview_recorded"])
             for name in [
                 "unresolved_legacy_subjects", "unapplied_classified_legacy_subjects",
@@ -129,6 +129,8 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertIn("unsettled_legacy_deliveries", report["unknown_obligation_checks"])
             self.assertIsNone(report["counts"]["unsettled_worktree_cleanups"])
             self.assertIn("unsettled_worktree_cleanups", report["unknown_obligation_checks"])
+            self.assertIsNone(report["counts"]["unsettled_keyed_team_spawns"])
+            self.assertIn("unsettled_keyed_team_spawns", report["unknown_obligation_checks"])
             self.assertEqual(digest(snapshot), before_digest)
             self.assertEqual(
                 sorted(p.name for p in snapshot.parent.iterdir()), before_names,
@@ -157,6 +159,36 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertEqual(report["counts"]["legacy_teams"], 1)
             self.assertIn("unresolved_legacy_subjects", report["unknown_obligation_checks"])
             self.assertFalse(report["cutover_authorized"])
+
+    def test_keyed_spawn_admission_and_unsettled_native_journal_block_cutover(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gg-snapshot-spawn-recovery-") as root:
+            snapshot = Path(root) / "consistent-schema30.sqlite3"
+            with sqlite3.connect(snapshot) as db:
+                db.executescript(
+                    "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);"
+                    "CREATE TABLE team_spawn_admissions(completed_response_json TEXT);"
+                    "CREATE TABLE team_operation_journal(kind TEXT,stage TEXT);"
+                    "INSERT INTO team_spawn_admissions VALUES (NULL),('{}');"
+                    "INSERT INTO team_operation_journal VALUES "
+                    "('spawn_member_with_worktree','rollback_review_required'),"
+                    "('spawn_member_with_worktree','completed'),"
+                    "('team_deleted','pending');"
+                )
+                db.executemany(
+                    "INSERT INTO schema_migrations VALUES (?)", [(i,) for i in range(1, 31)]
+                )
+            original = digest(snapshot)
+            report_result = run_audit(snapshot)
+            self.assertEqual(report_result.returncode, 0, report_result.stderr)
+            report = json.loads(report_result.stdout)
+            self.assertEqual(report["schema"]["snapshot_version"], 30)
+            self.assertEqual(report["schema"]["missing_applied_versions"], [])
+            self.assertEqual(report["counts"]["unsettled_keyed_team_spawns"], 1)
+            self.assertEqual(report["counts"]["unsettled_team_spawn_journals"], 1)
+            self.assertIn("unsettled_keyed_team_spawns", report["observed_outstanding_obligations"])
+            self.assertIn("unsettled_team_spawn_journals", report["observed_outstanding_obligations"])
+            self.assertFalse(report["cutover_authorized"])
+            self.assertEqual(digest(snapshot), original)
 
     def test_gapped_migration_chain_is_reported_without_changing_snapshot(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-snapshot-gap-") as root:

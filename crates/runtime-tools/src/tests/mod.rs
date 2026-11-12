@@ -24,6 +24,7 @@ mod team_manage;
 mod worktree;
 mod worktree_cleanup_recovery;
 mod worktree_retirement;
+mod worktree_spawn_admission;
 mod worktree_spawn_recovery;
 
 #[derive(Default)]

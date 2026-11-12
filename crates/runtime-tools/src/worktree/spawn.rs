@@ -1,8 +1,8 @@
 use runtime_core::{
-    ProviderKind, RuntimeError, TeamJoinRequest, TeamMemberSpawnRequest, TeamMemberSpawnResponse,
-    TeamRemoveMemberRequest, TeamSendDirectRequest, WorktreeCleanupRequest,
-    WorktreeMemberRemovedRequest, WorktreeMemberRemovedResponse, WorktreeReleaseRequest,
-    WorktreeService,
+    ProviderKind, RuntimeError, TeamJoinRequest, TeamMemberSpawnAdmission, TeamMemberSpawnRequest,
+    TeamMemberSpawnResponse, TeamRemoveMemberRequest, TeamSendDirectRequest,
+    WorktreeCleanupRequest, WorktreeMemberRemovedRequest, WorktreeMemberRemovedResponse,
+    WorktreeReleaseRequest, WorktreeService,
 };
 
 use crate::now_ms;
@@ -286,16 +286,46 @@ impl RuntimeWorktreeService {
                 "team_id is required".to_string(),
             ));
         }
-        let operation_id = self.allocate_operation_id();
-        self.record_journal(
-            operation_id.as_str(),
-            team_id.as_str(),
-            "planned",
-            serde_json::json!({
-                "source_session_id": request.source_session_id,
-                "worktree": request.worktree,
-            }),
-        )?;
+
+        let request_hash = if let Some(key) = request.idempotency_key.as_deref() {
+            if key.is_empty()
+                || key.len() > 512
+                || key.trim() != key
+                || key.chars().any(char::is_control)
+            {
+                return Err(RuntimeError::InvalidState(
+                    "spawn idempotency key must be 1-512 printable characters without surrounding whitespace".into(),
+                ));
+            }
+            let hash =
+                runtime_core::normalized_json_hash(&serde_json::to_value(&request).map_err(
+                    |error| RuntimeError::InvalidState(format!("invalid spawn request: {error}")),
+                )?)?;
+            // Original receipt precedes mutable source-session lookup; a
+            // retired session must not break the replay of its original key.
+            if let Some(admission) = self.store.replay_team_member_spawn(
+                &team_id,
+                &request.source_session_id,
+                key,
+                &hash,
+            )? {
+                return match admission {
+                    TeamMemberSpawnAdmission::Replay { response } => Ok(response),
+                    TeamMemberSpawnAdmission::Unresolved { operation_id } => Err(
+                        RuntimeError::operation_unresolved(
+                            operation_id,
+                            "original keyed spawn is not certified complete; inspect its operation before any native retry",
+                        ),
+                    ),
+                    TeamMemberSpawnAdmission::Execute { .. } => Err(RuntimeError::Conflict(
+                        "read-only team spawn replay cannot grant native execution".into(),
+                    )),
+                };
+            }
+            Some(hash)
+        } else {
+            None
+        };
 
         let source_session = self
             .runtime
@@ -305,6 +335,92 @@ impl RuntimeWorktreeService {
             .cwd
             .clone()
             .ok_or_else(|| RuntimeError::InvalidState("source session has no cwd".to_string()))?;
+
+        // Resolve provider authority before Git checkout creation or its init
+        // script. A bad provider request must never leave native artifacts.
+        let provider = match request.provider.as_deref() {
+            Some(provider) => ProviderKind::from_str(provider).ok_or_else(|| {
+                RuntimeError::InvalidState(format!("unsupported provider {}", provider))
+            })?,
+            None => ProviderKind::from_str(source_session.provider.as_str()).ok_or_else(|| {
+                RuntimeError::InvalidState(format!(
+                    "source session has unsupported provider {}",
+                    source_session.provider
+                ))
+            })?,
+        };
+
+        // A registered adapter and valid launch permission are also pure
+        // invariants. A valid provider name with no configured adapter must
+        // not cause an orphaned Git checkout before create_session fails.
+        let preflight_permission_mode = request
+            .permission_mode
+            .as_deref()
+            .or(source_session.permission_mode.as_deref())
+            .or(
+                if provider == ProviderKind::Codex && request.worktree.is_some() {
+                    Some("full_auto")
+                } else {
+                    None
+                },
+            );
+        self.runtime
+            .preflight_legacy_session_create(provider, preflight_permission_mode)?;
+
+        if let Some(worktree) = request.worktree.as_ref() {
+            let mode = worktree.mode.as_deref().unwrap_or("create").trim();
+            if !mode.is_empty()
+                && !["create", "reuse", "use_existing"]
+                    .iter()
+                    .any(|allowed| mode.eq_ignore_ascii_case(allowed))
+            {
+                return Err(RuntimeError::InvalidState(format!(
+                    "unsupported worktree spawn mode {mode}"
+                )));
+            }
+            Self::validate_managed_worktree_name(worktree.name.as_deref().unwrap_or_default())?;
+            if let Some(prefix) = worktree.branch_prefix.as_deref() {
+                if !prefix.trim().is_empty() {
+                    Self::validate_managed_worktree_name(prefix)?;
+                }
+            }
+        }
+
+        let operation_id = self.allocate_operation_id();
+        if let Some(hash) = request_hash.as_deref() {
+            match self
+                .store
+                .admit_team_member_spawn(&operation_id, &request, hash, now_ms())?
+            {
+                TeamMemberSpawnAdmission::Execute {
+                    operation_id: admitted,
+                } if admitted == operation_id => {}
+                TeamMemberSpawnAdmission::Replay { response } => return Ok(response),
+                TeamMemberSpawnAdmission::Unresolved { operation_id } => {
+                    return Err(RuntimeError::operation_unresolved(
+                        operation_id,
+                        "another worker owns the original keyed spawn; no repeated native effect is authorized",
+                    ));
+                }
+                TeamMemberSpawnAdmission::Execute { .. } => {
+                    return Err(RuntimeError::Conflict(
+                        "team spawn admission did not match new operation ID".into(),
+                    ));
+                }
+            }
+        } else {
+            // Legacy callers still admit an unkeyed operation for inspection,
+            // but their lost reply cannot safely be retried automatically.
+            self.record_journal(
+                &operation_id,
+                &team_id,
+                "planned",
+                serde_json::json!({
+                    "source_session_id": request.source_session_id,
+                    "worktree": request.worktree,
+                }),
+            )?;
+        }
 
         let mut worktree_assignment_mode = "none".to_string();
         let mut worktree_created_by_operation = false;
@@ -406,18 +522,6 @@ impl RuntimeWorktreeService {
             }
         }
         let assigned_worktree_id = worktree_record.as_ref().map(|row| row.id.clone());
-
-        let provider = match request.provider.as_deref() {
-            Some(provider) => ProviderKind::from_str(provider).ok_or_else(|| {
-                RuntimeError::InvalidState(format!("unsupported provider {}", provider))
-            })?,
-            None => ProviderKind::from_str(source_session.provider.as_str()).ok_or_else(|| {
-                RuntimeError::InvalidState(format!(
-                    "source session has unsupported provider {}",
-                    source_session.provider
-                ))
-            })?,
-        };
 
         let spawn_cwd = worktree_record
             .as_ref()
@@ -738,26 +842,19 @@ impl RuntimeWorktreeService {
                 "delivery_ids": onboarding_ack.deliveries.iter().map(|row| row.id.clone()).collect::<Vec<_>>()
             }),
         )?;
-        self.record_native_stage(
-            operation_id.as_str(),
-            team_id.as_str(),
-            "completed",
-            serde_json::json!({
-                "spawned_session_id": spawned_session.id,
-                "worktree_id": worktree_record.as_ref().map(|row| row.id.clone()),
-            }),
-        )?;
-
         let spawned_member = joined_team
             .members
             .iter()
             .find(|member| member.agent_id == spawned_session.id)
             .cloned()
             .ok_or_else(|| {
-                RuntimeError::InvalidState("spawned member missing after join".to_string())
+                RuntimeError::operation_unresolved(
+                    &operation_id,
+                    "native onboarding was accepted but joined team has no spawned member",
+                )
             })?;
 
-        Ok(TeamMemberSpawnResponse {
+        let response = TeamMemberSpawnResponse {
             operation_id,
             team: joined_team,
             spawned_session,
@@ -771,7 +868,26 @@ impl RuntimeWorktreeService {
                 "delivery_ids": onboarding_ack.deliveries.into_iter().map(|row| row.id).collect::<Vec<_>>()
             }),
             journal_stage: "completed".to_string(),
-        })
+        };
+        if request_hash.is_some() {
+            self.store
+                .complete_team_member_spawn(&response.operation_id, &response, now_ms())
+                .map_err(|error| RuntimeError::operation_unresolved(
+                    &response.operation_id,
+                    format!("native onboarding may have succeeded but exact completion receipt failed: {error}"),
+                ))?;
+        } else {
+            self.record_native_stage(
+                &response.operation_id,
+                &team_id,
+                "completed",
+                serde_json::json!({
+                    "spawned_session_id": response.spawned_session.id,
+                    "worktree_id": response.worktree.as_ref().map(|row| &row.id),
+                }),
+            )?;
+        }
+        Ok(response)
     }
 
     pub(super) async fn on_member_removed_impl(

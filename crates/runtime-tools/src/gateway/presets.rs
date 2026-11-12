@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 use runtime_core::{default_model_presets, ProviderKind};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TeamMcpPolicy {
@@ -32,12 +30,6 @@ pub(super) struct ResolvedModelPreset {
 pub(super) struct ModelPresetCatalog {
     presets_by_name: BTreeMap<String, ResolvedModelPreset>,
     preset_names: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct ManageAddIdempotencyEntry {
-    pub(super) inserted_at: Instant,
-    pub(super) completed_success: Option<Value>,
 }
 
 impl Default for TeamMcpPolicy {

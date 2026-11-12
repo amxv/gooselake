@@ -54,6 +54,16 @@ fn generated_openapi_includes_core_surface() {
     assert!(yaml.contains("  /v1/sessions:"));
     assert!(yaml.contains("  /v1/sessions/{session_id}/events/stream:"));
     assert!(yaml.contains("  /v1/teams/{team_id}/messages:"));
+    let keyed_spawn = yaml
+        .split("  /v1/teams/{team_id}/members/spawn:\n")
+        .nth(1)
+        .expect("operator-authorized legacy spawn")
+        .split("\n  /v1/")
+        .next()
+        .unwrap();
+    assert!(keyed_spawn.contains("        - name: Idempotency-Key\n"));
+    assert!(keyed_spawn.contains("          required: false\n"));
+    assert!(keyed_spawn.contains("never rerun Git or provider effects"));
     assert!(yaml.contains("  /v1/diagnostics/team-operations/{operation_id}:"));
     assert!(yaml.contains("  /v1/mcp/invoke:"));
     assert!(yaml.contains("  /v2/mcp/invoke:"));

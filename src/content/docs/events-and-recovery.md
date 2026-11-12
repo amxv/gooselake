@@ -460,7 +460,10 @@ The JSON report distinguishes observed counts from `null` (a schema table
 or required column is unavailable, **not** an observed zero). It inventories
 unresolved migration subjects, unowned live sessions, turns, approvals,
 dispatches, operations, effects/outbox, message deliveries, processes and
-completion notices, hook work, retirement fences, and worktree claims.
+completion notices, hook work, retirement fences, worktree claims, and legacy
+team native spawn journals. For schema version 30 and newer it additionally
+counts uncompleted caller-keyed spawn admissions: an absent older table is
+`null`/unknown, not proof that no pending Git/provider effects exist.
 It also reports the migration version and missing ordered migration steps.
 Only aggregate counts and metric names are printed, not prompts, credentials,
 file paths, or member identities.

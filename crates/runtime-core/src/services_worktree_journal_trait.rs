@@ -22,6 +22,51 @@ macro_rules! default_worktree_record_journal {
 
 pub(crate) use default_worktree_record_journal;
 
+macro_rules! default_team_spawn_admission {
+    () => {
+        /// Replayed callers must find the exact original durable record before
+        /// inspecting mutable roster/session state, otherwise fail closed.
+        fn replay_team_member_spawn(
+            &self,
+            _team_id: &str,
+            _source_session_id: &str,
+            _idempotency_key: &str,
+            _request_hash: &str,
+        ) -> Result<Option<crate::TeamMemberSpawnAdmission>, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "durable caller-bound team spawn replay unavailable".into(),
+            ))
+        }
+
+        /// Reserve a keyed spawn and planned recovery journal atomically.
+        fn admit_team_member_spawn(
+            &self,
+            _operation_id: &str,
+            _request: &crate::TeamMemberSpawnRequest,
+            _request_hash: &str,
+            _requested_at: i64,
+        ) -> Result<crate::TeamMemberSpawnAdmission, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "durable caller-bound team spawn admission unavailable".into(),
+            ))
+        }
+
+        /// Terminal response must share a transaction with completed stage.
+        fn complete_team_member_spawn(
+            &self,
+            _operation_id: &str,
+            _response: &crate::TeamMemberSpawnResponse,
+            _completed_at: i64,
+        ) -> Result<(), crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "durable team spawn completion receipt unavailable".into(),
+            ))
+        }
+    };
+}
+
+pub(crate) use default_team_spawn_admission;
+
 macro_rules! default_worktree_claim_cleanup_journal {
     () => {
         /// A claim/release and its critical worktree event are one authority.

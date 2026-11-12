@@ -1887,9 +1887,30 @@ anonymous caller can inspect journal contents. Neither the inspection API nor
 the general `/v2/operations/{operation_id}` endpoint converts a legacy spawn
 intent into an executable or repeatable native operation.
 These statuses are **review coordinates**, not permission to rerun Git or
-provider effects. This compatibility route still lacks a caller-bound durable
-idempotency key and a fully automated cross-stage recovery/replay contract;
-do not simply resubmit a request whose result is ambiguous.
+provider effects. The legacy spawn POST now optionally accepts a single
+`Idempotency-Key` HTTP header (1–512 printable UTF-8 bytes, no surrounding
+whitespace). That key is permanently bound to the **original team,
+source_session_id and full immutable request body**. The first call atomically
+commits the keyed admission and `planned` journal before any Git checkout,
+provider session or onboarding; a simultaneous second worker cannot execute
+the same key. Admission rejects an already-deleted legacy team even when an
+in-memory roster cache is stale, but a later racing deletion still requires
+independent native lifecycle reconciliation. An exact retry of a completed
+spawn returns the original stored
+response and `operation_id` (including after a lost HTTP reply or restart),
+without contacting Git or a provider. An exact retry of a pending, failed,
+rolled-back or uncertain spawn returns `409 outcome_unresolved` with its
+original operation ID for inspection, **not** authorization to retry native
+effects. Reusing the key with different request content returns `409 conflict`.
+Historical unkeyed calls retain compatibility but have **no caller-bound
+replay guarantee**; adding a new key after an unknown earlier call also starts
+a separate operation, so never use it to retry an ambiguous unkeyed spawn.
+Legacy `gg_team_manage` add invocations use the same SQLite-backed authority,
+scoped to their original calling session and invocation ID; the prior
+process-local duplicate-call cache is no longer treated as durable recovery.
+Native recovery remains manual where independently verified Git/provider
+evidence is unavailable; these receipts do **not** make the overall worktree
+spawn lifecycle or automatic rollback exactly-once.
 
 Legacy team **create, join, member removal and lead change** now commit their
 roster mutation together with one Critical canonical team event in an atomic

@@ -492,6 +492,10 @@ async fn runtime_manager_persists_admitted_turn_compaction_observations() {
         RuntimeSessionManager::new(store.clone(), Arc::new(registry), 256)
             .expect("construct runtime session manager"),
     );
+    // Match production bootstrap: subscribe before the fake bridge can emit
+    // compaction on the onboarding turn. The turn-local fallback subscriber
+    // alone may register after the native events have already been emitted.
+    manager.start_provider_compaction_observers();
 
     let agent = manager
         .create_workspace_agent(
@@ -525,16 +529,35 @@ async fn runtime_manager_persists_admitted_turn_compaction_observations() {
         .expect("dispatch durable onboarding");
     wait_for_ready_session(&manager, agent.agent_id.as_str()).await;
 
-    let events = store
-        .list_runtime_events(
-            Some((
-                runtime_core::RuntimeEventScope::Session,
-                agent.agent_id.as_str(),
-            )),
-            None,
-            100,
-        )
-        .expect("list runtime events");
+    // The manager can make the session ready before its independent provider
+    // compaction observer has committed both Critical observations. A ready
+    // session alone is not a receipt barrier: wait for the two *durable*
+    // events rather than asserting on a scheduler-dependent instant.
+    let events = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let events = store
+                .list_runtime_events(
+                    Some((
+                        runtime_core::RuntimeEventScope::Session,
+                        agent.agent_id.as_str(),
+                    )),
+                    None,
+                    100,
+                )
+                .expect("list runtime events");
+            if events
+                .iter()
+                .filter(|event| event.kind == "compaction.lifecycle_changed")
+                .count()
+                == 2
+            {
+                break events;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("both provider compaction events must be durably committed");
     let compaction = events
         .iter()
         .filter(|event| event.kind == "compaction.lifecycle_changed")

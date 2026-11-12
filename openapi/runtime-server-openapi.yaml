@@ -935,6 +935,12 @@ paths:
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Original team/source caller-bound immutable spawn receipt; completed exact retries replay, unresolved native stages return 409 and never rerun Git or provider effects
+          schema:
+            type: string
       requestBody:
         required: true
         content:

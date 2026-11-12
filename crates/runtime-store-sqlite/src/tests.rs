@@ -134,6 +134,7 @@ fn initialize_schema_creates_all_runtime_tables() {
         "process_scheduler_state",
         "credentials",
         "team_operation_journal",
+        "team_spawn_admissions",
         "team_operation_diagnostics",
         "diagnostics_journal",
         "workspaces",

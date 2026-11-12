@@ -411,7 +411,8 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
     let accepts_idempotency_key = (method == HttpMethod::Post
         && matches!(
             path,
-            "/v2/workspaces"
+            "/v1/teams/{team_id}/members/spawn"
+                | "/v2/workspaces"
                 | "/v2/workspaces/{workspace_id}/retire"
                 | "/v2/workspaces/{workspace_id}/retirement/advance"
                 | "/v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile"
@@ -490,6 +491,9 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         } else {
             "          required: false\n"
         });
+        if path == "/v1/teams/{team_id}/members/spawn" {
+            out.push_str("          description: Original team/source caller-bound immutable spawn receipt; completed exact retries replay, unresolved native stages return 409 and never rerun Git or provider effects\n");
+        }
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
     }

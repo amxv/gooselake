@@ -2,19 +2,19 @@ use super::*;
 use runtime_core::{TeamCommsService, TeamMemberSpawnRequest, WorktreeService};
 use std::process::Command;
 
-struct SpawnFixture {
-    _temp: tempfile::TempDir,
-    store: Arc<SqliteRuntimeStore>,
+pub(super) struct SpawnFixture {
+    pub(super) _temp: tempfile::TempDir,
+    pub(super) store: Arc<SqliteRuntimeStore>,
     source_session_id: String,
-    team_id: String,
-    service: Arc<RuntimeWorktreeService>,
-    runtime: Arc<RuntimeSessionManager>,
-    comms: Arc<RuntimeTeamCommsService>,
-    provider: Arc<WorktreeTestProvider>,
-    database_path: std::path::PathBuf,
+    pub(super) team_id: String,
+    pub(super) service: Arc<RuntimeWorktreeService>,
+    pub(super) runtime: Arc<RuntimeSessionManager>,
+    pub(super) comms: Arc<RuntimeTeamCommsService>,
+    pub(super) provider: Arc<WorktreeTestProvider>,
+    pub(super) database_path: std::path::PathBuf,
 }
 
-async fn fixture() -> SpawnFixture {
+pub(super) async fn fixture() -> SpawnFixture {
     let temp = tempfile::tempdir().unwrap();
     let database_path = temp.path().join("runtime.sqlite3");
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
@@ -73,10 +73,11 @@ async fn fixture() -> SpawnFixture {
 }
 
 impl SpawnFixture {
-    fn request(&self) -> TeamMemberSpawnRequest {
+    pub(super) fn request(&self) -> TeamMemberSpawnRequest {
         TeamMemberSpawnRequest {
             team_id: self.team_id.clone(),
             source_session_id: self.source_session_id.clone(),
+            idempotency_key: None,
             provider: None,
             model: None,
             title: None,
@@ -89,7 +90,7 @@ impl SpawnFixture {
         }
     }
 
-    fn fresh_journal(&self) -> runtime_core::TeamOperationJournalRecord {
+    pub(super) fn fresh_journal(&self) -> runtime_core::TeamOperationJournalRecord {
         // Read through an independent SQLite connection, not a cached runtime
         // projection; this is the state an operator sees after restart.
         let reopened = SqliteRuntimeStore::new(SqliteStoreConfig {
@@ -101,6 +102,68 @@ impl SpawnFixture {
         assert_eq!(rows.len(), 1);
         rows.into_iter().next().unwrap()
     }
+}
+
+#[tokio::test]
+async fn invalid_requested_provider_never_creates_native_git_checkout() {
+    let fixture = fixture().await;
+    let repo = fixture._temp.path();
+    for args in [
+        vec!["init", "--quiet"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "--quiet",
+            "-m",
+            "initial",
+        ],
+    ] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut request = fixture.request();
+    request.metadata = None;
+    request.provider = Some("not-a-provider".into());
+    request.worktree = Some(runtime_core::TeamMemberSpawnWorktreeInput {
+        mode: Some("create".into()),
+        name: Some("must-not-exist".into()),
+        branch_prefix: None,
+        base_ref: None,
+        run_init_script: Some(true),
+    });
+    let error = fixture
+        .service
+        .spawn_team_member(request)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error:?}");
+    assert!(fixture
+        .store
+        .hydrate_runtime_state()
+        .unwrap()
+        .managed_worktrees
+        .is_empty());
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("must-not-exist"));
 }
 
 #[tokio::test]
@@ -328,9 +391,10 @@ async fn native_git_checkout_survives_lost_spawn_stage_receipt_for_operator_revi
         base_ref: None,
         run_init_script: Some(false),
     });
+    request.idempotency_key = Some("git-stage-lost-reply".into());
     let error = fixture
         .service
-        .spawn_team_member(request)
+        .spawn_team_member(request.clone())
         .await
         .unwrap_err();
     let operation_id = match error {
@@ -358,6 +422,25 @@ async fn native_git_checkout_survives_lost_spawn_stage_receipt_for_operator_revi
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&output.stdout).contains(&worktrees[0].worktree_cwd));
+    // The original keyed request is still pending, even if Git has a real
+    // checkout and a new worker cannot see the native stage acknowledgment.
+    let retry = fixture
+        .service
+        .spawn_team_member(request)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(retry, RuntimeError::OperationUnresolved { operation_id: id, .. } if id == operation_id)
+    );
+    assert_eq!(
+        fixture
+            .store
+            .hydrate_runtime_state()
+            .unwrap()
+            .managed_worktrees
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]

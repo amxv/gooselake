@@ -341,18 +341,15 @@ impl SqliteRuntimeRepository {
         // committed or *all* native compensation is certified rolled back.
         // An unknown/missing stage, including a forged `completed` stage
         // without its original response, is not clearance to delete.
+        // SQLite triggers maintain this sparse integrity index in the same
+        // transaction as both original authority tables. It includes missing
+        // or mismatched keyed journals, completed stages without an original
+        // response, and all nonterminal native stages. A late terminal result
+        // cannot disappear from this fence until its exact receipt commits.
         let unsettled_keyed: Option<String> = tx
             .query_row(
-                "SELECT a.operation_id FROM team_spawn_admissions a
-                 LEFT JOIN team_operation_journal j
-                   ON j.operation_id=a.operation_id AND j.team_id=a.team_id
-                  AND j.kind='spawn_member_with_worktree'
-                 WHERE a.team_id=?1 AND (
-                     j.operation_id IS NULL OR
-                     (j.stage!='rolled_back' AND NOT (
-                         j.stage='completed' AND a.completed_response_json IS NOT NULL
-                     ))
-                 ) LIMIT 1",
+                "SELECT operation_id FROM team_spawn_deletion_fence
+                 WHERE team_id=?1 AND keyed=1 LIMIT 1",
                 [&before.id],
                 |row| row.get(0),
             )
@@ -363,18 +360,12 @@ impl SqliteRuntimeRepository {
                 "team deletion blocked by unresolved admitted spawn {operation_id}; inspect its original native outcome"
             )));
         }
-        // Historical unkeyed spawns still have a planned native journal,
-        // but no caller-bound retry identity. Never interpret their absence
-        // of a successful HTTP response as proof that no native work ran.
+        // Unkeyed historical rows have no caller-bound retry receipt. They
+        // remain in the same sparse index but must never be replayed as keyed.
         let unsettled_unkeyed: Option<String> = tx
             .query_row(
-                "SELECT j.operation_id FROM team_operation_journal j
-                 WHERE j.team_id=?1 AND j.kind='spawn_member_with_worktree'
-                   AND j.stage NOT IN ('completed','rolled_back')
-                   AND NOT EXISTS (
-                       SELECT 1 FROM team_spawn_admissions a
-                       WHERE a.operation_id=j.operation_id
-                   ) LIMIT 1",
+                "SELECT operation_id FROM team_spawn_deletion_fence
+                 WHERE team_id=?1 AND keyed=0 LIMIT 1",
                 [&before.id],
                 |row| row.get(0),
             )

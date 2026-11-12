@@ -2,6 +2,7 @@
 use super::legacy_team_messages::{commit, fixture, proposed};
 use super::*;
 use runtime_core::RuntimeError;
+use rusqlite::OptionalExtension;
 use std::sync::{Arc, Barrier};
 
 fn keyed_spawn(team: &TeamRecord, key: &str) -> runtime_core::TeamMemberSpawnRequest {
@@ -649,4 +650,228 @@ fn schema_30_upgrade_indexes_sparse_unsettled_spawn_deletion_fence_at_scale() {
     upgraded.upsert_team_operation_journal(&unsettled).unwrap();
     let plan = deletion_plan(&team, &[], 1400);
     assert_eq!(deletion(&upgraded, &team, &[], &plan).unwrap(), plan.0);
+}
+
+#[test]
+fn sparse_spawn_deletion_fence_migrates_historical_rows_without_losing_corrupt_authority() {
+    let (_temp, repo, team) = fixture();
+    let mut connection = open_connection(&repo.database_path).unwrap();
+    // Reconstruct a disposable v32 database with a large history before the
+    // first v33 backfill. No original SQLite database or native effect is used.
+    connection
+        .execute_batch(
+            "DROP TRIGGER trg_spawn_deletion_fence_journal_insert;
+             DROP TRIGGER trg_spawn_deletion_fence_journal_update;
+             DROP TRIGGER trg_spawn_deletion_fence_journal_delete;
+             DROP TRIGGER trg_spawn_deletion_fence_admission_insert;
+             DROP TRIGGER trg_spawn_deletion_fence_admission_update;
+             DROP TRIGGER trg_spawn_deletion_fence_admission_delete;
+             DROP VIEW team_spawn_deletion_fence_candidates;
+             DROP TABLE team_spawn_deletion_fence;
+             DELETE FROM schema_migrations WHERE version=33;",
+        )
+        .unwrap();
+    let tx = connection.transaction().unwrap();
+    for number in 0..2_000_i64 {
+        let operation_id = format!("terminal_{number:04}");
+        tx.execute(
+            "INSERT INTO team_operation_journal
+             (operation_id,team_id,kind,stage,payload_json,created_at,updated_at)
+             VALUES (?1,?2,'spawn_member_with_worktree','completed','{}',?3,?3)",
+            params![operation_id, &team.id, number],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO team_spawn_admissions
+             (team_id,source_session_id,idempotency_key,request_hash,operation_id,
+              completed_response_json,created_at,updated_at)
+             VALUES (?1,'session_lead',?2,'old_hash',?2,'{}',?3,?3)",
+            params![&team.id, operation_id, number],
+        )
+        .unwrap();
+    }
+    for (operation_id, journal_kind, stage, response) in [
+        ("missing_original_journal", None, None, None),
+        (
+            "completed_without_receipt",
+            Some("spawn_member_with_worktree"),
+            Some("completed"),
+            None,
+        ),
+        (
+            "foreign_kind_journal",
+            Some("unrelated_kind"),
+            Some("completed"),
+            Some("{}"),
+        ),
+    ] {
+        tx.execute(
+            "INSERT INTO team_spawn_admissions
+             (team_id,source_session_id,idempotency_key,request_hash,operation_id,
+              completed_response_json,created_at,updated_at)
+             VALUES (?1,'session_lead',?2,'hash',?2,?3,2200,2200)",
+            params![&team.id, operation_id, response],
+        )
+        .unwrap();
+        if let (Some(kind), Some(stage)) = (journal_kind, stage) {
+            tx.execute(
+                "INSERT INTO team_operation_journal
+                 (operation_id,team_id,kind,stage,payload_json,created_at,updated_at)
+                 VALUES (?1,?2,?3,?4,'{}',2200,2200)",
+                params![operation_id, &team.id, kind, stage],
+            )
+            .unwrap();
+        }
+    }
+    tx.execute(
+        "INSERT INTO team_operation_journal
+         (operation_id,team_id,kind,stage,payload_json,created_at,updated_at)
+         VALUES ('unfinished_unkeyed',?1,'spawn_member_with_worktree','planned','{}',2200,2200)",
+        [&team.id],
+    )
+    .unwrap();
+    tx.commit().unwrap();
+    drop(connection);
+
+    let reopened = SqliteRuntimeRepository::new(repo.database_path.clone());
+    reopened.initialize_schema().unwrap();
+    let connection = open_connection(&repo.database_path).unwrap();
+    let indexed = connection
+        .prepare(
+            "SELECT operation_id,keyed FROM team_spawn_deletion_fence
+             WHERE team_id=?1 ORDER BY keyed DESC,operation_id",
+        )
+        .unwrap()
+        .query_map([&team.id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        indexed,
+        vec![
+            ("completed_without_receipt".into(), 1),
+            ("foreign_kind_journal".into(), 1),
+            ("missing_original_journal".into(), 1),
+            ("unfinished_unkeyed".into(), 0),
+        ]
+    );
+    let plan: String = connection
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT operation_id FROM team_spawn_deletion_fence
+             WHERE team_id=?1 AND keyed=1 LIMIT 1",
+            [&team.id],
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(
+        plan.contains("idx_team_spawn_deletion_fence_team_keyed"),
+        "{plan}"
+    );
+    assert!(matches!(
+        deletion(&reopened, &team, &[], &deletion_plan(&team, &[], 3000)),
+        Err(RuntimeError::Conflict(ref error)) if error.contains("completed_without_receipt")
+    ));
+    drop(connection);
+    reopened.initialize_schema().unwrap();
+    let restarted = open_connection(&repo.database_path).unwrap();
+    let total: i64 = restarted
+        .query_row(
+            "SELECT COUNT(*) FROM team_spawn_deletion_fence",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        total, 4,
+        "repeated startup must preserve exact sparse fence"
+    );
+}
+
+#[test]
+fn sparse_spawn_deletion_fence_tracks_journal_corruption_and_failed_updates_atomically() {
+    let (_temp, repo, team) = fixture();
+    let id = "keyed_sparse_fence";
+    admit_keyed_spawn(&repo, &team, id).unwrap();
+    let connection = open_connection(&repo.database_path).unwrap();
+    let read_fence = || -> Option<i64> {
+        connection
+            .query_row(
+                "SELECT keyed FROM team_spawn_deletion_fence WHERE operation_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap()
+    };
+    assert_eq!(read_fence(), Some(1));
+    let current = deletion_plan(&team, &[], 3000);
+    assert!(matches!(
+        deletion(&repo, &team, &[], &current),
+        Err(RuntimeError::Conflict(ref error)) if error.contains(id)
+    ));
+    // A forged completed stage without the matching original response stays
+    // fenced. Injected journal defects must never silently clear admission.
+    connection
+        .execute(
+            "UPDATE team_operation_journal SET stage='completed' WHERE operation_id=?1",
+            [id],
+        )
+        .unwrap();
+    assert_eq!(read_fence(), Some(1));
+    connection
+        .execute_batch(
+            "CREATE TRIGGER reject_sparse_fence_update
+             BEFORE DELETE ON team_spawn_deletion_fence
+             BEGIN SELECT RAISE(ABORT,'injected index maintenance failure'); END;",
+        )
+        .unwrap();
+    assert!(connection
+        .execute(
+            "UPDATE team_operation_journal SET stage='rolled_back' WHERE operation_id=?1",
+            [id],
+        )
+        .is_err());
+    let journal_stage: String = connection
+        .query_row(
+            "SELECT stage FROM team_operation_journal WHERE operation_id=?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(journal_stage, "completed");
+    assert_eq!(read_fence(), Some(1));
+    connection
+        .execute_batch("DROP TRIGGER reject_sparse_fence_update")
+        .unwrap();
+    connection
+        .execute(
+            "DELETE FROM team_operation_journal WHERE operation_id=?1",
+            [id],
+        )
+        .unwrap();
+    assert_eq!(read_fence(), Some(1), "missing journal is not clearance");
+    connection
+        .execute(
+            "INSERT INTO team_operation_journal
+             (operation_id,team_id,kind,stage,payload_json,created_at,updated_at)
+             VALUES (?1,?2,'wrong_kind','rolled_back','{}',1100,1100)",
+            params![id, &team.id],
+        )
+        .unwrap();
+    assert_eq!(read_fence(), Some(1), "foreign kind is not clearance");
+    connection
+        .execute(
+            "UPDATE team_operation_journal SET kind='spawn_member_with_worktree'
+             WHERE operation_id=?1",
+            [id],
+        )
+        .unwrap();
+    assert_eq!(
+        read_fence(),
+        None,
+        "only matching rolled-back journal clears"
+    );
+    assert_eq!(deletion(&repo, &team, &[], &current).unwrap(), current.0);
 }

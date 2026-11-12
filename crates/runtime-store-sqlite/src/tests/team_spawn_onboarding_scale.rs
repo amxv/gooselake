@@ -1,4 +1,4 @@
-//! Bounded indexed onboarding provenance lookup after the v31 -> v32 upgrade.
+//! Bounded indexed onboarding provenance lookup after upgrading from v31.
 use super::legacy_team_messages::fixture;
 use super::*;
 
@@ -10,8 +10,16 @@ fn schema_31_upgrade_preserves_two_thousand_deliveries_and_indexes_original_onbo
     // Simulate an isolated v31 database, not a designated live user's DB.
     connection
         .execute_batch(
-            "DROP INDEX idx_team_deliveries_by_message;
-             DELETE FROM schema_migrations WHERE version=32;",
+            "DROP TRIGGER trg_spawn_deletion_fence_journal_insert;
+             DROP TRIGGER trg_spawn_deletion_fence_journal_update;
+             DROP TRIGGER trg_spawn_deletion_fence_journal_delete;
+             DROP TRIGGER trg_spawn_deletion_fence_admission_insert;
+             DROP TRIGGER trg_spawn_deletion_fence_admission_update;
+             DROP TRIGGER trg_spawn_deletion_fence_admission_delete;
+             DROP VIEW team_spawn_deletion_fence_candidates;
+             DROP TABLE team_spawn_deletion_fence;
+             DROP INDEX idx_team_deliveries_by_message;
+             DELETE FROM schema_migrations WHERE version IN (32,33);",
         )
         .unwrap();
     let transaction = connection.transaction().unwrap();
@@ -46,7 +54,7 @@ fn schema_31_upgrade_preserves_two_thousand_deliveries_and_indexes_original_onbo
     assert_eq!(original.0, 2_000);
     drop(connection);
 
-    // Reopening applies only the additive migration and keeps every delivery.
+    // Reopening applies only additive migrations and keeps every delivery.
     let upgraded = SqliteRuntimeRepository::new(repo.database_path.clone());
     upgraded.initialize_schema().unwrap();
     let connection = open_connection(&repo.database_path).unwrap();
@@ -55,7 +63,7 @@ fn schema_31_upgrade_preserves_two_thousand_deliveries_and_indexes_original_onbo
             row.get(0)
         })
         .unwrap();
-    assert_eq!(version, 32);
+    assert_eq!(version, crate::schema::SCHEMA_VERSION);
     let preserved: (i64, String) = connection
         .query_row("SELECT COUNT(*),MIN(id) FROM team_deliveries", [], |row| {
             Ok((row.get(0)?, row.get(1)?))

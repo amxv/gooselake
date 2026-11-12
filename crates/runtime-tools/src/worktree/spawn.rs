@@ -10,41 +10,68 @@ use crate::now_ms;
 use super::RuntimeWorktreeService;
 
 impl RuntimeWorktreeService {
-    async fn rollback_spawn_after_join(
+    async fn rollback_spawn_resources(
         &self,
         team_id: &str,
         operation_id: &str,
         spawned_session_id: &str,
         assigned_worktree_id: Option<&str>,
         created_worktree_id: Option<&str>,
+        remove_member: bool,
+        release_claim: bool,
         reason_code: &str,
         reason_message: &str,
         payload: serde_json::Value,
-    ) {
-        let mut rollback_diagnostics = Vec::new();
+    ) -> Result<(), RuntimeError> {
+        // Record the exact compensation targets *before* touching another
+        // native resource. A crash halfway through is an unresolved rollback,
+        // never evidence that the next caller may spawn or clean up again.
+        self.record_journal(
+            operation_id,
+            team_id,
+            "rollback_pending",
+            serde_json::json!({
+                "reason": reason_code,
+                "spawned_session_id": spawned_session_id,
+                "assigned_worktree_id": assigned_worktree_id,
+                "created_worktree_id": created_worktree_id,
+                "remove_member": remove_member,
+                "release_claim": release_claim,
+                "payload": payload,
+            }),
+        )
+        .map_err(|error| {
+            RuntimeError::operation_unresolved(
+                operation_id,
+                format!(
+                    "rollback intent could not be committed before native compensation: {error}"
+                ),
+            )
+        })?;
 
-        if let Err(error) = self
-            .team_comms
-            .remove_team_member(TeamRemoveMemberRequest {
-                team_id: team_id.to_string(),
-                agent_id: spawned_session_id.to_string(),
-            })
-            .await
-        {
-            rollback_diagnostics.push(format!("team_remove_failed:{error}"));
-            let _ = self.store.append_team_operation_diagnostic(
-                Some(operation_id),
-                Some(team_id),
-                "spawn_rollback_team_remove_failed",
-                error.to_string().as_str(),
-                &serde_json::json!({
-                    "spawned_session_id": spawned_session_id
-                }),
-                now_ms(),
-            );
+        let mut outcomes = serde_json::Map::new();
+        let mut uncertainties = Vec::new();
+
+        if remove_member {
+            match self
+                .team_comms
+                .remove_team_member(TeamRemoveMemberRequest {
+                    team_id: team_id.to_string(),
+                    agent_id: spawned_session_id.to_string(),
+                })
+                .await
+            {
+                Ok(_) => {
+                    outcomes.insert("team_remove".into(), serde_json::json!("confirmed"));
+                }
+                Err(error) => {
+                    uncertainties.push(format!("team_remove:{error}"));
+                    outcomes.insert("team_remove".into(), serde_json::json!("unknown"));
+                }
+            }
         }
 
-        if let Err(error) = self
+        match self
             .runtime
             .close_session(
                 spawned_session_id,
@@ -52,76 +79,160 @@ impl RuntimeWorktreeService {
             )
             .await
         {
-            rollback_diagnostics.push(format!("session_close_failed:{error}"));
-            let _ = self.store.append_team_operation_diagnostic(
-                Some(operation_id),
-                Some(team_id),
-                "spawn_rollback_session_close_failed",
-                error.to_string().as_str(),
-                &serde_json::json!({
-                    "spawned_session_id": spawned_session_id
-                }),
-                now_ms(),
-            );
-            if let Err(force_error) = self
-                .runtime
-                .force_close_session(
-                    spawned_session_id,
-                    Some(format!("spawn_rollback_{reason_code}")),
-                )
-                .await
-            {
-                rollback_diagnostics.push(format!("session_force_close_failed:{force_error}"));
-                let _ = self.store.append_team_operation_diagnostic(
-                    Some(operation_id),
-                    Some(team_id),
-                    "spawn_rollback_session_force_close_failed",
-                    force_error.to_string().as_str(),
-                    &serde_json::json!({
-                        "spawned_session_id": spawned_session_id
+            Ok(session) if session.status == "closed" => {
+                outcomes.insert("session_close".into(), serde_json::json!("confirmed"));
+            }
+            Ok(session) => {
+                uncertainties.push(format!("session_close_nonterminal:{}", session.status));
+                outcomes.insert("session_close".into(), serde_json::json!("unknown"));
+            }
+            Err(error) => {
+                uncertainties.push(format!("session_close:{error}"));
+                // Force-close only changes the local projection. It does not
+                // prove that an unsuccessful native provider close occurred.
+                let forced = self
+                    .runtime
+                    .force_close_session(
+                        spawned_session_id,
+                        Some(format!("spawn_rollback_{reason_code}")),
+                    )
+                    .await;
+                outcomes.insert(
+                    "session_close".into(),
+                    serde_json::json!({
+                        "status": "unknown_native_close",
+                        "force_close": match forced {
+                            Ok(_) => "local_projection_closed".to_string(),
+                            Err(error) => {
+                                uncertainties.push(format!("session_force_close:{error}"));
+                                "failed".to_string()
+                            }
+                        },
                     }),
-                    now_ms(),
                 );
             }
         }
 
-        if let Some(worktree_id) = assigned_worktree_id {
-            let _ = self
-                .release_worktree(WorktreeReleaseRequest {
-                    worktree_id: worktree_id.to_string(),
-                    session_id: spawned_session_id.to_string(),
-                    cleanup_if_last_claim: Some(false),
-                })
-                .await;
+        // A forced local close after failed native provider acknowledgement
+        // is not evidence the provider stopped using its checkout. Retain
+        // claim/path until both member removal and native close are proven.
+        let safe_to_release = outcomes.get("session_close")
+            == Some(&serde_json::json!("confirmed"))
+            && (!remove_member
+                || outcomes.get("team_remove") == Some(&serde_json::json!("confirmed")));
+        if let Some(worktree_id) = assigned_worktree_id.filter(|_| release_claim) {
+            if !safe_to_release {
+                uncertainties.push("worktree_release_deferred_unconfirmed_native".to_string());
+                outcomes.insert("worktree_release".into(), serde_json::json!("deferred"));
+            } else {
+                match self
+                    .release_worktree(WorktreeReleaseRequest {
+                        worktree_id: worktree_id.to_string(),
+                        session_id: spawned_session_id.to_string(),
+                        cleanup_if_last_claim: Some(false),
+                    })
+                    .await
+                {
+                    Ok(result) if result.released_claim.released_at.is_some() => {
+                        outcomes.insert("worktree_release".into(), serde_json::json!("confirmed"));
+                    }
+                    Ok(_) => {
+                        uncertainties.push("worktree_release_not_confirmed".to_string());
+                        outcomes.insert("worktree_release".into(), serde_json::json!("unknown"));
+                    }
+                    Err(error) => {
+                        uncertainties.push(format!("worktree_release:{error}"));
+                        outcomes.insert("worktree_release".into(), serde_json::json!("unknown"));
+                    }
+                }
+            }
         }
         if let Some(worktree_id) = created_worktree_id {
-            let _ = self
-                .cleanup_worktree(WorktreeCleanupRequest {
-                    worktree_id: worktree_id.to_string(),
-                    reason: Some(format!("spawn_rollback_{reason_code}")),
-                })
-                .await;
+            let release_confirmed = !release_claim
+                || assigned_worktree_id.is_none()
+                || outcomes.get("worktree_release") == Some(&serde_json::json!("confirmed"));
+            if !safe_to_release || !release_confirmed {
+                uncertainties
+                    .push("worktree_cleanup_deferred_unconfirmed_native_or_claim".to_string());
+                outcomes.insert("worktree_cleanup".into(), serde_json::json!("deferred"));
+            } else {
+                match self
+                    .cleanup_worktree(WorktreeCleanupRequest {
+                        worktree_id: worktree_id.to_string(),
+                        reason: Some(format!("spawn_rollback_{reason_code}")),
+                    })
+                    .await
+                {
+                    Ok(result) if result.status == "deleted" => {
+                        outcomes.insert(
+                            "worktree_cleanup".into(),
+                            serde_json::json!("confirmed_deleted"),
+                        );
+                    }
+                    Ok(result) => {
+                        uncertainties
+                            .push(format!("worktree_cleanup_not_deleted:{}", result.status));
+                        outcomes.insert(
+                            "worktree_cleanup".into(),
+                            serde_json::json!({
+                                "status": result.status,
+                                "diagnostics": result.diagnostics,
+                            }),
+                        );
+                    }
+                    Err(error) => {
+                        uncertainties.push(format!("worktree_cleanup:{error}"));
+                        outcomes.insert("worktree_cleanup".into(), serde_json::json!("unknown"));
+                    }
+                }
+            }
         }
 
-        let _ = self.store.append_team_operation_diagnostic(
+        if let Err(error) = self.store.append_team_operation_diagnostic(
             Some(operation_id),
             Some(team_id),
             reason_code,
             reason_message,
             &payload,
             now_ms(),
-        );
-        let _ = self.record_journal(
+        ) {
+            uncertainties.push(format!("rollback_diagnostic_write:{error}"));
+        }
+        let stage = if uncertainties.is_empty() {
+            "rolled_back"
+        } else {
+            "rollback_review_required"
+        };
+        self.record_journal(
             operation_id,
             team_id,
-            "rolled_back",
+            stage,
             serde_json::json!({
                 "reason": reason_code,
                 "message": reason_message,
                 "payload": payload,
-                "rollback_diagnostics": rollback_diagnostics,
+                "spawned_session_id": spawned_session_id,
+                "assigned_worktree_id": assigned_worktree_id,
+                "created_worktree_id": created_worktree_id,
+                "remove_member": remove_member,
+                "release_claim": release_claim,
+                "compensation_outcomes": outcomes,
+                "uncertainties": uncertainties,
             }),
-        );
+        ).map_err(|error| RuntimeError::operation_unresolved(
+            operation_id,
+            format!("compensation outcomes could not be durably receipted; inspect the original rollback_pending intent: {error}"),
+        ))?;
+        if !uncertainties.is_empty() {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                format!(
+                    "compensation needs independent review: {}",
+                    uncertainties.join("; ")
+                ),
+            ));
+        }
+        Ok(())
     }
 
     fn record_journal(
@@ -144,6 +255,22 @@ impl RuntimeWorktreeService {
                 created_at: now,
                 updated_at: now,
             })
+    }
+
+    // A successful native action followed by a failed stage write is an
+    // unknown outcome, not permission to repeat that action with a fresh ID.
+    fn record_native_stage(
+        &self,
+        operation_id: &str,
+        team_id: &str,
+        stage: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), RuntimeError> {
+        self.record_journal(operation_id, team_id, stage, payload)
+            .map_err(|error| RuntimeError::operation_unresolved(
+                operation_id,
+                format!("native effect may have succeeded but {stage} receipt failed: {error}; inspect original operation before any retry"),
+            ))
     }
 }
 
@@ -270,7 +397,7 @@ impl RuntimeWorktreeService {
                     .await?;
                 created_worktree_id = Some(created.worktree.id.clone());
                 worktree_record = Some(created.worktree.clone());
-                self.record_journal(
+                self.record_native_stage(
                     operation_id.as_str(),
                     team_id.as_str(),
                     "worktree_created",
@@ -320,28 +447,28 @@ impl RuntimeWorktreeService {
         {
             Ok(session) => session,
             Err(error) => {
-                if let Some(worktree_id) = created_worktree_id {
-                    let _ = self
-                        .cleanup_worktree(WorktreeCleanupRequest {
-                            worktree_id,
-                            reason: Some("spawn_session_create_failed".to_string()),
-                        })
-                        .await;
-                }
-                self.record_journal(
+                // A provider may have created a native session before a
+                // transport error. Without its confirmed identity, deleting
+                // the checkout or claiming complete rollback would be unsafe.
+                self.record_native_stage(
                     operation_id.as_str(),
                     team_id.as_str(),
-                    "rolled_back",
+                    "session_create_review_required",
                     serde_json::json!({
                         "reason": "session_create_failed",
-                        "error": error.to_string()
+                        "error": error.to_string(),
+                        "created_worktree_id": created_worktree_id,
+                        "assigned_worktree_id": assigned_worktree_id,
                     }),
                 )?;
-                return Err(error);
+                return Err(RuntimeError::operation_unresolved(
+                    operation_id,
+                    format!("provider session create result is unknown, inspect native admission and worktree before any retry: {error}"),
+                ));
             }
         };
 
-        self.record_journal(
+        self.record_native_stage(
             operation_id.as_str(),
             team_id.as_str(),
             "session_created",
@@ -354,44 +481,22 @@ impl RuntimeWorktreeService {
                 .set_session_worktree_id(spawned_session.id.as_str(), Some(worktree.id.clone()))
                 .await
             {
-                let close_reason = Some("spawn_set_worktree_id_failed".to_string());
-                if let Err(close_error) = self
-                    .runtime
-                    .close_session(spawned_session.id.as_str(), close_reason.clone())
-                    .await
-                {
-                    let _ = self.store.append_team_operation_diagnostic(
-                        Some(operation_id.as_str()),
-                        Some(team_id.as_str()),
-                        "spawn_set_worktree_id_session_close_failed",
-                        close_error.to_string().as_str(),
-                        &serde_json::json!({
-                            "spawned_session_id": spawned_session.id,
-                        }),
-                        now_ms(),
-                    );
-                    let _ = self
-                        .runtime
-                        .force_close_session(spawned_session.id.as_str(), close_reason.clone())
-                        .await;
-                }
-                if let Some(worktree_id) = created_worktree_id.as_deref() {
-                    let _ = self
-                        .cleanup_worktree(WorktreeCleanupRequest {
-                            worktree_id: worktree_id.to_string(),
-                            reason: Some("spawn_set_worktree_id_failed".to_string()),
-                        })
-                        .await;
-                }
-                self.record_journal(
-                    operation_id.as_str(),
+                self.rollback_spawn_resources(
                     team_id.as_str(),
-                    "rolled_back",
+                    operation_id.as_str(),
+                    spawned_session.id.as_str(),
+                    assigned_worktree_id.as_deref(),
+                    created_worktree_id.as_deref(),
+                    false,
+                    false,
+                    "spawn_set_worktree_id_failed",
+                    "spawn failed to bind new session to worktree",
                     serde_json::json!({
-                        "reason": "set_session_worktree_id_failed",
+                        "spawned_session_id": spawned_session.id,
                         "error": error.to_string(),
                     }),
-                )?;
+                )
+                .await?;
                 return Err(error);
             }
         }
@@ -411,30 +516,24 @@ impl RuntimeWorktreeService {
         {
             Ok(team) => team,
             Err(error) => {
-                let _ = self
-                    .runtime
-                    .close_session(
-                        spawned_session.id.as_str(),
-                        Some("spawn_join_failed".to_string()),
-                    )
-                    .await;
-                if let Some(worktree_id) = created_worktree_id {
-                    let _ = self
-                        .cleanup_worktree(WorktreeCleanupRequest {
-                            worktree_id,
-                            reason: Some("spawn_join_failed".to_string()),
-                        })
-                        .await;
-                }
-                self.record_journal(
-                    operation_id.as_str(),
+                // The join may have committed despite a lost response. The
+                // freshly created session is its only legitimate member ID.
+                self.rollback_spawn_resources(
                     team_id.as_str(),
-                    "rolled_back",
+                    operation_id.as_str(),
+                    spawned_session.id.as_str(),
+                    assigned_worktree_id.as_deref(),
+                    created_worktree_id.as_deref(),
+                    true,
+                    false,
+                    "spawn_join_failed",
+                    "spawn team join failed or its acknowledgement is unknown",
                     serde_json::json!({
-                        "reason": "team_join_failed",
-                        "error": error.to_string()
+                        "spawned_session_id": spawned_session.id,
+                        "error": error.to_string(),
                     }),
-                )?;
+                )
+                .await?;
                 return Err(error);
             }
         };
@@ -443,12 +542,14 @@ impl RuntimeWorktreeService {
         if Self::spawn_test_flag(&request.metadata, "__test_force_claim_failure_after_join") {
             let forced_error =
                 RuntimeError::InvalidState("forced claim failure after join for test".to_string());
-            self.rollback_spawn_after_join(
+            self.rollback_spawn_resources(
                 team_id.as_str(),
                 operation_id.as_str(),
                 spawned_session.id.as_str(),
                 assigned_worktree_id.as_deref(),
                 created_worktree_id.as_deref(),
+                true,
+                true,
                 "spawn_claim_failed_after_join",
                 "spawn worktree claim failed after team join",
                 serde_json::json!({
@@ -456,7 +557,7 @@ impl RuntimeWorktreeService {
                     "forced": true,
                 }),
             )
-            .await;
+            .await?;
             return Err(forced_error);
         }
 
@@ -473,12 +574,14 @@ impl RuntimeWorktreeService {
                 })
                 .await
             {
-                self.rollback_spawn_after_join(
+                self.rollback_spawn_resources(
                     team_id.as_str(),
                     operation_id.as_str(),
                     spawned_session.id.as_str(),
                     assigned_worktree_id.as_deref(),
                     created_worktree_id.as_deref(),
+                    true,
+                    true,
                     "spawn_claim_failed_after_join",
                     "spawn worktree claim failed after team join",
                     serde_json::json!({
@@ -487,12 +590,12 @@ impl RuntimeWorktreeService {
                         "error": error.to_string(),
                     }),
                 )
-                .await;
+                .await?;
                 return Err(error);
             }
         }
 
-        self.record_journal(
+        self.record_native_stage(
             operation_id.as_str(),
             team_id.as_str(),
             "team_joined",
@@ -504,15 +607,33 @@ impl RuntimeWorktreeService {
             &request.metadata,
             "__test_force_onboarding_failure_after_join",
         ) {
+            // Simulate a user edit in a disposable native checkout. Rollback
+            // must retain dirty Git state and mark operator review required.
+            if Self::spawn_test_flag(&request.metadata, "__test_dirty_checkout_before_rollback") {
+                if let Some(worktree) = worktree_record.as_ref() {
+                    std::fs::write(
+                        std::path::Path::new(&worktree.worktree_cwd)
+                            .join("preserve-operator-edit.txt"),
+                        "uncommitted operator content\n",
+                    )
+                    .map_err(|error| {
+                        RuntimeError::Io(format!(
+                            "failed injecting disposable dirty checkout: {error}"
+                        ))
+                    })?;
+                }
+            }
             let forced_error = RuntimeError::InvalidState(
                 "forced onboarding failure after join for test".to_string(),
             );
-            self.rollback_spawn_after_join(
+            self.rollback_spawn_resources(
                 team_id.as_str(),
                 operation_id.as_str(),
                 spawned_session.id.as_str(),
                 assigned_worktree_id.as_deref(),
                 created_worktree_id.as_deref(),
+                true,
+                true,
                 "spawn_onboarding_failed_after_join",
                 "spawn onboarding delivery failed after team join",
                 serde_json::json!({
@@ -520,7 +641,7 @@ impl RuntimeWorktreeService {
                     "forced": true,
                 }),
             )
-            .await;
+            .await?;
             return Err(forced_error);
         }
 
@@ -588,12 +709,14 @@ impl RuntimeWorktreeService {
         let onboarding_ack = match onboarding_ack {
             Ok(ack) => ack,
             Err(error) => {
-                self.rollback_spawn_after_join(
+                self.rollback_spawn_resources(
                     team_id.as_str(),
                     operation_id.as_str(),
                     spawned_session.id.as_str(),
                     assigned_worktree_id.as_deref(),
                     created_worktree_id.as_deref(),
+                    true,
+                    true,
                     "spawn_onboarding_failed_after_join",
                     "spawn onboarding delivery failed after team join",
                     serde_json::json!({
@@ -601,12 +724,12 @@ impl RuntimeWorktreeService {
                         "error": error.to_string(),
                     }),
                 )
-                .await;
+                .await?;
                 return Err(error);
             }
         };
 
-        self.record_journal(
+        self.record_native_stage(
             operation_id.as_str(),
             team_id.as_str(),
             "onboarding_sent",
@@ -615,7 +738,7 @@ impl RuntimeWorktreeService {
                 "delivery_ids": onboarding_ack.deliveries.iter().map(|row| row.id.clone()).collect::<Vec<_>>()
             }),
         )?;
-        self.record_journal(
+        self.record_native_stage(
             operation_id.as_str(),
             team_id.as_str(),
             "completed",

@@ -4,12 +4,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use runtime_core::{
     CreateSessionInput, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, ProviderAuthStatus,
-    ProviderCreateSessionRequest, ProviderInterruptTurnRequest, ProviderKind, ProviderMetadata,
-    ProviderModel, ProviderRegistry, ProviderResumeSessionRequest, ProviderSendTurnRequest,
-    ProviderSession, ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus,
-    ProviderWaitTurnRequest, RuntimeError, RuntimeProvider, RuntimeSessionManager, RuntimeStore,
-    RuntimeTeamCommsConfig, RuntimeTeamCommsService, SessionRecord, TeamCommsService,
-    TeamCreateRequest, ToolGateway,
+    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderInterruptTurnRequest,
+    ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry, ProviderResumeSessionRequest,
+    ProviderSendTurnRequest, ProviderSession, ProviderTurnAck, ProviderTurnResult,
+    ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError, RuntimeProvider,
+    RuntimeSessionManager, RuntimeStore, RuntimeTeamCommsConfig, RuntimeTeamCommsService,
+    SessionRecord, TeamCommsService, TeamCreateRequest, ToolGateway,
 };
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use serde_json::{json, Value};
@@ -24,6 +24,7 @@ mod team_manage;
 mod worktree;
 mod worktree_cleanup_recovery;
 mod worktree_retirement;
+mod worktree_spawn_recovery;
 
 #[derive(Default)]
 struct WorktreeTestProviderState {
@@ -33,6 +34,7 @@ struct WorktreeTestProviderState {
 #[derive(Default)]
 struct WorktreeTestProvider {
     state: AsyncMutex<WorktreeTestProviderState>,
+    fail_close: std::sync::atomic::AtomicBool,
 }
 
 #[async_trait]
@@ -131,6 +133,20 @@ impl RuntimeProvider for WorktreeTestProvider {
     }
 
     async fn interrupt_turn(&self, _req: ProviderInterruptTurnRequest) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    async fn close_session(&self, req: ProviderCloseSessionRequest) -> Result<(), RuntimeError> {
+        if self.fail_close.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(RuntimeError::Io(
+                "injected ambiguous native provider close".into(),
+            ));
+        }
+        self.state
+            .lock()
+            .await
+            .sessions
+            .remove(&req.runtime_session_id);
         Ok(())
     }
 }

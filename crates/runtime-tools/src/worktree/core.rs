@@ -46,7 +46,8 @@ impl RuntimeWorktreeService {
 
     pub(super) fn allocate_operation_id(&self) -> String {
         format!(
-            "op_spawn_{}",
+            "op_spawn_{}_{}",
+            self.event_id_nonce,
             self.next_operation_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         )

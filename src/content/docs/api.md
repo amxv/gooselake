@@ -1863,6 +1863,28 @@ Team delivery fields make multi-agent coordination inspectable: `pending`, `defe
 
 The `/v1/teams` HTTP routes and historical split MCP tools (`gg_team_status`, `gg_team_message`, `gg_team_manage`) are **operator-only compatibility surfaces** backed by the legacy team services. They remain available during migration but are not advertised to provider models. Current model agents instead use workspace-authoritative `gg_team` and `gg_message` operations through the scoped `/v2/mcp` endpoint or native Codex tools; the canonical workspace agent/message records are separate from legacy `TeamRecord` membership.
 
+The legacy `POST /v1/teams/{team_id}/members/spawn` workflow has a separate
+`op_spawn_*` operation journal. Successful native Git checkout, provider-session,
+team-join and onboarding effects that fail their next journal write return an
+**unresolved operation** with its original ID, not a safe-to-retry spawn error.
+If post-join onboarding or worktree-claim compensation begins, the runtime
+records `rollback_pending` with the exact session and worktree targets
+**before** cleanup. Only independently confirmed compensation results plus
+the rollback diagnostic can produce `rolled_back`; dirty worktrees, incomplete
+native session close, failed cleanup, or missing diagnostic evidence yield
+`rollback_review_required`. A failed final receipt leaves `rollback_pending`
+for manual inspection. An uncertain provider *creation* also preserves the
+possibly used worktree and records `session_create_review_required` rather than
+guessing that no native session exists. The legacy
+`GET /v1/diagnostics/team-operations?operation_id=...` endpoint exposes
+diagnostics only, **not** the authoritative journal stage; the team-operation
+journal currently requires inspection of the persisted SQLite record. A
+dedicated authenticated stage-inspection endpoint remains unfinished.
+These statuses are **review coordinates**, not permission to rerun Git or
+provider effects. This compatibility route still lacks a caller-bound durable
+idempotency key and a fully automated cross-stage recovery/replay contract;
+do not simply resubmit a request whose result is ambiguous.
+
 Legacy team **create, join, member removal and lead change** now commit their
 roster mutation together with one Critical canonical team event in an atomic
 SQLite transaction. A failed journal insert does not leave a partially

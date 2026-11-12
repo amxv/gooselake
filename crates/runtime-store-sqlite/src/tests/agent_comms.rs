@@ -270,7 +270,10 @@ fn indexed_delivery_pages_bound_fanout_preserve_equal_timestamp_order_and_filter
         query_plan.contains("idx_agent_deliveries_message"),
         "delivery paging should use the message/time/id index: {query_plan}"
     );
-    let other = make_message("msg_other");
+    // The unrelated page-boundary fixture has one recipient, not a 180-name
+    // broadcast snapshot with 179 missing delivery rows.
+    let mut other = make_message("msg_other");
+    other.recipient_agent_ids = vec!["agent_007".to_string()];
     repository
         .insert_agent_message_with_deliveries(
             &other,

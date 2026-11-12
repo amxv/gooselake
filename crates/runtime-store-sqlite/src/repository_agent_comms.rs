@@ -1,5 +1,6 @@
 use runtime_core::{AgentDeliveryRecord, AgentMessageRecord, RuntimeError};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use std::collections::HashSet;
 
 use crate::db::{collect_rows, db_error, json_to_string, open_connection};
 use crate::repository_team_hooks::queue_team_hook_trigger_tx;
@@ -42,6 +43,20 @@ impl SqliteRuntimeRepository {
         )
         .map_err(|error| db_error("failed inserting agent message", error))?;
 
+        // The immutable recipient snapshot is the complete pre-native dispatch
+        // authority. No recipient may be duplicated or silently omitted from
+        // the deliveries committed alongside the Critical message.sent event.
+        let expected_recipients = message
+            .recipient_agent_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        if expected_recipients.len() != message.recipient_agent_ids.len() {
+            return Err(RuntimeError::ProtocolViolation(
+                "message recipient snapshot has duplicate identities".into(),
+            ));
+        }
+        let mut seen_delivery_recipients = HashSet::new();
         for delivery in deliveries {
             if delivery.message_id != message.id {
                 return Err(RuntimeError::ProtocolViolation(format!(
@@ -49,7 +64,20 @@ impl SqliteRuntimeRepository {
                     delivery.id, message.id
                 )));
             }
+            if !expected_recipients.contains(delivery.recipient_agent_id.as_str())
+                || !seen_delivery_recipients.insert(delivery.recipient_agent_id.as_str())
+            {
+                return Err(RuntimeError::ProtocolViolation(format!(
+                    "delivery {} has an absent or repeated recipient outside the immutable message snapshot",
+                    delivery.id
+                )));
+            }
             insert_delivery(&tx, delivery)?;
+        }
+        if seen_delivery_recipients.len() != expected_recipients.len() {
+            return Err(RuntimeError::ProtocolViolation(
+                "message admission omitted a recipient from its immutable snapshot".into(),
+            ));
         }
 
         // The sender's workspace, not a shared-team assumption, owns the

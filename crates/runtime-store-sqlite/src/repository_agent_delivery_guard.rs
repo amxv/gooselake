@@ -1,5 +1,5 @@
 use runtime_core::{AgentDeliveryRecord, RuntimeError};
-use rusqlite::{OptionalExtension, Transaction};
+use rusqlite::{params, OptionalExtension, Transaction};
 
 use crate::db::db_error;
 
@@ -11,20 +11,28 @@ pub(crate) fn require_active_delivery_owners(
     tx: &Transaction<'_>,
     delivery: &AgentDeliveryRecord,
 ) -> Result<Option<String>, RuntimeError> {
-    let source: Option<(Option<String>, String)> = tx
+    let source: Option<(Option<String>, String, i64)> = tx
         .query_row(
-            "SELECT COALESCE(message.workspace_id,sender.workspace_id),message.sender_agent_id
+            "SELECT COALESCE(message.workspace_id,sender.workspace_id),message.sender_agent_id,
+                    (SELECT COUNT(*) FROM json_each(message.recipient_agent_ids_json)
+                     WHERE value=?2)
              FROM agent_messages message
              LEFT JOIN workspace_agents sender ON sender.session_id=message.sender_agent_id
              WHERE message.id=?1",
-            [&delivery.message_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            params![delivery.message_id, delivery.recipient_agent_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|error| db_error("failed inspecting delivery source authority", error))?;
-    let (workspace_id, sender_id) = source.ok_or_else(|| {
+    let (workspace_id, sender_id, is_snapshot_recipient) = source.ok_or_else(|| {
         RuntimeError::NotFound(format!("delivery message {}", delivery.message_id))
     })?;
+    if is_snapshot_recipient != 1 {
+        return Err(RuntimeError::Conflict(format!(
+            "delivery {} recipient is absent or duplicated in its immutable message snapshot",
+            delivery.id
+        )));
+    }
     let mut owner_workspaces = Vec::new();
     if let Some(ref owner) = workspace_id {
         owner_workspaces.push(owner.clone());

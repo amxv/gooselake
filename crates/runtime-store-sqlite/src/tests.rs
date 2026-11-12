@@ -9,6 +9,7 @@ use rusqlite::{params, Connection};
 
 mod agent_delivery_cas;
 mod agent_delivery_raw_mirror;
+mod agent_delivery_recipient_authority;
 mod agent_delivery_result;
 mod agent_delivery_retry;
 mod agent_delivery_scale;

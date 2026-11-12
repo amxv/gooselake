@@ -1368,11 +1368,18 @@ called, and a lost reservation acknowledgement never authorizes resending.
 Competing processes and restart retries cannot claim the already-pending
 native effect again. Only a provider adapter's explicit **not dispatched**
 proof allows an atomic release back to pending with its own
-\`approval.decision_not_dispatched\` event. An ambiguous provider outcome
-remains quarantined for reconciliation. Known provider decision results,
-the \`approval.resolved\` event and resulting turn/session transitions still
-have a separate state/event atomicity boundary; they are **not** covered by
-this pre-native reservation.
+`approval.decision_not_dispatched` event. A **separate post-native SQLite
+transaction** now commits a known successful provider acknowledgement,
+`approval.resolved` critical receipt and the guarded active turn/session
+resumption together. Ambiguous provider results retain their original
+`decision_pending` reservation and commit recovery quarantine and
+`approval.decision_unknown` receipt together, without making a potentially
+executed native action retryable. Journal faults roll back the outcome
+transaction, a duplicate/lost commit receipt is reconciled without a new
+provider decision, and a provider turn already completed concurrently is not
+resurrected or used to overwrite a newer session attachment. These rules do
+not claim atomicity for every other provider-wait/session or legacy `/v1`
+event family.
 
 The response is an accepted turn, not necessarily terminal output:
 

@@ -10,13 +10,14 @@ use tokio::time::{sleep, Duration};
 use crate::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
     ProcessRecord, ProviderApprovalAdmission, ProviderApprovalDecisionReceipt,
-    ProviderApprovalResponseRequest, ProviderAuthStatus, ProviderCreateSessionRequest,
-    ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry, ProviderResumeSessionRequest,
-    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit,
-    ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
-    RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
-    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
-    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
+    ProviderApprovalFinalization, ProviderApprovalResponseRequest, ProviderAuthStatus,
+    ProviderCreateSessionRequest, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
+    ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
+    ProviderTerminalCommit, ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus,
+    ProviderWaitTurnRequest, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeProvider,
+    RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
+    TurnRecord,
 };
 
 use super::RuntimeSessionManager;
@@ -32,6 +33,51 @@ pub(super) struct MockStore {
     pub(super) fail_next_event_append_for_kind: Mutex<Option<String>>,
     pub(super) fail_turn_write: Mutex<bool>,
     pub(super) fail_session_write: Mutex<bool>,
+    pub(super) native_approval_behavior: Mutex<Option<MockSendBehavior>>,
+    pub(super) native_approval_calls: AtomicUsize,
+}
+
+impl MockStore {
+    fn record_native_decision_result(
+        &self,
+        reserved: &ApprovalRecord,
+        outcome: &ApprovalRecord,
+        before_turn: &TurnRecord,
+        after_turn: &TurnRecord,
+        before_session: &SessionRecord,
+        after_session: &SessionRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderApprovalFinalization, RuntimeError> {
+        let mut turns = self.turns.lock().unwrap();
+        let mut sessions = self.sessions.lock().unwrap();
+        let mut approvals = self.approvals.lock().unwrap();
+        if approvals.get(&reserved.id) != Some(reserved)
+            || turns.get(&before_turn.id) != Some(before_turn)
+            || sessions.get(&before_session.id) != Some(before_session)
+        {
+            return Err(RuntimeError::Conflict(
+                "mock native decision authority changed".into(),
+            ));
+        }
+        if (before_turn != after_turn && *self.fail_turn_write.lock().unwrap())
+            || (before_session != after_session && *self.fail_session_write.lock().unwrap())
+        {
+            return Err(RuntimeError::Io(
+                "mock native decision projection fault".into(),
+            ));
+        }
+        // Inject journal errors before any projection/cache state is changed.
+        let receipt = self.append_runtime_event(event)?;
+        approvals.insert(outcome.id.clone(), outcome.clone());
+        turns.insert(after_turn.id.clone(), after_turn.clone());
+        sessions.insert(after_session.id.clone(), after_session.clone());
+        Ok(ProviderApprovalFinalization {
+            approval: outcome.clone(),
+            turn: after_turn.clone(),
+            session: after_session.clone(),
+            event: Some(receipt),
+        })
+    }
 }
 
 impl crate::WorkspaceWorktreeCreationStore for MockStore {}
@@ -337,6 +383,47 @@ impl RuntimeStore for MockStore {
         })
     }
 
+    fn finalize_provider_approval_decision(
+        &self,
+        reserved: &ApprovalRecord,
+        resolved: &ApprovalRecord,
+        before_turn: &TurnRecord,
+        after_turn: &TurnRecord,
+        before_session: &SessionRecord,
+        after_session: &SessionRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderApprovalFinalization, RuntimeError> {
+        self.record_native_decision_result(
+            reserved,
+            resolved,
+            before_turn,
+            after_turn,
+            before_session,
+            after_session,
+            event,
+        )
+    }
+
+    fn quarantine_provider_approval_decision(
+        &self,
+        reserved: &ApprovalRecord,
+        before_turn: &TurnRecord,
+        after_turn: &TurnRecord,
+        before_session: &SessionRecord,
+        after_session: &SessionRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<ProviderApprovalFinalization, RuntimeError> {
+        self.record_native_decision_result(
+            reserved,
+            reserved,
+            before_turn,
+            after_turn,
+            before_session,
+            after_session,
+            event,
+        )
+    }
+
     fn upsert_team(&self, _record: &TeamRecord) -> Result<(), RuntimeError> {
         Ok(())
     }
@@ -571,6 +658,23 @@ impl RuntimeProvider for MockProvider {
         &self,
         _req: ProviderApprovalResponseRequest,
     ) -> Result<(), RuntimeError> {
+        if let Some(store) = self.admission_probe.as_ref() {
+            store.native_approval_calls.fetch_add(1, Ordering::SeqCst);
+            match *store.native_approval_behavior.lock().unwrap() {
+                Some(MockSendBehavior::NotDispatched) => {
+                    return Err(RuntimeError::provider_not_dispatched(
+                        "approval_mock_preflight_rejected",
+                        "mock native decision not written",
+                    ));
+                }
+                Some(MockSendBehavior::Unknown) => {
+                    return Err(RuntimeError::Io(
+                        "mock native approval response ambiguous".into(),
+                    ));
+                }
+                _ => {}
+            }
+        }
         Ok(())
     }
 

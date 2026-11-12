@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use tokio::time::{sleep, Duration};
 
@@ -14,6 +15,234 @@ use super::super::test_support::{
     observable_manager_for_store_with_restore_probe, MockSendBehavior, MockStore,
 };
 use super::super::{ApprovalResponseInput, CreateSessionInput, SendTurnInput};
+
+async fn native_decision_fixture() -> (
+    Arc<super::super::RuntimeSessionManager>,
+    Arc<MockStore>,
+    String,
+    ApprovalRecord,
+) {
+    let (manager, store, _) =
+        manager_with_observable_send_provider(MockSendBehavior::Success, None);
+    let session = manager
+        .create_session(CreateSessionInput {
+            provider: ProviderKind::Codex,
+            model: None,
+            cwd: None,
+            permission_mode: None,
+            metadata: None,
+        })
+        .await
+        .unwrap();
+    let accepted = manager
+        .send_turn(
+            &session.id,
+            SendTurnInput {
+                input: vec![serde_json::json!({"type":"text","text":"needs approval"})],
+                expected_turn_id: None,
+                permission_mode: None,
+                projection_source: None,
+                user_input_snapshot: None,
+                correlation_id: None,
+                turn_settings: Default::default(),
+            },
+        )
+        .await
+        .unwrap();
+    let approval = manager
+        .record_provider_approval(
+            &session.id,
+            &accepted.turn_id,
+            "native-outcome-test",
+            Some("tool-outcome".into()),
+            serde_json::json!({"command":"true"}),
+        )
+        .await
+        .unwrap();
+    (manager, store, session.id, approval)
+}
+
+fn accept_native() -> ApprovalResponseInput {
+    ApprovalResponseInput {
+        decision: "accept".into(),
+        payload: Some(serde_json::json!({"operator":"approved"})),
+    }
+}
+
+#[tokio::test]
+async fn native_success_requires_atomic_result_receipt_and_never_resends_after_fault() {
+    let (manager, store, session_id, approval) = native_decision_fixture().await;
+    *store.fail_next_event_append_for_kind.lock().unwrap() = Some("approval.resolved".into());
+    let error = manager
+        .respond_approval(&session_id, &approval.id, accept_native())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("MUST NOT be retried"));
+    assert_eq!(store.native_approval_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store.approvals.lock().unwrap()[&approval.id].status,
+        "decision_pending"
+    );
+    assert_eq!(
+        manager.approvals.read().await[&approval.id].status,
+        "decision_pending"
+    );
+    assert_eq!(
+        manager.turns.read().await[&approval.turn_id].status,
+        "waiting_for_approval"
+    );
+    assert_eq!(
+        manager.sessions.read().await[&session_id].status,
+        "waiting_for_approval"
+    );
+    assert!(store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|row| row.kind != "approval.resolved"));
+    assert!(manager
+        .respond_approval(&session_id, &approval.id, accept_native())
+        .await
+        .is_err());
+    assert_eq!(store.native_approval_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn native_success_projects_approval_turn_session_and_critical_event_together() {
+    let (manager, store, session_id, approval) = native_decision_fixture().await;
+    let resolved = manager
+        .respond_approval(&session_id, &approval.id, accept_native())
+        .await
+        .unwrap();
+    assert_eq!(resolved.status, "accept");
+    assert_eq!(store.native_approval_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(store.approvals.lock().unwrap()[&approval.id], resolved);
+    assert_eq!(
+        manager.turns.read().await[&approval.turn_id].status,
+        "in_progress"
+    );
+    assert_eq!(
+        manager.sessions.read().await[&session_id].status,
+        "turn_running"
+    );
+    let rows = store.events.lock().unwrap();
+    let resolution = rows
+        .iter()
+        .find(|event| event.kind == "approval.resolved")
+        .unwrap();
+    assert_eq!(resolution.payload["approval_id"], approval.id);
+    assert_eq!(resolution.payload["decision"], "accept");
+    assert!(resolution.payload["decision_attempt_id"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn ambiguous_native_decision_quarantines_atomically_and_stays_nonretryable() {
+    let (manager, store, session_id, approval) = native_decision_fixture().await;
+    *store.native_approval_behavior.lock().unwrap() = Some(MockSendBehavior::Unknown);
+    let error = manager
+        .respond_approval(&session_id, &approval.id, accept_native())
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("approval_decision_unknown")
+            || error
+                .to_string()
+                .contains("mock native approval response ambiguous")
+    );
+    assert_eq!(
+        store.approvals.lock().unwrap()[&approval.id].status,
+        "decision_pending"
+    );
+    assert_eq!(
+        manager.turns.read().await[&approval.turn_id].status,
+        "approval_decision_unknown"
+    );
+    assert_eq!(
+        manager.sessions.read().await[&session_id].status,
+        "turn_recovery_required"
+    );
+    let rows = store.events.lock().unwrap();
+    let uncertain = rows
+        .iter()
+        .find(|row| row.kind == "approval.decision_unknown")
+        .unwrap();
+    assert_eq!(uncertain.payload["approval_id"], approval.id);
+    assert!(uncertain.payload["decision_attempt_id"].as_str().is_some());
+    drop(rows);
+    assert!(manager
+        .respond_approval(&session_id, &approval.id, accept_native())
+        .await
+        .is_err());
+    assert_eq!(store.native_approval_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn ambiguous_native_journal_fault_never_partially_quarantines_or_resends() {
+    let (manager, store, session_id, approval) = native_decision_fixture().await;
+    *store.native_approval_behavior.lock().unwrap() = Some(MockSendBehavior::Unknown);
+    *store.fail_next_event_append_for_kind.lock().unwrap() =
+        Some("approval.decision_unknown".into());
+    let error = manager
+        .respond_approval(&session_id, &approval.id, accept_native())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("quarantine receipt failed"));
+    assert_eq!(
+        store.approvals.lock().unwrap()[&approval.id].status,
+        "decision_pending"
+    );
+    assert_eq!(
+        manager.turns.read().await[&approval.turn_id].status,
+        "waiting_for_approval"
+    );
+    assert_eq!(
+        manager.sessions.read().await[&session_id].status,
+        "waiting_for_approval"
+    );
+    assert!(store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|row| row.kind != "approval.decision_unknown"));
+    assert!(manager
+        .respond_approval(&session_id, &approval.id, accept_native())
+        .await
+        .is_err());
+    assert_eq!(store.native_approval_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn proven_native_not_dispatched_releases_only_that_attempt() {
+    let (manager, store, session_id, approval) = native_decision_fixture().await;
+    *store.native_approval_behavior.lock().unwrap() = Some(MockSendBehavior::NotDispatched);
+    assert!(manager
+        .respond_approval(&session_id, &approval.id, accept_native())
+        .await
+        .is_err());
+    assert_eq!(store.approvals.lock().unwrap()[&approval.id], approval);
+    assert_eq!(
+        store
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|row| row.kind == "approval.decision_not_dispatched")
+            .count(),
+        1
+    );
+    *store.native_approval_behavior.lock().unwrap() = None;
+    assert_eq!(
+        manager
+            .respond_approval(&session_id, &approval.id, accept_native())
+            .await
+            .unwrap()
+            .status,
+        "accept"
+    );
+    assert_eq!(store.native_approval_calls.load(Ordering::SeqCst), 2);
+}
 
 #[tokio::test]
 async fn duplicate_provider_approval_event_converges_on_one_durable_record() {

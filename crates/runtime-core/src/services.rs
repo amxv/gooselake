@@ -18,9 +18,7 @@ mod worktree_models;
 mod worktree_store_trait;
 #[path = "services_worktree_trait.rs"]
 mod worktree_trait;
-pub use provider_terminal::{
-    ProviderApprovalAdmission, ProviderApprovalDecisionReceipt, ProviderTerminalCommit,
-};
+pub use provider_terminal::*;
 pub use team_comms_trait::*;
 pub use team_models::*;
 pub use worktree_models::*;

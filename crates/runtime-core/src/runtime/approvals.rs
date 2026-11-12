@@ -46,6 +46,47 @@ fn native_decision_event(
     }
 }
 
+fn native_decision_result_event(
+    approval: &ApprovalRecord,
+    attempt_id: &str,
+    decision: ApprovalDecision,
+    unknown_error: Option<&str>,
+) -> NewRuntimeEvent {
+    let unknown = unknown_error.is_some();
+    let mut payload = serde_json::json!({
+        "approval_id": approval.id,
+        "decision_attempt_id": attempt_id,
+        "decision": decision.as_str(),
+        "origin": "provider",
+    });
+    if let Some(error) = unknown_error {
+        payload["error"] = error.into();
+    }
+    NewRuntimeEvent {
+        event_id: if unknown {
+            format!("evt_approval_{}_decision_unknown_{attempt_id}", approval.id)
+        } else {
+            format!("evt_approval_{}_resolved", approval.id)
+        },
+        scope: RuntimeEventScope::Session,
+        scope_id: approval.session_id.clone(),
+        session_id: Some(approval.session_id.clone()),
+        team_id: None,
+        turn_id: Some(approval.turn_id.clone()),
+        kind: if unknown {
+            "approval.decision_unknown"
+        } else {
+            "approval.resolved"
+        }
+        .into(),
+        criticality: RuntimeEventCriticality::Critical,
+        payload,
+        provider: None,
+        provider_seq: None,
+        created_at: now_ms(),
+    }
+}
+
 impl RuntimeSessionManager {
     pub async fn respond_approval(
         self: &Arc<Self>,
@@ -366,38 +407,54 @@ impl RuntimeSessionManager {
                 }
                 return Err(error);
             }
+            let unknown_event = native_decision_result_event(
+                &existing,
+                &decision_attempt_id,
+                normalized_decision,
+                Some(&error.to_string()),
+            );
+            let mut turns = self.turns.write().await;
+            let mut sessions = self.sessions.write().await;
+            let previous_turn = turns
+                .get(&existing.turn_id)
+                .cloned()
+                .ok_or_else(|| RuntimeError::NotFound(format!("turn {}", existing.turn_id)))?;
+            let previous_session = sessions
+                .get(session_id)
+                .cloned()
+                .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+            let mut updated_turn = previous_turn.clone();
+            let mut updated_session = previous_session.clone();
+            if !is_terminal_turn_status(&previous_turn.status)
+                && previous_session.active_turn_id.as_deref() == Some(existing.turn_id.as_str())
             {
-                let mut turns = self.turns.write().await;
-                if let Some(turn) = turns.get_mut(&existing.turn_id) {
-                    turn.status = "approval_decision_unknown".to_string();
-                    turn.error = Some(serde_json::json!({
-                        "message": error.to_string(),
-                        "approval_id": approval_id,
-                    }));
-                    self.store.upsert_turn(turn)?;
-                }
-            }
-            {
-                let mut sessions = self.sessions.write().await;
-                if let Some(session) = sessions.get_mut(session_id) {
-                    session.status = "turn_recovery_required".to_string();
-                    session.updated_at = now_ms();
-                    self.store.upsert_session(session)?;
-                }
-            }
-            self.append_event(
-                RuntimeEventScope::Session,
-                session_id,
-                Some(session_id),
-                Some(existing.turn_id.as_str()),
-                "approval.decision_unknown",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({
+                updated_turn.status = "approval_decision_unknown".into();
+                updated_turn.error = Some(serde_json::json!({
+                    "message": error.to_string(),
                     "approval_id": approval_id,
-                    "error": error.to_string(),
-                }),
-            )
-            .await?;
+                    "decision_attempt_id": decision_attempt_id,
+                }));
+                updated_session.status = "turn_recovery_required".into();
+                updated_session.updated_at = now_ms();
+            }
+            let committed = self.store.quarantine_provider_approval_decision(
+                &decision_pending,
+                &previous_turn,
+                &updated_turn,
+                &previous_session,
+                &updated_session,
+                &unknown_event,
+            ).map_err(|journal| RuntimeError::provider_dispatch_unknown(
+                "approval_decision_unknown_unjournaled",
+                format!("provider result ambiguous ({error}); quarantine receipt failed ({journal}); reserved native action MUST NOT be retried"),
+            ))?;
+            turns.insert(committed.turn.id.clone(), committed.turn);
+            sessions.insert(committed.session.id.clone(), committed.session);
+            drop(sessions);
+            drop(turns);
+            if let Some(event) = committed.event {
+                let _ = self.event_tx.send(event);
+            }
             return Err(RuntimeError::provider_dispatch_unknown(
                 "approval_decision_unknown",
                 error.to_string(),
@@ -408,12 +465,64 @@ impl RuntimeSessionManager {
         resolved.status = normalized_decision.as_str().to_string();
         resolved.response = input.payload.clone();
         resolved.resolved_at = Some(now_ms());
+        if existing.origin == "provider" {
+            let mut turns = self.turns.write().await;
+            let mut sessions = self.sessions.write().await;
+            let previous_turn = turns
+                .get(&resolved.turn_id)
+                .cloned()
+                .ok_or_else(|| RuntimeError::NotFound(format!("turn {}", resolved.turn_id)))?;
+            let previous_session = sessions
+                .get(session_id)
+                .cloned()
+                .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+            let mut updated_turn = previous_turn.clone();
+            let mut updated_session = previous_session.clone();
+            if !is_terminal_turn_status(&previous_turn.status)
+                && previous_session.active_turn_id.as_deref() == Some(resolved.turn_id.as_str())
+            {
+                updated_turn.status = "in_progress".into();
+                updated_turn.error = None;
+                updated_session.status = "turn_running".into();
+                updated_session.updated_at = now_ms();
+            }
+            let result_event = native_decision_result_event(
+                &existing,
+                &decision_attempt_id,
+                normalized_decision,
+                None,
+            );
+            let committed = self.store.finalize_provider_approval_decision(
+                &decision_pending,
+                &resolved,
+                &previous_turn,
+                &updated_turn,
+                &previous_session,
+                &updated_session,
+                &result_event,
+            ).map_err(|journal| RuntimeError::provider_dispatch_unknown(
+                "approval_acknowledged_unjournaled",
+                format!("native approval was acknowledged but durable result receipt failed ({journal}); reserved native action MUST NOT be retried"),
+            ))?;
+            turns.insert(committed.turn.id.clone(), committed.turn);
+            sessions.insert(committed.session.id.clone(), committed.session);
+            self.approvals
+                .write()
+                .await
+                .insert(approval_id.to_string(), committed.approval.clone());
+            drop(sessions);
+            drop(turns);
+            if let Some(event) = committed.event {
+                let _ = self.event_tx.send(event);
+            }
+            return Ok(committed.approval);
+        }
+
         self.store.upsert_approval(&resolved)?;
         self.approvals
             .write()
             .await
             .insert(approval_id.to_string(), resolved.clone());
-
         let _ = self
             .append_event(
                 RuntimeEventScope::Session,
@@ -425,30 +534,7 @@ impl RuntimeSessionManager {
                 serde_json::json!({ "approval_id": approval_id }),
             )
             .await?;
-
-        if existing.origin == "provider" {
-            let mut turns = self.turns.write().await;
-            let mut sessions = self.sessions.write().await;
-            if let Some(turn) = turns.get_mut(&resolved.turn_id) {
-                if !is_terminal_turn_status(turn.status.as_str()) {
-                    turn.status = "in_progress".to_string();
-                    turn.error = None;
-                    self.store.upsert_turn(turn)?;
-                }
-            }
-            if let Some(session) = sessions.get_mut(session_id) {
-                if session.active_turn_id.as_deref() == Some(resolved.turn_id.as_str())
-                    && session.status != "closed"
-                    && session.status != "failed"
-                {
-                    session.status = "turn_running".to_string();
-                    session.updated_at = now_ms();
-                    self.store.upsert_session(session)?;
-                }
-            }
-            drop(sessions);
-            drop(turns);
-        } else if normalized_decision == ApprovalDecision::Accept {
+        if normalized_decision == ApprovalDecision::Accept {
             let mut turns = self.turns.write().await;
             let mut sessions = self.sessions.write().await;
             if let Some(turn) = turns.get_mut(&resolved.turn_id) {

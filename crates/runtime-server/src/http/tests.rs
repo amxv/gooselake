@@ -53,6 +53,7 @@ mod agent_session_controls_compaction;
 mod agent_session_controls_edit_rerun;
 mod mcp_core;
 mod mcp_policy_process;
+mod native_approval_journal_http;
 mod operator_agent_archive;
 mod operator_agent_create;
 mod operator_agent_create_contract;

@@ -29,6 +29,16 @@ pub struct ProviderApprovalDecisionReceipt {
     pub event: Option<RuntimeEventRecord>,
 }
 
+/// Committed provider-native decision result (success or unknown). Returned
+/// projections are canonical, including a concurrently completed provider turn.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderApprovalFinalization {
+    pub approval: ApprovalRecord,
+    pub turn: TurnRecord,
+    pub session: SessionRecord,
+    pub event: Option<RuntimeEventRecord>,
+}
+
 macro_rules! provider_terminal_methods {
     () => {
         /// Atomically commit an already-observed provider terminal turn,
@@ -94,6 +104,42 @@ macro_rules! provider_approval_methods {
         ) -> Result<crate::ProviderApprovalDecisionReceipt, crate::RuntimeError> {
             Err(crate::RuntimeError::Unsupported(
                 "atomic provider-native approval no-effect release unavailable".into(),
+            ))
+        }
+
+        /// A known successful provider acknowledgement is already an effect.
+        /// Commit its resolved approval, guarded turn/session projections,
+        /// and critical resolved event as one durable, restart-replayable
+        /// transaction, never as separate best-effort writes.
+        fn finalize_provider_approval_decision(
+            &self,
+            _reserved: &crate::ApprovalRecord,
+            _resolved: &crate::ApprovalRecord,
+            _before_turn: &crate::TurnRecord,
+            _after_turn: &crate::TurnRecord,
+            _before_session: &crate::SessionRecord,
+            _after_session: &crate::SessionRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<crate::ProviderApprovalFinalization, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic provider-native approval post-effect result unavailable".into(),
+            ))
+        }
+
+        /// After an ambiguous native result, keep the reservation fenced and
+        /// atomically quarantine the turn/session with its critical receipt.
+        /// Do not turn journal failure into permission to resend a decision.
+        fn quarantine_provider_approval_decision(
+            &self,
+            _reserved: &crate::ApprovalRecord,
+            _before_turn: &crate::TurnRecord,
+            _after_turn: &crate::TurnRecord,
+            _before_session: &crate::SessionRecord,
+            _after_session: &crate::SessionRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<crate::ProviderApprovalFinalization, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic provider-native approval ambiguous result unavailable".into(),
             ))
         }
     };

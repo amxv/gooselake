@@ -22,6 +22,7 @@ mod operator_process_pages;
 mod process_completion_authority;
 mod process_lifecycle_events;
 mod provider_approval_decisions;
+mod provider_approval_resolution;
 mod provider_native_approval_events;
 mod provider_terminal_events;
 mod workspace_agent_lifecycle_native_fences;

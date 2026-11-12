@@ -117,9 +117,10 @@ independently changed session rolls the full transition back; an ambiguous
 commit can be inspected by that durable receipt on restart without invoking
 the provider again. A late result for a superseded, no-longer-active turn may
 terminalize only that historical turn, never the newer active session.
-Provider wait failures, nonterminal dispatch transitions, provider-native
-approval callbacks/resolutions and older legacy team paths are **separate**
-event-authority cases and are not certified atomic by this result path.
+Provider wait failures, nonterminal dispatch transitions and older legacy
+team paths are **separate** event-authority cases and are not certified atomic
+by this result path. Provider-native approval outcomes have their own separate
+receipts described below.
 
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical
@@ -129,9 +130,8 @@ converges competing callbacks after a restart or a lost local response.
 An event insertion fault leaves no partial pending approval, and duplicate
 callbacks do not replay a second journal entry. Existing legacy approvals
 without a journal receipt remain historical rather than backfilled with
-invented request events. Native approval **resolution**, including unknown
-provider decision outcomes, is still a separate guarded recovery boundary
-and is not proven atomic by the request receipt.
+invented request events. Native approval **resolution** is a separate
+transaction boundary from the request receipt, as described below.
 
 Before submitting any **provider-native approval decision**, an exclusive
 SQLite transaction updates the pending approval to \`decision_pending\` and
@@ -141,10 +141,25 @@ decision. A failed journal insert means no reservation and no native call;
 concurrent or restarted callers cannot use an existing reservation as
 permission to submit a second native decision. Only an adapter that proves
 the decision **was not dispatched** may atomically release it to pending
-with \`approval.decision_not_dispatched\`. Lost/ambiguous native outcomes
-remain fenced; resolved decision and turn/session outcomes have their own
-pending journal-coupling audit. Historical approvals are not given
-fabricated reservation/no-effect events.
+with `approval.decision_not_dispatched`. After a provider **acknowledges** a
+native decision, its resolved approval and any still-attached turn/session
+resumption are committed with one deterministic critical `approval.resolved`
+receipt in a separate SQLite transaction. When a provider returns an
+**ambiguous native outcome**, the original `decision_pending` reservation
+remains fenced while the turn/session recovery quarantine and critical
+`approval.decision_unknown` receipt commit together. An event insertion
+failure rolls back the entire outcome transaction; it **never** authorizes
+resending a possibly executed native approval. Restart or lost SQLite commit
+responses are reconciled against exact reservation/decision receipts, and
+independent writers cannot resolve competing outcomes. If a provider turn
+completed while the decision acknowledgement was in flight, its already
+terminal state and the newer session attachment are preserved rather than
+reopened by the approval result. Missing/stale ownership fails closed; only
+the provider adapter's proven-not-dispatched response can release the exact
+attempt. These guarantees apply to new native approval outcomes, **not**
+legacy missing receipts, other provider wait/session lifecycle families or
+every `/v1` team event. Historical approvals are not given fabricated
+reservation/no-effect/outcome events.
 
 ## Replay before live
 

@@ -13,6 +13,19 @@ fn keyed_request(
     request
 }
 
+fn onboarding_stage_payload(response: &runtime_core::TeamMemberSpawnResponse) -> serde_json::Value {
+    serde_json::json!({
+        "source_session_id": response.spawned_member.added_by,
+        "spawned_session_id": response.spawned_session.id,
+        "provider": response.spawned_session.provider,
+        "provider_session_ref": response.spawned_session.provider_session_ref,
+        "canonical_provider_session_ref": response.spawned_session.canonical_provider_session_ref,
+        "worktree_id": response.worktree.as_ref().map(|row| &row.id),
+        "message_id": response.onboarding["message_id"],
+        "delivery_ids": response.onboarding["delivery_ids"],
+    })
+}
+
 #[tokio::test]
 async fn exact_keyed_completion_replays_original_receipt_without_native_work() {
     let fixture = fixture().await;
@@ -85,6 +98,186 @@ async fn exact_keyed_completion_replays_original_receipt_without_native_work() {
             .sessions
             .len(),
         2
+    );
+}
+
+#[tokio::test]
+async fn completed_key_cannot_bind_a_foreign_member_message_or_unverified_native_stage() {
+    let fixture = fixture().await;
+    let request = keyed_request(&fixture, "original-native-receipt-authority");
+    let first = fixture
+        .service
+        .spawn_team_member(request.clone())
+        .await
+        .unwrap();
+    let original_id = &first.operation_id;
+    let message_id = first.onboarding["message_id"].as_str().unwrap();
+    let delivery_id = first.onboarding["delivery_ids"][0].as_str().unwrap();
+    let stage_payload = onboarding_stage_payload(&first);
+    // Simulate loss of the atomic terminal response on disposable SQLite
+    // *after* the fake native session, real team join and onboarding admit.
+    // Do not resubmit the provider action to repair this evidence.
+    let connection = rusqlite::Connection::open(&fixture.database_path).unwrap();
+    connection
+        .execute(
+            "UPDATE team_spawn_admissions SET completed_response_json=NULL WHERE operation_id=?1",
+            [original_id],
+        )
+        .unwrap();
+    connection.execute(
+        "UPDATE team_operation_journal SET stage='onboarding_sent',payload_json=?2 WHERE operation_id=?1",
+        rusqlite::params![original_id, stage_payload.to_string()],
+    ).unwrap();
+    let reopened = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: fixture.database_path.clone(),
+    });
+
+    let mut forgeries = Vec::new();
+    let mut foreign_source = first.clone();
+    foreign_source.spawned_member.added_by = "different_original_caller".into();
+    forgeries.push(foreign_source);
+    let mut foreign_session = first.clone();
+    foreign_session.spawned_session.id = first.spawned_member.added_by.clone();
+    foreign_session.spawned_member.agent_id = foreign_session.spawned_session.id.clone();
+    forgeries.push(foreign_session);
+    let mut foreign_member = first.clone();
+    foreign_member
+        .team
+        .members
+        .retain(|member| member.agent_id != first.spawned_session.id);
+    forgeries.push(foreign_member);
+    let mut foreign_message = first.clone();
+    foreign_message.onboarding["message_id"] = serde_json::json!("other_message");
+    forgeries.push(foreign_message);
+    let mut foreign_delivery = first.clone();
+    foreign_delivery.onboarding["delivery_ids"] = serde_json::json!(["other_delivery"]);
+    forgeries.push(foreign_delivery);
+    let mut forged_native_ref = first.clone();
+    forged_native_ref.spawned_session.provider_session_ref = Some("foreign-native-session".into());
+    forgeries.push(forged_native_ref);
+    let mut forged_member_metadata = first.clone();
+    forged_member_metadata.spawned_member.joined_at += 1;
+    let stored_member = forged_member_metadata
+        .team
+        .members
+        .iter_mut()
+        .find(|member| member.agent_id == first.spawned_session.id)
+        .unwrap();
+    stored_member.joined_at += 1;
+    forgeries.push(forged_member_metadata);
+    let mut false_worktree = first.clone();
+    false_worktree.spawned_member.worktree_id = Some("unclaimed_worktree".into());
+    forgeries.push(false_worktree);
+    for forged in &forgeries {
+        assert!(matches!(
+            reopened.complete_team_member_spawn(original_id, forged, 2000),
+            Err(RuntimeError::Conflict(_) | RuntimeError::InvalidState(_))
+        ));
+        assert_eq!(fixture.fresh_journal().stage, "onboarding_sent");
+        let terminal: Option<String> = connection
+            .query_row(
+                "SELECT completed_response_json FROM team_spawn_admissions WHERE operation_id=?1",
+                [original_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(terminal.is_none(), "forgery must never certify replay");
+    }
+
+    let mut swapped_stage = stage_payload.clone();
+    swapped_stage["source_session_id"] = serde_json::json!("other_source");
+    connection
+        .execute(
+            "UPDATE team_operation_journal SET payload_json=?2 WHERE operation_id=?1",
+            rusqlite::params![original_id, swapped_stage.to_string()],
+        )
+        .unwrap();
+    assert!(matches!(
+        reopened.complete_team_member_spawn(original_id, &first, 2000),
+        Err(RuntimeError::Conflict(_))
+    ));
+    connection
+        .execute(
+            "UPDATE team_operation_journal SET payload_json=?2 WHERE operation_id=?1",
+            rusqlite::params![original_id, stage_payload.to_string()],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE team_messages SET sender_agent_id='other_source' WHERE id=?1",
+            [message_id],
+        )
+        .unwrap();
+    assert!(matches!(
+        reopened.complete_team_member_spawn(original_id, &first, 2000),
+        Err(RuntimeError::Conflict(_))
+    ));
+    connection
+        .execute(
+            "UPDATE team_messages SET sender_agent_id=?2 WHERE id=?1",
+            rusqlite::params![message_id, first.spawned_member.added_by],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE team_deliveries SET recipient_agent_id='other_recipient' WHERE id=?1",
+            [delivery_id],
+        )
+        .unwrap();
+    assert!(matches!(
+        reopened.complete_team_member_spawn(original_id, &first, 2000),
+        Err(RuntimeError::Conflict(_))
+    ));
+    connection
+        .execute(
+            "UPDATE team_deliveries SET recipient_agent_id=?2 WHERE id=?1",
+            rusqlite::params![delivery_id, first.spawned_session.id],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE sessions SET provider_session_ref='foreign-native-ref' WHERE id=?1",
+            [&first.spawned_session.id],
+        )
+        .unwrap();
+    assert!(matches!(
+        reopened.complete_team_member_spawn(original_id, &first, 2000),
+        Err(RuntimeError::Conflict(_))
+    ));
+    connection
+        .execute(
+            "UPDATE sessions SET provider_session_ref=?2 WHERE id=?1",
+            rusqlite::params![
+                first.spawned_session.id,
+                first.spawned_session.provider_session_ref
+            ],
+        )
+        .unwrap();
+
+    reopened
+        .complete_team_member_spawn(original_id, &first, 2000)
+        .unwrap();
+    let replay = reopened
+        .replay_team_member_spawn(
+            &request.team_id,
+            &request.source_session_id,
+            request.idempotency_key.as_deref().unwrap(),
+            &runtime_core::normalized_json_hash(&serde_json::to_value(&request).unwrap()).unwrap(),
+        )
+        .unwrap();
+    let runtime_core::TeamMemberSpawnAdmission::Replay { response } = replay.unwrap() else {
+        panic!("expected exact completed response")
+    };
+    assert_eq!(
+        serde_json::to_value(response).unwrap(),
+        serde_json::to_value(&first).unwrap()
+    );
+    assert_eq!(fixture.fresh_journal().stage, "completed");
+    let native_sessions = fixture.provider.state.lock().await;
+    assert_eq!(native_sessions.sessions.len(), 2); // original caller + one spawn
+    assert_eq!(
+        native_sessions.sessions.get(&first.spawned_session.id),
+        Some(&format!("test-thread-{}", first.spawned_session.id))
     );
 }
 
@@ -206,6 +399,38 @@ async fn failed_terminal_receipt_quarantines_original_key_across_restart() {
         2
     );
     assert_eq!(fixture.fresh_journal().stage, "onboarding_sent");
+}
+
+#[tokio::test]
+async fn ignored_final_response_write_never_certifies_native_success() {
+    let fixture = fixture().await;
+    let connection = rusqlite::Connection::open(&fixture.database_path).unwrap();
+    // SQLite can report a successful UPDATE with no affected row if a
+    // trigger suppresses it. The completed journal must roll back too.
+    connection
+        .execute_batch(
+            "CREATE TRIGGER ignore_spawn_response BEFORE UPDATE OF completed_response_json
+         ON team_spawn_admissions WHEN NEW.completed_response_json IS NOT NULL
+         BEGIN SELECT RAISE(IGNORE); END;",
+        )
+        .unwrap();
+    let request = keyed_request(&fixture, "ignore-receipt-write");
+    let first = fixture
+        .service
+        .spawn_team_member(request.clone())
+        .await
+        .unwrap_err();
+    let operation_id = fixture.fresh_journal().operation_id;
+    assert!(matches!(
+        first,
+        RuntimeError::OperationUnresolved { operation_id: id, .. } if id == operation_id
+    ));
+    assert_eq!(fixture.fresh_journal().stage, "onboarding_sent");
+    assert!(matches!(
+        fixture.service.spawn_team_member(request).await,
+        Err(RuntimeError::OperationUnresolved { operation_id: id, .. }) if id == operation_id
+    ));
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 2);
 }
 
 #[tokio::test]
@@ -553,6 +778,47 @@ async fn real_disposable_git_checkout_and_fake_provider_replay_from_reopened_sql
     let reopened = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: fixture.database_path.clone(),
     }));
+    // Claim/checkout provenance is independently enforced at terminal
+    // certification. Native Git and provider already ran; no retry may run
+    // those effects merely because a completion receipt was lost.
+    let connection = rusqlite::Connection::open(&fixture.database_path).unwrap();
+    connection
+        .execute(
+            "UPDATE team_spawn_admissions SET completed_response_json=NULL WHERE operation_id=?1",
+            [&first.operation_id],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE team_operation_journal SET stage='onboarding_sent',payload_json=?2 WHERE operation_id=?1",
+            rusqlite::params![first.operation_id, onboarding_stage_payload(&first).to_string()],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE managed_worktree_claims SET released_at=1234 WHERE worktree_id=?1 AND session_id=?2",
+            rusqlite::params![first.worktree.as_ref().unwrap().id, first.spawned_session.id],
+        )
+        .unwrap();
+    assert!(matches!(
+        reopened.complete_team_member_spawn(&first.operation_id, &first, 2000),
+        Err(RuntimeError::Conflict(_))
+    ));
+    let mut forged_creation = first.clone();
+    forged_creation.worktree_created_by_operation = false;
+    assert!(matches!(
+        reopened.complete_team_member_spawn(&first.operation_id, &forged_creation, 2000),
+        Err(RuntimeError::Conflict(_))
+    ));
+    connection
+        .execute(
+            "UPDATE managed_worktree_claims SET released_at=NULL WHERE worktree_id=?1 AND session_id=?2",
+            rusqlite::params![first.worktree.as_ref().unwrap().id, first.spawned_session.id],
+        )
+        .unwrap();
+    reopened
+        .complete_team_member_spawn(&first.operation_id, &first, 2000)
+        .unwrap();
     let mut registry = ProviderRegistry::new();
     registry.register(fixture.provider.clone()).unwrap();
     let restarted_runtime =

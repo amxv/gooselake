@@ -157,20 +157,32 @@ impl SqliteRuntimeRepository {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed locking team spawn completion", error))?;
-        let admitted_team: Option<String> = transaction
+        let admitted_owner: Option<(String, String)> = transaction
             .query_row(
-                "SELECT team_id FROM team_spawn_admissions
+                "SELECT team_id,source_session_id FROM team_spawn_admissions
                  WHERE operation_id=?1 AND completed_response_json IS NULL",
                 [operation_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(|error| db_error("failed verifying keyed spawn owner", error))?;
-        if admitted_team.as_deref() != Some(response.team.team.id.as_str()) {
+        let Some((admitted_team, admitted_source)) = admitted_owner else {
             return Err(RuntimeError::Conflict(format!(
                 "spawn {operation_id} has no matching unsettled caller-bound admission"
             )));
+        };
+        if admitted_team != response.team.team.id {
+            return Err(RuntimeError::Conflict(format!(
+                "spawn {operation_id} has no matching unsettled team authority"
+            )));
         }
+        // The stage was written *after* native session creation, roster
+        // membership and durable onboarding admission. Do not let an
+        // unrelated or forged response turn that stage into a terminal replay
+        // receipt for the same caller-bound key. Check the original source,
+        // native/session identity, joined roster and exact persisted message
+        // inside this same IMMEDIATE transaction before committing terminal.
+        validate_spawn_completion_lineage(&transaction, operation_id, response, &admitted_source)?;
         let changed = transaction
             .execute(
                 "UPDATE team_operation_journal SET stage='completed',payload_json=?2,updated_at=?3
@@ -192,7 +204,7 @@ impl SqliteRuntimeRepository {
                 "spawn {operation_id} has no certified onboarding stage"
             )));
         }
-        transaction
+        let receipt_written = transaction
             .execute(
                 "UPDATE team_spawn_admissions SET completed_response_json=?2,updated_at=?3
                  WHERE operation_id=?1 AND completed_response_json IS NULL",
@@ -205,10 +217,241 @@ impl SqliteRuntimeRepository {
                 ],
             )
             .map_err(|error| db_error("failed storing exact spawn result", error))?;
+        if receipt_written != 1 {
+            return Err(RuntimeError::Conflict(format!(
+                "spawn {operation_id} terminal reply was not durably recorded"
+            )));
+        }
         transaction
             .commit()
             .map_err(|error| db_error("failed committing exact team spawn receipt", error))
     }
+}
+
+fn validate_spawn_completion_lineage(
+    transaction: &rusqlite::Transaction<'_>,
+    operation_id: &str,
+    response: &TeamMemberSpawnResponse,
+    original_source: &str,
+) -> Result<(), RuntimeError> {
+    let mismatch = || {
+        RuntimeError::Conflict(format!(
+            "spawn {operation_id} native onboarding does not match original caller/session/team authority"
+        ))
+    };
+    let team_id = &response.team.team.id;
+    let spawned_id = &response.spawned_session.id;
+    let worktree_id = response.worktree.as_ref().map(|row| row.id.as_str());
+    if response.spawned_member.team_id != *team_id
+        || response.spawned_member.added_by != original_source
+        || response.spawned_member.worktree_id.as_deref() != worktree_id
+        || response
+            .team
+            .members
+            .iter()
+            .filter(|member| member.agent_id == *spawned_id)
+            .collect::<Vec<_>>()
+            != vec![&response.spawned_member]
+        || response.onboarding.get("status").and_then(|v| v.as_str()) != Some("sent")
+    {
+        return Err(mismatch());
+    }
+    let message_id = response
+        .onboarding
+        .get("message_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(mismatch)?;
+    let delivery_ids = response
+        .onboarding
+        .get("delivery_ids")
+        .and_then(|v| v.as_array())
+        .filter(|ids| !ids.is_empty() && ids.iter().all(|id| id.as_str().is_some()))
+        .ok_or_else(mismatch)?;
+    let stage_payload: Option<String> = transaction
+        .query_row(
+            "SELECT payload_json FROM team_operation_journal
+             WHERE operation_id=?1 AND team_id=?2 AND kind=?3 AND stage='onboarding_sent'",
+            params![operation_id, team_id, KIND],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| db_error("failed loading original spawn onboarding stage", error))?;
+    let stage = stage_payload
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+        .ok_or_else(mismatch)?;
+    if stage
+        != serde_json::json!({
+            "source_session_id": original_source,
+            "spawned_session_id": spawned_id,
+            "provider": response.spawned_session.provider,
+            "provider_session_ref": response.spawned_session.provider_session_ref,
+            "canonical_provider_session_ref": response.spawned_session.canonical_provider_session_ref,
+            "worktree_id": worktree_id,
+            "message_id": message_id,
+            "delivery_ids": delivery_ids,
+        })
+    {
+        return Err(mismatch());
+    }
+    let stored_member: Option<(Option<String>, i64, String, Option<String>, String, Option<String>)> = transaction
+        .query_row(
+            "SELECT title,joined_at,added_by,creator_agent_id,creator_compaction_subscription,worktree_id
+             FROM team_members WHERE team_id=?1 AND agent_id=?2",
+            params![team_id, spawned_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        )
+        .optional()
+        .map_err(|error| db_error("failed checking original spawned team member", error))?;
+    let original_session: Option<(String, Option<String>, Option<String>, Option<String>)> =
+        transaction
+            .query_row(
+                "SELECT provider,provider_session_ref,canonical_provider_session_ref,worktree_id
+             FROM sessions WHERE id=?1",
+                [spawned_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking original spawned session", error))?;
+    if stored_member
+        != Some((
+            response.spawned_member.title.clone(),
+            response.spawned_member.joined_at,
+            original_source.to_owned(),
+            response.spawned_member.creator_agent_id.clone(),
+            response
+                .spawned_member
+                .creator_compaction_subscription
+                .clone(),
+            worktree_id.map(str::to_owned),
+        ))
+        || original_session
+            != Some((
+                response.spawned_session.provider.clone(),
+                response.spawned_session.provider_session_ref.clone(),
+                response
+                    .spawned_session
+                    .canonical_provider_session_ref
+                    .clone(),
+                worktree_id.map(str::to_owned),
+            ))
+    {
+        return Err(mismatch());
+    }
+    // Native worktree effects are not SQLite-atomic. A success receipt can
+    // only name the original persisted worktree and active spawned claim;
+    // it cannot certify a different checkout or an orphaned assignment.
+    match (
+        response.worktree.as_ref(),
+        response.worktree_assignment_mode.as_str(),
+    ) {
+        (None, "none") if !response.worktree_created_by_operation => {}
+        (Some(worktree), "created" | "reused") => {
+            if response.worktree_created_by_operation
+                != (response.worktree_assignment_mode == "created")
+            {
+                return Err(mismatch());
+            }
+            let stored_worktree: Option<Option<String>> = transaction
+                .query_row(
+                    "SELECT created_by_operation_id FROM managed_worktrees
+                     WHERE id=?1 AND repo_root=?2 AND worktree_cwd=?3 AND branch_name=?4",
+                    params![
+                        worktree.id,
+                        worktree.repo_root,
+                        worktree.worktree_cwd,
+                        worktree.branch_name
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| db_error("failed verifying original spawn worktree", error))?;
+            if stored_worktree.is_none()
+                || (response.worktree_created_by_operation
+                    && stored_worktree.as_ref().and_then(Option::as_deref) != Some(operation_id))
+            {
+                return Err(mismatch());
+            }
+            let claim: Option<(String, Option<i64>)> = transaction
+                .query_row(
+                    "SELECT claim_role,released_at FROM managed_worktree_claims
+                     WHERE worktree_id=?1 AND session_id=?2",
+                    params![worktree.id, spawned_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(|error| db_error("failed checking original worktree claim", error))?;
+            if claim
+                != Some((
+                    if response.worktree_created_by_operation {
+                        "owner"
+                    } else {
+                        "consumer"
+                    }
+                    .to_owned(),
+                    None,
+                ))
+            {
+                return Err(mismatch());
+            }
+        }
+        _ => return Err(mismatch()),
+    }
+    let original_message: Option<(String, String, String, Option<String>, Option<String>)> =
+        transaction
+            .query_row(
+                "SELECT sender_agent_id,recipient_agent_ids_json,scope,idempotency_key,correlation_id
+                 FROM team_messages WHERE id=?1 AND team_id=?2",
+                params![message_id, team_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking original spawn onboarding message", error))?;
+    let Some((sender, recipients, scope, key, correlation)) = original_message else {
+        return Err(mismatch());
+    };
+    let original_key = format!("spawn-onboarding:{operation_id}");
+    if sender != original_source
+        || scope != "direct"
+        || recipients != serde_json::json!([spawned_id]).to_string()
+        || key.as_deref() != Some(original_key.as_str())
+        || correlation.as_deref() != Some(original_key.as_str())
+    {
+        return Err(mismatch());
+    }
+    let mut statement = transaction
+        .prepare("SELECT id,team_id,recipient_agent_id FROM team_deliveries WHERE message_id=?1")
+        .map_err(|error| db_error("failed preparing spawn onboarding recipients", error))?;
+    let actual_deliveries = statement
+        .query_map([message_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| db_error("failed querying spawn onboarding recipients", error))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| db_error("failed reading spawn onboarding recipients", error))?;
+    let mut expected_ids = delivery_ids
+        .iter()
+        .filter_map(|id| id.as_str().map(str::to_owned))
+        .collect::<Vec<_>>();
+    expected_ids.sort();
+    let mut actual_ids = actual_deliveries
+        .iter()
+        .map(|row| row.0.clone())
+        .collect::<Vec<_>>();
+    actual_ids.sort();
+    if actual_deliveries
+        .iter()
+        .any(|(_, team, recipient)| team != team_id || recipient != spawned_id)
+        || actual_ids != expected_ids
+        || expected_ids.len() != 1
+    {
+        return Err(mismatch());
+    }
+    Ok(())
 }
 
 fn lookup_spawn_admission(

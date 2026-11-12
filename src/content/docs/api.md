@@ -1898,6 +1898,12 @@ in-memory roster cache is stale. A concurrent team deletion now competes for
 that same SQLite write lock and cannot tombstone an admitted spawn until its
 exact completion receipt is committed or its native compensation is certified
 `rolled_back`. This is a deletion fence, **not** automatic native recovery.
+Before a caller-bound completion becomes an exact replay receipt, its SQLite
+transaction verifies the original calling session, persisted spawned native
+provider identity, joined team member, onboarding message and delivery,
+and (when assigned) worktree and active claim against the staged evidence.
+A missing or mismatched record leaves the operation unresolved rather than
+converting an unverified native outcome into success.
 An exact retry of a completed
 spawn returns the original stored
 response and `operation_id` (including after a lost HTTP reply or restart),

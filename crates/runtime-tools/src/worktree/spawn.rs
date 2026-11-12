@@ -838,6 +838,12 @@ impl RuntimeWorktreeService {
             team_id.as_str(),
             "onboarding_sent",
             serde_json::json!({
+                "source_session_id": source_session.id,
+                "spawned_session_id": spawned_session.id,
+                "provider": spawned_session.provider,
+                "provider_session_ref": spawned_session.provider_session_ref,
+                "canonical_provider_session_ref": spawned_session.canonical_provider_session_ref,
+                "worktree_id": worktree_record.as_ref().map(|row| &row.id),
                 "message_id": onboarding_ack.message.id,
                 "delivery_ids": onboarding_ack.deliveries.iter().map(|row| row.id.clone()).collect::<Vec<_>>()
             }),

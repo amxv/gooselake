@@ -18,7 +18,7 @@ use crate::db::{
 use crate::repository::insert_runtime_event_in_transaction;
 use crate::SqliteRuntimeRepository;
 
-fn message_by_id(
+pub(crate) fn message_by_id(
     tx: &Transaction<'_>,
     message_id: &str,
 ) -> Result<Option<TeamMessageRecord>, RuntimeError> {
@@ -49,7 +49,7 @@ fn message_by_id(
     .map_err(|error| db_error("failed reading legacy message admission", error))
 }
 
-fn deliveries_by_message(
+pub(crate) fn deliveries_by_message(
     tx: &Transaction<'_>,
     message_id: &str,
 ) -> Result<Vec<TeamDeliveryRecord>, RuntimeError> {
@@ -83,7 +83,7 @@ fn deliveries_by_message(
     collect_rows(rows)
 }
 
-fn event_matches(row: &RuntimeEventRecord, expected: &NewRuntimeEvent) -> bool {
+pub(crate) fn event_matches(row: &RuntimeEventRecord, expected: &NewRuntimeEvent) -> bool {
     row.event_id == expected.event_id
         && row.kind == expected.kind
         && row.scope == expected.scope

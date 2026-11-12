@@ -194,6 +194,13 @@ impl RuntimeTeamCommsService {
             )
             .await?;
 
+        // A concurrent cancellation or another delivery owner may have won
+        // the cache/SQLite state transition. Returning the winner's state is
+        // NOT a pre-native receipt authorizing a new provider turn.
+        if injecting.status != DELIVERY_STATUS_INJECTING {
+            return Ok(injecting);
+        }
+
         let injected_input = build_injected_input(&message, &recipient_session.id);
         let result = self
             .runtime

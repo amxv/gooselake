@@ -67,6 +67,25 @@ macro_rules! delegate_provider_event_methods {
                 .commit_legacy_team_message_admission(message, deliveries, events)
         }
 
+        fn commit_legacy_team_message_cancellation(
+            &self,
+            message: &runtime_core::TeamMessageRecord,
+            before: &[runtime_core::TeamDeliveryRecord],
+            after: &[runtime_core::TeamDeliveryRecord],
+            events: &[runtime_core::NewRuntimeEvent],
+        ) -> Result<Vec<runtime_core::TeamDeliveryRecord>, runtime_core::RuntimeError> {
+            self.repository
+                .commit_legacy_team_message_cancellation(message, before, after, events)
+        }
+
+        fn get_legacy_team_message_cancellation_receipt(
+            &self,
+            message: &runtime_core::TeamMessageRecord,
+        ) -> Result<Option<Vec<runtime_core::TeamDeliveryRecord>>, runtime_core::RuntimeError> {
+            self.repository
+                .get_legacy_team_message_cancellation_receipt(message)
+        }
+
         fn admit_provider_approval(
             &self,
             previous_turn: &runtime_core::TurnRecord,

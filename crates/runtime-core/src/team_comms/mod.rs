@@ -2,6 +2,7 @@ mod agent_delivery;
 mod agent_messages;
 mod delivery;
 mod helpers;
+mod legacy_cancel;
 mod legacy_message;
 mod legacy_roster;
 mod service_impl;

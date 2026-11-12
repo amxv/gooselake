@@ -624,73 +624,7 @@ impl TeamCommsService for RuntimeTeamCommsService {
                 .collect());
         }
 
-        let cancelled = {
-            let mut state = self.state.write().await;
-            let message = state
-                .messages
-                .get(&message_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("message {}", message_id)))?;
-            if message.team_id != team_id {
-                return Err(RuntimeError::InvalidState(format!(
-                    "message {} does not belong to team {}",
-                    message_id, team_id
-                )));
-            }
-
-            let delivery_ids = state
-                .message_delivery_ids
-                .get(&message_id)
-                .cloned()
-                .unwrap_or_default();
-
-            for delivery_id in &delivery_ids {
-                let Some(delivery) = state.deliveries.get(delivery_id) else {
-                    continue;
-                };
-                if !matches!(
-                    delivery.status.as_str(),
-                    DELIVERY_STATUS_PENDING | DELIVERY_STATUS_DEFERRED
-                ) {
-                    return Err(RuntimeError::InvalidState(format!(
-                        "message {} cannot be cancelled because delivery {} is in {}",
-                        message_id, delivery.id, delivery.status
-                    )));
-                }
-            }
-
-            let mut updated = Vec::new();
-            for delivery_id in delivery_ids {
-                if let Some(delivery) = state.deliveries.get_mut(&delivery_id) {
-                    delivery.status = DELIVERY_STATUS_CANCELLED.to_string();
-                    delivery.updated_at = now_ms();
-                    updated.push(delivery.clone());
-                }
-            }
-            updated
-        };
-
-        for delivery in &cancelled {
-            self.store.upsert_team_delivery(delivery)?;
-            let _ = self
-                .append_team_event(
-                    team_id.as_str(),
-                    "team_delivery.cancelled",
-                    serde_json::json!({ "delivery": delivery }),
-                    Some(delivery.recipient_agent_id.clone()),
-                )
-                .await;
-        }
-
-        let _ = self
-            .append_team_event(
-                team_id.as_str(),
-                "team_message.completed",
-                serde_json::json!({ "message_id": message_id }),
-                None,
-            )
-            .await;
-
-        Ok(cancelled)
+        self.legacy_cancel_message(&team_id, &message_id).await
     }
 
     async fn get_view_snapshot(

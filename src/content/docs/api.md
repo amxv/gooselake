@@ -1879,8 +1879,8 @@ delivery**. The service cache updates only after the whole commit succeeds.
 An exact keyed retry reuses its original durable message/delivery receipt
 with disposition `existing`, never granting another native delivery attempt;
 same key with different intent, forged critical events and old unjournaled
-legacy rows fail closed. Subsequent delivery transitions, message cancellation
-and team deletion are **not** covered by this admission transaction; neither
+legacy rows fail closed. Subsequent delivery transitions, pre-native
+cancellation and team deletion are **not** covered by this admission transaction; neither
 is exactly-once retry for unkeyed HTTP, nor any provider-native side effect.
 Uncertain post-native outcomes must not be retried blindly.
 The historical direct SQLite upsert/import helpers cannot rewrite a message
@@ -1888,6 +1888,20 @@ already sealed by its critical admission event (including key aliases).
 Status updates to a sealed delivery must retain the same immutable recipient,
 message, team, provider, initial policy and creation timestamp; older rows
 with no admission receipt keep their historical compatibility behavior.
+
+Legacy `/v1` **message cancellation**, while every delivery remains pending
+or deferred, now commits all terminal `cancelled` delivery states, all
+Critical `team_delivery.cancelled` events and a Critical
+`team_message.completed` event **atomically before native injection**.
+A failed critical event aborts the entire cancellation. An injecting,
+injected, missing or concurrently changed recipient is never overwritten
+with a fabricated cancellation result. Retrying after an acknowledged or
+lost cancellation response validates the complete durable receipt (including
+after restart), so no second native operation is triggered; older cancelled
+rows lacking that critical receipt fail closed. This does **not** certify
+post-native cancellations, retries, team deletion or provider-native
+side effects. An unkeyed `/v1` message-creation POST still lacks transport
+exactly-once semantics.
 
 ## MCP gateway
 

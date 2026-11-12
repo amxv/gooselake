@@ -1,6 +1,83 @@
 use super::*;
 use crate::{TeamListMessagesRequest, TeamSendDirectRequest};
 
+impl TestStore {
+    pub(super) fn commit_legacy_message_admission_test(
+        &self,
+        message: &TeamMessageRecord,
+        deliveries: &[TeamDeliveryRecord],
+        events: &[NewRuntimeEvent],
+    ) -> Result<TeamMessageAck, RuntimeError> {
+        if events.len() != deliveries.len() + 1 {
+            return Err(RuntimeError::ProtocolViolation(
+                "mock legacy message event snapshot is incomplete".into(),
+            ));
+        }
+        let mut hydrated = self.hydrated.lock().expect("hydrated lock");
+        if let Some(existing) = hydrated.team_messages.iter().find(|row| {
+            row.id == message.id
+                || (message.idempotency_key.is_some()
+                    && row.team_id == message.team_id
+                    && row.sender_agent_id == message.sender_agent_id
+                    && row.scope == message.scope
+                    && row.idempotency_key == message.idempotency_key)
+        }) {
+            if existing.input != message.input
+                || existing.recipient_agent_ids != message.recipient_agent_ids
+                || existing.image_paths != message.image_paths
+                || existing.priority != message.priority
+                || existing.policy != message.policy
+                || existing.correlation_id != message.correlation_id
+                || existing.reply_to_message_id != message.reply_to_message_id
+            {
+                return Err(RuntimeError::Conflict(
+                    "mock legacy message key changed".into(),
+                ));
+            }
+            return Ok(TeamMessageAck {
+                message: existing.clone(),
+                deliveries: hydrated
+                    .team_deliveries
+                    .iter()
+                    .filter(|delivery| delivery.message_id == existing.id)
+                    .cloned()
+                    .collect(),
+                disposition: "existing".into(),
+            });
+        }
+        // Preflight all journal events before publishing *any* in-memory
+        // state; this test store mirrors SQLite's all-or-nothing fault gate.
+        {
+            let mut fail = self.fail_next_team_event_kind.lock().expect("failure lock");
+            if fail
+                .as_ref()
+                .is_some_and(|kind| events.iter().any(|event| &event.kind == kind))
+            {
+                fail.take();
+                return Err(RuntimeError::Io(
+                    "forced legacy critical message admission journal fault".into(),
+                ));
+            }
+        }
+        for event in events {
+            self.append_runtime_event(event)?;
+        }
+        Self::upsert_with_key(&mut hydrated.team_messages, message.clone(), |row| {
+            row.id.clone()
+        });
+        for delivery in deliveries {
+            Self::upsert_with_key(&mut hydrated.team_deliveries, delivery.clone(), |row| {
+                row.id.clone()
+            });
+        }
+        Ok(TeamMessageAck {
+            message: message.clone(),
+            deliveries: deliveries.to_vec(),
+            disposition: "created".into(),
+        })
+    }
+}
+
 fn request(team_id: &str, sender: &str, recipient: &str) -> TeamSendDirectRequest {
     TeamSendDirectRequest {
         team_id: team_id.into(),

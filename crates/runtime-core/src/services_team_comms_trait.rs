@@ -28,6 +28,35 @@ macro_rules! legacy_team_event_methods {
                 "atomic legacy team message admission journal unavailable".into(),
             ))
         }
+
+        /// Pre-native cancellation of *all* pending/deferred legacy message
+        /// deliveries and its critical events must commit as one durable
+        /// operation. Never publish a cancelled cache state before this
+        /// receipt, or cancel a delivery that was already native-injecting.
+        fn commit_legacy_team_message_cancellation(
+            &self,
+            _message: &crate::TeamMessageRecord,
+            _before: &[crate::TeamDeliveryRecord],
+            _after: &[crate::TeamDeliveryRecord],
+            _events: &[crate::NewRuntimeEvent],
+        ) -> Result<Vec<crate::TeamDeliveryRecord>, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic legacy team cancellation event journal unavailable".into(),
+            ))
+        }
+
+        /// Read and validate the *previously committed* terminal receipt,
+        /// including all cancelled delivery events. A transport retry after
+        /// restart is not a new native operation; missing/forged receipt
+        /// must fail closed rather than certify an unjournaled cancellation.
+        fn get_legacy_team_message_cancellation_receipt(
+            &self,
+            _message: &crate::TeamMessageRecord,
+        ) -> Result<Option<Vec<crate::TeamDeliveryRecord>>, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "legacy team cancellation receipt verification unavailable".into(),
+            ))
+        }
     };
 }
 pub(super) use legacy_team_event_methods;

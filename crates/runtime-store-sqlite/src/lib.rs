@@ -19,6 +19,7 @@ mod repository_context_limit;
 mod repository_edit_rerun;
 mod repository_event_history;
 mod repository_hydration;
+mod repository_legacy_team_cancellation;
 mod repository_legacy_team_events;
 mod repository_legacy_team_messages;
 mod repository_operator_agent_archive;

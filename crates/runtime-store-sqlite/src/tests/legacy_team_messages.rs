@@ -2,7 +2,7 @@ use super::*;
 use runtime_core::{RuntimeError, TeamMessageAck};
 use std::sync::{Arc, Barrier};
 
-fn fixture() -> (tempfile::TempDir, SqliteRuntimeRepository, TeamRecord) {
+pub(super) fn fixture() -> (tempfile::TempDir, SqliteRuntimeRepository, TeamRecord) {
     let temp = tempfile::tempdir().unwrap();
     let repo = repo(&temp);
     repo.initialize_schema().unwrap();
@@ -39,7 +39,7 @@ fn fixture() -> (tempfile::TempDir, SqliteRuntimeRepository, TeamRecord) {
     (temp, repo, team)
 }
 
-fn proposed(
+pub(super) fn proposed(
     team: &TeamRecord,
     id: &str,
     recipients: &[&str],
@@ -130,7 +130,7 @@ fn event(
     }
 }
 
-fn commit(
+pub(super) fn commit(
     repo: &SqliteRuntimeRepository,
     admission: &(
         TeamMessageRecord,

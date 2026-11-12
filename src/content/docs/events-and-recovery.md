@@ -182,10 +182,10 @@ with disposition `existing`, without dispatching native delivery twice.
 Changed input against the same key, reused event IDs, missing members and
 historical unjournaled rows fail closed. Replaying admission after a delivery
 has been injected does **not** reset its status. This guarantees **initial
-pre-native admission** only: subsequent delivery retries, cancellation,
-team deletion, status event transitions and any already executed native
-effects require separate fencing and reconciliation; unkeyed HTTP POSTs do
-not have a lost-response exactly-once guarantee.
+pre-native admission** only: subsequent delivery retries, post-native
+cancellation, team deletion, status event transitions and any already
+executed native effects require separate fencing and reconciliation; unkeyed
+message creation POSTs do not have a lost-response exactly-once guarantee.
 
 Historical low-level SQLite `upsert_team_message` calls cannot rewrite a
 message sealed by the critical admission receipt, even when addressed through
@@ -194,6 +194,23 @@ fields, but cannot retarget a sealed delivery to another message, team,
 recipient, provider or initial policy. Legacy **unjournaled** rows retain their
 historical upsert compatibility; sealing them retroactively would invent
 authority that was never committed.
+
+Legacy `/v1` **pre-native message cancellation** is a separate all-or-nothing
+SQLite transaction, permitted only while **every** delivery is still
+`pending` or `deferred`. It changes the complete delivery set to `cancelled`
+together with one Critical `team_delivery.cancelled` event per delivery and
+one Critical `team_message.completed` event. A late event fault rolls back
+all prior delivery updates and events, leaving the live cache unchanged.
+An injecting/injected, missing, canonical-owned, or concurrently changed
+delivery fails closed instead of partially cancelling the message. A
+generation-specific pre-native injection guard prevents a queued worker
+from sending a native turn when a concurrent cancellation already won.
+Cancellation events record the exact previous status/revision and the
+resulting delivery; a lost response or retry after restart verifies the
+complete stored receipts without introducing a second cancellation or native
+effect. A missing/altered receipt does **not** certify an older unjournaled
+cancellation. This is **not** a guarantee for messages that have started
+native injection, post-native state transitions, team deletion or retry.
 
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical

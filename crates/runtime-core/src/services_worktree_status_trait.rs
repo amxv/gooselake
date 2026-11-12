@@ -31,10 +31,50 @@ macro_rules! default_worktree_status_query {
             }
             Ok(output)
         }
+        crate::services_worktree_status_trait::default_worktree_status_page_query!();
     };
 }
 
 pub(crate) use default_worktree_status_query;
+
+// Non-SQLite stores preserve the historical inventory contract while SQLite
+// overrides this with a keyset query over only the requested page. The boolean
+// says whether the supplied cursor still belongs to the visible collection.
+macro_rules! default_worktree_status_page_query {
+    () => {
+        fn list_managed_worktree_status_for_root_page(
+            &self,
+            canonical_repo_root: &str,
+            after: Option<(&str, &str)>,
+            limit: usize,
+        ) -> Result<(Vec<crate::ManagedWorktreeStatusProjection>, bool), crate::RuntimeError> {
+            let mut rows = self.list_managed_worktree_status_for_root(canonical_repo_root)?;
+            rows.retain(|row| !row.worktree.worktree_cwd.starts_with("__gg_tombstoned__/"));
+            rows.sort_by(|left, right| {
+                left.worktree
+                    .worktree_name
+                    .cmp(&right.worktree.worktree_name)
+                    .then(left.worktree.id.cmp(&right.worktree.id))
+            });
+            let valid_cursor = after.is_none_or(|(name, id)| {
+                rows.iter()
+                    .any(|row| row.worktree.worktree_name == name && row.worktree.id == id)
+            });
+            if let Some((name, id)) = after {
+                rows.retain(|row| {
+                    (
+                        row.worktree.worktree_name.as_str(),
+                        row.worktree.id.as_str(),
+                    ) > (name, id)
+                });
+            }
+            rows.truncate(limit);
+            Ok((rows, valid_cursor))
+        }
+    };
+}
+
+pub(crate) use default_worktree_status_page_query;
 
 // Legacy stores without a point-read projection retain the historical lookup.
 // SQLite uses the managed_worktrees primary-key index instead of hydrating

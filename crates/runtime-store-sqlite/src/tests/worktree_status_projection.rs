@@ -223,3 +223,198 @@ fn migration_25_builds_live_claim_index_without_discarding_version_24_rows() {
         .unwrap();
     assert_eq!(index, "idx_managed_worktree_claims_active_worktree");
 }
+
+#[test]
+fn migration_34_pages_two_thousand_worktrees_with_aliases_claims_and_exact_cursor_membership() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("runtime.sqlite3");
+    // This disposable fixture is genuinely at schema 33 before migration.
+    apply_schema_through(&path, 33);
+    let root = temp.path().join("canonical-repository");
+    let foreign_root = temp.path().join("another-repository");
+    std::fs::create_dir_all(root.join("nested")).unwrap();
+    std::fs::create_dir_all(&foreign_root).unwrap();
+    let canonical_root = std::fs::canonicalize(&root).unwrap();
+    let alias_root = root.join("nested/..").display().to_string();
+    let canonical_text = canonical_root.display().to_string();
+
+    let mut connection = Connection::open(&path).unwrap();
+    let transaction = connection.transaction().unwrap();
+    for i in 0..2_000 {
+        let id = format!("worktree_{i:04}");
+        let name = if i % 5 == 0 {
+            "same-name".to_owned()
+        } else {
+            format!("name-{i:04}")
+        };
+        let rooted_at = if i % 11 == 0 {
+            alias_root.as_str()
+        } else {
+            canonical_text.as_str()
+        };
+        transaction
+            .execute(
+                "INSERT INTO managed_worktrees
+                 (id,repo_root,worktree_root,worktree_cwd,branch_name,
+                  worktree_name,unified_workspace_path,deletion_policy,created_at,updated_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,'managed','retain_on_last_claim',1,1)",
+                params![
+                    &id,
+                    rooted_at,
+                    temp.path().display().to_string(),
+                    temp.path()
+                        .join(format!("checkout-{id}"))
+                        .display()
+                        .to_string(),
+                    format!("gg/{id}"),
+                    name,
+                ],
+            )
+            .unwrap();
+    }
+    for (id, repo_root, cwd) in [
+        (
+            "tombstoned_worktree",
+            canonical_text.as_str(),
+            "__gg_tombstoned__/tombstoned_worktree",
+        ),
+        (
+            "foreign_worktree",
+            foreign_root.to_str().unwrap(),
+            "/unrelated/checkout",
+        ),
+    ] {
+        transaction
+            .execute(
+                "INSERT INTO managed_worktrees
+                 (id,repo_root,worktree_root,worktree_cwd,branch_name,
+                  worktree_name,unified_workspace_path,deletion_policy,created_at,updated_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,'managed','retain_on_last_claim',1,1)",
+                params![
+                    id,
+                    repo_root,
+                    temp.path().display().to_string(),
+                    cwd,
+                    format!("gg/{id}"),
+                    id
+                ],
+            )
+            .unwrap();
+    }
+    transaction.commit().unwrap();
+    drop(connection);
+    let repository = SqliteRuntimeRepository::new(path.clone());
+    repository.upsert_session(&sample_session()).unwrap();
+    repository
+        .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            worktree_id: "worktree_0000".into(),
+            session_id: "session_1".into(),
+            claim_role: "owner".into(),
+            created_at: 2,
+            released_at: None,
+        })
+        .unwrap();
+
+    let before: i64 = Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM managed_worktrees", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(before, 2_002);
+    repository.initialize_schema().unwrap();
+    let full = repository
+        .list_managed_worktree_status_for_root(&canonical_text)
+        .unwrap()
+        .into_iter()
+        .filter(|row| !row.worktree.worktree_cwd.starts_with("__gg_tombstoned__/"))
+        .collect::<Vec<_>>();
+    assert_eq!(full.len(), 2_000);
+    let restarted = SqliteRuntimeRepository::new(path.clone());
+    let mut cursor: Option<(String, String)> = None;
+    let mut found = Vec::new();
+    loop {
+        let (part, valid) = restarted
+            .list_managed_worktree_status_for_root_page(
+                &canonical_text,
+                cursor
+                    .as_ref()
+                    .map(|(name, id)| (name.as_str(), id.as_str())),
+                19,
+            )
+            .unwrap();
+        assert!(valid);
+        assert!(part.len() <= 19);
+        if part.is_empty() {
+            break;
+        }
+        cursor = part
+            .last()
+            .map(|row| (row.worktree.worktree_name.clone(), row.worktree.id.clone()));
+        found.extend(part);
+    }
+    assert_eq!(
+        found, full,
+        "keyset pages must equal the complete authority after restart"
+    );
+    assert_eq!(
+        found
+            .iter()
+            .find(|row| row.worktree.id == "worktree_0000")
+            .unwrap()
+            .active_claim_session_ids,
+        ["session_1"]
+    );
+    for (name, id) in [
+        ("wrong-name", "worktree_0000"),
+        ("same-name", "does-not-exist"),
+        ("foreign_worktree", "foreign_worktree"),
+        ("tombstoned_worktree", "tombstoned_worktree"),
+    ] {
+        let (empty, valid) = restarted
+            .list_managed_worktree_status_for_root_page(&canonical_text, Some((name, id)), 19)
+            .unwrap();
+        assert!(
+            !valid,
+            "foreign or missing cursor should not skip a page: {name} {id}"
+        );
+        assert!(empty.is_empty());
+    }
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        crate::schema::SCHEMA_VERSION,
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM managed_worktrees", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        before
+    );
+    let index_plan = connection
+        .prepare(
+            "EXPLAIN QUERY PLAN SELECT id,revision FROM managed_worktrees
+             WHERE repo_root IN ('repo-one') AND (worktree_name,id) > ('same-name','worktree_0000')
+             ORDER BY worktree_name,id LIMIT 19",
+        )
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .join(" | ");
+    assert!(
+        index_plan.contains("idx_managed_worktrees_repo_name_id"),
+        "{index_plan}"
+    );
+    assert!(
+        !index_plan.contains("SCAN managed_worktrees"),
+        "{index_plan}"
+    );
+}

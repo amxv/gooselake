@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use runtime_core::{ManagedWorktreeRecord, ManagedWorktreeStatusProjection, RuntimeError};
-use rusqlite::{params_from_iter, OptionalExtension, Row, TransactionBehavior};
+use rusqlite::{params_from_iter, OptionalExtension, Row, ToSql, TransactionBehavior};
 
 use crate::db::{collect_rows, db_error, open_connection};
 use crate::SqliteRuntimeRepository;
@@ -130,6 +130,153 @@ impl SqliteRuntimeRepository {
                 .then(left.worktree.id.cmp(&right.worktree.id))
         });
         Ok(output)
+    }
+
+    /// Fetch at most `limit` worktree records and their live claims from one
+    /// read snapshot. The cursor point lookup must belong to the same actual
+    /// canonical repo, including historical alias spellings, and must still
+    /// be visible. A missing cursor is reported to the caller, not skipped.
+    pub fn list_managed_worktree_status_for_root_page(
+        &self,
+        canonical_repo_root: &str,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<(Vec<ManagedWorktreeStatusProjection>, bool), RuntimeError> {
+        if !(1..=101).contains(&limit) {
+            return Err(RuntimeError::InvalidState(
+                "worktree status read limit must be between 1 and 101".into(),
+            ));
+        }
+        let mut connection = open_connection(&self.database_path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|error| db_error("failed beginning paged worktree snapshot", error))?;
+        let requested_root = Path::new(canonical_repo_root);
+        let cursor_valid = if let Some((name, id)) = after {
+            let record: Option<(String, String, String)> = transaction
+                .query_row(
+                    "SELECT repo_root, worktree_cwd, worktree_name
+                     FROM managed_worktrees WHERE id=?1",
+                    [id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(|error| db_error("failed checking worktree page cursor", error))?;
+            record.is_some_and(|(root, cwd, persisted_name)| {
+                persisted_name == name
+                    && !cwd.starts_with("__gg_tombstoned__/")
+                    && std::fs::canonicalize(root).ok().as_deref() == Some(requested_root)
+            })
+        } else {
+            true
+        };
+        if !cursor_valid {
+            return Ok((Vec::new(), false));
+        }
+
+        let roots = {
+            let mut statement = transaction
+                .prepare("SELECT DISTINCT repo_root FROM managed_worktrees ORDER BY repo_root")
+                .map_err(|error| db_error("failed preparing paged worktree roots", error))?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| db_error("failed querying paged worktree roots", error))?;
+            collect_rows(rows)?
+        };
+        let matching_roots = roots
+            .into_iter()
+            .filter(|root| std::fs::canonicalize(root).ok().as_deref() == Some(requested_root))
+            .collect::<Vec<_>>();
+        let page_size = i64::try_from(limit).expect("bounded worktree page fits i64");
+        let mut selected = Vec::new();
+        // Per-root index walks stop after one page; a repository with many
+        // historical alias roots merges those bounded candidates, never all
+        // worktrees. The final claim query only touches winning IDs.
+        for chunk in matching_roots.chunks(200) {
+            let placeholders = vec!["?"; chunk.len()].join(", ");
+            let mut arguments: Vec<&dyn ToSql> =
+                chunk.iter().map(|root| root as &dyn ToSql).collect();
+            let after_clause = if let Some((name, id)) = after.as_ref() {
+                arguments.extend([name as &dyn ToSql, id as &dyn ToSql]);
+                "AND (worktree_name, id) > (?, ?)"
+            } else {
+                ""
+            };
+            arguments.push(&page_size);
+            let sql = format!(
+                "SELECT id, repo_root, worktree_root, worktree_cwd, branch_name,
+                        worktree_name, unified_workspace_path, deletion_policy,
+                        created_by_session_id, created_by_operation_id,
+                        created_at, updated_at, revision
+                 FROM managed_worktrees
+                 WHERE repo_root IN ({placeholders})
+                   AND worktree_cwd NOT GLOB '__gg_tombstoned__/*'
+                   {after_clause}
+                 ORDER BY worktree_name ASC, id ASC LIMIT ?"
+            );
+            let mut statement = transaction
+                .prepare(&sql)
+                .map_err(|error| db_error("failed preparing paged worktree records", error))?;
+            let rows = statement
+                .query_map(params_from_iter(arguments), |row| {
+                    Ok((worktree_from_row(row)?, row.get::<_, i64>(12)?))
+                })
+                .map_err(|error| db_error("failed querying paged worktree records", error))?;
+            selected.extend(collect_rows(rows)?);
+            selected.sort_by(|left: &(ManagedWorktreeRecord, i64), right| {
+                left.0
+                    .worktree_name
+                    .cmp(&right.0.worktree_name)
+                    .then(left.0.id.cmp(&right.0.id))
+            });
+            selected.truncate(limit);
+        }
+
+        let mut active_claims: HashMap<String, Vec<String>> = HashMap::new();
+        if !selected.is_empty() {
+            let ids = selected
+                .iter()
+                .map(|(row, _)| row.id.as_str())
+                .collect::<Vec<_>>();
+            let placeholders = vec!["?"; ids.len()].join(", ");
+            let sql = format!(
+                "SELECT worktree_id, session_id FROM managed_worktree_claims
+                 WHERE worktree_id IN ({placeholders}) AND released_at IS NULL
+                 ORDER BY worktree_id ASC, session_id ASC"
+            );
+            let mut statement = transaction
+                .prepare(&sql)
+                .map_err(|error| db_error("failed preparing paged worktree claims", error))?;
+            let rows = statement
+                .query_map(params_from_iter(ids), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| db_error("failed querying paged worktree claims", error))?;
+            for (worktree_id, session_id) in collect_rows(rows)? {
+                active_claims
+                    .entry(worktree_id)
+                    .or_default()
+                    .push(session_id);
+            }
+        }
+        let page = selected
+            .into_iter()
+            .map(|(worktree, revision)| {
+                let revision = u64::try_from(revision).map_err(|_| {
+                    RuntimeError::ProtocolViolation(
+                        "negative managed worktree status revision".into(),
+                    )
+                })?;
+                let active_claim_session_ids =
+                    active_claims.remove(&worktree.id).unwrap_or_default();
+                Ok(ManagedWorktreeStatusProjection {
+                    worktree,
+                    revision,
+                    active_claim_session_ids,
+                })
+            })
+            .collect::<Result<Vec<_>, RuntimeError>>()?;
+        Ok((page, true))
     }
 }
 

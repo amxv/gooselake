@@ -660,7 +660,8 @@ fn sparse_spawn_deletion_fence_migrates_historical_rows_without_losing_corrupt_a
     // first v33 backfill. No original SQLite database or native effect is used.
     connection
         .execute_batch(
-            "DROP TRIGGER trg_spawn_deletion_fence_journal_insert;
+            "DROP INDEX idx_managed_worktrees_repo_name_id;
+             DROP TRIGGER trg_spawn_deletion_fence_journal_insert;
              DROP TRIGGER trg_spawn_deletion_fence_journal_update;
              DROP TRIGGER trg_spawn_deletion_fence_journal_delete;
              DROP TRIGGER trg_spawn_deletion_fence_admission_insert;
@@ -668,7 +669,7 @@ fn sparse_spawn_deletion_fence_migrates_historical_rows_without_losing_corrupt_a
              DROP TRIGGER trg_spawn_deletion_fence_admission_delete;
              DROP VIEW team_spawn_deletion_fence_candidates;
              DROP TABLE team_spawn_deletion_fence;
-             DELETE FROM schema_migrations WHERE version=33;",
+             DELETE FROM schema_migrations WHERE version IN (33,34);",
         )
         .unwrap();
     let tx = connection.transaction().unwrap();

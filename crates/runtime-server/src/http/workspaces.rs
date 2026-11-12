@@ -331,10 +331,19 @@ pub(super) async fn list_workspace_worktree_inventory(
         return Err(RuntimeError::Unsupported("managed worktrees are disabled".into()).into());
     }
     let (limit, cursor) = query.parse()?;
-    let inventory = state
-        .runtime
-        .list_workspace_worktree_inventory(&workspace_id)?;
-    paged_worktree_inventory(inventory, limit, cursor)
+    let (inventory, cursor_valid) = state.runtime.list_workspace_worktree_inventory_page(
+        &workspace_id,
+        cursor
+            .as_ref()
+            .map(|(name, id)| (name.as_str(), id.as_str())),
+        limit,
+    )?;
+    if !cursor_valid {
+        return Err(ApiError::bad_request(
+            "worktree cursor is not in the requested workspace inventory".into(),
+        ));
+    }
+    paged_worktree_inventory(inventory, limit, None)
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

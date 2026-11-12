@@ -32,14 +32,46 @@ impl RuntimeSessionManager {
         &self,
         workspace_id: &str,
     ) -> Result<WorkspaceWorktreeInventory, RuntimeError> {
+        Ok(self
+            .build_workspace_worktree_inventory(workspace_id, None)?
+            .0)
+    }
+
+    /// HTTP needs only one keyset page, never every persisted worktree in the
+    /// repository. The second result preserves the exact original cursor
+    /// membership check (including aliases and tombstones).
+    pub fn list_workspace_worktree_inventory_page(
+        &self,
+        workspace_id: &str,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<(WorkspaceWorktreeInventory, bool), RuntimeError> {
+        self.build_workspace_worktree_inventory(workspace_id, Some((after, limit)))
+    }
+
+    fn build_workspace_worktree_inventory(
+        &self,
+        workspace_id: &str,
+        page: Option<(Option<(&str, &str)>, usize)>,
+    ) -> Result<(WorkspaceWorktreeInventory, bool), RuntimeError> {
         let workspace = self
             .store
             .get_workspace(workspace_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace {workspace_id}")))?;
         let identity = resolve_repository_identity(Path::new(&workspace.canonical_root))?;
-        let scoped = self
-            .store
-            .list_managed_worktree_status_for_root(&identity.canonical_root)?;
+        let (scoped, valid_cursor) = if let Some((after, limit)) = page {
+            self.store.list_managed_worktree_status_for_root_page(
+                &identity.canonical_root,
+                after,
+                limit.saturating_add(1),
+            )?
+        } else {
+            (
+                self.store
+                    .list_managed_worktree_status_for_root(&identity.canonical_root)?,
+                true,
+            )
+        };
         let active_routes = self
             .store
             .list_workspace_active_agent_routes(workspace_id)?;
@@ -101,13 +133,16 @@ impl RuntimeSessionManager {
                 .cmp(&b.normalized_name)
                 .then(a.worktree_id.cmp(&b.worktree_id))
         });
-        Ok(WorkspaceWorktreeInventory {
-            workspace_id: workspace_id.to_string(),
-            canonical_repository_root: identity.canonical_root,
-            git_common_dir: identity.git_common_dir,
-            repository_fingerprint: identity.fingerprint,
-            worktrees,
-        })
+        Ok((
+            WorkspaceWorktreeInventory {
+                workspace_id: workspace_id.to_string(),
+                canonical_repository_root: identity.canonical_root,
+                git_common_dir: identity.git_common_dir,
+                repository_fingerprint: identity.fingerprint,
+                worktrees,
+            },
+            valid_cursor,
+        ))
     }
 
     pub fn get_workspace_agent_rebind(

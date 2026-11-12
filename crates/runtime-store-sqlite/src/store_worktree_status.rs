@@ -42,6 +42,16 @@ macro_rules! delegate_worktree_status {
                 .list_managed_worktree_status_for_root(canonical_repo_root)
         }
 
+        fn list_managed_worktree_status_for_root_page(
+            &self,
+            canonical_repo_root: &str,
+            after: Option<(&str, &str)>,
+            limit: usize,
+        ) -> Result<(Vec<runtime_core::ManagedWorktreeStatusProjection>, bool), runtime_core::RuntimeError> {
+            self.repository
+                .list_managed_worktree_status_for_root_page(canonical_repo_root, after, limit)
+        }
+
         fn managed_worktree_revision(
             &self,
             worktree_id: &str,

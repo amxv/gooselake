@@ -20,6 +20,7 @@ mod repository_context_limit;
 mod repository_edit_rerun;
 mod repository_event_history;
 mod repository_hydration;
+mod repository_legacy_canonical_mirror_guard;
 mod repository_legacy_team_cancellation;
 mod repository_legacy_team_deletion;
 mod repository_legacy_team_delivery_claim;

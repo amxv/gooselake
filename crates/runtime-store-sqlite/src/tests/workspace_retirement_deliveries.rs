@@ -75,6 +75,16 @@ fn canonical_delivery(
     legacy: &TeamDeliveryRecord,
     status: &str,
 ) -> AgentDeliveryRecord {
+    canonical_delivery_with_context(repository, workspace, legacy, status, false)
+}
+
+fn canonical_delivery_with_context(
+    repository: &SqliteRuntimeRepository,
+    workspace: &runtime_core::WorkspaceRecord,
+    legacy: &TeamDeliveryRecord,
+    status: &str,
+    global_direct: bool,
+) -> AgentDeliveryRecord {
     let delivery = AgentDeliveryRecord {
         id: legacy.id.clone(),
         message_id: legacy.message_id.clone(),
@@ -94,10 +104,18 @@ fn canonical_delivery(
             &AgentMessageRecord {
                 id: legacy.message_id.clone(),
                 scope: "direct".into(),
-                context_kind: AgentMessageContextKind::LegacyTeam,
-                workspace_id: Some(workspace.workspace_id.clone()),
+                context_kind: if global_direct {
+                    AgentMessageContextKind::GlobalDirect
+                } else {
+                    AgentMessageContextKind::LegacyTeam
+                },
+                workspace_id: (!global_direct).then(|| workspace.workspace_id.clone()),
                 legacy_team_id: Some(legacy.team_id.clone()),
-                sender_agent_id: legacy.recipient_agent_id.clone(),
+                sender_agent_id: if global_direct {
+                    "recipient".into()
+                } else {
+                    legacy.recipient_agent_id.clone()
+                },
                 recipient_agent_ids: vec![legacy.recipient_agent_id.clone()],
                 input: serde_json::json!([{"type":"text","text":"Retirement delivery fixture"}]),
                 image_paths: vec![],
@@ -247,7 +265,6 @@ fn retirement_freezes_outbound_delivery_injection_before_passive_cancellation() 
     let (temp, repository, workspace) = setup();
     let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
     let mut legacy = legacy_delivery(&repository, &workspace, &db, "pending");
-    let mut canonical = canonical_delivery(&repository, &workspace, &legacy, "pending");
     let other_root = temp.path().join("other-workspace");
     std::fs::create_dir(&other_root).unwrap();
     let other_workspace = register(&repository, &other_root, "other-workspace");
@@ -265,21 +282,17 @@ fn retirement_freezes_outbound_delivery_injection_before_passive_cancellation() 
     )
     .unwrap();
     legacy.recipient_agent_id = outside.id.clone();
-    canonical.recipient_agent_id = outside.id.clone();
+    // Arrange the cross-workspace recipient before canonical admission;
+    // post-admission raw upsert must never retarget a certified recipient.
     repository.upsert_team_delivery(&legacy).unwrap();
-    repository.upsert_agent_delivery(&canonical).unwrap();
     db.execute(
         "UPDATE team_messages SET recipient_agent_ids_json=json_array(?1)
          WHERE id=?2",
-        params![outside.id, canonical.message_id],
+        params![outside.id, legacy.message_id],
     )
     .unwrap();
-    db.execute(
-        "UPDATE agent_messages SET recipient_agent_ids_json=json_array(?1),
-         workspace_id=NULL,context_kind='global_direct' WHERE id=?2",
-        params![outside.id, canonical.message_id],
-    )
-    .unwrap();
+    let mut canonical =
+        canonical_delivery_with_context(&repository, &workspace, &legacy, "pending", true);
 
     let command = retirement_command(&workspace, "outbound-freeze");
     repository.admit_workspace_retirement(&command).unwrap();

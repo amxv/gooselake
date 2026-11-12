@@ -11,6 +11,7 @@ use crate::db::{
     collect_rows, db_error, fetch_runtime_event_by_event_id, json_to_string, open_connection,
     opt_json_to_string, string_to_json,
 };
+use crate::repository_legacy_canonical_mirror_guard::require_exact_canonical_mirror;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
@@ -405,6 +406,8 @@ impl SqliteRuntimeRepository {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting legacy delivery update guard", error))?;
+
+        require_exact_canonical_mirror(&transaction, record)?;
 
         // The pending event is the immutable recipient/provider snapshot.
         // Status, error and injected-turn fields may legitimately advance,

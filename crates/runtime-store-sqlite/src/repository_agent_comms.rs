@@ -147,8 +147,40 @@ impl SqliteRuntimeRepository {
                 "native delivery status requires the certified receipt path".into(),
             ));
         }
-        let connection = open_connection(&self.database_path)?;
-        let changed = connection
+        let mut connection = open_connection(&self.database_path)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| db_error("failed starting raw canonical delivery guard", error))?;
+        let existing_message: Option<String> = tx
+            .query_row(
+                "SELECT message_id FROM agent_deliveries WHERE id=?1",
+                [&delivery.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking raw canonical delivery origin", error))?;
+        let certified: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM runtime_events
+                 WHERE (kind='message.sent' AND critical=1 AND event_id IN (?1,?2))
+                   OR (kind LIKE 'agent_delivery.%' AND critical=1
+                       AND json_extract(payload_json,'$.delivery.id')=?3))",
+                params![
+                    format!("agent-message:{}:sent", delivery.message_id),
+                    existing_message.map(|id| format!("agent-message:{id}:sent")),
+                    delivery.id,
+                ],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed checking certified canonical delivery", error))?;
+        if certified {
+            return Err(RuntimeError::Conflict(
+                "certified canonical delivery requires the Critical generation transaction; raw upsert cannot update or recreate it".into(),
+            ));
+        }
+        // Preserve old unjournaled legacy migration fixtures only; new
+        // canonical message admission always creates the Critical sent event.
+        let changed = tx
             .execute(
                 "INSERT INTO agent_deliveries (
                     id, message_id, recipient_agent_id, provider, status, effective_policy,
@@ -195,6 +227,8 @@ impl SqliteRuntimeRepository {
                 delivery.id
             )));
         }
+        tx.commit()
+            .map_err(|error| db_error("failed committing guarded raw delivery update", error))?;
         Ok(())
     }
 

@@ -8,8 +8,10 @@ use runtime_core::{
 use rusqlite::{params, Connection};
 
 mod agent_delivery_cas;
+mod agent_delivery_raw_mirror;
 mod agent_delivery_result;
 mod agent_delivery_retry;
+mod agent_delivery_scale;
 mod agent_message_cancellation;
 mod agent_message_pages;
 mod context_status_batch;

@@ -2,13 +2,35 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::{
-    ProviderAuthStatus, ProviderCloseSessionRequest, ProviderCreateSessionPolicyRequest,
-    ProviderKind, RuntimeError, RuntimeEventCriticality, RuntimeEventScope, SessionRecord,
-    TurnRecord,
+    NewRuntimeEvent, ProviderAuthStatus, ProviderCloseSessionRequest,
+    ProviderCreateSessionPolicyRequest, ProviderKind, RuntimeError, RuntimeEventCriticality,
+    RuntimeEventScope, SessionRecord, TurnRecord,
 };
 
 use super::helpers::now_ms;
 use super::{CreateSessionInput, ResumeSessionInput, RuntimeSessionManager};
+
+fn lifecycle_event(
+    record: &SessionRecord,
+    kind: &str,
+    event_id: String,
+    payload: Value,
+) -> NewRuntimeEvent {
+    NewRuntimeEvent {
+        event_id,
+        scope: RuntimeEventScope::Session,
+        scope_id: record.id.clone(),
+        session_id: Some(record.id.clone()),
+        team_id: None,
+        turn_id: None,
+        kind: kind.to_string(),
+        criticality: RuntimeEventCriticality::Critical,
+        payload,
+        provider: None,
+        provider_seq: None,
+        created_at: now_ms(),
+    }
+}
 
 impl RuntimeSessionManager {
     pub async fn list_sessions(&self) -> Vec<SessionRecord> {
@@ -289,7 +311,14 @@ impl RuntimeSessionManager {
             failure_message: None,
         };
 
-        if let Err(error) = self.store.upsert_session(&record) {
+        let event = lifecycle_event(
+            &record,
+            "session.created",
+            format!("evt_session_{}_created", session_id),
+            serde_json::json!({"provider":record.provider}),
+        );
+        let committed = self.store.commit_session_lifecycle(None, &record, &event);
+        let (record, event) = if let Err(error) = committed {
             if let Err(native_error) = provider
                 .close_session(ProviderCloseSessionRequest {
                     runtime_session_id: session_id.clone(),
@@ -300,23 +329,20 @@ impl RuntimeSessionManager {
                 tracing::warn!(session_id,error=%native_error,
                     "legacy session native cleanup could not be verified after failed durable admission");
             }
-            return Err(error);
-        }
+            return Err(RuntimeError::provider_dispatch_unknown(
+                "native_session_creation_unjournaled",
+                format!("native session was created, but its critical durable admission failed ({error}); do not blindly retry a new provider session"),
+            ));
+        } else {
+            committed.expect("handled lifecycle journal error")
+        };
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(session_id.clone(), record.clone());
         }
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                session_id.as_str(),
-                Some(session_id.as_str()),
-                None,
-                "session.created",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({ "provider": record.provider }),
-            )
-            .await?;
+        if let Some(event) = event {
+            let _ = self.event_tx.send(event);
+        }
         Ok(record)
     }
 
@@ -338,6 +364,9 @@ impl RuntimeSessionManager {
         }
         self.fence_unresolved_operator_turn_native_effect(session_id)?;
         let session = self.get_session(session_id).await?;
+        if session.status == "closed" {
+            return Ok(session);
+        }
         let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
             RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
         })?;
@@ -355,6 +384,7 @@ impl RuntimeSessionManager {
         self.finalize_session_close(
             session_id,
             reason.unwrap_or_else(|| "closed_by_request".to_string()),
+            true,
         )
         .await
     }
@@ -367,6 +397,7 @@ impl RuntimeSessionManager {
         self.finalize_session_close(
             session_id,
             reason.unwrap_or_else(|| "closed_by_runtime_rollback".to_string()),
+            false,
         )
         .await
     }
@@ -429,22 +460,29 @@ impl RuntimeSessionManager {
             updated.status = "ready".to_string();
         }
         updated.updated_at = now_ms();
-        self.store.upsert_session(&updated)?;
+        let event = lifecycle_event(
+            &updated,
+            "session.resumed",
+            format!(
+                "evt_session_{}_resumed_{}",
+                session_id,
+                self.allocate_id("run", "resume")
+            ),
+            serde_json::json!({}),
+        );
+        let (updated, committed_event) = self.store.commit_session_lifecycle(
+            Some(&session), &updated, &event,
+        ).map_err(|error| RuntimeError::provider_dispatch_unknown(
+            "native_session_resume_unjournaled",
+            format!("native resume was acknowledged, but critical state and event journal failed ({error}); native resume MUST NOT be retried automatically"),
+        ))?;
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(session_id.to_string(), updated.clone());
         }
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                session_id,
-                Some(session_id),
-                None,
-                "session.resumed",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({}),
-            )
-            .await?;
+        if let Some(event) = committed_event {
+            let _ = self.event_tx.send(event);
+        }
         Ok(updated)
     }
 
@@ -452,30 +490,44 @@ impl RuntimeSessionManager {
         &self,
         session_id: &str,
         reason: String,
+        native_acknowledged: bool,
     ) -> Result<SessionRecord, RuntimeError> {
         let session = self.get_session(session_id).await?;
+        if session.status == "closed" {
+            return Ok(session);
+        }
         let mut updated = session.clone();
         updated.status = "closed".to_string();
         updated.closed_at = Some(now_ms());
         updated.updated_at = now_ms();
         updated.active_turn_id = None;
-        self.store.upsert_session(&updated)?;
+        let event = lifecycle_event(
+            &updated,
+            "session.closed",
+            format!("evt_session_{}_closed", session_id),
+            serde_json::json!({"reason":reason}),
+        );
+        let committed = self
+            .store
+            .commit_session_lifecycle(Some(&session), &updated, &event);
+        let (updated, committed_event) = committed.map_err(|error| {
+            if native_acknowledged {
+                RuntimeError::provider_dispatch_unknown(
+                    "native_session_close_unjournaled",
+                    format!("native close acknowledged, but critical session close receipt failed ({error}); native close MUST NOT be retried blindly"),
+                )
+            } else {
+                error
+            }
+        })?;
 
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(session_id.to_string(), updated.clone());
         }
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                session_id,
-                Some(session_id),
-                None,
-                "session.closed",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({ "reason": reason }),
-            )
-            .await?;
+        if let Some(event) = committed_event {
+            let _ = self.event_tx.send(event);
+        }
         Ok(updated)
     }
 }

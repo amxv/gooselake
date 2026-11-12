@@ -11,13 +11,13 @@ use crate::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
     ProcessRecord, ProviderApprovalAdmission, ProviderApprovalDecisionReceipt,
     ProviderApprovalFinalization, ProviderApprovalResponseRequest, ProviderAuthStatus,
-    ProviderCreateSessionRequest, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
-    ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
-    ProviderTerminalCommit, ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus,
-    ProviderWaitTurnRequest, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeProvider,
-    RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
-    TurnRecord,
+    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderKind, ProviderMetadata,
+    ProviderModel, ProviderRegistry, ProviderResumeSessionRequest, ProviderRuntimeEvent,
+    ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit, ProviderTurnAck,
+    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
+    RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
 };
 
 use super::RuntimeSessionManager;
@@ -39,6 +39,8 @@ pub(super) struct MockStore {
 
 #[path = "test_support_native_decision.rs"]
 mod native_decision;
+#[path = "test_support_session_lifecycle.rs"]
+mod session_lifecycle;
 
 impl crate::WorkspaceWorktreeCreationStore for MockStore {}
 impl crate::OperatorUserTurnStore for MockStore {}
@@ -265,6 +267,15 @@ impl RuntimeStore for MockStore {
             session: Some(updated_session.clone()),
             event: receipt,
         })
+    }
+
+    fn commit_session_lifecycle(
+        &self,
+        before: Option<&SessionRecord>,
+        after: &SessionRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<(SessionRecord, Option<RuntimeEventRecord>), RuntimeError> {
+        self.record_session_lifecycle(before, after, event)
     }
 
     fn admit_provider_approval(
@@ -629,6 +640,10 @@ impl RuntimeProvider for MockProvider {
             provider_session_ref: req.provider_session_ref,
             canonical_provider_session_ref: req.canonical_provider_session_ref,
         })
+    }
+
+    async fn close_session(&self, _req: ProviderCloseSessionRequest) -> Result<(), RuntimeError> {
+        Ok(())
     }
 
     async fn restore_turn_identity_mapping(

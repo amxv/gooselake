@@ -83,6 +83,7 @@ mod provider_contract_routes;
 mod provider_failure_journal_http;
 mod scoped_mcp;
 mod session_basics;
+mod session_lifecycle_journal_http;
 mod session_terminal_journal_http;
 mod sse_cursor_headers;
 mod team_routes;

@@ -134,8 +134,27 @@ terminal/wait/stream outcomes or a stale session owner cannot overwrite one
 another. A later unsupported wait error cannot silently turn an **already
 quarantined unknown native effect** into a terminal failure or authorize a
 retry. Late callbacks for operator-closed, terminal or detached turns remain
-state-preserving audit observations. Other session-creation/closure/dispatch
-event families and legacy `/v1` team paths still need independent review.
+state-preserving audit observations. Other session creation/closure/dispatch
+boundaries and legacy `/v1` team paths have their own independent reviews.
+
+For new legacy `/v1` native provider sessions, `session.created` now commits
+with the persisted created session as **one critical SQLite transaction**.
+Acknowledged explicit provider resume (`session.resumed`) and native/session
+rollback closure (`session.closed`) likewise commit their guarded session
+projection together with a matching critical event. Each create/close receipt
+has a deterministic session event ID; resumes receive an operation-scoped
+unique ID. SQLite journal faults roll back the entire local state update.
+An acknowledged native create/resume/close whose local receipt fails is
+reported as an **unknown post-native effect**, **not** automatic permission to
+repeat the provider action; creation also attempts its existing native
+cleanup, but unsuccessful cleanup is not treated as proof of no residual
+provider activity. Concurrent/stale session writers fail closed, and a
+previous identical SQLite commit receipt may be read again without creating
+new events. An already-closed session does not dispatch another native close
+or invent another closure event. These guarantees are for **session state and
+critical lifecycle events**; they do not guarantee that native provider
+creation itself is exactly-once when a transport response is lost, or certify
+all legacy `/v1` team and nonterminal turn-transition event families.
 
 A dispatched provider turn may also produce a **native approval request**.
 Its pending approval record, waiting turn/session projections and critical

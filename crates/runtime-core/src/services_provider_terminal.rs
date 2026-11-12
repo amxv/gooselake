@@ -73,6 +73,21 @@ macro_rules! provider_terminal_methods {
                 "atomic provider failure and critical event journal unavailable".into(),
             ))
         }
+
+        /// Commit legacy provider session admission/resume/close projections
+        /// with their one critical event. On a post-native journal fault the
+        /// caller MUST NOT assume it can replay a native create/close/resume.
+        fn commit_session_lifecycle(
+            &self,
+            _before: Option<&crate::SessionRecord>,
+            _after: &crate::SessionRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<(crate::SessionRecord, Option<crate::RuntimeEventRecord>), crate::RuntimeError>
+        {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic legacy provider session lifecycle journal unavailable".into(),
+            ))
+        }
     };
 }
 pub(super) use provider_terminal_methods;

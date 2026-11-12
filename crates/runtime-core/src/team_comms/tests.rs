@@ -121,6 +121,23 @@ impl RuntimeStore for TestStore {
         Ok(())
     }
 
+    fn commit_session_lifecycle(
+        &self,
+        before: Option<&SessionRecord>,
+        after: &SessionRecord,
+        event: &NewRuntimeEvent,
+    ) -> Result<(SessionRecord, Option<RuntimeEventRecord>), RuntimeError> {
+        let mut hydrated = self.hydrated.lock().expect("hydrated lock");
+        if hydrated.sessions.iter().find(|row| row.id == after.id) != before {
+            return Err(RuntimeError::Conflict(
+                "test session lifecycle authority changed".into(),
+            ));
+        }
+        let receipt = self.append_runtime_event(event)?;
+        Self::upsert_with_key(&mut hydrated.sessions, after.clone(), |row| row.id.clone());
+        Ok((after.clone(), Some(receipt)))
+    }
+
     fn admit_turn(
         &self,
         admission: &TurnAdmissionRecord,

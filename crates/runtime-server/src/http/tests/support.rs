@@ -1,4 +1,6 @@
 use super::*;
+#[path = "support/session_lifecycle_close.rs"]
+mod session_lifecycle_close;
 
 pub(super) fn test_team_model_presets() -> Vec<TeamModelPreset> {
     vec![
@@ -47,6 +49,7 @@ pub(super) struct TestProvider {
     edit_inputs: Mutex<Vec<Vec<serde_json::Value>>>,
     pub(super) send_failure_mode: std::sync::atomic::AtomicU8,
     pub(super) send_invocations: std::sync::atomic::AtomicUsize,
+    allow_lifecycle_close: std::sync::atomic::AtomicBool,
     supports_thinking: std::sync::atomic::AtomicBool,
     preferences_mutation_calls: std::sync::atomic::AtomicUsize,
     preferences_mutation_mode: std::sync::atomic::AtomicU8,
@@ -327,6 +330,13 @@ impl RuntimeProvider for TestProvider {
             provider_session_ref: observed_ref,
             canonical_provider_session_ref: req.canonical_provider_session_ref,
         })
+    }
+
+    async fn close_session(
+        &self,
+        req: runtime_core::ProviderCloseSessionRequest,
+    ) -> Result<(), RuntimeError> {
+        self.perform_test_session_close(req).await
     }
 
     async fn close_session_for_retirement(

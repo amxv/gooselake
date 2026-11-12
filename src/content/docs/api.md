@@ -1356,6 +1356,20 @@ instead preserves the active turn for recovery and commits its
 all affected state; neither outcome can blindly resend possibly executed
 native work, and a later wait error cannot clear an existing quarantine.
 
+Legacy `/v1` session **create, resume and close** also use separate guarded
+SQLite transactions to couple their session projection and critical
+`session.created`, `session.resumed` or `session.closed` receipt. SQLite event
+faults roll back the corresponding session change; stale owners cannot
+overwrite a concurrent session transition, and replay of an identical
+committed receipt does not append an event. Following an acknowledged native
+action, a missing/failed local receipt is an uncertain native-effect result,
+**never authorization to automatically repeat the native provider call**.
+The legacy native-create fallback attempts provider cleanup, but does not
+claim exactly-once provider creation if its effect is uncertain. Closing an
+already-closed session is state-preserving and does not call the provider
+again. These lifecycle receipts do not assert authority over independent
+legacy `/v1` team events or every nonterminal dispatch transition.
+
 A **provider-native approval request** observed after turn dispatch now also
 commits its pending approval identity, the waiting turn/session state, and one
 critical `approval.requested` session event in a single SQLite transaction.
@@ -1386,8 +1400,8 @@ executed native action retryable. Journal faults roll back the outcome
 transaction, a duplicate/lost commit receipt is reconciled without a new
 provider decision, and a provider turn already completed concurrently is not
 resurrected or used to overwrite a newer session attachment. These rules do
-not claim atomicity for other session lifecycle or legacy `/v1` event
-families.
+not claim atomicity for legacy `/v1` team and other nonterminal dispatch
+event families.
 
 The response is an accepted turn, not necessarily terminal output:
 

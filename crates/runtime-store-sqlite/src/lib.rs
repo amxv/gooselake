@@ -41,6 +41,7 @@ mod repository_provider_approval;
 mod repository_provider_approval_decision;
 mod repository_provider_approval_resolution;
 mod repository_provider_failure;
+mod repository_session_lifecycle;
 mod repository_team_hooks;
 mod repository_turn_authority;
 mod repository_turn_terminal;

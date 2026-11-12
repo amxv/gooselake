@@ -34,6 +34,22 @@ macro_rules! delegate_provider_event_methods {
             )
         }
 
+        fn commit_session_lifecycle(
+            &self,
+            before: Option<&runtime_core::SessionRecord>,
+            after: &runtime_core::SessionRecord,
+            event: &runtime_core::NewRuntimeEvent,
+        ) -> Result<
+            (
+                runtime_core::SessionRecord,
+                Option<runtime_core::RuntimeEventRecord>,
+            ),
+            runtime_core::RuntimeError,
+        > {
+            self.repository
+                .commit_session_lifecycle(before, after, event)
+        }
+
         fn admit_provider_approval(
             &self,
             previous_turn: &runtime_core::TurnRecord,

@@ -276,26 +276,62 @@ fn verify_migration_chain(connection: &Connection) -> Result<(), RuntimeError> {
     Ok(())
 }
 
-/// A completed migration marker is not sufficient if a derived journal
-/// projection or its append trigger was subsequently removed. Refuse startup
-/// rather than silently losing new turn/message/operation replay links.
-/// Full retained-row reconciliation is a separate, potentially expensive
-/// operation; this constant-sized check never rewrites journal evidence.
+/// A completed migration marker (or merely an object name) is not sufficient
+/// if the derived journal projection/trigger was replaced with weaker SQL.
+/// Compare the installed definitions against the exact shipped migration 27
+/// definitions before accepting new writes. This is constant-sized and never
+/// rewrites history; full retained-row reconciliation remains an offline audit.
 fn verify_event_subject_projection_schema(connection: &Connection) -> Result<(), RuntimeError> {
-    let present: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE (type='table' AND name='runtime_event_subjects')
-                OR (type='trigger' AND name='runtime_event_subjects_after_insert'
-                    AND tbl_name='runtime_events')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| db_error("failed verifying event subject projection schema", error))?;
-    if present != 2 {
-        return Err(RuntimeError::Bootstrap(
-            "runtime event subject projection table or append trigger is missing; refusing startup without changing retained event history".into(),
-        ));
+    let migration = include_str!("schema_migration_27.sql");
+    let table_prefix = "CREATE TABLE runtime_event_subjects (";
+    let table_start = migration
+        .find(table_prefix)
+        .expect("schema27 subject table");
+    let table_ending = ") WITHOUT ROWID;";
+    let table_end = table_start
+        + migration[table_start..]
+            .find(table_ending)
+            .expect("schema27 subject table ending")
+        + table_ending.len();
+    let trigger_prefix = "CREATE TRIGGER runtime_event_subjects_after_insert";
+    let trigger_start = migration
+        .find(trigger_prefix)
+        .expect("schema27 subject trigger");
+    for (object_type, object_name, parent_table, canonical_sql) in [
+        (
+            "table",
+            "runtime_event_subjects",
+            "runtime_event_subjects",
+            &migration[table_start..table_end],
+        ),
+        (
+            "trigger",
+            "runtime_event_subjects_after_insert",
+            "runtime_events",
+            &migration[trigger_start..],
+        ),
+    ] {
+        let installed: Option<String> = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master
+                 WHERE type=?1 AND name=?2 AND tbl_name=?3",
+                params![object_type, object_name, parent_table],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed verifying event subject projection schema", error))?;
+        // SQLite omits the trailing statement terminator for some versions.
+        // Do not normalize SQL tokens: changing a literal or trigger predicate
+        // must fail closed instead of silently changing future replay links.
+        if installed
+            .as_deref()
+            .map(|sql| sql.trim().trim_end_matches(';'))
+            != Some(canonical_sql.trim().trim_end_matches(';'))
+        {
+            return Err(RuntimeError::Bootstrap(format!(
+                "runtime event subject projection table or append trigger is missing or differs from canonical migration 27 ({object_name}); refusing startup without changing retained event history"
+            )));
+        }
     }
     Ok(())
 }

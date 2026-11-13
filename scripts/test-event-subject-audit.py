@@ -190,6 +190,43 @@ class EventSubjectAuditTests(unittest.TestCase):
                 self.assertIn("refused", result.stderr)
                 self.assertEqual(digest(path), original)
 
+    def test_same_named_weakened_schema_is_refused_despite_matching_retained_links(self) -> None:
+        for altered_trigger in (True, False):
+            with self.subTest(altered_trigger=altered_trigger), tempfile.TemporaryDirectory(
+                prefix="gg-event-audit-schema-spoof-"
+            ) as root:
+                path = Path(root) / "checkpoint.sqlite3"
+                create_snapshot(path, 12)
+                with sqlite3.connect(path) as db:
+                    links = db.execute(
+                        "SELECT subject_scope,subject_id,event_row_id "
+                        "FROM runtime_event_subjects ORDER BY 1,2,3"
+                    ).fetchall()
+                    if altered_trigger:
+                        db.executescript(
+                            "DROP TRIGGER runtime_event_subjects_after_insert;"
+                            "CREATE TRIGGER runtime_event_subjects_after_insert "
+                            "AFTER INSERT ON runtime_events BEGIN SELECT 1; END;"
+                        )
+                    else:
+                        db.executescript(
+                            "DROP TABLE runtime_event_subjects;"
+                            "CREATE TABLE runtime_event_subjects("
+                            "subject_scope TEXT,subject_id TEXT,event_row_id INTEGER);"
+                        )
+                        db.executemany(
+                            "INSERT INTO runtime_event_subjects VALUES (?,?,?)", links
+                        )
+                    self.assertEqual(db.execute(
+                        "SELECT subject_scope,subject_id,event_row_id "
+                        "FROM runtime_event_subjects ORDER BY 1,2,3"
+                    ).fetchall(), links)
+                before = digest(path)
+                result = run_audit(path)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("canonical migration27", result.stderr)
+                self.assertEqual(digest(path), before)
+
     def test_live_sidecars_and_symlink_snapshots_are_refused(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-event-audit-sidecars-") as root:
             path = Path(root) / "checkpoint.sqlite3"

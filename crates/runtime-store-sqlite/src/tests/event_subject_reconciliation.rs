@@ -300,6 +300,82 @@ fn startup_fails_closed_if_required_subject_projection_objects_were_lost() {
 }
 
 #[test]
+fn startup_refuses_same_named_weakened_projection_sql_without_rewriting_events() {
+    for altered_trigger in [true, false] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("runtime.sqlite3");
+        let repository = repo(&temp);
+        repository.initialize_schema().unwrap();
+        let original = repository
+            .append_runtime_event(&NewRuntimeEvent {
+                event_id: "evt_subject_schema_attest".into(),
+                scope: RuntimeEventScope::Workspace,
+                scope_id: "ws_subject_schema_attest".into(),
+                session_id: None,
+                team_id: None,
+                turn_id: Some("turn_subject_schema_attest".into()),
+                kind: "test.projection_schema_attestation".into(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: serde_json::json!({"message_id":"msg_subject_schema_attest"}),
+                provider: None,
+                provider_seq: None,
+                created_at: 100,
+            })
+            .unwrap();
+        let db = open_connection(&path).unwrap();
+        let original_links = stored_subject_links(&db);
+        assert_eq!(original_links, canonical_subject_links(&db));
+        if altered_trigger {
+            // Old rows still look healthy, but future appended events would
+            // lose every linked subject if name-only verification passed.
+            db.execute_batch(
+                "DROP TRIGGER runtime_event_subjects_after_insert;
+                 CREATE TRIGGER runtime_event_subjects_after_insert
+                 AFTER INSERT ON runtime_events BEGIN SELECT 1; END;",
+            )
+            .unwrap();
+        } else {
+            // Preserve every existing link while removing the original
+            // primary key and foreign-key enforcement under the same name.
+            db.execute_batch(
+                "DROP TABLE runtime_event_subjects;
+                 CREATE TABLE runtime_event_subjects (
+                   subject_scope TEXT, subject_id TEXT, event_row_id INTEGER
+                 );",
+            )
+            .unwrap();
+            for (scope, id, row_id) in &original_links {
+                db.execute(
+                    "INSERT INTO runtime_event_subjects VALUES (?1,?2,?3)",
+                    params![scope, id, row_id],
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(stored_subject_links(&db), original_links);
+        drop(db);
+        let reason = repository.initialize_schema().unwrap_err().to_string();
+        assert!(
+            reason.contains("differs from canonical migration 27"),
+            "{reason}"
+        );
+        let reopened = open_connection(&path).unwrap();
+        assert_eq!(stored_subject_links(&reopened), original_links);
+        assert_eq!(canonical_subject_links(&reopened), original_links);
+        assert_eq!(
+            repository.list_runtime_events(None, None, 10).unwrap(),
+            [original]
+        );
+        let migration_count: i64 = reopened
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(migration_count, crate::schema::SCHEMA_VERSION);
+    }
+}
+
+#[test]
 fn independent_rebuild_reads_one_consistent_snapshot_during_concurrent_commits() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("runtime.sqlite3");

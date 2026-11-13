@@ -41,11 +41,12 @@ Check:
 
 Public `/health` working only proves the process is alive. It does not prove protected auth is correct.
 
-If startup reports a missing `runtime_event_subjects` table or
+If startup reports a missing or noncanonical `runtime_event_subjects` table or
 `runtime_event_subjects_after_insert` trigger, preserve an offline copy of the
 SQLite database (including any WAL) before investigating. A completed
-migration marker is not proof that these projection objects still exist.
-Gooselake refuses to start with this schema gap; do not delete migration
+migration marker and matching object names are not proof of the canonical
+projection constraints and append-trigger body. Gooselake refuses to start
+with this schema gap; do not delete migration
 markers, invent historical events, or retry native work as a repair shortcut.
 If a consistent offline copy is available, run
 `python3 scripts/audit-event-subjects.py --snapshot /path/to/offline-copy.sqlite3`

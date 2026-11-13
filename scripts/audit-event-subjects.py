@@ -45,12 +45,29 @@ def verify_source_schema(connection: sqlite3.Connection) -> int:
     for table, names in required.items():
         if not names <= columns(table):
             raise ValueError(f"snapshot lacks required indexed event schema: {table}")
-    trigger = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='trigger' "
-        "AND name='runtime_event_subjects_after_insert' AND tbl_name='runtime_events'"
-    ).fetchone()
-    if trigger is None:
-        raise ValueError("snapshot lacks canonical event subject append trigger")
+    # A trigger with the expected name but an empty/weakened body can leave
+    # every retained link consistent while silently corrupting FUTURE writes.
+    # Attest both full definitions against migration 27, including constraints,
+    # instead of accepting merely matching object names or column presence.
+    migration = (Path(__file__).resolve().parents[1] /
+                 "crates/runtime-store-sqlite/src/schema_migration_27.sql").read_text(
+                     encoding="utf-8"
+                 )
+    table_start = migration.index("CREATE TABLE runtime_event_subjects (")
+    table_end = migration.index(") WITHOUT ROWID;", table_start) + len(") WITHOUT ROWID;")
+    trigger_start = migration.index("CREATE TRIGGER runtime_event_subjects_after_insert")
+    for kind, name, parent, expected in (
+        ("table", "runtime_event_subjects", "runtime_event_subjects",
+         migration[table_start:table_end]),
+        ("trigger", "runtime_event_subjects_after_insert", "runtime_events",
+         migration[trigger_start:]),
+    ):
+        found = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type=? AND name=? AND tbl_name=?",
+            (kind, name, parent),
+        ).fetchone()
+        if found is None or found[0].strip().rstrip(";") != expected.strip().rstrip(";"):
+            raise ValueError(f"snapshot lacks canonical migration27 {name} SQL definition")
     migrations = [row[0] for row in connection.execute(
         "SELECT version FROM schema_migrations ORDER BY version"
     )]

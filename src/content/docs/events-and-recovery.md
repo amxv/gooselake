@@ -36,22 +36,26 @@ Message publication and durable operation admission/transitions now append
 redacted events in their own authority transaction. Not every historical
 operation or transition necessarily generated a journal event.
 
-On startup, the SQLite schema check requires the subject projection table and
-its parent-event append trigger to exist even when their migration is already
-marked complete. A missing object stops bootstrap rather than silently
-accepting future event replay gaps. This check does **not** rebuild subject
-rows, verify every historical link, or rewrite retained journal evidence;
-damaged databases need independent, offline inspection before any repair.
+On startup, SQLite verifies that the subject projection table **and complete
+append-trigger SQL** match their canonical migration 27 definitions, even when
+that migration is already marked complete. Missing objects or weaker, same-name
+replacements (including a no-op trigger or a table without its original
+constraints) stop bootstrap rather than silently losing future replay links.
+This constant-sized schema attestation does **not** rebuild subject rows,
+verify every historical link, or rewrite retained journal evidence; damaged
+databases need independent, offline inspection before any repair.
 
 For an **isolated, consistently checkpointed offline SQLite copy**, use
 `python3 scripts/audit-event-subjects.py --snapshot /path/to/offline-copy.sqlite3`
 to compare retained canonical rows against stored subject links. The audit
 reports missing, unexpected, and malformed/structured-ID evidence without
 writing to the database or fabricating a historical event. It refuses SQLite
-WAL/journal sidecars or symlink paths; exit 1 reports discrepancies, exit 2
+WAL/journal sidecars, symlink paths, or a projection schema that differs from
+the checked-out migration 27 source; exit 1 reports discrepancies, exit 2
 refuses an unsafe or unsupported snapshot. A clean audit certifies **only**
-source/index parity in that copy, not completeness of event publication,
-native effect settlement, future SQL trigger integrity or safe pruning.
+source/index parity and the installed schema definition in that copy, not
+completeness of event publication, native effect settlement, future live
+database integrity or safe pruning.
 
 ## Operator history vs live replay
 

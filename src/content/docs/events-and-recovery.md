@@ -43,6 +43,16 @@ accepting future event replay gaps. This check does **not** rebuild subject
 rows, verify every historical link, or rewrite retained journal evidence;
 damaged databases need independent, offline inspection before any repair.
 
+For an **isolated, consistently checkpointed offline SQLite copy**, use
+`python3 scripts/audit-event-subjects.py --snapshot /path/to/offline-copy.sqlite3`
+to compare retained canonical rows against stored subject links. The audit
+reports missing, unexpected, and malformed/structured-ID evidence without
+writing to the database or fabricating a historical event. It refuses SQLite
+WAL/journal sidecars or symlink paths; exit 1 reports discrepancies, exit 2
+refuses an unsafe or unsupported snapshot. A clean audit certifies **only**
+source/index parity in that copy, not completeness of event publication,
+native effect settlement, future SQL trigger integrity or safe pruning.
+
 ## Operator history vs live replay
 
 `GET /v2/events` is an operator-authenticated, bounded history index. It can

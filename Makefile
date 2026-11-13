@@ -84,6 +84,10 @@ check-api-docs-smoke: ## Exercise v2 operator docs against an isolated no-provid
 check-legacy-snapshot-audit: ## Test the immutable counts-only legacy SQLite snapshot audit (fixtures only)
 	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test-legacy-snapshot-audit.py -v
 
+.PHONY: check-event-subject-audit
+check-event-subject-audit: ## Test immutable retained-event subject reconciliation (offline fixtures only)
+	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test-event-subject-audit.py -v
+
 .PHONY: check-goldengoose-parity-fixtures
 check-goldengoose-parity-fixtures: ## Test static GG parity audit drift and fail-closed behavior without a GG checkout
 	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test-goldengoose-source-parity.py -v
@@ -106,6 +110,7 @@ check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tes
 	cargo test --manifest-path sidecars/gg-mcp-server/Cargo.toml
 	$(MAKE) api-docs-check
 	$(MAKE) check-legacy-snapshot-audit
+	$(MAKE) check-event-subject-audit
 	$(MAKE) check-goldengoose-parity-fixtures
 	$(MAKE) check-api-docs-smoke
 	$(MAKE) check-release-layout

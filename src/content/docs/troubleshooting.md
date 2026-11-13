@@ -47,6 +47,11 @@ SQLite database (including any WAL) before investigating. A completed
 migration marker is not proof that these projection objects still exist.
 Gooselake refuses to start with this schema gap; do not delete migration
 markers, invent historical events, or retry native work as a repair shortcut.
+If a consistent offline copy is available, run
+`python3 scripts/audit-event-subjects.py --snapshot /path/to/offline-copy.sqlite3`
+for a read-only retained-source/subject-link comparison. A nonzero audit
+reports discrepancies or refusal; neither outcome authorizes automatic
+index reconstruction, provider replay or deletion of journal evidence.
 
 The operator routes (`/v1/**` and operator `/v2/**`) require exactly
 one valid operator Bearer header. Duplicate `Authorization` headers

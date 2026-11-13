@@ -3,13 +3,15 @@
 //! authority. Terminal side effects share the state transition transaction.
 
 use runtime_core::{
-    CompactionObservationReceipt, ProviderCompactSessionOutcome, ProviderCompactionObservation,
-    RuntimeError, SessionCompactionRun, TeamHookEventName, WorkspaceSystemNoticeRecord,
+    CompactionObservationReceipt, NewRuntimeEvent, ProviderCompactSessionOutcome,
+    ProviderCompactionObservation, RuntimeError, RuntimeEventCriticality, RuntimeEventScope,
+    SessionCompactionRun, TeamHookEventName, WorkspaceSystemNoticeRecord,
 };
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::json;
 
 use crate::db::{db_error, open_connection};
+use crate::repository::insert_runtime_event_in_transaction;
 use crate::repository_team_hooks::{active_workspace_hook_targets_tx, queue_team_hook_trigger_tx};
 use crate::repository_workspace_notice::{workspace_active_lead_tx, workspace_notice_policy_tx};
 use crate::SqliteRuntimeRepository;
@@ -284,6 +286,7 @@ impl SqliteRuntimeRepository {
                     return Ok(CompactionObservationReceipt {
                         run: prior,
                         changed: false,
+                        journal_event: None,
                     });
                 }
             }
@@ -361,6 +364,7 @@ impl SqliteRuntimeRepository {
                 return Ok(CompactionObservationReceipt {
                     run: old.clone(),
                     changed: false,
+                    journal_event: None,
                 });
             }
         }
@@ -395,8 +399,44 @@ impl SqliteRuntimeRepository {
         if run.phase == "completed" && (!was_pending || before != "completed") {
             admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?;
         }
+        // The native compaction transition, approved post-compaction hooks,
+        // system notices AND the replayable Critical lifecycle event must be
+        // one authority transaction. A late journal failure must never leave
+        // a silently advanced run that has no matching immutable event.
+        let nonce: String = tx
+            .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))
+            .map_err(|error| db_error("failed allocating compaction journal identity", error))?;
+        let journal_event = insert_runtime_event_in_transaction(
+            &tx,
+            &NewRuntimeEvent {
+                event_id: format!("evt_compaction_{nonce}"),
+                scope: RuntimeEventScope::Session,
+                scope_id: run.agent_id.clone(),
+                session_id: Some(run.agent_id.clone()),
+                team_id: None,
+                turn_id: observation.turn_id.clone(),
+                kind: "compaction.lifecycle_changed".into(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: json!({
+                    "run_id": run.run_id,
+                    "phase": run.phase,
+                    "source": run.source,
+                    "trigger": run.trigger,
+                    "pre_tokens": run.pre_tokens,
+                    "post_tokens": run.post_tokens,
+                    "context_window_size": run.context_window_size,
+                }),
+                provider: None,
+                provider_seq: None,
+                created_at: run.updated_at_ms,
+            },
+        )?;
         tx.commit()
             .map_err(|error| db_error("failed committing native compaction", error))?;
-        Ok(CompactionObservationReceipt { run, changed: true })
+        Ok(CompactionObservationReceipt {
+            run,
+            changed: true,
+            journal_event: Some(journal_event),
+        })
     }
 }

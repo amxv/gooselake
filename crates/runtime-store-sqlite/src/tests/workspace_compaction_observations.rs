@@ -1,8 +1,9 @@
 use super::workspace_agent::{registered_workspace, workspace_agent_fixture};
 use super::*;
 use runtime_core::{
-    ProviderCompactionObservation, ProviderKind, RuntimeError, TeamHookApprovalUpdate,
-    TeamHookEventName, TeamHookResolvedEntry, TeamHookScope,
+    ProviderCompactionObservation, ProviderKind, RuntimeError, RuntimeEventCriticality,
+    RuntimeEventScope, TeamHookApprovalUpdate, TeamHookEventName, TeamHookResolvedEntry,
+    TeamHookScope,
 };
 
 fn compaction_event(
@@ -85,10 +86,59 @@ fn provider_compaction_commits_one_durable_lifecycle_notice_and_approved_hook() 
         .is_empty());
 
     let completed_signal = compaction_event(&agent.agent_id, "completed", "cmp_auto_2", 102);
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fault_compaction_critical BEFORE INSERT ON runtime_events
+         WHEN NEW.kind='compaction.lifecycle_changed'
+           AND json_extract(NEW.payload_json,'$.phase')='completed'
+         BEGIN SELECT RAISE(ABORT,'injected final Critical event failure'); END;",
+    )
+    .unwrap();
+    assert!(repository
+        .observe_provider_compaction(&completed_signal)
+        .is_err());
+    assert_eq!(
+        repository
+            .get_session_compaction(&started.run.run_id)
+            .unwrap()
+            .unwrap()
+            .phase,
+        "started",
+        "the post-native observation cannot commit without its Critical event"
+    );
+    assert!(repository
+        .list_workspace_system_notices(10)
+        .unwrap()
+        .is_empty());
+    assert!(repository
+        .list_team_hook_effects(&workspace.workspace_id, 10)
+        .unwrap()
+        .is_empty());
+    let compaction_events = || {
+        repository
+            .list_runtime_events(
+                Some((RuntimeEventScope::Session, &agent.agent_id)),
+                None,
+                100,
+            )
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.kind == "compaction.lifecycle_changed")
+            .collect::<Vec<_>>()
+    };
+    let prior = compaction_events();
+    assert_eq!(prior.len(), 1);
+    assert_eq!(prior[0].payload["phase"], "started");
+    db.execute_batch("DROP TRIGGER fault_compaction_critical;")
+        .unwrap();
     let completed = repository
         .observe_provider_compaction(&completed_signal)
         .unwrap();
     assert!(completed.changed);
+    assert_eq!(
+        completed.journal_event.as_ref().unwrap().payload["phase"],
+        "completed"
+    );
     assert_eq!(completed.run.phase, "completed");
     assert_eq!(completed.run.run_id, started.run.run_id);
     assert_eq!(completed.run.post_tokens, Some(60));
@@ -107,11 +157,21 @@ fn provider_compaction_commits_one_durable_lifecycle_notice_and_approved_hook() 
         effects[0].hook.event_name,
         TeamHookEventName::PostCompaction
     );
+    let durable = compaction_events();
+    assert_eq!(durable.len(), 2, "one Critical journal receipt per change");
+    assert_eq!(durable[1], completed.journal_event.clone().unwrap());
+    assert!(durable
+        .iter()
+        .all(|event| event.criticality == RuntimeEventCriticality::Critical));
+    assert_eq!(durable[0].payload["run_id"], started.run.run_id);
+    assert_eq!(durable[1].payload["run_id"], started.run.run_id);
 
     let replay = repository
         .observe_provider_compaction(&completed_signal)
         .unwrap();
     assert!(!replay.changed);
+    assert!(replay.journal_event.is_none());
+    assert_eq!(compaction_events(), durable, "replay cannot double publish");
     assert_eq!(replay.run.run_id, completed.run.run_id);
     assert!(
         !repository
@@ -136,6 +196,11 @@ fn provider_compaction_commits_one_durable_lifecycle_notice_and_approved_hook() 
     ));
 
     let restarted = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    assert_eq!(
+        compaction_events(),
+        durable,
+        "reopened journal retains both events"
+    );
     assert_eq!(
         restarted
             .get_session_compaction(&completed.run.run_id)

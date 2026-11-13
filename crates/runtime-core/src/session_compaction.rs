@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{ProviderCompactSessionOutcome, ProviderKind, RuntimeError};
+use crate::{ProviderCompactSessionOutcome, ProviderKind, RuntimeError, RuntimeEventRecord};
 
 /// Durable manager-owned compaction request. Accepted is not the same as a
 /// completed provider compaction; observed terminal evidence advances it.
@@ -66,6 +66,10 @@ pub struct ProviderCompactionObservation {
 pub struct CompactionObservationReceipt {
     pub run: SessionCompactionRun,
     pub changed: bool,
+    /// Exact Critical journal row committed atomically with a changed SQLite
+    /// observation. Publish this receipt to live subscribers; never append a
+    /// second, potentially post-commit event for the same transition.
+    pub journal_event: Option<RuntimeEventRecord>,
 }
 
 impl SessionCompactionRun {

@@ -92,24 +92,33 @@ impl RuntimeSessionManager {
             Err(error) => return Err(error),
         };
         if receipt.changed {
-            self.append_event(
-                RuntimeEventScope::Session,
-                runtime_session_id,
-                Some(runtime_session_id),
-                turn_id.as_deref(),
-                "compaction.lifecycle_changed",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({
-                    "run_id": receipt.run.run_id,
-                    "phase": receipt.run.phase,
-                    "source": receipt.run.source,
-                    "trigger": receipt.run.trigger,
-                    "pre_tokens": receipt.run.pre_tokens,
-                    "post_tokens": receipt.run.post_tokens,
-                    "context_window_size": receipt.run.context_window_size,
-                }),
-            )
-            .await?;
+            if let Some(event) = receipt.journal_event.as_ref() {
+                // SQLite already atomically committed the exact lifecycle
+                // receipt with run status, notices and post-compaction hooks.
+                // A lost broadcast can be replayed; never append another row.
+                let _ = self.event_tx.send(event.clone());
+            } else {
+                // In-memory/third-party stores without the transactional
+                // primitive retain their historical notification behavior.
+                self.append_event(
+                    RuntimeEventScope::Session,
+                    runtime_session_id,
+                    Some(runtime_session_id),
+                    turn_id.as_deref(),
+                    "compaction.lifecycle_changed",
+                    RuntimeEventCriticality::Critical,
+                    serde_json::json!({
+                        "run_id": receipt.run.run_id,
+                        "phase": receipt.run.phase,
+                        "source": receipt.run.source,
+                        "trigger": receipt.run.trigger,
+                        "pre_tokens": receipt.run.pre_tokens,
+                        "post_tokens": receipt.run.post_tokens,
+                        "context_window_size": receipt.run.context_window_size,
+                    }),
+                )
+                .await?;
+            }
         }
         if receipt.changed && receipt.run.phase == "completed" {
             let _ = self

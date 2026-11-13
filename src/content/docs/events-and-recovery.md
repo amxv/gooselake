@@ -109,6 +109,17 @@ are not retrospectively certified by newer code.
 
 Droppable events are useful but less sacred. Process output samples are the clearest example. They help live UIs feel alive, but the process log files remain the authoritative output source.
 
+For provider-observed compaction, the committed `compaction.lifecycle_changed`
+Critical event shares a SQLite transaction with the manager-owned compaction
+run transition and, on completion, the subscribed system notices and approved
+`post_compaction` hook intents. A failed journal insert rolls all of those
+changes back; a replay resolved to the **same durable compaction run** does not
+publish an extra event. Provider signals without strong native IDs still use
+the documented bounded weak-alias deduplication window; this is not global
+exactly-once native-event identity. Unknown native outcomes are **not**
+automatically retried because a journal write failed. This atomic coupling applies to provider observations; it does
+not certify every historical manual compaction request/review transition.
+
 Managed-process **critical** lifecycle events (`process.queued`,
 `process.started`, `process.kill_requested` and terminal outcomes such as
 `process.completed` / `process.canceled`) are inserted in the **same SQLite

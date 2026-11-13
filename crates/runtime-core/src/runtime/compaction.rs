@@ -348,24 +348,35 @@ impl RuntimeSessionManager {
                 return Ok(observed);
             }
         }
-        let persisted = self.store.transition_session_compaction(
+        let receipt = self.store.transition_session_compaction(
             &run.run_id,
             phase,
             outcome,
             error_code,
             now_ms(),
         )?;
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                agent_id,
-                Some(agent_id),
-                None,
-                "compaction.request_state_changed",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({"run_id": run.run_id, "phase": persisted.phase}),
-            )
-            .await;
+        let persisted = receipt.run;
+        if receipt.changed {
+            if let Some(event) = receipt.journal_event {
+                // SQLite already committed the exact Critical receipt with
+                // the request state. A lost live pulse is recoverable from
+                // the journal; never insert a second post-commit event.
+                let _ = self.event_tx.send(event);
+            } else {
+                // A non-SQLite store may lack atomic event capability.
+                let _ = self
+                    .append_event(
+                        RuntimeEventScope::Session,
+                        agent_id,
+                        Some(agent_id),
+                        None,
+                        "compaction.request_state_changed",
+                        RuntimeEventCriticality::Critical,
+                        serde_json::json!({"run_id": run.run_id, "phase": persisted.phase}),
+                    )
+                    .await;
+            }
+        }
         match native_result {
             Ok(ProviderCompactSessionOutcome::Accepted) => {
                 if persisted.phase == "completed" {
@@ -393,7 +404,7 @@ impl RuntimeSessionManager {
                         None,
                         Some("provider_compaction_observer_unavailable"),
                         now_ms(),
-                    )
+                    ).map(|receipt| receipt.run)
                 }
             }
             Ok(ProviderCompactSessionOutcome::NotPerformed) => Ok(persisted),

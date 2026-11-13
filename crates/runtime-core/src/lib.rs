@@ -140,7 +140,8 @@ pub use services_workspace_status_trait::{
     WorkspaceActiveAgentRoute, WorkspaceStatusRosterSnapshot,
 };
 pub use session_compaction::{
-    CompactionObservationReceipt, ProviderCompactionObservation, SessionCompactionRun,
+    CompactionObservationReceipt, CompactionTransitionReceipt, ProviderCompactionObservation,
+    SessionCompactionRun,
 };
 pub use state::{
     ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,

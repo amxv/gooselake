@@ -117,8 +117,16 @@ changes back; a replay resolved to the **same durable compaction run** does not
 publish an extra event. Provider signals without strong native IDs still use
 the documented bounded weak-alias deduplication window; this is not global
 exactly-once native-event identity. Unknown native outcomes are **not**
-automatically retried because a journal write failed. This atomic coupling applies to provider observations; it does
-not certify every historical manual compaction request/review transition.
+automatically retried because a journal write failed.
+
+Manual compaction request-state transitions (`accepted`, `not_performed`,
+`manual_review` and other explicit store phases) likewise commit the Critical
+`compaction.request_state_changed` receipt in the same SQLite transaction as
+the changed run state. A failed event insert retains the prior state and
+leaves uncertain native effects fenced; an exact phase replay emits nothing.
+Initial request admission, startup reconciliation and operator review are
+separate authority paths and do not yet have a whole-family Critical event
+completeness guarantee.
 
 Managed-process **critical** lifecycle events (`process.queued`,
 `process.started`, `process.kill_requested` and terminal outcomes such as

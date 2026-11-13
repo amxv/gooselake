@@ -1,7 +1,11 @@
-use runtime_core::{ProviderCompactSessionOutcome, RuntimeError, SessionCompactionRun};
+use runtime_core::{
+    CompactionTransitionReceipt, NewRuntimeEvent, ProviderCompactSessionOutcome, RuntimeError,
+    RuntimeEventCriticality, RuntimeEventScope, SessionCompactionRun,
+};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::db::{db_error, open_connection};
+use crate::repository::insert_runtime_event_in_transaction;
 use crate::repository_compaction_observations::admit_compaction_completion_tx;
 use crate::SqliteRuntimeRepository;
 
@@ -327,6 +331,27 @@ impl SqliteRuntimeRepository {
         error_code: Option<&str>,
         updated_at_ms: i64,
     ) -> Result<SessionCompactionRun, RuntimeError> {
+        self.transition_session_compaction_with_receipt(
+            run_id,
+            phase,
+            outcome,
+            error_code,
+            updated_at_ms,
+        )
+        .map(|receipt| receipt.run)
+    }
+
+    /// Every changed manual request-state phase and its Critical event share
+    /// one SQLite transaction, including unknown-outcome review fences.
+    /// Exact phase replays return no new event; no native request is issued.
+    pub fn transition_session_compaction_with_receipt(
+        &self,
+        run_id: &str,
+        phase: &str,
+        outcome: Option<ProviderCompactSessionOutcome>,
+        error_code: Option<&str>,
+        updated_at_ms: i64,
+    ) -> Result<CompactionTransitionReceipt, RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -340,11 +365,19 @@ impl SqliteRuntimeRepository {
         {
             // The native event can arrive and durably complete before the
             // asynchronous acceptance response reaches the manager.
-            return Ok(run);
+            return Ok(CompactionTransitionReceipt {
+                run,
+                changed: false,
+                journal_event: None,
+            });
         }
         if run.phase == phase {
             if run.outcome == outcome && run.error_code.as_deref() == error_code {
-                return Ok(run);
+                return Ok(CompactionTransitionReceipt {
+                    run,
+                    changed: false,
+                    journal_event: None,
+                });
             }
             return Err(RuntimeError::Conflict(
                 "duplicate compaction phase contains contradictory provider evidence".into(),
@@ -414,8 +447,32 @@ impl SqliteRuntimeRepository {
         if phase == "completed" {
             admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?;
         }
+        let nonce: String = tx
+            .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))
+            .map_err(|error| db_error("failed allocating compaction request event", error))?;
+        let event = insert_runtime_event_in_transaction(
+            &tx,
+            &NewRuntimeEvent {
+                event_id: format!("evt_compaction_request_{nonce}"),
+                scope: RuntimeEventScope::Session,
+                scope_id: run.agent_id.clone(),
+                session_id: Some(run.agent_id.clone()),
+                team_id: None,
+                turn_id: None,
+                kind: "compaction.request_state_changed".into(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: serde_json::json!({"run_id": run.run_id, "phase": run.phase}),
+                provider: None,
+                provider_seq: None,
+                created_at: run.updated_at_ms,
+            },
+        )?;
         tx.commit()
             .map_err(|error| db_error("failed committing compaction transition", error))?;
-        Ok(run)
+        Ok(CompactionTransitionReceipt {
+            run,
+            changed: true,
+            journal_event: Some(event),
+        })
     }
 }

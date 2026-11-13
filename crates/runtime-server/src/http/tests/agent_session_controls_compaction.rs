@@ -130,6 +130,30 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
     assert_eq!(accepted["phase"], "accepted");
     let run_id = accepted["run_id"].as_str().unwrap();
     assert_eq!(provider.compaction_calls(), 1);
+    let events_uri = format!("/v2/events?scope=session&scope_id={agent_id}&limit=100");
+    let (status, journal) = call(&router, &token, "GET", &events_uri, None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let accepted_event_ids: Vec<_> = journal
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"] == "compaction.request_state_changed")
+        .map(|event| event["event_id"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(accepted_event_ids.len(), 1);
+    let (status, receipt) = call(
+        &router,
+        &token,
+        "GET",
+        &format!("/v2/events/{}", accepted_event_ids[0]),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(receipt["criticality"], "critical");
+    assert_eq!(receipt["payload"]["run_id"], run_id);
+    assert_eq!(receipt["payload"]["phase"], "accepted");
     let (status, replay) = call(
         &router,
         &token,
@@ -141,6 +165,18 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(replay["run_id"], run_id);
+    let (status, journal) = call(&router, &token, "GET", &events_uri, None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        journal
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"] == "compaction.request_state_changed")
+            .count(),
+        1,
+        "exact HTTP replay cannot append a second manual request Critical event"
+    );
     assert_eq!(
         provider.compaction_calls(),
         1,

@@ -41,13 +41,13 @@ mod operator_turn_models;
 mod operator_turn_store_trait;
 use crate::{
     AgentDeliveryRecord, AgentMessageRecord, AgentToolMutationAdmission, AgentToolMutationCommand,
-    ApprovalRecord, CompactionObservationReceipt, LegacyWorkspaceMigrationApplyCommand,
-    LegacyWorkspaceMigrationApplyResponse, LegacyWorkspaceMigrationResolutionCommand,
-    LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
-    ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate,
-    ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent, OperationDetails,
-    OperationSummary, ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
-    ProviderCompactionObservation, ProviderRetirementCloseEvidence,
+    ApprovalRecord, CompactionObservationReceipt, CompactionTransitionReceipt,
+    LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
+    LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
+    LegacyWorkspaceMigrationStatus, ManagedProcessAdmission, ManagedProcessRecord,
+    ManagedProcessTerminalUpdate, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
+    NewRuntimeEvent, OperationDetails, OperationSummary, ProcessCompletionUpdate, ProcessRecord,
+    ProcessSchedulerSettings, ProviderCompactionObservation, ProviderRetirementCloseEvidence,
     ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
     RuntimeHydratedState, SessionCompactionRun, SessionEditRerunOperation, SessionRecord,
     TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
@@ -269,7 +269,7 @@ pub trait RuntimeStore:
         _outcome: Option<crate::ProviderCompactSessionOutcome>,
         _error_code: Option<&str>,
         _updated_at_ms: i64,
-    ) -> Result<SessionCompactionRun, RuntimeError> {
+    ) -> Result<CompactionTransitionReceipt, RuntimeError> {
         unsupported_store("session compaction persistence unavailable")
     }
     fn get_session_compaction(

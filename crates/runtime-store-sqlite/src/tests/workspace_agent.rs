@@ -219,7 +219,15 @@ fn manual_compaction_admission_replay_and_native_recovery_are_durable() {
     ));
     assert_eq!(repository.begin_session_compaction(&run).unwrap(), run);
 
-    let accepted = repository
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_request_critical BEFORE INSERT ON runtime_events
+         WHEN NEW.kind='compaction.request_state_changed'
+           AND json_extract(NEW.payload_json,'$.phase')='accepted'
+         BEGIN SELECT RAISE(ABORT,'injected request Critical event failure'); END;",
+    )
+    .unwrap();
+    assert!(repository
         .transition_session_compaction(
             "cmp_1",
             "accepted",
@@ -227,8 +235,63 @@ fn manual_compaction_admission_replay_and_native_recovery_are_durable() {
             None,
             102,
         )
+        .is_err());
+    assert_eq!(
+        repository.get_session_compaction("cmp_1").unwrap(),
+        Some(run.clone())
+    );
+    let request_event_count = || -> i64 {
+        db.query_row(
+            "SELECT COUNT(*) FROM runtime_events WHERE kind='compaction.request_state_changed'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(request_event_count(), 0, "failed append rolls state back");
+    db.execute_batch("DROP TRIGGER fail_request_critical")
+        .unwrap();
+    let accepted_receipt = repository
+        .transition_session_compaction_with_receipt(
+            "cmp_1",
+            "accepted",
+            Some(ProviderCompactSessionOutcome::Accepted),
+            None,
+            102,
+        )
         .expect("native admission accepted");
+    assert!(accepted_receipt.changed);
+    assert_eq!(
+        accepted_receipt.journal_event.as_ref().unwrap().payload["phase"],
+        "accepted"
+    );
+    assert_eq!(
+        accepted_receipt.journal_event.as_ref().unwrap().payload["run_id"],
+        "cmp_1"
+    );
+    assert_eq!(
+        accepted_receipt.journal_event.as_ref().unwrap().criticality,
+        runtime_core::RuntimeEventCriticality::Critical
+    );
+    let accepted = accepted_receipt.run;
     assert_eq!(accepted.phase, "accepted");
+    let replay = repository
+        .transition_session_compaction_with_receipt(
+            "cmp_1",
+            "accepted",
+            Some(ProviderCompactSessionOutcome::Accepted),
+            None,
+            103,
+        )
+        .unwrap();
+    assert!(!replay.changed);
+    assert!(replay.journal_event.is_none());
+    assert_eq!(replay.run, accepted);
+    assert_eq!(
+        request_event_count(),
+        1,
+        "exact replay cannot republish Critical event"
+    );
     assert!(repository
         .unresolved_session_compaction(&session.id)
         .unwrap());

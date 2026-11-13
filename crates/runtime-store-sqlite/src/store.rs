@@ -3,20 +3,21 @@ use std::path::Path;
 use async_trait::async_trait;
 use runtime_core::{
     AgentDeliveryRecord, AgentMessageRecord, AgentToolMutationAdmission, AgentToolMutationCommand,
-    ApprovalRecord, CompactionObservationReceipt, LegacyWorkspaceMigrationApplyCommand,
-    LegacyWorkspaceMigrationApplyResponse, LegacyWorkspaceMigrationResolutionCommand,
-    LegacyWorkspaceMigrationResolutionResponse, LegacyWorkspaceMigrationStatus,
-    ManagedProcessAdmission, ManagedProcessRecord, ManagedProcessTerminalUpdate, NewRuntimeEvent,
-    OperationDetails, OperationSummary, OperatorProcessSummary, ProcessCompletionUpdate,
-    ProcessRecord, ProcessSchedulerSettings, ProviderCompactionObservation,
-    ProviderWorkspaceRebindEvidence, RuntimeError, RuntimeEventRecord, RuntimeEventScope,
-    RuntimeHydratedState, RuntimeStore, SessionCompactionRun, SessionEditRerunOperation,
-    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
-    TurnRecord, WorkspaceAgentLifecycleState, WorkspaceAgentRebindOperation, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceInterruptAdmission, WorkspaceInterruptCommand,
-    WorkspaceInterruptResponse, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse,
-    WorkspaceRegisterCommand, WorkspaceRegisterResponse,
+    ApprovalRecord, CompactionObservationReceipt, CompactionTransitionReceipt,
+    LegacyWorkspaceMigrationApplyCommand, LegacyWorkspaceMigrationApplyResponse,
+    LegacyWorkspaceMigrationResolutionCommand, LegacyWorkspaceMigrationResolutionResponse,
+    LegacyWorkspaceMigrationStatus, ManagedProcessAdmission, ManagedProcessRecord,
+    ManagedProcessTerminalUpdate, NewRuntimeEvent, OperationDetails, OperationSummary,
+    OperatorProcessSummary, ProcessCompletionUpdate, ProcessRecord, ProcessSchedulerSettings,
+    ProviderCompactionObservation, ProviderWorkspaceRebindEvidence, RuntimeError,
+    RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, RuntimeStore,
+    SessionCompactionRun, SessionEditRerunOperation, SessionRecord, TeamDeliveryRecord,
+    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
+    TeamRecord, TurnAdmissionRecord, TurnRecord, WorkspaceAgentLifecycleState,
+    WorkspaceAgentRebindOperation, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptResponse,
+    WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionResponse, WorkspaceRegisterCommand,
+    WorkspaceRegisterResponse,
 };
 use runtime_core::{
     TeamHookApproval, TeamHookApprovalMutationCommand, TeamHookApprovalMutationResponse,
@@ -279,8 +280,8 @@ impl RuntimeStore for SqliteRuntimeStore {
         outcome: Option<runtime_core::ProviderCompactSessionOutcome>,
         error_code: Option<&str>,
         updated_at_ms: i64,
-    ) -> Result<SessionCompactionRun, RuntimeError> {
-        self.repository.transition_session_compaction(
+    ) -> Result<CompactionTransitionReceipt, RuntimeError> {
+        self.repository.transition_session_compaction_with_receipt(
             run_id,
             phase,
             outcome,

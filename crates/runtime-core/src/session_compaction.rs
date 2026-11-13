@@ -72,6 +72,14 @@ pub struct CompactionObservationReceipt {
     pub journal_event: Option<RuntimeEventRecord>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CompactionTransitionReceipt {
+    pub run: SessionCompactionRun,
+    pub changed: bool,
+    /// Only a changed transition may publish this already-committed event.
+    pub journal_event: Option<RuntimeEventRecord>,
+}
+
 impl SessionCompactionRun {
     pub fn validate(&self) -> Result<(), RuntimeError> {
         if self.run_id.trim().is_empty()

@@ -41,6 +41,13 @@ Check:
 
 Public `/health` working only proves the process is alive. It does not prove protected auth is correct.
 
+If startup reports a missing `runtime_event_subjects` table or
+`runtime_event_subjects_after_insert` trigger, preserve an offline copy of the
+SQLite database (including any WAL) before investigating. A completed
+migration marker is not proof that these projection objects still exist.
+Gooselake refuses to start with this schema gap; do not delete migration
+markers, invent historical events, or retry native work as a repair shortcut.
+
 The operator routes (`/v1/**` and operator `/v2/**`) require exactly
 one valid operator Bearer header. Duplicate `Authorization` headers
 return 401 even if one is correct. The `/v2/mcp/**` gateway is

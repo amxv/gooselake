@@ -148,6 +148,7 @@ pub(crate) fn apply_schema(connection: &mut Connection) -> Result<(), RuntimeErr
     }
 
     verify_migration_chain(connection)?;
+    verify_event_subject_projection_schema(connection)?;
     Ok(())
 }
 
@@ -271,6 +272,30 @@ fn verify_migration_chain(connection: &Connection) -> Result<(), RuntimeError> {
         return Err(RuntimeError::Bootstrap(format!(
             "sqlite migration chain is incomplete: expected {expected:?}, found {versions:?}"
         )));
+    }
+    Ok(())
+}
+
+/// A completed migration marker is not sufficient if a derived journal
+/// projection or its append trigger was subsequently removed. Refuse startup
+/// rather than silently losing new turn/message/operation replay links.
+/// Full retained-row reconciliation is a separate, potentially expensive
+/// operation; this constant-sized check never rewrites journal evidence.
+fn verify_event_subject_projection_schema(connection: &Connection) -> Result<(), RuntimeError> {
+    let present: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE (type='table' AND name='runtime_event_subjects')
+                OR (type='trigger' AND name='runtime_event_subjects_after_insert'
+                    AND tbl_name='runtime_events')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed verifying event subject projection schema", error))?;
+    if present != 2 {
+        return Err(RuntimeError::Bootstrap(
+            "runtime event subject projection table or append trigger is missing; refusing startup without changing retained event history".into(),
+        ));
     }
     Ok(())
 }

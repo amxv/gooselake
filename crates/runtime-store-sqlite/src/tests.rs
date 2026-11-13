@@ -19,6 +19,7 @@ mod context_status_batch;
 mod event_commit_notifications;
 mod event_cursor_concurrency;
 mod event_cursor_recovery_scale;
+mod event_subject_reconciliation;
 mod event_subject_scale;
 mod event_subject_scopes;
 mod legacy_team_cancellation;

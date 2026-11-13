@@ -36,6 +36,13 @@ Message publication and durable operation admission/transitions now append
 redacted events in their own authority transaction. Not every historical
 operation or transition necessarily generated a journal event.
 
+On startup, the SQLite schema check requires the subject projection table and
+its parent-event append trigger to exist even when their migration is already
+marked complete. A missing object stops bootstrap rather than silently
+accepting future event replay gaps. This check does **not** rebuild subject
+rows, verify every historical link, or rewrite retained journal evidence;
+damaged databases need independent, offline inspection before any repair.
+
 ## Operator history vs live replay
 
 `GET /v2/events` is an operator-authenticated, bounded history index. It can

@@ -149,6 +149,102 @@ impl RuntimeSessionManager {
             resolved.status = normalized_decision.as_str().to_string();
             resolved.response = input.payload.clone();
             resolved.resolved_at = Some(now_ms());
+            if normalized_decision == ApprovalDecision::Decline {
+                // A local policy denial has no native effect. Neither the
+                // approved/denied state nor either Critical receipt may be
+                // visible without all the other release projections.
+                let admission = self
+                    .turn_admissions
+                    .read()
+                    .await
+                    .get(&existing.turn_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        RuntimeError::NotFound(format!("turn admission {}", existing.turn_id))
+                    })?;
+                let completed_at = now_ms()
+                    .max(existing.created_at)
+                    .max(turn.started_at.unwrap_or(0));
+                resolved.resolved_at = Some(completed_at);
+                let mut updated_admission = admission.clone();
+                updated_admission.dispatch_state = TurnDispatchState::NotDispatched;
+                updated_admission.dispatch_error = Some(serde_json::json!({
+                    "code": "pre_dispatch_approval_declined",
+                    "message": "runtime pre-dispatch approval declined",
+                }));
+                updated_admission.updated_at = completed_at.max(admission.updated_at);
+                let mut updated_turn = turn.clone();
+                updated_turn.status = "interrupted".into();
+                updated_turn.completed_at = Some(completed_at);
+                updated_turn.error = Some(serde_json::json!({
+                    "message": "approval declined before provider dispatch",
+                }));
+                let mut updated_session = session.clone();
+                updated_session.active_turn_id = None;
+                updated_session.status = "ready".into();
+                updated_session.updated_at = completed_at.max(session.updated_at);
+                let make_event = |id: String, kind: &str, payload: Value| NewRuntimeEvent {
+                    event_id: id,
+                    scope: RuntimeEventScope::Session,
+                    scope_id: session_id.to_string(),
+                    session_id: Some(session_id.to_string()),
+                    team_id: None,
+                    turn_id: Some(turn.id.clone()),
+                    kind: kind.to_string(),
+                    criticality: RuntimeEventCriticality::Critical,
+                    payload,
+                    provider: None,
+                    provider_seq: None,
+                    created_at: completed_at,
+                };
+                let events = [
+                    make_event(
+                        format!("evt_approval_{}_resolved", resolved.id),
+                        "approval.resolved",
+                        serde_json::json!({
+                            "approval_id": approval_id,
+                            "origin": "runtime_pre_dispatch_policy",
+                            "decision": "decline",
+                        }),
+                    ),
+                    make_event(
+                        format!("evt_turn_{}_pre_dispatch_declined", turn.id),
+                        "turn.interrupted",
+                        serde_json::json!({"source": "pre_dispatch_approval.declined"}),
+                    ),
+                ];
+                let committed = self.store.decline_pre_dispatch_approval(
+                    &admission,
+                    &updated_admission,
+                    &existing,
+                    &resolved,
+                    &turn,
+                    &updated_turn,
+                    &session,
+                    &updated_session,
+                    &events,
+                )?;
+                self.turn_admissions
+                    .write()
+                    .await
+                    .insert(turn.id.clone(), committed.admission);
+                self.turns
+                    .write()
+                    .await
+                    .insert(turn.id.clone(), committed.turn);
+                self.sessions
+                    .write()
+                    .await
+                    .insert(session_id.to_string(), committed.session);
+                self.approvals
+                    .write()
+                    .await
+                    .insert(approval_id.to_string(), committed.approval.clone());
+                for event in committed.events {
+                    let _ = self.event_tx.send(event);
+                }
+                return Ok(committed.approval);
+            }
             self.store.upsert_approval(&resolved)?;
             self.approvals
                 .write()
@@ -169,56 +265,6 @@ impl RuntimeSessionManager {
                 }),
             )
             .await?;
-
-            if normalized_decision == ApprovalDecision::Decline {
-                self.update_turn_dispatch_authority(
-                    resolved.turn_id.as_str(),
-                    TurnDispatchState::NotDispatched,
-                    None,
-                    Some(serde_json::json!({
-                        "code": "pre_dispatch_approval_declined",
-                        "message": "runtime pre-dispatch approval declined",
-                    })),
-                )
-                .await?;
-                {
-                    let mut turns = self.turns.write().await;
-                    if let Some(turn) = turns.get_mut(&resolved.turn_id) {
-                        turn.status = "interrupted".to_string();
-                        turn.completed_at = Some(now_ms());
-                        turn.error = Some(serde_json::json!({
-                            "message": "approval declined before provider dispatch",
-                        }));
-                        self.store.upsert_turn(turn)?;
-                    }
-                }
-                {
-                    let mut sessions = self.sessions.write().await;
-                    if let Some(session) = sessions.get_mut(session_id) {
-                        if session.active_turn_id.as_deref() == Some(resolved.turn_id.as_str()) {
-                            session.active_turn_id = None;
-                        }
-                        if session.status != "closed" && session.status != "failed" {
-                            session.status = "ready".to_string();
-                        }
-                        session.updated_at = now_ms();
-                        self.store.upsert_session(session)?;
-                    }
-                }
-                self.append_event(
-                    RuntimeEventScope::Session,
-                    session_id,
-                    Some(session_id),
-                    Some(resolved.turn_id.as_str()),
-                    "turn.interrupted",
-                    RuntimeEventCriticality::Critical,
-                    serde_json::json!({
-                        "source": "pre_dispatch_approval.declined",
-                    }),
-                )
-                .await?;
-                return Ok(resolved);
-            }
 
             let turn = self
                 .turns

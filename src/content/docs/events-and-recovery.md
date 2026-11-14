@@ -196,8 +196,21 @@ fence stays non-retryable. Startup recovery of an in-flight `dispatching`
 admission uses the same unknown quarantine without sending native work again.
 Conflicting independent writers or a forged prior receipt fail closed; exact
 unchanged committed receipts are inspectable after restart. Historical already-
-`unknown` partial projections, pre-dispatch approval-decline events and other
-nonterminal state transitions are not certified by this specific authority.
+`unknown` partial projections and other nonterminal state transitions are not
+certified by this specific native-send authority.
+
+A **local pre-dispatch policy decline** is a different, provider-free decision
+boundary. A new pending policy gate now commits `approval.status=decline`,
+its `not_dispatched` admission, interrupted logical turn, released ready
+session, and both deterministic Critical session events `approval.resolved`
+and `turn.interrupted` **in one guarded SQLite transaction**. A failure in
+either event insert rolls the entire denial back to `waiting_for_approval`;
+no native send occurs. Independently racing writers converge on the exact
+pair of receipts, while stale authority, absent original `turn.admitted` /
+`approval.requested` receipts or historical partial rows fail closed rather
+than being silently repaired. A fresh SQLite reader can retrieve both event
+IDs and the four matching projections. This does not certify the separate
+pre-dispatch **acceptance** reservation or old native/legacy recovery paths.
 
 An observed **provider terminal result** (`turn.completed`, `turn.interrupted`,
 or `turn.failed`) now commits the terminal turn, the session's active-turn

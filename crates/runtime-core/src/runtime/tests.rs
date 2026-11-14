@@ -13,6 +13,7 @@ use super::test_support::{
 };
 use super::{ApprovalResponseInput, CreateSessionInput, ResumeSessionInput, SendTurnInput};
 
+mod pre_dispatch_decline;
 mod provider_approvals;
 mod provider_dispatch_outcome;
 mod provider_dispatch_started;

@@ -16,7 +16,10 @@ use crate::repository_turn_start::read_admission;
 use crate::repository_turn_terminal::{read_session, read_turn};
 use crate::SqliteRuntimeRepository;
 
-fn read_approval(tx: &Transaction<'_>, id: &str) -> Result<ApprovalRecord, RuntimeError> {
+pub(crate) fn read_approval(
+    tx: &Transaction<'_>,
+    id: &str,
+) -> Result<ApprovalRecord, RuntimeError> {
     tx.query_row(
         "SELECT id,session_id,turn_id,origin,tool_call_id,provider_approval_ref,
                 status,request_json,response_json,created_at,resolved_at

@@ -1340,8 +1340,14 @@ session and Critical `turn.dispatch_unknown` together. A fault inserting either
 Critical event rolls back the projections, preserving the original
 `dispatching` fence rather than permitting a duplicate native send. Startup
 recovery also atomically quarantines a found `dispatching` turn without
-resending it. Neither outcome certifies older historical partial repairs,
-pre-dispatch approval-decline transitions or native exactly-once behavior.
+resending it. Neither outcome certifies older historical partial repairs or
+native exactly-once behavior. Local policy **declines** instead commit the
+pending approval resolution, non-dispatched admission, interrupted turn,
+released session and the Critical `approval.resolved` / `turn.interrupted`
+events **together** before any provider effect. Failed SQLite event insertion
+leaves the pending gate intact for a safe retry, while cross-process conflicts
+and preexisting partial/legacy receipts fail closed. This does not certify
+pre-dispatch acceptance or uncertain provider-native decisions.
 
 ```bash
 TURN_JSON=$(curl -fsS -X POST \
@@ -1460,6 +1466,13 @@ Approvals are durable turn-scoped records. They can originate from the runtime's
 policy gate or from a provider after a turn has already been dispatched. Provider-originated
 approval records retain their provider approval reference, optional tool-call correlation, and
 request payload; the `origin` field distinguishes them from the runtime pre-dispatch gate.
+
+Declining a **runtime pre-dispatch policy** approval makes no provider call:
+the decision, admission release, terminal turn, session and both Critical
+events are one durable transaction. An insertion fault leaves the original
+approval pending, not half-resolved. A successfully resolved approval cannot
+be re-decided through the ordinary response endpoint. Provider-native
+approval decisions use a different reserved-effect protocol below.
 
 When an approval is pending, it is stored and emitted in the event stream. Respond with:
 

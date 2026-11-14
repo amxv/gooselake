@@ -9,16 +9,16 @@ use tokio::time::{sleep, Duration};
 
 use crate::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    ProcessRecord, ProviderApprovalAdmission, ProviderApprovalDecisionReceipt,
-    ProviderApprovalFinalization, ProviderApprovalResponseRequest, ProviderAuthStatus,
-    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderDispatchOutcomeCommit,
-    ProviderDispatchStartedCommit, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
-    ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
-    ProviderTerminalCommit, ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus,
-    ProviderWaitTurnRequest, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeProvider,
-    RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
-    TurnRecord,
+    PreDispatchApprovalDeclineCommit, ProcessRecord, ProviderApprovalAdmission,
+    ProviderApprovalDecisionReceipt, ProviderApprovalFinalization, ProviderApprovalResponseRequest,
+    ProviderAuthStatus, ProviderCloseSessionRequest, ProviderCreateSessionRequest,
+    ProviderDispatchOutcomeCommit, ProviderDispatchStartedCommit, ProviderKind, ProviderMetadata,
+    ProviderModel, ProviderRegistry, ProviderResumeSessionRequest, ProviderRuntimeEvent,
+    ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit, ProviderTurnAck,
+    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
+    RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
 };
 
 use super::RuntimeSessionManager;
@@ -44,6 +44,8 @@ mod dispatch_outcome;
 mod dispatch_start;
 #[path = "test_support_native_decision.rs"]
 mod native_decision;
+#[path = "test_support_pre_dispatch_decline.rs"]
+mod pre_dispatch_decline;
 #[path = "test_support_session_lifecycle.rs"]
 mod session_lifecycle;
 
@@ -177,6 +179,7 @@ impl RuntimeStore for MockStore {
 
     dispatch_start::delegate_mock_start!();
     dispatch_outcome::delegate_mock_outcome!();
+    pre_dispatch_decline::delegate_mock_decline!();
 
     fn list_turn_admissions(&self) -> Result<Vec<TurnAdmissionRecord>, RuntimeError> {
         Ok(self

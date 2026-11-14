@@ -1,5 +1,30 @@
 macro_rules! delegate_provider_event_methods {
     () => {
+        fn decline_pre_dispatch_approval(
+            &self,
+            before_admission: &runtime_core::TurnAdmissionRecord,
+            after_admission: &runtime_core::TurnAdmissionRecord,
+            before_approval: &runtime_core::ApprovalRecord,
+            after_approval: &runtime_core::ApprovalRecord,
+            before_turn: &runtime_core::TurnRecord,
+            after_turn: &runtime_core::TurnRecord,
+            before_session: &runtime_core::SessionRecord,
+            after_session: &runtime_core::SessionRecord,
+            events: &[runtime_core::NewRuntimeEvent],
+        ) -> Result<runtime_core::PreDispatchApprovalDeclineCommit, RuntimeError> {
+            self.repository.decline_pre_dispatch_approval(
+                before_admission,
+                after_admission,
+                before_approval,
+                after_approval,
+                before_turn,
+                after_turn,
+                before_session,
+                after_session,
+                events,
+            )
+        }
+
         fn commit_provider_turn_started(
             &self,
             before_admission: &TurnAdmissionRecord,

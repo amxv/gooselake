@@ -62,6 +62,18 @@ pub struct ProviderApprovalFinalization {
     pub event: Option<RuntimeEventRecord>,
 }
 
+/// A local pre-dispatch denial has no native provider effect. The approval,
+/// still-pending admission, interrupted turn, released session and BOTH
+/// Critical events must become visible together, including across restart.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreDispatchApprovalDeclineCommit {
+    pub admission: TurnAdmissionRecord,
+    pub approval: ApprovalRecord,
+    pub turn: TurnRecord,
+    pub session: SessionRecord,
+    pub events: Vec<RuntimeEventRecord>,
+}
+
 macro_rules! provider_terminal_methods {
     () => {
         /// Commit a positive native send acknowledgement, canonical dispatch
@@ -154,6 +166,25 @@ pub(super) use provider_terminal_methods;
 
 macro_rules! provider_approval_methods {
     () => {
+        /// Deny a pending local policy gate without touching the provider.
+        /// A failed event journal rolls back the entire local authority.
+        fn decline_pre_dispatch_approval(
+            &self,
+            _before_admission: &crate::TurnAdmissionRecord,
+            _after_admission: &crate::TurnAdmissionRecord,
+            _before_approval: &crate::ApprovalRecord,
+            _after_approval: &crate::ApprovalRecord,
+            _before_turn: &crate::TurnRecord,
+            _after_turn: &crate::TurnRecord,
+            _before_session: &crate::SessionRecord,
+            _after_session: &crate::SessionRecord,
+            _events: &[crate::NewRuntimeEvent],
+        ) -> Result<crate::PreDispatchApprovalDeclineCommit, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic local pre-dispatch denial and Critical journal unavailable".into(),
+            ))
+        }
+
         /// Atomically journal a provider-native approval callback with its
         /// approval/turn/session state before projecting it into live memory.
         fn admit_provider_approval(

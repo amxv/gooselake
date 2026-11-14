@@ -45,6 +45,7 @@ mod repository_operator_native_policy_receipt;
 mod repository_operator_native_policy_recovery;
 mod repository_operator_native_policy_review;
 mod repository_operator_user_turn;
+mod repository_pre_dispatch_decline;
 mod repository_process;
 mod repository_provider_approval;
 mod repository_provider_approval_decision;

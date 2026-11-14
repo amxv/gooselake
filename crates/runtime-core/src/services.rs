@@ -705,11 +705,9 @@ pub trait RuntimeStore:
             "workspace agent recreation-policy mutation is not implemented by this runtime store",
         )
     }
-
     fn get_operation(&self, _operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
         unsupported_store("durable operation authority is not implemented by this runtime store")
     }
-
     /// Indexed operation summaries; exact claims/effects live in get_operation.
     fn list_operations_page(
         &self,
@@ -719,32 +717,36 @@ pub trait RuntimeStore:
     ) -> Result<Vec<OperationSummary>, RuntimeError> {
         unsupported_store("durable operation pagination is not implemented by this runtime store")
     }
-
     fn persist_workspace_migration_preview(
         &self,
         _status: &LegacyWorkspaceMigrationStatus,
     ) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
         unsupported_store("workspace migration authority is not implemented by this runtime store")
     }
-
     fn workspace_migration_status(&self) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
         unsupported_store("workspace migration authority is not implemented by this runtime store")
     }
-
+    /// Bounded persisted diagnostic page; fallback preserves other stores'
+    /// existing full-status implementation and strict cursor membership.
+    fn workspace_migration_status_page(
+        &self,
+        after: Option<(crate::LegacyWorkspaceMigrationSubjectKind, String)>,
+        limit: usize,
+    ) -> Result<Option<LegacyWorkspaceMigrationStatus>, RuntimeError> {
+        Ok(self.workspace_migration_status()?.page_after(after, limit))
+    }
     fn apply_workspace_migration(
         &self,
         _command: &LegacyWorkspaceMigrationApplyCommand,
     ) -> Result<LegacyWorkspaceMigrationApplyResponse, RuntimeError> {
         unsupported_store("workspace migration authority is not implemented by this runtime store")
     }
-
     fn resolve_workspace_migration_subject(
         &self,
         _command: &LegacyWorkspaceMigrationResolutionCommand,
     ) -> Result<LegacyWorkspaceMigrationResolutionResponse, RuntimeError> {
         unsupported_store("workspace migration authority is not implemented by this runtime store")
     }
-
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError>;
 
     fn admit_turn(
@@ -756,11 +758,9 @@ pub trait RuntimeStore:
     ) -> Result<(), RuntimeError> {
         unsupported_store("atomic turn admission is not implemented by this runtime store")
     }
-
     fn upsert_turn_admission(&self, _record: &TurnAdmissionRecord) -> Result<(), RuntimeError> {
         Ok(())
     }
-
     fn list_turn_admissions(&self) -> Result<Vec<TurnAdmissionRecord>, RuntimeError> {
         Ok(Vec::new())
     }

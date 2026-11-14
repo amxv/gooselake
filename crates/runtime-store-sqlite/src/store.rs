@@ -658,11 +658,9 @@ impl RuntimeStore for SqliteRuntimeStore {
                 changed_at,
             )
     }
-
     fn get_operation(&self, operation_id: &str) -> Result<Option<OperationDetails>, RuntimeError> {
         self.repository.get_operation(operation_id)
     }
-
     fn list_operations_page(
         &self,
         workspace_id: Option<&str>,
@@ -672,25 +670,29 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository
             .list_operations_page(workspace_id, after, limit)
     }
-
     fn persist_workspace_migration_preview(
         &self,
         status: &LegacyWorkspaceMigrationStatus,
     ) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
         self.repository.persist_workspace_migration_preview(status)
     }
-
     fn workspace_migration_status(&self) -> Result<LegacyWorkspaceMigrationStatus, RuntimeError> {
         self.repository.workspace_migration_status()
     }
-
+    fn workspace_migration_status_page(
+        &self,
+        after: Option<(runtime_core::LegacyWorkspaceMigrationSubjectKind, String)>,
+        limit: usize,
+    ) -> Result<Option<LegacyWorkspaceMigrationStatus>, RuntimeError> {
+        self.repository
+            .workspace_migration_status_page(after, limit)
+    }
     fn apply_workspace_migration(
         &self,
         command: &LegacyWorkspaceMigrationApplyCommand,
     ) -> Result<LegacyWorkspaceMigrationApplyResponse, RuntimeError> {
         self.repository.apply_workspace_migration(command)
     }
-
     fn resolve_workspace_migration_subject(
         &self,
         command: &LegacyWorkspaceMigrationResolutionCommand,

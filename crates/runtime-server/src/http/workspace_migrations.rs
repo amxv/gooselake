@@ -23,8 +23,30 @@ pub(super) async fn get_workspace_migration_status(
     Query(query): Query<MigrationSubjectPageQuery>,
 ) -> Result<Response, ApiError> {
     let (limit, cursor) = query.parse()?;
-    let status = state.app.services.store.workspace_migration_status()?;
-    paged_migration_status(status, limit, cursor)
+    let after = cursor.map(|(rank, id)| {
+        let kind = match rank {
+            0 => LegacyWorkspaceMigrationSubjectKind::Session,
+            1 => LegacyWorkspaceMigrationSubjectKind::Team,
+            2 => LegacyWorkspaceMigrationSubjectKind::TeamMember,
+            3 => LegacyWorkspaceMigrationSubjectKind::ManagedWorktree,
+            4 => LegacyWorkspaceMigrationSubjectKind::WorktreeClaim,
+            _ => unreachable!("validated migration subject rank"),
+        };
+        (kind, id)
+    });
+    let status = state
+        .app
+        .services
+        .store
+        .workspace_migration_status_page(after, limit + 1)?
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "migration cursor is not in the current subject collection".into(),
+            )
+        })?;
+    // The repository already seeks beyond a validated cursor; this helper
+    // only applies the existing response limit and X-Next-Cursor convention.
+    paged_migration_status(status, limit, None)
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

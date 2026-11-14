@@ -828,7 +828,7 @@ fn migration_subject_by_key(
         .map_err(|error| db_error("failed querying workspace migration subject", error))
 }
 
-fn migration_subject_from_row(
+pub(crate) fn migration_subject_from_row(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<LegacyWorkspaceMigrationSubject> {
     let kind_text: String = row.get(0)?;

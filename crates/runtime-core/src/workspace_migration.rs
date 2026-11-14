@@ -166,6 +166,29 @@ impl LegacyWorkspaceMigrationStatus {
             cutover_blocked: unresolved_subjects > 0,
         }
     }
+
+    /// Retain the original collection-bound cursor contract for stores that
+    /// do not offer an indexed persisted-status page implementation.
+    pub fn page_after(
+        mut self,
+        after: Option<(LegacyWorkspaceMigrationSubjectKind, String)>,
+        limit: usize,
+    ) -> Option<Self> {
+        if let Some((kind, id)) = after {
+            if !self
+                .subjects
+                .iter()
+                .any(|subject| (subject.subject_kind, &subject.subject_id) == (kind, &id))
+            {
+                return None;
+            }
+            self.subjects.retain(|subject| {
+                (subject.subject_kind, subject.subject_id.as_str()) > (kind, id.as_str())
+            });
+        }
+        self.subjects.truncate(limit);
+        Some(self)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

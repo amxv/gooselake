@@ -1210,6 +1210,10 @@ and an opaque `cursor`. Follow `X-Next-Cursor` until exhausted to inspect
 all subject diagnostics ordered by kind and immutable subject ID. The global
 mapped, archived and unresolved counts, including `cutover_blocked`, always
 describe the complete migration snapshot, not only the current page.
+The persisted **GET** obtains one read-consistent, indexed subject page and
+index-covered global totals without loading every subject's evidence JSON;
+counts still represent the full persisted collection. **POST preview** must
+inspect legacy authority to refresh the plan before it can page the result.
 
 Migration subject resolution accepts only `action` (`map` or `archive`) and
 optional `workspace_id`. Unknown JSON options, such as `force` or `dry_run`,

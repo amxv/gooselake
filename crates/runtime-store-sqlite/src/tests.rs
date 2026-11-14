@@ -259,6 +259,7 @@ mod workspace_authority;
 mod workspace_compaction_observations;
 mod workspace_control;
 mod workspace_migration;
+mod workspace_migration_status_pages_scale;
 
 #[test]
 fn append_runtime_event_assigns_monotonic_scope_sequence() {

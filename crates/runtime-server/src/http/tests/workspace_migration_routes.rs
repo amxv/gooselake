@@ -3,6 +3,102 @@ use std::process::Command;
 use super::*;
 
 #[tokio::test]
+async fn persisted_migration_status_http_pages_large_private_evidence_without_changing_totals() {
+    let (router, token, temp_dir) = build_test_router().await;
+    let mut database = rusqlite::Connection::open(temp_dir.path().join("runtime.sqlite3"))
+        .expect("disposable runtime database");
+    let transaction = database.transaction().unwrap();
+    let kinds = [
+        "session",
+        "team",
+        "team_member",
+        "managed_worktree",
+        "worktree_claim",
+    ];
+    for number in (0..1_005).rev() {
+        let classification = if number % 3 == 0 {
+            "unresolved"
+        } else {
+            "mapped"
+        };
+        transaction
+            .execute(
+                "INSERT INTO legacy_workspace_migration_subjects
+                    (subject_kind, subject_id, classification, reason_code,
+                     evidence_json, resolution_source, updated_at)
+                 VALUES(?1, ?2, ?3, 'private_fixture', ?4, 'deterministic', 10)",
+                rusqlite::params![
+                    kinds[number % 5],
+                    format!("item_{number:05}"),
+                    classification,
+                    serde_json::json!({"private": "evidence".repeat(150)}).to_string()
+                ],
+            )
+            .unwrap();
+    }
+    transaction.commit().unwrap();
+    drop(database);
+
+    let mut cursor = None;
+    let mut ids = Vec::new();
+    loop {
+        let uri = match &cursor {
+            Some(cursor) => format!("/v2/migrations/workspaces?limit=79&cursor={cursor}"),
+            None => "/v2/migrations/workspaces?limit=79".to_owned(),
+        };
+        let response = router
+            .clone()
+            .oneshot(auth_request("GET", &uri, &token, None, None))
+            .await
+            .expect("authenticated migration status page");
+        assert_eq!(response.status(), StatusCode::OK);
+        cursor = response
+            .headers()
+            .get("x-next-cursor")
+            .map(|value| value.to_str().unwrap().to_owned());
+        let status: runtime_core::LegacyWorkspaceMigrationStatus = decode(response).await;
+        assert_eq!(status.mapped_subjects, 670);
+        assert_eq!(status.unresolved_subjects, 335);
+        assert_eq!(status.unresolved_active_sessions, 67);
+        assert_eq!(status.archived_subjects, 0);
+        assert!(status.cutover_blocked);
+        assert!(status.subjects.len() <= 79);
+        ids.extend(
+            status
+                .subjects
+                .into_iter()
+                .map(|subject| (subject.subject_kind, subject.subject_id)),
+        );
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(ids.len(), 1_005);
+    assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(
+        ids[0].0,
+        runtime_core::LegacyWorkspaceMigrationSubjectKind::Session
+    );
+    assert_eq!(
+        ids[1_004].0,
+        runtime_core::LegacyWorkspaceMigrationSubjectKind::WorktreeClaim
+    );
+
+    let forged = encode_opaque_pair_cursor("0", "missing_from_current_collection");
+    let rejected = router
+        .oneshot(auth_request(
+            "GET",
+            &format!("/v2/migrations/workspaces?cursor={forged}"),
+            &token,
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessions() {
     let (router, token, temp_dir) = build_test_router().await;
     let git_root = temp_dir.path().join("migration-repo");

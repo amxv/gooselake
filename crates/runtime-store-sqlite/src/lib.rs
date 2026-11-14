@@ -69,6 +69,7 @@ mod repository_workspace_agent;
 mod repository_workspace_agent_lifecycle;
 mod repository_workspace_control;
 mod repository_workspace_migration;
+mod repository_workspace_migration_pages;
 mod repository_workspace_notice;
 mod repository_workspace_rebind;
 mod repository_workspace_retirement;

@@ -27,6 +27,8 @@ pub use worktree_models::*;
 pub use worktree_store_trait::*;
 pub use worktree_trait::*;
 
+#[path = "services_comms_diagnostics_trait.rs"]
+mod comms_diagnostics_trait;
 #[path = "services_operator_archive_store_trait.rs"]
 mod operator_archive_store_trait;
 #[path = "services_operator_create_store_trait.rs"]
@@ -827,6 +829,7 @@ pub trait RuntimeStore:
         unsupported_store("managed-process admission authority unavailable")
     }
     process_diagnostics_trait::default_managed_process_reads!();
+    comms_diagnostics_trait::default_comms_diagnostic_reads!();
     worktree_diagnostics_trait::default_worktree_diagnostic_reads!();
     fn get_managed_process(
         &self,

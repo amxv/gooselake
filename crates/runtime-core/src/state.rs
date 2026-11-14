@@ -220,6 +220,18 @@ pub struct ManagedWorktreeDiagnosticCounts {
     pub deletion_policy_counts: BTreeMap<String, usize>,
 }
 
+/// Counts of historical legacy team rows, including deleted teams and
+/// deliveries in unknown historical statuses. Not canonical /v2 messages.
+/// Optional read projection only; it never authorizes comms mutations.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LegacyCommsDiagnosticCounts {
+    pub team_count: usize,
+    pub member_count: usize,
+    pub message_count: usize,
+    pub delivery_total: usize,
+    pub delivery_status_counts: BTreeMap<String, usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessRecord {
     pub id: String,

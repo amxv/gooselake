@@ -145,6 +145,14 @@ Top-level groups:
 - Workspace authority: durable workspace registration, nullable/revisioned lead authority, workspace-wide turn interruption, workspace-owned agent create/list/get/archive/restore, managed-worktree inventory and guarded reassignment, legacy-authority migration, and operation inspection under `/v2`
 - Agent messaging: agent-first direct messages across workspaces plus workspace-local broadcasts, delivery inspection, retry, and cancellation under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
+- Legacy operator `GET /v1/diagnostics/comms` retains the historical
+  `team_count`, `member_count`, `message_count`, `delivery_total`, and
+  `delivery_status_counts` fields. The SQLite implementation counts the
+  legacy team tables (including deleted teams and unknown delivery statuses)
+  using a single read snapshot and a status index, without deserializing
+  message inputs or other runtime state. The combined diagnostics route also
+  reuses these counts, but still hydrates unrelated state for recovery checks.
+  Non-SQLite stores retain their prior hydrated diagnostic fallback.
 - The legacy operator `GET /v1/diagnostics/processes` response remains an
   aggregate (`process_total`, `process_status_counts`), not process detail.
   SQLite computes it from a single covering-index grouped read rather than

@@ -75,8 +75,25 @@ pub(super) async fn provider_diagnostics(
 pub(super) async fn comms_diagnostics(
     State(state): State<AppState>,
 ) -> Result<Json<CommsDiagnosticsResponse>, ApiError> {
+    // Legacy team diagnostics need only historical row/status counts. SQLite
+    // can return these without hydrating the whole runtime or message inputs.
+    if let Some(counts) = state.app.services.store.legacy_comms_diagnostic_counts()? {
+        return Ok(Json(CommsDiagnosticsResponse::from_counts(counts)));
+    }
     let (comms, _, _, _) = diagnostics_from_hydrated_state(&state)?;
     Ok(Json(comms))
+}
+
+impl CommsDiagnosticsResponse {
+    fn from_counts(counts: runtime_core::LegacyCommsDiagnosticCounts) -> Self {
+        Self {
+            team_count: counts.team_count,
+            member_count: counts.member_count,
+            message_count: counts.message_count,
+            delivery_total: counts.delivery_total,
+            delivery_status_counts: counts.delivery_status_counts,
+        }
+    }
 }
 
 pub(super) async fn process_diagnostics(
@@ -187,18 +204,22 @@ pub(super) fn diagnostics_from_hydrated_state(
         .hydrate_runtime_state()
         .map_err(ApiError::from)?;
 
-    let mut delivery_status_counts = BTreeMap::<String, usize>::new();
-    for delivery in &hydrated.team_deliveries {
-        *delivery_status_counts
-            .entry(delivery.status.clone())
-            .or_insert(0) += 1;
-    }
-    let comms = CommsDiagnosticsResponse {
-        team_count: hydrated.teams.len(),
-        member_count: hydrated.team_members.len(),
-        message_count: hydrated.team_messages.len(),
-        delivery_total: hydrated.team_deliveries.len(),
-        delivery_status_counts,
+    let comms = if let Some(counts) = state.app.services.store.legacy_comms_diagnostic_counts()? {
+        CommsDiagnosticsResponse::from_counts(counts)
+    } else {
+        let mut delivery_status_counts = BTreeMap::<String, usize>::new();
+        for delivery in &hydrated.team_deliveries {
+            *delivery_status_counts
+                .entry(delivery.status.clone())
+                .or_insert(0) += 1;
+        }
+        CommsDiagnosticsResponse {
+            team_count: hydrated.teams.len(),
+            member_count: hydrated.team_members.len(),
+            message_count: hydrated.team_messages.len(),
+            delivery_total: hydrated.team_deliveries.len(),
+            delivery_status_counts,
+        }
     };
 
     let (process_status_counts, include_legacy_process_anomalies) =

@@ -40,6 +40,7 @@ use support_acp_http::*;
 mod claude_acp_smoke;
 mod codex_edit_rerun_live;
 mod codex_runtime_smoke;
+mod comms_diagnostics_aggregate;
 mod durable_event_stream_idle;
 mod durable_event_stream_lag;
 mod durable_event_stream_restart;

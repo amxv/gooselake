@@ -207,6 +207,44 @@ impl RuntimeSessionManager {
                 turn.status,
                 result.status.as_str()
             );
+            // This is a *late observation* of an already-terminal turn, not
+            // authority over whichever turn currently owns the session. An
+            // old provider callback must not fail a newer active attachment
+            // (or reopen a session which has since been closed).
+            let preserved_reason = sessions.get(&turn.session_id).and_then(|session| {
+                if session.status == "closed" {
+                    Some("session_already_closed")
+                } else if session
+                    .active_turn_id
+                    .as_deref()
+                    .is_some_and(|active| active != turn.id)
+                {
+                    Some("newer_turn_active")
+                } else {
+                    None
+                }
+            });
+            if let Some(reason) = preserved_reason {
+                let payload = serde_json::json!({
+                    "status": result.status.as_str(),
+                    "stored_status": turn.status,
+                    "state_preserved": true,
+                    "reason": reason,
+                });
+                drop(sessions);
+                drop(turns);
+                self.append_event(
+                    RuntimeEventScope::Session,
+                    &result.runtime_session_id,
+                    Some(&result.runtime_session_id),
+                    Some(&result.turn_id),
+                    "provider.late_turn_outcome",
+                    RuntimeEventCriticality::Critical,
+                    payload,
+                )
+                .await?;
+                return Err(RuntimeError::ProtocolViolation(conflict));
+            }
             if let Some(mut session) = sessions.get(&turn.session_id).cloned() {
                 session.status = "failed".into();
                 session.failure_code = Some("terminal_conflict".into());

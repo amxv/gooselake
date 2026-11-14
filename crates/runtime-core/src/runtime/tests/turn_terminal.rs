@@ -265,6 +265,106 @@ async fn callback(
 }
 
 #[tokio::test]
+async fn conflicting_late_terminal_callback_cannot_fail_a_newer_active_turn() {
+    let (manager, store, mut session, mut old_turn) = fixture(false).await;
+    old_turn.status = "completed".into();
+    old_turn.completed_at = Some(20);
+    let mut successor = old_turn.clone();
+    successor.id = "successor-native-turn".into();
+    successor.status = "in_progress".into();
+    successor.completed_at = None;
+    session.active_turn_id = Some(successor.id.clone());
+    store.upsert_turn(&old_turn).unwrap();
+    store.upsert_turn(&successor).unwrap();
+    store.upsert_session(&session).unwrap();
+    {
+        let mut turns = manager.turns.write().await;
+        turns.insert(old_turn.id.clone(), old_turn.clone());
+        turns.insert(successor.id.clone(), successor.clone());
+    }
+    manager
+        .sessions
+        .write()
+        .await
+        .insert(session.id.clone(), session.clone());
+
+    let conflict = manager
+        .apply_terminal_result(ProviderTurnResult {
+            runtime_session_id: session.id.clone(),
+            turn_id: old_turn.id.clone(),
+            status: ProviderTurnStatus::Failed,
+            usage: None,
+            error: None,
+        })
+        .await;
+    assert!(matches!(conflict, Err(RuntimeError::ProtocolViolation(_))));
+    assert_eq!(manager.get_session(&session.id).await.unwrap(), session);
+    assert_eq!(manager.turns.read().await[&successor.id], successor);
+    assert_eq!(manager.turns.read().await[&old_turn.id], old_turn);
+    assert_eq!(store.sessions.lock().unwrap()[&session.id], session);
+    assert_eq!(store.turns.lock().unwrap()[&old_turn.id], old_turn);
+    assert_eq!(store.turns.lock().unwrap()[&successor.id], successor);
+    let events = store.events.lock().unwrap();
+    let observations: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == "provider.late_turn_outcome")
+        .collect();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].payload["stored_status"], "completed");
+    assert_eq!(observations[0].payload["status"], "failed");
+    assert_eq!(observations[0].payload["state_preserved"], true);
+    assert_eq!(observations[0].payload["reason"], "newer_turn_active");
+    assert_eq!(
+        observations[0].criticality,
+        RuntimeEventCriticality::Critical
+    );
+}
+
+#[tokio::test]
+async fn conflicting_late_terminal_callback_cannot_fail_an_already_closed_session() {
+    let (manager, store, mut session, mut old_turn) = fixture(false).await;
+    old_turn.status = "completed".into();
+    old_turn.completed_at = Some(20);
+    session.status = "closed".into();
+    session.closed_at = Some(30);
+    session.active_turn_id = None;
+    store.upsert_turn(&old_turn).unwrap();
+    store.upsert_session(&session).unwrap();
+    manager
+        .turns
+        .write()
+        .await
+        .insert(old_turn.id.clone(), old_turn.clone());
+    manager
+        .sessions
+        .write()
+        .await
+        .insert(session.id.clone(), session.clone());
+
+    let conflict = manager
+        .apply_terminal_result(ProviderTurnResult {
+            runtime_session_id: session.id.clone(),
+            turn_id: old_turn.id.clone(),
+            status: ProviderTurnStatus::Failed,
+            usage: None,
+            error: None,
+        })
+        .await;
+    assert!(matches!(conflict, Err(RuntimeError::ProtocolViolation(_))));
+    assert_eq!(manager.get_session(&session.id).await.unwrap(), session);
+    assert_eq!(manager.turns.read().await[&old_turn.id], old_turn);
+    assert_eq!(store.sessions.lock().unwrap()[&session.id], session);
+    assert_eq!(store.turns.lock().unwrap()[&old_turn.id], old_turn);
+    let events = store.events.lock().unwrap();
+    let observed = events
+        .iter()
+        .find(|event| event.kind == "provider.late_turn_outcome")
+        .expect("critical late conflicting observation");
+    assert_eq!(observed.payload["reason"], "session_already_closed");
+    assert_eq!(observed.payload["state_preserved"], true);
+}
+
+#[tokio::test]
 async fn late_native_callbacks_preserve_operator_closure_after_restore_and_new_work() {
     let (manager, store, mut session, turn) = fixture(true).await;
     for lifecycle in ["closed", "ready", "turn_running"] {

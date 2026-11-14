@@ -228,6 +228,15 @@ independently changed session rolls the full transition back; an ambiguous
 commit can be inspected by that durable receipt on restart without invoking
 the provider again. A late result for a superseded, no-longer-active turn may
 terminalize only that historical turn, never the newer active session.
+If a *different* terminal outcome arrives after the old turn was already
+terminal, the manager also preserves a newer active attachment or an already
+closed session instead of marking that unrelated session state `failed`.
+It records the rejected stale observation as a critical
+`provider.late_turn_outcome` with `state_preserved: true` and the reason
+`newer_turn_active` or `session_already_closed`. An ordinary conflicting
+observation while the session is idle still follows the existing
+`terminal_conflict` failure path. This guard is not a cross-process callback
+CAS guarantee or certification of the idle-conflict event-atomicity path.
 Provider wait failures, nonterminal dispatch transitions and older legacy
 team paths are **separate** event-authority cases; none is implied by this
 terminal-result transaction. Provider wait failures and native approval

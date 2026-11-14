@@ -21,6 +21,29 @@ macro_rules! delegate_provider_event_methods {
             )
         }
 
+        fn commit_provider_dispatch_outcome(
+            &self,
+            before_admission: &runtime_core::TurnAdmissionRecord,
+            after_admission: &runtime_core::TurnAdmissionRecord,
+            before_turn: &runtime_core::TurnRecord,
+            after_turn: &runtime_core::TurnRecord,
+            before_session: &runtime_core::SessionRecord,
+            after_session: &runtime_core::SessionRecord,
+            approvals: &[(runtime_core::ApprovalRecord, runtime_core::ApprovalRecord)],
+            event: &runtime_core::NewRuntimeEvent,
+        ) -> Result<runtime_core::ProviderDispatchOutcomeCommit, RuntimeError> {
+            self.repository.commit_provider_dispatch_outcome(
+                before_admission,
+                after_admission,
+                before_turn,
+                after_turn,
+                before_session,
+                after_session,
+                approvals,
+                event,
+            )
+        }
+
         fn commit_provider_turn_result(
             &self,
             previous_turn: &runtime_core::TurnRecord,

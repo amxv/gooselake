@@ -11,13 +11,14 @@ use crate::{
     ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
     ProcessRecord, ProviderApprovalAdmission, ProviderApprovalDecisionReceipt,
     ProviderApprovalFinalization, ProviderApprovalResponseRequest, ProviderAuthStatus,
-    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderDispatchStartedCommit,
-    ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry, ProviderResumeSessionRequest,
-    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit,
-    ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
-    RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
-    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
-    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
+    ProviderCloseSessionRequest, ProviderCreateSessionRequest, ProviderDispatchOutcomeCommit,
+    ProviderDispatchStartedCommit, ProviderKind, ProviderMetadata, ProviderModel, ProviderRegistry,
+    ProviderResumeSessionRequest, ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderSession,
+    ProviderTerminalCommit, ProviderTurnAck, ProviderTurnResult, ProviderTurnStatus,
+    ProviderWaitTurnRequest, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeProvider,
+    RuntimeStore, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord,
+    TurnRecord,
 };
 
 use super::RuntimeSessionManager;
@@ -37,6 +38,8 @@ pub(super) struct MockStore {
     pub(super) native_approval_calls: AtomicUsize,
 }
 
+#[path = "test_support_dispatch_outcome.rs"]
+mod dispatch_outcome;
 #[path = "test_support_dispatch_start.rs"]
 mod dispatch_start;
 #[path = "test_support_native_decision.rs"]
@@ -173,6 +176,7 @@ impl RuntimeStore for MockStore {
     }
 
     dispatch_start::delegate_mock_start!();
+    dispatch_outcome::delegate_mock_outcome!();
 
     fn list_turn_admissions(&self) -> Result<Vec<TurnAdmissionRecord>, RuntimeError> {
         Ok(self

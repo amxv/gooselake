@@ -55,6 +55,7 @@ mod repository_team_hooks;
 mod repository_team_operation_lookup;
 mod repository_team_spawn_admission;
 mod repository_turn_authority;
+mod repository_turn_dispatch_outcome;
 mod repository_turn_start;
 mod repository_turn_terminal;
 mod repository_upserts;

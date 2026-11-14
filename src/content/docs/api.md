@@ -1331,6 +1331,18 @@ to fill a missing event. An exact committed receipt is available through the
 durable event journal. This does not certify every older startup recovery or
 provider callback path.
 
+A provider send that **provably never executed** now commits its
+`not_dispatched` admission, failed logical turn, released session, any cancelled
+still-pending approval and deterministic Critical `turn.failed` receipt in one
+SQLite transaction. An **unknown** native send instead commits the `unknown`
+admission, `dispatch_unknown` turn, still-active `turn_recovery_required`
+session and Critical `turn.dispatch_unknown` together. A fault inserting either
+Critical event rolls back the projections, preserving the original
+`dispatching` fence rather than permitting a duplicate native send. Startup
+recovery also atomically quarantines a found `dispatching` turn without
+resending it. Neither outcome certifies older historical partial repairs,
+pre-dispatch approval-decline transitions or native exactly-once behavior.
+
 ```bash
 TURN_JSON=$(curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \

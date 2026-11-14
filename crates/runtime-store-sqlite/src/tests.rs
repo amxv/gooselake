@@ -36,6 +36,7 @@ mod process_completion_authority;
 mod process_lifecycle_events;
 mod provider_approval_decisions;
 mod provider_approval_resolution;
+mod provider_dispatch_outcome;
 mod provider_dispatch_started;
 mod provider_failure_events;
 mod provider_native_approval_events;

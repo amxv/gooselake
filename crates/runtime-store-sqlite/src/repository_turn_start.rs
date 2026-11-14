@@ -12,7 +12,10 @@ use crate::repository_turn_authority::turn_admission_from_row;
 use crate::repository_turn_terminal::{read_session, read_turn};
 use crate::SqliteRuntimeRepository;
 
-fn read_admission(tx: &Transaction<'_>, id: &str) -> Result<TurnAdmissionRecord, RuntimeError> {
+pub(crate) fn read_admission(
+    tx: &Transaction<'_>,
+    id: &str,
+) -> Result<TurnAdmissionRecord, RuntimeError> {
     tx.query_row(
         "SELECT turn_id, session_id, provider, projection_source,
                 user_input_snapshot_json, dispatch_policy_json, correlation_json,

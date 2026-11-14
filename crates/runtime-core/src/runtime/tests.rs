@@ -14,6 +14,7 @@ use super::test_support::{
 use super::{ApprovalResponseInput, CreateSessionInput, ResumeSessionInput, SendTurnInput};
 
 mod provider_approvals;
+mod provider_dispatch_outcome;
 mod provider_dispatch_started;
 mod session_lifecycle;
 mod turn_authority;

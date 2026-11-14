@@ -588,72 +588,8 @@ impl RuntimeSessionManager {
         turn_id: &str,
         error: &RuntimeError,
     ) -> Result<(), RuntimeError> {
-        self.update_turn_dispatch_authority(
-            turn_id,
-            TurnDispatchState::NotDispatched,
-            None,
-            Some(serde_json::json!({
-                "code": error.provider_dispatch_code(),
-                "message": error.to_string(),
-            })),
-        )
-        .await?;
-        {
-            let mut turns = self.turns.write().await;
-            let turn = turns
-                .get_mut(turn_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
-            turn.status = "failed".to_string();
-            turn.completed_at = Some(now_ms());
-            turn.error = Some(serde_json::json!({
-                "message": error.to_string(),
-                "provider_dispatch_outcome": "not_dispatched",
-            }));
-            self.store.upsert_turn(turn)?;
-        }
-        {
-            let mut approvals = self.approvals.write().await;
-            for approval in approvals.values_mut().filter(|approval| {
-                approval.session_id == session_id
-                    && approval.turn_id == turn_id
-                    && approval.status == "pending"
-            }) {
-                approval.status = "cancelled".to_string();
-                approval.response = Some(serde_json::json!({
-                    "reason": "provider dispatch was proven not to have occurred",
-                }));
-                approval.resolved_at = Some(now_ms());
-                self.store.upsert_approval(approval)?;
-            }
-        }
-        {
-            let mut sessions = self.sessions.write().await;
-            let session = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
-            if session.active_turn_id.as_deref() == Some(turn_id) {
-                session.active_turn_id = None;
-            }
-            if !matches!(session.status.as_str(), "closed" | "failed") {
-                session.status = "ready".to_string();
-            }
-            session.updated_at = now_ms();
-            self.store.upsert_session(session)?;
-        }
-        self.append_event(
-            RuntimeEventScope::Session,
-            session_id,
-            Some(session_id),
-            Some(turn_id),
-            "turn.failed",
-            RuntimeEventCriticality::Critical,
-            serde_json::json!({
-                "error": error.to_string(),
-                "provider_dispatch_outcome": "not_dispatched",
-            }),
-        )
-        .await?;
-        Ok(())
+        self.commit_provider_dispatch_outcome(session_id, turn_id, error, true)
+            .await
     }
 
     pub(super) async fn mark_dispatch_unknown(
@@ -662,51 +598,8 @@ impl RuntimeSessionManager {
         turn_id: &str,
         error: &RuntimeError,
     ) -> Result<(), RuntimeError> {
-        self.update_turn_dispatch_authority(
-            turn_id,
-            TurnDispatchState::Unknown,
-            None,
-            Some(serde_json::json!({
-                "code": error.provider_dispatch_code(),
-                "message": error.to_string(),
-            })),
-        )
-        .await?;
-        {
-            let mut turns = self.turns.write().await;
-            let turn = turns
-                .get_mut(turn_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
-            turn.status = "dispatch_unknown".to_string();
-            turn.error = Some(serde_json::json!({
-                "message": error.to_string(),
-                "provider_dispatch_outcome": "unknown",
-            }));
-            self.store.upsert_turn(turn)?;
-        }
-        {
-            let mut sessions = self.sessions.write().await;
-            let session = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
-            session.status = "turn_recovery_required".to_string();
-            session.updated_at = now_ms();
-            self.store.upsert_session(session)?;
-        }
-        self.append_event(
-            RuntimeEventScope::Session,
-            session_id,
-            Some(session_id),
-            Some(turn_id),
-            "turn.dispatch_unknown",
-            RuntimeEventCriticality::Critical,
-            serde_json::json!({
-                "error": error.to_string(),
-                "provider_dispatch_outcome": "unknown",
-            }),
-        )
-        .await?;
-        Ok(())
+        self.commit_provider_dispatch_outcome(session_id, turn_id, error, false)
+            .await
     }
 
     pub(super) async fn dispatch_send_turn_with_resume_fallback(

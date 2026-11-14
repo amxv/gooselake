@@ -11,6 +11,18 @@ pub struct ProviderDispatchStartedCommit {
     pub event: RuntimeEventRecord,
 }
 
+/// A proven no-native-send or an uncertain native-send outcome. Its durable
+/// dispatch admission, turn, session, affected approvals and Critical event
+/// must have one commit boundary; UNKNOWN is never authorization to resend.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderDispatchOutcomeCommit {
+    pub admission: TurnAdmissionRecord,
+    pub turn: TurnRecord,
+    pub session: SessionRecord,
+    pub approvals: Vec<ApprovalRecord>,
+    pub event: RuntimeEventRecord,
+}
+
 /// Durable projection of one provider result, returned even if an identical
 /// receipt was committed before a lost response or a process restart.
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +79,25 @@ macro_rules! provider_terminal_methods {
         ) -> Result<crate::ProviderDispatchStartedCommit, crate::RuntimeError> {
             Err(crate::RuntimeError::Unsupported(
                 "atomic provider dispatch start and Critical journal unavailable".into(),
+            ))
+        }
+
+        /// Persist a pre-terminal provider send outcome and its Critical
+        /// receipt atomically. Pending approvals cancelled for a *proven*
+        /// no-send outcome are part of the same transaction.
+        fn commit_provider_dispatch_outcome(
+            &self,
+            _before_admission: &crate::TurnAdmissionRecord,
+            _after_admission: &crate::TurnAdmissionRecord,
+            _before_turn: &crate::TurnRecord,
+            _after_turn: &crate::TurnRecord,
+            _before_session: &crate::SessionRecord,
+            _after_session: &crate::SessionRecord,
+            _approvals: &[(crate::ApprovalRecord, crate::ApprovalRecord)],
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<crate::ProviderDispatchOutcomeCommit, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic provider dispatch outcome and Critical journal unavailable".into(),
             ))
         }
 

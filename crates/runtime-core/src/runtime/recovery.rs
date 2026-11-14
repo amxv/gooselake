@@ -452,15 +452,27 @@ impl RuntimeSessionManager {
                     match admission.dispatch_state {
                         TurnDispatchState::Dispatching | TurnDispatchState::Unknown => {
                             if admission.dispatch_state == TurnDispatchState::Dispatching {
-                                self.update_turn_dispatch_authority(
+                                // A crash between native send and acknowledgement
+                                // is not proof of no effect. Quarantine the entire
+                                // dispatch/turn/session plus its Critical receipt
+                                // atomically; never replay the native request.
+                                let error = RuntimeError::provider_dispatch_unknown(
+                                    "startup_dispatch_inflight",
+                                    "startup recovery found provider dispatch in-flight",
+                                );
+                                self.mark_dispatch_unknown(
+                                    session.id.as_str(),
                                     turn.id.as_str(),
-                                    TurnDispatchState::Unknown,
-                                    admission.provider_native_turn_id.clone(),
-                                    Some(serde_json::json!({
-                                        "message": "startup recovery found provider dispatch in-flight",
-                                    })),
+                                    &error,
                                 )
                                 .await?;
+                                summary.turns_reconciled += 1;
+                                summary.sessions_reconciled += 1;
+                                summary.notes.push(format!(
+                                    "session {} quarantined in-flight turn {} without native replay",
+                                    session.id, turn.id,
+                                ));
+                                continue;
                             }
                             let mut repaired = turn.clone();
                             repaired.status = "dispatch_unknown".to_string();

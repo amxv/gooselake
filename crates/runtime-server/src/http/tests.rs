@@ -56,6 +56,7 @@ mod legacy_team_spawn_idempotency;
 mod mcp_core;
 mod mcp_policy_process;
 mod native_approval_journal_http;
+mod native_dispatch_outcome_journal_http;
 mod operator_agent_archive;
 mod operator_agent_create;
 mod operator_agent_create_contract;

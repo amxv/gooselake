@@ -184,6 +184,21 @@ as permission to send the native turn twice. Live broadcast follows commit
 and is not authoritative. This covers normal and approved send acknowledgements;
 other legacy/recovery callbacks have separate acceptance boundaries.
 
+**Known no-send and unknown native dispatch** now have their own transactional
+Critical receipts. A confirmed `not_dispatched` result commits its admission,
+failed turn, cleared active session, all still-pending approval cancellations
+and deterministic `turn.failed` event together. An ambiguous provider result
+commits the `unknown` admission, quarantined nonterminal turn, still-attached
+`turn_recovery_required` session and deterministic `turn.dispatch_unknown`
+event in one transaction. A late event-insert fault rolls *every* affected
+projection back to the original state; in particular, a former `dispatching`
+fence stays non-retryable. Startup recovery of an in-flight `dispatching`
+admission uses the same unknown quarantine without sending native work again.
+Conflicting independent writers or a forged prior receipt fail closed; exact
+unchanged committed receipts are inspectable after restart. Historical already-
+`unknown` partial projections, pre-dispatch approval-decline events and other
+nonterminal state transitions are not certified by this specific authority.
+
 An observed **provider terminal result** (`turn.completed`, `turn.interrupted`,
 or `turn.failed`) now commits the terminal turn, the session's active-turn
 release and transcript update when that turn is still attached, and its

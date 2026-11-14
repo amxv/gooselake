@@ -56,7 +56,12 @@ pub(super) async fn runtime_diagnostics(
     State(state): State<AppState>,
 ) -> Result<Json<RuntimeDiagnosticsResponse>, ApiError> {
     let providers = provider_diagnostics_internal(&state).await;
-    let (comms, processes, worktrees, recovery) = diagnostics_from_hydrated_state(&state)?;
+    let (comms, processes, worktrees, recovery) =
+        if let Some(diagnostics) = diagnostics_from_indexed_store(&state)? {
+            diagnostics
+        } else {
+            diagnostics_from_hydrated_state(&state)?
+        };
     Ok(Json(RuntimeDiagnosticsResponse {
         providers,
         comms,
@@ -150,8 +155,59 @@ impl WorktreeDiagnosticsResponse {
 pub(super) async fn recovery_diagnostics(
     State(state): State<AppState>,
 ) -> Result<Json<RecoveryDiagnosticsResponse>, ApiError> {
+    if let Some(recovery) = indexed_recovery_diagnostics(&state)? {
+        return Ok(Json(recovery));
+    }
     let (_, _, _, recovery) = diagnostics_from_hydrated_state(&state)?;
     Ok(Json(recovery))
+}
+
+fn indexed_recovery_diagnostics(
+    state: &AppState,
+) -> Result<Option<RecoveryDiagnosticsResponse>, ApiError> {
+    Ok(state
+        .app
+        .services
+        .store
+        .recovery_diagnostic_anomalies()?
+        .map(|active_anomalies| RecoveryDiagnosticsResponse {
+            startup: (*state.startup_recovery).clone(),
+            active_anomalies,
+        }))
+}
+
+fn diagnostics_from_indexed_store(
+    state: &AppState,
+) -> Result<
+    Option<(
+        CommsDiagnosticsResponse,
+        ProcessDiagnosticsResponse,
+        WorktreeDiagnosticsResponse,
+        RecoveryDiagnosticsResponse,
+    )>,
+    ApiError,
+> {
+    let store = &state.app.services.store;
+    let Some(recovery) = indexed_recovery_diagnostics(state)? else {
+        return Ok(None);
+    };
+    let Some(comms) = store.legacy_comms_diagnostic_counts()? else {
+        return Ok(None);
+    };
+    let Some(processes) = store.managed_process_status_counts()? else {
+        return Ok(None);
+    };
+    let Some(worktrees) = store.managed_worktree_diagnostic_counts()? else {
+        return Ok(None);
+    };
+    // These are independent SQLite read snapshots, as before. Do not claim a
+    // global consistent snapshot or change the non-SQLite hydrated fallback.
+    Ok(Some((
+        CommsDiagnosticsResponse::from_counts(comms),
+        ProcessDiagnosticsResponse::from_status_counts(processes),
+        WorktreeDiagnosticsResponse::from_counts(worktrees),
+        recovery,
+    )))
 }
 
 pub(super) async fn provider_diagnostics_internal(state: &AppState) -> ProviderDiagnosticsResponse {

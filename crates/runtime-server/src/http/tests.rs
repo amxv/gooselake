@@ -88,6 +88,7 @@ mod process_lifecycle_journal_http;
 mod process_more;
 mod provider_contract_routes;
 mod provider_failure_journal_http;
+mod recovery_diagnostics_aggregate;
 mod scoped_mcp;
 mod session_basics;
 mod session_lifecycle_journal_http;

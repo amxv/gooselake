@@ -185,7 +185,10 @@ fn migration_38_adds_index_without_rewriting_historical_legacy_delivery() {
             provider,status,created_at,updated_at)
          VALUES('d','m','t','s','inert','historical_unknown',1,1);
          DROP INDEX idx_team_deliveries_status;
-         DELETE FROM schema_migrations WHERE version = 38;",
+         DROP INDEX idx_sessions_active_turn_diagnostics;
+         DROP INDEX idx_approvals_pending_diagnostics;
+         DROP INDEX idx_worktree_claims_active_diagnostics;
+         DELETE FROM schema_migrations WHERE version IN (38,39);",
     )
     .unwrap();
     drop(db);
@@ -210,6 +213,6 @@ fn migration_38_adds_index_without_rewriting_historical_legacy_delivery() {
             0
         ))
         .unwrap(),
-        38
+        39
     );
 }

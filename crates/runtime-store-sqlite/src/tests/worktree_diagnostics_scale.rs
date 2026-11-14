@@ -134,8 +134,12 @@ fn indexed_worktree_diagnostics_match_full_hydration_orphans_and_one_wal_snapsho
         .collect::<Result<Vec<_>, _>>()
         .unwrap()
         .join(" ");
+    // Both partial indexes restrict the scan to active claims. Schema 39's
+    // recovery-order index can be chosen over the older worktree-first index
+    // for this no-order grouped count without changing count semantics.
     assert!(
-        claim_plan.contains("idx_managed_worktree_claims_active_worktree"),
+        claim_plan.contains("idx_managed_worktree_claims_active_worktree")
+            || claim_plan.contains("idx_worktree_claims_active_diagnostics"),
         "{claim_plan}"
     );
     assert!(

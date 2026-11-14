@@ -45,6 +45,7 @@ mod provider_failure_events;
 mod provider_native_approval_events;
 mod provider_terminal_conflict;
 mod provider_terminal_events;
+mod recovery_diagnostics_scale;
 mod session_lifecycle_events;
 mod team_operation_journal_scale;
 mod team_spawn_onboarding_scale;

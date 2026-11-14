@@ -151,21 +151,32 @@ Top-level groups:
   legacy team tables (including deleted teams and unknown delivery statuses)
   using a single read snapshot and a status index, without deserializing
   message inputs or other runtime state. The combined diagnostics route also
-  reuses these counts, but still hydrates unrelated state for recovery checks.
+  reuses these counts. SQLite also uses an indexed, separately consistent
+  recovery-anomaly read snapshot instead of full-state hydration; each legacy
+  component is read independently, not as one cross-component snapshot.
   Non-SQLite stores retain their prior hydrated diagnostic fallback.
 - The legacy operator `GET /v1/diagnostics/processes` response remains an
   aggregate (`process_total`, `process_status_counts`), not process detail.
   SQLite computes it from a single covering-index grouped read rather than
   hydrating every runtime record and managed-process command. The combined
-  diagnostics route preserves its other hydrated recovery/comms/worktree
-  projections; neither endpoint exposes process payloads through these counts.
+  diagnostics route also uses indexed recovery, comms and worktree projections
+  on SQLite; neither endpoint exposes process payloads through these counts.
 - Legacy `GET /v1/diagnostics/worktrees` retains the exact four diagnostic
   fields (`worktree_total`, `active_claim_total`, `orphaned_claim_total`,
   `deletion_policy_counts`). SQLite counts deletion policies and active claims,
   including claims with missing session/worktree parents, in one consistent
   read snapshot using indexes; it does not deserialize worktree paths or every
   claim/session. The combined diagnostics endpoint uses these counts too, but
-  still hydrates full state for unrelated comms/recovery anomaly reporting.
+  uses separate indexed SQLite comms and recovery projections too.
+- Legacy `GET /v1/diagnostics/recovery` returns the original `startup` summary
+  and ordered `active_anomalies` strings, including missing/mismatched/terminal
+  active turns, pending approvals with missing/terminal turns, and active
+  worktree claims with missing sessions. SQLite reads only the relevant
+  indexed IDs/statuses under one deferred read snapshot, not provider input,
+  session metadata, credentials or worktree paths. It neither repairs anomalies
+  nor authorizes replay of unknown native effects. The legacy process anomaly
+  fallback remains suppressed when managed-process authoritative status counts
+  are supported; non-SQLite stores retain the previous hydrated behavior.
 - Providers/auth: legacy provider list/models/auth plus v2 capability, model-discovery, and skill-discovery endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
 - Global events: replay and stream

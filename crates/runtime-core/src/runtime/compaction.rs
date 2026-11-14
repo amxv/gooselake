@@ -199,8 +199,13 @@ impl RuntimeSessionManager {
         evidence: &str,
     ) -> Result<SessionCompactionRun, RuntimeError> {
         self.session_compaction_run(agent_id, run_id)?;
-        self.store
-            .resolve_session_compaction_review(run_id, phase, evidence, now_ms())
+        let receipt =
+            self.store
+                .resolve_session_compaction_review(run_id, phase, evidence, now_ms())?;
+        if let Some(event) = receipt.journal_event {
+            let _ = self.event_tx.send(event);
+        }
+        Ok(receipt.run)
     }
 
     /// A single-flight, crash-safe manager operation. Provider accepted means
@@ -287,7 +292,19 @@ impl RuntimeSessionManager {
             created_at_ms: now,
             updated_at_ms: now,
         };
-        self.store.begin_session_compaction(&run)?;
+        let admission = self.store.begin_session_compaction(&run)?;
+        // A concurrent process can win admission with the same key between
+        // our optimistic lookup and the transactional SQLite check. Its
+        // receipt is inspection-only: never issue a second native effect.
+        if !admission.changed {
+            return Ok(admission.run);
+        }
+        let Some(event) = admission.journal_event else {
+            return Err(RuntimeError::Bootstrap(
+                "compaction admission committed without a Critical journal receipt".into(),
+            ));
+        };
+        let _ = self.event_tx.send(event);
         // Subscribe before native dispatch to preserve an observation that
         // arrives ahead of the provider's synchronous acceptance response.
         let events = adapter.subscribe_events();

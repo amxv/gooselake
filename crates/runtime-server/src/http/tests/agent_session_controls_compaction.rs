@@ -133,6 +133,26 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
     let events_uri = format!("/v2/events?scope=session&scope_id={agent_id}&limit=100");
     let (status, journal) = call(&router, &token, "GET", &events_uri, None, None).await;
     assert_eq!(status, StatusCode::OK);
+    let admissions: Vec<_> = journal
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"] == "compaction.admitted")
+        .collect();
+    assert_eq!(admissions.len(), 1);
+    assert_eq!(admissions[0]["criticality"], "critical");
+    let (status, admitted_detail) = call(
+        &router,
+        &token,
+        "GET",
+        &format!("/v2/events/{}", admissions[0]["event_id"].as_str().unwrap()),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(admitted_detail["payload"]["run_id"], run_id);
+    assert_eq!(admitted_detail["payload"]["phase"], "intended");
     let accepted_event_ids: Vec<_> = journal
         .as_array()
         .unwrap()
@@ -167,6 +187,16 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
     assert_eq!(replay["run_id"], run_id);
     let (status, journal) = call(&router, &token, "GET", &events_uri, None, None).await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        journal
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"] == "compaction.admitted")
+            .count(),
+        1,
+        "exact HTTP replay must not create another admission event"
+    );
     assert_eq!(
         journal
             .as_array()
@@ -286,6 +316,32 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
     assert_eq!(status, StatusCode::OK);
     assert_eq!(settled["phase"], "failed");
     assert!(settled["review_evidence"].as_str().unwrap().len() > 8);
+    let (status, after_review) = call(&router, &token, "GET", &events_uri, None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let review_events: Vec<_> = after_review
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["kind"] == "compaction.review_resolved")
+        .collect();
+    assert_eq!(review_events.len(), 1);
+    assert_eq!(review_events[0]["criticality"], "critical");
+    let (status, review_detail) = call(
+        &router,
+        &token,
+        "GET",
+        &format!(
+            "/v2/events/{}",
+            review_events[0]["event_id"].as_str().unwrap()
+        ),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(review_detail["payload"]["run_id"], review["run_id"]);
+    assert_eq!(review_detail["payload"]["phase"], "failed");
+    assert!(review_detail["payload"].get("review_evidence").is_none());
     assert_eq!(provider.compaction_calls(), 3, "review must not redispatch");
     let (status, _) = call(
         &router, &token, "POST", &review_uri,

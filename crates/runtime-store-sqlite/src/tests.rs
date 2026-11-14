@@ -15,6 +15,7 @@ mod agent_delivery_retry;
 mod agent_delivery_scale;
 mod agent_message_cancellation;
 mod agent_message_pages;
+mod compaction_critical_authority;
 mod context_status_batch;
 mod event_commit_notifications;
 mod event_cursor_concurrency;

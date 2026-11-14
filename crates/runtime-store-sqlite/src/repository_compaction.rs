@@ -2,7 +2,7 @@ use runtime_core::{
     CompactionTransitionReceipt, NewRuntimeEvent, ProviderCompactSessionOutcome, RuntimeError,
     RuntimeEventCriticality, RuntimeEventScope, SessionCompactionRun,
 };
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::db::{db_error, open_connection};
 use crate::repository::insert_runtime_event_in_transaction;
@@ -33,11 +33,55 @@ fn encode(run: &SessionCompactionRun) -> Result<String, RuntimeError> {
         .map_err(|error| RuntimeError::Bootstrap(format!("invalid compaction run: {error}")))
 }
 
+/// Called only after the corresponding state mutation inside the same
+/// immediate transaction. A failed Critical insertion aborts that mutation.
+fn journal_compaction_event_tx(
+    tx: &Transaction<'_>,
+    run: &SessionCompactionRun,
+    kind: &str,
+    previous_phase: Option<&str>,
+) -> Result<runtime_core::RuntimeEventRecord, RuntimeError> {
+    let nonce: String = tx
+        .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))
+        .map_err(|error| db_error("failed allocating compaction state event", error))?;
+    let mut payload = serde_json::json!({"run_id": run.run_id, "phase": run.phase});
+    if let Some(previous) = previous_phase {
+        payload["previous_phase"] = serde_json::Value::String(previous.into());
+    }
+    insert_runtime_event_in_transaction(
+        tx,
+        &NewRuntimeEvent {
+            event_id: format!("evt_compaction_state_{nonce}"),
+            scope: RuntimeEventScope::Session,
+            scope_id: run.agent_id.clone(),
+            session_id: Some(run.agent_id.clone()),
+            team_id: None,
+            turn_id: None,
+            kind: kind.into(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload,
+            provider: None,
+            provider_seq: None,
+            created_at: run.updated_at_ms,
+        },
+    )
+}
+
 impl SqliteRuntimeRepository {
     pub fn recover_session_compactions(
         &self,
         now_ms: i64,
     ) -> Result<Vec<SessionCompactionRun>, RuntimeError> {
+        self.recover_session_compactions_with_receipts(now_ms)
+            .map(|receipts| receipts.into_iter().map(|receipt| receipt.run).collect())
+    }
+
+    /// On restart every ambiguous native request is quarantined with its
+    /// Critical journal event, or the entire batch remains unchanged.
+    pub fn recover_session_compactions_with_receipts(
+        &self,
+        now_ms: i64,
+    ) -> Result<Vec<CompactionTransitionReceipt>, RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -78,7 +122,17 @@ impl SqliteRuntimeRepository {
                     "concurrent compaction changed during startup reconciliation".into(),
                 ));
             }
-            recovered.push(run);
+            let journal_event = journal_compaction_event_tx(
+                &tx,
+                &run,
+                "compaction.restart_quarantined",
+                Some(&old_phase),
+            )?;
+            recovered.push(CompactionTransitionReceipt {
+                run,
+                changed: true,
+                journal_event: Some(journal_event),
+            });
         }
         tx.commit()
             .map_err(|error| db_error("failed committing compaction startup recovery", error))?;
@@ -92,6 +146,17 @@ impl SqliteRuntimeRepository {
         evidence: &str,
         now_ms: i64,
     ) -> Result<SessionCompactionRun, RuntimeError> {
+        self.resolve_session_compaction_review_with_receipt(run_id, phase, evidence, now_ms)
+            .map(|receipt| receipt.run)
+    }
+
+    pub fn resolve_session_compaction_review_with_receipt(
+        &self,
+        run_id: &str,
+        phase: &str,
+        evidence: &str,
+        now_ms: i64,
+    ) -> Result<CompactionTransitionReceipt, RuntimeError> {
         let evidence = evidence.trim();
         if !matches!(phase, "completed" | "failed") || evidence.len() < 8 || evidence.len() > 2048 {
             return Err(RuntimeError::InvalidState(
@@ -143,18 +208,33 @@ impl SqliteRuntimeRepository {
         run.review_evidence = Some(evidence.into());
         run.updated_at_ms = now_ms.max(run.updated_at_ms);
         run.validate()?;
-        tx.execute(
+        let changed = tx.execute(
             "UPDATE session_compaction_runs SET phase = ?2, record_json = ?3, updated_at_ms = ?4
              WHERE run_id = ?1 AND phase = 'manual_review'",
             params![run_id, phase, encode(&run)?, run.updated_at_ms],
         )
         .map_err(|error| db_error("failed committing operator compaction review", error))?;
+        if changed != 1 {
+            return Err(RuntimeError::Conflict(
+                "concurrent compaction review settlement".into(),
+            ));
+        }
         if phase == "completed" {
             admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?;
         }
+        let journal_event = journal_compaction_event_tx(
+            &tx,
+            &run,
+            "compaction.review_resolved",
+            Some("manual_review"),
+        )?;
         tx.commit()
             .map_err(|error| db_error("failed committing reviewed compaction outcome", error))?;
-        Ok(run)
+        Ok(CompactionTransitionReceipt {
+            run,
+            changed: true,
+            journal_event: Some(journal_event),
+        })
     }
 
     pub fn get_session_compaction(
@@ -206,6 +286,14 @@ impl SqliteRuntimeRepository {
         &self,
         run: &SessionCompactionRun,
     ) -> Result<SessionCompactionRun, RuntimeError> {
+        self.begin_session_compaction_with_receipt(run)
+            .map(|receipt| receipt.run)
+    }
+
+    pub fn begin_session_compaction_with_receipt(
+        &self,
+        run: &SessionCompactionRun,
+    ) -> Result<CompactionTransitionReceipt, RuntimeError> {
         run.validate()?;
         if run.phase != "intended" || run.outcome.is_some() {
             return Err(RuntimeError::InvalidState(
@@ -227,7 +315,12 @@ impl SqliteRuntimeRepository {
                 .optional()
                 .map_err(|error| db_error("failed checking compaction replay", error))?;
             if let Some(id) = existing {
-                return load(&tx, &id)?.ok_or_else(|| RuntimeError::NotFound(id));
+                let original = load(&tx, &id)?.ok_or_else(|| RuntimeError::NotFound(id))?;
+                return Ok(CompactionTransitionReceipt {
+                    run: original,
+                    changed: false,
+                    journal_event: None,
+                });
             }
         }
         // Same-key replay is an inspection of existing native authority, not
@@ -318,9 +411,14 @@ impl SqliteRuntimeRepository {
             ],
         )
         .map_err(|error| db_error("failed admitting durable compaction operation", error))?;
+        let journal_event = journal_compaction_event_tx(&tx, run, "compaction.admitted", None)?;
         tx.commit()
             .map_err(|error| db_error("failed committing compaction admission", error))?;
-        Ok(run.clone())
+        Ok(CompactionTransitionReceipt {
+            run: run.clone(),
+            changed: true,
+            journal_event: Some(journal_event),
+        })
     }
 
     pub fn transition_session_compaction(

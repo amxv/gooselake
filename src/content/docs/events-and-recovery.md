@@ -124,9 +124,21 @@ Manual compaction request-state transitions (`accepted`, `not_performed`,
 `compaction.request_state_changed` receipt in the same SQLite transaction as
 the changed run state. A failed event insert retains the prior state and
 leaves uncertain native effects fenced; an exact phase replay emits nothing.
-Initial request admission, startup reconciliation and operator review are
-separate authority paths and do not yet have a whole-family Critical event
-completeness guarantee.
+Initial native-request admission (`compaction.admitted`), restart quarantine
+(`compaction.restart_quarantined` with the previous phase) and explicit
+operator settlement (`compaction.review_resolved`) also publish Critical
+receipts **in the same transaction** as their changed durable run state.
+Startup quarantine is all-or-nothing across the pending batch; injected event
+failure rolls back all affected phases, retaining native uncertainty until a
+later authorized recovery attempt. A same-key admission replay, including one
+that races between independent runtime processes, returns the existing run and
+must not dispatch another native request. Operator review events omit the
+review evidence itself, which remains on the protected durable run record;
+review always requires external native-outcome verification. Journal replay is
+authoritative; broadcasts may be lost without changing the persisted state.
+This proof covers the named compaction mutation paths, not arbitrary native
+effect exactly-once identity, legacy historical event backfills or safe
+destructive retention.
 
 Managed-process **critical** lifecycle events (`process.queued`,
 `process.started`, `process.kill_requested` and terminal outcomes such as

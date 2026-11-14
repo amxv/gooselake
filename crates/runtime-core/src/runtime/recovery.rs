@@ -58,7 +58,11 @@ impl RuntimeSessionManager {
         // Never redispatch a native compact request whose response or native
         // terminal observation could have been lost across restart.
         let ambiguous_compactions = self.store.recover_session_compactions(started_at)?;
-        for run in ambiguous_compactions {
+        for receipt in ambiguous_compactions {
+            if let Some(event) = receipt.journal_event {
+                let _ = self.event_tx.send(event);
+            }
+            let run = receipt.run;
             summary.notes.push(format!(
                 "manual compaction {} for {} requires explicit provider outcome review",
                 run.run_id, run.agent_id

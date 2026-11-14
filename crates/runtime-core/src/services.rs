@@ -259,7 +259,7 @@ pub trait RuntimeStore:
     fn begin_session_compaction(
         &self,
         _run: &SessionCompactionRun,
-    ) -> Result<SessionCompactionRun, RuntimeError> {
+    ) -> Result<CompactionTransitionReceipt, RuntimeError> {
         unsupported_store("session compaction persistence unavailable")
     }
     fn transition_session_compaction(
@@ -297,7 +297,7 @@ pub trait RuntimeStore:
     fn recover_session_compactions(
         &self,
         _now_ms: i64,
-    ) -> Result<Vec<SessionCompactionRun>, RuntimeError> {
+    ) -> Result<Vec<CompactionTransitionReceipt>, RuntimeError> {
         Ok(Vec::new())
     }
     fn resolve_session_compaction_review(
@@ -306,7 +306,7 @@ pub trait RuntimeStore:
         _phase: &str,
         _evidence: &str,
         _now_ms: i64,
-    ) -> Result<SessionCompactionRun, RuntimeError> {
+    ) -> Result<CompactionTransitionReceipt, RuntimeError> {
         unsupported_store("compaction manual review unavailable")
     }
     async fn initialize(&self) -> Result<(), RuntimeError>;

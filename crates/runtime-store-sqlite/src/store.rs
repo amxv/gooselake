@@ -270,8 +270,8 @@ impl RuntimeStore for SqliteRuntimeStore {
     fn begin_session_compaction(
         &self,
         run: &SessionCompactionRun,
-    ) -> Result<SessionCompactionRun, RuntimeError> {
-        self.repository.begin_session_compaction(run)
+    ) -> Result<CompactionTransitionReceipt, RuntimeError> {
+        self.repository.begin_session_compaction_with_receipt(run)
     }
     fn transition_session_compaction(
         &self,
@@ -314,8 +314,9 @@ impl RuntimeStore for SqliteRuntimeStore {
     fn recover_session_compactions(
         &self,
         now_ms: i64,
-    ) -> Result<Vec<SessionCompactionRun>, RuntimeError> {
-        self.repository.recover_session_compactions(now_ms)
+    ) -> Result<Vec<CompactionTransitionReceipt>, RuntimeError> {
+        self.repository
+            .recover_session_compactions_with_receipts(now_ms)
     }
     fn resolve_session_compaction_review(
         &self,
@@ -323,9 +324,9 @@ impl RuntimeStore for SqliteRuntimeStore {
         phase: &str,
         evidence: &str,
         now_ms: i64,
-    ) -> Result<SessionCompactionRun, RuntimeError> {
+    ) -> Result<CompactionTransitionReceipt, RuntimeError> {
         self.repository
-            .resolve_session_compaction_review(run_id, phase, evidence, now_ms)
+            .resolve_session_compaction_review_with_receipt(run_id, phase, evidence, now_ms)
     }
     crate::store_context_limit::delegate_context_limit_methods!();
     async fn initialize(&self) -> Result<(), RuntimeError> {

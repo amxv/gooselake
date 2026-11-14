@@ -40,6 +40,7 @@ impl SqliteRuntimeRepository {
                   json_each(a.approved_hooks_json) approved
                 WHERE w.workspace_id=e.workspace_id AND w.lifecycle_state='active'
                   AND approved.value=e.hook_json)",
+            "idx_workspace_hook_effects_dispatch_order",
             limit,
         )
     }
@@ -58,6 +59,7 @@ impl SqliteRuntimeRepository {
              AND e.event_name IN
              ('post_teammate_add','post_teammate_remove',
               'post_direct_message_send','post_broadcast_message_send')",
+            "idx_workspace_hook_effects_unapplied_order",
             limit,
         )
     }
@@ -65,13 +67,17 @@ impl SqliteRuntimeRepository {
     fn list_hook_effects_by_state(
         &self,
         clause: &str,
+        index: &str,
         limit: usize,
     ) -> Result<Vec<TeamHookEffectRecord>, RuntimeError> {
-        // The clause is selected from two constants above, never caller SQL.
+        // Both the predicate and partial index are fixed internal constants,
+        // never caller SQL. The old phase/application indexes place workspace_id
+        // ahead of the event tie-breakers, forcing a temp sort on each worker
+        // poll. The narrow ordered indexes avoid sorting historical effects.
         let connection = open_connection(&self.database_path)?;
         let query = format!(
             "SELECT e.workspace_id,e.parent_event_id,e.event_name,e.hook_name
-             FROM workspace_hook_effects e WHERE {clause}
+             FROM workspace_hook_effects e INDEXED BY {index} WHERE {clause}
              ORDER BY e.created_at_ms,e.parent_event_id,e.hook_name LIMIT ?1"
         );
         let mut statement = connection

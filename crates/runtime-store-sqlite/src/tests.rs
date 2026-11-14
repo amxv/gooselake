@@ -836,3 +836,4 @@ async fn store_initialize_and_healthcheck_use_schema() {
 }
 
 mod workspace_notice;
+mod workspace_notice_queue_scale;

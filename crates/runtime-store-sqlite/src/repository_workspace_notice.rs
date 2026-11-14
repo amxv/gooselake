@@ -398,27 +398,40 @@ impl SqliteRuntimeRepository {
         limit: usize,
     ) -> Result<Vec<WorkspaceSystemNoticeRecord>, RuntimeError> {
         let connection = open_connection(&self.database_path)?;
+        // The state-first index cannot merge pending/injecting creation order
+        // without a full queue sort. Schema 41's partial expression index
+        // matches both the historical onboarding tie-break and this keyset.
+        // Explicit first/continuation shapes avoid a nullable-cursor OR.
+        let select = format!(
+            "{SELECT_NOTICE} INDEXED BY idx_workspace_system_notices_active_order
+             WHERE state IN ('pending','injecting')"
+        );
+        let order = "created_at_ms, CASE WHEN kind = 'onboarding' THEN 0 ELSE 1 END, notice_id";
+        let sql = if after.is_some() {
+            format!(
+                "{select} AND (created_at_ms, CASE WHEN kind = 'onboarding' THEN 0 ELSE 1 END,
+                 notice_id) > (?1, ?2, ?3) ORDER BY {order} LIMIT ?4"
+            )
+        } else {
+            format!("{select} ORDER BY {order} LIMIT ?1")
+        };
         let mut statement = connection
-            .prepare(&format!(
-                "{SELECT_NOTICE} WHERE state IN ('pending','injecting')
-             AND (?2 IS NULL OR
-                 (created_at_ms, CASE WHEN kind = 'onboarding' THEN 0 ELSE 1 END, notice_id)
-                 > (?2, ?3, ?4))
-             ORDER BY created_at_ms, CASE WHEN kind = 'onboarding' THEN 0 ELSE 1 END, notice_id
-             LIMIT ?1"
-            ))
+            .prepare(&sql)
             .map_err(|error| db_error("failed preparing outstanding notices", error))?;
-        let rows = statement
-            .query_map(
+        let limit = i64::try_from(limit.min(256)).unwrap_or(256);
+        let rows = match after {
+            Some(notice) => statement.query_map(
                 params![
-                    i64::try_from(limit.min(256)).unwrap_or(256),
-                    after.map(|notice| notice.created_at_ms),
-                    after.map(|notice| i64::from(notice.kind != "onboarding")),
-                    after.map(|notice| notice.notice_id.as_str()),
+                    notice.created_at_ms,
+                    i64::from(notice.kind != "onboarding"),
+                    notice.notice_id,
+                    limit,
                 ],
                 notice_from_row,
-            )
-            .map_err(|error| db_error("failed querying outstanding notices", error))?;
+            ),
+            None => statement.query_map(params![limit], notice_from_row),
+        }
+        .map_err(|error| db_error("failed querying outstanding notices", error))?;
         crate::db::collect_rows(rows)
     }
 

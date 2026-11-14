@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only comparison of retained events against their derived subject index.
+"""Read-only retained-event subject and primary-scope sequence inspection.
 
 Pass ONLY a consistently checkpointed, isolated offline SQLite copy. This
 command is not a repair, migration, retention decision or native replay tool.
@@ -128,6 +128,7 @@ def inspect(connection: sqlite3.Connection, schema_version: int) -> dict[str, An
     connection.execute("BEGIN")
     event_count = projected_count = expected_count = 0
     missing_count = unexpected_count = malformed_count = structured_count = 0
+    global_first_row_id = global_row_high_water = 0
     missing_samples: list[dict[str, Any]] = []
     unexpected_samples: list[dict[str, Any]] = []
     source_samples: list[dict[str, Any]] = []
@@ -141,6 +142,9 @@ def inspect(connection: sqlite3.Connection, schema_version: int) -> dict[str, An
     )
     for row_id, scope, scope_id, turn_id, payload_text in events:
         event_count += 1
+        if event_count == 1:
+            global_first_row_id = row_id
+        global_row_high_water = row_id
         expected, anomalies = source_links(row_id, scope, scope_id, turn_id, payload_text)
         expected_count += len(expected)
         if anomalies:
@@ -173,14 +177,69 @@ def inspect(connection: sqlite3.Connection, schema_version: int) -> dict[str, An
             if len(unexpected_samples) < SAMPLE_LIMIT:
                 unexpected_samples.append({"scope": kind, "id": subject_id, "event_row_id": row_id})
 
+    # A deleted canonical row can also delete its subject links. The source /
+    # index comparison above would then report a false clean bill of health.
+    # Since unpruned primary scopes assign seq=MAX(seq)+1 from one, separately
+    # inspect every retained per-scope sequence in index order. This is an
+    # immutable snapshot witness, NOT a persisted retention high-water mark:
+    # losing a complete tail or an entire scope cannot be inferred from it.
+    scope_count = checked_scope_rows = missing_sequence_slots = 0
+    invalid_sequences = repeated_sequences = 0
+    sequence_samples: list[dict[str, Any]] = []
+    previous_scope: tuple[str, str] | None = None
+    last_seq = 0
+    scoped_events = connection.execute(
+        "SELECT id,scope,scope_id,seq FROM runtime_events "
+        "ORDER BY scope,scope_id,seq"
+    )
+    for row_id, scope, scope_id, seq in scoped_events:
+        checked_scope_rows += 1
+        key = (scope, scope_id)
+        if key != previous_scope:
+            scope_count += 1
+            previous_scope = key
+            last_seq = 0
+        expected_seq = last_seq + 1
+        reason: str | None = None
+        if not isinstance(seq, int) or seq <= 0:
+            invalid_sequences += 1
+            reason = "invalid_sequence"
+        elif seq < expected_seq:
+            repeated_sequences += 1
+            reason = "repeated_sequence"
+        elif seq > expected_seq:
+            missing_sequence_slots += seq - expected_seq
+            reason = "sequence_gap"
+            last_seq = seq
+        else:
+            last_seq = seq
+        if reason and len(sequence_samples) < SAMPLE_LIMIT:
+            sequence_samples.append({
+                "scope": scope, "event_row_id": row_id,
+                "expected_seq": expected_seq, "observed_seq": seq,
+                "reason": reason,
+            })
+
     connection.execute("COMMIT")
-    consistent = not (missing_count or unexpected_count or malformed_count or structured_count)
+    consistent = not (
+        missing_count or unexpected_count or malformed_count or structured_count
+        or missing_sequence_slots or invalid_sequences or repeated_sequences
+        or checked_scope_rows != event_count
+    )
     return {
         "kind": "gooselake_retained_event_subject_audit",
         "inspection_only": True,
         "repair_authorized": False,
         "source_mode": "immutable_read_only",
         "schema_version": schema_version,
+        "observed_high_water": {
+            "first_retained_global_row_id": global_first_row_id,
+            "last_retained_global_row_id": global_row_high_water,
+            "primary_scope_count": scope_count,
+            "persisted_recovery_safe_row_id": None,
+            "retention_authorized": False,
+            "live_fanout_certified": False,
+        },
         "counts": {
             "canonical_events": event_count,
             "expected_subject_links": expected_count,
@@ -189,17 +248,24 @@ def inspect(connection: sqlite3.Connection, schema_version: int) -> dict[str, An
             "unexpected_subject_links": unexpected_count,
             "malformed_json_sources": malformed_count,
             "nonstring_or_ambiguous_subject_sources": structured_count,
+            "primary_scope_rows_checked": checked_scope_rows,
+            "missing_primary_scope_sequence_slots": missing_sequence_slots,
+            "invalid_primary_scope_sequences": invalid_sequences,
+            "repeated_primary_scope_sequences": repeated_sequences,
         },
         "examples": {
             "missing": missing_samples,
             "unexpected": unexpected_samples,
             "source_anomalies": source_samples,
+            "primary_scope_sequences": sequence_samples,
         },
         "consistent": consistent,
         "note": (
             "An empty discrepancy report is source/index parity for this offline "
-            "snapshot only, not proof of event-family completeness, native effect "
-            "safety, future trigger SQL integrity, or permission to repair/prune."
+            "snapshot only. Observed high-water and primary-scope continuity "
+            "cannot detect a fully missing tail/scope or authorize retention. "
+            "This is not proof of live cross-process SSE fan-out, event-family "
+            "completeness, native effect safety, or permission to repair/prune."
         ),
     }
 

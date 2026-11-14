@@ -82,6 +82,12 @@ class EventSubjectAuditTests(unittest.TestCase):
                 ))
                 self.assertIn("PRIMARY KEY", plan, plan)
                 self.assertNotIn("USE TEMP B-TREE", plan)
+                continuity_plan = " ".join(row[3] for row in db.execute(
+                    "EXPLAIN QUERY PLAN SELECT id,scope,scope_id,seq "
+                    "FROM runtime_events ORDER BY scope,scope_id,seq"
+                ))
+                self.assertIn("idx_runtime_events_scope_seq", continuity_plan)
+                self.assertNotIn("USE TEMP B-TREE", continuity_plan)
             original = digest(path)
             result = run_audit(path)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -91,11 +97,88 @@ class EventSubjectAuditTests(unittest.TestCase):
             self.assertGreater(report["counts"]["stored_subject_links"], 2_600)
             self.assertEqual(report["counts"]["missing_subject_links"], 0)
             self.assertEqual(report["counts"]["unexpected_subject_links"], 0)
+            self.assertEqual(report["counts"]["primary_scope_rows_checked"], 2_600)
+            self.assertEqual(report["counts"]["missing_primary_scope_sequence_slots"], 0)
+            self.assertEqual(report["counts"]["invalid_primary_scope_sequences"], 0)
+            self.assertEqual(report["observed_high_water"]["last_retained_global_row_id"], 2_600)
+            self.assertEqual(report["observed_high_water"]["first_retained_global_row_id"], 1)
+            self.assertEqual(report["observed_high_water"]["primary_scope_count"], 6)
+            self.assertIsNone(report["observed_high_water"]["persisted_recovery_safe_row_id"])
+            self.assertFalse(report["observed_high_water"]["retention_authorized"])
+            self.assertFalse(report["observed_high_water"]["live_fanout_certified"])
             self.assertTrue(report["consistent"])
             self.assertTrue(report["inspection_only"])
             self.assertFalse(report["repair_authorized"])
             self.assertEqual(digest(path), original)
             self.assertEqual(sorted(p.name for p in Path(root).iterdir()), [path.name])
+
+    def test_cascaded_source_deletion_leaves_subject_parity_but_flags_scope_gap(self) -> None:
+        # Deletes with FK cascades remove every derived subject link. A
+        # subject-only audit previously returned green for this lost event.
+        for deleted_id in (1, 7):
+            with self.subTest(deleted_id=deleted_id), tempfile.TemporaryDirectory(
+                prefix="gg-event-audit-gap-"
+            ) as root:
+                path = Path(root) / "checkpoint.sqlite3"
+                create_snapshot(path, 30)
+                with sqlite3.connect(path) as db:
+                    db.execute("PRAGMA foreign_keys=ON")
+                    db.execute("DELETE FROM runtime_events WHERE id=?", (deleted_id,))
+                    self.assertEqual(db.execute(
+                        "SELECT COUNT(*) FROM runtime_event_subjects s "
+                        "LEFT JOIN runtime_events e ON e.id=s.event_row_id "
+                        "WHERE e.id IS NULL"
+                    ).fetchone()[0], 0)
+                original = digest(path)
+                result = run_audit(path)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(report["counts"]["missing_subject_links"], 0)
+                self.assertEqual(report["counts"]["unexpected_subject_links"], 0)
+                self.assertEqual(report["counts"]["canonical_events"], 29)
+                self.assertEqual(report["counts"]["missing_primary_scope_sequence_slots"], 1)
+                self.assertEqual(report["examples"]["primary_scope_sequences"][0]["reason"],
+                                 "sequence_gap")
+                self.assertEqual(report["observed_high_water"]["last_retained_global_row_id"], 30)
+                self.assertFalse(report["consistent"])
+                self.assertEqual(digest(path), original)
+
+    def test_invalid_primary_scope_seq_is_not_certified_as_consistent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gg-event-audit-seq-") as root:
+            path = Path(root) / "checkpoint.sqlite3"
+            create_snapshot(path, 6)
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at) "
+                    "VALUES ('invalid_seq','workspace','workspace_fixture',0,'test.invalid',1,'{}',99)"
+                )
+            before = digest(path)
+            result = run_audit(path)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["counts"]["invalid_primary_scope_sequences"], 1)
+            self.assertEqual(report["counts"]["missing_subject_links"], 0)
+            self.assertEqual(report["counts"]["unexpected_subject_links"], 0)
+            self.assertEqual(report["observed_high_water"]["last_retained_global_row_id"], 7)
+            self.assertEqual(digest(path), before)
+
+    def test_missing_entire_tail_cannot_authorize_retention_from_observed_high_water(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="gg-event-audit-tail-limit-") as root:
+            path = Path(root) / "checkpoint.sqlite3"
+            create_snapshot(path, 6)
+            with sqlite3.connect(path) as db:
+                db.execute("PRAGMA foreign_keys=ON")
+                db.execute("DELETE FROM runtime_events WHERE id=6")
+            before = digest(path)
+            result = run_audit(path)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertTrue(report["consistent"])
+            self.assertEqual(report["observed_high_water"]["last_retained_global_row_id"], 5)
+            self.assertIsNone(report["observed_high_water"]["persisted_recovery_safe_row_id"])
+            self.assertFalse(report["observed_high_water"]["retention_authorized"])
+            self.assertFalse(report["observed_high_water"]["live_fanout_certified"])
+            self.assertEqual(digest(path), before)
 
     def test_missing_and_forged_subject_links_are_both_reported_without_repair(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-event-audit-corrupt-") as root:

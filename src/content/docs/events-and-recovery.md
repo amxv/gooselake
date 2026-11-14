@@ -48,14 +48,21 @@ databases need independent, offline inspection before any repair.
 For an **isolated, consistently checkpointed offline SQLite copy**, use
 `python3 scripts/audit-event-subjects.py --snapshot /path/to/offline-copy.sqlite3`
 to compare retained canonical rows against stored subject links. The audit
-reports missing, unexpected, and malformed/structured-ID evidence without
+reports missing, unexpected, and malformed/structured-ID evidence, plus a
+separate indexed primary-scope sequence-continuity check, without
 writing to the database or fabricating a historical event. It refuses SQLite
 WAL/journal sidecars, symlink paths, or a projection schema that differs from
 the checked-out migration 27 source; exit 1 reports discrepancies, exit 2
 refuses an unsafe or unsupported snapshot. A clean audit certifies **only**
-source/index parity and the installed schema definition in that copy, not
-completeness of event publication, native effect settlement, future live
-database integrity or safe pruning.
+source/index parity, contiguous *retained* per-primary-scope sequences starting
+at one, and the installed schema definition in that copy. The report includes
+the **observed** first/last global row IDs and count of primary scopes but
+deliberately returns `persisted_recovery_safe_row_id: null` and
+`retention_authorized: false`: a consistent snapshot cannot reveal a missing
+entire scope or tail, establish a recovery-safe persisted high-water mark, or
+authorize pruning. This offline SQLite inspection also does **not** verify
+live or cross-process SSE notification fan-out, completeness of event-family
+publication, native effect settlement, or future live database integrity.
 
 ## Operator history vs live replay
 

@@ -82,8 +82,24 @@ pub(super) async fn comms_diagnostics(
 pub(super) async fn process_diagnostics(
     State(state): State<AppState>,
 ) -> Result<Json<ProcessDiagnosticsResponse>, ApiError> {
+    // This endpoint only needs two counters. Do not hydrate the entire runtime
+    // (or deserialize every managed process) on SQLite-backed installations.
+    if let Some(status_counts) = state.app.services.store.managed_process_status_counts()? {
+        return Ok(Json(ProcessDiagnosticsResponse::from_status_counts(
+            status_counts,
+        )));
+    }
     let (_, processes, _, _) = diagnostics_from_hydrated_state(&state)?;
     Ok(Json(processes))
+}
+
+impl ProcessDiagnosticsResponse {
+    fn from_status_counts(process_status_counts: BTreeMap<String, usize>) -> Self {
+        Self {
+            process_total: process_status_counts.values().sum(),
+            process_status_counts,
+        }
+    }
 }
 
 pub(super) async fn worktree_diagnostics(
@@ -164,31 +180,28 @@ pub(super) fn diagnostics_from_hydrated_state(
         delivery_status_counts,
     };
 
-    let managed_processes = match state.app.services.store.list_managed_processes() {
-        Ok(rows) => Some(rows),
-        Err(runtime_core::RuntimeError::Unsupported(_)) => None,
-        Err(error) => return Err(ApiError::from(error)),
-    };
-    let mut process_status_counts = BTreeMap::<String, usize>::new();
-    let process_total = if let Some(managed_processes) = managed_processes.as_ref() {
-        for process in managed_processes {
-            *process_status_counts
-                .entry(process.status.clone())
-                .or_insert(0) += 1;
-        }
-        managed_processes.len()
-    } else {
-        for process in &hydrated.processes {
-            *process_status_counts
-                .entry(process.status.clone())
-                .or_insert(0) += 1;
-        }
-        hydrated.processes.len()
-    };
-    let processes = ProcessDiagnosticsResponse {
-        process_total,
-        process_status_counts,
-    };
+    let (process_status_counts, include_legacy_process_anomalies) =
+        if let Some(counts) = state.app.services.store.managed_process_status_counts()? {
+            (counts, false)
+        } else {
+            let managed_processes = match state.app.services.store.list_managed_processes() {
+                Ok(rows) => Some(rows),
+                Err(runtime_core::RuntimeError::Unsupported(_)) => None,
+                Err(error) => return Err(ApiError::from(error)),
+            };
+            let mut counts = BTreeMap::<String, usize>::new();
+            if let Some(managed) = &managed_processes {
+                for process in managed {
+                    *counts.entry(process.status.clone()).or_insert(0) += 1;
+                }
+            } else {
+                for process in &hydrated.processes {
+                    *counts.entry(process.status.clone()).or_insert(0) += 1;
+                }
+            }
+            (counts, managed_processes.is_none())
+        };
+    let processes = ProcessDiagnosticsResponse::from_status_counts(process_status_counts);
 
     let mut deletion_policy_counts = BTreeMap::<String, usize>::new();
     for worktree in &hydrated.managed_worktrees {
@@ -230,7 +243,7 @@ pub(super) fn diagnostics_from_hydrated_state(
 
     let recovery = RecoveryDiagnosticsResponse {
         startup: (*state.startup_recovery).clone(),
-        active_anomalies: collect_recovery_anomalies(&hydrated, managed_processes.is_none()),
+        active_anomalies: collect_recovery_anomalies(&hydrated, include_legacy_process_anomalies),
     };
     Ok((comms, processes, worktrees, recovery))
 }

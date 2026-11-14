@@ -39,6 +39,8 @@ mod operator_restore_store_trait;
 mod operator_turn_models;
 #[path = "services_operator_turn_store_trait.rs"]
 mod operator_turn_store_trait;
+#[path = "services_process_diagnostics_trait.rs"]
+mod process_diagnostics_trait;
 use crate::{
     AgentDeliveryRecord, AgentMessageRecord, AgentToolMutationAdmission, AgentToolMutationCommand,
     ApprovalRecord, CompactionObservationReceipt, CompactionTransitionReceipt,
@@ -822,17 +824,7 @@ pub trait RuntimeStore:
     ) -> Result<ManagedProcessRecord, RuntimeError> {
         unsupported_store("managed-process admission authority unavailable")
     }
-    fn list_managed_processes(&self) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
-        unsupported_store("managed-process authority is not implemented by this runtime store")
-    }
-    fn list_managed_processes_page(
-        &self,
-        _workspace_id: Option<&str>,
-        _cursor: Option<(i64, String)>,
-        _limit: usize,
-    ) -> Result<Vec<crate::OperatorProcessSummary>, RuntimeError> {
-        unsupported_store("indexed operator process history unavailable")
-    }
+    process_diagnostics_trait::default_managed_process_reads!();
     fn get_managed_process(
         &self,
         _process_id: &str,

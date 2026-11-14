@@ -796,6 +796,11 @@ impl RuntimeStore for SqliteRuntimeStore {
     fn list_managed_processes(&self) -> Result<Vec<ManagedProcessRecord>, RuntimeError> {
         self.repository.list_managed_processes()
     }
+    fn managed_process_status_counts(
+        &self,
+    ) -> Result<Option<std::collections::BTreeMap<String, usize>>, RuntimeError> {
+        self.repository.managed_process_status_counts().map(Some)
+    }
     fn list_managed_processes_page(
         &self,
         workspace_id: Option<&str>,

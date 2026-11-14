@@ -134,6 +134,30 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed decoding managed processes", error))
     }
 
+    /// A single SQLite read snapshot and covering status-leading index avoid
+    /// materializing every process command, path, log field and JSON value.
+    pub fn managed_process_status_counts(&self) -> Result<BTreeMap<String, usize>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        let mut statement = connection
+            .prepare("SELECT status, COUNT(*) FROM managed_processes GROUP BY status")
+            .map_err(|error| db_error("failed preparing managed-process status counts", error))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|error| db_error("failed querying managed-process status counts", error))?;
+        let mut counts = BTreeMap::new();
+        for row in rows {
+            let (status, count) = row
+                .map_err(|error| db_error("failed reading managed-process status count", error))?;
+            let count = usize::try_from(count).map_err(|_| {
+                RuntimeError::Bootstrap("invalid managed-process status count".into())
+            })?;
+            counts.insert(status, count);
+        }
+        Ok(counts)
+    }
+
     /// Operator history is deliberately a small projection instead of a full
     /// process scan that deserializes commands and log/OS diagnostic fields.
     /// Two query shapes allow each scope to use its own descending page index.

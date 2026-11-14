@@ -145,6 +145,12 @@ Top-level groups:
 - Workspace authority: durable workspace registration, nullable/revisioned lead authority, workspace-wide turn interruption, workspace-owned agent create/list/get/archive/restore, managed-worktree inventory and guarded reassignment, legacy-authority migration, and operation inspection under `/v2`
 - Agent messaging: agent-first direct messages across workspaces plus workspace-local broadcasts, delivery inspection, retry, and cancellation under `/v2`
 - Runtime/meta: health, version, OpenAPI, diagnostics
+- The legacy operator `GET /v1/diagnostics/processes` response remains an
+  aggregate (`process_total`, `process_status_counts`), not process detail.
+  SQLite computes it from a single covering-index grouped read rather than
+  hydrating every runtime record and managed-process command. The combined
+  diagnostics route preserves its other hydrated recovery/comms/worktree
+  projections; neither endpoint exposes process payloads through these counts.
 - Providers/auth: legacy provider list/models/auth plus v2 capability, model-discovery, and skill-discovery endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
 - Global events: replay and stream

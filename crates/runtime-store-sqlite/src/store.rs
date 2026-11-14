@@ -784,6 +784,7 @@ impl RuntimeStore for SqliteRuntimeStore {
     }
 
     crate::store_worktree_status::delegate_worktree_status!();
+    crate::store_worktree_diagnostics::delegate_worktree_diagnostic_reads!();
     fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError> {
         self.repository.upsert_process(record)
     }

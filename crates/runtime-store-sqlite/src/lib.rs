@@ -83,6 +83,7 @@ mod repository_workspace_status_roster;
 mod repository_workspace_worktree_creation;
 mod repository_worktree_claim_events;
 mod repository_worktree_cleanup;
+mod repository_worktree_diagnostics;
 mod repository_worktree_record_events;
 mod repository_worktree_status;
 mod repository_worktree_status_stream;
@@ -102,6 +103,7 @@ mod store_retirement;
 mod store_team_spawn_admission;
 mod store_workspace_status_roster;
 mod store_worktree_creation;
+mod store_worktree_diagnostics;
 mod store_worktree_status;
 
 pub use repository::SqliteRuntimeRepository;

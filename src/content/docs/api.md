@@ -151,6 +151,13 @@ Top-level groups:
   hydrating every runtime record and managed-process command. The combined
   diagnostics route preserves its other hydrated recovery/comms/worktree
   projections; neither endpoint exposes process payloads through these counts.
+- Legacy `GET /v1/diagnostics/worktrees` retains the exact four diagnostic
+  fields (`worktree_total`, `active_claim_total`, `orphaned_claim_total`,
+  `deletion_policy_counts`). SQLite counts deletion policies and active claims,
+  including claims with missing session/worktree parents, in one consistent
+  read snapshot using indexes; it does not deserialize worktree paths or every
+  claim/session. The combined diagnostics endpoint uses these counts too, but
+  still hydrates full state for unrelated comms/recovery anomaly reporting.
 - Providers/auth: legacy provider list/models/auth plus v2 capability, model-discovery, and skill-discovery endpoints
 - Sessions: create/list/get/resume/close, turns, approvals, event replay/stream
 - Global events: replay and stream

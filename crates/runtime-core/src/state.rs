@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -207,6 +208,16 @@ pub struct ManagedWorktreeClaimRecord {
     pub claim_role: String,
     pub created_at: i64,
     pub released_at: Option<i64>,
+}
+
+/// Read-only, bounded diagnostic projection. Never an authority for native
+/// worktree/claim mutation; stores without an aggregate can hydrate instead.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ManagedWorktreeDiagnosticCounts {
+    pub worktree_total: usize,
+    pub active_claim_total: usize,
+    pub orphaned_claim_total: usize,
+    pub deletion_policy_counts: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

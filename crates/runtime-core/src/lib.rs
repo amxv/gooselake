@@ -145,11 +145,11 @@ pub use session_compaction::{
     SessionCompactionRun,
 };
 pub use state::{
-    ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
-    NewRuntimeEvent, OperatorEventSummary, ProcessRecord, RuntimeEventCriticality,
-    RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord,
-    TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord,
-    TeamRecord, TurnRecord,
+    ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeDiagnosticCounts,
+    ManagedWorktreeRecord, NewRuntimeEvent, OperatorEventSummary, ProcessRecord,
+    RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState,
+    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
 pub use team_comms::{RuntimeTeamCommsConfig, RuntimeTeamCommsService};
 pub use team_hooks::{

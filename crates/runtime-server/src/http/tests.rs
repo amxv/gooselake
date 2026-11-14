@@ -107,4 +107,5 @@ mod workspace_worktree_paging_scale;
 mod workspace_worktree_routes;
 mod workspace_worktree_status_projection;
 mod worktree_create_cleanup;
+mod worktree_diagnostics_aggregate;
 mod worktree_existing_smoke;

@@ -105,8 +105,29 @@ impl ProcessDiagnosticsResponse {
 pub(super) async fn worktree_diagnostics(
     State(state): State<AppState>,
 ) -> Result<Json<WorktreeDiagnosticsResponse>, ApiError> {
+    // Diagnostic counts need no paths, branches, or claim/session records on
+    // SQLite. Retain the hydrated fallback for non-SQLite stores.
+    if let Some(counts) = state
+        .app
+        .services
+        .store
+        .managed_worktree_diagnostic_counts()?
+    {
+        return Ok(Json(WorktreeDiagnosticsResponse::from_counts(counts)));
+    }
     let (_, _, worktrees, _) = diagnostics_from_hydrated_state(&state)?;
     Ok(Json(worktrees))
+}
+
+impl WorktreeDiagnosticsResponse {
+    fn from_counts(counts: runtime_core::ManagedWorktreeDiagnosticCounts) -> Self {
+        Self {
+            worktree_total: counts.worktree_total,
+            active_claim_total: counts.active_claim_total,
+            orphaned_claim_total: counts.orphaned_claim_total,
+            deletion_policy_counts: counts.deletion_policy_counts,
+        }
+    }
 }
 
 pub(super) async fn recovery_diagnostics(
@@ -203,6 +224,27 @@ pub(super) fn diagnostics_from_hydrated_state(
         };
     let processes = ProcessDiagnosticsResponse::from_status_counts(process_status_counts);
 
+    let worktrees = if let Some(counts) = state
+        .app
+        .services
+        .store
+        .managed_worktree_diagnostic_counts()?
+    {
+        WorktreeDiagnosticsResponse::from_counts(counts)
+    } else {
+        worktree_diagnostics_from_hydrated_state(&hydrated)
+    };
+
+    let recovery = RecoveryDiagnosticsResponse {
+        startup: (*state.startup_recovery).clone(),
+        active_anomalies: collect_recovery_anomalies(&hydrated, include_legacy_process_anomalies),
+    };
+    Ok((comms, processes, worktrees, recovery))
+}
+
+fn worktree_diagnostics_from_hydrated_state(
+    hydrated: &runtime_core::RuntimeHydratedState,
+) -> WorktreeDiagnosticsResponse {
     let mut deletion_policy_counts = BTreeMap::<String, usize>::new();
     for worktree in &hydrated.managed_worktrees {
         *deletion_policy_counts
@@ -230,7 +272,7 @@ pub(super) fn diagnostics_from_hydrated_state(
         })
         .count();
 
-    let worktrees = WorktreeDiagnosticsResponse {
+    WorktreeDiagnosticsResponse {
         worktree_total: hydrated.managed_worktrees.len(),
         active_claim_total: hydrated
             .managed_worktree_claims
@@ -239,13 +281,7 @@ pub(super) fn diagnostics_from_hydrated_state(
             .count(),
         orphaned_claim_total,
         deletion_policy_counts,
-    };
-
-    let recovery = RecoveryDiagnosticsResponse {
-        startup: (*state.startup_recovery).clone(),
-        active_anomalies: collect_recovery_anomalies(&hydrated, include_legacy_process_anomalies),
-    };
-    Ok((comms, processes, worktrees, recovery))
+    }
 }
 
 pub(super) fn collect_recovery_anomalies(

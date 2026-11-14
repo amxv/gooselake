@@ -41,6 +41,8 @@ mod operator_turn_models;
 mod operator_turn_store_trait;
 #[path = "services_process_diagnostics_trait.rs"]
 mod process_diagnostics_trait;
+#[path = "services_worktree_diagnostics_trait.rs"]
+mod worktree_diagnostics_trait;
 use crate::{
     AgentDeliveryRecord, AgentMessageRecord, AgentToolMutationAdmission, AgentToolMutationCommand,
     ApprovalRecord, CompactionObservationReceipt, CompactionTransitionReceipt,
@@ -825,6 +827,7 @@ pub trait RuntimeStore:
         unsupported_store("managed-process admission authority unavailable")
     }
     process_diagnostics_trait::default_managed_process_reads!();
+    worktree_diagnostics_trait::default_worktree_diagnostic_reads!();
     fn get_managed_process(
         &self,
         _process_id: &str,

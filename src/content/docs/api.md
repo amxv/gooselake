@@ -1322,6 +1322,15 @@ SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.id')
 
 Send a turn:
 
+After a positive native send acknowledgement, ordinary and approved
+pre-dispatch turn sends commit the runtime/native-turn mapping, running
+turn/session state and Critical `turn.started` receipt atomically in SQLite.
+If that local commit fails, the turn remains fenced in `dispatching` for
+recovery review; clients must not replay the potentially executed native send
+to fill a missing event. An exact committed receipt is available through the
+durable event journal. This does not certify every older startup recovery or
+provider callback path.
+
 ```bash
 TURN_JSON=$(curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \

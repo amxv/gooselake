@@ -291,41 +291,11 @@ impl RuntimeSessionManager {
                     return Err(unknown);
                 }
             };
-            self.update_turn_dispatch_authority(
-                resolved.turn_id.as_str(),
-                TurnDispatchState::Dispatched,
-                ack.provider_native_turn_id,
-                None,
-            )
-            .await?;
-            {
-                let mut turns = self.turns.write().await;
-                if let Some(turn) = turns.get_mut(&resolved.turn_id) {
-                    turn.status = "in_progress".to_string();
-                    turn.error = None;
-                    self.store.upsert_turn(turn)?;
-                }
-            }
-            {
-                let mut sessions = self.sessions.write().await;
-                if let Some(session) = sessions.get_mut(session_id) {
-                    session.status = "turn_running".to_string();
-                    session.failure_code = None;
-                    session.failure_message = None;
-                    session.updated_at = now_ms();
-                    self.store.upsert_session(session)?;
-                }
-            }
-            self.append_event(
-                RuntimeEventScope::Session,
+            self.commit_provider_dispatch_started(
                 session_id,
-                Some(session_id),
-                Some(resolved.turn_id.as_str()),
-                "turn.started",
-                RuntimeEventCriticality::Critical,
-                serde_json::json!({
-                    "source": "pre_dispatch_approval.accepted",
-                }),
+                resolved.turn_id.as_str(),
+                ack.provider_native_turn_id,
+                Some("pre_dispatch_approval.accepted"),
             )
             .await?;
             self.spawn_wait_for_turn(

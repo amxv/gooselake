@@ -1,4 +1,6 @@
 use super::*;
+
+mod native_start_mock;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -194,6 +196,8 @@ impl RuntimeStore for TestStore {
         });
         Ok(())
     }
+
+    native_start_mock::mock_native_start_method!();
 
     fn list_turn_admissions(&self) -> Result<Vec<TurnAdmissionRecord>, RuntimeError> {
         Ok(self

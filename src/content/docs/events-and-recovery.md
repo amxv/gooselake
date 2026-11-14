@@ -173,6 +173,17 @@ approval and turn-transition event families retain distinct authority/recovery
 boundaries; this is not a blanket claim that every legacy event source is
 transactionally journaled.
 
+After a **positively acknowledged provider turn send** (including an approved
+pre-dispatch manual request), the canonical native-turn mapping, `dispatched`
+admission, `in_progress` turn, `turn_running` session and deterministic Critical
+`turn.started` receipt commit in **one SQLite transaction**. A failed event
+insert rolls back all three projections. The pre-existing `dispatching` fence
+then remains for restart/operator inspection; a lost acknowledgement of the
+database commit can be reconciled against its stored receipt, never interpreted
+as permission to send the native turn twice. Live broadcast follows commit
+and is not authoritative. This covers normal and approved send acknowledgements;
+other legacy/recovery callbacks have separate acceptance boundaries.
+
 An observed **provider terminal result** (`turn.completed`, `turn.interrupted`,
 or `turn.failed`) now commits the terminal turn, the session's active-turn
 release and transcript update when that turn is still attached, and its

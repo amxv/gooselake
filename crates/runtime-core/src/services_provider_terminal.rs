@@ -1,4 +1,15 @@
-use crate::{ApprovalRecord, RuntimeEventRecord, SessionRecord, TurnRecord};
+use crate::{ApprovalRecord, RuntimeEventRecord, SessionRecord, TurnAdmissionRecord, TurnRecord};
+
+/// One positively acknowledged native turn, its three durable projections and
+/// the same Critical start receipt. This is a post-native observation, not an
+/// authorization to dispatch again after an uncertain return.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderDispatchStartedCommit {
+    pub admission: TurnAdmissionRecord,
+    pub turn: TurnRecord,
+    pub session: SessionRecord,
+    pub event: RuntimeEventRecord,
+}
 
 /// Durable projection of one provider result, returned even if an identical
 /// receipt was committed before a lost response or a process restart.
@@ -41,6 +52,24 @@ pub struct ProviderApprovalFinalization {
 
 macro_rules! provider_terminal_methods {
     () => {
+        /// Commit a positive native send acknowledgement, canonical dispatch
+        /// mapping, running turn/session and Critical turn.started together.
+        /// A failed receipt leaves `dispatching` fenced for restart review.
+        fn commit_provider_turn_started(
+            &self,
+            _before_admission: &crate::TurnAdmissionRecord,
+            _after_admission: &crate::TurnAdmissionRecord,
+            _before_turn: &crate::TurnRecord,
+            _after_turn: &crate::TurnRecord,
+            _before_session: &crate::SessionRecord,
+            _after_session: &crate::SessionRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<crate::ProviderDispatchStartedCommit, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic provider dispatch start and Critical journal unavailable".into(),
+            ))
+        }
+
         /// Atomically commit an already-observed provider terminal turn,
         /// attached session update and critical journal receipt. Never
         /// interpret a lost response as permission to resend native work.

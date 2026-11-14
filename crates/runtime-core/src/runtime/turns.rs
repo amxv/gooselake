@@ -483,39 +483,15 @@ impl RuntimeSessionManager {
             }
         };
 
-        self.update_turn_dispatch_authority(
-            turn_id.as_str(),
-            TurnDispatchState::Dispatched,
-            ack.provider_native_turn_id.clone(),
-            None,
-        )
-        .await?;
-
-        {
-            let mut turns = self.turns.write().await;
-            let turn = turns
-                .get_mut(&turn_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
-            turn.status = "in_progress".to_string();
-            self.store.upsert_turn(turn)?;
-        }
-        {
-            let mut sessions = self.sessions.write().await;
-            let session = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
-            session.status = "turn_running".to_string();
-            session.updated_at = now_ms();
-            self.store.upsert_session(session)?;
-        }
-        self.append_event(
-            RuntimeEventScope::Session,
+        // Native send has already succeeded: all three durable projections
+        // and their Critical start receipt must commit together. On failure
+        // leave the original dispatching fence for restart/inspection; never
+        // resend the accepted native turn to recover a missing receipt.
+        self.commit_provider_dispatch_started(
             session_id,
-            Some(session_id),
-            Some(turn_id.as_str()),
-            "turn.started",
-            RuntimeEventCriticality::Critical,
-            serde_json::json!({}),
+            turn_id.as_str(),
+            ack.provider_native_turn_id,
+            None,
         )
         .await?;
         self.spawn_wait_for_turn(

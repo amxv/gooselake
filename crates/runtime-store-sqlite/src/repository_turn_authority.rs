@@ -694,7 +694,9 @@ fn admission_params(
     Ok(rusqlite::params_from_iter(values))
 }
 
-fn turn_admission_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TurnAdmissionRecord> {
+pub(crate) fn turn_admission_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<TurnAdmissionRecord> {
     let projection_source: String = row.get(3)?;
     let dispatch_state: String = row.get(7)?;
     let dispatch_error_json: Option<String> = row.get(9)?;

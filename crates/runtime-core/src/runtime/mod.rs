@@ -27,6 +27,7 @@ mod operator_agent_restore;
 mod operator_native_policy;
 mod recovery;
 mod sessions;
+mod turn_dispatch_start;
 mod turn_dispatch_transitions;
 mod turn_interrupt;
 mod turn_queries;

@@ -1,5 +1,26 @@
 macro_rules! delegate_provider_event_methods {
     () => {
+        fn commit_provider_turn_started(
+            &self,
+            before_admission: &TurnAdmissionRecord,
+            after_admission: &TurnAdmissionRecord,
+            before_turn: &TurnRecord,
+            after_turn: &TurnRecord,
+            before_session: &SessionRecord,
+            after_session: &SessionRecord,
+            event: &NewRuntimeEvent,
+        ) -> Result<runtime_core::ProviderDispatchStartedCommit, RuntimeError> {
+            self.repository.commit_provider_turn_started(
+                before_admission,
+                after_admission,
+                before_turn,
+                after_turn,
+                before_session,
+                after_session,
+                event,
+            )
+        }
+
         fn commit_provider_turn_result(
             &self,
             previous_turn: &runtime_core::TurnRecord,

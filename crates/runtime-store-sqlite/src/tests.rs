@@ -35,6 +35,7 @@ mod legacy_team_messages;
 mod operator_event_pages;
 mod operator_process_pages;
 mod pre_dispatch_decline;
+mod process_admission_order_scale;
 mod process_completion_authority;
 mod process_diagnostics_scale;
 mod process_lifecycle_events;

@@ -129,6 +129,23 @@ macro_rules! provider_terminal_methods {
             ))
         }
 
+        /// An already-terminal turn's contradictory late native observation
+        /// may fail its *still-unowned* session, but only with a durable,
+        /// turn-bound Critical receipt in the same compare-and-swap commit.
+        /// Never let a stale manager overwrite a newer session owner.
+        fn commit_provider_terminal_conflict(
+            &self,
+            _previous_turn: &crate::TurnRecord,
+            _previous_session: &crate::SessionRecord,
+            _failed_session: &crate::SessionRecord,
+            _event: &crate::NewRuntimeEvent,
+        ) -> Result<(crate::SessionRecord, Option<crate::RuntimeEventRecord>), crate::RuntimeError>
+        {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic terminal conflict and Critical receipt unavailable".into(),
+            ))
+        }
+
         /// An unsuccessful provider wait or lost native event stream is
         /// observed *after* a potentially dispatched turn. Its guarded turn
         /// and session projections must commit together with the critical

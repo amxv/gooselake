@@ -8,6 +8,18 @@ summary: "How Gooselake remembers what happened and comes back after restarts."
 
 Events are the runtime's flight recorder. They let a client reconnect, rebuild context, and explain what happened even if the original UI tab disappeared.
 
+For a contradictory **late** native terminal callback on an already-terminal
+turn, an idle session's `terminal_conflict` failure now commits with one
+Critical `provider.terminal_conflict` receipt in the **same guarded SQLite
+transaction**. A failed receipt write leaves the durable session unchanged;
+replaying the same observation cannot publish another live notification.
+The transaction verifies the original terminal turn and current session owner,
+so a different manager's newly attached or closed session cannot be overwritten
+by an obsolete callback. Existing `provider.late_turn_outcome` observations
+for newer active owners or closed sessions remain state-preserving; neither
+path proves provider-native exactly-once execution. Historical turns lacking
+independent terminal receipts are not retroactively certified.
+
 ## Event scopes
 
 Runtime events are scoped. A scope is the logbook a record belongs to.

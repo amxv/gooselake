@@ -41,6 +41,7 @@ mod provider_dispatch_outcome;
 mod provider_dispatch_started;
 mod provider_failure_events;
 mod provider_native_approval_events;
+mod provider_terminal_conflict;
 mod provider_terminal_events;
 mod session_lifecycle_events;
 mod team_operation_journal_scale;

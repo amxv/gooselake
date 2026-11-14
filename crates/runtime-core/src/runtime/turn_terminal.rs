@@ -245,13 +245,45 @@ impl RuntimeSessionManager {
                 .await?;
                 return Err(RuntimeError::ProtocolViolation(conflict));
             }
-            if let Some(mut session) = sessions.get(&turn.session_id).cloned() {
-                session.status = "failed".into();
-                session.failure_code = Some("terminal_conflict".into());
-                session.failure_message = Some(conflict.clone());
-                session.updated_at = now_ms();
-                self.store.upsert_session(&session)?;
-                sessions.insert(session.id.clone(), session);
+            let original_session = sessions
+                .get(&turn.session_id)
+                .cloned()
+                .ok_or_else(|| RuntimeError::NotFound(format!("session {}", turn.session_id)))?;
+            let mut failed_session = original_session.clone();
+            failed_session.status = "failed".into();
+            failed_session.failure_code = Some("terminal_conflict".into());
+            failed_session.failure_message = Some(conflict.clone());
+            failed_session.updated_at = now_ms().max(original_session.updated_at);
+            let event = NewRuntimeEvent {
+                event_id: format!("evt_turn_{}_terminal_conflict", turn.id),
+                scope: RuntimeEventScope::Session,
+                scope_id: turn.session_id.clone(),
+                session_id: Some(turn.session_id.clone()),
+                team_id: None,
+                turn_id: Some(turn.id.clone()),
+                kind: "provider.terminal_conflict".into(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload: serde_json::json!({
+                    "stored_status": turn.status,
+                    "status": result.status.as_str(),
+                    "reason": "idle_terminal_conflict",
+                    "state_preserved": false,
+                }),
+                provider: None,
+                provider_seq: None,
+                created_at: failed_session.updated_at,
+            };
+            let (committed_session, receipt) = self.store.commit_provider_terminal_conflict(
+                &turn,
+                &original_session,
+                &failed_session,
+                &event,
+            )?;
+            sessions.insert(committed_session.id.clone(), committed_session);
+            drop(sessions);
+            drop(turns);
+            if let Some(receipt) = receipt {
+                let _ = self.event_tx.send(receipt);
             }
             return Err(RuntimeError::ProtocolViolation(conflict));
         }

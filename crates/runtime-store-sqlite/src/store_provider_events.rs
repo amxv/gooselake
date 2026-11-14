@@ -86,6 +86,27 @@ macro_rules! delegate_provider_event_methods {
             )
         }
 
+        fn commit_provider_terminal_conflict(
+            &self,
+            previous_turn: &runtime_core::TurnRecord,
+            previous_session: &runtime_core::SessionRecord,
+            failed_session: &runtime_core::SessionRecord,
+            event: &runtime_core::NewRuntimeEvent,
+        ) -> Result<
+            (
+                runtime_core::SessionRecord,
+                Option<runtime_core::RuntimeEventRecord>,
+            ),
+            runtime_core::RuntimeError,
+        > {
+            self.repository.commit_provider_terminal_conflict(
+                previous_turn,
+                previous_session,
+                failed_session,
+                event,
+            )
+        }
+
         fn commit_provider_failure_result(
             &self,
             previous_turn: &runtime_core::TurnRecord,

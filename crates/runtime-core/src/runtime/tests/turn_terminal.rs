@@ -365,6 +365,93 @@ async fn conflicting_late_terminal_callback_cannot_fail_an_already_closed_sessio
 }
 
 #[tokio::test]
+async fn idle_terminal_conflict_requires_critical_receipt_before_cache_or_persisted_failure() {
+    let (manager, store, mut session, mut turn) = fixture(false).await;
+    turn.status = "completed".into();
+    turn.completed_at = Some(20);
+    session.status = "ready".into();
+    session.active_turn_id = None;
+    store.upsert_turn(&turn).unwrap();
+    store.upsert_session(&session).unwrap();
+    manager
+        .turns
+        .write()
+        .await
+        .insert(turn.id.clone(), turn.clone());
+    manager
+        .sessions
+        .write()
+        .await
+        .insert(session.id.clone(), session.clone());
+
+    let contradictory = || ProviderTurnResult {
+        runtime_session_id: session.id.clone(),
+        turn_id: turn.id.clone(),
+        status: ProviderTurnStatus::Failed,
+        usage: None,
+        error: None,
+    };
+    *store.fail_next_event_append_for_kind.lock().unwrap() =
+        Some("provider.terminal_conflict".into());
+    assert!(matches!(
+        manager.apply_terminal_result(contradictory()).await,
+        Err(RuntimeError::Io(_))
+    ));
+    assert_eq!(manager.get_session(&session.id).await.unwrap(), session);
+    assert_eq!(store.sessions.lock().unwrap()[&session.id], session);
+    assert_eq!(manager.turns.read().await[&turn.id], turn);
+    assert_eq!(store.turns.lock().unwrap()[&turn.id], turn);
+    assert!(store
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|row| row.kind != "provider.terminal_conflict"));
+
+    assert!(matches!(
+        manager.apply_terminal_result(contradictory()).await,
+        Err(RuntimeError::ProtocolViolation(_))
+    ));
+    let failed = manager.get_session(&session.id).await.unwrap();
+    assert_eq!(failed.status, "failed");
+    assert_eq!(failed.failure_code.as_deref(), Some("terminal_conflict"));
+    assert_eq!(store.sessions.lock().unwrap()[&session.id], failed);
+    assert_eq!(manager.turns.read().await[&turn.id], turn);
+    let receipts = store.events.lock().unwrap();
+    let conflict_receipts: Vec<_> = receipts
+        .iter()
+        .filter(|event| event.kind == "provider.terminal_conflict")
+        .collect();
+    assert_eq!(conflict_receipts.len(), 1);
+    assert_eq!(
+        conflict_receipts[0].criticality,
+        RuntimeEventCriticality::Critical
+    );
+    assert_eq!(conflict_receipts[0].payload["stored_status"], "completed");
+    assert_eq!(conflict_receipts[0].payload["status"], "failed");
+    drop(receipts);
+
+    // An identical late observation is still an error, but never generates a
+    // second durable receipt or another live event notification.
+    let mut notifications = manager.event_tx.subscribe();
+    assert!(matches!(
+        manager.apply_terminal_result(contradictory()).await,
+        Err(RuntimeError::ProtocolViolation(_))
+    ));
+    assert_eq!(
+        store
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event.kind == "provider.terminal_conflict")
+            .count(),
+        1
+    );
+    assert!(notifications.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn late_native_callbacks_preserve_operator_closure_after_restore_and_new_work() {
     let (manager, store, mut session, turn) = fixture(true).await;
     for lifecycle in ["closed", "ready", "turn_running"] {

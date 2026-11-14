@@ -48,12 +48,15 @@ mod native_decision;
 mod pre_dispatch_decline;
 #[path = "test_support_session_lifecycle.rs"]
 mod session_lifecycle;
+#[path = "test_support_terminal_conflict.rs"]
+mod terminal_conflict;
 
 impl crate::WorkspaceWorktreeCreationStore for MockStore {}
 impl crate::OperatorUserTurnStore for MockStore {}
 
 #[async_trait]
 impl RuntimeStore for MockStore {
+    terminal_conflict::mock_terminal_conflict_methods!();
     async fn initialize(&self) -> Result<(), RuntimeError> {
         Ok(())
     }

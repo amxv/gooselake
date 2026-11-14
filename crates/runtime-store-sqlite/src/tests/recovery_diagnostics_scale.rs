@@ -297,7 +297,8 @@ fn recovery_indexes_upgrade_from_previous_schema_without_rewriting_history() {
          DROP INDEX idx_sessions_active_turn_diagnostics;
          DROP INDEX idx_approvals_pending_diagnostics;
          DROP INDEX idx_worktree_claims_active_diagnostics;
-         DELETE FROM schema_migrations WHERE version=39;",
+         DROP INDEX idx_agent_deliveries_message_recipient_created;
+         DELETE FROM schema_migrations WHERE version IN (39,40);",
     )
     .unwrap();
     drop(db);
@@ -313,7 +314,7 @@ fn recovery_indexes_upgrade_from_previous_schema_without_rewriting_history() {
             0
         ))
         .unwrap(),
-        39
+        crate::schema::SCHEMA_VERSION
     );
     for name in [
         "idx_sessions_active_turn_diagnostics",

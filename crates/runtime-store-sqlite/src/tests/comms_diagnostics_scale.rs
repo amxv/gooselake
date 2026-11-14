@@ -188,7 +188,8 @@ fn migration_38_adds_index_without_rewriting_historical_legacy_delivery() {
          DROP INDEX idx_sessions_active_turn_diagnostics;
          DROP INDEX idx_approvals_pending_diagnostics;
          DROP INDEX idx_worktree_claims_active_diagnostics;
-         DELETE FROM schema_migrations WHERE version IN (38,39);",
+         DROP INDEX idx_agent_deliveries_message_recipient_created;
+         DELETE FROM schema_migrations WHERE version IN (38,39,40);",
     )
     .unwrap();
     drop(db);
@@ -213,6 +214,6 @@ fn migration_38_adds_index_without_rewriting_historical_legacy_delivery() {
             0
         ))
         .unwrap(),
-        39
+        crate::schema::SCHEMA_VERSION
     );
 }

@@ -1295,7 +1295,10 @@ the request is rejected; only the bounded page's JSON inputs are decoded.
 array shape; when another page exists the response includes `X-Next-Cursor`,
 based on stable delivery creation time and ID. The SQLite backend reads these
 pages using the indexed message/time/ID keyset rather than loading every
-delivery of a large broadcast into the HTTP request. Each cursor must match
+delivery of a large broadcast into the HTTP request. When `recipient_agent_id`
+is present, an additional message/recipient/time/ID index seeks directly to
+that recipient's deliveries instead of scanning unrelated broadcast recipients;
+the unfiltered page and response contracts are unchanged. Each cursor must match
 the ID and exact creation time of a delivery in that message and optional
 recipient filter; unknown, changed, or cross-message cursors return HTTP `400`
 instead of skipping deliveries. Delivery state is per recipient

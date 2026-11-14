@@ -157,4 +157,8 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         version: 39,
         sql: include_str!("schema_migration_39.sql"),
     },
+    Migration {
+        version: 40,
+        sql: include_str!("schema_migration_40.sql"),
+    },
 ];

@@ -182,9 +182,19 @@ impl SqliteRuntimeRepository {
         after: Option<(i64, String)>,
         limit: usize,
     ) -> Result<Vec<WorkspaceRecord>, RuntimeError> {
-        let connection = open_connection(&self.database_path)?;
+        if !(1..=101).contains(&limit) {
+            return Err(RuntimeError::InvalidState(
+                "workspace page size must be between 1 and 101".into(),
+            ));
+        }
+        // Cursor membership and page rows must observe the same database
+        // snapshot even if a second writer changes an anchor meanwhile.
+        let mut connection = open_connection(&self.database_path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|error| db_error("failed starting workspace page snapshot", error))?;
         if let Some((created_at, workspace_id)) = after.as_ref() {
-            let anchor: Option<i64> = connection
+            let anchor: Option<i64> = transaction
                 .query_row(
                     "SELECT created_at FROM workspaces WHERE workspace_id=?1",
                     [workspace_id],
@@ -198,24 +208,34 @@ impl SqliteRuntimeRepository {
                 ));
             }
         }
-        let mut statement = connection
-            .prepare(
-                "SELECT workspace_id, canonical_root, display_name, lifecycle_state,
-                    lead_agent_id, revision, created_at, updated_at
-             FROM workspaces
-             WHERE (?1 IS NULL OR created_at > ?1 OR (created_at = ?1 AND workspace_id > ?2))
-             ORDER BY created_at ASC, workspace_id ASC LIMIT ?3",
+        let select = "SELECT workspace_id, canonical_root, display_name, lifecycle_state,
+                    lead_agent_id, revision, created_at, updated_at FROM workspaces";
+        let sql = if after.is_some() {
+            format!(
+                "{select} WHERE (created_at, workspace_id) > (?1, ?2)
+                 ORDER BY created_at ASC, workspace_id ASC LIMIT ?3"
             )
+        } else {
+            format!("{select} ORDER BY created_at ASC, workspace_id ASC LIMIT ?1")
+        };
+        let mut statement = transaction
+            .prepare(&sql)
             .map_err(|error| db_error("failed preparing paginated workspace list", error))?;
-        let (timestamp, id) =
-            after.map_or((None, None), |(timestamp, id)| (Some(timestamp), Some(id)));
+        let mut arguments = Vec::<rusqlite::types::Value>::new();
+        if let Some((created_at, workspace_id)) = after {
+            arguments.push(created_at.into());
+            arguments.push(workspace_id.into());
+        }
+        arguments.push(i64::try_from(limit).unwrap_or(i64::MAX).into());
         let rows = statement
-            .query_map(
-                params![timestamp, id, i64::try_from(limit).unwrap_or(i64::MAX)],
-                workspace_from_row,
-            )
+            .query_map(rusqlite::params_from_iter(arguments), workspace_from_row)
             .map_err(|error| db_error("failed listing paginated workspaces", error))?;
-        collect_rows(rows)
+        let page = collect_rows(rows)?;
+        drop(statement);
+        transaction
+            .commit()
+            .map_err(|error| db_error("failed ending workspace page snapshot", error))?;
+        Ok(page)
     }
 
     pub fn get_workspace(

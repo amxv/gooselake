@@ -48,6 +48,7 @@ mod team_operation_journal_scale;
 mod team_spawn_onboarding_scale;
 mod workspace_active_route_pages;
 mod workspace_agent_lifecycle_native_fences;
+mod workspace_collection_pages;
 mod workspace_notice_policy_idempotency;
 mod workspace_retirement;
 mod workspace_retirement_deliveries;

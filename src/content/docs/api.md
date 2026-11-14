@@ -366,6 +366,13 @@ the exact creation timestamp and ID of a currently existing workspace;
 fabricated or removed anchors return HTTP 400 rather than silently skipping
 the collection. Workspace-agent lists also accept
 `lifecycle=active|archived|all` independently from pagination.
+Workspace lists seek a persisted creation-order index, while agent lists use
+workspace/lifecycle creation indexes (including mixed active and archived
+agents with `lifecycle=all`), rather than sorting the full roster for each
+page. Cursor membership and returned rows are checked in the **same SQLite
+read snapshot per request**. Separate page requests are not a frozen
+multi-request snapshot: concurrent additions or lifecycle transitions can
+change what a later page observes.
 
 Read the durable state:
 

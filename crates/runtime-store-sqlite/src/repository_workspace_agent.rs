@@ -501,12 +501,21 @@ impl SqliteRuntimeRepository {
         after: Option<(i64, String)>,
         limit: usize,
     ) -> Result<Vec<WorkspaceAgentRecord>, RuntimeError> {
-        let connection = open_connection(&self.database_path)?;
+        if !(1..=101).contains(&limit) {
+            return Err(RuntimeError::InvalidState(
+                "workspace agent page size must be between 1 and 101".into(),
+            ));
+        }
+        let mut connection = open_connection(&self.database_path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|error| db_error("failed starting workspace agent page snapshot", error))?;
         // A timestamp/id tuple is a continuation token, not an arbitrary
         // offset. Check the exact anchor belongs to this workspace and its
         // selected lifecycle before allowing it to advance the keyset.
+        // The validation and rows share one SQLite read snapshot.
         if let Some((created_at, agent_id)) = after.as_ref() {
-            let belongs: bool = connection
+            let belongs: bool = transaction
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM workspace_agents
                      WHERE session_id=?1 AND workspace_id=?2 AND created_at=?3
@@ -528,31 +537,45 @@ impl SqliteRuntimeRepository {
                 ));
             }
         }
-        let query = format!(
-            "{AGENT_SELECT} WHERE a.workspace_id = ?1
-             AND (?2 IS NULL OR a.lifecycle_state = ?2)
-             AND (?3 IS NULL OR a.created_at > ?3 OR
-                (a.created_at = ?3 AND a.session_id > ?4))
-             ORDER BY a.created_at ASC, a.session_id ASC LIMIT ?5"
-        );
-        let mut statement = connection
+        // Explicit shapes let SQLite seek the lifecycle-specific creation
+        // index, or the global workspace creation index for lifecycle=all.
+        // Optional NULL/OR predicates here made the indexed source re-sort
+        // an entire mixed-lifecycle roster for each small page.
+        let mut arguments = vec![rusqlite::types::Value::Text(workspace_id.to_owned())];
+        let mut query = format!("{AGENT_SELECT} WHERE a.workspace_id = ?1");
+        if let Some(lifecycle) = lifecycle {
+            arguments.push(lifecycle.as_str().to_owned().into());
+            query.push_str(&format!(" AND a.lifecycle_state = ?{}", arguments.len()));
+        }
+        if let Some((timestamp, id)) = after {
+            arguments.push(timestamp.into());
+            let timestamp_arg = arguments.len();
+            arguments.push(id.into());
+            query.push_str(&format!(
+                " AND (a.created_at, a.session_id) > (?{timestamp_arg}, ?{})",
+                arguments.len()
+            ));
+        }
+        arguments.push(i64::try_from(limit).unwrap_or(i64::MAX).into());
+        query.push_str(&format!(
+            " ORDER BY a.created_at ASC, a.session_id ASC LIMIT ?{}",
+            arguments.len()
+        ));
+        let mut statement = transaction
             .prepare(&query)
             .map_err(|error| db_error("failed preparing paginated workspace agent list", error))?;
-        let (timestamp, id) =
-            after.map_or((None, None), |(timestamp, id)| (Some(timestamp), Some(id)));
         let rows = statement
             .query_map(
-                params![
-                    workspace_id,
-                    lifecycle.map(|state| state.as_str()),
-                    timestamp,
-                    id,
-                    i64::try_from(limit).unwrap_or(i64::MAX)
-                ],
+                rusqlite::params_from_iter(arguments),
                 workspace_agent_from_row,
             )
             .map_err(|error| db_error("failed listing paginated workspace agents", error))?;
-        collect_rows(rows)
+        let page = collect_rows(rows)?;
+        drop(statement);
+        transaction
+            .commit()
+            .map_err(|error| db_error("failed ending workspace agent page snapshot", error))?;
+        Ok(page)
     }
 
     pub fn get_workspace_agent(

@@ -2,7 +2,7 @@ use runtime_core::{
     NewRuntimeEvent, ProviderTerminalCommit, RuntimeError, RuntimeEventCriticality,
     RuntimeEventScope, SessionRecord, TurnRecord,
 };
-use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::db::{
     db_error, fetch_runtime_event_by_event_id, json_to_string, open_connection, opt_json_to_string,
@@ -37,8 +37,8 @@ pub(crate) fn read_turn(tx: &Transaction<'_>, id: &str) -> Result<TurnRecord, Ru
     .ok_or_else(|| RuntimeError::NotFound(format!("turn {id}")))
 }
 
-pub(crate) fn read_session(tx: &Transaction<'_>, id: &str) -> Result<SessionRecord, RuntimeError> {
-    tx.query_row(
+pub(crate) fn read_session(db: &Connection, id: &str) -> Result<SessionRecord, RuntimeError> {
+    db.query_row(
         "SELECT id, provider, status, cwd, model, permission_mode, system_prompt,
                 metadata_json, provider_session_ref, canonical_provider_session_ref,
                 active_turn_id, worktree_id, created_at, updated_at, closed_at,

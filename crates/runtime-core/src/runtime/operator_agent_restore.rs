@@ -239,8 +239,9 @@ impl RuntimeSessionManager {
         // Reflect the durable review fence in this live process. Even when
         // replaying an old review, do not leave the in-memory session 'closed'
         // while the authoritative restored agent awaits startup reattachment.
-        let hydrated = self.store.hydrate_runtime_state()?;
-        if let Some(session) = hydrated.sessions.into_iter().find(|row| row.id == agent_id) {
+        // The review receipt has already committed. Refresh only this session
+        // so unrelated malformed persisted payloads cannot mask that result.
+        if let Some(session) = self.store.get_persisted_session(agent_id)? {
             self.sessions
                 .write()
                 .await

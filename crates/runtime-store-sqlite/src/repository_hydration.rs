@@ -7,9 +7,25 @@ use runtime_core::{
 };
 
 use crate::db::{collect_rows, db_error, open_connection, opt_string_to_json, string_to_json};
+use crate::repository_turn_terminal::read_session;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
+    /// Session primary-key projection for post-commit policy review refresh.
+    /// A corrupt unrelated session or historical payload must not turn a
+    /// successfully persisted operator review into an HTTP 500.
+    pub fn get_persisted_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<SessionRecord>, RuntimeError> {
+        let db = open_connection(&self.database_path)?;
+        match read_session(&db, session_id) {
+            Ok(record) => Ok(Some(record)),
+            Err(RuntimeError::NotFound(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn hydrate_runtime_state(&self) -> Result<RuntimeHydratedState, RuntimeError> {
         let connection = open_connection(&self.database_path)?;
 

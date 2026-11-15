@@ -63,10 +63,10 @@ impl RuntimeSessionManager {
             reviewed_at: now_ms(),
         };
         let result = self.store.resolve_operator_native_policy_review(&command)?;
-        // The SQL review and resource release are one commit. Refresh the
-        // active projection while still serialized against other native work.
-        let hydrated = self.store.hydrate_runtime_state()?;
-        if let Some(session) = hydrated.sessions.into_iter().find(|row| row.id == agent_id) {
+        // The SQL review and resource release are one commit. Refresh only
+        // the reviewed session; unrelated corrupt records must not convert a
+        // committed review into a failed HTTP response.
+        if let Some(session) = self.store.get_persisted_session(agent_id)? {
             self.sessions
                 .write()
                 .await

@@ -66,6 +66,62 @@ async fn reopen_runtime(
 }
 
 #[tokio::test]
+async fn archive_review_refresh_ignores_unrelated_corrupt_session() {
+    let (router, token, temp, provider, runtime, agent_id, revision) =
+        operator_policy_fixture().await;
+    let workspace = runtime
+        .get_active_workspace_agent_by_id(&agent_id)
+        .unwrap()
+        .workspace_id;
+    let original = runtime.get_session(&agent_id).await.unwrap();
+    provider.set_archive_close_mode(2);
+    let (status, unknown, _) = archive_http(
+        &router,
+        &token,
+        &workspace,
+        &agent_id,
+        Some("quarantine"),
+        Some("archive-isolated"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{unknown:?}");
+    let operation_id = unknown["error"]["details"]["operation_id"]
+        .as_str()
+        .unwrap();
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "INSERT INTO sessions
+         SELECT 'unrelated_bad_archive_metadata',provider,status,cwd,model,permission_mode,
+                system_prompt,'{invalid-json',provider_session_ref,canonical_provider_session_ref,
+                NULL,worktree_id,created_at,updated_at,closed_at,failure_code,failure_message
+         FROM sessions WHERE id=?1",
+        [&agent_id],
+    )
+    .unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    assert!(store.hydrate_runtime_state().is_err());
+
+    let before = provider.archive_close_count();
+    let uri =
+        format!("/v2/workspaces/{workspace}/agents/{agent_id}/archives/{operation_id}/resolve");
+    let input = review_input(&original, revision, "closed");
+    let (status, first) = call(&router, &token, "POST", &uri, Some(input.clone()), None).await;
+    assert_eq!(status, StatusCode::OK, "{first:?}");
+    assert_eq!(first["resolution"], "closed");
+    assert_eq!(
+        runtime.get_session(&agent_id).await.unwrap().status,
+        "closed"
+    );
+    let (status, repeated) = call(&router, &token, "POST", &uri, Some(input), None).await;
+    assert_eq!(status, StatusCode::OK, "{repeated:?}");
+    assert_eq!(repeated, first);
+    assert_eq!(provider.archive_close_count(), before);
+    assert!(store.hydrate_runtime_state().is_err());
+}
+
+#[tokio::test]
 async fn archive_commits_strong_native_close_once_then_replays_exact_receipt() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;

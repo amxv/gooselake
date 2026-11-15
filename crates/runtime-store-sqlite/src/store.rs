@@ -704,6 +704,8 @@ impl RuntimeStore for SqliteRuntimeStore {
         self.repository.upsert_session(record)
     }
 
+    crate::store_session_lookup::delegate_persisted_session_lookup!();
+
     fn admit_turn(
         &self,
         admission: &TurnAdmissionRecord,

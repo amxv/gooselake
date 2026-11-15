@@ -76,7 +76,6 @@ use crate::{
 use crate::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord};
 pub use operator_turn_models::*;
 pub use operator_turn_store_trait::*;
-
 #[async_trait]
 pub trait RuntimeStore:
     WorkspaceWorktreeCreationStore + OperatorUserTurnStore + Send + Sync
@@ -748,7 +747,7 @@ pub trait RuntimeStore:
         unsupported_store("workspace migration authority is not implemented by this runtime store")
     }
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError>;
-
+    crate::services_session_lookup::default_persisted_session_lookup!();
     fn admit_turn(
         &self,
         _admission: &TurnAdmissionRecord,

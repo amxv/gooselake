@@ -105,6 +105,7 @@ mod store_pagination;
 mod store_provider_events;
 mod store_recovery_diagnostics;
 mod store_retirement;
+mod store_session_lookup;
 mod store_team_spawn_admission;
 mod store_workspace_status_roster;
 mod store_worktree_creation;

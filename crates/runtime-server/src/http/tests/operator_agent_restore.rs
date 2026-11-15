@@ -104,6 +104,57 @@ async fn reopen_runtime(
 }
 
 #[tokio::test]
+async fn restore_review_refresh_ignores_unrelated_corrupt_session() {
+    let (router, token, temp, provider, runtime, workspace, agent_id, revision) =
+        archived_fixture().await;
+    let original = runtime.get_session(&agent_id).await.unwrap();
+    provider.set_restore_failure_mode(2);
+    let (status, unknown, _) = restore_http(
+        &router,
+        &token,
+        &workspace,
+        &agent_id,
+        Some("restore-isolated"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{unknown:?}");
+    let operation_id = unknown["error"]["details"]["operation_id"]
+        .as_str()
+        .unwrap();
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "INSERT INTO sessions
+         SELECT 'unrelated_bad_restore_metadata',provider,status,cwd,model,permission_mode,
+                system_prompt,'{invalid-json',provider_session_ref,canonical_provider_session_ref,
+                NULL,worktree_id,created_at,updated_at,closed_at,failure_code,failure_message
+         FROM sessions WHERE id=?1",
+        [&agent_id],
+    )
+    .unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    assert!(store.hydrate_runtime_state().is_err());
+
+    let baseline = provider.restore_call_count().await;
+    let uri =
+        format!("/v2/workspaces/{workspace}/agents/{agent_id}/restores/{operation_id}/resolve");
+    let input = review_input(&original, revision, "resumed");
+    let (status, first) = call(&router, &token, "POST", &uri, Some(input.clone()), None).await;
+    assert_eq!(status, StatusCode::OK, "{first:?}");
+    assert_eq!(first["resolution"], "resumed");
+    assert_eq!(
+        runtime.get_session(&agent_id).await.unwrap().status,
+        "restore_recovery_required"
+    );
+    let (status, repeated) = call(&router, &token, "POST", &uri, Some(input), None).await;
+    assert_eq!(status, StatusCode::OK, "{repeated:?}");
+    assert_eq!(repeated, first);
+    assert_eq!(provider.restore_call_count().await, baseline);
+    assert!(store.hydrate_runtime_state().is_err());
+}
+
+#[tokio::test]
 async fn operator_restore_key_replays_exact_atomic_roster_receipt_without_native_retry() {
     let (router, token, temp, provider, runtime, workspace, agent_id, revision) =
         archived_fixture().await;

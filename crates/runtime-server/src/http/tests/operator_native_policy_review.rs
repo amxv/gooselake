@@ -113,6 +113,57 @@ fn policy_intent_without_native_dispatch(
 }
 
 #[tokio::test]
+async fn native_policy_review_refresh_is_isolated_from_unrelated_corrupt_session_metadata() {
+    let (router, token, temp, provider, runtime, agent_id, revision) =
+        operator_policy_fixture().await;
+    let agent = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
+    let session = runtime.get_session(&agent_id).await.unwrap();
+    let operation_id = "op_policy_review_isolated_hydration";
+    policy_intent_without_native_dispatch(
+        &temp,
+        &agent_id,
+        &agent,
+        &session,
+        "review-isolated-hydration-key",
+        operation_id,
+    );
+
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "INSERT INTO sessions
+         SELECT 'unrelated_bad_metadata',provider,status,cwd,model,permission_mode,
+                system_prompt,'{invalid-json',provider_session_ref,canonical_provider_session_ref,
+                NULL,worktree_id,created_at,updated_at,closed_at,failure_code,failure_message
+         FROM sessions WHERE id=?1",
+        [&agent_id],
+    )
+    .unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    assert!(store.hydrate_runtime_state().is_err());
+
+    let baseline_native_calls = provider.preferences_mutation_calls();
+    let body = review_body(&runtime, &agent_id, revision, "not_applied").await;
+    let path = format!("/v2/agents/{agent_id}/native-policy/{operation_id}/resolve");
+    let (status, first) = call(&router, &token, "POST", &path, Some(body.clone()), None).await;
+    assert_eq!(status, StatusCode::OK, "{first:?}");
+    assert_eq!(first["resolution"], "not_applied");
+    assert_eq!(
+        runtime.get_session(&agent_id).await.unwrap().status,
+        "policy_recovery_required"
+    );
+    let (status, again) = call(&router, &token, "POST", &path, Some(body), None).await;
+    assert_eq!(status, StatusCode::OK, "{again:?}");
+    assert_eq!(again, first);
+    assert_eq!(provider.preferences_mutation_calls(), baseline_native_calls);
+    assert!(
+        store.hydrate_runtime_state().is_err(),
+        "unrelated row stays corrupt"
+    );
+}
+
+#[tokio::test]
 async fn reviewed_applied_native_policy_commits_once_and_requires_verified_reattachment() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;

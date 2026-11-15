@@ -232,8 +232,9 @@ impl RuntimeSessionManager {
                 reviewed_at: now_ms(),
             },
         )?;
-        let hydrated = self.store.hydrate_runtime_state()?;
-        if let Some(session) = hydrated.sessions.into_iter().find(|row| row.id == agent_id) {
+        // The review receipt has already committed; never hydrate unrelated
+        // rows while refreshing the affected session's recovery projection.
+        if let Some(session) = self.store.get_persisted_session(agent_id)? {
             self.sessions.write().await.insert(agent_id.into(), session);
         }
         Ok(result)

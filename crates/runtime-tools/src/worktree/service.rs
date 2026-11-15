@@ -34,8 +34,13 @@ impl WorktreeService for RuntimeWorktreeService {
 
     async fn get_worktree(&self, worktree_id: &str) -> Result<ManagedWorktreeRecord, RuntimeError> {
         self.ensure_enabled()?;
-        let hydrated = self.store.hydrate_runtime_state()?;
-        self.get_worktree_from_hydrated(worktree_id, &hydrated)
+        // The store already has a primary-key point lookup. A single worktree
+        // read must not hydrate every unrelated session, message, event or
+        // process, nor fail because one of those projections is unreadable.
+        self.store
+            .get_managed_worktree(worktree_id)?
+            .filter(|record| !Self::is_record_tombstoned(record))
+            .ok_or_else(|| RuntimeError::NotFound(format!("worktree {worktree_id}")))
     }
 
     async fn create_worktree(

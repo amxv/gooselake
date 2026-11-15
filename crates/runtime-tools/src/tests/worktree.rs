@@ -1,4 +1,88 @@
 use super::*;
+use runtime_core::WorktreeService;
+
+#[tokio::test]
+async fn get_worktree_reads_only_its_id_despite_unrelated_malformed_session_history() {
+    let temp = tempfile::tempdir().unwrap();
+    let database_path = temp.path().join("runtime.sqlite3");
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: database_path.clone(),
+    }));
+    store.initialize().await.unwrap();
+    let (runtime, comms) = build_runtime_and_team_comms(store.clone()).await;
+    let service = RuntimeWorktreeService::new(
+        store.clone(),
+        runtime,
+        comms,
+        WorktreeServiceConfig {
+            enabled: true,
+            root_dir: temp.path().join("worktrees").display().to_string(),
+            init_script_path: ".agents/gg/worktree-init.sh".into(),
+            deletion_policy_default: "delete_on_last_claim".into(),
+        },
+    )
+    .unwrap();
+
+    let live = ManagedWorktreeRecord {
+        id: "wt_point_read_live".into(),
+        repo_root: "/disposable/repo".into(),
+        worktree_root: "/disposable/worktrees".into(),
+        worktree_cwd: "/disposable/worktrees/live".into(),
+        branch_name: "gg/live".into(),
+        worktree_name: "live".into(),
+        unified_workspace_path: "disposable__repo".into(),
+        deletion_policy: "retain_on_last_claim".into(),
+        created_by_session_id: None,
+        created_by_operation_id: None,
+        created_at: 101,
+        updated_at: 101,
+    };
+    store.upsert_managed_worktree(&live).unwrap();
+    let tombstoned = ManagedWorktreeRecord {
+        id: "wt_point_read_tombstone".into(),
+        repo_root: "__gg_tombstoned__/old_repo".into(),
+        worktree_cwd: "__gg_tombstoned__/old_checkout".into(),
+        branch_name: "__gg_tombstoned__/old_branch".into(),
+        ..live.clone()
+    };
+    store.upsert_managed_worktree(&tombstoned).unwrap();
+
+    // A broken, unrelated session projection can make whole-database
+    // hydration fail. One worktree's indexed primary-key read should not
+    // depend on parsing every session, event, process and delivery.
+    let db = rusqlite::Connection::open(&database_path).unwrap();
+    db.execute(
+        "INSERT INTO sessions (id, provider, status, metadata_json, created_at, updated_at)
+         VALUES ('unrelated_session', 'codex', 'idle', '{malformed', 1, 1)",
+        [],
+    )
+    .unwrap();
+    assert!(store.hydrate_runtime_state().is_err());
+
+    assert_eq!(service.get_worktree(&live.id).await.unwrap(), live);
+    for id in [tombstoned.id.as_str(), "unknown_worktree"] {
+        assert!(
+            matches!(
+                service.get_worktree(id).await,
+                Err(RuntimeError::NotFound(_))
+            ),
+            "missing/tombstoned IDs cannot be made visible by a point-read"
+        );
+    }
+    let plan: String = db
+        .query_row(
+            "EXPLAIN QUERY PLAN
+             SELECT id, repo_root, worktree_root, worktree_cwd, branch_name,
+                    worktree_name, unified_workspace_path, deletion_policy,
+                    created_by_session_id, created_by_operation_id, created_at, updated_at
+             FROM managed_worktrees WHERE id=?1",
+            [&live.id],
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(plan.contains("SEARCH managed_worktrees"), "{plan}");
+    assert!(!plan.contains("SCAN managed_worktrees"), "{plan}");
+}
 
 #[tokio::test]
 async fn startup_repair_normalizes_identity_and_repairs_conflicting_claims() {

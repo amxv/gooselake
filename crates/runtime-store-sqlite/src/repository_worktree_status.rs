@@ -8,6 +8,24 @@ use crate::db::{collect_rows, db_error, open_connection};
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
+    /// Preserve the original full-list chronology while decoding only managed
+    /// worktrees, never unrelated sessions or event-history projections.
+    pub fn list_managed_worktrees(&self) -> Result<Vec<ManagedWorktreeRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, repo_root, worktree_root, worktree_cwd, branch_name,
+                        worktree_name, unified_workspace_path, deletion_policy,
+                        created_by_session_id, created_by_operation_id, created_at, updated_at
+                 FROM managed_worktrees ORDER BY created_at ASC,id ASC",
+            )
+            .map_err(|error| db_error("failed preparing managed worktree inventory", error))?;
+        let rows = statement
+            .query_map([], worktree_from_row)
+            .map_err(|error| db_error("failed querying managed worktree inventory", error))?;
+        collect_rows(rows)
+    }
+
     /// Lightweight legacy session-create checkout preflight. The caller only
     /// needs these two path columns to acquire all matching workspace locks;
     /// unrelated malformed sessions and other historical rows must not mask

@@ -22,9 +22,9 @@ impl WorktreeService for RuntimeWorktreeService {
 
     async fn list_worktrees(&self) -> Result<Vec<ManagedWorktreeRecord>, RuntimeError> {
         self.ensure_enabled()?;
-        let hydrated = self.store.hydrate_runtime_state()?;
-        let mut rows = hydrated
-            .managed_worktrees
+        let mut rows = self
+            .store
+            .list_managed_worktrees()?
             .into_iter()
             .filter(|row| !Self::is_record_tombstoned(row))
             .collect::<Vec<_>>();

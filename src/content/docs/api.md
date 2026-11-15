@@ -1960,6 +1960,12 @@ Important request fields:
 | `run_init_script` | Whether to run configured init script. |
 | `team_id` / `operation_id` | Optional team/spawn traceability fields. |
 
+Authenticated `GET /v1/worktrees` returns the legacy full inventory of
+non-tombstoned managed worktrees, ordered by creation time with stable ID ties.
+SQLite reads that inventory directly from `managed_worktrees`; it does not
+decode unrelated historical sessions or messages. This remains an unpaged
+legacy read, not a source of authority for native cleanup or reassignment.
+
 Claims, release, and cleanup are separate endpoints so ownership can be represented explicitly.
 
 ## Teams and comms

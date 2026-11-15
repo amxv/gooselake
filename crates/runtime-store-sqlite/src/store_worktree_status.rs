@@ -2,6 +2,12 @@
 // the existing RuntimeStore implementation without exceeding file-size limits.
 macro_rules! delegate_worktree_status {
     () => {
+        fn list_managed_worktrees(
+            &self,
+        ) -> Result<Vec<runtime_core::ManagedWorktreeRecord>, runtime_core::RuntimeError> {
+            self.repository.list_managed_worktrees()
+        }
+
         fn upsert_managed_worktree(
             &self,
             record: &runtime_core::ManagedWorktreeRecord,

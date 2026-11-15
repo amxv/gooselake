@@ -112,6 +112,15 @@ pub(crate) use default_worktree_status_page_query;
 // unrelated agents, turns, events, processes and worktrees.
 macro_rules! default_managed_worktree_lookup {
     () => {
+        // Legacy list clients preserve their complete-inventory behavior.
+        // SQLite overrides this with an exact managed-worktree table read,
+        // without decoding unrelated historical sessions and other records.
+        fn list_managed_worktrees(
+            &self,
+        ) -> Result<Vec<crate::ManagedWorktreeRecord>, crate::RuntimeError> {
+            Ok(self.hydrate_runtime_state()?.managed_worktrees)
+        }
+
         // A legacy provider-create preflight needs only checkout paths for
         // retirement locks. Non-SQLite stores preserve their prior hydration
         // behavior; SQLite reads only the two required durable columns.

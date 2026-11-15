@@ -204,7 +204,7 @@ impl RuntimeSessionManager {
             let managed_worktrees = if workspaces.is_empty() {
                 Vec::new()
             } else {
-                self.store.hydrate_runtime_state()?.managed_worktrees
+                self.store.list_managed_worktree_checkout_paths()?
             };
             workspaces
                 .into_iter()
@@ -217,14 +217,16 @@ impl RuntimeSessionManager {
                     });
                     let matches = candidate.starts_with(&workspace.canonical_root)
                         || same_repository
-                        || managed_worktrees.iter().any(|worktree| {
-                            (worktree.repo_root == workspace.canonical_root
-                                || (same_repository
-                                    && repository_root.as_deref()
-                                        == Some(worktree.repo_root.as_str())))
-                                && std::path::Path::new(&worktree.worktree_cwd).is_absolute()
-                                && candidate.starts_with(&worktree.worktree_cwd)
-                        });
+                        || managed_worktrees
+                            .iter()
+                            .any(|(worktree_root, worktree_cwd)| {
+                                (worktree_root == &workspace.canonical_root
+                                    || (same_repository
+                                        && repository_root.as_deref()
+                                            == Some(worktree_root.as_str())))
+                                    && std::path::Path::new(worktree_cwd).is_absolute()
+                                    && candidate.starts_with(worktree_cwd)
+                            });
                     if matches {
                         let lock_root = if same_repository {
                             repository_root

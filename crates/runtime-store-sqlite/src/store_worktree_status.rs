@@ -33,6 +33,12 @@ macro_rules! delegate_worktree_status {
             self.repository.get_managed_worktree(worktree_id)
         }
 
+        fn list_managed_worktree_checkout_paths(
+            &self,
+        ) -> Result<Vec<(String, String)>, runtime_core::RuntimeError> {
+            self.repository.list_managed_worktree_checkout_paths()
+        }
+
         fn list_managed_worktree_status_for_root(
             &self,
             canonical_repo_root: &str,

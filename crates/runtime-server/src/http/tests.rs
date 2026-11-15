@@ -53,6 +53,7 @@ mod agent_message_routes;
 mod agent_session_controls;
 mod agent_session_controls_compaction;
 mod agent_session_controls_edit_rerun;
+mod legacy_session_worktree_preflight;
 mod legacy_team_operation_recovery;
 mod legacy_team_spawn_idempotency;
 mod mcp_core;

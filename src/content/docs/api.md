@@ -1407,6 +1407,14 @@ SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.id')
 | `permission_mode` | no | Passed to providers; `require_approval` enables runtime approval gating where supported. |
 | `metadata` | no | Arbitrary JSON object/value stored with the session. |
 
+Legacy session creation checks every matching registered workspace, including
+managed checkout paths outside its canonical root, for active lifecycle and
+in-progress retirement **before** attempting provider-native creation. The
+SQLite preflight reads only durable managed-checkout root/CWD paths rather
+than hydrating unrelated historical sessions. An inactive or retiring matching
+workspace still rejects creation; this narrower read does not bypass native
+creation fences or establish that unrelated historical data is healthy.
+
 Send a turn:
 
 After a positive native send acknowledgement, ordinary and approved

@@ -38,6 +38,10 @@ impl RetirementInterruptGate {
 }
 
 impl RetirementProvider {
+    pub(super) async fn native_session_count(&self) -> usize {
+        self.sessions.lock().await.len()
+    }
+
     pub(super) fn new(kind: ProviderKind) -> Arc<Self> {
         Arc::new(Self {
             kind,

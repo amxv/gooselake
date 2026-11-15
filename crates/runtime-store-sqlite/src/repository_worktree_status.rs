@@ -8,6 +8,26 @@ use crate::db::{collect_rows, db_error, open_connection};
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
+    /// Lightweight legacy session-create checkout preflight. The caller only
+    /// needs these two path columns to acquire all matching workspace locks;
+    /// unrelated malformed sessions and other historical rows must not mask
+    /// the retirement fence before a provider-native creation can occur.
+    pub fn list_managed_worktree_checkout_paths(
+        &self,
+    ) -> Result<Vec<(String, String)>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT repo_root,worktree_cwd FROM managed_worktrees
+                 ORDER BY created_at ASC,id ASC",
+            )
+            .map_err(|error| db_error("failed preparing managed checkout preflight", error))?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|error| db_error("failed querying managed checkout preflight", error))?;
+        collect_rows(rows)
+    }
+
     /// Point lookup for native worktree route and post-provider evidence
     /// validation. Missing rows remain distinct from storage failure.
     pub fn get_managed_worktree(

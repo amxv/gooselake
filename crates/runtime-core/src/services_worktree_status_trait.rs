@@ -112,6 +112,20 @@ pub(crate) use default_worktree_status_page_query;
 // unrelated agents, turns, events, processes and worktrees.
 macro_rules! default_managed_worktree_lookup {
     () => {
+        // A legacy provider-create preflight needs only checkout paths for
+        // retirement locks. Non-SQLite stores preserve their prior hydration
+        // behavior; SQLite reads only the two required durable columns.
+        fn list_managed_worktree_checkout_paths(
+            &self,
+        ) -> Result<Vec<(String, String)>, crate::RuntimeError> {
+            Ok(self
+                .hydrate_runtime_state()?
+                .managed_worktrees
+                .into_iter()
+                .map(|worktree| (worktree.repo_root, worktree.worktree_cwd))
+                .collect())
+        }
+
         fn get_managed_worktree(
             &self,
             worktree_id: &str,

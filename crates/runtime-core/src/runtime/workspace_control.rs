@@ -194,20 +194,16 @@ impl RuntimeSessionManager {
                             "native close completed but its durable receipt needs reconciliation");
                         return self.retirement_operation(operation_id);
                     }
-                    let state = self.store.hydrate_runtime_state()?;
-                    let closed = state
-                        .sessions
-                        .into_iter()
-                        .find(|session| session.id == *agent_id)
+                    // Native close has already committed. Refresh only this
+                    // attachment and its turns, never unrelated sessions.
+                    let (closed, affected_turns) = self
+                        .store
+                        .get_persisted_session_with_turns(agent_id)?
                         .ok_or_else(|| {
                             RuntimeError::NotFound(format!("closed session {agent_id}"))
                         })?;
                     sessions.insert(agent_id.clone(), closed);
-                    for turn in state
-                        .turns
-                        .into_iter()
-                        .filter(|turn| turn.session_id == *agent_id)
-                    {
+                    for turn in affected_turns {
                         turns.insert(turn.id.clone(), turn);
                     }
                 }

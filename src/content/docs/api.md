@@ -445,6 +445,13 @@ Queued processes that never launched are cancelled without creating a completion
 
 **HTTP 200** means the returned operation is `completed` and the workspace is retired. **HTTP 202** means it remains `requested` or `manual_review`; inspect `GET /v2/operations/{operation_id}`. Repeating the original request and key advances only provable effects. Background workers continue safe admitted work, including after restart. Effects whose native outcome was left uncertain are quarantined for operator reconciliation rather than replayed. Neither an accepted request nor an archived-agent row proves native closure by itself.
 
+After a verified provider-native close acknowledgement commits during
+`retirement/advance`, the runtime refreshes only that attachment and its turns
+from one SQLite read snapshot. An unrelated malformed session payload cannot
+mask the close receipt with a post-commit HTTP error. This does not bypass
+retirement preflight, repair a corrupt affected session, or change the separate
+operator-reconciliation projection path.
+
 A frozen retirement blocks further SQLite admission and native process launch authorization, including legacy-origin records. Its terminal tombstone continues fencing workspace routes until reactivation. Historical legacy work without proven ownership and provider attachments without verified native closure require explicit reconciliation. Completed close receipts can be reused for an unchanged archived attachment on a later retirement; explicitly restoring or changing that attachment requires fresh close evidence.
 
 #### Reconciling an uncertain retirement

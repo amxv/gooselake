@@ -3,6 +3,75 @@ use super::*;
 use std::sync::atomic::Ordering;
 
 #[tokio::test]
+async fn retired_native_close_refresh_ignores_unrelated_corrupt_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("retired-close-point-read");
+    fs::create_dir_all(&root).unwrap();
+    let provider = RetirementProvider::new(ProviderKind::Codex);
+    let fixture = retirement_fixture(temp.path(), &[provider.clone()]).await;
+    let workspace = fixture.register(&root).await;
+    let agent = fixture
+        .agent(&workspace.workspace_id, ProviderKind::Codex)
+        .await;
+    let unrelated_root = temp.path().join("different-active-workspace");
+    fs::create_dir_all(&unrelated_root).unwrap();
+    let unrelated_workspace = fixture.register(&unrelated_root).await;
+    let unrelated = fixture
+        .agent(&unrelated_workspace.workspace_id, ProviderKind::Codex)
+        .await;
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE sessions SET metadata_json='{invalid-json' WHERE id=?1",
+        [&unrelated.agent_id],
+    )
+    .unwrap();
+    assert!(fixture.store.hydrate_runtime_state().is_err());
+
+    let revision = fixture.workspace(&workspace.workspace_id).await.revision;
+    let path = format!(
+        "/v2/workspaces/{}/retirement/advance",
+        workspace.workspace_id
+    );
+    let (status, response) = fixture
+        .call(
+            "POST",
+            &path,
+            Some(serde_json::json!({"expected_revision":revision})),
+            Some("retirement-verified-close-isolated"),
+        )
+        .await;
+    assert!(
+        matches!(status, StatusCode::OK | StatusCode::ACCEPTED),
+        "native closes={}, status={status}, body={response}",
+        provider.closes.load(Ordering::SeqCst)
+    );
+    assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture
+            .runtime
+            .get_session(&agent.agent_id)
+            .await
+            .unwrap()
+            .status,
+        "closed"
+    );
+    assert!(fixture.store.hydrate_runtime_state().is_err());
+    let (status, replay) = fixture
+        .call(
+            "POST",
+            &path,
+            Some(serde_json::json!({"expected_revision":revision})),
+            Some("retirement-verified-close-isolated"),
+        )
+        .await;
+    assert!(
+        matches!(status, StatusCode::OK | StatusCode::ACCEPTED),
+        "{replay}"
+    );
+    assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn retirement_observes_delivery_claim_before_a_racing_native_interrupt() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("interrupt-race-workspace");

@@ -114,6 +114,117 @@ fn turn_admission_round_trips_snapshot_provenance_and_native_mapping() {
 }
 
 #[test]
+fn retirement_review_snapshot_preserves_all_target_authority_and_ignores_corrupt_foreign_rows() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+
+    let base = admission_session();
+    repository.upsert_session(&base).unwrap();
+    let turn = admission_turn();
+    let mut target = base.clone();
+    target.status = "turn_admitted".into();
+    target.active_turn_id = Some(turn.id.clone());
+    target.updated_at = 11;
+    let approval = admission_approval();
+    let admission = admission_record();
+    repository
+        .admit_turn(&admission, &turn, &target, Some(&approval))
+        .unwrap();
+
+    let mut other = admission_session();
+    other.id = "unrelated_snapshot_session".into();
+    other.provider_session_ref = Some("unrelated_native_session".into());
+    repository.upsert_session(&other).unwrap();
+    let mut other_turn = admission_turn();
+    other_turn.id = "unrelated_snapshot_turn".into();
+    other_turn.session_id = other.id.clone();
+    other.active_turn_id = Some(other_turn.id.clone());
+    other.status = "turn_admitted".into();
+    other.updated_at = 12;
+    let mut other_approval = admission_approval();
+    other_approval.id = "unrelated_snapshot_approval".into();
+    other_approval.session_id = other.id.clone();
+    other_approval.turn_id = other_turn.id.clone();
+    other_approval.provider_approval_ref = Some("unrelated_native_approval".into());
+    let mut other_admission = admission_record();
+    other_admission.turn_id = other_turn.id.clone();
+    other_admission.session_id = other.id.clone();
+    repository
+        .admit_turn(&other_admission, &other_turn, &other, Some(&other_approval))
+        .unwrap();
+
+    let snapshot = repository
+        .get_persisted_retirement_review_session(&target.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.session, target);
+    assert_eq!(snapshot.turns, vec![turn]);
+    assert_eq!(snapshot.approvals, vec![approval]);
+    assert_eq!(snapshot.admissions, vec![admission]);
+    let hydrated = repository.hydrate_runtime_state().unwrap();
+    assert_eq!(
+        snapshot.turns,
+        hydrated
+            .turns
+            .into_iter()
+            .filter(|row| row.session_id == target.id)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        snapshot.approvals,
+        hydrated
+            .approvals
+            .into_iter()
+            .filter(|row| row.session_id == target.id)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        snapshot.admissions,
+        repository
+            .list_turn_admissions()
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.session_id == target.id)
+            .collect::<Vec<_>>()
+    );
+
+    let db = open_connection(&repository.database_path).unwrap();
+    db.execute(
+        "UPDATE sessions SET metadata_json='{invalid' WHERE id=?1",
+        [&other.id],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE approvals SET request_json='{invalid' WHERE session_id=?1",
+        [&other.id],
+    )
+    .unwrap();
+    // Valid JSON with an invalid shape evades the column's json_valid check;
+    // global admission decoding must still fail while the target remains sound.
+    db.execute(
+        "UPDATE turn_admissions SET user_input_snapshot_json='null' WHERE session_id=?1",
+        [&other.id],
+    )
+    .unwrap();
+    assert!(repository.hydrate_runtime_state().is_err());
+    assert!(repository.list_turn_admissions().is_err());
+    assert_eq!(
+        repository
+            .get_persisted_retirement_review_session(&target.id)
+            .unwrap(),
+        Some(snapshot.clone())
+    );
+    let reopened = SqliteRuntimeRepository::new(repository.database_path.clone());
+    assert_eq!(
+        reopened
+            .get_persisted_retirement_review_session(&target.id)
+            .unwrap(),
+        Some(snapshot)
+    );
+}
+
+#[test]
 fn critical_turn_admission_event_rolls_back_authority_on_journal_failure_and_replays_once() {
     let temp = tempfile::tempdir().unwrap();
     let repository = repo(&temp);

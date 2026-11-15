@@ -18,6 +18,17 @@ macro_rules! delegate_persisted_session_lookup {
         > {
             self.repository.get_persisted_session_with_turns(session_id)
         }
+
+        fn get_persisted_retirement_review_session(
+            &self,
+            session_id: &str,
+        ) -> Result<
+            Option<runtime_core::RetirementReviewSessionProjection>,
+            runtime_core::RuntimeError,
+        > {
+            self.repository
+                .get_persisted_retirement_review_session(session_id)
+        }
     };
 }
 

@@ -31,6 +31,40 @@ macro_rules! default_persisted_session_lookup {
                     (session, turns)
                 }))
         }
+
+        /// SQLite overrides this fallback with a single scoped read snapshot.
+        /// Other stores preserve their existing hydration/authority semantics.
+        fn get_persisted_retirement_review_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Option<crate::RetirementReviewSessionProjection>, crate::RuntimeError> {
+            let state = self.hydrate_runtime_state()?;
+            let Some(session) = state
+                .sessions
+                .into_iter()
+                .find(|session| session.id == session_id)
+            else {
+                return Ok(None);
+            };
+            Ok(Some(crate::RetirementReviewSessionProjection {
+                session,
+                turns: state
+                    .turns
+                    .into_iter()
+                    .filter(|turn| turn.session_id == session_id)
+                    .collect(),
+                approvals: state
+                    .approvals
+                    .into_iter()
+                    .filter(|approval| approval.session_id == session_id)
+                    .collect(),
+                admissions: self
+                    .list_turn_admissions()?
+                    .into_iter()
+                    .filter(|admission| admission.session_id == session_id)
+                    .collect(),
+            }))
+        }
     };
 }
 

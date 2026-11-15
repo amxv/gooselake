@@ -3,6 +3,131 @@ use super::*;
 use std::sync::atomic::Ordering;
 
 #[tokio::test]
+async fn operator_verified_retirement_close_receipt_ignores_unrelated_corrupt_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("retirement-review-target");
+    let unrelated_root = temp.path().join("retirement-review-unrelated");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&unrelated_root).unwrap();
+    let provider = RetirementProvider::new(ProviderKind::Codex);
+    let fixture = retirement_fixture(temp.path(), &[provider.clone()]).await;
+    let workspace = fixture.register(&root).await;
+    let agent = fixture
+        .agent(&workspace.workspace_id, ProviderKind::Codex)
+        .await;
+    let unrelated_workspace = fixture.register(&unrelated_root).await;
+    let unrelated = fixture
+        .agent(&unrelated_workspace.workspace_id, ProviderKind::Codex)
+        .await;
+
+    provider.fail_close.store(true, Ordering::SeqCst);
+    let revision = fixture.workspace(&workspace.workspace_id).await.revision;
+    let unknown = fixture
+        .advance(
+            &workspace.workspace_id,
+            revision,
+            "review-corrupt-other-session",
+        )
+        .await;
+    assert_eq!(
+        unknown.operation.phase,
+        runtime_core::OperationPhase::ManualReview
+    );
+    assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
+    let effect = unknown
+        .effects
+        .iter()
+        .find(|effect| effect.effect_kind == "workspace_provider_close")
+        .unwrap();
+    provider
+        .externally_close_for_operator_review(&agent.agent_id)
+        .await;
+    let session = fixture
+        .store
+        .hydrate_runtime_state()
+        .unwrap()
+        .sessions
+        .into_iter()
+        .find(|session| session.id == agent.agent_id)
+        .unwrap();
+    let current_agent = fixture
+        .runtime
+        .get_workspace_agent(&workspace.workspace_id, &agent.agent_id)
+        .unwrap();
+
+    // The unrelated session belongs to a different valid workspace; it must
+    // not poison a durable operator receipt after native closure is verified.
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE sessions SET metadata_json='{invalid-json' WHERE id=?1",
+        [&unrelated.agent_id],
+    )
+    .unwrap();
+    assert!(fixture.store.hydrate_runtime_state().is_err());
+    let input = serde_json::json!({
+        "effect_id":effect.effect_id,
+        "evidence":"Operator independently verified native closure for the exact reviewed attachment",
+        "resolution":{"kind":"provider_closed","identity":{
+            "agent_id":agent.agent_id,"provider":"codex",
+            "provider_session_ref":session.provider_session_ref,
+            "canonical_provider_session_ref":session.canonical_provider_session_ref,
+            "agent_revision":current_agent.revision,
+            "session_updated_at":session.updated_at,
+            "active_turn_id":session.active_turn_id,
+        }},
+    });
+    let uri = format!(
+        "/v2/workspaces/{}/retirement/{}/reconcile",
+        workspace.workspace_id, unknown.operation.operation_id
+    );
+    let (status, receipt) = fixture
+        .call(
+            "POST",
+            &uri,
+            Some(input.clone()),
+            Some("review-corrupt-history"),
+        )
+        .await;
+    let committed = fixture
+        .store
+        .get_operation(&unknown.operation.operation_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        committed
+            .effects
+            .iter()
+            .find(|row| row.effect_id == effect.effect_id)
+            .unwrap()
+            .phase,
+        "finalized",
+        "native operator review must be durably committed independently of HTTP projection"
+    );
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "committed receipt returned {status}: {receipt}"
+    );
+    assert_eq!(receipt["settled"], true);
+    assert_eq!(
+        fixture
+            .runtime
+            .get_session(&agent.agent_id)
+            .await
+            .unwrap()
+            .status,
+        "closed"
+    );
+    let (status, replay) = fixture
+        .call("POST", &uri, Some(input), Some("review-corrupt-history"))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay, receipt);
+    assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
+    assert!(fixture.store.hydrate_runtime_state().is_err());
+}
+
+#[tokio::test]
 async fn operator_reconciles_unknown_native_close_after_restart_and_resumes_original_retirement() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("review-workspace");

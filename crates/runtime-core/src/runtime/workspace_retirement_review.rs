@@ -29,40 +29,32 @@ impl RuntimeSessionManager {
             .filter(|effect| effect.effect_kind == "workspace_provider_close")
             .map(|effect| effect.target_id.as_str())
             .collect();
-        let state = self.store.hydrate_runtime_state()?;
-        for session in state
-            .sessions
+        // Read every affected snapshot before changing any in-memory authority:
+        // one corrupt *affected* target must not partially refresh its peers.
+        let refreshed = agents
             .into_iter()
-            .filter(|session| agents.contains(session.id.as_str()))
-        {
-            sessions.insert(session.id.clone(), session);
-        }
-        for turn in state
-            .turns
-            .into_iter()
-            .filter(|turn| agents.contains(turn.session_id.as_str()))
-        {
-            turns.insert(turn.id.clone(), turn);
+            .map(|agent_id| self.store.get_persisted_retirement_review_session(agent_id))
+            .collect::<Result<Vec<_>, _>>()?;
+        for snapshot in refreshed.iter().flatten() {
+            sessions.insert(snapshot.session.id.clone(), snapshot.session.clone());
+            for turn in &snapshot.turns {
+                turns.insert(turn.id.clone(), turn.clone());
+            }
         }
         drop(sessions);
         drop(turns);
         let mut approvals = self.approvals.write().await;
-        for approval in state
-            .approvals
-            .into_iter()
-            .filter(|approval| agents.contains(approval.session_id.as_str()))
-        {
-            approvals.insert(approval.id.clone(), approval);
+        for snapshot in refreshed.iter().flatten() {
+            for approval in &snapshot.approvals {
+                approvals.insert(approval.id.clone(), approval.clone());
+            }
         }
         drop(approvals);
         let mut admissions = self.turn_admissions.write().await;
-        for admission in self
-            .store
-            .list_turn_admissions()?
-            .into_iter()
-            .filter(|admission| agents.contains(admission.session_id.as_str()))
-        {
-            admissions.insert(admission.turn_id.clone(), admission);
+        for snapshot in refreshed.into_iter().flatten() {
+            for admission in snapshot.admissions {
+                admissions.insert(admission.turn_id.clone(), admission);
+            }
         }
         Ok(outcome)
     }

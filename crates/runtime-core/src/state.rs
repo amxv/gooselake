@@ -350,3 +350,13 @@ pub struct RuntimeHydratedState {
     pub processes: Vec<ProcessRecord>,
     pub credentials: Vec<CredentialRecord>,
 }
+
+/// Persisted authority for one reviewed retirement attachment. SQLite reads
+/// all four projections from one snapshot without decoding other sessions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetirementReviewSessionProjection {
+    pub session: SessionRecord,
+    pub turns: Vec<TurnRecord>,
+    pub approvals: Vec<ApprovalRecord>,
+    pub admissions: Vec<crate::TurnAdmissionRecord>,
+}

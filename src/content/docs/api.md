@@ -450,7 +450,7 @@ After a verified provider-native close acknowledgement commits during
 from one SQLite read snapshot. An unrelated malformed session payload cannot
 mask the close receipt with a post-commit HTTP error. This does not bypass
 retirement preflight, repair a corrupt affected session, or change the separate
-operator-reconciliation projection path.
+operator-reconciliation authority.
 
 A frozen retirement blocks further SQLite admission and native process launch authorization, including legacy-origin records. Its terminal tombstone continues fencing workspace routes until reactivation. Historical legacy work without proven ownership and provider attachments without verified native closure require explicit reconciliation. Completed close receipts can be reused for an unchanged archived attachment on a later retirement; explicitly restoring or changing that attachment requires fresh close evidence.
 
@@ -462,6 +462,13 @@ An operator can reconcile one exact quarantined effect through `POST /v2/workspa
 - `{"kind":"recheck_settled"}` asks the runtime to verify durable settlement facts for the exact turn, process, delivery, notice, or hook effect. The explanation alone cannot authorize a result. If the required proof is still missing, the receipt reports `settled:false` and the retirement stays quarantined.
 
 The response is an immutable review receipt with `settled`, `operation_phase`, and `unresolved_effect_ids`. Repeating the same review key and input returns that receipt; changing the input with the same key returns a conflict. Once the uncertain effects are resolved, the original retirement operation returns to `requested` and its background worker continues the remaining admitted work. A successful review response does not itself mean the workspace is retired: inspect the original operation until it reaches `completed`. The resource fence remains in place throughout reconciliation.
+
+After an operator's retirement review commits, the runtime refreshes only the
+affected native-close attachment and its turns, approvals, and dispatch
+admissions from a consistent SQLite read snapshot. Malformed unrelated
+historical session or input data cannot mask a committed review receipt with a
+post-commit projection error. A corrupt *affected* attachment is not silently
+repaired, and no unknown native action is retried or inferred complete.
 
 Native close proof is provider-specific. Codex retirement waits for its isolated app-server child to exit. Claude retirement seals the session against new SDK subprocesses and waits for every child owned by that session to exit. ACP requires the negotiated close capability and a valid acknowledgement from the same connection. Unsupported, malformed, or timed-out outcomes remain recoverable `manual_review` state instead of being treated as successful closure.
 

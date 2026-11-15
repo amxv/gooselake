@@ -1,15 +1,48 @@
 use runtime_core::{
     AgentDeliveryRecord, AgentMessageContextKind, AgentMessageRecord, ApprovalRecord,
     CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, ProcessRecord,
-    RuntimeError, RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnRecord,
+    RetirementReviewSessionProjection, RuntimeError, RuntimeHydratedState, SessionRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+    TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
-use rusqlite::TransactionBehavior;
+use rusqlite::{Transaction, TransactionBehavior};
 
 use crate::db::{collect_rows, db_error, open_connection, opt_string_to_json, string_to_json};
+use crate::repository_turn_authority::turn_admission_from_row;
 use crate::repository_turn_terminal::read_session;
 use crate::SqliteRuntimeRepository;
+
+fn read_session_turns(
+    tx: &Transaction<'_>,
+    session_id: &str,
+) -> Result<Vec<TurnRecord>, RuntimeError> {
+    let mut statement = tx
+        .prepare(
+            "SELECT id,session_id,provider_turn_ref,status,input_json,source,
+                    started_at,completed_at,usage_json,error_json
+             FROM turns WHERE session_id=?1 ORDER BY rowid ASC",
+        )
+        .map_err(|error| db_error("failed preparing retired-session turn projection", error))?;
+    let rows = statement
+        .query_map([session_id], |row| {
+            let usage: Option<String> = row.get(8)?;
+            let error: Option<String> = row.get(9)?;
+            Ok(TurnRecord {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                provider_turn_ref: row.get(2)?,
+                status: row.get(3)?,
+                input: string_to_json(row.get(4)?)?,
+                source: row.get(5)?,
+                started_at: row.get(6)?,
+                completed_at: row.get(7)?,
+                usage: opt_string_to_json(usage)?,
+                error: opt_string_to_json(error)?,
+            })
+        })
+        .map_err(|error| db_error("failed querying retired-session turns", error))?;
+    collect_rows(rows)
+}
 
 impl SqliteRuntimeRepository {
     /// Session primary-key projection for post-commit policy review refresh.
@@ -43,36 +76,83 @@ impl SqliteRuntimeRepository {
             Err(RuntimeError::NotFound(_)) => return Ok(None),
             Err(error) => return Err(error),
         };
-        let mut statement = tx
-            .prepare(
-                "SELECT id,session_id,provider_turn_ref,status,input_json,source,
-                        started_at,completed_at,usage_json,error_json
-                 FROM turns WHERE session_id=?1 ORDER BY rowid ASC",
-            )
-            .map_err(|error| db_error("failed preparing retired-session turn projection", error))?;
-        let rows = statement
-            .query_map([session_id], |row| {
-                let usage: Option<String> = row.get(8)?;
-                let error: Option<String> = row.get(9)?;
-                Ok(TurnRecord {
-                    id: row.get(0)?,
-                    session_id: row.get(1)?,
-                    provider_turn_ref: row.get(2)?,
-                    status: row.get(3)?,
-                    input: string_to_json(row.get(4)?)?,
-                    source: row.get(5)?,
-                    started_at: row.get(6)?,
-                    completed_at: row.get(7)?,
-                    usage: opt_string_to_json(usage)?,
-                    error: opt_string_to_json(error)?,
-                })
-            })
-            .map_err(|error| db_error("failed querying retired-session turns", error))?;
-        let turns = collect_rows(rows)?;
-        drop(statement);
+        let turns = read_session_turns(&tx, session_id)?;
         tx.commit()
             .map_err(|error| db_error("failed closing retired-session read snapshot", error))?;
         Ok(Some((session, turns)))
+    }
+
+    /// Operator retirement review commits before the live cache refresh. Read
+    /// only its closed attachment, turns, approvals and dispatch admissions in
+    /// one consistent SQLite snapshot; unrelated malformed history must not
+    /// convert a committed review receipt into an HTTP failure.
+    pub fn get_persisted_retirement_review_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<RetirementReviewSessionProjection>, RuntimeError> {
+        let mut db = open_connection(&self.database_path)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|error| db_error("failed opening retirement review read snapshot", error))?;
+        let session = match read_session(&tx, session_id) {
+            Ok(session) => session,
+            Err(RuntimeError::NotFound(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let turns = read_session_turns(&tx, session_id)?;
+        let approvals = {
+            let mut statement = tx
+                .prepare(
+                    "SELECT id,session_id,turn_id,origin,tool_call_id,provider_approval_ref,
+                            status,request_json,response_json,created_at,resolved_at
+                     FROM approvals WHERE session_id=?1 ORDER BY created_at ASC,id ASC",
+                )
+                .map_err(|error| db_error("failed preparing retirement review approvals", error))?;
+            let rows = statement
+                .query_map([session_id], |row| {
+                    let response: Option<String> = row.get(8)?;
+                    Ok(ApprovalRecord {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        turn_id: row.get(2)?,
+                        origin: row.get(3)?,
+                        tool_call_id: row.get(4)?,
+                        provider_approval_ref: row.get(5)?,
+                        status: row.get(6)?,
+                        request: string_to_json(row.get(7)?)?,
+                        response: opt_string_to_json(response)?,
+                        created_at: row.get(9)?,
+                        resolved_at: row.get(10)?,
+                    })
+                })
+                .map_err(|error| db_error("failed querying retirement review approvals", error))?;
+            collect_rows(rows)?
+        };
+        let admissions = {
+            let mut statement = tx
+                .prepare(
+                    "SELECT turn_id,session_id,provider,projection_source,
+                            user_input_snapshot_json,dispatch_policy_json,correlation_json,
+                            dispatch_state,provider_native_turn_id,dispatch_error_json,
+                            admitted_at,updated_at
+                     FROM turn_admissions WHERE session_id=?1 ORDER BY admitted_at ASC,turn_id ASC",
+                )
+                .map_err(|error| {
+                    db_error("failed preparing retirement review admissions", error)
+                })?;
+            let rows = statement
+                .query_map([session_id], turn_admission_from_row)
+                .map_err(|error| db_error("failed querying retirement review admissions", error))?;
+            collect_rows(rows)?
+        };
+        tx.commit()
+            .map_err(|error| db_error("failed closing retirement review read snapshot", error))?;
+        Ok(Some(RetirementReviewSessionProjection {
+            session,
+            turns,
+            approvals,
+            admissions,
+        }))
     }
 
     pub fn hydrate_runtime_state(&self) -> Result<RuntimeHydratedState, RuntimeError> {

@@ -1638,6 +1638,15 @@ Behavior:
   durable pages, and wake on committed SQLite event inserts instead of
   periodically polling while idle; lagged notifications catch up from the last
   delivered cursor without re-emitting it
+- **Cross-process wake limitation:** the current SQLite event-commit broadcast
+  is shared by store instances **within one OS process**, not across server
+  processes. A commit made by a different process is readable through the
+  durable SQLite journal immediately after commit, but it does **not** wake an
+  already-idle SSE subscriber in this process. Reconnecting (with the last
+  received event ID) or a later local commit replays that unread event in
+  order. Ten-second SSE keepalives do not query SQLite or close this gap.
+  Separate-process live fan-out requires its own verified design; do not treat
+  WAL visibility or same-process SSE tests as cross-process wake proof.
 - an instrumented real-SQLite stream regression verifies a single initial
   journal query, **zero additional reads across idle intervals longer than
   the old 250 ms polling cadence**, and one catch-up query after each

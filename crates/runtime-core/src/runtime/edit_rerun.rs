@@ -408,15 +408,12 @@ impl RuntimeSessionManager {
             .await;
         let correlated = match correlated {
             Some(admission) => Some(admission),
+            // A durable SQLite receipt can exist even if the process-local
+            // admission cache was not refreshed. Never decode other agents'
+            // historical admissions to classify this native fork.
             None => self
                 .store
-                .list_turn_admissions()?
-                .into_iter()
-                .find(|admission| {
-                    admission.session_id == agent_id
-                        && admission.correlation.correlation_id.as_deref()
-                            == Some(operation.operation_id.as_str())
-                }),
+                .get_persisted_turn_admission_for_correlation(agent_id, &operation.operation_id)?,
         };
         if let Some(admission) = correlated {
             let dispatch_error_code = replacement

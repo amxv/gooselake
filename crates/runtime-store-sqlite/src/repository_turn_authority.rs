@@ -417,6 +417,31 @@ impl SqliteRuntimeRepository {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| db_error("failed collecting turn admissions", error))
     }
+
+    /// Exact persisted edit correlation, avoiding unrelated historical
+    /// admission deserialization after the irreversible native fork.
+    /// Preserve the previous full-list fallback's earliest ordering.
+    pub fn get_persisted_turn_admission_for_correlation(
+        &self,
+        session_id: &str,
+        correlation_id: &str,
+    ) -> Result<Option<TurnAdmissionRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        connection
+            .query_row(
+                "SELECT turn_id,session_id,provider,projection_source,
+                        user_input_snapshot_json,dispatch_policy_json,correlation_json,
+                        dispatch_state,provider_native_turn_id,dispatch_error_json,
+                        admitted_at,updated_at
+                 FROM turn_admissions
+                 WHERE session_id=?1 AND json_extract(correlation_json,'$.correlation_id')=?2
+                 ORDER BY admitted_at ASC,turn_id ASC LIMIT 1",
+                params![session_id, correlation_id],
+                turn_admission_from_row,
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading scoped persisted turn admission", error))
+    }
 }
 
 fn validate_operator_user_turn_command(

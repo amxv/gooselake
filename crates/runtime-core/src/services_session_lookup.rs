@@ -96,6 +96,19 @@ macro_rules! default_persisted_session_lookup {
                 admission,
             }))
         }
+
+        /// Fallback stores keep the historical first global admission match;
+        /// SQLite overrides with a single exact session/correlation read.
+        fn get_persisted_turn_admission_for_correlation(
+            &self,
+            session_id: &str,
+            correlation_id: &str,
+        ) -> Result<Option<crate::TurnAdmissionRecord>, crate::RuntimeError> {
+            Ok(self.list_turn_admissions()?.into_iter().find(|admission| {
+                admission.session_id == session_id
+                    && admission.correlation.correlation_id.as_deref() == Some(correlation_id)
+            }))
+        }
     };
 }
 

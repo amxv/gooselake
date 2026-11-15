@@ -257,6 +257,7 @@ fn initialize_schema_migrates_partially_populated_database_without_reset() {
 }
 
 mod agent_comms;
+mod edit_correlation_projection_scale;
 mod edit_rerun;
 mod hook_integration;
 mod hook_queue_scale;

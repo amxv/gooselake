@@ -39,6 +39,15 @@ macro_rules! delegate_persisted_session_lookup {
         > {
             self.repository.get_persisted_retirement_settled_turn(turn_id)
         }
+
+        fn get_persisted_turn_admission_for_correlation(
+            &self,
+            session_id: &str,
+            correlation_id: &str,
+        ) -> Result<Option<runtime_core::TurnAdmissionRecord>, runtime_core::RuntimeError> {
+            self.repository
+                .get_persisted_turn_admission_for_correlation(session_id, correlation_id)
+        }
     };
 }
 

@@ -8,6 +8,15 @@ macro_rules! delegate_worktree_status {
             self.repository.list_managed_worktrees()
         }
 
+        fn first_active_foreign_worktree_claim_for_session(
+            &self,
+            session_id: &str,
+            worktree_id: &str,
+        ) -> Result<Option<String>, runtime_core::RuntimeError> {
+            self.repository
+                .first_active_foreign_worktree_claim_for_session(session_id, worktree_id)
+        }
+
         fn upsert_managed_worktree(
             &self,
             record: &runtime_core::ManagedWorktreeRecord,

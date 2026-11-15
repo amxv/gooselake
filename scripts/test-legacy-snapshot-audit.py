@@ -15,6 +15,9 @@ import unittest
 
 
 SCRIPT = Path(__file__).with_name("audit-legacy-snapshot.py")
+# Deliberately pinned fixture expectation: bump with each additive source
+# migration, independently of the audit script's source-version discovery.
+EXPECTED_SOURCE_SCHEMA_VERSION = 48
 
 
 def run_audit(path: Path) -> subprocess.CompletedProcess[str]:
@@ -48,8 +51,8 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertEqual(report_result.returncode, 0, report_result.stderr)
             report = json.loads(report_result.stdout)
             self.assertEqual(report["schema"]["snapshot_version"], 28)
-            self.assertEqual(report["schema"]["source_version"], 47)
-            self.assertEqual(report["schema"]["missing_applied_versions"], list(range(29, 48)))
+            self.assertEqual(report["schema"]["source_version"], EXPECTED_SOURCE_SCHEMA_VERSION)
+            self.assertEqual(report["schema"]["missing_applied_versions"], list(range(29, EXPECTED_SOURCE_SCHEMA_VERSION + 1)))
             self.assertEqual(report["counts"]["unsettled_worktree_cleanups"], 1)
             self.assertIn("unsettled_worktree_cleanups", report["observed_outstanding_obligations"])
             self.assertFalse(report["cutover_authorized"])
@@ -109,8 +112,8 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertFalse(report["cutover_authorized"])
             self.assertEqual(report["source_mode"], "immutable_read_only")
             self.assertEqual(report["schema"]["snapshot_version"], 27)
-            self.assertEqual(report["schema"]["source_version"], 47)
-            self.assertEqual(report["schema"]["missing_applied_versions"], list(range(28, 48)))
+            self.assertEqual(report["schema"]["source_version"], EXPECTED_SOURCE_SCHEMA_VERSION)
+            self.assertEqual(report["schema"]["missing_applied_versions"], list(range(28, EXPECTED_SOURCE_SCHEMA_VERSION + 1)))
             self.assertTrue(report["schema"]["workspace_migration_preview_recorded"])
             for name in [
                 "unresolved_legacy_subjects", "unapplied_classified_legacy_subjects",
@@ -182,7 +185,7 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertEqual(report_result.returncode, 0, report_result.stderr)
             report = json.loads(report_result.stdout)
             self.assertEqual(report["schema"]["snapshot_version"], 30)
-            self.assertEqual(report["schema"]["missing_applied_versions"], list(range(31, 48)))
+            self.assertEqual(report["schema"]["missing_applied_versions"], list(range(31, EXPECTED_SOURCE_SCHEMA_VERSION + 1)))
             self.assertEqual(report["counts"]["unsettled_keyed_team_spawns"], 1)
             self.assertEqual(report["counts"]["unsettled_team_spawn_journals"], 1)
             self.assertIn("unsettled_keyed_team_spawns", report["observed_outstanding_obligations"])

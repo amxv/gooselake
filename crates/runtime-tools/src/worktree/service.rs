@@ -131,8 +131,7 @@ impl WorktreeService for RuntimeWorktreeService {
                 "agent has an unresolved provider rebind; worktree claims cannot change".into(),
             ));
         }
-        let hydrated = self.store.hydrate_runtime_state()?;
-        let worktree = self.get_worktree_from_hydrated(request.worktree_id.as_str(), &hydrated)?;
+        let worktree = self.get_worktree(request.worktree_id.as_str()).await?;
         if let Some(operation_id) = self.store.native_worktree_cleanup_owner(
             &worktree.repo_root,
             &worktree.worktree_cwd,
@@ -154,8 +153,7 @@ impl WorktreeService for RuntimeWorktreeService {
         }
         let repository_lock = self.lock_for_repo(&worktree.repo_root).await;
         let _repository_guard = repository_lock.lock().await;
-        let hydrated = self.store.hydrate_runtime_state()?;
-        let worktree = self.get_worktree_from_hydrated(request.worktree_id.as_str(), &hydrated)?;
+        let worktree = self.get_worktree(request.worktree_id.as_str()).await?;
         if let Some(operation_id) = self.store.native_worktree_cleanup_owner(
             &worktree.repo_root,
             &worktree.worktree_cwd,
@@ -184,15 +182,18 @@ impl WorktreeService for RuntimeWorktreeService {
             ));
         }
 
-        let conflicting_claim = hydrated.managed_worktree_claims.iter().find(|row| {
-            row.session_id == request.session_id
-                && row.released_at.is_none()
-                && row.worktree_id != request.worktree_id
-        });
+        // No native mutation happens here. The SQLite transition separately
+        // serializes cross-process active-claim exclusion with its Critical
+        // event; this preflight preserves the historical first-conflict error
+        // without hydrating unrelated sessions or message history.
+        let conflicting_claim = self.store.first_active_foreign_worktree_claim_for_session(
+            request.session_id.as_str(),
+            request.worktree_id.as_str(),
+        )?;
         if let Some(conflict) = conflicting_claim {
             return Err(RuntimeError::InvalidState(format!(
                 "session {} already has an active claim on worktree {}",
-                request.session_id, conflict.worktree_id
+                request.session_id, conflict
             )));
         }
 

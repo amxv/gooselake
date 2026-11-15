@@ -121,6 +121,27 @@ macro_rules! default_managed_worktree_lookup {
             Ok(self.hydrate_runtime_state()?.managed_worktrees)
         }
 
+        // The legacy claim service reports the first other active checkout
+        // for a session in historical (created_at,worktree_id) order. SQLite
+        // seeks that one row without decoding unrelated durable history;
+        // non-SQLite stores keep the original hydrated-list behavior.
+        fn first_active_foreign_worktree_claim_for_session(
+            &self,
+            session_id: &str,
+            worktree_id: &str,
+        ) -> Result<Option<String>, crate::RuntimeError> {
+            Ok(self
+                .hydrate_runtime_state()?
+                .managed_worktree_claims
+                .into_iter()
+                .find(|claim| {
+                    claim.session_id == session_id
+                        && claim.released_at.is_none()
+                        && claim.worktree_id != worktree_id
+                })
+                .map(|claim| claim.worktree_id))
+        }
+
         // A legacy provider-create preflight needs only checkout paths for
         // retirement locks. Non-SQLite stores preserve their prior hydration
         // behavior; SQLite reads only the two required durable columns.

@@ -1967,6 +1967,11 @@ decode unrelated historical sessions or messages. This remains an unpaged
 legacy read, not a source of authority for native cleanup or reassignment.
 
 Claims, release, and cleanup are separate endpoints so ownership can be represented explicitly.
+For legacy `POST /v1/worktrees/{worktree_id}/claims`, SQLite reads the exact
+worktree and the first active conflicting claim for the requested session,
+without decoding unrelated historical sessions or messages. An atomic claim
+transition still enforces cross-process exclusivity and journals a Critical
+event; the read-only preflight is not separate native-mutation authority.
 
 ## Teams and comms
 

@@ -8,6 +8,27 @@ use crate::db::{collect_rows, db_error, open_connection};
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
+    /// Legacy claim preflight: one active foreign claim for the requested
+    /// session, with the original hydration ordering and no unrelated rows.
+    /// The claim transaction independently enforces cross-process exclusion.
+    pub fn first_active_foreign_worktree_claim_for_session(
+        &self,
+        session_id: &str,
+        worktree_id: &str,
+    ) -> Result<Option<String>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        connection
+            .query_row(
+                "SELECT worktree_id FROM managed_worktree_claims
+                 WHERE session_id=?1 AND worktree_id!=?2 AND released_at IS NULL
+                 ORDER BY created_at ASC,worktree_id ASC LIMIT 1",
+                rusqlite::params![session_id, worktree_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading active foreign worktree claim", error))
+    }
+
     /// Preserve the original full-list chronology while decoding only managed
     /// worktrees, never unrelated sessions or event-history projections.
     pub fn list_managed_worktrees(&self) -> Result<Vec<ManagedWorktreeRecord>, RuntimeError> {

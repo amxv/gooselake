@@ -2068,6 +2068,11 @@ in-memory roster cache is stale. A concurrent team deletion now competes for
 that same SQLite write lock and cannot tombstone an admitted spawn until its
 exact completion receipt is committed or its native compensation is certified
 `rolled_back`. This is a deletion fence, **not** automatic native recovery.
+For `worktree.mode: "reuse"` or `"use_existing"`, the post-admission
+managed-checkout identity lookup uses only the exact SQLite natural key,
+without decoding unrelated historical session metadata. This preserves
+existing checkout validation, keyed replay, claims and native uncertainty
+fences; it does not authorize an unresolved spawn to be run again.
 Before a caller-bound completion becomes an exact replay receipt, its SQLite
 transaction verifies the original calling session, persisted spawned native
 provider identity, joined team member, onboarding message and delivery,

@@ -460,10 +460,15 @@ impl RuntimeWorktreeService {
             let reuse_requested = matches!(mode.as_str(), "reuse" | "use_existing");
             if reuse_requested {
                 worktree_assignment_mode = "reused".to_string();
-                let hydrated = self.store.hydrate_runtime_state()?;
-                let existing = if let Some(existing) =
-                    self.worktree_by_identity(&hydrated, &planned)
-                {
+                // Reuse only needs this immutable managed-worktree identity.
+                // The original keyed admission is already durable, so do not
+                // turn corrupt unrelated session history into an unresolved
+                // spawn before any provider or native Git effect occurred.
+                let existing = if let Some(existing) = self.store.get_managed_worktree_by_identity(
+                    &planned.repo_root,
+                    &planned.worktree_cwd,
+                    &planned.branch_name,
+                )? {
                     let live_artifacts = Self::has_live_artifacts_for_record(&existing);
                     if !live_artifacts {
                         return Err(RuntimeError::NotFound(format!(

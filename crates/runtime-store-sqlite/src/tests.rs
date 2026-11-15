@@ -22,6 +22,7 @@ mod context_status_batch;
 mod event_commit_notifications;
 mod event_cursor_concurrency;
 mod event_cursor_cross_process;
+mod event_cursor_multi_reader;
 mod event_cursor_recovery_scale;
 mod event_subject_reconciliation;
 mod event_subject_scale;

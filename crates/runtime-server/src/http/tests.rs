@@ -112,6 +112,7 @@ mod workspace_routes;
 mod workspace_worktree_creation;
 mod workspace_worktree_failures;
 mod workspace_worktree_paging_scale;
+mod workspace_worktree_policy_preflight;
 mod workspace_worktree_routes;
 mod workspace_worktree_status_projection;
 mod worktree_create_cleanup;

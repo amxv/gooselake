@@ -166,6 +166,29 @@ macro_rules! default_managed_worktree_lookup {
                 .into_iter()
                 .find(|worktree| worktree.id == worktree_id))
         }
+
+        // Only the immutable natural-key row is needed to reject an explicit
+        // retention-policy mismatch before a v2 Git creation is admitted.
+        // Non-SQLite stores keep their original hydrated read semantics.
+        fn get_managed_worktree_by_identity(
+            &self,
+            repo_root: &str,
+            worktree_cwd: &str,
+            branch_name: &str,
+        ) -> Result<Option<crate::ManagedWorktreeRecord>, crate::RuntimeError> {
+            Ok(self
+                .hydrate_runtime_state()?
+                .managed_worktrees
+                .into_iter()
+                .find(|row| {
+                    !row.repo_root.starts_with("__gg_tombstoned__/")
+                        && !row.worktree_cwd.starts_with("__gg_tombstoned__/")
+                        && !row.branch_name.starts_with("__gg_tombstoned__/")
+                        && row.repo_root == repo_root
+                        && row.worktree_cwd == worktree_cwd
+                        && row.branch_name == branch_name
+                }))
+        }
     };
 }
 

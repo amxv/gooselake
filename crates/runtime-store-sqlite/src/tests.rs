@@ -74,6 +74,7 @@ mod worktree_claim_events;
 mod worktree_claim_session_projection_scale;
 mod worktree_cleanup_receipts;
 mod worktree_diagnostics_scale;
+mod worktree_identity_policy_preflight;
 mod worktree_record_events;
 mod worktree_status_projection;
 mod worktree_status_stream;

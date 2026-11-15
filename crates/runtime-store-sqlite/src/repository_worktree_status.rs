@@ -87,6 +87,30 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed reading managed worktree by ID", error))
     }
 
+    /// Exact managed-worktree natural-key preflight, using the existing
+    /// UNIQUE(repo_root,worktree_cwd,branch_name) index. It never decodes
+    /// unrelated sessions, messages, claims, or historical native outcomes.
+    pub fn get_managed_worktree_by_identity(
+        &self,
+        repo_root: &str,
+        worktree_cwd: &str,
+        branch_name: &str,
+    ) -> Result<Option<ManagedWorktreeRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        connection
+            .query_row(
+                "SELECT id, repo_root, worktree_root, worktree_cwd, branch_name,
+                        worktree_name, unified_workspace_path, deletion_policy,
+                        created_by_session_id, created_by_operation_id, created_at, updated_at
+                 FROM managed_worktrees
+                 WHERE repo_root=?1 AND worktree_cwd=?2 AND branch_name=?3",
+                rusqlite::params![repo_root, worktree_cwd, branch_name],
+                worktree_from_row,
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading managed worktree by natural key", error))
+    }
+
     /// Read only worktrees belonging to this canonical Git repository. Legacy
     /// records may contain a symlink/`..` spelling of repo_root, so enumerate
     /// indexed *distinct roots* rather than assuming old paths were canonical.

@@ -1973,6 +1973,13 @@ without decoding unrelated historical sessions or messages. An atomic claim
 transition still enforces cross-process exclusivity and journals a Critical
 event; the read-only preflight is not separate native-mutation authority.
 
+For v2 workspace worktree creation with an explicitly specified retention
+policy, the pre-admission policy-conflict check seeks only the existing
+managed-worktree natural key in SQLite. It can reject a different persisted
+policy without decoding unrelated historical session metadata and without
+admitting a new Git effect. This scoped read does not change the later native
+Git creation, recovery, or unknown-outcome fencing protocols.
+
 ## Teams and comms
 
 Create a team:

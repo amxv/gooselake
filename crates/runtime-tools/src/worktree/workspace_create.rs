@@ -105,9 +105,14 @@ impl RuntimeWorktreeService {
         // An omitted policy, however, must be allowed to reuse a managed
         // checkout with its existing retention setting.
         if let Some(requested_policy) = requested_deletion_policy {
-            let hydrated = self.store.hydrate_runtime_state()?;
-            if let Some(existing) = self.worktree_by_identity(&hydrated, &planned) {
-                if existing.deletion_policy != requested_policy {
+            if let Some(existing) = self.store.get_managed_worktree_by_identity(
+                &planned.repo_root,
+                &planned.worktree_cwd,
+                &planned.branch_name,
+            )? {
+                if !Self::is_record_tombstoned(&existing)
+                    && existing.deletion_policy != requested_policy
+                {
                     return Err(RuntimeError::Conflict(
                         "existing managed worktree has a different retention policy".into(),
                     ));

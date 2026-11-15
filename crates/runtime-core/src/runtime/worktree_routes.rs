@@ -255,16 +255,6 @@ impl RuntimeSessionManager {
         // send_turn and policy mutations use this same guard. The provider
         // cannot accept new work between the durable intent and final CAS.
         let _guard = self.session_policy_mutation_lock.lock().await;
-        if self.store.unresolved_session_edit_rerun(agent_id)? {
-            return Err(RuntimeError::Conflict(
-                "cannot change worktree while native edit-and-rerun remains unresolved".into(),
-            ));
-        }
-        if self.store.unresolved_session_compaction(agent_id)? {
-            return Err(RuntimeError::Conflict(
-                "cannot rebind a workspace agent during unresolved provider compaction".into(),
-            ));
-        }
         if idempotency_key
             .as_deref()
             .is_some_and(|value| value.trim().is_empty() || value.len() > 128)
@@ -302,6 +292,18 @@ impl RuntimeSessionManager {
                     newly_completed: false,
                 });
             }
+        }
+        // A saved keyed receipt is inspection-only. Later unresolved native
+        // work fences new rebind admission, not retrieval of a prior result.
+        if self.store.unresolved_session_edit_rerun(agent_id)? {
+            return Err(RuntimeError::Conflict(
+                "cannot change worktree while native edit-and-rerun remains unresolved".into(),
+            ));
+        }
+        if self.store.unresolved_session_compaction(agent_id)? {
+            return Err(RuntimeError::Conflict(
+                "cannot rebind a workspace agent during unresolved provider compaction".into(),
+            ));
         }
         self.fence_unresolved_operator_turn_native_effect(agent_id)?;
         let workspace = self

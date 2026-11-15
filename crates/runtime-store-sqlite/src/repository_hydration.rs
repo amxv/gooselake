@@ -1,15 +1,15 @@
 use runtime_core::{
     AgentDeliveryRecord, AgentMessageContextKind, AgentMessageRecord, ApprovalRecord,
     CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, ProcessRecord,
-    RetirementReviewSessionProjection, RuntimeError, RuntimeHydratedState, SessionRecord,
-    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
-    TeamOperationJournalRecord, TeamRecord, TurnRecord,
+    RetirementReviewSessionProjection, RetirementSettledTurnProjection, RuntimeError,
+    RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
-use rusqlite::{Transaction, TransactionBehavior};
+use rusqlite::{OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::db::{collect_rows, db_error, open_connection, opt_string_to_json, string_to_json};
 use crate::repository_turn_authority::turn_admission_from_row;
-use crate::repository_turn_terminal::read_session;
+use crate::repository_turn_terminal::{read_session, read_turn};
 use crate::SqliteRuntimeRepository;
 
 fn read_session_turns(
@@ -152,6 +152,78 @@ impl SqliteRuntimeRepository {
             turns,
             approvals,
             admissions,
+        }))
+    }
+
+    /// Exact post-terminal retirement turn, its session, pending approvals,
+    /// and dispatch admission in one SQLite read snapshot. The committed
+    /// receipt must not be masked by malformed unrelated session history.
+    pub fn get_persisted_retirement_settled_turn(
+        &self,
+        turn_id: &str,
+    ) -> Result<Option<RetirementSettledTurnProjection>, RuntimeError> {
+        let mut db = open_connection(&self.database_path)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|error| db_error("failed opening settled retirement turn snapshot", error))?;
+        let turn = match read_turn(&tx, turn_id) {
+            Ok(turn) => turn,
+            Err(RuntimeError::NotFound(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let session = match read_session(&tx, &turn.session_id) {
+            Ok(session) => Some(session),
+            Err(RuntimeError::NotFound(_)) => None,
+            Err(error) => return Err(error),
+        };
+        let approvals = {
+            let mut statement = tx
+                .prepare(
+                    "SELECT id,session_id,turn_id,origin,tool_call_id,provider_approval_ref,
+                            status,request_json,response_json,created_at,resolved_at
+                     FROM approvals WHERE session_id=?1 AND turn_id=?2
+                     ORDER BY created_at ASC,id ASC",
+                )
+                .map_err(|error| db_error("failed preparing settled turn approvals", error))?;
+            let rows = statement
+                .query_map([turn.session_id.as_str(), turn_id], |row| {
+                    let response: Option<String> = row.get(8)?;
+                    Ok(ApprovalRecord {
+                        id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        turn_id: row.get(2)?,
+                        origin: row.get(3)?,
+                        tool_call_id: row.get(4)?,
+                        provider_approval_ref: row.get(5)?,
+                        status: row.get(6)?,
+                        request: string_to_json(row.get(7)?)?,
+                        response: opt_string_to_json(response)?,
+                        created_at: row.get(9)?,
+                        resolved_at: row.get(10)?,
+                    })
+                })
+                .map_err(|error| db_error("failed querying settled turn approvals", error))?;
+            collect_rows(rows)?
+        };
+        let admission = tx
+            .query_row(
+                "SELECT turn_id,session_id,provider,projection_source,
+                        user_input_snapshot_json,dispatch_policy_json,correlation_json,
+                        dispatch_state,provider_native_turn_id,dispatch_error_json,
+                        admitted_at,updated_at
+                 FROM turn_admissions WHERE turn_id=?1 AND session_id=?2",
+                [turn_id, turn.session_id.as_str()],
+                turn_admission_from_row,
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading settled turn admission", error))?;
+        tx.commit()
+            .map_err(|error| db_error("failed closing settled retirement turn snapshot", error))?;
+        Ok(Some(RetirementSettledTurnProjection {
+            turn,
+            session,
+            approvals,
+            admission,
         }))
     }
 

@@ -360,3 +360,13 @@ pub struct RetirementReviewSessionProjection {
     pub approvals: Vec<ApprovalRecord>,
     pub admissions: Vec<crate::TurnAdmissionRecord>,
 }
+
+/// One durable retirement turn and its exact authority projections, loaded
+/// after a terminal turn receipt without decoding unrelated historical rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetirementSettledTurnProjection {
+    pub turn: TurnRecord,
+    pub session: Option<SessionRecord>,
+    pub approvals: Vec<ApprovalRecord>,
+    pub admission: Option<crate::TurnAdmissionRecord>,
+}

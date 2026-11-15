@@ -445,6 +445,14 @@ Queued processes that never launched are cancelled without creating a completion
 
 **HTTP 200** means the returned operation is `completed` and the workspace is retired. **HTTP 202** means it remains `requested` or `manual_review`; inspect `GET /v2/operations/{operation_id}`. Repeating the original request and key advances only provable effects. Background workers continue safe admitted work, including after restart. Effects whose native outcome was left uncertain are quarantined for operator reconciliation rather than replayed. Neither an accepted request nor an archived-agent row proves native closure by itself.
 
+Once a native turn is **durably terminal** (or input was proven never
+dispatched), retirement refreshes just that turn and its owning session,
+approvals, and dispatch admission from one consistent SQLite snapshot. A
+malformed unrelated historical session cannot turn a completed terminal-turn
+receipt into a post-commit HTTP failure. An accepted native interrupt alone
+is **not** terminal evidence, and this refresh does not retry uncertain native
+work or repair a corrupt affected turn.
+
 After a verified provider-native close acknowledgement commits during
 `retirement/advance`, the runtime refreshes only that attachment and its turns
 from one SQLite read snapshot. An unrelated malformed session payload cannot

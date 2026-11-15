@@ -225,6 +225,100 @@ fn retirement_review_snapshot_preserves_all_target_authority_and_ignores_corrupt
 }
 
 #[test]
+fn retirement_settled_turn_snapshot_matches_authority_and_ignores_corrupt_foreign_rows() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+
+    let session = admission_session();
+    repository.upsert_session(&session).unwrap();
+    let turn = admission_turn();
+    let mut admitted_session = session.clone();
+    admitted_session.status = "turn_admitted".into();
+    admitted_session.active_turn_id = Some(turn.id.clone());
+    admitted_session.updated_at = 11;
+    let approval = admission_approval();
+    let admission = admission_record();
+    repository
+        .admit_turn(&admission, &turn, &admitted_session, Some(&approval))
+        .unwrap();
+
+    let mut foreign = admission_session();
+    foreign.id = "settled_foreign_session".into();
+    foreign.provider_session_ref = Some("settled_foreign_native".into());
+    repository.upsert_session(&foreign).unwrap();
+    let mut foreign_turn = admission_turn();
+    foreign_turn.id = "settled_foreign_turn".into();
+    foreign_turn.session_id = foreign.id.clone();
+    foreign.status = "turn_admitted".into();
+    foreign.active_turn_id = Some(foreign_turn.id.clone());
+    foreign.updated_at = 12;
+    let mut foreign_approval = admission_approval();
+    foreign_approval.id = "settled_foreign_approval".into();
+    foreign_approval.session_id = foreign.id.clone();
+    foreign_approval.turn_id = foreign_turn.id.clone();
+    foreign_approval.provider_approval_ref = Some("settled_foreign_approval".into());
+    let mut foreign_admission = admission_record();
+    foreign_admission.turn_id = foreign_turn.id.clone();
+    foreign_admission.session_id = foreign.id.clone();
+    repository
+        .admit_turn(
+            &foreign_admission,
+            &foreign_turn,
+            &foreign,
+            Some(&foreign_approval),
+        )
+        .unwrap();
+
+    let snapshot = repository
+        .get_persisted_retirement_settled_turn(&turn.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.turn, turn);
+    assert_eq!(snapshot.session, Some(admitted_session));
+    assert_eq!(snapshot.approvals, vec![approval]);
+    assert_eq!(snapshot.admission, Some(admission));
+    assert_eq!(
+        repository
+            .get_persisted_retirement_settled_turn("nonexistent-turn")
+            .unwrap(),
+        None
+    );
+
+    let db = open_connection(&repository.database_path).unwrap();
+    db.execute(
+        "UPDATE sessions SET metadata_json='{invalid' WHERE id=?1",
+        [&foreign.id],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE approvals SET request_json='{invalid' WHERE session_id=?1",
+        [&foreign.id],
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE turn_admissions SET user_input_snapshot_json='null' WHERE session_id=?1",
+        [&foreign.id],
+    )
+    .unwrap();
+    assert!(repository.hydrate_runtime_state().is_err());
+    assert!(repository.list_turn_admissions().is_err());
+    assert_eq!(
+        repository
+            .get_persisted_retirement_settled_turn(&turn.id)
+            .unwrap(),
+        Some(snapshot.clone())
+    );
+    let reopened = SqliteRuntimeRepository::new(repository.database_path.clone());
+    assert_eq!(
+        reopened
+            .get_persisted_retirement_settled_turn(&turn.id)
+            .unwrap(),
+        Some(snapshot)
+    );
+}
+
+#[test]
 fn critical_turn_admission_event_rolls_back_authority_on_journal_failure_and_replays_once() {
     let temp = tempfile::tempdir().unwrap();
     let repository = repo(&temp);

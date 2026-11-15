@@ -235,34 +235,27 @@ impl RuntimeSessionManager {
     }
 
     async fn sync_retirement_settled_turn(&self, turn_id: &str) -> Result<(), RuntimeError> {
-        let state = self.store.hydrate_runtime_state()?;
-        let Some(turn) = state.turns.into_iter().find(|turn| turn.id == turn_id) else {
+        // The terminal receipt already committed. Never hydrate unrelated
+        // historical sessions/approvals/admissions just to project this turn.
+        let Some(projection) = self.store.get_persisted_retirement_settled_turn(turn_id)? else {
             return Ok(());
         };
-        let session_id = turn.session_id.clone();
-        self.turns.write().await.insert(turn.id.clone(), turn);
-        if let Some(session) = state
-            .sessions
-            .into_iter()
-            .find(|session| session.id == session_id)
-        {
-            self.sessions.write().await.insert(session_id, session);
+        self.turns
+            .write()
+            .await
+            .insert(projection.turn.id.clone(), projection.turn);
+        if let Some(session) = projection.session {
+            self.sessions
+                .write()
+                .await
+                .insert(session.id.clone(), session);
         }
         let mut approvals = self.approvals.write().await;
-        for approval in state
-            .approvals
-            .into_iter()
-            .filter(|approval| approval.turn_id == turn_id)
-        {
+        for approval in projection.approvals {
             approvals.insert(approval.id.clone(), approval);
         }
         drop(approvals);
-        if let Some(admission) = self
-            .store
-            .list_turn_admissions()?
-            .into_iter()
-            .find(|admission| admission.turn_id == turn_id)
-        {
+        if let Some(admission) = projection.admission {
             self.turn_admissions
                 .write()
                 .await

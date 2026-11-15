@@ -65,6 +65,37 @@ macro_rules! default_persisted_session_lookup {
                     .collect(),
             }))
         }
+
+        /// SQLite overrides with the exact terminal turn's consistent read.
+        /// Existing non-SQLite stores keep the historical hydrated fallback.
+        fn get_persisted_retirement_settled_turn(
+            &self,
+            turn_id: &str,
+        ) -> Result<Option<crate::RetirementSettledTurnProjection>, crate::RuntimeError> {
+            let state = self.hydrate_runtime_state()?;
+            let Some(turn) = state.turns.into_iter().find(|turn| turn.id == turn_id) else {
+                return Ok(None);
+            };
+            let session = state
+                .sessions
+                .into_iter()
+                .find(|session| session.id == turn.session_id);
+            let approvals = state
+                .approvals
+                .into_iter()
+                .filter(|approval| approval.turn_id == turn_id)
+                .collect();
+            let admission = self
+                .list_turn_admissions()?
+                .into_iter()
+                .find(|admission| admission.turn_id == turn_id);
+            Ok(Some(crate::RetirementSettledTurnProjection {
+                turn,
+                session,
+                approvals,
+                admission,
+            }))
+        }
     };
 }
 

@@ -111,6 +111,61 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed reading managed worktree by natural key", error))
     }
 
+    /// Read the exact existing managed checkout and its active claim count
+    /// under one SQLite snapshot before legacy native creation/reuse. The
+    /// existing natural-key UNIQUE index and claim primary-key index avoid
+    /// decoding unrelated sessions, messages, provider or native history.
+    /// This is advisory input to existing native locks and recovery fences,
+    /// never fresh permission to retry an uncertain Git operation.
+    pub fn managed_worktree_creation_snapshot(
+        &self,
+        repo_root: &str,
+        worktree_cwd: &str,
+        branch_name: &str,
+    ) -> Result<Option<(ManagedWorktreeRecord, usize)>, RuntimeError> {
+        let mut connection = open_connection(&self.database_path)?;
+        let snapshot = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|error| db_error("failed beginning worktree creation snapshot", error))?;
+        let existing = snapshot
+            .query_row(
+                "SELECT id, repo_root, worktree_root, worktree_cwd, branch_name,
+                        worktree_name, unified_workspace_path, deletion_policy,
+                        created_by_session_id, created_by_operation_id, created_at, updated_at
+                 FROM managed_worktrees
+                 WHERE repo_root=?1 AND worktree_cwd=?2 AND branch_name=?3",
+                rusqlite::params![repo_root, worktree_cwd, branch_name],
+                worktree_from_row,
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading worktree creation identity", error))?
+            .filter(|row| {
+                !row.repo_root.starts_with("__gg_tombstoned__/")
+                    && !row.worktree_cwd.starts_with("__gg_tombstoned__/")
+                    && !row.branch_name.starts_with("__gg_tombstoned__/")
+            });
+        let result = if let Some(worktree) = existing {
+            let count: i64 = snapshot
+                .query_row(
+                    "SELECT COUNT(*) FROM managed_worktree_claims
+                     WHERE worktree_id=?1 AND released_at IS NULL",
+                    [&worktree.id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| db_error("failed counting creation worktree claims", error))?;
+            let active_claim_count = usize::try_from(count).map_err(|_| {
+                RuntimeError::InvalidState("invalid active worktree claim count".into())
+            })?;
+            Some((worktree, active_claim_count))
+        } else {
+            None
+        };
+        snapshot
+            .commit()
+            .map_err(|error| db_error("failed completing worktree creation snapshot", error))?;
+        Ok(result)
+    }
+
     /// Read only worktrees belonging to this canonical Git repository. Legacy
     /// records may contain a symlink/`..` spelling of repo_root, so enumerate
     /// indexed *distinct roots* rather than assuming old paths were canonical.

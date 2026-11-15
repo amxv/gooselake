@@ -73,6 +73,7 @@ mod workspace_status_roster;
 mod worktree_claim_events;
 mod worktree_claim_session_projection_scale;
 mod worktree_cleanup_receipts;
+mod worktree_create_snapshot;
 mod worktree_diagnostics_scale;
 mod worktree_identity_policy_preflight;
 mod worktree_record_events;

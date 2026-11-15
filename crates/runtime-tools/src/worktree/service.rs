@@ -846,8 +846,12 @@ impl RuntimeWorktreeService {
             }
         }
 
-        let hydrated_before = self.store.hydrate_runtime_state()?;
-        if let Some(existing) = self.worktree_by_identity(&hydrated_before, &planned) {
+        let existing_snapshot = self.store.managed_worktree_creation_snapshot(
+            &planned.repo_root,
+            &planned.worktree_cwd,
+            &planned.branch_name,
+        )?;
+        if let Some((existing, active_claim_count)) = existing_snapshot {
             if let Some(requested) = request.deletion_policy.as_deref() {
                 if self.normalize_deletion_policy(Some(requested)) != existing.deletion_policy {
                     return Err(RuntimeError::Conflict(
@@ -855,9 +859,6 @@ impl RuntimeWorktreeService {
                     ));
                 }
             }
-            let active_claim_count = self
-                .active_claims_for(&hydrated_before, existing.id.as_str())
-                .len();
             let live_artifacts = Self::has_live_artifacts_for_record(&existing);
             let stale_cleaned = active_claim_count == 0
                 && !live_artifacts

@@ -1979,6 +1979,11 @@ managed-worktree natural key in SQLite. It can reject a different persisted
 policy without decoding unrelated historical session metadata and without
 admitting a new Git effect. This scoped read does not change the later native
 Git creation, recovery, or unknown-outcome fencing protocols.
+Legacy checkout creation or reuse also reads the exact existing natural-key
+record and its active claim count from one SQLite snapshot before checking
+the stale-checkout policy. Foreign malformed session history cannot mask an
+existing retained checkout or its policy conflict. The original repository
+locks, Git admission and uncertain native-outcome safeguards still apply.
 
 ## Teams and comms
 

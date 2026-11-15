@@ -58,6 +58,22 @@ macro_rules! delegate_worktree_status {
                 .get_managed_worktree_by_identity(repo_root, worktree_cwd, branch_name)
         }
 
+        fn managed_worktree_creation_snapshot(
+            &self,
+            repo_root: &str,
+            worktree_cwd: &str,
+            branch_name: &str,
+        ) -> Result<
+            Option<(runtime_core::ManagedWorktreeRecord, usize)>,
+            runtime_core::RuntimeError,
+        > {
+            self.repository.managed_worktree_creation_snapshot(
+                repo_root,
+                worktree_cwd,
+                branch_name,
+            )
+        }
+
         fn list_managed_worktree_checkout_paths(
             &self,
         ) -> Result<Vec<(String, String)>, runtime_core::RuntimeError> {

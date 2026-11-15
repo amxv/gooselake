@@ -189,6 +189,35 @@ macro_rules! default_managed_worktree_lookup {
                         && row.branch_name == branch_name
                 }))
         }
+
+        // Before a legacy Git checkout create/reuse, the caller needs the
+        // existing managed identity and its active-claim count from one
+        // coherent snapshot. Non-SQLite stores keep historical hydration;
+        // SQLite uses indexed reads of only those two projections.
+        fn managed_worktree_creation_snapshot(
+            &self,
+            repo_root: &str,
+            worktree_cwd: &str,
+            branch_name: &str,
+        ) -> Result<Option<(crate::ManagedWorktreeRecord, usize)>, crate::RuntimeError> {
+            let hydrated = self.hydrate_runtime_state()?;
+            let Some(existing) = hydrated.managed_worktrees.iter().find(|row| {
+                !row.repo_root.starts_with("__gg_tombstoned__/")
+                    && !row.worktree_cwd.starts_with("__gg_tombstoned__/")
+                    && !row.branch_name.starts_with("__gg_tombstoned__/")
+                    && row.repo_root == repo_root
+                    && row.worktree_cwd == worktree_cwd
+                    && row.branch_name == branch_name
+            }) else {
+                return Ok(None);
+            };
+            let active_claim_count = hydrated
+                .managed_worktree_claims
+                .iter()
+                .filter(|claim| claim.worktree_id == existing.id && claim.released_at.is_none())
+                .count();
+            Ok(Some((existing.clone(), active_claim_count)))
+        }
     };
 }
 

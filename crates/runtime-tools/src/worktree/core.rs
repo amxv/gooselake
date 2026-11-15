@@ -256,23 +256,6 @@ impl RuntimeWorktreeService {
             .collect()
     }
 
-    pub(super) fn worktree_by_identity(
-        &self,
-        hydrated: &runtime_core::RuntimeHydratedState,
-        planned: &PlannedWorktreePaths,
-    ) -> Option<ManagedWorktreeRecord> {
-        hydrated
-            .managed_worktrees
-            .iter()
-            .find(|row| {
-                !Self::is_record_tombstoned(row)
-                    && row.repo_root == planned.repo_root
-                    && row.worktree_cwd == planned.worktree_cwd
-                    && row.branch_name == planned.branch_name
-            })
-            .cloned()
-    }
-
     pub(crate) fn is_record_tombstoned(record: &ManagedWorktreeRecord) -> bool {
         record.repo_root.starts_with("__gg_tombstoned__/")
             || record.worktree_cwd.starts_with("__gg_tombstoned__/")

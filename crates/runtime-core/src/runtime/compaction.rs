@@ -216,11 +216,6 @@ impl RuntimeSessionManager {
         idempotency_key: Option<String>,
     ) -> Result<SessionCompactionRun, RuntimeError> {
         let _guard = self.session_policy_mutation_lock.lock().await;
-        if self.store.unresolved_session_edit_rerun(agent_id)? {
-            return Err(RuntimeError::Conflict(
-                "cannot compact while native edit-and-rerun remains unresolved".into(),
-            ));
-        }
         if let Some(key) = idempotency_key.as_deref() {
             if key.trim().is_empty() || key.len() > 128 {
                 return Err(RuntimeError::InvalidState(
@@ -230,6 +225,13 @@ impl RuntimeSessionManager {
             if let Some(existing) = self.store.get_session_compaction_by_key(agent_id, key)? {
                 return Ok(existing);
             }
+        }
+        // Existing keyed receipts are inspection-only. A later unresolved edit
+        // fences new compaction admission, not retrieval of an earlier run.
+        if self.store.unresolved_session_edit_rerun(agent_id)? {
+            return Err(RuntimeError::Conflict(
+                "cannot compact while native edit-and-rerun remains unresolved".into(),
+            ));
         }
         self.fence_unresolved_operator_turn_native_effect(agent_id)?;
         let agent = self.get_active_workspace_agent_by_id(agent_id)?;

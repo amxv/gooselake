@@ -276,6 +276,139 @@ async fn unknown_native_edit_is_fenced_across_idempotent_retries_and_cannot_be_g
 }
 
 #[tokio::test]
+async fn compaction_receipt_replays_during_later_unresolved_edit_without_native_dispatch() {
+    let (router, token, temp, provider, agent_id, turn_id) = ready_edit_agent(2).await;
+    provider.set_compaction_mode(2);
+    let compact_uri = format!("/v2/agents/{agent_id}/compact");
+    let original_key = "compact-before-unknown-edit";
+    let (status, original) = call(
+        &router,
+        &token,
+        "POST",
+        &compact_uri,
+        None,
+        Some(original_key),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{original}");
+    assert_eq!(original["phase"], "not_performed");
+    assert_eq!(provider.compaction_calls(), 1);
+
+    let edit_uri = format!("/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun");
+    let edit_body = serde_json::json!({"edited_snapshot":{
+        "prompt_text":"later edit with unknown native outcome",
+        "image_refs":[], "invocation":null
+    }});
+    let (status, unknown) = call(
+        &router,
+        &token,
+        "POST",
+        &edit_uri,
+        Some(edit_body.clone()),
+        Some("later-unknown-edit"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{unknown}");
+    let (status, edit) = call(
+        &router,
+        &token,
+        "POST",
+        &edit_uri,
+        Some(edit_body),
+        Some("later-unknown-edit"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edit}");
+    assert_eq!(edit["phase"], "manual_review");
+    assert_eq!(provider.edit_calls(), 1);
+
+    let database_path = temp.path().join("runtime.sqlite3");
+    let db = rusqlite::Connection::open(&database_path).unwrap();
+    let counts = || -> (i64, i64, i64, i64) {
+        db.query_row(
+            "SELECT (SELECT COUNT(*) FROM session_compaction_runs),
+                    (SELECT COUNT(*) FROM session_edit_reruns),
+                    (SELECT COUNT(*) FROM runtime_operations),
+                    (SELECT COUNT(*) FROM runtime_events)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap()
+    };
+    let before = counts();
+    for key in [Some("new-compact-during-unknown-edit"), None] {
+        let (status, blocked) = call(&router, &token, "POST", &compact_uri, None, key).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{blocked}");
+        assert!(blocked["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("edit-and-rerun remains unresolved"));
+    }
+
+    let (status, replay) = call(
+        &router,
+        &token,
+        "POST",
+        &compact_uri,
+        Some(serde_json::json!({})),
+        Some(original_key),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "saved receipt must remain readable: {replay}"
+    );
+    assert_eq!(
+        replay, original,
+        "exact retry returns the original durable run"
+    );
+
+    // Reopening the same fixture without a provider must still permit receipt
+    // inspection while retaining the durable fence against new native work.
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig { database_path }));
+    assert!(store.unresolved_session_edit_rerun(&agent_id).unwrap());
+    let reopened = Arc::new(
+        RuntimeSessionManager::new(
+            store.clone(),
+            Arc::new(runtime_core::ProviderRegistry::new()),
+            128,
+        )
+        .unwrap(),
+    );
+    let replay = reopened
+        .compact_workspace_agent(&agent_id, Some(original_key.into()))
+        .await
+        .expect("persisted compaction replay does not require a provider");
+    assert_eq!(serde_json::to_value(replay).unwrap(), original);
+    for key in [Some("new-compact-after-reopen".into()), None] {
+        assert!(matches!(
+            reopened.compact_workspace_agent(&agent_id, key).await,
+            Err(RuntimeError::Conflict(message))
+                if message.contains("edit-and-rerun remains unresolved")
+        ));
+    }
+    assert_eq!(
+        serde_json::to_value(
+            store
+                .get_session_edit_rerun(edit["operation_id"].as_str().unwrap())
+                .unwrap()
+                .unwrap()
+        )
+        .unwrap(),
+        edit,
+        "receipt replay must not settle or change the later unknown edit"
+    );
+    assert_eq!(
+        counts(),
+        before,
+        "replay and rejected new work make no durable writes"
+    );
+    assert_eq!(provider.compaction_calls(), 1);
+    assert_eq!(provider.edit_calls(), 1);
+}
+
+#[tokio::test]
 async fn edit_rejects_missing_native_image_before_any_provider_fork() {
     let (router, token, temp, provider, agent_id, turn_id) = ready_edit_agent(1).await;
     let uri = format!("/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun");

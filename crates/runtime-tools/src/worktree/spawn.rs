@@ -384,6 +384,13 @@ impl RuntimeWorktreeService {
                     Self::validate_managed_worktree_name(prefix)?;
                 }
             }
+
+            // Inspect the source Git checkout before durable keyed admission.
+            // A missing/non-repository cwd is a pure request failure: if it
+            // only fails after `admit_team_member_spawn`, the original key is
+            // stranded as unresolved even though no native work ran. Native
+            // worktree planning below still resolves again before mutation.
+            Self::resolve_repo_root_from_source_cwd(source_cwd.as_str())?;
         }
 
         let operation_id = self.allocate_operation_id();

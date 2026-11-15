@@ -167,6 +167,92 @@ async fn invalid_requested_provider_never_creates_native_git_checkout() {
 }
 
 #[tokio::test]
+async fn invalid_source_git_root_does_not_consume_keyed_spawn_before_native_work() {
+    let fixture = fixture().await;
+    let mut request = fixture.request();
+    request.metadata = None;
+    request.idempotency_key = Some("source-not-yet-a-git-repository".into());
+    request.worktree = Some(runtime_core::TeamMemberSpawnWorktreeInput {
+        mode: Some("create".into()),
+        name: Some("first-checkout".into()),
+        branch_prefix: None,
+        base_ref: None,
+        run_init_script: Some(false),
+    });
+
+    // The source directory exists but is not a Git checkout. This is a
+    // read-only preflight failure, not a native-admitted unresolved operation.
+    let error = fixture
+        .service
+        .spawn_team_member(request.clone())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error:?}");
+    let conn = rusqlite::Connection::open(&fixture.database_path).unwrap();
+    let admissions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM team_spawn_admissions", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(
+        admissions, 0,
+        "invalid source must not consume the caller key"
+    );
+    assert!(fixture
+        .store
+        .list_team_operation_journal(Some(&fixture.team_id))
+        .unwrap()
+        .is_empty());
+    assert!(fixture
+        .store
+        .hydrate_runtime_state()
+        .unwrap()
+        .managed_worktrees
+        .is_empty());
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
+
+    // Fixing the *same source* must allow the exact same request/key to
+    // execute once. No stranded planned admission may force manual repair.
+    let repo = fixture._temp.path();
+    for args in [
+        vec!["init", "--quiet"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--allow-empty",
+            "--quiet",
+            "-m",
+            "initial",
+        ],
+    ] {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let completed = fixture
+        .service
+        .spawn_team_member(request.clone())
+        .await
+        .expect("same key may execute after pure preflight is corrected");
+    assert_eq!(completed.journal_stage, "completed");
+    assert_eq!(fixture.fresh_journal().operation_id, completed.operation_id);
+    let replay = fixture.service.spawn_team_member(request).await.unwrap();
+    assert_eq!(replay.operation_id, completed.operation_id);
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 2);
+}
+
+#[tokio::test]
 async fn spawn_rollback_receipts_are_durable_only_after_confirmed_compensations() {
     let fixture = fixture().await;
     let error = fixture

@@ -69,6 +69,82 @@ pub(super) async fn reopened_runtime(
 }
 
 #[tokio::test]
+async fn reviewed_native_create_is_not_masked_by_unrelated_corrupt_session() {
+    let (router, token, temp, provider, runtime, workspace) = fixture().await;
+    let input = serde_json::json!({"provider":"codex","model":"test-model"});
+    let (status, unrelated, _) = create_http(
+        &router,
+        &token,
+        &workspace,
+        input.clone(),
+        Some("unrelated-before-review"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unrelated:?}");
+
+    provider.set_create_failure_mode(2);
+    let (status, unresolved, _) = create_http(
+        &router,
+        &token,
+        &workspace,
+        input.clone(),
+        Some("create-review-isolated"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{unresolved:?}");
+    let operation_id = unresolved["error"]["details"]["operation_id"]
+        .as_str()
+        .unwrap();
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let reserved: String = db
+        .query_row(
+            "SELECT target_id FROM runtime_operation_effects WHERE operation_id=?1",
+            [operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    db.execute(
+        "UPDATE sessions SET metadata_json='{invalid-json' WHERE id=?1",
+        [unrelated["agent_id"].as_str().unwrap()],
+    )
+    .unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    assert!(store.hydrate_runtime_state().is_err());
+
+    let baseline = provider.create_call_count();
+    let path = format!("/v2/workspaces/{workspace}/agents/creations/{operation_id}/resolve");
+    let review_input = serde_json::json!({
+        "resolution":"created", "provider":"codex", "reserved_agent_id":reserved,
+        "evidence":"Operator independently verified the reserved native session attachment",
+        "observed_provider_session_ref":format!("test-thread-{reserved}"),
+        "observed_canonical_provider_session_ref":null,
+    });
+    let (status, reviewed) = call(
+        &router,
+        &token,
+        "POST",
+        &path,
+        Some(review_input.clone()),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reviewed:?}");
+    assert_eq!(reviewed["resolution"], "created");
+    assert_eq!(reviewed["restart_required"], true);
+    assert_eq!(
+        runtime.get_session(&reserved).await.unwrap().status,
+        "create_recovery_required"
+    );
+    let (status, repeated) = call(&router, &token, "POST", &path, Some(review_input), None).await;
+    assert_eq!(status, StatusCode::OK, "{repeated:?}");
+    assert_eq!(repeated, reviewed);
+    assert_eq!(provider.create_call_count(), baseline);
+    assert!(store.hydrate_runtime_state().is_err());
+}
+
+#[tokio::test]
 async fn keyed_create_replays_the_same_session_profile_and_onboarding_after_restart() {
     let (router, token, temp, provider, runtime, workspace) = fixture().await;
     let input = serde_json::json!({

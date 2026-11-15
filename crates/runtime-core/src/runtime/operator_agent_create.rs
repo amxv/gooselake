@@ -137,12 +137,9 @@ impl RuntimeSessionManager {
         if result.restart_required {
             // The newly created, verified native attachment remains fenced in
             // this process until a *fresh* startup proves its exact identity.
-            let hydrated = self.store.hydrate_runtime_state()?;
-            if let Some(session) = hydrated
-                .sessions
-                .into_iter()
-                .find(|row| row.id == input.reserved_agent_id)
-            {
+            // The review has already committed. Only reload the reserved
+            // session; unrelated invalid history cannot mask the receipt.
+            if let Some(session) = self.store.get_persisted_session(&input.reserved_agent_id)? {
                 self.sessions
                     .write()
                     .await

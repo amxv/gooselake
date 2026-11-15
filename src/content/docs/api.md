@@ -739,9 +739,10 @@ consumes the original key: repeat calls return nonretryable
 The operator evidence, prior uncertainty, final effect and terminal transition
 remain in `GET /v2/operations/{operation_id}`.
 
-After a native-policy, archive or restore operator review commits, the live
-runtime refreshes only the reviewed session from SQLite. An unrelated malformed
-historical session payload does not turn an already-committed review into an
+After a native-policy, archive, restore or verified native-creation operator
+review commits, the live runtime refreshes only the reviewed session from
+SQLite. An unrelated malformed historical session payload does not turn an
+already-committed review into an
 HTTP error or cause another provider invocation. This does **not** imply that
 the entire store, a corrupted reviewed session, or subsequent startup can be
 recovered automatically.

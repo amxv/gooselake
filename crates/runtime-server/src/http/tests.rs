@@ -59,6 +59,7 @@ mod legacy_team_spawn_idempotency;
 mod legacy_worktree_claim_projection;
 mod legacy_worktree_create_preflight;
 mod legacy_worktree_list_projection;
+mod legacy_worktree_missing_id_preflight;
 mod legacy_worktree_reuse_preflight;
 mod mcp_core;
 mod mcp_policy_process;

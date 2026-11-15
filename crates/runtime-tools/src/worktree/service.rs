@@ -223,6 +223,9 @@ impl WorktreeService for RuntimeWorktreeService {
                 "agent has an unresolved provider rebind; worktree claims cannot change".into(),
             ));
         }
+        // Reject only missing/tombstoned IDs without decoding unrelated
+        // sessions. Existing IDs still use the original full safety read.
+        self.get_worktree(request.worktree_id.as_str()).await?;
         let hydrated = self.store.hydrate_runtime_state()?;
         let worktree = self.get_worktree_from_hydrated(request.worktree_id.as_str(), &hydrated)?;
         let repository_lock = self.lock_for_repo(&worktree.repo_root).await;
@@ -306,6 +309,10 @@ impl WorktreeService for RuntimeWorktreeService {
         request: WorktreeCleanupRequest,
     ) -> Result<WorktreeCleanupResponse, RuntimeError> {
         self.ensure_enabled()?;
+        // Reject only missing/tombstoned IDs without decoding unrelated
+        // sessions; existing IDs still require the *original* full safety
+        // snapshot before taking any native Git cleanup locks or decisions.
+        self.get_worktree(request.worktree_id.as_str()).await?;
         let hydrated = self.store.hydrate_runtime_state()?;
         let worktree = self.get_worktree_from_hydrated(request.worktree_id.as_str(), &hydrated)?;
         let lifecycle_lock = runtime_core::repository_lifecycle_lock(&worktree.repo_root).await;

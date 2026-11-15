@@ -50,6 +50,7 @@ mod provider_native_approval_events;
 mod provider_terminal_conflict;
 mod provider_terminal_events;
 mod recovery_diagnostics_scale;
+mod retirement_approval_projection_scale;
 mod retirement_turn_projection_scale;
 mod session_lifecycle_events;
 mod team_operation_journal_scale;

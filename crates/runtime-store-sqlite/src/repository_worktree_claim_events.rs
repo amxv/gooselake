@@ -9,6 +9,34 @@ use crate::repository::insert_runtime_event_in_transaction;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
+    /// A missing claim is a pure PK read. Never widen the successful case's
+    /// native cleanup safety authorization using this limited projection.
+    pub fn get_managed_worktree_claim(
+        &self,
+        worktree_id: &str,
+        session_id: &str,
+    ) -> Result<Option<ManagedWorktreeClaimRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        connection
+            .query_row(
+                "SELECT worktree_id,session_id,claim_role,created_at,released_at
+                 FROM managed_worktree_claims
+                 WHERE worktree_id=?1 AND session_id=?2",
+                params![worktree_id, session_id],
+                |row| {
+                    Ok(ManagedWorktreeClaimRecord {
+                        worktree_id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        claim_role: row.get(2)?,
+                        created_at: row.get(3)?,
+                        released_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading exact managed worktree claim", error))
+    }
+
     /// Legacy best-effort member removal needs only this removed session's
     /// active claims in original hydrated (created_at, worktree_id) order.
     /// Schema 48 already supplies the partial seek index; the subsequent

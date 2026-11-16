@@ -182,10 +182,8 @@ impl WorktreeService for RuntimeWorktreeService {
             ));
         }
 
-        // No native mutation happens here. The SQLite transition separately
-        // serializes cross-process active-claim exclusion with its Critical
-        // event; this preflight preserves the historical first-conflict error
-        // without hydrating unrelated sessions or message history.
+        // SQLite serializes claim exclusion and its Critical event; this
+        // preflight preserves original conflict order without global hydration.
         let conflicting_claim = self.store.first_active_foreign_worktree_claim_for_session(
             request.session_id.as_str(),
             request.worktree_id.as_str(),
@@ -223,9 +221,16 @@ impl WorktreeService for RuntimeWorktreeService {
                 "agent has an unresolved provider rebind; worktree claims cannot change".into(),
             ));
         }
-        // Reject only missing/tombstoned IDs without decoding unrelated
-        // sessions. Existing IDs still use the original full safety read.
+        // Missing IDs and claims short-circuit; valid targets retain full safety.
         self.get_worktree(request.worktree_id.as_str()).await?;
+        self.store
+            .get_managed_worktree_claim(&request.worktree_id, &request.session_id)?
+            .ok_or_else(|| {
+                RuntimeError::NotFound(format!(
+                    "worktree claim {}:{}",
+                    request.worktree_id, request.session_id
+                ))
+            })?;
         let hydrated = self.store.hydrate_runtime_state()?;
         let worktree = self.get_worktree_from_hydrated(request.worktree_id.as_str(), &hydrated)?;
         let repository_lock = self.lock_for_repo(&worktree.repo_root).await;

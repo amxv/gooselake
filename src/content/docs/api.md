@@ -1983,6 +1983,11 @@ Malformed unrelated session history cannot leave those claims orphaned.
 Each release still commits independently with its Critical event, while
 native cleanup requires the complete original safety evidence and records
 a diagnostic without deleting a checkout if that evidence is unreadable.
+For legacy release, a **missing claim** on a valid managed worktree is also
+reported as 404 using its exact `(worktree_id, session_id)` key, independent
+of unrelated malformed historical sessions. An **existing** claim continues
+through the original complete live-binding, rebind, claim and cleanup guards;
+the point read cannot authorize a release or any native deletion.
 
 For v2 workspace worktree creation with an explicitly specified retention
 policy, the pre-admission policy-conflict check seeks only the existing

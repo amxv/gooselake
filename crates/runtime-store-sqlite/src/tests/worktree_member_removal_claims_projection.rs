@@ -111,6 +111,41 @@ fn removed_member_active_claims_seek_schema48_in_old_order_across_corrupt_histor
         .unwrap();
     assert_eq!(rows, 2400);
 
+    let pk_plan = db
+        .prepare(
+            "EXPLAIN QUERY PLAN
+             SELECT worktree_id,session_id,claim_role,created_at,released_at
+             FROM managed_worktree_claims
+             WHERE worktree_id='wt_history_0111' AND session_id='session_1'",
+        )
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .join(" | ");
+    assert!(
+        pk_plan.contains(
+            "SEARCH managed_worktree_claims USING INDEX sqlite_autoindex_managed_worktree_claims_1"
+        ),
+        "{pk_plan}"
+    );
+    let expected_claim = claims
+        .iter()
+        .find(|row| row.worktree_id == "wt_history_0111")
+        .unwrap();
+    assert_eq!(
+        repository
+            .get_managed_worktree_claim("wt_history_0111", REMOVED)
+            .unwrap()
+            .as_ref(),
+        Some(expected_claim)
+    );
+    assert!(repository
+        .get_managed_worktree_claim("wt_history_0111", UNRELATED)
+        .unwrap()
+        .is_none());
+
     db.execute(
         "UPDATE sessions SET metadata_json='{foreign-corrupted-session' WHERE id=?1",
         [UNRELATED],
@@ -134,6 +169,18 @@ fn removed_member_active_claims_seek_schema48_in_old_order_across_corrupt_histor
         claims,
         "RuntimeStore method must delegate to indexed SQLite projection"
     );
+    assert_eq!(
+        store
+            .get_managed_worktree_claim("wt_history_0111", REMOVED)
+            .unwrap()
+            .as_ref(),
+        Some(expected_claim),
+        "exact claim point read must survive unrelated corrupt session history"
+    );
+    assert!(reopened
+        .get_managed_worktree_claim("wt_history_0111", UNRELATED)
+        .unwrap()
+        .is_none());
     assert!(store.hydrate_runtime_state().is_err());
     db.execute(
         "UPDATE managed_worktree_claims SET released_at=555
@@ -159,4 +206,13 @@ fn removed_member_active_claims_seek_schema48_in_old_order_across_corrupt_histor
         rows
     );
     assert!(reopened.hydrate_runtime_state().is_err());
+    assert_eq!(
+        reopened
+            .get_managed_worktree_claim("wt_history_0111", REMOVED)
+            .unwrap()
+            .unwrap()
+            .released_at,
+        Some(555),
+        "a released historical claim must remain visible to a pure existence preflight"
+    );
 }

@@ -41,6 +41,17 @@ async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_
         post_legacy_worktree(&router, Some(&token), "/v1/sessions", source_body).await;
     assert_eq!(status, StatusCode::OK, "{foreign}");
     let foreign_id = foreign["id"].as_str().unwrap();
+    let (status, unclaimed) = post_legacy_worktree(
+        &router,
+        Some(&token),
+        "/v1/sessions",
+        serde_json::json!({
+            "provider":"codex", "model":"test-model", "cwd":root,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unclaimed}");
+    let unclaimed_id = unclaimed["id"].as_str().unwrap();
 
     let database_path = temp.path().join("runtime.sqlite3");
     let db = rusqlite::Connection::open(&database_path).unwrap();
@@ -57,6 +68,19 @@ async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_
                 temp.path().display().to_string(),
                 existing_cwd
             ],
+        )
+        .unwrap(),
+        1
+    );
+    // Keep a genuine claim on the existing worktree so its release still
+    // exercises the original full cleanup-safety evidence, unlike the
+    // distinct nonexistent claim checked below.
+    assert_eq!(
+        db.execute(
+            "INSERT INTO managed_worktree_claims
+             (worktree_id,session_id,claim_role,created_at,released_at)
+             VALUES('wt_guarded',?1,'owner',100,NULL)",
+            [session_id],
         )
         .unwrap(),
         1
@@ -121,6 +145,10 @@ async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_
         ),
         (
             "/v1/worktrees/wt_guarded/release".to_string(),
+            serde_json::json!({"session_id":unclaimed_id,"cleanup_if_last_claim":false}),
+        ),
+        (
+            "/v1/worktrees/wt_guarded/release".to_string(),
             serde_json::json!({"session_id":session_id,"cleanup_if_last_claim":false}),
         ),
         (
@@ -131,7 +159,7 @@ async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_
     for (index, (uri, body)) in cases.into_iter().enumerate() {
         let (status, result) =
             post_legacy_worktree(&router, Some(&token), &uri, body.clone()).await;
-        let expected = if index < 4 {
+        let expected = if index < 5 {
             StatusCode::NOT_FOUND
         } else {
             StatusCode::INTERNAL_SERVER_ERROR
@@ -144,6 +172,11 @@ async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_
                 "wt_tombstoned"
             };
             assert_eq!(result["error"], format!("worktree {id}"));
+        } else if index == 4 {
+            assert_eq!(
+                result["error"],
+                format!("worktree claim wt_guarded:{unclaimed_id}")
+            );
         } else {
             assert!(
                 result["error"].as_str().unwrap_or_default().contains("failed collecting sqlite rows"),

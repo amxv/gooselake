@@ -159,6 +159,20 @@ macro_rules! default_managed_worktree_lookup {
                 .collect())
         }
 
+        // A negative claim release needs only the exact claim key. Positive
+        // matches still require the caller's original complete safety reads.
+        fn get_managed_worktree_claim(
+            &self,
+            worktree_id: &str,
+            session_id: &str,
+        ) -> Result<Option<crate::ManagedWorktreeClaimRecord>, crate::RuntimeError> {
+            Ok(self
+                .hydrate_runtime_state()?
+                .managed_worktree_claims
+                .into_iter()
+                .find(|row| row.worktree_id == worktree_id && row.session_id == session_id))
+        }
+
         // A legacy provider-create preflight needs only checkout paths for
         // retirement locks. Non-SQLite stores preserve their prior hydration
         // behavior; SQLite reads only the two required durable columns.

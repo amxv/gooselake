@@ -25,6 +25,14 @@ macro_rules! delegate_worktree_status {
                 .list_active_managed_worktree_claims_for_session(session_id)
         }
 
+        fn get_managed_worktree_claim(
+            &self,
+            worktree_id: &str,
+            session_id: &str,
+        ) -> Result<Option<runtime_core::ManagedWorktreeClaimRecord>, runtime_core::RuntimeError> {
+            self.repository.get_managed_worktree_claim(worktree_id, session_id)
+        }
+
         fn upsert_managed_worktree(
             &self,
             record: &runtime_core::ManagedWorktreeRecord,

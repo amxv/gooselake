@@ -111,6 +111,7 @@ mod workspace_control_routes;
 mod workspace_migration_routes;
 mod workspace_retirement_live;
 mod workspace_retirement_review;
+mod workspace_retirement_revision_ceiling;
 mod workspace_retirement_routes;
 mod workspace_retirement_scoped_turn;
 mod workspace_retirement_support;

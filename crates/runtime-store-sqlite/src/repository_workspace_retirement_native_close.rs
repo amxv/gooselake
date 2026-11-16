@@ -102,6 +102,42 @@ impl SqliteRuntimeRepository {
             provider_session_ref,
         };
         let identity = current_native_identity(&tx, operation_id, agent_id)?;
+        // Recheck after freezing: a second writer or direct store caller may
+        // have exhausted either signed revision before this native boundary.
+        // One workspace revision retires, another clears an existing lead.
+        let (workspace_revision, lead_id): (i64, Option<String>) = tx
+            .query_row(
+                "SELECT w.revision,w.lead_agent_id FROM workspaces w
+                 JOIN workspace_retirement_fences f ON f.workspace_id=w.workspace_id
+                 WHERE f.operation_id=?1",
+                [operation_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|error| db_error("failed checking retirement workspace revision", error))?;
+        let needed = if lead_id.is_some() { 2 } else { 1 };
+        if workspace_revision > i64::MAX - needed {
+            return Err(RuntimeError::InvalidState(
+                "workspace retirement cannot advance signed SQLite revision".into(),
+            ));
+        }
+        // A roster entry already archived by an older/legacy path does not
+        // advance its revision again when retirement proves native closure.
+        // Only a *currently active* roster entry needs signed headroom.
+        let active_roster_exhausted: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspace_agents
+                 WHERE session_id=?1 AND lifecycle_state='active' AND revision>=?2)",
+                params![agent_id, i64::MAX],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                db_error("failed checking active retirement roster revision", error)
+            })?;
+        if active_roster_exhausted {
+            return Err(RuntimeError::InvalidState(
+                "retiring agent revision cannot advance beyond SQLite signed range".into(),
+            ));
+        }
         let updated = tx
             .execute(
                 "UPDATE runtime_operation_effects SET phase='started',

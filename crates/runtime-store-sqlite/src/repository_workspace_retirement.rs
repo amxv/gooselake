@@ -225,6 +225,12 @@ impl SqliteRuntimeRepository {
                 command.workspace_id, command.expected_revision, workspace.revision
             )));
         }
+        if workspace.revision >= i64::MAX as u64 {
+            return Err(RuntimeError::InvalidState(
+                "quiescent retirement workspace revision cannot advance beyond SQLite signed range"
+                    .into(),
+            ));
+        }
         if workspace.lead_agent_id.is_some() {
             return Err(RuntimeError::Conflict(
                 "workspace lead must be cleared before quiescent retirement".into(),

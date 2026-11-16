@@ -130,6 +130,42 @@ pub(crate) fn archive_verified_close(
             |row| row.get(0),
         )
         .map_err(|error| db_error("failed finding retiring workspace for close receipt", error))?;
+    // Retire needs one final workspace revision after every close, plus one
+    // if any lead must still be cleared. Recheck in the receipt transaction
+    // even though native admission already made this assertion before close.
+    let (workspace_revision, lead_id): (i64, Option<String>) = tx
+        .query_row(
+            "SELECT revision,lead_agent_id FROM workspaces WHERE workspace_id=?1",
+            [&workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| db_error("failed reading verified close workspace revision", error))?;
+    let needed = if lead_id.is_some() { 2 } else { 1 };
+    if workspace_revision > i64::MAX - needed {
+        return Err(RuntimeError::InvalidState(
+            "workspace retirement close cannot advance signed SQLite revision".into(),
+        ));
+    }
+    // An already archived legacy roster row is a no-op here, even at MAX;
+    // it must still be possible to prove closure of its native attachment.
+    let active_roster_exhausted: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_agents
+             WHERE session_id=?1 AND lifecycle_state='active' AND revision>=?2)",
+            params![attempt.agent_id, i64::MAX],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            db_error(
+                "failed checking verified-close active roster revision",
+                error,
+            )
+        })?;
+    if active_roster_exhausted {
+        return Err(RuntimeError::InvalidState(
+            "retirement archive revision cannot advance beyond SQLite signed range".into(),
+        ));
+    }
     tx.execute(
         "UPDATE workspaces SET lead_agent_id=NULL,revision=revision+1,updated_at=?3
         WHERE workspace_id=?1 AND lead_agent_id=?2",

@@ -475,6 +475,11 @@ impl SqliteRuntimeRepository {
         if workspace.lead_agent_id.is_some() {
             return Ok(None);
         }
+        if workspace.revision >= i64::MAX as u64 {
+            return Err(RuntimeError::InvalidState(
+                "retirement finalization cannot advance signed SQLite workspace revision".into(),
+            ));
+        }
         let active_agents: i64 = tx.query_row(
             "SELECT COUNT(*) FROM workspace_agents WHERE workspace_id=?1 AND lifecycle_state<>'archived'",
             [&workspace_id],|row|row.get(0),

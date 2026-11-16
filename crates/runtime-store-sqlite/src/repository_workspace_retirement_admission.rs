@@ -274,6 +274,36 @@ impl SqliteRuntimeRepository {
                 command.expected_revision, workspace.revision
             )));
         }
+        // A populated retirement always advances the workspace revision at
+        // finalization, and archiving its current lead advances it once more.
+        // Refuse a plan with no signed SQLite successor BEFORE any native
+        // close/interrupt/process effects or durable retirement admission.
+        let required_revisions = if workspace.lead_agent_id.is_some() {
+            2
+        } else {
+            1
+        };
+        if workspace.revision > (i64::MAX as u64 - required_revisions) {
+            return Err(RuntimeError::InvalidState(
+                "workspace retirement requires unavailable signed SQLite revisions".into(),
+            ));
+        }
+        let exhausted_agent_revision: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspace_agents
+                 WHERE workspace_id=?1 AND lifecycle_state='active' AND revision>=?2)",
+                params![workspace.workspace_id, i64::MAX],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                db_error("failed checking retirement agent revision ceilings", error)
+            })?;
+        if exhausted_agent_revision {
+            return Err(RuntimeError::InvalidState(
+                "workspace retirement agent revision cannot advance beyond SQLite signed range"
+                    .into(),
+            ));
+        }
         let existing_fence: Option<String> = tx
             .query_row(
                 "SELECT operation_id FROM workspace_retirement_fences WHERE workspace_id=?1",

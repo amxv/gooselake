@@ -2,9 +2,201 @@ use super::workspace_retirement::{retirement_command, setup};
 use super::*;
 use runtime_core::{
     prepare_workspace_registration, OperationActor, OperationPhase,
-    ProviderRetirementCloseEvidence, ProviderRetirementCloseProofKind, WorkspaceLifecycleState,
-    WorkspaceRegisterRequest, WorkspaceRetirementAdmission,
+    ProviderRetirementCloseEvidence, ProviderRetirementCloseProofKind, RuntimeError,
+    WorkspaceLifecycleState, WorkspaceRegisterRequest, WorkspaceRetirementAdmission,
 };
+
+#[test]
+fn retirement_native_close_rechecks_signed_workspace_ceiling_after_freeze() {
+    let (temp, repo, workspace) = setup();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let mut native = sample_session();
+    native.cwd = Some(workspace.canonical_root.clone());
+    native.active_turn_id = None;
+    native.worktree_id = None;
+    native.provider_session_ref = Some("native-ceiling-proof".into());
+    repo.upsert_session(&native).unwrap();
+    db.execute(
+        "INSERT INTO workspace_session_ownership(session_id,workspace_id,source,created_at)
+         VALUES (?1,?2,'migration',1)",
+        params![native.id, workspace.workspace_id],
+    )
+    .unwrap();
+    let command = retirement_command(&workspace, "retirement-postfreeze-ceiling");
+    let plan = match repo.admit_workspace_retirement(&command).unwrap() {
+        WorkspaceRetirementAdmission::New(plan) => plan,
+        other => panic!("unexpected retirement admission: {other:?}"),
+    };
+    db.execute(
+        "UPDATE workspaces SET revision=?1 WHERE workspace_id=?2",
+        params![i64::MAX, workspace.workspace_id],
+    )
+    .unwrap();
+    let error = repo
+        .claim_workspace_retirement_native_close(&plan.operation_id, &native.id, 2)
+        .unwrap_err();
+    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error}");
+    let durable = repo.get_operation(&plan.operation_id).unwrap().unwrap();
+    assert_eq!(durable.operation.phase, OperationPhase::Requested);
+    assert_eq!(durable.effects.len(), 1);
+    assert_eq!(durable.effects[0].phase, "intended");
+    assert_eq!(durable.effects[0].attempt_count, 0);
+}
+
+#[test]
+fn quiescent_retirement_rejects_signed_workspace_ceiling_without_a_receipt() {
+    let (temp, repo, mut workspace) = setup();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE workspaces SET revision=?1 WHERE workspace_id=?2",
+        params![i64::MAX, workspace.workspace_id],
+    )
+    .unwrap();
+    workspace.revision = i64::MAX as u64;
+    let command = retirement_command(&workspace, "quiescent-ceiling");
+    let error = repo.retire_empty_workspace(&command).unwrap_err();
+    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error}");
+    assert!(repo.get_operation(&command.operation_id).unwrap().is_none());
+    assert_eq!(
+        repo.get_workspace(&workspace.workspace_id)
+            .unwrap()
+            .unwrap(),
+        workspace
+    );
+}
+
+#[test]
+fn quiescent_retirement_at_final_signed_successor_is_exactly_replayable() {
+    let (temp, repo, workspace) = setup();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE workspaces SET revision=?1 WHERE workspace_id=?2",
+        params![i64::MAX - 1, workspace.workspace_id],
+    )
+    .unwrap();
+    let at_limit = repo
+        .get_workspace(&workspace.workspace_id)
+        .unwrap()
+        .unwrap();
+    let command = retirement_command(&at_limit, "quiescent-final-signed-successor");
+    let retired = repo.retire_empty_workspace(&command).unwrap();
+    assert_eq!(retired.workspace.revision, i64::MAX as u64);
+    assert_eq!(
+        retired.workspace.lifecycle_state,
+        WorkspaceLifecycleState::Retired
+    );
+    assert_eq!(repo.retire_empty_workspace(&command).unwrap(), retired);
+    assert_eq!(
+        repo.get_operation(&command.operation_id)
+            .unwrap()
+            .unwrap()
+            .operation
+            .phase,
+        OperationPhase::Completed
+    );
+}
+
+#[test]
+fn retirement_close_receipt_fails_closed_if_signed_workspace_revision_changes_after_claim() {
+    let (temp, repo, workspace) = setup();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let mut native = sample_session();
+    native.cwd = Some(workspace.canonical_root.clone());
+    native.active_turn_id = None;
+    native.worktree_id = None;
+    native.provider_session_ref = Some("native-ceiling-ack".into());
+    repo.upsert_session(&native).unwrap();
+    db.execute(
+        "INSERT INTO workspace_session_ownership(session_id,workspace_id,source,created_at)
+         VALUES (?1,?2,'migration',1)",
+        params![native.id, workspace.workspace_id],
+    )
+    .unwrap();
+    let command = retirement_command(&workspace, "retirement-receipt-ceiling");
+    let plan = match repo.admit_workspace_retirement(&command).unwrap() {
+        WorkspaceRetirementAdmission::New(plan) => plan,
+        other => panic!("unexpected retirement admission: {other:?}"),
+    };
+    let attempt = repo
+        .claim_workspace_retirement_native_close(&plan.operation_id, &native.id, 2)
+        .unwrap();
+    db.execute(
+        "UPDATE workspaces SET revision=?1 WHERE workspace_id=?2",
+        params![i64::MAX, workspace.workspace_id],
+    )
+    .unwrap();
+    let evidence = ProviderRetirementCloseEvidence {
+        runtime_session_id: native.id.clone(),
+        provider_session_ref: "native-ceiling-ack".into(),
+        proof_kind: ProviderRetirementCloseProofKind::NativeSessionCloseAcknowledged,
+    };
+    let error = repo
+        .finalize_workspace_retirement_native_close(&attempt, &evidence, 3)
+        .unwrap_err();
+    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error}");
+    let pending = repo.get_operation(&plan.operation_id).unwrap().unwrap();
+    assert_eq!(pending.effects[0].phase, "started");
+    assert_eq!(pending.effects[0].attempt_count, 1);
+    assert_ne!(
+        repo.get_persisted_session(&native.id)
+            .unwrap()
+            .unwrap()
+            .status,
+        "closed"
+    );
+    assert_eq!(
+        repo.get_workspace(&workspace.workspace_id)
+            .unwrap()
+            .unwrap()
+            .revision,
+        i64::MAX as u64
+    );
+    // After a hypothetical adapter acknowledgement the native effect is
+    // unknown, never claim it again; the explicit recovery fence is durable.
+    repo.quarantine_workspace_retirement_native_close(&attempt, "receipt_revision_exhausted", 4)
+        .unwrap();
+    assert_eq!(
+        repo.get_operation(&plan.operation_id)
+            .unwrap()
+            .unwrap()
+            .operation
+            .phase,
+        OperationPhase::ManualReview
+    );
+    assert!(repo
+        .claim_workspace_retirement_native_close(&plan.operation_id, &native.id, 5)
+        .is_err());
+}
+
+#[test]
+fn retirement_terminal_commit_rechecks_signed_ceiling_without_sqlite_real_overflow() {
+    let (temp, repo, workspace) = setup();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let command = retirement_command(&workspace, "retirement-terminal-ceiling");
+    let plan = match repo.admit_workspace_retirement(&command).unwrap() {
+        WorkspaceRetirementAdmission::New(plan) => plan,
+        other => panic!("unexpected retirement admission: {other:?}"),
+    };
+    assert!(plan.agent_ids.is_empty());
+    db.execute(
+        "UPDATE workspaces SET revision=?1 WHERE workspace_id=?2",
+        params![i64::MAX, workspace.workspace_id],
+    )
+    .unwrap();
+    let error = repo
+        .finalize_settled_workspace_retirement(&plan.operation_id, 2)
+        .unwrap_err();
+    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error}");
+    let pending = repo.get_operation(&plan.operation_id).unwrap().unwrap();
+    assert_eq!(pending.operation.phase, OperationPhase::Requested);
+    assert!(pending.operation.exact_terminal_result.is_none());
+    let unchanged = repo
+        .get_workspace(&workspace.workspace_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(unchanged.lifecycle_state, WorkspaceLifecycleState::Active);
+    assert_eq!(unchanged.revision, i64::MAX as u64);
+}
 
 #[test]
 fn retirement_freeze_is_atomic_resumable_and_blocks_new_native_work() {

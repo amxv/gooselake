@@ -3,6 +3,19 @@
 //! must never silently fall back to a best-effort post-native event append.
 macro_rules! default_worktree_record_journal {
     () => {
+        /// Historical startup normalization must compare the hydrated source
+        /// to the current durable row inside the same writer transaction.
+        /// Non-SQLite stores cannot silently substitute a blind UPSERT.
+        fn repair_managed_worktree_if_unchanged(
+            &self,
+            _original: &crate::ManagedWorktreeRecord,
+            _normalized: &crate::ManagedWorktreeRecord,
+        ) -> Result<(), crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic managed-worktree startup snapshot repair unavailable".into(),
+            ))
+        }
+
         /// Commit native Git worktree record and critical lifecycle evidence
         /// in one durable store transaction after independently verified Git.
         fn record_managed_worktree_event(

@@ -86,6 +86,11 @@ impl RuntimeWorktreeService {
             session_ids.insert(session.id.trim().to_string());
         }
 
+        let original_records_by_id = hydrated
+            .managed_worktrees
+            .iter()
+            .map(|record| (record.id.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
         let mut normalized_records_by_id = BTreeMap::<String, ManagedWorktreeRecord>::new();
         for original in &hydrated.managed_worktrees {
             let mut normalized = original.clone();
@@ -163,20 +168,52 @@ impl RuntimeWorktreeService {
             // A restart is not a new native worktree mutation. Re-upserting
             // unchanged records increments their persisted revisions and can
             // overwrite another writer's newer row after snapshot hydration.
-            if normalized_records_by_id.get(&winner.id) == Some(winner) {
+            let Some(original) = normalized_records_by_id.get(&winner.id) else {
+                return Err(RuntimeError::Conflict(
+                    "historical worktree normalization lost its source record".into(),
+                ));
+            };
+            if original == winner {
                 continue;
             }
-            store.upsert_managed_worktree(winner)?;
+            let source = original_records_by_id
+                .get(winner.id.as_str())
+                .ok_or_else(|| {
+                    RuntimeError::Conflict(
+                        "historical worktree normalization lost its raw source record".into(),
+                    )
+                })?;
+            store.repair_managed_worktree_if_unchanged(source, winner)?;
         }
 
         for loser_id in loser_to_winner.keys() {
             if let Some(loser) = normalized_records_by_id.get(loser_id) {
-                store.upsert_managed_worktree(&Self::tombstone_record(loser, now))?;
+                let original = original_records_by_id
+                    .get(loser_id.as_str())
+                    .ok_or_else(|| {
+                        RuntimeError::Conflict(
+                            "historical loser worktree missing its raw source record".into(),
+                        )
+                    })?;
+                store.repair_managed_worktree_if_unchanged(
+                    original,
+                    &Self::tombstone_record(loser, now),
+                )?;
             }
         }
         for malformed_id in &malformed_ids {
             if let Some(malformed) = normalized_records_by_id.get(malformed_id) {
-                store.upsert_managed_worktree(&Self::tombstone_record(malformed, now))?;
+                let original = original_records_by_id
+                    .get(malformed_id.as_str())
+                    .ok_or_else(|| {
+                        RuntimeError::Conflict(
+                            "historical malformed worktree missing its raw source record".into(),
+                        )
+                    })?;
+                store.repair_managed_worktree_if_unchanged(
+                    original,
+                    &Self::tombstone_record(malformed, now),
+                )?;
             }
         }
 
@@ -373,6 +410,81 @@ mod startup_snapshot_tests {
     use super::*;
     use runtime_core::{ManagedWorktreeClaimTransition, RuntimeEventScope};
     use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
+
+    #[tokio::test]
+    async fn stale_changed_worktree_repair_cannot_overwrite_independent_route_revision() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("disposable-changed-worktree.sqlite3");
+        let reader = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path.clone(),
+        });
+        reader.initialize().await.unwrap();
+        let original = ManagedWorktreeRecord {
+            id: "wt_changed_worktree_snapshot".into(),
+            repo_root: temp.path().display().to_string(),
+            worktree_root: temp.path().join("worktrees").display().to_string(),
+            worktree_cwd: temp.path().join("worktrees/legacy").display().to_string(),
+            branch_name: "gg/legacy".into(),
+            worktree_name: "legacy".into(),
+            unified_workspace_path: "legacy".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: None,
+            created_by_operation_id: None,
+            created_at: 10,
+            updated_at: 10,
+        };
+        reader.upsert_managed_worktree(&original).unwrap();
+        // A second legacy row has a distinct raw SQLite identity but shares
+        // the normalized repository/cwd/branch. Startup would merge its
+        // stricter deletion policy into the winner and tombstone this loser;
+        // unlike trim-only normalization, this genuinely invokes a writer.
+        let loser = ManagedWorktreeRecord {
+            id: "wt_changed_worktree_loser".into(),
+            repo_root: format!(" {} ", original.repo_root),
+            worktree_cwd: format!(" {} ", original.worktree_cwd),
+            branch_name: format!(" {} ", original.branch_name),
+            deletion_policy: "delete_on_last_claim".into(),
+            created_at: 11,
+            updated_at: 11,
+            ..original.clone()
+        };
+        reader.upsert_managed_worktree(&loser).unwrap();
+        let stale = reader.hydrate_runtime_state().unwrap();
+
+        // Another SQLite writer updates the winning row's persisted route
+        // after startup hydrates but before its merge snapshot is applied.
+        let writer = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path,
+        });
+        let newer = ManagedWorktreeRecord {
+            unified_workspace_path: "newer_authoritative_route".into(),
+            updated_at: 30,
+            ..original.clone()
+        };
+        writer.upsert_managed_worktree(&newer).unwrap();
+        let durable_revision = writer.managed_worktree_revision(&original.id).unwrap();
+
+        let repair = RuntimeWorktreeService::repair_startup_state(&reader, &stale);
+        assert!(
+            matches!(repair, Err(RuntimeError::Conflict(_))),
+            "stale startup must not overwrite an independently updated route/revision: {repair:?}"
+        );
+        assert_eq!(
+            writer.get_managed_worktree(&original.id).unwrap(),
+            Some(newer),
+            "failed repair must preserve the other writer's newer route",
+        );
+        assert_eq!(
+            writer.managed_worktree_revision(&original.id).unwrap(),
+            durable_revision,
+            "stale legacy repair must not churn the independent revision",
+        );
+        assert_eq!(
+            writer.get_managed_worktree(&loser.id).unwrap(),
+            Some(loser),
+            "failed plan may not partly tombstone the second historical row",
+        );
+    }
 
     #[tokio::test]
     async fn stale_healthy_startup_snapshot_cannot_undo_independent_claim_release_or_revision() {

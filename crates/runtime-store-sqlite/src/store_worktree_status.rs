@@ -40,6 +40,15 @@ macro_rules! delegate_worktree_status {
             self.repository.upsert_managed_worktree(record)
         }
 
+        fn repair_managed_worktree_if_unchanged(
+            &self,
+            original: &runtime_core::ManagedWorktreeRecord,
+            normalized: &runtime_core::ManagedWorktreeRecord,
+        ) -> Result<(), runtime_core::RuntimeError> {
+            self.repository
+                .repair_managed_worktree_if_unchanged(original, normalized)
+        }
+
         fn record_managed_worktree_event(
             &self,
             record: &runtime_core::ManagedWorktreeRecord,

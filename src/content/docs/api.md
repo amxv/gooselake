@@ -2003,8 +2003,14 @@ On a clean runtime restart, unchanged managed-worktree records and claims are
 not re-upserted by startup normalization: this preserves existing worktree
 revisions and avoids overwriting a newer release or route recorded by another
 SQLite writer after startup hydration. Repairs that actually change legacy
-records still use their existing reconciliation path; this no-op optimization
-does not establish full cross-process CAS semantics for those repairs.
+records use a separate exact-source-row guard within one SQLite `IMMEDIATE`
+writer transaction for each identity merge or historical loser tombstone. If
+another writer changes the persisted record after startup hydration, the stale
+repair fails with a conflict instead of overwriting its newer policy, route,
+or record revision. Positive legacy duplicate reconciliation still works when
+the original source row is unchanged. This is a *per-record value-snapshot*
+check, not a global atomic multi-record startup plan or a complete generation-
+aware CAS guarantee when a row has been changed and restored to equal values.
 If an agent has an `intended` or `manual_review` native provider rebind,
 historical claim repair UPSERTs are also fenced by an immediate SQLite writer
 transaction. A stale startup snapshot cannot overwrite its recovery-sensitive

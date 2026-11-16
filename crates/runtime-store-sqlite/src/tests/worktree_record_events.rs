@@ -18,6 +18,138 @@ fn record() -> ManagedWorktreeRecord {
 }
 
 #[test]
+fn historical_managed_worktree_merge_requires_exact_original_row_under_writer_lock() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let original = record();
+    repository.upsert_managed_worktree(&original).unwrap();
+    let changed = ManagedWorktreeRecord {
+        worktree_name: "native_normalized".into(),
+        deletion_policy: "delete_on_last_claim".into(),
+        ..original.clone()
+    };
+    let independent = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    let newer = ManagedWorktreeRecord {
+        unified_workspace_path: "independent_route".into(),
+        updated_at: 250,
+        ..original.clone()
+    };
+    independent.upsert_managed_worktree(&newer).unwrap();
+    let durable_revision = independent.managed_worktree_revision(&original.id).unwrap();
+
+    assert!(matches!(
+        repository.repair_managed_worktree_if_unchanged(&original, &changed),
+        Err(runtime_core::RuntimeError::Conflict(_)),
+    ));
+    assert_eq!(
+        independent.get_managed_worktree(&original.id).unwrap(),
+        Some(newer.clone())
+    );
+    assert_eq!(
+        independent.managed_worktree_revision(&original.id).unwrap(),
+        durable_revision
+    );
+
+    // A genuinely unchanged input is an exact no-op even with an UPDATE
+    // trigger, and the changed legacy repair can later commit with the
+    // refreshed original without any synthetic lifecycle event.
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER forbid_worktree_noop BEFORE UPDATE ON managed_worktrees
+         WHEN NEW.worktree_name=OLD.worktree_name
+         BEGIN SELECT RAISE(FAIL,'historical exact retry must not UPDATE'); END;",
+    )
+    .unwrap();
+    repository
+        .repair_managed_worktree_if_unchanged(&newer, &newer)
+        .unwrap();
+    db.execute_batch("DROP TRIGGER forbid_worktree_noop;")
+        .unwrap();
+    assert_eq!(
+        independent.managed_worktree_revision(&original.id).unwrap(),
+        durable_revision,
+    );
+    let valid_normalized = ManagedWorktreeRecord {
+        worktree_name: "native_normalized".into(),
+        ..newer.clone()
+    };
+    repository
+        .repair_managed_worktree_if_unchanged(&newer, &valid_normalized)
+        .unwrap();
+    assert_eq!(
+        independent.get_managed_worktree(&original.id).unwrap(),
+        Some(valid_normalized.clone())
+    );
+    assert_eq!(
+        independent.managed_worktree_revision(&original.id).unwrap(),
+        durable_revision + 1,
+    );
+    let wrong_identity = ManagedWorktreeRecord {
+        id: "wt_unrelated_identity".into(),
+        ..valid_normalized.clone()
+    };
+    assert!(matches!(
+        repository.repair_managed_worktree_if_unchanged(&valid_normalized, &wrong_identity),
+        Err(runtime_core::RuntimeError::Conflict(_)),
+    ));
+    assert!(repository
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn historical_worktree_normalization_cannot_rewrite_another_natural_key_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let raw = ManagedWorktreeRecord {
+        repo_root: " /tmp/native-repository ".into(),
+        ..record()
+    };
+    let foreign = ManagedWorktreeRecord {
+        id: "wt_foreign".into(),
+        ..record()
+    };
+    repository.upsert_managed_worktree(&raw).unwrap();
+    repository.upsert_managed_worktree(&foreign).unwrap();
+    let raw_revision = repository.managed_worktree_revision(&raw.id).unwrap();
+    let foreign_revision = repository.managed_worktree_revision(&foreign.id).unwrap();
+    let normalized = ManagedWorktreeRecord {
+        repo_root: raw.repo_root.trim().into(),
+        ..raw.clone()
+    };
+    // The proposed identity collides with a different pre-existing row.
+    // The helper may temporarily target it, but the CAS must roll back the
+    // entire writer transaction before touching either durable revision.
+    assert!(matches!(
+        repository.repair_managed_worktree_if_unchanged(&raw, &normalized),
+        Err(runtime_core::RuntimeError::Conflict(_)),
+    ));
+    assert_eq!(
+        repository.get_managed_worktree(&raw.id).unwrap(),
+        Some(raw.clone())
+    );
+    assert_eq!(
+        repository.get_managed_worktree(&foreign.id).unwrap(),
+        Some(foreign.clone())
+    );
+    assert_eq!(
+        repository.managed_worktree_revision(&raw.id).unwrap(),
+        raw_revision
+    );
+    assert_eq!(
+        repository.managed_worktree_revision(&foreign.id).unwrap(),
+        foreign_revision,
+    );
+    assert!(repository
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn native_created_managed_row_and_critical_event_rollback_together() {
     let temp = tempfile::tempdir().unwrap();
     let repository = repo(&temp);

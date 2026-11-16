@@ -6,6 +6,7 @@ use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::db::{db_error, open_connection};
 use crate::repository::insert_runtime_event_in_transaction;
+use crate::repository_worktree_status::worktree_from_row;
 use crate::SqliteRuntimeRepository;
 
 /// The legacy normalizer, native worktree creation, and recovery path must all
@@ -93,6 +94,55 @@ pub(crate) fn upsert_managed_worktree_in_transaction(
 }
 
 impl SqliteRuntimeRepository {
+    /// Startup may normalize a legacy worktree row hydrated before a second
+    /// SQLite writer committed a new policy, revision or tombstone. Require
+    /// the complete original durable row to still match inside the same
+    /// IMMEDIATE transaction as the repair. This never performs native Git.
+    /// It is a value-snapshot CAS, not a cross-lifecycle revision receipt.
+    pub fn repair_managed_worktree_if_unchanged(
+        &self,
+        original: &ManagedWorktreeRecord,
+        normalized: &ManagedWorktreeRecord,
+    ) -> Result<(), RuntimeError> {
+        if original.id != normalized.id {
+            return Err(RuntimeError::Conflict(
+                "historical worktree normalization cannot change persisted identity".into(),
+            ));
+        }
+        let mut connection = open_connection(&self.database_path)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| db_error("failed beginning historical worktree repair", error))?;
+        let existing = tx
+            .query_row(
+                "SELECT id,repo_root,worktree_root,worktree_cwd,branch_name,worktree_name,
+                        unified_workspace_path,deletion_policy,created_by_session_id,
+                        created_by_operation_id,created_at,updated_at
+                 FROM managed_worktrees WHERE id=?1",
+                [&original.id],
+                worktree_from_row,
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading historical worktree repair source", error))?;
+        if existing.as_ref() != Some(original) {
+            return Err(RuntimeError::Conflict(
+                "historical worktree repair source changed after startup hydration".into(),
+            ));
+        }
+        if original == normalized {
+            return Ok(());
+        }
+        let effective = upsert_managed_worktree_in_transaction(&tx, normalized)?;
+        if effective.id != original.id {
+            return Err(RuntimeError::Conflict(
+                "historical worktree repair cannot migrate another identity".into(),
+            ));
+        }
+        tx.commit()
+            .map_err(|error| db_error("failed committing historical worktree repair", error))?;
+        Ok(())
+    }
+
     /// Git has already created or independently verified this checkout. The
     /// native effect itself cannot be rolled back by SQLite. Its managed row
     /// and evidence event, however, must never commit separately. Callers with

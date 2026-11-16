@@ -22,6 +22,36 @@ impl SqliteRuntimeRepository {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting historical worktree claim repair", error))?;
         require_no_unresolved_rebind_for_claim_mutation(&transaction, &record.session_id)?;
+        let existing = transaction
+            .query_row(
+                "SELECT claim_role,created_at,released_at FROM managed_worktree_claims
+                 WHERE worktree_id=?1 AND session_id=?2",
+                params![record.worktree_id, record.session_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading historical claim repair authority", error))?;
+        if let Some((prior_role, prior_created_at, Some(prior_released_at))) = existing {
+            // A journaled release may have committed after stale startup
+            // hydration. Rewriting even its role or creation time would
+            // contradict that terminal event's durable payload. Exact legacy
+            // no-op is harmless; only journaled Claim may reactivate it.
+            if record.released_at == Some(prior_released_at)
+                && record.claim_role == prior_role
+                && record.created_at == prior_created_at
+            {
+                return Ok(());
+            }
+            return Err(RuntimeError::Conflict(
+                "historical startup claim repair cannot rewrite a terminal claim".into(),
+            ));
+        }
         transaction
             .execute(
                 "INSERT INTO managed_worktree_claims (

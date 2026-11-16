@@ -98,6 +98,76 @@ fn missing_rebind_authority_schema_fails_closed_without_rewriting_claim() {
 }
 
 #[test]
+fn historical_claim_repair_cannot_rewrite_a_journaled_terminal_release() {
+    let (temp, repository, claim) = fixture();
+    repository
+        .transition_managed_worktree_claim(&claim, Claim)
+        .unwrap();
+    let released = ManagedWorktreeClaimRecord {
+        released_at: Some(200),
+        ..claim.clone()
+    };
+    repository
+        .transition_managed_worktree_claim(&released, Release)
+        .unwrap();
+    let before = repository
+        .list_runtime_events(
+            Some((RuntimeEventScope::Worktree, &claim.worktree_id)),
+            None,
+            10,
+        )
+        .unwrap();
+    assert_eq!(before.len(), 2);
+
+    for stale in [
+        claim.clone(),
+        ManagedWorktreeClaimRecord {
+            claim_role: "consumer".into(),
+            ..released.clone()
+        },
+        ManagedWorktreeClaimRecord {
+            created_at: 199,
+            ..released.clone()
+        },
+        ManagedWorktreeClaimRecord {
+            released_at: Some(300),
+            ..released.clone()
+        },
+    ] {
+        assert!(matches!(
+            repository.upsert_managed_worktree_claim(&stale),
+            Err(runtime_core::RuntimeError::Conflict(_))
+        ));
+        assert_eq!(
+            repository
+                .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+                .unwrap(),
+            Some(released.clone()),
+        );
+    }
+
+    // An identical repair neither updates the terminal record nor emits an
+    // event; the journaled Claim path remains the only way to reactivate it.
+    let db = Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER forbid_terminal_upsert BEFORE UPDATE ON managed_worktree_claims
+         BEGIN SELECT RAISE(FAIL,'terminal claim must not be re-upserted'); END;",
+    )
+    .unwrap();
+    repository.upsert_managed_worktree_claim(&released).unwrap();
+    assert_eq!(
+        repository
+            .list_runtime_events(
+                Some((RuntimeEventScope::Worktree, &claim.worktree_id)),
+                None,
+                10
+            )
+            .unwrap(),
+        before,
+    );
+}
+
+#[test]
 fn claim_release_and_reclaim_are_atomic_exact_once_and_restart_safe() {
     let (temp, _repository, claim) = fixture();
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {

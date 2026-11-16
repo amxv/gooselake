@@ -2010,6 +2010,13 @@ historical claim repair UPSERTs are also fenced by an immediate SQLite writer
 transaction. A stale startup snapshot cannot overwrite its recovery-sensitive
 worktree reservation; changed legacy repairs outside this fence are not a full
 cross-process compare-and-swap mechanism.
+Historical claim repair also refuses to rewrite an already **released** claim
+when a second SQLite writer has committed that terminal state after startup
+hydration. Exact terminal repeats are no-ops; reviving a claim, changing its
+release timestamp or rewriting its recorded role/creation time through the
+unjournaled repair path fails closed. A new claim activation must still use
+the journaled worktree Claim transition. This terminal-state guard does not
+give other changed active-claim repairs general cross-process CAS authority.
 
 For v2 workspace worktree creation with an explicitly specified retention
 policy, the pre-admission policy-conflict check seeks only the existing

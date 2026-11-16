@@ -246,10 +246,7 @@ impl WorktreeService for RuntimeWorktreeService {
             ));
         }
         if hydrated.sessions.iter().any(|session| {
-            session.id == request.session_id
-                && session.status != "closed"
-                && (session.worktree_id.as_deref() == Some(worktree.id.as_str())
-                    || session.cwd.as_deref() == Some(worktree.worktree_cwd.as_str()))
+            session.id == request.session_id && Self::session_binds_worktree(session, &worktree)
         }) {
             return Err(RuntimeError::Conflict(
                 "cannot release a worktree still bound to a live provider session; rebind or close the agent first".into(),
@@ -656,11 +653,10 @@ impl RuntimeWorktreeService {
         state: &runtime_core::RuntimeHydratedState,
         worktree: &ManagedWorktreeRecord,
     ) -> bool {
-        state.sessions.iter().any(|session| {
-            session.status != "closed"
-                && (session.worktree_id.as_deref() == Some(worktree.id.as_str())
-                    || session.cwd.as_deref() == Some(worktree.worktree_cwd.as_str()))
-        })
+        state
+            .sessions
+            .iter()
+            .any(|session| Self::session_binds_worktree(session, worktree))
     }
 
     fn native_cleanup_blocker(&self, worktree: &ManagedWorktreeRecord) -> Option<&'static str> {

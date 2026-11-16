@@ -43,6 +43,79 @@ fn explicit_release_rejects_later_live_cwd_only_binding() {
 }
 
 #[test]
+fn explicit_release_rejects_later_live_nested_cwd_binding() {
+    let (temp, reader, claim) = super::worktree_claim_events::fixture();
+    reader
+        .transition_managed_worktree_claim(&claim, Claim)
+        .unwrap();
+    let worktree = reader
+        .get_managed_worktree(&claim.worktree_id)
+        .unwrap()
+        .unwrap();
+    let writer = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    writer
+        .upsert_session(&SessionRecord {
+            worktree_id: None,
+            cwd: Some(format!("{}/nested/source", worktree.worktree_cwd)),
+            status: "ready".into(),
+            ..sample_session()
+        })
+        .unwrap();
+    let requested = ManagedWorktreeClaimRecord {
+        released_at: Some(300),
+        ..claim.clone()
+    };
+    let result = reader.release_managed_worktree_claim_if_unbound(
+        &requested,
+        &claim,
+        &worktree.worktree_cwd,
+    );
+    assert!(
+        matches!(result, Err(RuntimeError::Conflict(_))),
+        "a live nested native cwd must block explicit release: {result:?}"
+    );
+    assert_eq!(
+        writer
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(claim)
+    );
+    assert_eq!(writer.list_runtime_events(None, None, 10).unwrap().len(), 1);
+}
+
+#[test]
+fn explicit_release_does_not_confuse_sibling_cwd_prefix_with_native_binding() {
+    let (temp, reader, claim) = super::worktree_claim_events::fixture();
+    reader
+        .transition_managed_worktree_claim(&claim, Claim)
+        .unwrap();
+    let worktree = reader
+        .get_managed_worktree(&claim.worktree_id)
+        .unwrap()
+        .unwrap();
+    let writer = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    writer
+        .upsert_session(&SessionRecord {
+            worktree_id: None,
+            cwd: Some(format!("{}-other/subdir", worktree.worktree_cwd)),
+            status: "ready".into(),
+            ..sample_session()
+        })
+        .unwrap();
+    let requested = ManagedWorktreeClaimRecord {
+        released_at: Some(300),
+        ..claim.clone()
+    };
+    assert_eq!(
+        reader
+            .release_managed_worktree_claim_if_unbound(&requested, &claim, &worktree.worktree_cwd)
+            .unwrap(),
+        requested
+    );
+    assert_eq!(writer.list_runtime_events(None, None, 10).unwrap().len(), 2);
+}
+
+#[test]
 fn explicit_release_checks_current_worktree_route_after_independent_change() {
     let (temp, reader, claim) = super::worktree_claim_events::fixture();
     reader

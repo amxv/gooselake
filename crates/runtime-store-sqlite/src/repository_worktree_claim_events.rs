@@ -409,7 +409,9 @@ impl SqliteRuntimeRepository {
                         .query_row(
                             "SELECT EXISTS(SELECT 1 FROM sessions
                              WHERE id = ?1 AND status != 'closed'
-                               AND (worktree_id = ?2 OR cwd = ?3 OR cwd = ?4))",
+                               AND (worktree_id = ?2 OR cwd = ?3 OR cwd = ?4
+                                 OR substr(cwd, 1, length(?3) + 1) = ?3 || '/'
+                                 OR substr(cwd, 1, length(?4) + 1) = ?4 || '/'))",
                             params![
                                 record.session_id,
                                 record.worktree_id,

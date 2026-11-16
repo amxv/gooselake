@@ -233,7 +233,8 @@ impl SqliteRuntimeRepository {
                 "SELECT (SELECT COUNT(*) FROM managed_worktree_claims
                      WHERE worktree_id=?1 AND released_at IS NULL)
                   + (SELECT COUNT(*) FROM sessions
-                     WHERE status!='closed' AND (worktree_id=?1 OR cwd=?2))",
+                     WHERE status!='closed' AND (worktree_id=?1 OR cwd=?2
+                       OR substr(cwd, 1, length(?2) + 1) = ?2 || '/'))",
                 params![worktree.id, worktree.worktree_cwd],
                 |row| row.get(0),
             )

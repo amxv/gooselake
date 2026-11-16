@@ -9,6 +9,20 @@ use crate::now_ms;
 use super::{PlannedWorktreePaths, RuntimeWorktreeService, StdCommand};
 
 impl RuntimeWorktreeService {
+    pub(super) fn session_binds_worktree(
+        session: &runtime_core::SessionRecord,
+        worktree: &ManagedWorktreeRecord,
+    ) -> bool {
+        session.status != "closed"
+            && (session.worktree_id.as_deref() == Some(worktree.id.as_str())
+                || session.cwd.as_deref().is_some_and(|cwd| {
+                    cwd == worktree.worktree_cwd
+                        || cwd
+                            .strip_prefix(worktree.worktree_cwd.as_str())
+                            .is_some_and(|suffix| suffix.starts_with('/'))
+                }))
+    }
+
     pub(super) fn validate_public_claim_role(raw: &str) -> Result<String, RuntimeError> {
         let role = raw.trim().to_ascii_lowercase();
         // Only the provider rebind's write-ahead authority transaction may

@@ -1,7 +1,7 @@
 use super::workspace_agent::apply_schema_through;
 use super::*;
 use runtime_core::{
-    ManagedWorktreeCleanupAdmission, ManagedWorktreeCleanupCommand, OperationPhase,
+    ManagedWorktreeCleanupAdmission, ManagedWorktreeCleanupCommand, OperationPhase, RuntimeError,
     WorktreeCleanupResponse,
 };
 
@@ -55,6 +55,71 @@ fn success() -> WorktreeCleanupResponse {
         branch_deleted: true,
         diagnostics: Vec::new(),
     }
+}
+
+#[test]
+fn cleanup_admission_rejects_later_live_nested_cwd_binding() {
+    let (temp, repository, command) = fixture();
+    // Another SQLite process binds a live provider session to a descendant of
+    // the checkout without using the optional worktree_id column. Native Git
+    // must not be admitted for cleanup after this binding.
+    let writer = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    writer
+        .upsert_session(&SessionRecord {
+            id: "nested_cleanup_session".into(),
+            cwd: Some(format!("{}/nested/source", command.worktree.worktree_cwd)),
+            worktree_id: None,
+            status: "ready".into(),
+            ..sample_session()
+        })
+        .unwrap();
+    let result = repository.admit_managed_worktree_cleanup(&command);
+    assert!(
+        matches!(result, Err(RuntimeError::Conflict(_))),
+        "nested live session must block native cleanup admission: {result:?}"
+    );
+    assert!(repository
+        .get_operation(&command.operation_id)
+        .unwrap()
+        .is_none());
+    assert!(repository
+        .replay_managed_worktree_cleanup(&command.worktree)
+        .unwrap()
+        .is_none());
+    assert!(repository
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn cleanup_admission_does_not_confuse_sibling_cwd_prefix_with_native_binding() {
+    let (temp, repository, command) = fixture();
+    let writer = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    writer
+        .upsert_session(&SessionRecord {
+            id: "sibling_cleanup_session".into(),
+            cwd: Some(format!("{}-other/subdir", command.worktree.worktree_cwd)),
+            worktree_id: None,
+            status: "ready".into(),
+            ..sample_session()
+        })
+        .unwrap();
+    assert!(matches!(
+        repository.admit_managed_worktree_cleanup(&command).unwrap(),
+        ManagedWorktreeCleanupAdmission::Execute { .. }
+    ));
+    assert_eq!(
+        repository
+            .list_runtime_events(
+                Some((RuntimeEventScope::Worktree, &command.worktree.id)),
+                None,
+                10,
+            )
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]

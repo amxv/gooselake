@@ -933,8 +933,9 @@ checkout likewise commits its managed record and `worktree.created` or
 an unknown post-Git database result must not be interpreted as permission to
 run the same native operation again.
 Explicit legacy `/v1/worktrees/{worktree_id}/release` additionally rechecks the
-requesting session's live worktree-ID or CWD binding **inside that same SQLite
-writer transaction**. If another SQLite writer binds the native session after
+requesting session's live worktree-ID or checkout CWD binding (including a
+descendant directory of the checkout, but not a sibling path prefix) **inside
+that same SQLite writer transaction**. If another SQLite writer binds the native session after
 the service's initial safety read, the release returns a conflict without
 releasing the claim or appending a Critical event. Both the service-observed and
 current durable worktree CWD are checked. The exact hydrated claim row is also
@@ -944,6 +945,9 @@ This is value-snapshot protection, not a generation-aware ABA guarantee.
 Generic claim release used by legacy
 roster member removal retains its separate semantics; this fence does not make
 subsequent native Git cleanup atomic with a release.
+Native cleanup admission independently checks *all* live sessions for checkout
+ID, exact CWD or descendant CWD bindings under its own SQLite writer lock;
+preflight alone never authorizes native Git removal.
 Public legacy claim admission accepts only `owner` or `consumer` roles;
 `rebind_reservation` is internal provider-rebind authority and cannot be minted
 by an ordinary claim request, which would otherwise strand a non-releasable

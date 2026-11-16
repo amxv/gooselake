@@ -164,6 +164,7 @@ impl RuntimeWorktreeService {
             merged_winners.insert(record.id.clone(), record);
         }
 
+        let mut record_repairs = Vec::<(&ManagedWorktreeRecord, ManagedWorktreeRecord)>::new();
         for winner in merged_winners.values() {
             // A restart is not a new native worktree mutation. Re-upserting
             // unchanged records increments their persisted revisions and can
@@ -183,7 +184,7 @@ impl RuntimeWorktreeService {
                         "historical worktree normalization lost its raw source record".into(),
                     )
                 })?;
-            store.repair_managed_worktree_if_unchanged(source, winner)?;
+            record_repairs.push((source, winner.clone()));
         }
 
         for loser_id in loser_to_winner.keys() {
@@ -195,10 +196,7 @@ impl RuntimeWorktreeService {
                             "historical loser worktree missing its raw source record".into(),
                         )
                     })?;
-                store.repair_managed_worktree_if_unchanged(
-                    original,
-                    &Self::tombstone_record(loser, now),
-                )?;
+                record_repairs.push((original, Self::tombstone_record(loser, now)));
             }
         }
         for malformed_id in &malformed_ids {
@@ -210,11 +208,14 @@ impl RuntimeWorktreeService {
                             "historical malformed worktree missing its raw source record".into(),
                         )
                     })?;
-                store.repair_managed_worktree_if_unchanged(
-                    original,
-                    &Self::tombstone_record(malformed, now),
-                )?;
+                record_repairs.push((original, Self::tombstone_record(malformed, now)));
             }
+        }
+        // All historical record edits (winner merges, duplicate losers, and
+        // malformed tombstones) must share one SQLite writer snapshot. Never
+        // persist a winner if a later loser proves the hydrated plan stale.
+        if !record_repairs.is_empty() {
+            store.repair_managed_worktrees_if_unchanged(&record_repairs)?;
         }
 
         let mut winner_created_at = BTreeMap::<String, i64>::new();
@@ -410,6 +411,85 @@ mod startup_snapshot_tests {
     use super::*;
     use runtime_core::{ManagedWorktreeClaimTransition, RuntimeEventScope};
     use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
+
+    #[tokio::test]
+    async fn stale_loser_conflict_cannot_partially_commit_earlier_winner_merge() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("disposable-stale-loser.sqlite3");
+        let reader = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path.clone(),
+        });
+        reader.initialize().await.unwrap();
+        let winner = ManagedWorktreeRecord {
+            id: "wt_atomic_plan_winner".into(),
+            repo_root: temp.path().display().to_string(),
+            worktree_root: temp.path().join("worktrees").display().to_string(),
+            worktree_cwd: temp.path().join("worktrees/winner").display().to_string(),
+            branch_name: "gg/winner".into(),
+            worktree_name: "winner".into(),
+            unified_workspace_path: "winner".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: None,
+            created_by_operation_id: None,
+            created_at: 10,
+            updated_at: 10,
+        };
+        let loser = ManagedWorktreeRecord {
+            id: "wt_atomic_plan_loser".into(),
+            repo_root: format!(" {} ", winner.repo_root),
+            worktree_cwd: format!(" {} ", winner.worktree_cwd),
+            branch_name: format!(" {} ", winner.branch_name),
+            deletion_policy: "delete_on_last_claim".into(),
+            created_at: 11,
+            updated_at: 11,
+            ..winner.clone()
+        };
+        reader.upsert_managed_worktree(&winner).unwrap();
+        reader.upsert_managed_worktree(&loser).unwrap();
+        let stale = reader.hydrate_runtime_state().unwrap();
+
+        // Both records were visible to the legacy plan. A second SQLite
+        // writer changes ONLY the losing row before the old snapshot applies.
+        // A partial winner merge followed by loser Conflict must not persist.
+        let writer = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path,
+        });
+        let changed_loser = ManagedWorktreeRecord {
+            worktree_name: "independent_updated_loser".into(),
+            updated_at: 40,
+            ..loser.clone()
+        };
+        writer.upsert_managed_worktree(&changed_loser).unwrap();
+        let winner_revision = writer.managed_worktree_revision(&winner.id).unwrap();
+        let loser_revision = writer.managed_worktree_revision(&loser.id).unwrap();
+
+        let repair = RuntimeWorktreeService::repair_startup_state(&reader, &stale);
+        assert!(
+            matches!(repair, Err(RuntimeError::Conflict(_))),
+            "stale loser must fail the historical merge plan closed: {repair:?}"
+        );
+        assert_eq!(
+            writer.get_managed_worktree(&winner.id).unwrap(),
+            Some(winner.clone()),
+            "failed multirow reconciliation cannot partially merge winner",
+        );
+        assert_eq!(
+            writer.get_managed_worktree(&loser.id).unwrap(),
+            Some(changed_loser)
+        );
+        assert_eq!(
+            writer.managed_worktree_revision(&winner.id).unwrap(),
+            winner_revision
+        );
+        assert_eq!(
+            writer.managed_worktree_revision(&loser.id).unwrap(),
+            loser_revision
+        );
+        assert!(writer
+            .list_runtime_events(None, None, 10)
+            .unwrap()
+            .is_empty());
+    }
 
     #[tokio::test]
     async fn stale_changed_worktree_repair_cannot_overwrite_independent_route_revision() {

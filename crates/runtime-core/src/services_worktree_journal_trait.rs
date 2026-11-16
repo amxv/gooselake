@@ -16,6 +16,18 @@ macro_rules! default_worktree_record_journal {
             ))
         }
 
+        /// A historical duplicate-identity merge may change a winner and
+        /// tombstone several losers. No row may commit if any original source
+        /// is stale. SQLite applies this batch in one writer transaction.
+        fn repair_managed_worktrees_if_unchanged(
+            &self,
+            _repairs: &[(&crate::ManagedWorktreeRecord, crate::ManagedWorktreeRecord)],
+        ) -> Result<(), crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic managed-worktree historical repair batch unavailable".into(),
+            ))
+        }
+
         /// Commit native Git worktree record and critical lifecycle evidence
         /// in one durable store transaction after independently verified Git.
         fn record_managed_worktree_event(

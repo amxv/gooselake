@@ -150,6 +150,96 @@ fn historical_worktree_normalization_cannot_rewrite_another_natural_key_identity
 }
 
 #[test]
+fn historical_worktree_repair_batch_rolls_back_earlier_winner_on_later_write_fault() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let winner = record();
+    let loser = ManagedWorktreeRecord {
+        id: "wt_batch_loser".into(),
+        repo_root: " /tmp/native-repository ".into(),
+        worktree_cwd: " /tmp/native-managed/gg--native ".into(),
+        branch_name: " gg/native ".into(),
+        ..winner.clone()
+    };
+    repository.upsert_managed_worktree(&winner).unwrap();
+    repository.upsert_managed_worktree(&loser).unwrap();
+    let winner_rev = repository.managed_worktree_revision(&winner.id).unwrap();
+    let loser_rev = repository.managed_worktree_revision(&loser.id).unwrap();
+    let merged = ManagedWorktreeRecord {
+        deletion_policy: "delete_on_last_claim".into(),
+        ..winner.clone()
+    };
+    let tombstoned = ManagedWorktreeRecord {
+        repo_root: "__gg_tombstoned__/wt_batch_loser".into(),
+        ..loser.clone()
+    };
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER reject_later_legacy_repair BEFORE UPDATE ON managed_worktrees
+         WHEN OLD.id='wt_batch_loser'
+         BEGIN SELECT RAISE(FAIL,'injected losing row write failure'); END;",
+    )
+    .unwrap();
+    assert!(repository
+        .repair_managed_worktrees_if_unchanged(&[
+            (&winner, merged.clone()),
+            (&loser, tombstoned.clone()),
+        ])
+        .is_err());
+    assert_eq!(
+        repository.get_managed_worktree(&winner.id).unwrap(),
+        Some(winner.clone())
+    );
+    assert_eq!(
+        repository.get_managed_worktree(&loser.id).unwrap(),
+        Some(loser.clone())
+    );
+    assert_eq!(
+        repository.managed_worktree_revision(&winner.id).unwrap(),
+        winner_rev
+    );
+    assert_eq!(
+        repository.managed_worktree_revision(&loser.id).unwrap(),
+        loser_rev
+    );
+    assert!(repository
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+
+    db.execute_batch("DROP TRIGGER reject_later_legacy_repair;")
+        .unwrap();
+    repository
+        .repair_managed_worktrees_if_unchanged(&[
+            (&winner, merged.clone()),
+            (&loser, tombstoned.clone()),
+        ])
+        .unwrap();
+    let reopened = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    assert_eq!(
+        reopened.get_managed_worktree(&winner.id).unwrap(),
+        Some(merged)
+    );
+    assert_eq!(
+        reopened.get_managed_worktree(&loser.id).unwrap(),
+        Some(tombstoned)
+    );
+    assert_eq!(
+        reopened.managed_worktree_revision(&winner.id).unwrap(),
+        winner_rev + 1
+    );
+    assert_eq!(
+        reopened.managed_worktree_revision(&loser.id).unwrap(),
+        loser_rev + 1
+    );
+    assert!(reopened
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn native_created_managed_row_and_critical_event_rollback_together() {
     let temp = tempfile::tempdir().unwrap();
     let repository = repo(&temp);

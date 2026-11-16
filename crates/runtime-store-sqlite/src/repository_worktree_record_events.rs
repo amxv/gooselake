@@ -104,42 +104,68 @@ impl SqliteRuntimeRepository {
         original: &ManagedWorktreeRecord,
         normalized: &ManagedWorktreeRecord,
     ) -> Result<(), RuntimeError> {
-        if original.id != normalized.id {
-            return Err(RuntimeError::Conflict(
-                "historical worktree normalization cannot change persisted identity".into(),
-            ));
+        self.repair_managed_worktrees_if_unchanged(&[(original, normalized.clone())])
+    }
+
+    /// Every changed winner and historical loser/malformed tombstone uses
+    /// one atomic plan: check ALL raw hydrated rows under one SQLite writer
+    /// lock, then apply ALL modifications or roll back every one of them.
+    /// This does not encompass later claim repair or native Git effects and
+    /// does not make value comparisons generation/ABA-safe.
+    pub fn repair_managed_worktrees_if_unchanged(
+        &self,
+        repairs: &[(&ManagedWorktreeRecord, ManagedWorktreeRecord)],
+    ) -> Result<(), RuntimeError> {
+        if repairs.is_empty() {
+            return Ok(());
         }
         let mut connection = open_connection(&self.database_path)?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| db_error("failed beginning historical worktree repair", error))?;
-        let existing = tx
-            .query_row(
-                "SELECT id,repo_root,worktree_root,worktree_cwd,branch_name,worktree_name,
-                        unified_workspace_path,deletion_policy,created_by_session_id,
-                        created_by_operation_id,created_at,updated_at
-                 FROM managed_worktrees WHERE id=?1",
-                [&original.id],
-                worktree_from_row,
-            )
-            .optional()
-            .map_err(|error| db_error("failed reading historical worktree repair source", error))?;
-        if existing.as_ref() != Some(original) {
-            return Err(RuntimeError::Conflict(
-                "historical worktree repair source changed after startup hydration".into(),
-            ));
+            .map_err(|error| {
+                db_error("failed beginning historical worktree repair batch", error)
+            })?;
+        let mut checked_ids = std::collections::BTreeSet::new();
+        for (original, normalized) in repairs {
+            if original.id != normalized.id || !checked_ids.insert(original.id.as_str()) {
+                return Err(RuntimeError::Conflict(
+                    "historical worktree repair batch has changed or duplicate identity".into(),
+                ));
+            }
+            let existing = tx
+                .query_row(
+                    "SELECT id,repo_root,worktree_root,worktree_cwd,branch_name,worktree_name,
+                            unified_workspace_path,deletion_policy,created_by_session_id,
+                            created_by_operation_id,created_at,updated_at
+                     FROM managed_worktrees WHERE id=?1",
+                    [&original.id],
+                    worktree_from_row,
+                )
+                .optional()
+                .map_err(|error| {
+                    db_error("failed reading historical worktree repair source", error)
+                })?;
+            if existing.as_ref() != Some(*original) {
+                return Err(RuntimeError::Conflict(
+                    "historical worktree repair source changed after startup hydration".into(),
+                ));
+            }
         }
-        if original == normalized {
-            return Ok(());
+
+        for (original, normalized) in repairs {
+            if *original == normalized {
+                continue;
+            }
+            let effective = upsert_managed_worktree_in_transaction(&tx, normalized)?;
+            if effective.id != original.id {
+                return Err(RuntimeError::Conflict(
+                    "historical worktree repair cannot migrate another identity".into(),
+                ));
+            }
         }
-        let effective = upsert_managed_worktree_in_transaction(&tx, normalized)?;
-        if effective.id != original.id {
-            return Err(RuntimeError::Conflict(
-                "historical worktree repair cannot migrate another identity".into(),
-            ));
-        }
-        tx.commit()
-            .map_err(|error| db_error("failed committing historical worktree repair", error))?;
+        tx.commit().map_err(|error| {
+            db_error("failed committing historical worktree repair batch", error)
+        })?;
         Ok(())
     }
 

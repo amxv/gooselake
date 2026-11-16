@@ -15,6 +15,9 @@ mod spawn;
 mod spawn_guard;
 mod workspace_create;
 
+#[cfg(test)]
+mod startup_atomic_tests;
+
 pub struct RuntimeWorktreeService {
     pub(super) store: Arc<dyn RuntimeStore>,
     pub(super) runtime: Arc<RuntimeSessionManager>,
@@ -211,12 +214,6 @@ impl RuntimeWorktreeService {
                 record_repairs.push((original, Self::tombstone_record(malformed, now)));
             }
         }
-        // All historical record edits (winner merges, duplicate losers, and
-        // malformed tombstones) must share one SQLite writer snapshot. Never
-        // persist a winner if a later loser proves the hydrated plan stale.
-        if !record_repairs.is_empty() {
-            store.repair_managed_worktrees_if_unchanged(&record_repairs)?;
-        }
 
         let mut winner_created_at = BTreeMap::<String, i64>::new();
         for (id, record) in &merged_winners {
@@ -344,12 +341,13 @@ impl RuntimeWorktreeService {
             }
             claim_repairs.push(claim);
         }
-        // A later claim may have been independently released/re-claimed or
-        // fenced by an unresolved native rebind. Its Conflict must roll back
-        // all earlier historical claim normalizations in this startup pass.
-        // This is separate from the prior record batch and native Git.
-        if !claim_repairs.is_empty() {
-            store.repair_managed_worktree_claims_if_unchanged_atomically(
+        // Both plans derive from the same pre-startup hydrate. One SQLite
+        // writer transaction must check and commit BOTH changed records and
+        // claims or neither; a stale claim must not leave a merged winner or
+        // tombstoned loser behind. Native Git is necessarily outside this.
+        if !record_repairs.is_empty() || !claim_repairs.is_empty() {
+            store.repair_historical_worktree_startup_atomically(
+                &record_repairs,
                 &hydrated.managed_worktree_claims,
                 &claim_repairs,
             )?;

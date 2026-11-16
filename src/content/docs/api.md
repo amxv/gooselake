@@ -2002,32 +2002,25 @@ the point read cannot authorize a release or any native deletion.
 On a clean runtime restart, unchanged managed-worktree records and claims are
 not re-upserted by startup normalization: this preserves existing worktree
 revisions and avoids overwriting a newer release or route recorded by another
-SQLite writer after startup hydration. Repairs that actually change legacy
-records use an exact-source-row guard. The complete historical worktree record
-normalization plan (changed identity-merge winners and loser/malformed
-tombstones) now checks **every affected original row before applying any** and
-commits all affected record writes within **one SQLite `IMMEDIATE` writer
-transaction**. A changed loser can no longer strand an already-merged winner:
-the stale plan fails with a conflict and rolls all record edits back. Positive
-legacy duplicate reconciliation still works when source rows are unchanged.
-This is a batch of **value-snapshot** checks limited to historical worktree
-record repair, not an atomic transaction with the later separate claim repairs,
-native Git work, or a complete generation-aware CAS guarantee against a row
-that changed and then returned to identical values.
-Changed historical **claim** repairs are collected into a separate SQLite
-`IMMEDIATE` writer transaction. A later journal-backed Release/re-Claim,
-unresolved rebind conflict, or failed SQL claim update rolls back **all** claim
-normalizations in that startup pass, including earlier updates. This does not
-make the preceding worktree-record batch and following claim batch one atomic
-unit, nor does it provide a general journal-free claim snapshot CAS or
-transactionality with native Git/provider effects.
-For startup repairs (unlike unscoped historical upserts), the same writer
-transaction compares every raw hydrated claim source key and its exact role,
-creation and release values before writing even a normalized/remapped key; a
-new target key must still be absent. A separate writer's unjournaled active
-claim change is therefore a Conflict for the entire claim batch, not an
-overwritten normalization. These value snapshots cannot detect **ABA** or
-unrelated new keys absent from the startup plan.
+SQLite writer after startup hydration. Historical duplicate-identity winner
+merges, loser/malformed tombstones and changed claim normalization now share
+**one SQLite `IMMEDIATE` writer transaction**. The record plan first compares
+every affected original row; the claim plan checks every raw hydrated claim
+source key and exact role/creation/release values, including remapped source
+keys, and requires newly introduced destination keys to remain absent. An
+independent claim Release/re-Claim, newer journal-free claim update, unresolved
+native provider rebind, changed record, or SQL fault aborts **both record and
+claim plans**. A failed later claim can no longer leave an earlier winner
+merged or loser tombstoned. Successful historical merges and claim normalization
+commit together, and unchanged retries perform no UPDATE.
+
+The combined startup transaction protects only historical SQLite record/claim
+repairs derived from that hydration. It cannot encompass native Git, provider
+rebind/dispatch or later cleanup, and value comparisons are not a
+**generation-aware ABA** guard against a row changed and restored to identical
+values. Unrelated newly inserted records/claims outside the normalized plan
+are not a claim of global snapshot isolation. Historical unscoped upserts and
+explicit journaled Claim/Release retain their separate existing contracts.
 If an agent has an `intended` or `manual_review` native provider rebind,
 historical claim repair UPSERTs are also fenced by an immediate SQLite writer
 transaction. A stale startup snapshot cannot overwrite its recovery-sensitive

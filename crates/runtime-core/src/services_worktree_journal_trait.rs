@@ -28,6 +28,20 @@ macro_rules! default_worktree_record_journal {
             ))
         }
 
+        /// Historical worktree records and claims derive from one hydration.
+        /// Never commit a changed record plan before a later changed claim
+        /// plan can fail its raw-source or native-rebind authority checks.
+        fn repair_historical_worktree_startup_atomically(
+            &self,
+            _record_repairs: &[(&crate::ManagedWorktreeRecord, crate::ManagedWorktreeRecord)],
+            _claim_originals: &[crate::ManagedWorktreeClaimRecord],
+            _claim_repairs: &[crate::ManagedWorktreeClaimRecord],
+        ) -> Result<(), crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic historical worktree record+claim startup repair unavailable".into(),
+            ))
+        }
+
         /// Commit native Git worktree record and critical lifecycle evidence
         /// in one durable store transaction after independently verified Git.
         fn record_managed_worktree_event(

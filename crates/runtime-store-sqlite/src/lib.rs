@@ -88,6 +88,7 @@ mod repository_worktree_claim_events;
 mod repository_worktree_cleanup;
 mod repository_worktree_diagnostics;
 mod repository_worktree_record_events;
+mod repository_worktree_startup;
 mod repository_worktree_status;
 mod repository_worktree_status_stream;
 mod schema;

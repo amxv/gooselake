@@ -56,6 +56,19 @@ macro_rules! delegate_worktree_status {
             self.repository.repair_managed_worktrees_if_unchanged(repairs)
         }
 
+        fn repair_historical_worktree_startup_atomically(
+            &self,
+            record_repairs: &[(&runtime_core::ManagedWorktreeRecord, runtime_core::ManagedWorktreeRecord)],
+            claim_originals: &[runtime_core::ManagedWorktreeClaimRecord],
+            claim_repairs: &[runtime_core::ManagedWorktreeClaimRecord],
+        ) -> Result<(), runtime_core::RuntimeError> {
+            self.repository.repair_historical_worktree_startup_atomically(
+                record_repairs,
+                claim_originals,
+                claim_repairs,
+            )
+        }
+
         fn record_managed_worktree_event(
             &self,
             record: &runtime_core::ManagedWorktreeRecord,

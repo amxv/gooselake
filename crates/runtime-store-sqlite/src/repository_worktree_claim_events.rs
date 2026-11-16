@@ -4,11 +4,144 @@ use runtime_core::{
     ManagedWorktreeClaimRecord, ManagedWorktreeClaimTransition, NewRuntimeEvent, RuntimeError,
     RuntimeEventCriticality, RuntimeEventScope,
 };
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::db::{collect_rows, db_error, open_connection};
 use crate::repository::insert_runtime_event_in_transaction;
 use crate::SqliteRuntimeRepository;
+
+/// Validate all raw hydrated claim keys/values and newly created target
+/// absence in the caller's writer transaction, then apply changed historical
+/// claim rows. This is value-snapshot CAS, not generation-aware ABA safety.
+pub(crate) fn repair_historical_claims_in_transaction(
+    transaction: &Transaction<'_>,
+    originals: Option<&[ManagedWorktreeClaimRecord]>,
+    repairs: &[ManagedWorktreeClaimRecord],
+) -> Result<(), RuntimeError> {
+    let mut hydrated_keys = BTreeSet::<(String, String)>::new();
+    if let Some(originals) = originals {
+        for original in originals {
+            if !hydrated_keys.insert((original.worktree_id.clone(), original.session_id.clone())) {
+                return Err(RuntimeError::Conflict(
+                    "historical startup claim snapshot contains duplicate source keys".into(),
+                ));
+            }
+            let durable = transaction
+                .query_row(
+                    "SELECT claim_role,created_at,released_at FROM managed_worktree_claims
+                     WHERE worktree_id=?1 AND session_id=?2",
+                    params![original.worktree_id, original.session_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, Option<i64>>(2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|error| db_error("failed comparing historical raw claim source", error))?;
+            if durable
+                .as_ref()
+                .is_none_or(|(role, created_at, released_at)| {
+                    role != &original.claim_role
+                        || *created_at != original.created_at
+                        || *released_at != original.released_at
+                })
+            {
+                return Err(RuntimeError::Conflict(
+                    "historical startup claim source changed since hydration".into(),
+                ));
+            }
+        }
+    }
+    for record in repairs {
+        require_no_unresolved_rebind_for_claim_mutation(&transaction, &record.session_id)?;
+        let existing = transaction
+            .query_row(
+                "SELECT claim_role,created_at,released_at FROM managed_worktree_claims
+                 WHERE worktree_id=?1 AND session_id=?2",
+                params![record.worktree_id, record.session_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading historical claim repair authority", error))?;
+        if originals.is_some()
+            && !hydrated_keys.contains(&(record.worktree_id.clone(), record.session_id.clone()))
+            && existing.is_some()
+        {
+            return Err(RuntimeError::Conflict(
+                "historical startup claim target was created after hydration".into(),
+            ));
+        }
+        if let Some((prior_role, prior_created_at, prior_released_at)) = existing {
+            // Exact historical retries never UPDATE, including active
+            // journal-backed or terminal rows.
+            if record.released_at == prior_released_at
+                && record.claim_role == prior_role
+                && record.created_at == prior_created_at
+            {
+                continue;
+            }
+            if prior_released_at.is_some() {
+                // Only a journaled Claim may reactivate a released row.
+                return Err(RuntimeError::Conflict(
+                    "historical startup claim repair cannot rewrite a terminal claim".into(),
+                ));
+            }
+
+            // A committed Release then re-Claim may leave this row active
+            // again. The Critical journal, not old hydration, is authority.
+            // Legacy unjournaled active claims may still be normalized.
+            let journaled: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM runtime_events
+                     WHERE scope = 'worktree' AND scope_id = ?1 AND session_id = ?2
+                       AND critical = 1
+                       AND kind IN ('worktree.claimed','worktree.released'))",
+                    params![record.worktree_id, record.session_id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| {
+                    db_error(
+                        "failed reading active worktree claim journal authority",
+                        error,
+                    )
+                })?;
+            if journaled {
+                return Err(RuntimeError::Conflict(
+                    "historical startup claim repair cannot rewrite a journaled active claim"
+                        .into(),
+                ));
+            }
+        }
+        transaction
+            .execute(
+                "INSERT INTO managed_worktree_claims (
+                    worktree_id, session_id, claim_role, created_at, released_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(worktree_id, session_id) DO UPDATE SET
+                    claim_role = excluded.claim_role,
+                    created_at = excluded.created_at,
+                    released_at = excluded.released_at",
+                params![
+                    record.worktree_id,
+                    record.session_id,
+                    record.claim_role,
+                    record.created_at,
+                    record.released_at,
+                ],
+            )
+            .map_err(|error| db_error("failed upserting managed worktree claim", error))?;
+    }
+    Ok(())
+}
 
 impl SqliteRuntimeRepository {
     /// Reconstruct old claims at startup only when normalization changed the
@@ -31,7 +164,7 @@ impl SqliteRuntimeRepository {
         &self,
         repairs: &[ManagedWorktreeClaimRecord],
     ) -> Result<(), RuntimeError> {
-        self.persist_historical_claim_batch(None, repairs.iter())
+        self.persist_historical_claim_batch(None, repairs)
     }
 
     /// Startup's reconstructed role/identity must still be based on the raw
@@ -43,16 +176,15 @@ impl SqliteRuntimeRepository {
         originals: &[ManagedWorktreeClaimRecord],
         repairs: &[ManagedWorktreeClaimRecord],
     ) -> Result<(), RuntimeError> {
-        self.persist_historical_claim_batch(Some(originals), repairs.iter())
+        self.persist_historical_claim_batch(Some(originals), repairs)
     }
 
-    fn persist_historical_claim_batch<'a>(
+    fn persist_historical_claim_batch(
         &self,
         originals: Option<&[ManagedWorktreeClaimRecord]>,
-        repairs: impl IntoIterator<Item = &'a ManagedWorktreeClaimRecord>,
+        repairs: &[ManagedWorktreeClaimRecord],
     ) -> Result<(), RuntimeError> {
-        let mut repairs = repairs.into_iter().peekable();
-        if repairs.peek().is_none() {
+        if repairs.is_empty() {
             return Ok(());
         }
         let mut connection = open_connection(&self.database_path)?;
@@ -64,134 +196,7 @@ impl SqliteRuntimeRepository {
                     error,
                 )
             })?;
-        let mut hydrated_keys = BTreeSet::<(String, String)>::new();
-        if let Some(originals) = originals {
-            for original in originals {
-                if !hydrated_keys
-                    .insert((original.worktree_id.clone(), original.session_id.clone()))
-                {
-                    return Err(RuntimeError::Conflict(
-                        "historical startup claim snapshot contains duplicate source keys".into(),
-                    ));
-                }
-                let durable = transaction
-                    .query_row(
-                        "SELECT claim_role,created_at,released_at FROM managed_worktree_claims
-                         WHERE worktree_id=?1 AND session_id=?2",
-                        params![original.worktree_id, original.session_id],
-                        |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, i64>(1)?,
-                                row.get::<_, Option<i64>>(2)?,
-                            ))
-                        },
-                    )
-                    .optional()
-                    .map_err(|error| {
-                        db_error("failed comparing historical raw claim source", error)
-                    })?;
-                if durable
-                    .as_ref()
-                    .is_none_or(|(role, created_at, released_at)| {
-                        role != &original.claim_role
-                            || *created_at != original.created_at
-                            || *released_at != original.released_at
-                    })
-                {
-                    return Err(RuntimeError::Conflict(
-                        "historical startup claim source changed since hydration".into(),
-                    ));
-                }
-            }
-        }
-        for record in repairs {
-            require_no_unresolved_rebind_for_claim_mutation(&transaction, &record.session_id)?;
-            let existing = transaction
-                .query_row(
-                    "SELECT claim_role,created_at,released_at FROM managed_worktree_claims
-                     WHERE worktree_id=?1 AND session_id=?2",
-                    params![record.worktree_id, record.session_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, Option<i64>>(2)?,
-                        ))
-                    },
-                )
-                .optional()
-                .map_err(|error| {
-                    db_error("failed reading historical claim repair authority", error)
-                })?;
-            if originals.is_some()
-                && !hydrated_keys.contains(&(record.worktree_id.clone(), record.session_id.clone()))
-                && existing.is_some()
-            {
-                return Err(RuntimeError::Conflict(
-                    "historical startup claim target was created after hydration".into(),
-                ));
-            }
-            if let Some((prior_role, prior_created_at, prior_released_at)) = existing {
-                // Exact historical retries never UPDATE, including active
-                // journal-backed or terminal rows.
-                if record.released_at == prior_released_at
-                    && record.claim_role == prior_role
-                    && record.created_at == prior_created_at
-                {
-                    continue;
-                }
-                if prior_released_at.is_some() {
-                    // Only a journaled Claim may reactivate a released row.
-                    return Err(RuntimeError::Conflict(
-                        "historical startup claim repair cannot rewrite a terminal claim".into(),
-                    ));
-                }
-
-                // A committed Release then re-Claim may leave this row active
-                // again. The Critical journal, not old hydration, is authority.
-                // Legacy unjournaled active claims may still be normalized.
-                let journaled: bool = transaction
-                    .query_row(
-                        "SELECT EXISTS(SELECT 1 FROM runtime_events
-                         WHERE scope = 'worktree' AND scope_id = ?1 AND session_id = ?2
-                           AND critical = 1
-                           AND kind IN ('worktree.claimed','worktree.released'))",
-                        params![record.worktree_id, record.session_id],
-                        |row| row.get(0),
-                    )
-                    .map_err(|error| {
-                        db_error(
-                            "failed reading active worktree claim journal authority",
-                            error,
-                        )
-                    })?;
-                if journaled {
-                    return Err(RuntimeError::Conflict(
-                        "historical startup claim repair cannot rewrite a journaled active claim"
-                            .into(),
-                    ));
-                }
-            }
-            transaction
-                .execute(
-                    "INSERT INTO managed_worktree_claims (
-                        worktree_id, session_id, claim_role, created_at, released_at
-                     ) VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(worktree_id, session_id) DO UPDATE SET
-                        claim_role = excluded.claim_role,
-                        created_at = excluded.created_at,
-                        released_at = excluded.released_at",
-                    params![
-                        record.worktree_id,
-                        record.session_id,
-                        record.claim_role,
-                        record.created_at,
-                        record.released_at,
-                    ],
-                )
-                .map_err(|error| db_error("failed upserting managed worktree claim", error))?;
-        }
+        repair_historical_claims_in_transaction(&transaction, originals, repairs)?;
         transaction.commit().map_err(|error| {
             db_error(
                 "failed committing historical worktree claim repair batch",

@@ -122,6 +122,107 @@ fn cleanup_admission_does_not_confuse_sibling_cwd_prefix_with_native_binding() {
     );
 }
 
+const CLEANUP_CHILD_DB: &str = "GOOSELAKE_NATIVE_CLEANUP_OS_CHILD_DB";
+
+// The real test executable is spawned by the parent test below. In ordinary
+// `cargo test` this function does nothing and cannot touch a user's database.
+#[test]
+fn child_os_writer_observes_postadmission_checkout_binding_fence() {
+    let Some(path) = std::env::var_os(CLEANUP_CHILD_DB) else {
+        return;
+    };
+    let writer = SqliteRuntimeRepository::new(std::path::PathBuf::from(path));
+    let checkout = worktree().worktree_cwd;
+    let bound = SessionRecord {
+        id: "os_child_live_nested".into(),
+        worktree_id: None,
+        cwd: Some(format!("{checkout}/nested/source")),
+        status: "ready".into(),
+        ..sample_session()
+    };
+    let error = writer
+        .upsert_session(&bound)
+        .expect_err("independent OS writer cannot bind to an admitted native checkout");
+    assert!(
+        error
+            .to_string()
+            .contains("managed worktree native cleanup fences session binding"),
+        "the native cleanup trigger, not another constraint, must refuse: {error}"
+    );
+
+    let closed = SessionRecord {
+        id: "os_child_closed_nested".into(),
+        status: "closed".into(),
+        ..bound.clone()
+    };
+    writer.upsert_session(&closed).unwrap();
+    let sibling = SessionRecord {
+        id: "os_child_live_sibling".into(),
+        cwd: Some(format!("{checkout}-other/nested/source")),
+        ..bound
+    };
+    writer.upsert_session(&sibling).unwrap();
+}
+
+#[test]
+fn admitted_native_cleanup_fences_later_nested_cwd_from_independent_os_process() {
+    let (temp, repository, command) = fixture();
+    assert!(matches!(
+        repository.admit_managed_worktree_cleanup(&command).unwrap(),
+        ManagedWorktreeCleanupAdmission::Execute { .. }
+    ));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::worktree_cleanup_receipts::child_os_writer_observes_postadmission_checkout_binding_fence",
+            "--nocapture",
+        ])
+        .env(CLEANUP_CHILD_DB, temp.path().join("runtime.sqlite3"))
+        .output()
+        .expect("spawn independent OS process with only disposable SQLite");
+    assert!(
+        output.status.success(),
+        "child failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+        "child fixture must actually execute its exact test: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let sessions = repository.hydrate_runtime_state().unwrap().sessions;
+    assert!(!sessions
+        .iter()
+        .any(|session| session.id == "os_child_live_nested"));
+    assert!(sessions
+        .iter()
+        .any(|session| session.id == "os_child_closed_nested" && session.status == "closed"));
+    assert!(sessions
+        .iter()
+        .any(|session| session.id == "os_child_live_sibling" && session.status == "ready"));
+    assert!(matches!(
+        repository
+            .replay_managed_worktree_cleanup(&command.worktree)
+            .unwrap(),
+        Some(ManagedWorktreeCleanupAdmission::Unresolved { operation_id })
+            if operation_id == command.operation_id
+    ));
+    assert_eq!(
+        repository
+            .list_runtime_events(
+                Some((RuntimeEventScope::Worktree, &command.worktree.id)),
+                None,
+                10,
+            )
+            .unwrap()
+            .len(),
+        1,
+        "late rejected binding must not forge another native event"
+    );
+}
+
 #[test]
 fn cleanup_admission_fault_rolls_back_intent_journal_and_git_claims() {
     let (temp, repository, command) = fixture();

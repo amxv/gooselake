@@ -1977,6 +1977,12 @@ the exact managed-worktree primary-key read, even if unrelated historical
 session metadata is malformed. For any **existing** worktree ID, both routes
 still require their original full session/claim safety evidence and fail
 closed before release or native deletion when it cannot be decoded.
+After a legacy team-member removal, its best-effort worktree callback reads
+only that removed session's active claims in original claim chronology.
+Malformed unrelated session history cannot leave those claims orphaned.
+Each release still commits independently with its Critical event, while
+native cleanup requires the complete original safety evidence and records
+a diagnostic without deleting a checkout if that evidence is unreadable.
 
 For v2 workspace worktree creation with an explicitly specified retention
 policy, the pre-admission policy-conflict check seeks only the existing

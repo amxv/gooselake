@@ -4,11 +4,42 @@ use runtime_core::{
 };
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
-use crate::db::{db_error, open_connection};
+use crate::db::{collect_rows, db_error, open_connection};
 use crate::repository::insert_runtime_event_in_transaction;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
+    /// Legacy best-effort member removal needs only this removed session's
+    /// active claims in original hydrated (created_at, worktree_id) order.
+    /// Schema 48 already supplies the partial seek index; the subsequent
+    /// durable claim releases and native cleanup retain their own fences.
+    pub fn list_active_managed_worktree_claims_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<ManagedWorktreeClaimRecord>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT worktree_id,session_id,claim_role,created_at,released_at
+                 FROM managed_worktree_claims
+                 WHERE session_id=?1 AND released_at IS NULL
+                 ORDER BY created_at ASC,worktree_id ASC,session_id ASC",
+            )
+            .map_err(|error| db_error("failed preparing removed member's active claims", error))?;
+        let rows = statement
+            .query_map([session_id], |row| {
+                Ok(ManagedWorktreeClaimRecord {
+                    worktree_id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    claim_role: row.get(2)?,
+                    created_at: row.get(3)?,
+                    released_at: row.get(4)?,
+                })
+            })
+            .map_err(|error| db_error("failed reading removed member's active claims", error))?;
+        collect_rows(rows)
+    }
+
     /// A claim transition has no native Git effect. Commit the state AND its
     /// critical journal entry in one immediate transaction. An exact retry is
     /// a durable no-op; it cannot reset claim timestamps or duplicate history.

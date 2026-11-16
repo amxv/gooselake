@@ -76,6 +76,7 @@ mod worktree_cleanup_receipts;
 mod worktree_create_snapshot;
 mod worktree_diagnostics_scale;
 mod worktree_identity_policy_preflight;
+mod worktree_member_removal_claims_projection;
 mod worktree_record_events;
 mod worktree_status_projection;
 mod worktree_status_stream;

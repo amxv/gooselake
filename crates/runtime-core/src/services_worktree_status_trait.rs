@@ -142,6 +142,23 @@ macro_rules! default_managed_worktree_lookup {
                 .map(|claim| claim.worktree_id))
         }
 
+        // The legacy team-member removal callback releases all active claims
+        // for exactly the removed member. Non-SQLite stores preserve the
+        // historical hydrated chronology; SQLite seeks the existing
+        // session/created_at/worktree_id partial index without decoding other
+        // sessions or changing claim/native cleanup authority.
+        fn list_active_managed_worktree_claims_for_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Vec<crate::ManagedWorktreeClaimRecord>, crate::RuntimeError> {
+            Ok(self
+                .hydrate_runtime_state()?
+                .managed_worktree_claims
+                .into_iter()
+                .filter(|claim| claim.session_id == session_id && claim.released_at.is_none())
+                .collect())
+        }
+
         // A legacy provider-create preflight needs only checkout paths for
         // retirement locks. Non-SQLite stores preserve their prior hydration
         // behavior; SQLite reads only the two required durable columns.

@@ -17,6 +17,14 @@ macro_rules! delegate_worktree_status {
                 .first_active_foreign_worktree_claim_for_session(session_id, worktree_id)
         }
 
+        fn list_active_managed_worktree_claims_for_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Vec<runtime_core::ManagedWorktreeClaimRecord>, runtime_core::RuntimeError> {
+            self.repository
+                .list_active_managed_worktree_claims_for_session(session_id)
+        }
+
         fn upsert_managed_worktree(
             &self,
             record: &runtime_core::ManagedWorktreeRecord,

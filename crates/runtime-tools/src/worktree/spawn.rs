@@ -913,16 +913,12 @@ impl RuntimeWorktreeService {
         request: WorktreeMemberRemovedRequest,
     ) -> Result<WorktreeMemberRemovedResponse, RuntimeError> {
         self.ensure_enabled()?;
-        let hydrated = self.store.hydrate_runtime_state()?;
         let mut released_claims = Vec::new();
         let mut cleanup_results = Vec::new();
         let mut diagnostics = Vec::new();
-        let active_claims = hydrated
-            .managed_worktree_claims
-            .iter()
-            .filter(|row| row.session_id == request.agent_id && row.released_at.is_none())
-            .cloned()
-            .collect::<Vec<_>>();
+        let active_claims = self
+            .store
+            .list_active_managed_worktree_claims_for_session(&request.agent_id)?;
         for claim in active_claims {
             let released = runtime_core::ManagedWorktreeClaimRecord {
                 released_at: Some(now_ms()),

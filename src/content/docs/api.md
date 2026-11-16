@@ -1094,6 +1094,11 @@ archived: the endpoint returns `400 invalid_state` **before** admitting a
 native-close operation or contacting the provider, since the required roster
 revision increment could not be committed. Already archived no-effect receipts
 do not require a successor revision.
+Archiving the current workspace lead also clears lead authority and increments
+the **workspace** revision. If that separate signed SQLite revision is already
+at its maximum, archival similarly returns `400 invalid_state` without a
+provider close or durable native intent. This does not deny non-lead archival
+solely because the workspace revision is exhausted.
 
 If the close acknowledgement is lost, the provider returns mismatching proof,
 the atomic receipt fails, or the runtime crashes, the original operation is

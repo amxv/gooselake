@@ -91,6 +91,17 @@ impl RuntimeSessionManager {
                 "agent revision cannot advance beyond SQLite signed integer range".into(),
             ));
         }
+        // Archiving the current lead also advances the WORKSPACE revision when
+        // clearing lead authority. A max signed workspace revision must not
+        // turn into SQLite REAL after the irreversible native close.
+        if agent.lifecycle_state == WorkspaceAgentLifecycleState::Active
+            && workspace.lead_agent_id.as_deref() == Some(agent_id)
+            && workspace.revision >= i64::MAX as u64
+        {
+            return Err(RuntimeError::InvalidState(
+                "workspace lead revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         let session = self.get_session(agent_id).await?;
         let provider = if agent.lifecycle_state == WorkspaceAgentLifecycleState::Active {
             Some(

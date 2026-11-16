@@ -294,6 +294,22 @@ impl SqliteRuntimeRepository {
                 "agent revision cannot advance beyond SQLite signed integer range".into(),
             ));
         }
+        // Revalidate current lead authority AND workspace revision under this
+        // IMMEDIATE transaction. A direct caller or racing lead change must
+        // not admit a native close that would overflow the workspace row.
+        let lead_revision_exhausted: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspaces
+                 WHERE workspace_id=?1 AND lead_agent_id=?2 AND revision>=?3)",
+                params![command.workspace_id, command.agent_id, i64::MAX],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed checking archive lead revision ceiling", error))?;
+        if lead_revision_exhausted {
+            return Err(RuntimeError::InvalidState(
+                "workspace lead revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         authority.acquire_claim(
             &command.operation_id,
             CLAIM_KIND,

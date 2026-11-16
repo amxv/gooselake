@@ -68,6 +68,7 @@ mod mcp_policy_process;
 mod native_approval_journal_http;
 mod native_dispatch_outcome_journal_http;
 mod operator_agent_archive;
+mod operator_agent_archive_lead_ceiling;
 mod operator_agent_create;
 mod operator_agent_create_contract;
 mod operator_agent_restore;

@@ -578,6 +578,101 @@ async fn cleanup_refuses_live_agent_route_even_if_legacy_claim_was_released() {
 }
 
 #[tokio::test]
+async fn legacy_release_and_cleanup_refuse_live_nested_checkout_cwd_without_native_git() {
+    let (router, token, temp, _, workspace, _, _) = fixture().await;
+    let (status, agent) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v2/workspaces/{}/agents", workspace.workspace_id),
+        Some(serde_json::json!({
+            "provider": "codex", "model": "test-model",
+            "worktree": {"mode": "new", "worktree_name": "nested-live",
+                "deletion_policy": "delete_on_last_claim", "run_init_script": false}
+        })),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{agent:?}");
+    let agent_id = agent["agent_id"].as_str().unwrap();
+    let checkout = agent["recreation_policy"]["authoritative_cwd"]
+        .as_str()
+        .unwrap();
+    let sqlite = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let state = sqlite.hydrate_runtime_state().unwrap();
+    let claim = state
+        .managed_worktree_claims
+        .iter()
+        .find(|claim| claim.session_id == agent_id && claim.released_at.is_none())
+        .cloned()
+        .unwrap();
+    // A separate SQLite writer changes the durable native session route to a
+    // child directory while omitting the optional managed-worktree ID.
+    let mut session = state
+        .sessions
+        .iter()
+        .find(|session| session.id == agent_id)
+        .cloned()
+        .unwrap();
+    session.cwd = Some(format!("{checkout}/nested/source"));
+    session.worktree_id = None;
+    session.updated_at += 1;
+    sqlite.upsert_session(&session).unwrap();
+
+    let (status, release) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v1/worktrees/{}/release", claim.worktree_id),
+        Some(serde_json::json!({"session_id": agent_id, "cleanup_if_last_claim": true})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{release:?}");
+    assert!(sqlite
+        .hydrate_runtime_state()
+        .unwrap()
+        .managed_worktree_claims
+        .iter()
+        .any(|row| row == &claim));
+
+    // Simulate the historical released-claim route without native provider or
+    // Git effects. The *separate* cleanup API must still refuse to admit Git.
+    sqlite
+        .upsert_managed_worktree_claim(&runtime_core::ManagedWorktreeClaimRecord {
+            released_at: Some(1_000_000_000),
+            ..claim.clone()
+        })
+        .unwrap();
+    let (status, cleanup) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v1/worktrees/{}/cleanup", claim.worktree_id),
+        Some(serde_json::json!({"reason": "nested_route_authority"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cleanup:?}");
+    assert_eq!(cleanup["status"], "skipped_live_binding");
+    assert!(
+        Path::new(checkout).is_dir(),
+        "native Git checkout must survive"
+    );
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let admitted: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM managed_worktree_cleanup_receipts WHERE worktree_id=?1",
+            [&claim.worktree_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(admitted, 0, "no native cleanup operation was admitted");
+}
+
+#[tokio::test]
 async fn verified_rebind_cleanup_retries_safely_after_an_interrupted_native_cleanup() {
     let (router, token, temp, provider, workspace, _, _) = fixture().await;
     let (status, agent) = call(

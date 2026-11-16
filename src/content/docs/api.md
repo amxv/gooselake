@@ -948,6 +948,12 @@ subsequent native Git cleanup atomic with a release.
 Native cleanup admission independently checks *all* live sessions for checkout
 ID, exact CWD or descendant CWD bindings under its own SQLite writer lock;
 preflight alone never authorizes native Git removal.
+An authenticated, provider-disabled legacy HTTP regression covers both routes:
+a separately persisted live session inside a nested checkout directory, with
+no `worktree_id`, blocks `/v1/worktrees/{worktree_id}/release` (HTTP 409,
+claim preserved) and `/v1/worktrees/{worktree_id}/cleanup`
+(`skipped_live_binding`, no native cleanup operation admitted). This is a
+disposable native-checkout safety test, not proof of Git/SQLite atomicity.
 Public legacy claim admission accepts only `owner` or `consumer` roles;
 `rebind_reservation` is internal provider-rebind authority and cannot be minted
 by an ordinary claim request, which would otherwise strand a non-releasable

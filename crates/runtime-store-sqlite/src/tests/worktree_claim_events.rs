@@ -290,6 +290,118 @@ fn historical_claim_repair_preserves_journaled_active_reclaim_and_unrelated_lega
 }
 
 #[test]
+fn historical_claim_repair_batch_rolls_back_earlier_update_on_later_sql_fault() {
+    let (temp, repository, claim) = fixture();
+    let mut later_session = sample_session();
+    later_session.id = "later_historical_claim".into();
+    repository.upsert_session(&later_session).unwrap();
+    let earlier = ManagedWorktreeClaimRecord {
+        claim_role: " owner ".into(),
+        ..claim
+    };
+    let later = ManagedWorktreeClaimRecord {
+        session_id: later_session.id,
+        claim_role: " consumer ".into(),
+        created_at: 200,
+        ..earlier.clone()
+    };
+    repository.upsert_managed_worktree_claim(&earlier).unwrap();
+    repository.upsert_managed_worktree_claim(&later).unwrap();
+    let normalized_earlier = ManagedWorktreeClaimRecord {
+        claim_role: "owner".into(),
+        ..earlier.clone()
+    };
+    let normalized_later = ManagedWorktreeClaimRecord {
+        claim_role: "consumer".into(),
+        ..later.clone()
+    };
+    let path = temp.path().join("runtime.sqlite3");
+    let independent = Connection::open(&path).unwrap();
+    let original_journal = repository.list_runtime_events(None, None, 10).unwrap();
+    assert!(original_journal.is_empty());
+
+    // Let the first historical UPDATE execute; abort only the second one.
+    // A transaction shared by both rows must undo the first write as well.
+    independent
+        .execute_batch(
+            "CREATE TRIGGER fail_later_historical_claim
+             BEFORE UPDATE OF claim_role ON managed_worktree_claims
+             WHEN OLD.session_id='later_historical_claim'
+             BEGIN SELECT RAISE(ABORT, 'injected later claim update fault'); END;",
+        )
+        .unwrap();
+    let writer = SqliteRuntimeRepository::new(path.clone());
+    assert!(writer
+        .repair_managed_worktree_claims_atomically(&[
+            normalized_earlier.clone(),
+            normalized_later.clone(),
+        ])
+        .is_err());
+    let reopened_after_failure = SqliteRuntimeRepository::new(path.clone());
+    assert_eq!(
+        reopened_after_failure
+            .get_managed_worktree_claim(&earlier.worktree_id, &earlier.session_id)
+            .unwrap(),
+        Some(earlier.clone()),
+        "later SQL failure cannot strand the earlier normalized claim",
+    );
+    assert_eq!(
+        reopened_after_failure
+            .get_managed_worktree_claim(&later.worktree_id, &later.session_id)
+            .unwrap(),
+        Some(later.clone()),
+    );
+    assert_eq!(
+        reopened_after_failure
+            .list_runtime_events(None, None, 10)
+            .unwrap(),
+        original_journal,
+        "unjournaled repair failure must not alter Critical history",
+    );
+
+    independent
+        .execute_batch("DROP TRIGGER fail_later_historical_claim;")
+        .unwrap();
+    writer
+        .repair_managed_worktree_claims_atomically(&[
+            normalized_earlier.clone(),
+            normalized_later.clone(),
+        ])
+        .unwrap();
+    let reopened_after_success = SqliteRuntimeRepository::new(path.clone());
+    assert_eq!(
+        reopened_after_success
+            .get_managed_worktree_claim(&earlier.worktree_id, &earlier.session_id)
+            .unwrap(),
+        Some(normalized_earlier.clone()),
+    );
+    assert_eq!(
+        reopened_after_success
+            .get_managed_worktree_claim(&later.worktree_id, &later.session_id)
+            .unwrap(),
+        Some(normalized_later.clone()),
+    );
+    assert_eq!(
+        reopened_after_success
+            .list_runtime_events(None, None, 10)
+            .unwrap(),
+        original_journal,
+    );
+
+    // A clean restart's exact retry cannot issue even an unnecessary UPDATE.
+    independent
+        .execute_batch(
+            "CREATE TRIGGER forbid_identical_historical_claim_update
+             BEFORE UPDATE ON managed_worktree_claims
+             BEGIN SELECT RAISE(ABORT, 'exact retry must be write-free'); END;",
+        )
+        .unwrap();
+    reopened_after_success
+        .repair_managed_worktree_claims_atomically(&[normalized_earlier, normalized_later])
+        .unwrap();
+}
+
+#[test]
 fn independent_historical_claim_repair_and_journaled_release_preserve_terminal_authority() {
     use std::sync::{Arc, Barrier};
 

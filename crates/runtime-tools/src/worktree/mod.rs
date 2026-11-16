@@ -330,6 +330,7 @@ impl RuntimeWorktreeService {
                 )
             })
             .collect::<BTreeMap<_, _>>();
+        let mut claim_repairs = Vec::<ManagedWorktreeClaimRecord>::new();
         for claim in claim_by_key.into_values().chain(claims_changed) {
             // Never rewrite identical historical claim authority on a clean
             // restart: an independent writer may have since committed a
@@ -341,7 +342,14 @@ impl RuntimeWorktreeService {
             {
                 continue;
             }
-            store.upsert_managed_worktree_claim(&claim)?;
+            claim_repairs.push(claim);
+        }
+        // A later claim may have been independently released/re-claimed or
+        // fenced by an unresolved native rebind. Its Conflict must roll back
+        // all earlier historical claim normalizations in this startup pass.
+        // This is separate from the prior record batch and native Git.
+        if !claim_repairs.is_empty() {
+            store.repair_managed_worktree_claims_atomically(&claim_repairs)?;
         }
 
         Ok(())
@@ -725,6 +733,101 @@ mod startup_snapshot_tests {
                 .unwrap(),
             prior_journal,
             "failed startup reconciliation must not fabricate Critical journal authority"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_later_claim_conflict_cannot_partially_normalize_earlier_claim() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("disposable-partial-claim-plan.sqlite3");
+        let reader = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path.clone(),
+        });
+        reader.initialize().await.unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "INSERT INTO sessions (id,provider,status,metadata_json,created_at,updated_at)
+             VALUES ('claim_a','codex','idle','{}',1,1),
+                    ('claim_z','codex','idle','{}',1,1);",
+        )
+        .unwrap();
+        let worktree = ManagedWorktreeRecord {
+            id: "wt_two_claims".into(),
+            repo_root: temp.path().display().to_string(),
+            worktree_root: temp.path().join("worktrees").display().to_string(),
+            worktree_cwd: temp
+                .path()
+                .join("worktrees/two-claims")
+                .display()
+                .to_string(),
+            branch_name: "gg/two-claims".into(),
+            worktree_name: "two-claims".into(),
+            unified_workspace_path: "two_claims".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: None,
+            created_by_operation_id: None,
+            created_at: 10,
+            updated_at: 10,
+        };
+        reader.upsert_managed_worktree(&worktree).unwrap();
+        let earlier = ManagedWorktreeClaimRecord {
+            worktree_id: worktree.id.clone(),
+            session_id: "claim_a".into(),
+            claim_role: " owner ".into(),
+            created_at: 20,
+            released_at: None,
+        };
+        let later = ManagedWorktreeClaimRecord {
+            session_id: "claim_z".into(),
+            claim_role: " consumer ".into(),
+            created_at: 30,
+            ..earlier.clone()
+        };
+        reader.upsert_managed_worktree_claim(&earlier).unwrap();
+        reader.upsert_managed_worktree_claim(&later).unwrap();
+        let stale = reader.hydrate_runtime_state().unwrap();
+
+        // The independent writer journals only the later claim's release.
+        // Startup's old iteration order changes claim_a before claim_z
+        // detects the terminal Conflict, leaving a partly repaired plan.
+        let writer = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path,
+        });
+        let released = ManagedWorktreeClaimRecord {
+            released_at: Some(100),
+            ..later
+        };
+        writer
+            .transition_managed_worktree_claim(&released, ManagedWorktreeClaimTransition::Release)
+            .unwrap();
+        let journal = writer
+            .list_runtime_events(Some((RuntimeEventScope::Worktree, &worktree.id)), None, 10)
+            .unwrap();
+        assert_eq!(journal.len(), 1);
+
+        let repair = RuntimeWorktreeService::repair_startup_state(&reader, &stale);
+        assert!(
+            matches!(repair, Err(RuntimeError::Conflict(_))),
+            "journaled later release must reject changed startup claim plan: {repair:?}"
+        );
+        assert_eq!(
+            writer
+                .get_managed_worktree_claim(&worktree.id, &earlier.session_id)
+                .unwrap(),
+            Some(earlier),
+            "failed plan must not partially normalize the earlier active claim",
+        );
+        assert_eq!(
+            writer
+                .get_managed_worktree_claim(&worktree.id, &released.session_id)
+                .unwrap(),
+            Some(released),
+        );
+        assert_eq!(
+            writer
+                .list_runtime_events(Some((RuntimeEventScope::Worktree, &worktree.id)), None, 10)
+                .unwrap(),
+            journal,
         );
     }
 

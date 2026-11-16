@@ -161,6 +161,13 @@ macro_rules! delegate_worktree_status {
             self.repository.upsert_managed_worktree_claim(record)
         }
 
+        fn repair_managed_worktree_claims_atomically(
+            &self,
+            repairs: &[runtime_core::ManagedWorktreeClaimRecord],
+        ) -> Result<(), runtime_core::RuntimeError> {
+            self.repository.repair_managed_worktree_claims_atomically(repairs)
+        }
+
         fn transition_managed_worktree_claim(
             &self,
             record: &runtime_core::ManagedWorktreeClaimRecord,

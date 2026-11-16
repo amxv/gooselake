@@ -94,6 +94,18 @@ pub(crate) use default_team_spawn_admission;
 
 macro_rules! default_worktree_claim_cleanup_journal {
     () => {
+        /// An unjournaled historical startup repair may normalize multiple
+        /// claims. The batch must commit all or none under one writer lock;
+        /// stores without this guarantee must not fall back to serial upserts.
+        fn repair_managed_worktree_claims_atomically(
+            &self,
+            _repairs: &[crate::ManagedWorktreeClaimRecord],
+        ) -> Result<(), crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic historical managed-worktree claim repair unavailable".into(),
+            ))
+        }
+
         /// A claim/release and its critical worktree event are one authority.
         fn transition_managed_worktree_claim(
             &self,

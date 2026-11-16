@@ -2014,6 +2014,13 @@ This is a batch of **value-snapshot** checks limited to historical worktree
 record repair, not an atomic transaction with the later separate claim repairs,
 native Git work, or a complete generation-aware CAS guarantee against a row
 that changed and then returned to identical values.
+Changed historical **claim** repairs are collected into a separate SQLite
+`IMMEDIATE` writer transaction. A later journal-backed Release/re-Claim,
+unresolved rebind conflict, or failed SQL claim update rolls back **all** claim
+normalizations in that startup pass, including earlier updates. This does not
+make the preceding worktree-record batch and following claim batch one atomic
+unit, nor does it provide a general journal-free claim snapshot CAS or
+transactionality with native Git/provider effects.
 If an agent has an `intended` or `manual_review` native provider rebind,
 historical claim repair UPSERTs are also fenced by an immediate SQLite writer
 transaction. A stale startup snapshot cannot overwrite its recovery-sensitive

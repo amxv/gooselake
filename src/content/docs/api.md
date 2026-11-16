@@ -712,6 +712,8 @@ supplying custom refresh options returns `400 invalid_request` without querying 
 
 Use the current agent `revision` from `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` when updating thinking preference or Claude permission intent. Both public mutations require `expected_revision`, return the new revision, and reject stale revisions with HTTP `409`. Changes are rejected during an active turn. Codex and Claude thinking preferences carry into later turns/resume; ACP retains its own preferences and does not support these mutations.
 
+SQLite stores agent revisions as signed 64-bit integers. If the current revision is already the maximum representable value, a preference or permission change returns `400 invalid_state` **before** admitting a native operation or calling the provider; an unrepresentable successor cannot become a successful native policy receipt.
+
 **For retry-safe preference and permission changes, send `Idempotency-Key`.**
 Both routes *always* commit an immutable operator request, exact native-session
 identity and exclusive agent claim to SQLite **before** calling the provider.

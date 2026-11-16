@@ -646,3 +646,103 @@ async fn ambiguous_native_preference_ack_quarantines_and_fences_new_turns() {
     );
     assert_eq!(provider.preferences_mutation_calls(), baseline + 1);
 }
+
+#[tokio::test]
+async fn native_policy_sqlite_revision_ceiling_rejects_before_native_mutation() {
+    let (router, token, temp, provider, runtime, agent_id, _revision) =
+        operator_policy_fixture().await;
+    let connection = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    // SQLite workspace_agent revisions are stored as signed integers. An
+    // existing revision of i64::MAX is valid, but its successor cannot be
+    // persisted. No provider write or durable native intent is safe here.
+    connection
+        .execute(
+            "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+            rusqlite::params![i64::MAX, agent_id],
+        )
+        .unwrap();
+    assert_eq!(
+        runtime
+            .get_active_workspace_agent_by_id(&agent_id)
+            .unwrap()
+            .revision,
+        i64::MAX as u64,
+    );
+    let before_calls = provider.preferences_mutation_calls();
+    let (status, result) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v2/agents/{agent_id}/preferences"),
+        Some(preference_body(i64::MAX as u64, "high")),
+        Some("sqlite-revision-ceiling-no-native"),
+    )
+    .await;
+    assert_eq!(
+        provider.preferences_mutation_calls(),
+        before_calls,
+        "revision ceiling must reject before provider mutation: {status} {result:?}"
+    );
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{result:?}");
+    assert_eq!(result["error"]["code"], "invalid_state");
+    let operations: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM runtime_operations WHERE idempotency_key='sqlite-revision-ceiling-no-native'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(operations, 0, "no impossible durable native intent");
+    let current: i64 = connection
+        .query_row(
+            "SELECT revision FROM workspace_agents WHERE session_id=?1",
+            [&agent_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(current, i64::MAX);
+
+    // Also fence callers of the SQLite admission API that bypass the HTTP
+    // manager. They must not persist an impossible native intent either.
+    let agent = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
+    let session = runtime.get_session(&agent_id).await.unwrap();
+    let request = serde_json::json!({
+        "agent_id":agent_id,
+        "kind":"preferences",
+        "expected_revision":i64::MAX as u64,
+        "current_preferences":{"thinking_effort":"high"},
+    });
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let denied = store.repository().admit_operator_native_policy(
+        &runtime_core::OperatorNativePolicyCommand {
+            operation_id: "op_policy_sqlite_revision_max".into(),
+            actor: runtime_core::OperationActor::operator("runtime_operator"),
+            idempotency_key: "sqlite-revision-ceiling-direct".into(),
+            workspace_id: agent.workspace_id,
+            agent_id: agent_id.clone(),
+            kind: runtime_core::OperatorNativePolicyKind::Preferences,
+            expected_revision: i64::MAX as u64,
+            provider: session.provider.clone(),
+            provider_session_ref: session.provider_session_ref.clone(),
+            canonical_provider_session_ref: session.canonical_provider_session_ref.clone(),
+            session_updated_at: session.updated_at,
+            normalized_request: request.clone(),
+            normalized_request_hash: runtime_core::normalized_json_hash(&request).unwrap(),
+            requested_at: session.updated_at + 1,
+        },
+    );
+    assert!(
+        matches!(denied, Err(runtime_core::RuntimeError::InvalidState(_))),
+        "raw SQLite native intent must be rejected before effect: {denied:?}"
+    );
+    let direct_operations: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM runtime_operations WHERE idempotency_key='sqlite-revision-ceiling-direct'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(direct_operations, 0);
+}

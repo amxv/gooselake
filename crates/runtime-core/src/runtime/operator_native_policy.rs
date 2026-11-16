@@ -158,6 +158,11 @@ impl RuntimeSessionManager {
                 agent.agent_id, agent.revision
             )));
         }
+        // Validate the next revision before any provider effect is admitted.
+        // A post-native overflow would leave an unreceipted provider mutation.
+        let next_revision = expected_revision
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::InvalidState("agent revision overflow".into()))?;
         if let Some(operation_id) = self.store.retiring_operation_for_session(agent_id)? {
             return Err(RuntimeError::Conflict(format!(
                 "policy mutation is frozen by workspace retirement {operation_id}"
@@ -286,9 +291,6 @@ impl RuntimeSessionManager {
         }
 
         let mut policy = agent.recreation_policy;
-        let next_revision = expected_revision
-            .checked_add(1)
-            .ok_or_else(|| RuntimeError::InvalidState("agent revision overflow".into()))?;
         let exact = match selection {
             OperatorPolicySelection::Preferences(value) => {
                 policy.current_preferences = value.clone();

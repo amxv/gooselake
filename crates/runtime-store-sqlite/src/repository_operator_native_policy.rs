@@ -212,6 +212,14 @@ impl SqliteRuntimeRepository {
                 "native provider policy session identity or agent revision changed before admission".into(),
             ));
         }
+        // SQLite stores the revision as a signed INTEGER. Its maximum is a
+        // valid current value but has no representable successor; reject it
+        // before recording a durable native intent or invoking the provider.
+        if command.expected_revision >= i64::MAX as u64 {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         let frozen: bool = transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM workspace_retirement_fences WHERE workspace_id=?1)",

@@ -9,6 +9,43 @@ use crate::repository::insert_runtime_event_in_transaction;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
+    /// Reconstruct old claims at startup only when normalization changed the
+    /// historical row. This repair path is not Critical-journaled, so fence
+    /// unresolved provider rebind authority under the same writer lock as
+    /// journaled Claim/Release and native rebind admission.
+    pub fn upsert_managed_worktree_claim(
+        &self,
+        record: &ManagedWorktreeClaimRecord,
+    ) -> Result<(), RuntimeError> {
+        let mut connection = open_connection(&self.database_path)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| db_error("failed starting historical worktree claim repair", error))?;
+        require_no_unresolved_rebind_for_claim_mutation(&transaction, &record.session_id)?;
+        transaction
+            .execute(
+                "INSERT INTO managed_worktree_claims (
+                    worktree_id, session_id, claim_role, created_at, released_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(worktree_id, session_id) DO UPDATE SET
+                    claim_role = excluded.claim_role,
+                    created_at = excluded.created_at,
+                    released_at = excluded.released_at",
+                params![
+                    record.worktree_id,
+                    record.session_id,
+                    record.claim_role,
+                    record.created_at,
+                    record.released_at,
+                ],
+            )
+            .map_err(|error| db_error("failed upserting managed worktree claim", error))?;
+        transaction.commit().map_err(|error| {
+            db_error("failed committing historical worktree claim repair", error)
+        })?;
+        Ok(())
+    }
+
     /// A missing claim is a pure PK read. Never widen the successful case's
     /// native cleanup safety authorization using this limited projection.
     pub fn get_managed_worktree_claim(
@@ -235,6 +272,39 @@ fn require_no_unresolved_rebind_for_claim_mutation(
     connection: &rusqlite::Connection,
     session_id: &str,
 ) -> Result<(), RuntimeError> {
+    // Claims existed in migration 1, but the native rebind authority table
+    // was not introduced until migration 10. Old databases legitimately
+    // write claims before upgrading; a missing table is safe ONLY with a
+    // complete recorded pre-rebind migration chain. Do not treat missing or
+    // damaged current schema as an empty set of pending native effects.
+    const REBIND_SCHEMA_VERSION: i64 = 10;
+    let rebind_table_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'workspace_agent_rebinds')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed checking native rebind schema", error))?;
+    if !rebind_table_exists {
+        let (first, latest, count): (Option<i64>, Option<i64>, i64) = connection
+            .query_row(
+                "SELECT MIN(version), MAX(version), COUNT(*) FROM schema_migrations",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|error| db_error("failed checking legacy claim migration authority", error))?;
+        if first == Some(1)
+            && latest.is_some_and(|version| (1..REBIND_SCHEMA_VERSION).contains(&version))
+            && latest == Some(count)
+        {
+            return Ok(());
+        }
+        return Err(RuntimeError::Bootstrap(
+            "native rebind authority table missing from migrated worktree claim schema".into(),
+        ));
+    }
+
     let unresolved: i64 = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM workspace_agent_rebinds

@@ -1,8 +1,7 @@
 use runtime_core::{
-    ApprovalRecord, CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord,
-    ProcessRecord, RuntimeError, SessionRecord, TeamDeliveryRecord, TeamMemberRecord,
-    TeamMessageRecord, TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord,
-    TurnRecord,
+    ApprovalRecord, CredentialRecord, ManagedWorktreeRecord, ProcessRecord, RuntimeError,
+    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
+    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
@@ -569,32 +568,6 @@ impl SqliteRuntimeRepository {
         u64::try_from(revision).map_err(|_| {
             RuntimeError::ProtocolViolation("negative managed worktree revision".into())
         })
-    }
-
-    pub fn upsert_managed_worktree_claim(
-        &self,
-        record: &ManagedWorktreeClaimRecord,
-    ) -> Result<(), RuntimeError> {
-        let connection = open_connection(&self.database_path)?;
-        connection
-            .execute(
-                "INSERT INTO managed_worktree_claims (
-                    worktree_id, session_id, claim_role, created_at, released_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(worktree_id, session_id) DO UPDATE SET
-                    claim_role = excluded.claim_role,
-                    created_at = excluded.created_at,
-                    released_at = excluded.released_at",
-                params![
-                    record.worktree_id,
-                    record.session_id,
-                    record.claim_role,
-                    record.created_at,
-                    record.released_at,
-                ],
-            )
-            .map_err(|error| db_error("failed upserting managed worktree claim", error))?;
-        Ok(())
     }
 
     pub fn upsert_process(&self, record: &ProcessRecord) -> Result<(), RuntimeError> {

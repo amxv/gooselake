@@ -37,6 +37,67 @@ fn fixture() -> (
 }
 
 #[test]
+fn missing_rebind_authority_schema_fails_closed_without_rewriting_claim() {
+    let (temp, repository, claim) = fixture();
+    repository.upsert_managed_worktree_claim(&claim).unwrap();
+    let connection = Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    connection
+        .execute_batch("DROP TABLE workspace_agent_rebinds;")
+        .unwrap();
+
+    let rewritten = ManagedWorktreeClaimRecord {
+        claim_role: "consumer".into(),
+        released_at: Some(500),
+        ..claim.clone()
+    };
+    assert!(matches!(
+        repository.upsert_managed_worktree_claim(&rewritten),
+        Err(runtime_core::RuntimeError::Bootstrap(_))
+    ));
+    assert_eq!(
+        repository
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(claim.clone()),
+    );
+    assert!(matches!(
+        repository.transition_managed_worktree_claim(
+            &ManagedWorktreeClaimRecord {
+                released_at: Some(500),
+                ..claim.clone()
+            },
+            Release,
+        ),
+        Err(runtime_core::RuntimeError::Bootstrap(_))
+    ));
+    assert_eq!(
+        repository
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(claim.clone()),
+    );
+
+    // A damaged history must not be mistaken for a legitimate pre-v10
+    // database merely because its highest remaining version is below 10.
+    connection
+        .execute_batch(
+            "DELETE FROM schema_migrations WHERE version >= 10;
+             DELETE FROM schema_migrations WHERE version = 5;",
+        )
+        .unwrap();
+    assert!(matches!(
+        repository.upsert_managed_worktree_claim(&rewritten),
+        Err(runtime_core::RuntimeError::Bootstrap(_))
+    ));
+    assert_eq!(
+        repository
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(claim),
+    );
+}
+
+#[test]
 fn claim_release_and_reclaim_are_atomic_exact_once_and_restart_safe() {
     let (temp, _repository, claim) = fixture();
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {

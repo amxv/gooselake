@@ -79,6 +79,27 @@ async fn legacy_member_removal_does_not_unreserve_unresolved_native_provider_reb
     assert_eq!(reservation.claim_role, "rebind_reservation");
     assert_eq!(reservation.released_at, None);
 
+    // Legacy startup normalization also had a separate unjournaled upsert
+    // writer. It must not replace or terminalize a real pending destination
+    // reservation after the provider returned an unknown native outcome.
+    assert!(
+        matches!(
+            store.upsert_managed_worktree_claim(&runtime_core::ManagedWorktreeClaimRecord {
+                claim_role: "owner".into(),
+                released_at: Some(reservation.created_at + 1),
+                ..reservation.clone()
+            }),
+            Err(RuntimeError::Conflict(_)),
+        ),
+        "stale historical UPSERT must not rewrite an unresolved destination reservation"
+    );
+    assert_eq!(
+        store
+            .get_managed_worktree_claim("wt_linked", &agent.agent_id)
+            .unwrap(),
+        Some(reservation.clone()),
+    );
+
     let before = store
         .list_runtime_events(
             Some((runtime_core::RuntimeEventScope::Worktree, "wt_linked")),
@@ -211,6 +232,16 @@ async fn unresolved_root_rebind_fences_new_direct_claim_transaction_without_a_de
         created_at: 1000,
         released_at: None,
     };
+    // Startup's historical claim repair uses this unjournaled UPSERT rather
+    // than the normal evented Claim transition. It must not bypass the
+    // existing IMMEDIATE unresolved-provider-rebind authority fence.
+    assert!(
+        matches!(
+            store.upsert_managed_worktree_claim(&claim),
+            Err(RuntimeError::Conflict(_)),
+        ),
+        "legacy repair UPSERT must not admit a claim behind unresolved native rebind"
+    );
     assert!(matches!(
         store.transition_managed_worktree_claim(
             &claim,

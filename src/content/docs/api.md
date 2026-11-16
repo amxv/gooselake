@@ -2005,6 +2005,11 @@ revisions and avoids overwriting a newer release or route recorded by another
 SQLite writer after startup hydration. Repairs that actually change legacy
 records still use their existing reconciliation path; this no-op optimization
 does not establish full cross-process CAS semantics for those repairs.
+If an agent has an `intended` or `manual_review` native provider rebind,
+historical claim repair UPSERTs are also fenced by an immediate SQLite writer
+transaction. A stale startup snapshot cannot overwrite its recovery-sensitive
+worktree reservation; changed legacy repairs outside this fence are not a full
+cross-process compare-and-swap mechanism.
 
 For v2 workspace worktree creation with an explicitly specified retention
 policy, the pre-admission policy-conflict check seeks only the existing

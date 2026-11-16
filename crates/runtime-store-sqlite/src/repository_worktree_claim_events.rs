@@ -282,12 +282,13 @@ impl SqliteRuntimeRepository {
     pub fn release_managed_worktree_claim_if_unbound(
         &self,
         record: &ManagedWorktreeClaimRecord,
+        observed: &ManagedWorktreeClaimRecord,
         expected_worktree_cwd: &str,
     ) -> Result<ManagedWorktreeClaimRecord, RuntimeError> {
         self.transition_managed_worktree_claim_with_guard(
             record,
             ManagedWorktreeClaimTransition::Release,
-            Some(expected_worktree_cwd),
+            Some((observed, expected_worktree_cwd)),
         )
     }
 
@@ -295,7 +296,7 @@ impl SqliteRuntimeRepository {
         &self,
         record: &ManagedWorktreeClaimRecord,
         transition: ManagedWorktreeClaimTransition,
-        explicit_release_cwd: Option<&str>,
+        explicit_release_snapshot: Option<(&ManagedWorktreeClaimRecord, &str)>,
     ) -> Result<ManagedWorktreeClaimRecord, RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         let transaction = connection
@@ -371,7 +372,23 @@ impl SqliteRuntimeRepository {
                         record.worktree_id, record.session_id
                     ))
                 })?;
-                if let Some(expected_cwd) = explicit_release_cwd {
+                if let Some((observed, expected_cwd)) = explicit_release_snapshot {
+                    // A separate writer may have released and re-claimed the
+                    // same PK since the service read its original claim. Do
+                    // not let that stale release revoke the newer Critical
+                    // claim, even when the session has no native binding.
+                    if &existing != observed {
+                        return Err(RuntimeError::Conflict(
+                            "explicit worktree claim changed since release preflight".into(),
+                        ));
+                    }
+                    if observed.worktree_id != record.worktree_id
+                        || observed.session_id != record.session_id
+                    {
+                        return Err(RuntimeError::Conflict(
+                            "explicit worktree claim release identity mismatch".into(),
+                        ));
+                    }
                     // Both the current persisted route and the route observed
                     // by the service must be checked. Another writer may have
                     // changed the worktree cwd before binding the session.

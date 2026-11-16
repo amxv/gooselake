@@ -937,7 +937,11 @@ requesting session's live worktree-ID or CWD binding **inside that same SQLite
 writer transaction**. If another SQLite writer binds the native session after
 the service's initial safety read, the release returns a conflict without
 releasing the claim or appending a Critical event. Both the service-observed and
-current durable worktree CWD are checked. Generic claim release used by legacy
+current durable worktree CWD are checked. The exact hydrated claim row is also
+compared inside the transaction: an earlier explicit release cannot revoke a
+new claim created by another writer's Release→Claim cycle on the same key.
+This is value-snapshot protection, not a generation-aware ABA guarantee.
+Generic claim release used by legacy
 roster member removal retains its separate semantics; this fence does not make
 subsequent native Git cleanup atomic with a release.
 Public legacy claim admission accepts only `owner` or `consumer` roles;

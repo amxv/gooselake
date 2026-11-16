@@ -26,7 +26,11 @@ fn explicit_release_rejects_later_live_cwd_only_binding() {
         ..claim.clone()
     };
     assert!(matches!(
-        reader.release_managed_worktree_claim_if_unbound(&requested, &worktree.worktree_cwd),
+        reader.release_managed_worktree_claim_if_unbound(
+            &requested,
+            &claim,
+            &worktree.worktree_cwd
+        ),
         Err(RuntimeError::Conflict(_))
     ));
     assert_eq!(
@@ -71,6 +75,7 @@ fn explicit_release_checks_current_worktree_route_after_independent_change() {
                 released_at: Some(300),
                 ..claim.clone()
             },
+            &claim,
             &original.worktree_cwd,
         ),
         Err(RuntimeError::Conflict(_))
@@ -104,11 +109,11 @@ fn explicit_release_allows_closed_native_binding_and_exact_retry() {
         .unwrap();
     let requested = ManagedWorktreeClaimRecord {
         released_at: Some(300),
-        ..claim
+        ..claim.clone()
     };
     assert_eq!(
         reader
-            .release_managed_worktree_claim_if_unbound(&requested, &worktree.worktree_cwd)
+            .release_managed_worktree_claim_if_unbound(&requested, &claim, &worktree.worktree_cwd)
             .unwrap(),
         requested
     );
@@ -119,6 +124,7 @@ fn explicit_release_allows_closed_native_binding_and_exact_retry() {
                     released_at: Some(301),
                     ..requested.clone()
                 },
+                &requested,
                 &worktree.worktree_cwd,
             )
             .unwrap(),
@@ -158,4 +164,65 @@ fn generic_member_removal_release_keeps_existing_semantics() {
         released
     );
     assert_eq!(reader.list_runtime_events(None, None, 10).unwrap().len(), 2);
+}
+
+#[test]
+fn stale_explicit_release_must_not_release_newer_journaled_reclaim() {
+    let (temp, reader, claim) = super::worktree_claim_events::fixture();
+    reader
+        .transition_managed_worktree_claim(&claim, Claim)
+        .unwrap();
+    // Explicit release hydrates this older active claim before the service's
+    // per-repository lock; it will submit the release later.
+    let observed = reader
+        .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+        .unwrap()
+        .unwrap();
+    let worktree = reader
+        .get_managed_worktree(&claim.worktree_id)
+        .unwrap()
+        .unwrap();
+
+    // Another real SQLite writer journaled a release AND a new generation
+    // of the same (worktree_id, session_id) claim. Session is unbound, so the
+    // live-session fence alone cannot protect this newer Critical authority.
+    let writer = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    writer
+        .transition_managed_worktree_claim(
+            &ManagedWorktreeClaimRecord {
+                released_at: Some(150),
+                ..claim.clone()
+            },
+            Release,
+        )
+        .unwrap();
+    let newer = ManagedWorktreeClaimRecord {
+        created_at: 200,
+        ..claim.clone()
+    };
+    writer
+        .transition_managed_worktree_claim(&newer, Claim)
+        .unwrap();
+    let stale_release = ManagedWorktreeClaimRecord {
+        released_at: Some(300),
+        ..observed.clone()
+    };
+    let result = reader.release_managed_worktree_claim_if_unbound(
+        &stale_release,
+        &observed,
+        &worktree.worktree_cwd,
+    );
+    assert!(
+        matches!(result, Err(RuntimeError::Conflict(_))),
+        "stale explicit release must preserve a later journaled claim generation: {result:?}"
+    );
+    assert_eq!(
+        writer
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(newer),
+    );
+    let events = writer.list_runtime_events(None, None, 10).unwrap();
+    assert_eq!(events.len(), 3, "no fourth Critical release event");
+    assert_eq!(events[2].kind, "worktree.claimed");
 }

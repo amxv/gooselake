@@ -222,7 +222,6 @@ impl WorktreeService for RuntimeWorktreeService {
                 "agent has an unresolved provider rebind; worktree claims cannot change".into(),
             ));
         }
-        // Missing IDs and claims short-circuit; valid targets retain full safety.
         self.get_worktree(request.worktree_id.as_str()).await?;
         self.store
             .get_managed_worktree_claim(&request.worktree_id, &request.session_id)?
@@ -278,11 +277,13 @@ impl WorktreeService for RuntimeWorktreeService {
         }
         let released_claim = ManagedWorktreeClaimRecord {
             released_at: Some(now_ms()),
-            ..existing_claim
+            ..existing_claim.clone()
         };
-        let released_claim = self
-            .store
-            .release_managed_worktree_claim_if_unbound(&released_claim, &worktree.worktree_cwd)?;
+        let released_claim = self.store.release_managed_worktree_claim_if_unbound(
+            &released_claim,
+            &existing_claim,
+            &worktree.worktree_cwd,
+        )?;
 
         drop(repository_guard);
         let hydrated_after = self.store.hydrate_runtime_state()?;

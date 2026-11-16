@@ -948,7 +948,8 @@ fn explicit_release_stale_preflight_must_not_release_a_new_native_session_bindin
     };
     // The explicit service uses the scoped, transactionally fenced path;
     // generic roster member removal intentionally keeps its own semantics.
-    let result = reader.release_managed_worktree_claim_if_unbound(&proposed, &stale.worktree_cwd);
+    let result =
+        reader.release_managed_worktree_claim_if_unbound(&proposed, &observed, &stale.worktree_cwd);
     assert!(
         matches!(result, Err(runtime_core::RuntimeError::Conflict(_))),
         "explicit release must fence later live native binding: {result:?}"

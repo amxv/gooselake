@@ -151,6 +151,7 @@ macro_rules! default_worktree_claim_cleanup_journal {
         fn release_managed_worktree_claim_if_unbound(
             &self,
             _record: &crate::ManagedWorktreeClaimRecord,
+            _observed: &crate::ManagedWorktreeClaimRecord,
             _expected_worktree_cwd: &str,
         ) -> Result<crate::ManagedWorktreeClaimRecord, crate::RuntimeError> {
             Err(crate::RuntimeError::Unsupported(

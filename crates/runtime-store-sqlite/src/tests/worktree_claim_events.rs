@@ -168,6 +168,84 @@ fn historical_claim_repair_cannot_rewrite_a_journaled_terminal_release() {
 }
 
 #[test]
+fn independent_historical_claim_repair_and_journaled_release_preserve_terminal_authority() {
+    use std::sync::{Arc, Barrier};
+
+    // The historical role normalizer is deliberately unjournaled. A second
+    // process can commit a real Release while startup repairs that legacy
+    // row; both writers must serialize under SQLite's IMMEDIATE lock, with
+    // exactly one Critical event and no revived terminal claim.
+    for round in 0_i64..12 {
+        let (temp, repository, claim) = fixture();
+        let legacy = ManagedWorktreeClaimRecord {
+            claim_role: " owner ".into(),
+            ..claim.clone()
+        };
+        repository.upsert_managed_worktree_claim(&legacy).unwrap();
+        let expected_release_at = 200 + round;
+        let released_request = ManagedWorktreeClaimRecord {
+            released_at: Some(expected_release_at),
+            ..legacy.clone()
+        };
+        let normalized = ManagedWorktreeClaimRecord {
+            claim_role: "owner".into(),
+            ..legacy
+        };
+        let path = temp.path().join("runtime.sqlite3");
+        let gate = Arc::new(Barrier::new(3));
+
+        let repair_gate = gate.clone();
+        let repair_writer = SqliteRuntimeRepository::new(path.clone());
+        let repair = std::thread::spawn(move || {
+            repair_gate.wait();
+            repair_writer.upsert_managed_worktree_claim(&normalized)
+        });
+        let release_gate = gate.clone();
+        let release_writer = SqliteRuntimeRepository::new(path.clone());
+        let release = std::thread::spawn(move || {
+            release_gate.wait();
+            release_writer.transition_managed_worktree_claim(&released_request, Release)
+        });
+        gate.wait();
+
+        let repair_result = repair.join().unwrap();
+        assert!(
+            repair_result.is_ok()
+                || matches!(repair_result, Err(runtime_core::RuntimeError::Conflict(_))),
+            "round {round}: historical repair had unexpected result: {repair_result:?}"
+        );
+        let committed_release = release.join().unwrap().unwrap();
+        assert_eq!(committed_release.released_at, Some(expected_release_at));
+        let restarted = SqliteRuntimeRepository::new(path);
+        let recovered = restarted
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap();
+        assert_eq!(
+            recovered,
+            Some(committed_release.clone()),
+            "round {round}: a concurrent startup writer cannot revive or rewrite the release"
+        );
+        let events = restarted
+            .list_runtime_events(
+                Some((RuntimeEventScope::Worktree, &claim.worktree_id)),
+                None,
+                10,
+            )
+            .unwrap();
+        assert_eq!(events.len(), 1, "round {round}: exactly one Release event");
+        assert_eq!(events[0].kind, "worktree.released");
+        assert_eq!(
+            events[0].payload["claim"]["released_at"],
+            expected_release_at
+        );
+        assert_eq!(
+            events[0].payload["claim"]["claim_role"], committed_release.claim_role,
+            "round {round}: the Critical event must match the winning serialized row"
+        );
+    }
+}
+
+#[test]
 fn claim_release_and_reclaim_are_atomic_exact_once_and_restart_safe() {
     let (temp, _repository, claim) = fixture();
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {

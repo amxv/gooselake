@@ -2015,8 +2015,14 @@ when a second SQLite writer has committed that terminal state after startup
 hydration. Exact terminal repeats are no-ops; reviving a claim, changing its
 release timestamp or rewriting its recorded role/creation time through the
 unjournaled repair path fails closed. A new claim activation must still use
-the journaled worktree Claim transition. This terminal-state guard does not
-give other changed active-claim repairs general cross-process CAS authority.
+the journaled worktree Claim transition. The same writer lock also preserves
+**journal-backed active** claims: if an independent writer has journaled a
+Release followed by a new Claim after stale startup hydration, the old
+historical role normalizer cannot overwrite the new role or claim timestamp
+without a Critical event. Exact active retries do not UPDATE; older active
+claims without journaled transitions can still be normalized. The guard is
+scoped to the exact worktree/session journal authority and does not give
+other journal-free active-claim repairs general cross-process CAS authority.
 
 For v2 workspace worktree creation with an explicitly specified retention
 policy, the pre-admission policy-conflict check seeks only the existing

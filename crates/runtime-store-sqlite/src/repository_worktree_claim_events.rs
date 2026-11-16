@@ -37,20 +37,50 @@ impl SqliteRuntimeRepository {
             )
             .optional()
             .map_err(|error| db_error("failed reading historical claim repair authority", error))?;
-        if let Some((prior_role, prior_created_at, Some(prior_released_at))) = existing {
-            // A journaled release may have committed after stale startup
-            // hydration. Rewriting even its role or creation time would
-            // contradict that terminal event's durable payload. Exact legacy
-            // no-op is harmless; only journaled Claim may reactivate it.
-            if record.released_at == Some(prior_released_at)
+        if let Some((prior_role, prior_created_at, prior_released_at)) = existing {
+            // A historical repair is not a new state transition. Exact retries
+            // must not UPDATE even an active row whose Critical event exists.
+            if record.released_at == prior_released_at
                 && record.claim_role == prior_role
                 && record.created_at == prior_created_at
             {
                 return Ok(());
             }
-            return Err(RuntimeError::Conflict(
-                "historical startup claim repair cannot rewrite a terminal claim".into(),
-            ));
+            if prior_released_at.is_some() {
+                // A journaled release may have committed since hydration;
+                // only a journaled Claim can reactivate that terminal row.
+                return Err(RuntimeError::Conflict(
+                    "historical startup claim repair cannot rewrite a terminal claim".into(),
+                ));
+            }
+
+            // An independent writer may have released and re-claimed this
+            // key since hydration, leaving it active again. The event payload
+            // is authoritative, so never rewrite any journal-backed active
+            // claim from this deliberately unjournaled historical path.
+            // Older unjournaled active claims remain eligible for legacy
+            // normalization. This is not general CAS for journal-free rows.
+            let journaled: bool = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM runtime_events
+                     WHERE scope = 'worktree' AND scope_id = ?1 AND session_id = ?2
+                       AND critical = 1
+                       AND kind IN ('worktree.claimed','worktree.released'))",
+                    params![record.worktree_id, record.session_id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| {
+                    db_error(
+                        "failed reading active worktree claim journal authority",
+                        error,
+                    )
+                })?;
+            if journaled {
+                return Err(RuntimeError::Conflict(
+                    "historical startup claim repair cannot rewrite a journaled active claim"
+                        .into(),
+                ));
+            }
         }
         transaction
             .execute(

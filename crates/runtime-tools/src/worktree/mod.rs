@@ -535,4 +535,89 @@ mod startup_snapshot_tests {
             "failed startup reconciliation must not fabricate Critical journal authority"
         );
     }
+
+    #[tokio::test]
+    async fn stale_changed_claim_normalization_cannot_rewrite_a_journaled_reclaim() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("disposable-reclaimed-claim.sqlite3");
+        let reader = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path.clone(),
+        });
+        reader.initialize().await.unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute(
+            "INSERT INTO sessions (id,provider,status,metadata_json,created_at,updated_at)
+             VALUES ('reclaim_session','codex','idle','{}',1,1)",
+            [],
+        )
+        .unwrap();
+        let worktree = ManagedWorktreeRecord {
+            id: "wt_reclaim_snapshot".into(),
+            repo_root: temp.path().display().to_string(),
+            worktree_root: temp.path().join("worktrees").display().to_string(),
+            worktree_cwd: temp.path().join("worktrees/reclaim").display().to_string(),
+            branch_name: "gg/reclaim".into(),
+            worktree_name: "reclaim".into(),
+            unified_workspace_path: "reclaim".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: Some("reclaim_session".into()),
+            created_by_operation_id: None,
+            created_at: 10,
+            updated_at: 10,
+        };
+        reader.upsert_managed_worktree(&worktree).unwrap();
+        let legacy = ManagedWorktreeClaimRecord {
+            worktree_id: worktree.id.clone(),
+            session_id: "reclaim_session".into(),
+            claim_role: " owner ".into(),
+            created_at: 20,
+            released_at: None,
+        };
+        reader.upsert_managed_worktree_claim(&legacy).unwrap();
+        let stale = reader.hydrate_runtime_state().unwrap();
+
+        // An independent writer finishes a journaled release AND a new
+        // journaled Claim while startup still holds the old active snapshot.
+        let writer = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path,
+        });
+        let released = ManagedWorktreeClaimRecord {
+            released_at: Some(100),
+            ..legacy.clone()
+        };
+        writer
+            .transition_managed_worktree_claim(&released, ManagedWorktreeClaimTransition::Release)
+            .unwrap();
+        let reclaimed = ManagedWorktreeClaimRecord {
+            claim_role: "consumer".into(),
+            created_at: 200,
+            released_at: None,
+            ..legacy
+        };
+        writer
+            .transition_managed_worktree_claim(&reclaimed, ManagedWorktreeClaimTransition::Claim)
+            .unwrap();
+        let original_events = writer
+            .list_runtime_events(Some((RuntimeEventScope::Worktree, &worktree.id)), None, 10)
+            .unwrap();
+        assert_eq!(original_events.len(), 2);
+
+        let repair = RuntimeWorktreeService::repair_startup_state(&reader, &stale);
+        assert!(
+            matches!(repair, Err(RuntimeError::Conflict(_))),
+            "historical startup must not silently rewrite an independently journaled active re-Claim: {repair:?}"
+        );
+        assert_eq!(
+            writer
+                .get_managed_worktree_claim(&worktree.id, &reclaimed.session_id)
+                .unwrap(),
+            Some(reclaimed),
+        );
+        assert_eq!(
+            writer
+                .list_runtime_events(Some((RuntimeEventScope::Worktree, &worktree.id)), None, 10)
+                .unwrap(),
+            original_events,
+        );
+    }
 }

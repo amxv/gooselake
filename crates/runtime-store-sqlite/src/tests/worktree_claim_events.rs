@@ -168,6 +168,128 @@ fn historical_claim_repair_cannot_rewrite_a_journaled_terminal_release() {
 }
 
 #[test]
+fn historical_claim_repair_preserves_journaled_active_reclaim_and_unrelated_legacy_normalization() {
+    let (temp, repository, claim) = fixture();
+    let legacy = ManagedWorktreeClaimRecord {
+        claim_role: " owner ".into(),
+        ..claim.clone()
+    };
+    repository.upsert_managed_worktree_claim(&legacy).unwrap();
+    repository
+        .transition_managed_worktree_claim(
+            &ManagedWorktreeClaimRecord {
+                released_at: Some(200),
+                ..legacy.clone()
+            },
+            Release,
+        )
+        .unwrap();
+    let reclaimed = ManagedWorktreeClaimRecord {
+        claim_role: "consumer".into(),
+        created_at: 300,
+        released_at: None,
+        ..legacy.clone()
+    };
+    repository
+        .transition_managed_worktree_claim(&reclaimed, Claim)
+        .unwrap();
+    let before = repository
+        .list_runtime_events(
+            Some((RuntimeEventScope::Worktree, &claim.worktree_id)),
+            None,
+            10,
+        )
+        .unwrap();
+    assert_eq!(before.len(), 2);
+
+    for stale in [
+        ManagedWorktreeClaimRecord {
+            claim_role: "owner".into(),
+            ..legacy.clone()
+        },
+        ManagedWorktreeClaimRecord {
+            created_at: 301,
+            ..reclaimed.clone()
+        },
+        ManagedWorktreeClaimRecord {
+            claim_role: "owner".into(),
+            ..reclaimed.clone()
+        },
+    ] {
+        assert!(matches!(
+            repository.upsert_managed_worktree_claim(&stale),
+            Err(runtime_core::RuntimeError::Conflict(_)),
+        ));
+        assert_eq!(
+            repository
+                .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+                .unwrap(),
+            Some(reclaimed.clone()),
+        );
+    }
+
+    let db = Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER forbid_journaled_active_update BEFORE UPDATE ON managed_worktree_claims
+         WHEN OLD.session_id='session_1'
+         BEGIN SELECT RAISE(FAIL,'journaled active claim must not be upserted'); END;",
+    )
+    .unwrap();
+    repository
+        .upsert_managed_worktree_claim(&reclaimed)
+        .unwrap();
+    assert_eq!(
+        repository
+            .list_runtime_events(
+                Some((RuntimeEventScope::Worktree, &claim.worktree_id)),
+                None,
+                10,
+            )
+            .unwrap(),
+        before,
+        "historical retry cannot append or alter the journal",
+    );
+
+    // A journaled claim for a different session on the same worktree does
+    // not prevent normalization of this session's old unjournaled row.
+    let (_temp, repository, claim) = fixture();
+    let mut other_session = sample_session();
+    other_session.id = "unrelated_claim_session".into();
+    repository.upsert_session(&other_session).unwrap();
+    let foreign = ManagedWorktreeClaimRecord {
+        session_id: other_session.id,
+        ..claim.clone()
+    };
+    repository
+        .transition_managed_worktree_claim(&foreign, Claim)
+        .unwrap();
+    let legacy = ManagedWorktreeClaimRecord {
+        claim_role: " owner ".into(),
+        ..claim.clone()
+    };
+    repository.upsert_managed_worktree_claim(&legacy).unwrap();
+    repository.upsert_managed_worktree_claim(&claim).unwrap();
+    assert_eq!(
+        repository
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(claim.clone()),
+    );
+    let events = repository
+        .list_runtime_events(
+            Some((RuntimeEventScope::Worktree, &claim.worktree_id)),
+            None,
+            10,
+        )
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].session_id.as_deref(),
+        Some("unrelated_claim_session")
+    );
+}
+
+#[test]
 fn independent_historical_claim_repair_and_journaled_release_preserve_terminal_authority() {
     use std::sync::{Arc, Barrier};
 

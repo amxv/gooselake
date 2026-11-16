@@ -299,3 +299,97 @@ fn stale_explicit_release_must_not_release_newer_journaled_reclaim() {
     assert_eq!(events.len(), 3, "no fourth Critical release event");
     assert_eq!(events[2].kind, "worktree.claimed");
 }
+
+const CLAIM_CHILD_DB: &str = "GOOSELAKE_EXPLICIT_CLAIM_OS_CHILD_DB";
+
+#[test]
+fn child_os_process_journals_changed_worktree_claim_generation() {
+    let Some(path) = std::env::var_os(CLAIM_CHILD_DB) else {
+        return;
+    };
+    // This exact-filter child is inert without the private path to the
+    // parent's disposable SQLite fixture.
+    let writer = SqliteRuntimeRepository::new(std::path::PathBuf::from(path));
+    let old = writer
+        .get_managed_worktree_claim("wt_claim_event", "session_1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(old.created_at, 100);
+    writer
+        .transition_managed_worktree_claim(
+            &ManagedWorktreeClaimRecord {
+                released_at: Some(150),
+                ..old.clone()
+            },
+            Release,
+        )
+        .unwrap();
+    writer
+        .transition_managed_worktree_claim(
+            &ManagedWorktreeClaimRecord {
+                created_at: 200,
+                ..old
+            },
+            Claim,
+        )
+        .unwrap();
+}
+
+#[test]
+fn stale_explicit_release_conflicts_with_independent_os_process_reclaim() {
+    let (temp, reader, old) = super::worktree_claim_events::fixture();
+    reader
+        .transition_managed_worktree_claim(&old, Claim)
+        .unwrap();
+    let observed = reader
+        .get_managed_worktree_claim(&old.worktree_id, &old.session_id)
+        .unwrap()
+        .unwrap();
+    let cwd = reader
+        .get_managed_worktree(&old.worktree_id)
+        .unwrap()
+        .unwrap()
+        .worktree_cwd;
+
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::worktree_explicit_release::child_os_process_journals_changed_worktree_claim_generation",
+            "--nocapture",
+        ])
+        .env(CLAIM_CHILD_DB, temp.path().join("runtime.sqlite3"))
+        .output()
+        .expect("spawn independent OS process on the disposable claim database");
+    assert!(
+        output.status.success(),
+        "child failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+        "the child must execute its exact test, not an empty filter"
+    );
+    let newer = ManagedWorktreeClaimRecord {
+        created_at: 200,
+        ..old.clone()
+    };
+    let release = ManagedWorktreeClaimRecord {
+        released_at: Some(300),
+        ..observed.clone()
+    };
+    let result = reader.release_managed_worktree_claim_if_unbound(&release, &observed, &cwd);
+    assert!(
+        matches!(result, Err(RuntimeError::Conflict(_))),
+        "stale value-observed explicit release must not revoke another process's claim: {result:?}"
+    );
+    assert_eq!(
+        reader
+            .get_managed_worktree_claim(&old.worktree_id, &old.session_id)
+            .unwrap(),
+        Some(newer)
+    );
+    let events = reader.list_runtime_events(None, None, 10).unwrap();
+    assert_eq!(events.len(), 3, "no fourth Critical release event");
+    assert_eq!(events[2].kind, "worktree.claimed");
+}

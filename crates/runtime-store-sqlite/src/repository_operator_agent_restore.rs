@@ -408,6 +408,14 @@ impl SqliteRuntimeRepository {
         }
 
         assert_restore_identity(&state, command, "archived", "closed")?;
+        // Guard direct repository callers under the IMMEDIATE write lock too:
+        // no durable native intent can be admitted without a signed successor.
+        // The already active/no-effect branch above needs no revision change.
+        if state.revision >= i64::MAX {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         authority.acquire_claim(
             &command.operation_id,
             CLAIM_KIND,

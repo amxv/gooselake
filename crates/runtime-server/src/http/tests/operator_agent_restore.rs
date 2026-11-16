@@ -104,6 +104,77 @@ async fn reopen_runtime(
 }
 
 #[tokio::test]
+async fn restore_sqlite_revision_ceiling_rejects_before_native_resume() {
+    let (router, token, temp, provider, runtime, workspace, agent_id, _) = archived_fixture().await;
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    // A legal archived SQLite revision cannot advance after native resume.
+    db.execute(
+        "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+        rusqlite::params![i64::MAX, agent_id],
+    )
+    .unwrap();
+    let before = provider.restore_call_count().await;
+    let (status, response, _) = restore_http(
+        &router,
+        &token,
+        &workspace,
+        &agent_id,
+        Some("restore-signed-ceiling"),
+    )
+    .await;
+    assert_eq!(
+        provider.restore_call_count().await,
+        before,
+        "unrepresentable revision must be rejected BEFORE provider resume: {status} {response:?}"
+    );
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response:?}");
+    assert_eq!(response["error"]["code"], "invalid_state");
+    let durable: (i64, String, i64) = db
+        .query_row(
+            "SELECT a.revision,s.status,(SELECT COUNT(*) FROM runtime_operations
+             WHERE idempotency_key='restore-signed-ceiling')
+             FROM workspace_agents a JOIN sessions s ON s.id=a.session_id
+             WHERE a.session_id=?1",
+            [&agent_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(durable, (i64::MAX, "closed".into(), 0));
+    // Direct SQLite callers cannot bypass the runtime's pre-native guard.
+    let session = runtime.get_session(&agent_id).await.unwrap();
+    let request = serde_json::json!({
+        "workspace_id":workspace,"agent_id":agent_id,"action":"restore",
+    });
+    let command = runtime_core::OperatorAgentRestoreCommand {
+        operation_id: "op_restore_direct_signed_ceiling".into(),
+        actor: runtime_core::OperationActor::operator("runtime_operator"),
+        idempotency_key: "restore-direct-ceiling".into(),
+        workspace_id: workspace.clone(),
+        agent_id: agent_id.clone(),
+        expected_revision: i64::MAX as u64,
+        provider: session.provider.clone(),
+        provider_session_ref: session.provider_session_ref.clone().unwrap(),
+        canonical_provider_session_ref: session.canonical_provider_session_ref.clone(),
+        session_updated_at: session.updated_at,
+        normalized_request_hash: runtime_core::normalized_json_hash(&request).unwrap(),
+        normalized_request: request,
+        requested_at: session.updated_at + 1,
+    };
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    assert!(matches!(
+        store.repository().admit_operator_agent_restore(&command),
+        Err(runtime_core::RuntimeError::InvalidState(_))
+    ));
+    assert!(store
+        .repository()
+        .get_operation(&command.operation_id)
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn restore_review_refresh_ignores_unrelated_corrupt_session() {
     let (router, token, temp, provider, runtime, workspace, agent_id, revision) =
         archived_fixture().await;
@@ -228,6 +299,27 @@ async fn operator_restore_key_replays_exact_atomic_roster_receipt_without_native
         noop_details.effects.is_empty(),
         "no-op has no native effect"
     );
+    // An already active row at i64::MAX still supports a newly keyed no-op
+    // and its exact replay; neither is allowed to resume the fake provider.
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+        rusqlite::params![i64::MAX, agent_id],
+    )
+    .unwrap();
+    let (status, max_noop, first_headers) =
+        restore_http(&router, &token, &workspace, &agent_id, Some("max-noop")).await;
+    assert_eq!(status, StatusCode::OK, "{max_noop:?}");
+    assert_eq!(max_noop["revision"], i64::MAX);
+    let (status, max_replay, replay_headers) =
+        restore_http(&router, &token, &workspace, &agent_id, Some("max-noop")).await;
+    assert_eq!(status, StatusCode::OK, "{max_replay:?}");
+    assert_eq!(max_noop, max_replay);
+    assert_eq!(
+        first_headers.get("x-operation-id"),
+        replay_headers.get("x-operation-id")
+    );
+    assert_eq!(provider.restore_call_count().await, baseline + 1);
 }
 
 #[tokio::test]

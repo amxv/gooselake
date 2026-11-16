@@ -1130,6 +1130,11 @@ no-op. For compatibility, a missing key gets a generated one-shot key and
 `X-Operation-ID`, but **a new unkeyed HTTP retry cannot identify the prior
 attempt**. `409 outcome_unresolved` includes the original operation ID: use
 `GET /v2/operations/{operation_id}` to inspect its durable intent/effect/claim.
+An archived agent already at SQLite's maximum signed 64-bit revision cannot be
+restored: the endpoint returns `400 invalid_state` **before** a native resume
+intent is admitted or the provider is contacted, because the next roster
+revision would not be representable. Already active, no-effect restore receipts
+do not require a successor revision.
 An ambiguous provider response, failed atomic receipt or crash during the
 native operation leaves `manual_review` and never automatically dispatches
 another restore. An unresolved restore also fences other native turns,

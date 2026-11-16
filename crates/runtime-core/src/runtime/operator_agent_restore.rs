@@ -76,6 +76,16 @@ impl RuntimeSessionManager {
             ));
         }
         let agent = self.get_workspace_agent(workspace_id, agent_id)?;
+        // Archived restore advances the agent revision only after native
+        // resume. Reject an unrepresentable SQLite successor before admitting
+        // a provider effect; already active no-effect receipts remain legal.
+        if agent.lifecycle_state == WorkspaceAgentLifecycleState::Archived
+            && agent.revision >= i64::MAX as u64
+        {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         let session = self.get_session(agent_id).await?;
         let provider = if agent.lifecycle_state == WorkspaceAgentLifecycleState::Archived {
             Some(

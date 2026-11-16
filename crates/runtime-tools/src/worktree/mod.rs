@@ -335,8 +335,8 @@ impl RuntimeWorktreeService {
             // Never rewrite identical historical claim authority on a clean
             // restart: an independent writer may have since committed a
             // release or a new rebind reservation. Changed legacy repairs
-            // still take the existing reconstruction path; their separate
-            // concurrent-write CAS semantics are not broadened here.
+            // compare the full raw hydrated claim sources under the writer
+            // lock; value snapshots are not generation-aware ABA protection.
             if prior_claims.get(&(claim.worktree_id.as_str(), claim.session_id.as_str()))
                 == Some(&&claim)
             {
@@ -349,7 +349,10 @@ impl RuntimeWorktreeService {
         // all earlier historical claim normalizations in this startup pass.
         // This is separate from the prior record batch and native Git.
         if !claim_repairs.is_empty() {
-            store.repair_managed_worktree_claims_atomically(&claim_repairs)?;
+            store.repair_managed_worktree_claims_if_unchanged_atomically(
+                &hydrated.managed_worktree_claims,
+                &claim_repairs,
+            )?;
         }
 
         Ok(())
@@ -913,6 +916,75 @@ mod startup_snapshot_tests {
                 .list_runtime_events(Some((RuntimeEventScope::Worktree, &worktree.id)), None, 10)
                 .unwrap(),
             original_events,
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_journal_free_claim_role_cannot_overwrite_a_newer_active_writer() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("journal-free-active-claim.sqlite3");
+        let reader = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path.clone(),
+        });
+        reader.initialize().await.unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "INSERT INTO sessions (id,provider,status,metadata_json,created_at,updated_at)
+             VALUES ('unlogged_claim_session','codex','idle','{}',1,1);",
+        )
+        .unwrap();
+        let worktree = ManagedWorktreeRecord {
+            id: "wt_unlogged_claim".into(),
+            repo_root: temp.path().display().to_string(),
+            worktree_root: temp.path().join("worktrees").display().to_string(),
+            worktree_cwd: temp.path().join("worktrees/claim").display().to_string(),
+            branch_name: "gg/unlogged-claim".into(),
+            worktree_name: "claim".into(),
+            unified_workspace_path: "unlogged_claim".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: None,
+            created_by_operation_id: None,
+            created_at: 10,
+            updated_at: 10,
+        };
+        reader.upsert_managed_worktree(&worktree).unwrap();
+        let legacy = ManagedWorktreeClaimRecord {
+            worktree_id: worktree.id.clone(),
+            session_id: "unlogged_claim_session".into(),
+            claim_role: " owner ".into(),
+            created_at: 20,
+            released_at: None,
+        };
+        reader.upsert_managed_worktree_claim(&legacy).unwrap();
+        let stale = reader.hydrate_runtime_state().unwrap();
+
+        // Another SQLite writer legitimately updates an unjournaled legacy
+        // active row after startup hydration. No Critical event distinguishes
+        // this from the old role normalizer's own historical authority.
+        let writer = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path,
+        });
+        let newer = ManagedWorktreeClaimRecord {
+            claim_role: "consumer".into(),
+            created_at: 40,
+            ..legacy
+        };
+        writer.upsert_managed_worktree_claim(&newer).unwrap();
+        assert!(writer
+            .list_runtime_events(Some((RuntimeEventScope::Worktree, &worktree.id)), None, 10)
+            .unwrap()
+            .is_empty());
+
+        let repair = RuntimeWorktreeService::repair_startup_state(&reader, &stale);
+        assert!(
+            matches!(repair, Err(RuntimeError::Conflict(_))),
+            "stale startup role normalization must not erase unjournaled newer active claim: {repair:?}"
+        );
+        assert_eq!(
+            writer
+                .get_managed_worktree_claim(&worktree.id, &newer.session_id)
+                .unwrap(),
+            Some(newer)
         );
     }
 }

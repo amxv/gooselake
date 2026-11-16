@@ -168,6 +168,15 @@ macro_rules! delegate_worktree_status {
             self.repository.repair_managed_worktree_claims_atomically(repairs)
         }
 
+        fn repair_managed_worktree_claims_if_unchanged_atomically(
+            &self,
+            originals: &[runtime_core::ManagedWorktreeClaimRecord],
+            repairs: &[runtime_core::ManagedWorktreeClaimRecord],
+        ) -> Result<(), runtime_core::RuntimeError> {
+            self.repository
+                .repair_managed_worktree_claims_if_unchanged_atomically(originals, repairs)
+        }
+
         fn transition_managed_worktree_claim(
             &self,
             record: &runtime_core::ManagedWorktreeClaimRecord,

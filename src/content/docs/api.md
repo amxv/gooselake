@@ -2021,6 +2021,13 @@ normalizations in that startup pass, including earlier updates. This does not
 make the preceding worktree-record batch and following claim batch one atomic
 unit, nor does it provide a general journal-free claim snapshot CAS or
 transactionality with native Git/provider effects.
+For startup repairs (unlike unscoped historical upserts), the same writer
+transaction compares every raw hydrated claim source key and its exact role,
+creation and release values before writing even a normalized/remapped key; a
+new target key must still be absent. A separate writer's unjournaled active
+claim change is therefore a Conflict for the entire claim batch, not an
+overwritten normalization. These value snapshots cannot detect **ABA** or
+unrelated new keys absent from the startup plan.
 If an agent has an `intended` or `manual_review` native provider rebind,
 historical claim repair UPSERTs are also fenced by an immediate SQLite writer
 transaction. A stale startup snapshot cannot overwrite its recovery-sensitive

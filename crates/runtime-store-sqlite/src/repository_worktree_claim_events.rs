@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use runtime_core::{
     ManagedWorktreeClaimRecord, ManagedWorktreeClaimTransition, NewRuntimeEvent, RuntimeError,
     RuntimeEventCriticality, RuntimeEventScope,
@@ -29,7 +31,28 @@ impl SqliteRuntimeRepository {
         &self,
         repairs: &[ManagedWorktreeClaimRecord],
     ) -> Result<(), RuntimeError> {
-        if repairs.is_empty() {
+        self.persist_historical_claim_batch(None, repairs.iter())
+    }
+
+    /// Startup's reconstructed role/identity must still be based on the raw
+    /// durable source rows it hydrated, even when it remaps a source key.
+    /// A new target key must also remain absent until the writer lock.
+    /// This value-snapshot guard is not a generation-aware ABA guarantee.
+    pub fn repair_managed_worktree_claims_if_unchanged_atomically(
+        &self,
+        originals: &[ManagedWorktreeClaimRecord],
+        repairs: &[ManagedWorktreeClaimRecord],
+    ) -> Result<(), RuntimeError> {
+        self.persist_historical_claim_batch(Some(originals), repairs.iter())
+    }
+
+    fn persist_historical_claim_batch<'a>(
+        &self,
+        originals: Option<&[ManagedWorktreeClaimRecord]>,
+        repairs: impl IntoIterator<Item = &'a ManagedWorktreeClaimRecord>,
+    ) -> Result<(), RuntimeError> {
+        let mut repairs = repairs.into_iter().peekable();
+        if repairs.peek().is_none() {
             return Ok(());
         }
         let mut connection = open_connection(&self.database_path)?;
@@ -41,6 +64,47 @@ impl SqliteRuntimeRepository {
                     error,
                 )
             })?;
+        let mut hydrated_keys = BTreeSet::<(String, String)>::new();
+        if let Some(originals) = originals {
+            for original in originals {
+                if !hydrated_keys
+                    .insert((original.worktree_id.clone(), original.session_id.clone()))
+                {
+                    return Err(RuntimeError::Conflict(
+                        "historical startup claim snapshot contains duplicate source keys".into(),
+                    ));
+                }
+                let durable = transaction
+                    .query_row(
+                        "SELECT claim_role,created_at,released_at FROM managed_worktree_claims
+                         WHERE worktree_id=?1 AND session_id=?2",
+                        params![original.worktree_id, original.session_id],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, i64>(1)?,
+                                row.get::<_, Option<i64>>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(|error| {
+                        db_error("failed comparing historical raw claim source", error)
+                    })?;
+                if durable
+                    .as_ref()
+                    .is_none_or(|(role, created_at, released_at)| {
+                        role != &original.claim_role
+                            || *created_at != original.created_at
+                            || *released_at != original.released_at
+                    })
+                {
+                    return Err(RuntimeError::Conflict(
+                        "historical startup claim source changed since hydration".into(),
+                    ));
+                }
+            }
+        }
         for record in repairs {
             require_no_unresolved_rebind_for_claim_mutation(&transaction, &record.session_id)?;
             let existing = transaction
@@ -60,6 +124,14 @@ impl SqliteRuntimeRepository {
                 .map_err(|error| {
                     db_error("failed reading historical claim repair authority", error)
                 })?;
+            if originals.is_some()
+                && !hydrated_keys.contains(&(record.worktree_id.clone(), record.session_id.clone()))
+                && existing.is_some()
+            {
+                return Err(RuntimeError::Conflict(
+                    "historical startup claim target was created after hydration".into(),
+                ));
+            }
             if let Some((prior_role, prior_created_at, prior_released_at)) = existing {
                 // Exact historical retries never UPDATE, including active
                 // journal-backed or terminal rows.

@@ -402,6 +402,227 @@ fn historical_claim_repair_batch_rolls_back_earlier_update_on_later_sql_fault() 
 }
 
 #[test]
+fn historical_claim_snapshot_catches_changed_raw_source_even_for_remapped_target_key() {
+    let (temp, repository, claim) = fixture();
+    let raw = ManagedWorktreeClaimRecord {
+        claim_role: " owner ".into(),
+        ..claim
+    };
+    repository.upsert_managed_worktree_claim(&raw).unwrap();
+    let mut other_session = sample_session();
+    other_session.id = "target_remapped_session".into();
+    repository.upsert_session(&other_session).unwrap();
+    let desired = ManagedWorktreeClaimRecord {
+        session_id: other_session.id,
+        claim_role: "owner".into(),
+        ..raw.clone()
+    };
+
+    // The target PK is absent. Comparing only that target would miss that the
+    // legacy raw source PK changed between hydration and normalization.
+    let path = temp.path().join("runtime.sqlite3");
+    let writer = SqliteRuntimeRepository::new(path.clone());
+    let newer_raw = ManagedWorktreeClaimRecord {
+        claim_role: "consumer".into(),
+        created_at: 250,
+        ..raw.clone()
+    };
+    writer.upsert_managed_worktree_claim(&newer_raw).unwrap();
+    assert!(matches!(
+        repository.repair_managed_worktree_claims_if_unchanged_atomically(
+            &[raw.clone()],
+            &[desired.clone()]
+        ),
+        Err(runtime_core::RuntimeError::Conflict(_))
+    ));
+    let reopened = SqliteRuntimeRepository::new(path);
+    assert_eq!(
+        reopened
+            .get_managed_worktree_claim(&raw.worktree_id, &raw.session_id)
+            .unwrap(),
+        Some(newer_raw.clone()),
+    );
+    assert_eq!(
+        reopened
+            .get_managed_worktree_claim(&desired.worktree_id, &desired.session_id)
+            .unwrap(),
+        None,
+        "a stale remap cannot create its previously absent destination key",
+    );
+    assert!(reopened
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+
+    // Fresh raw source authority may create the absent destination normally.
+    reopened
+        .repair_managed_worktree_claims_if_unchanged_atomically(
+            &[newer_raw.clone()],
+            &[desired.clone()],
+        )
+        .unwrap();
+    let reopened = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    assert_eq!(
+        reopened
+            .get_managed_worktree_claim(&raw.worktree_id, &raw.session_id)
+            .unwrap(),
+        Some(newer_raw),
+    );
+    assert_eq!(
+        reopened
+            .get_managed_worktree_claim(&desired.worktree_id, &desired.session_id)
+            .unwrap(),
+        Some(desired),
+    );
+    assert!(reopened
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn historical_claim_snapshot_fences_an_independently_created_destination_key() {
+    let (temp, repository, target) = fixture();
+    let path = temp.path().join("runtime.sqlite3");
+    let independent = SqliteRuntimeRepository::new(path.clone());
+    let newer = ManagedWorktreeClaimRecord {
+        claim_role: "consumer".into(),
+        created_at: 800,
+        ..target.clone()
+    };
+    independent.upsert_managed_worktree_claim(&newer).unwrap();
+    assert!(matches!(
+        repository.repair_managed_worktree_claims_if_unchanged_atomically(&[], &[target.clone()]),
+        Err(runtime_core::RuntimeError::Conflict(_))
+    ));
+    let reopened = SqliteRuntimeRepository::new(path);
+    assert_eq!(
+        reopened
+            .get_managed_worktree_claim(&target.worktree_id, &target.session_id)
+            .unwrap(),
+        Some(newer)
+    );
+    assert!(reopened
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+
+    // A genuinely missing target is eligible for legacy reconstruction.
+    let (fresh_temp, fresh_repository, fresh_target) = fixture();
+    fresh_repository
+        .repair_managed_worktree_claims_if_unchanged_atomically(&[], &[fresh_target.clone()])
+        .unwrap();
+    let reopened = SqliteRuntimeRepository::new(fresh_temp.path().join("runtime.sqlite3"));
+    assert_eq!(
+        reopened
+            .get_managed_worktree_claim(&fresh_target.worktree_id, &fresh_target.session_id)
+            .unwrap(),
+        Some(fresh_target),
+    );
+    assert!(reopened
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn historical_claim_snapshot_later_changed_source_blocks_entire_batch_and_retry_is_write_free() {
+    let (temp, repository, claim) = fixture();
+    let mut other_session = sample_session();
+    other_session.id = "snapshot_later_session".into();
+    repository.upsert_session(&other_session).unwrap();
+    let earlier = ManagedWorktreeClaimRecord {
+        claim_role: " owner ".into(),
+        ..claim
+    };
+    let later = ManagedWorktreeClaimRecord {
+        session_id: other_session.id,
+        claim_role: " consumer ".into(),
+        created_at: 200,
+        ..earlier.clone()
+    };
+    repository.upsert_managed_worktree_claim(&earlier).unwrap();
+    repository.upsert_managed_worktree_claim(&later).unwrap();
+    let desired_earlier = ManagedWorktreeClaimRecord {
+        claim_role: "owner".into(),
+        ..earlier.clone()
+    };
+    let desired_later = ManagedWorktreeClaimRecord {
+        claim_role: "consumer".into(),
+        ..later.clone()
+    };
+    let path = temp.path().join("runtime.sqlite3");
+    let independent = SqliteRuntimeRepository::new(path.clone());
+    let newer_later = ManagedWorktreeClaimRecord {
+        claim_role: "consumer".into(),
+        created_at: 300,
+        ..later.clone()
+    };
+    independent
+        .upsert_managed_worktree_claim(&newer_later)
+        .unwrap();
+    assert!(matches!(
+        repository.repair_managed_worktree_claims_if_unchanged_atomically(
+            &[earlier.clone(), later],
+            &[desired_earlier.clone(), desired_later]
+        ),
+        Err(runtime_core::RuntimeError::Conflict(_))
+    ));
+    let reopened = SqliteRuntimeRepository::new(path.clone());
+    assert_eq!(
+        reopened
+            .get_managed_worktree_claim(&earlier.worktree_id, &earlier.session_id)
+            .unwrap(),
+        Some(earlier.clone()),
+        "no earlier claim can be normalized if a later raw source is stale",
+    );
+    assert_eq!(
+        reopened
+            .get_managed_worktree_claim(&newer_later.worktree_id, &newer_later.session_id)
+            .unwrap(),
+        Some(newer_later.clone())
+    );
+    assert!(reopened
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+
+    // A fresh snapshot can change only the earlier legacy spelling. A
+    // completed exact retry must not UPDATE either durable claim row.
+    reopened
+        .repair_managed_worktree_claims_if_unchanged_atomically(
+            &[earlier, newer_later.clone()],
+            &[desired_earlier.clone(), newer_later.clone()],
+        )
+        .unwrap();
+    let reopened_after_success = SqliteRuntimeRepository::new(path.clone());
+    assert_eq!(
+        reopened_after_success
+            .get_managed_worktree_claim(&desired_earlier.worktree_id, &desired_earlier.session_id)
+            .unwrap(),
+        Some(desired_earlier.clone()),
+    );
+    let connection = Connection::open(path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER forbid_snapshot_claim_retry_update
+             BEFORE UPDATE ON managed_worktree_claims
+             BEGIN SELECT RAISE(ABORT, 'exact snapshot retry must be write-free'); END;",
+        )
+        .unwrap();
+    reopened_after_success
+        .repair_managed_worktree_claims_if_unchanged_atomically(
+            &[desired_earlier.clone(), newer_later.clone()],
+            &[desired_earlier, newer_later],
+        )
+        .unwrap();
+    assert!(reopened_after_success
+        .list_runtime_events(None, None, 10)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn independent_historical_claim_repair_and_journaled_release_preserve_terminal_authority() {
     use std::sync::{Arc, Barrier};
 

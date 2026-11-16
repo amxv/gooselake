@@ -106,6 +106,19 @@ macro_rules! default_worktree_claim_cleanup_journal {
             ))
         }
 
+        /// Unlike legacy unscoped upserts, startup repairs compare every
+        /// hydrated raw claim source and require absent new target keys
+        /// inside the writer transaction. Never silently fall back to UPSERT.
+        fn repair_managed_worktree_claims_if_unchanged_atomically(
+            &self,
+            _originals: &[crate::ManagedWorktreeClaimRecord],
+            _repairs: &[crate::ManagedWorktreeClaimRecord],
+        ) -> Result<(), crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "historical managed-worktree claim source snapshot repair unavailable".into(),
+            ))
+        }
+
         /// A claim/release and its critical worktree event are one authority.
         fn transition_managed_worktree_claim(
             &self,

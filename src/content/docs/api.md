@@ -1983,6 +1983,13 @@ Malformed unrelated session history cannot leave those claims orphaned.
 Each release still commits independently with its Critical event, while
 native cleanup requires the complete original safety evidence and records
 a diagnostic without deleting a checkout if that evidence is unreadable.
+If a legacy team-member removal encounters an unresolved provider workspace
+rebind, its best-effort cleanup **cannot release** the in-flight worktree
+reservation or previous binding. The claim release is fenced transactionally,
+the team membership removal still persists, and a cleanup diagnostic remains
+for operator reconciliation. No native retry or checkout deletion is implied.
+New managed-worktree claims likewise cannot race an unresolved provider rebind
+across independent SQLite writers; unchanged active-claim retries remain no-ops.
 For legacy release, a **missing claim** on a valid managed worktree is also
 reported as 404 using its exact `(worktree_id, session_id)` key, independent
 of unrelated malformed historical sessions. An **existing** claim continues

@@ -137,6 +137,10 @@ impl SqliteRuntimeRepository {
                         "active worktree claim role cannot be overwritten".into(),
                     ));
                 }
+                // A separate writer can admit a native rebind after the
+                // service preflight. Serialize claim admission with rebind
+                // intent under this same IMMEDIATE transaction.
+                require_no_unresolved_rebind_for_claim_mutation(&transaction, &record.session_id)?;
                 record.clone()
             }
             ManagedWorktreeClaimTransition::Release => {
@@ -149,6 +153,10 @@ impl SqliteRuntimeRepository {
                 if existing.released_at.is_some() {
                     return Ok(existing);
                 }
+                // Member removal runs after the roster commit; it must never
+                // invalidate a reserved destination or previous claim while
+                // the provider rebind outcome is unresolved.
+                require_no_unresolved_rebind_for_claim_mutation(&transaction, &record.session_id)?;
                 let released_at = record.released_at.ok_or_else(|| {
                     RuntimeError::InvalidState("worktree release needs a timestamp".into())
                 })?;
@@ -218,4 +226,27 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed committing atomic worktree claim event", error))?;
         Ok(updated)
     }
+}
+
+// Native rebind admission and verified finalization also acquire SQLite's
+// immediate writer lock. They update reservations in their own authority
+// transactions, never through this generic claim/release entry point.
+fn require_no_unresolved_rebind_for_claim_mutation(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<(), RuntimeError> {
+    let unresolved: i64 = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM workspace_agent_rebinds
+             WHERE agent_id = ?1 AND phase IN ('intended','manual_review'))",
+            [session_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed fencing worktree claim against native rebind", error))?;
+    if unresolved != 0 {
+        return Err(RuntimeError::Conflict(
+            "agent has an unresolved provider rebind; worktree claim changes are fenced".into(),
+        ));
+    }
+    Ok(())
 }

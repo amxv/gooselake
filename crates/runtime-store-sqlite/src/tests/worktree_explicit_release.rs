@@ -510,3 +510,98 @@ fn explicit_release_allows_sibling_route_from_independent_os_process() {
     );
     assert_eq!(reader.list_runtime_events(None, None, 10).unwrap().len(), 2);
 }
+
+#[test]
+fn stale_generic_member_removal_release_must_not_revoke_journaled_reclaim() {
+    let (temp, reader, claim) = super::worktree_claim_events::fixture();
+    reader
+        .transition_managed_worktree_claim(&claim, Claim)
+        .unwrap();
+    // Member-removal snapshots active claims before independently journaling
+    // their Release transitions, leaving a window for another SQLite writer.
+    let observed = reader
+        .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+        .unwrap()
+        .unwrap();
+    let writer = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    writer
+        .transition_managed_worktree_claim(
+            &ManagedWorktreeClaimRecord {
+                released_at: Some(150),
+                ..claim.clone()
+            },
+            Release,
+        )
+        .unwrap();
+    let newer = ManagedWorktreeClaimRecord {
+        created_at: 200,
+        ..claim.clone()
+    };
+    writer
+        .transition_managed_worktree_claim(&newer, Claim)
+        .unwrap();
+
+    let stale_release = ManagedWorktreeClaimRecord {
+        released_at: Some(300),
+        ..observed
+    };
+    let result = reader.transition_managed_worktree_claim(&stale_release, Release);
+    assert!(
+        matches!(result, Err(RuntimeError::Conflict(_))),
+        "member-removal stale Release must not revoke a different durable claim: {result:?}"
+    );
+    assert_eq!(
+        reader
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(newer)
+    );
+    let events = reader.list_runtime_events(None, None, 10).unwrap();
+    assert_eq!(events.len(), 3, "no fourth member-removal release event");
+    assert_eq!(events[2].kind, "worktree.claimed");
+}
+
+#[test]
+fn stale_generic_release_rejects_different_claim_role_after_reclaim() {
+    let (temp, reader, claim) = super::worktree_claim_events::fixture();
+    reader
+        .transition_managed_worktree_claim(&claim, Claim)
+        .unwrap();
+    let writer = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    writer
+        .transition_managed_worktree_claim(
+            &ManagedWorktreeClaimRecord {
+                released_at: Some(150),
+                ..claim.clone()
+            },
+            Release,
+        )
+        .unwrap();
+    // Deliberately reuse the same timestamp; a changed role must still be
+    // fenced while an equivalent legacy trim/case normalization is allowed.
+    let newer = ManagedWorktreeClaimRecord {
+        claim_role: "consumer".into(),
+        ..claim.clone()
+    };
+    writer
+        .transition_managed_worktree_claim(&newer, Claim)
+        .unwrap();
+    let stale = ManagedWorktreeClaimRecord {
+        released_at: Some(300),
+        ..claim.clone()
+    };
+    let result = reader.transition_managed_worktree_claim(&stale, Release);
+    assert!(
+        matches!(result, Err(RuntimeError::Conflict(_))),
+        "a different durable role must not be released by stale member removal: {result:?}"
+    );
+    assert_eq!(
+        reader
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(newer)
+    );
+    let events = reader.list_runtime_events(None, None, 10).unwrap();
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[2].kind, "worktree.claimed");
+}

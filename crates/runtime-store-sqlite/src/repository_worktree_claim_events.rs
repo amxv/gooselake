@@ -432,6 +432,26 @@ impl SqliteRuntimeRepository {
                 if existing.released_at.is_some() {
                     return Ok(existing);
                 }
+                // Best-effort member removal hydrates active claims before
+                // releasing them. Another SQLite writer may have journaled a
+                // Release and re-Claim for the same key in the meantime.
+                // The generic path deliberately does not enforce the
+                // explicit release's live-native-binding policy, but must
+                // still reject a different claim generation under this
+                // writer lock. Historical unjournaled trim/case-only role
+                // normalization is equivalent and may race a generic
+                // Release; do not break that long-standing compatibility.
+                // This value guard does not distinguish identical-value ABA.
+                if existing.created_at != record.created_at
+                    || !existing
+                        .claim_role
+                        .trim()
+                        .eq_ignore_ascii_case(record.claim_role.trim())
+                {
+                    return Err(RuntimeError::Conflict(
+                        "worktree claim changed since release observation".into(),
+                    ));
+                }
                 // Member removal runs after the roster commit; it must never
                 // invalidate a reserved destination or previous claim while
                 // the provider rebind outcome is unresolved.

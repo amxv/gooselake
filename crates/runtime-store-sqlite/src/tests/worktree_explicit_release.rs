@@ -393,3 +393,120 @@ fn stale_explicit_release_conflicts_with_independent_os_process_reclaim() {
     assert_eq!(events.len(), 3, "no fourth Critical release event");
     assert_eq!(events[2].kind, "worktree.claimed");
 }
+
+const BINDING_CHILD_DB: &str = "GOOSELAKE_EXPLICIT_BINDING_OS_CHILD_DB";
+const BINDING_CHILD_ROUTE: &str = "GOOSELAKE_EXPLICIT_BINDING_OS_CHILD_ROUTE";
+
+#[test]
+fn child_os_process_persists_live_checkout_route() {
+    let Some(path) = std::env::var_os(BINDING_CHILD_DB) else {
+        return;
+    };
+    // Only a parent-owned disposable SQLite path makes this child write.
+    let writer = SqliteRuntimeRepository::new(std::path::PathBuf::from(path));
+    let worktree = writer
+        .get_managed_worktree("wt_claim_event")
+        .unwrap()
+        .unwrap();
+    let cwd = match std::env::var(BINDING_CHILD_ROUTE).unwrap().as_str() {
+        "nested" => format!("{}/nested/source", worktree.worktree_cwd),
+        "sibling" => format!("{}-other/subdir", worktree.worktree_cwd),
+        other => panic!("unsupported private child fixture route: {other}"),
+    };
+    writer
+        .upsert_session(&SessionRecord {
+            worktree_id: None,
+            cwd: Some(cwd),
+            status: "ready".into(),
+            ..sample_session()
+        })
+        .unwrap();
+}
+
+fn persist_live_checkout_route_from_child(database_path: &std::path::Path, route: &str) {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::worktree_explicit_release::child_os_process_persists_live_checkout_route",
+            "--nocapture",
+        ])
+        .env(BINDING_CHILD_DB, database_path)
+        .env(BINDING_CHILD_ROUTE, route)
+        .output()
+        .expect("spawn independent OS process on the disposable binding database");
+    assert!(
+        output.status.success(),
+        "child failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+        "child must execute exact binding fixture, not an empty filter"
+    );
+}
+
+#[test]
+fn explicit_release_rejects_live_nested_route_from_independent_os_process() {
+    let (temp, reader, claim) = super::worktree_claim_events::fixture();
+    reader
+        .transition_managed_worktree_claim(&claim, Claim)
+        .unwrap();
+    let observed = reader
+        .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+        .unwrap()
+        .unwrap();
+    let cwd = reader
+        .get_managed_worktree(&claim.worktree_id)
+        .unwrap()
+        .unwrap()
+        .worktree_cwd;
+    // A different OS process persists its native route after the parent
+    // hydrated the claim, outside any in-memory repository lock.
+    persist_live_checkout_route_from_child(&temp.path().join("runtime.sqlite3"), "nested");
+    let requested = ManagedWorktreeClaimRecord {
+        released_at: Some(300),
+        ..observed.clone()
+    };
+    let result = reader.release_managed_worktree_claim_if_unbound(&requested, &observed, &cwd);
+    assert!(
+        matches!(result, Err(RuntimeError::Conflict(_))),
+        "live native checkout descendant must fence explicit release: {result:?}"
+    );
+    assert_eq!(
+        reader
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(observed)
+    );
+    assert_eq!(reader.list_runtime_events(None, None, 10).unwrap().len(), 1);
+}
+
+#[test]
+fn explicit_release_allows_sibling_route_from_independent_os_process() {
+    let (temp, reader, claim) = super::worktree_claim_events::fixture();
+    reader
+        .transition_managed_worktree_claim(&claim, Claim)
+        .unwrap();
+    let observed = reader
+        .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+        .unwrap()
+        .unwrap();
+    let cwd = reader
+        .get_managed_worktree(&claim.worktree_id)
+        .unwrap()
+        .unwrap()
+        .worktree_cwd;
+    persist_live_checkout_route_from_child(&temp.path().join("runtime.sqlite3"), "sibling");
+    let requested = ManagedWorktreeClaimRecord {
+        released_at: Some(300),
+        ..observed.clone()
+    };
+    assert_eq!(
+        reader
+            .release_managed_worktree_claim_if_unbound(&requested, &observed, &cwd)
+            .unwrap(),
+        requested
+    );
+    assert_eq!(reader.list_runtime_events(None, None, 10).unwrap().len(), 2);
+}

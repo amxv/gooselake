@@ -66,6 +66,86 @@ async fn reopen_runtime(
 }
 
 #[tokio::test]
+async fn archive_sqlite_revision_ceiling_rejects_before_native_close() {
+    let (router, token, temp, provider, runtime, agent_id, _) = operator_policy_fixture().await;
+    let workspace_id = runtime
+        .get_active_workspace_agent_by_id(&agent_id)
+        .unwrap()
+        .workspace_id;
+    let connection = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    // A signed SQLite agent revision may legally equal i64::MAX, but an
+    // archive would need to increment it after an irreversible native close.
+    connection
+        .execute(
+            "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+            rusqlite::params![i64::MAX, agent_id],
+        )
+        .unwrap();
+    let before = provider.archive_close_count();
+    let (status, response, _) = archive_http(
+        &router,
+        &token,
+        &workspace_id,
+        &agent_id,
+        Some("signed SQLite ceiling"),
+        Some("archive-sqlite-revision-ceiling"),
+    )
+    .await;
+    assert_eq!(
+        provider.archive_close_count(),
+        before,
+        "unrepresentable next revision must be rejected BEFORE provider close: {status} {response:?}"
+    );
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response:?}");
+    assert_eq!(response["error"]["code"], "invalid_state");
+    let durable: (i64, String, i64) = connection
+        .query_row(
+            "SELECT a.revision,s.status,(SELECT COUNT(*) FROM runtime_operations
+             WHERE idempotency_key='archive-sqlite-revision-ceiling')
+             FROM workspace_agents a JOIN sessions s ON s.id=a.session_id
+             WHERE a.session_id=?1",
+            [&agent_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(durable, (i64::MAX, "ready".into(), 0));
+    // The repository's IMMEDIATE admission must reject direct callers too.
+    let session = runtime.get_session(&agent_id).await.unwrap();
+    let request = serde_json::json!({
+        "workspace_id":workspace_id,"agent_id":agent_id,
+        "action":"archive","reason":"signed SQLite ceiling",
+    });
+    let command = runtime_core::OperatorAgentArchiveCommand {
+        operation_id: "op_archive_direct_signed_ceiling".into(),
+        actor: runtime_core::OperationActor::operator("runtime_operator"),
+        idempotency_key: "archive-direct-ceiling".into(),
+        workspace_id: workspace_id.clone(),
+        agent_id: agent_id.clone(),
+        reason: Some("signed SQLite ceiling".into()),
+        expected_revision: i64::MAX as u64,
+        provider: session.provider.clone(),
+        provider_session_ref: session.provider_session_ref.clone().unwrap(),
+        canonical_provider_session_ref: session.canonical_provider_session_ref.clone(),
+        session_updated_at: session.updated_at,
+        normalized_request_hash: runtime_core::normalized_json_hash(&request).unwrap(),
+        normalized_request: request,
+        requested_at: session.updated_at + 1,
+    };
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    assert!(matches!(
+        store.repository().admit_operator_agent_archive(&command),
+        Err(runtime_core::RuntimeError::InvalidState(_))
+    ));
+    assert!(store
+        .repository()
+        .get_operation(&command.operation_id)
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn archive_review_refresh_ignores_unrelated_corrupt_session() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;
@@ -245,6 +325,27 @@ async fn archive_commits_strong_native_close_once_then_replays_exact_receipt() {
         completed.operation.exact_terminal_result.unwrap()
     );
     assert_eq!(same_operation, op_id);
+    assert_eq!(provider.archive_close_count(), before + 1);
+    // An already archived row at the same signed ceiling has NO next-revision
+    // requirement: a new no-effect receipt and its exact replay remain legal.
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+        rusqlite::params![i64::MAX, agent_id],
+    )
+    .unwrap();
+    let refs = (&router, &token, &workspace_id, &agent_id);
+    let call_max_noop = || archive_http(refs.0, refs.1, refs.2, refs.3, None, Some("max-noop"));
+    let (status, max_noop, first_headers) = call_max_noop().await;
+    assert_eq!(status, StatusCode::OK, "{max_noop:?}");
+    assert_eq!(max_noop["revision"], i64::MAX);
+    let (status, max_replay, replay_headers) = call_max_noop().await;
+    assert_eq!(status, StatusCode::OK, "{max_replay:?}");
+    assert_eq!(max_noop, max_replay);
+    assert_eq!(
+        first_headers.get("x-operation-id"),
+        replay_headers.get("x-operation-id")
+    );
     assert_eq!(provider.archive_close_count(), before + 1);
 }
 

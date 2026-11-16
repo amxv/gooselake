@@ -1089,6 +1089,12 @@ transaction. Exact caller-key retries return the same JSON, `ETag` and
 accepts a new key as a journaled no-effect operation, **not** new evidence
 of historical native closure.
 
+An active agent already at SQLite's maximum signed 64-bit revision cannot be
+archived: the endpoint returns `400 invalid_state` **before** admitting a
+native-close operation or contacting the provider, since the required roster
+revision increment could not be committed. Already archived no-effect receipts
+do not require a successor revision.
+
 If the close acknowledgement is lost, the provider returns mismatching proof,
 the atomic receipt fails, or the runtime crashes, the original operation is
 quarantined in `manual_review` with its exclusive claim. The request returns

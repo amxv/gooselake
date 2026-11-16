@@ -80,6 +80,17 @@ impl RuntimeSessionManager {
             ));
         }
         let agent = self.get_workspace_agent(workspace_id, agent_id)?;
+        // Active archival advances the roster revision only after verifying
+        // native close. Reject a successor that signed SQLite cannot store
+        // before admitting the irreversible provider effect. An already
+        // archived no-op may still replay at the signed ceiling.
+        if agent.lifecycle_state == WorkspaceAgentLifecycleState::Active
+            && agent.revision >= i64::MAX as u64
+        {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         let session = self.get_session(agent_id).await?;
         let provider = if agent.lifecycle_state == WorkspaceAgentLifecycleState::Active {
             Some(

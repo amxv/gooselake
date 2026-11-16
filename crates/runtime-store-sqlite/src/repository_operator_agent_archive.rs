@@ -286,6 +286,14 @@ impl SqliteRuntimeRepository {
         }
 
         assert_archive_identity(&state, command, "active", "ready")?;
+        // Even a trusted direct SQLite caller must not admit an irreversible
+        // native close when this active agent has no representable revision
+        // successor. The already-archived no-effect branch above is exempt.
+        if state.revision >= i64::MAX {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         authority.acquire_claim(
             &command.operation_id,
             CLAIM_KIND,

@@ -142,3 +142,110 @@ async fn legacy_operator_worktree_claim_ignores_unrelated_corrupt_history_withou
         .unwrap();
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn legacy_public_worktree_claim_rejects_internal_rebind_reservations_and_invalid_roles() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("public-claim-workspace");
+    fs::create_dir_all(&root).unwrap();
+    let provider = RetirementProvider::new(ProviderKind::Codex);
+    let fixture = retirement_fixture(temp.path(), &[provider.clone()]).await;
+    let workspace = fixture.register(&root).await;
+    let agent = fixture
+        .agent(&workspace.workspace_id, ProviderKind::Codex)
+        .await;
+    fixture
+        .store
+        .upsert_managed_worktree(&runtime_core::ManagedWorktreeRecord {
+            id: "wt_public_claim_role".into(),
+            repo_root: root.display().to_string(),
+            worktree_root: temp.path().join("worktrees").display().to_string(),
+            worktree_cwd: temp.path().join("worktrees/public").display().to_string(),
+            branch_name: "gg/public".into(),
+            worktree_name: "public".into(),
+            unified_workspace_path: "public_claim_fixture".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: None,
+            created_by_operation_id: None,
+            created_at: 100,
+            updated_at: 100,
+        })
+        .unwrap();
+    let native_before = provider.native_session_count().await;
+    let uri = "/v1/worktrees/wt_public_claim_role/claims";
+
+    // The only producer of rebind_reservation must be the native provider
+    // rebind admission transaction. A public claim with that role cannot be
+    // released via the ordinary API and would strand the managed checkout.
+    for role in [
+        "rebind_reservation",
+        " ReBiNd_ReSeRvAtIoN ",
+        "unknown_role",
+        "   ",
+    ] {
+        let (status, denied) = fixture
+            .call(
+                "POST",
+                uri,
+                Some(serde_json::json!({"session_id":agent.agent_id,"claim_role":role})),
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "role {role:?}: {denied}");
+        assert!(
+            denied["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("claim_role"),
+            "role {role:?}: {denied}"
+        );
+    }
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let counts = || {
+        (
+            db.query_row("SELECT COUNT(*) FROM managed_worktree_claims WHERE worktree_id='wt_public_claim_role'", [], |row| row.get::<_,i64>(0)).unwrap(),
+            db.query_row("SELECT COUNT(*) FROM runtime_events WHERE scope='worktree' AND scope_id='wt_public_claim_role' AND kind LIKE 'worktree.%'", [], |row| row.get::<_,i64>(0)).unwrap(),
+        )
+    };
+    assert_eq!(
+        counts(),
+        (0, 0),
+        "invalid role must not mutate the claim or journal"
+    );
+
+    let (status, owner) = fixture
+        .call(
+            "POST",
+            uri,
+            Some(serde_json::json!({"session_id":agent.agent_id,"claim_role":" OwNeR "})),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{owner}");
+    assert_eq!(owner["claim"]["claim_role"], "owner");
+    let (status, released) = fixture
+        .call(
+            "POST",
+            "/v1/worktrees/wt_public_claim_role/release",
+            Some(serde_json::json!({"session_id":agent.agent_id,"cleanup_if_last_claim":false})),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{released}");
+    let (status, consumer) = fixture
+        .call(
+            "POST",
+            uri,
+            Some(serde_json::json!({"session_id":agent.agent_id,"claim_role":"consumer"})),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{consumer}");
+    assert_eq!(consumer["claim"]["claim_role"], "consumer");
+    assert_eq!(
+        counts(),
+        (1, 3),
+        "only valid claim/release/reclaim append Critical events"
+    );
+    assert_eq!(provider.native_session_count().await, native_before);
+}

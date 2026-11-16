@@ -9,6 +9,19 @@ use crate::now_ms;
 use super::{PlannedWorktreePaths, RuntimeWorktreeService, StdCommand};
 
 impl RuntimeWorktreeService {
+    pub(super) fn validate_public_claim_role(raw: &str) -> Result<String, RuntimeError> {
+        let role = raw.trim().to_ascii_lowercase();
+        // Only the provider rebind's write-ahead authority transaction may
+        // mint rebind_reservation. A public reservation is unresolvable by
+        // legacy release and can strand the managed Git checkout.
+        if matches!(role.as_str(), "owner" | "consumer") {
+            return Ok(role);
+        }
+        Err(RuntimeError::InvalidState(
+            "worktree claim_role must be owner or consumer; rebind_reservation is internal".into(),
+        ))
+    }
+
     pub(super) fn validate_managed_worktree_name(name: &str) -> Result<(), RuntimeError> {
         let name = name.trim();
         if name.is_empty()

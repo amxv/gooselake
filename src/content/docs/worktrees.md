@@ -87,6 +87,10 @@ curl -X POST "$BASE_URL/v1/worktrees/$WORKTREE_ID/claims"   "${AUTH[@]}"   -H 'C
 ```
 
 A claim says a session is using the worktree. The runtime can enforce ownership decisions and later release or clean up safely.
+Public `claim_role` values are `owner` or `consumer` (trimmed and case-insensitive).
+`rebind_reservation` is **internal**: only the native provider-rebind admission
+transaction may reserve a destination worktree. A public claim cannot create
+one of these recovery-sensitive reservations.
 
 ## Release a claim
 

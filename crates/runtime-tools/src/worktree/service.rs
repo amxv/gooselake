@@ -123,6 +123,7 @@ impl WorktreeService for RuntimeWorktreeService {
         request: WorktreeClaimRequest,
     ) -> Result<WorktreeClaimResponse, RuntimeError> {
         self.ensure_enabled()?;
+        let claim_role = Self::validate_public_claim_role(&request.claim_role)?;
         if self
             .store
             .unresolved_workspace_agent_rebind(&request.session_id)?
@@ -198,7 +199,7 @@ impl WorktreeService for RuntimeWorktreeService {
         let claim = ManagedWorktreeClaimRecord {
             worktree_id: request.worktree_id.clone(),
             session_id: request.session_id.clone(),
-            claim_role: request.claim_role.trim().to_ascii_lowercase(),
+            claim_role,
             created_at: now_ms(),
             released_at: None,
         };

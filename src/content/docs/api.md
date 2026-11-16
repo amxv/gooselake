@@ -932,6 +932,10 @@ checkout likewise commits its managed record and `worktree.created` or
 `worktree.recovered` event together. Git itself is a separate native effect:
 an unknown post-Git database result must not be interpreted as permission to
 run the same native operation again.
+Public legacy claim admission accepts only `owner` or `consumer` roles;
+`rebind_reservation` is internal provider-rebind authority and cannot be minted
+by an ordinary claim request, which would otherwise strand a non-releasable
+checkout claim without any matching native rebind operation.
 
 Native managed-worktree **cleanup** (`delete_on_last_claim` only) now admits a
 durable system operation, checkout-path and branch reservations, and a

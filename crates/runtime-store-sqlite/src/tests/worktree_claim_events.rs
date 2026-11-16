@@ -1,7 +1,7 @@
 use super::*;
 use runtime_core::ManagedWorktreeClaimTransition::{Claim, Release};
 
-fn fixture() -> (
+pub(super) fn fixture() -> (
     tempfile::TempDir,
     SqliteRuntimeRepository,
     ManagedWorktreeClaimRecord,
@@ -915,5 +915,53 @@ fn independent_sqlite_writers_cannot_claim_two_worktrees_for_one_session() {
     assert_eq!(
         recovered.list_runtime_events(None, None, 10).unwrap().len(),
         1
+    );
+}
+
+#[test]
+fn explicit_release_stale_preflight_must_not_release_a_new_native_session_binding() {
+    let (temp, reader, claim) = fixture();
+    reader
+        .transition_managed_worktree_claim(&claim, Claim)
+        .unwrap();
+    let stale = reader
+        .get_managed_worktree(&claim.worktree_id)
+        .unwrap()
+        .unwrap();
+    let observed = reader
+        .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+        .unwrap()
+        .unwrap();
+    // The legacy explicit-release service loaded this clean snapshot first.
+    // Afterward, an independent SQLite writer binds the live native session.
+    let writer = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    let rebound = SessionRecord {
+        worktree_id: Some(stale.id.clone()),
+        cwd: Some(stale.worktree_cwd.clone()),
+        updated_at: 220,
+        ..sample_session()
+    };
+    writer.upsert_session(&rebound).unwrap();
+    let proposed = ManagedWorktreeClaimRecord {
+        released_at: Some(300),
+        ..observed.clone()
+    };
+    // The explicit service uses the scoped, transactionally fenced path;
+    // generic roster member removal intentionally keeps its own semantics.
+    let result = reader.release_managed_worktree_claim_if_unbound(&proposed, &stale.worktree_cwd);
+    assert!(
+        matches!(result, Err(runtime_core::RuntimeError::Conflict(_))),
+        "explicit release must fence later live native binding: {result:?}"
+    );
+    assert_eq!(
+        writer
+            .get_managed_worktree_claim(&claim.worktree_id, &claim.session_id)
+            .unwrap(),
+        Some(claim),
+    );
+    assert_eq!(
+        reader.list_runtime_events(None, None, 10).unwrap().len(),
+        1,
+        "conflicting explicit release must not append a Critical event",
     );
 }

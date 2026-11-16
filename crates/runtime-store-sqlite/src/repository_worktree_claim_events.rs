@@ -273,6 +273,30 @@ impl SqliteRuntimeRepository {
         record: &ManagedWorktreeClaimRecord,
         transition: ManagedWorktreeClaimTransition,
     ) -> Result<ManagedWorktreeClaimRecord, RuntimeError> {
+        self.transition_managed_worktree_claim_with_guard(record, transition, None)
+    }
+
+    /// Used exclusively by explicit legacy worktree release. The service's
+    /// hydrated preflight cannot fence an independent SQLite session writer;
+    /// recheck the binding under the claim/event writer lock instead.
+    pub fn release_managed_worktree_claim_if_unbound(
+        &self,
+        record: &ManagedWorktreeClaimRecord,
+        expected_worktree_cwd: &str,
+    ) -> Result<ManagedWorktreeClaimRecord, RuntimeError> {
+        self.transition_managed_worktree_claim_with_guard(
+            record,
+            ManagedWorktreeClaimTransition::Release,
+            Some(expected_worktree_cwd),
+        )
+    }
+
+    fn transition_managed_worktree_claim_with_guard(
+        &self,
+        record: &ManagedWorktreeClaimRecord,
+        transition: ManagedWorktreeClaimTransition,
+        explicit_release_cwd: Option<&str>,
+    ) -> Result<ManagedWorktreeClaimRecord, RuntimeError> {
         let mut connection = open_connection(&self.database_path)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -347,6 +371,45 @@ impl SqliteRuntimeRepository {
                         record.worktree_id, record.session_id
                     ))
                 })?;
+                if let Some(expected_cwd) = explicit_release_cwd {
+                    // Both the current persisted route and the route observed
+                    // by the service must be checked. Another writer may have
+                    // changed the worktree cwd before binding the session.
+                    let current_cwd: String = transaction
+                        .query_row(
+                            "SELECT worktree_cwd FROM managed_worktrees WHERE id = ?1",
+                            [&record.worktree_id],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .map_err(|error| {
+                            db_error("failed reading explicit release worktree route", error)
+                        })?
+                        .ok_or_else(|| {
+                            RuntimeError::NotFound(format!("worktree {}", record.worktree_id))
+                        })?;
+                    let live_binding: bool = transaction
+                        .query_row(
+                            "SELECT EXISTS(SELECT 1 FROM sessions
+                             WHERE id = ?1 AND status != 'closed'
+                               AND (worktree_id = ?2 OR cwd = ?3 OR cwd = ?4))",
+                            params![
+                                record.session_id,
+                                record.worktree_id,
+                                expected_cwd,
+                                current_cwd
+                            ],
+                            |row| row.get(0),
+                        )
+                        .map_err(|error| {
+                            db_error("failed checking explicit release native binding", error)
+                        })?;
+                    if live_binding {
+                        return Err(RuntimeError::Conflict(
+                            "cannot release a worktree still bound to a live provider session; rebind or close the agent first".into(),
+                        ));
+                    }
+                }
                 if existing.released_at.is_some() {
                     return Ok(existing);
                 }

@@ -280,10 +280,9 @@ impl WorktreeService for RuntimeWorktreeService {
             released_at: Some(now_ms()),
             ..existing_claim
         };
-        let released_claim = self.store.transition_managed_worktree_claim(
-            &released_claim,
-            ManagedWorktreeClaimTransition::Release,
-        )?;
+        let released_claim = self
+            .store
+            .release_managed_worktree_claim_if_unbound(&released_claim, &worktree.worktree_cwd)?;
 
         drop(repository_guard);
         let hydrated_after = self.store.hydrate_runtime_state()?;

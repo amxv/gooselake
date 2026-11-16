@@ -144,6 +144,20 @@ macro_rules! default_worktree_claim_cleanup_journal {
             ))
         }
 
+        /// Explicit release must recheck native session binding inside the
+        /// same writer transaction as the claim release and Critical event.
+        /// Unrelated generic releases (such as roster member removal) retain
+        /// their own semantics; stores lacking this guard must fail closed.
+        fn release_managed_worktree_claim_if_unbound(
+            &self,
+            _record: &crate::ManagedWorktreeClaimRecord,
+            _expected_worktree_cwd: &str,
+        ) -> Result<crate::ManagedWorktreeClaimRecord, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "atomic explicit worktree claim release binding fence unavailable".into(),
+            ))
+        }
+
         fn replay_managed_worktree_cleanup(
             &self,
             _worktree: &crate::ManagedWorktreeRecord,

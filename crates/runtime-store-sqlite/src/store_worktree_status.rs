@@ -199,6 +199,15 @@ macro_rules! delegate_worktree_status {
                 .transition_managed_worktree_claim(record, transition)
         }
 
+        fn release_managed_worktree_claim_if_unbound(
+            &self,
+            record: &runtime_core::ManagedWorktreeClaimRecord,
+            expected_worktree_cwd: &str,
+        ) -> Result<runtime_core::ManagedWorktreeClaimRecord, runtime_core::RuntimeError> {
+            self.repository
+                .release_managed_worktree_claim_if_unbound(record, expected_worktree_cwd)
+        }
+
         fn replay_managed_worktree_cleanup(
             &self,
             worktree: &runtime_core::ManagedWorktreeRecord,

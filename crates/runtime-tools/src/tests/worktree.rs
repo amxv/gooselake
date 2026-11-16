@@ -189,3 +189,77 @@ async fn startup_repair_normalizes_identity_and_repairs_conflicting_claims() {
         .collect::<Vec<_>>();
     assert_eq!(live_records.len(), 1);
 }
+
+#[tokio::test]
+async fn healthy_worktree_startup_does_not_rewrite_unchanged_authority_or_claims() {
+    let temp = tempfile::tempdir().unwrap();
+    let database_path = temp.path().join("runtime.sqlite3");
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: database_path.clone(),
+    }));
+    store.initialize().await.unwrap();
+    let (runtime, comms) = build_runtime_and_team_comms(store.clone()).await;
+    let session = create_test_session(runtime.as_ref(), temp.path().to_str().unwrap()).await;
+
+    let worktree = ManagedWorktreeRecord {
+        id: "wt_clean_startup".into(),
+        repo_root: temp.path().display().to_string(),
+        worktree_root: temp.path().join("worktrees").display().to_string(),
+        worktree_cwd: temp.path().join("worktrees/clean").display().to_string(),
+        branch_name: "gg/clean".into(),
+        worktree_name: "clean".into(),
+        unified_workspace_path: "clean_fixture".into(),
+        deletion_policy: "retain_on_last_claim".into(),
+        created_by_session_id: Some(session.id.clone()),
+        created_by_operation_id: None,
+        created_at: 101,
+        updated_at: 101,
+    };
+    store.upsert_managed_worktree(&worktree).unwrap();
+    let claim = ManagedWorktreeClaimRecord {
+        worktree_id: worktree.id.clone(),
+        session_id: session.id,
+        claim_role: "owner".into(),
+        created_at: 102,
+        released_at: None,
+    };
+    store.upsert_managed_worktree_claim(&claim).unwrap();
+    let before_revision = store.managed_worktree_revision(&worktree.id).unwrap();
+
+    // Actual independent SQLite triggers make no-op writes observable.
+    // A healthy restart must not increment revision, churn ETags, or rewrite
+    // historical claims; in particular stale hydration cannot rewrite a
+    // just-released claim if no normalization was required.
+    let db = rusqlite::Connection::open(&database_path).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_unchanged_worktree_rewrite BEFORE UPDATE ON managed_worktrees
+         WHEN OLD.id='wt_clean_startup'
+         BEGIN SELECT RAISE(FAIL,'unexpected startup worktree revision rewrite'); END;
+         CREATE TRIGGER fail_unchanged_claim_rewrite BEFORE UPDATE ON managed_worktree_claims
+         WHEN OLD.worktree_id='wt_clean_startup'
+         BEGIN SELECT RAISE(FAIL,'unexpected startup claim rewrite'); END;",
+    )
+    .unwrap();
+    let _service = RuntimeWorktreeService::new(
+        store.clone(),
+        runtime,
+        comms,
+        WorktreeServiceConfig {
+            enabled: true,
+            root_dir: temp.path().join("worktrees").display().to_string(),
+            init_script_path: ".agents/gg/worktree-init.sh".into(),
+            deletion_policy_default: "delete_on_last_claim".into(),
+        },
+    )
+    .expect("healthy startup should not write unchanged worktree and claim rows");
+    assert_eq!(
+        store.managed_worktree_revision(&worktree.id).unwrap(),
+        before_revision
+    );
+    assert_eq!(
+        store
+            .get_managed_worktree_claim(&worktree.id, &claim.session_id)
+            .unwrap(),
+        Some(claim)
+    );
+}

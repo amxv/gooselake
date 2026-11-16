@@ -160,6 +160,12 @@ impl RuntimeWorktreeService {
         }
 
         for winner in merged_winners.values() {
+            // A restart is not a new native worktree mutation. Re-upserting
+            // unchanged records increments their persisted revisions and can
+            // overwrite another writer's newer row after snapshot hydration.
+            if normalized_records_by_id.get(&winner.id) == Some(winner) {
+                continue;
+            }
             store.upsert_managed_worktree(winner)?;
         }
 
@@ -276,10 +282,27 @@ impl RuntimeWorktreeService {
             }
         }
 
-        for claim in claim_by_key.into_values() {
-            store.upsert_managed_worktree_claim(&claim)?;
-        }
-        for claim in claims_changed {
+        let prior_claims = hydrated
+            .managed_worktree_claims
+            .iter()
+            .map(|claim| {
+                (
+                    (claim.worktree_id.as_str(), claim.session_id.as_str()),
+                    claim,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        for claim in claim_by_key.into_values().chain(claims_changed) {
+            // Never rewrite identical historical claim authority on a clean
+            // restart: an independent writer may have since committed a
+            // release or a new rebind reservation. Changed legacy repairs
+            // still take the existing reconstruction path; their separate
+            // concurrent-write CAS semantics are not broadened here.
+            if prior_claims.get(&(claim.worktree_id.as_str(), claim.session_id.as_str()))
+                == Some(&&claim)
+            {
+                continue;
+            }
             store.upsert_managed_worktree_claim(&claim)?;
         }
 
@@ -342,5 +365,96 @@ impl RuntimeWorktreeService {
         Err(RuntimeError::Unsupported(
             "managed worktrees are disabled".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod startup_snapshot_tests {
+    use super::*;
+    use runtime_core::{ManagedWorktreeClaimTransition, RuntimeEventScope};
+    use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
+
+    #[tokio::test]
+    async fn stale_healthy_startup_snapshot_cannot_undo_independent_claim_release_or_revision() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("disposable-runtime.sqlite3");
+        let reader = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path.clone(),
+        });
+        reader.initialize().await.unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute(
+            "INSERT INTO sessions (id, provider, status, metadata_json, created_at, updated_at)
+             VALUES ('snapshot_session', 'codex', 'idle', '{}', 1, 1)",
+            [],
+        )
+        .unwrap();
+        let record = ManagedWorktreeRecord {
+            id: "wt_stale_snapshot".into(),
+            repo_root: temp.path().display().to_string(),
+            worktree_root: temp.path().join("worktrees").display().to_string(),
+            worktree_cwd: temp.path().join("worktrees/fixture").display().to_string(),
+            branch_name: "gg/fixture".into(),
+            worktree_name: "fixture".into(),
+            unified_workspace_path: "snapshot_fixture".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: Some("snapshot_session".into()),
+            created_by_operation_id: None,
+            created_at: 10,
+            updated_at: 10,
+        };
+        reader.upsert_managed_worktree(&record).unwrap();
+        let claim = ManagedWorktreeClaimRecord {
+            worktree_id: record.id.clone(),
+            session_id: "snapshot_session".into(),
+            claim_role: "owner".into(),
+            created_at: 20,
+            released_at: None,
+        };
+        reader.upsert_managed_worktree_claim(&claim).unwrap();
+        let stale = reader.hydrate_runtime_state().unwrap();
+
+        // A distinct SQLite connection finishes legitimate work after the
+        // startup reader hydrated, but before normalization applies its plan.
+        let writer = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: path,
+        });
+        let updated = ManagedWorktreeRecord {
+            deletion_policy: "delete_on_last_claim".into(),
+            updated_at: 30,
+            ..record.clone()
+        };
+        writer.upsert_managed_worktree(&updated).unwrap();
+        let expected_revision = writer.managed_worktree_revision(&record.id).unwrap();
+        let released = ManagedWorktreeClaimRecord {
+            released_at: Some(40),
+            ..claim.clone()
+        };
+        writer
+            .transition_managed_worktree_claim(&released, ManagedWorktreeClaimTransition::Release)
+            .unwrap();
+
+        RuntimeWorktreeService::repair_startup_state(&reader, &stale).unwrap();
+        assert_eq!(
+            writer.managed_worktree_revision(&record.id).unwrap(),
+            expected_revision,
+            "an unchanged snapshot record must not undo another writer's revision"
+        );
+        assert_eq!(
+            writer.get_managed_worktree(&record.id).unwrap(),
+            Some(updated)
+        );
+        assert_eq!(
+            writer
+                .get_managed_worktree_claim(&record.id, &claim.session_id)
+                .unwrap(),
+            Some(released),
+            "stale startup hydration must not revive another writer's released claim"
+        );
+        let journal = writer
+            .list_runtime_events(Some((RuntimeEventScope::Worktree, &record.id)), None, 10)
+            .unwrap();
+        assert_eq!(journal.len(), 1);
+        assert_eq!(journal[0].kind, "worktree.released");
     }
 }

@@ -1995,6 +1995,12 @@ reported as 404 using its exact `(worktree_id, session_id)` key, independent
 of unrelated malformed historical sessions. An **existing** claim continues
 through the original complete live-binding, rebind, claim and cleanup guards;
 the point read cannot authorize a release or any native deletion.
+On a clean runtime restart, unchanged managed-worktree records and claims are
+not re-upserted by startup normalization: this preserves existing worktree
+revisions and avoids overwriting a newer release or route recorded by another
+SQLite writer after startup hydration. Repairs that actually change legacy
+records still use their existing reconciliation path; this no-op optimization
+does not establish full cross-process CAS semantics for those repairs.
 
 For v2 workspace worktree creation with an explicitly specified retention
 policy, the pre-admission policy-conflict check seeks only the existing

@@ -94,7 +94,7 @@ impl RuntimeSessionManager {
                 &command.workspace_id,
                 request,
                 &command.actor.identifier,
-                Some(&command),
+                &command,
             )
             .await;
         match result {

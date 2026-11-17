@@ -6,18 +6,21 @@ use crate::{
     RuntimeStore, SessionRecord, TurnRecord,
 };
 
-use super::helpers::{append_session_transcript, extract_assistant_text_from_usage, now_ms};
+use super::helpers::now_ms;
 use super::test_support::{
     manager_with_permission_capture_provider, manager_with_provider,
     manager_with_provider_and_store,
 };
-use super::{ApprovalResponseInput, CreateSessionInput, ResumeSessionInput, SendTurnInput};
+use super::{ApprovalResponseInput, CreateSessionInput, SendTurnInput};
+use crate::session_transcript::{append_session_transcript, extract_assistant_text_from_usage};
 
 mod pre_dispatch_decline;
 mod provider_approvals;
 mod provider_dispatch_outcome;
 mod provider_dispatch_started;
 mod session_lifecycle;
+mod startup_reattachment;
+mod startup_reattachment_interleavings;
 mod turn_authority;
 mod turn_recovery;
 mod turn_terminal;
@@ -59,15 +62,18 @@ fn append_session_transcript_migrates_legacy_key() {
 async fn one_active_turn_per_session_is_enforced() {
     let manager = manager_with_provider(200);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
 
     let _ = manager
         .send_turn(
@@ -106,15 +112,18 @@ async fn one_active_turn_per_session_is_enforced() {
 async fn duplicate_terminal_event_is_idempotent_and_conflict_fails_closed() {
     let manager = manager_with_provider(0);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),
@@ -168,15 +177,18 @@ async fn duplicate_terminal_event_is_idempotent_and_conflict_fails_closed() {
 async fn provider_turn_ownership_mismatch_is_rejected() {
     let manager = manager_with_provider(200);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),
@@ -212,15 +224,18 @@ async fn provider_turn_ownership_mismatch_is_rejected() {
 async fn send_turn_inherits_session_permission_mode_when_turn_omits_it() {
     let (manager, captured_permission_modes) = manager_with_permission_capture_provider();
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: Some("full_auto".to_string()),
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: Some("full_auto".to_string()),
+                metadata: None,
+            },
+            "capture:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
 
     let _ = manager
         .send_turn(
@@ -250,15 +265,18 @@ async fn send_turn_inherits_session_permission_mode_when_turn_omits_it() {
 async fn approval_requested_and_resolution_transitions_turn() {
     let manager = manager_with_provider(0);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
 
     let accepted = manager
         .send_turn(
@@ -331,15 +349,18 @@ async fn approval_requested_and_resolution_transitions_turn() {
 async fn approval_accept_is_case_insensitive_and_advances_turn() {
     let manager = manager_with_provider(0);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
 
     let accepted = manager
         .send_turn(
@@ -395,15 +416,18 @@ async fn approval_accept_is_case_insensitive_and_advances_turn() {
 async fn approval_invalid_decision_is_rejected() {
     let manager = manager_with_provider(0);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
 
     let _ = manager
         .send_turn(
@@ -453,42 +477,64 @@ async fn approval_invalid_decision_is_rejected() {
 }
 
 #[tokio::test]
-async fn explicit_resume_path_updates_session_and_emits_event() {
-    let manager = manager_with_provider(0);
-    let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: Some("/tmp".to_string()),
-            permission_mode: None,
-            metadata: Some(serde_json::json!({"a":1})),
-        })
-        .await
-        .expect("create session");
 
-    let resumed = manager
-        .resume_session(
-            session.id.as_str(),
-            ResumeSessionInput {
-                provider_session_ref: None,
-                canonical_provider_session_ref: None,
+async fn stored_session_startup_reattachment_commits_one_journaled_receipt() {
+    let (manager, store) = manager_with_provider_and_store(0);
+    let session = manager
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: Some("/tmp".to_string()),
+                permission_mode: None,
+                metadata: Some(serde_json::json!({"a":1})),
             },
+            "mock:",
         )
         .await
-        .expect("resume session");
-    assert_eq!(resumed.status, "ready");
+        .expect("seed stored session");
 
-    let events = manager
-        .replay_session_events(session.id.as_str(), None, 20)
-        .expect("events");
-    assert!(
-        events.iter().any(|event| event.kind == "session.resumed"),
-        "session.resumed event missing"
+    let first = manager.recover_startup().await.expect("journaled startup");
+    assert_eq!(first.resumed_sessions, 1, "{:?}", first.notes);
+    assert_eq!(manager.get_session(&session.id).await.unwrap(), session);
+    let operation_id = {
+        let ledger = store.startup.lock().unwrap();
+        assert_eq!(ledger.operations.len(), 1);
+        assert!(ledger.claims.is_empty());
+        let operation = ledger.operations.values().next().unwrap();
+        assert_eq!(operation.phase, crate::OperationPhase::Completed);
+        assert_eq!(operation.effect_phase, "finalized");
+        assert_eq!(operation.attempt_count, 1);
+        let receipt = operation.receipt.as_ref().unwrap();
+        assert_eq!(receipt.session_id, session.id);
+        assert_eq!(receipt.acknowledgement.runtime_session_id, session.id);
+        assert_eq!(
+            receipt.acknowledgement.provider_session_ref,
+            session.provider_session_ref.clone().unwrap()
+        );
+        assert_eq!(
+            receipt.acknowledgement.canonical_provider_session_ref,
+            session.canonical_provider_session_ref
+        );
+        receipt.operation_id.clone()
+    };
+    let second = manager
+        .recover_startup()
+        .await
+        .expect("same startup key replay");
+    assert_eq!(second.resumed_sessions, 0, "{:?}", second.notes);
+    let ledger = store.startup.lock().unwrap();
+    assert_eq!(ledger.operations.len(), 1);
+    assert_eq!(ledger.operations[&operation_id].attempt_count, 1);
+    assert_eq!(
+        ledger.operations[&operation_id].phase,
+        crate::OperationPhase::Completed
     );
+    assert!(ledger.claims.is_empty());
 }
 
 #[tokio::test]
-async fn startup_recovery_clears_stale_active_turn_and_orphaned_pending_approval() {
+async fn startup_recovery_refuses_missing_original_turn_without_clearing_its_approval() {
     let (manager, store) = manager_with_provider_and_store(0);
     let now = now_ms();
     store
@@ -554,19 +600,42 @@ async fn startup_recovery_clears_stale_active_turn_and_orphaned_pending_approval
         );
     }
 
+    let before = store
+        .get_persisted_retirement_review_session("sess_recover")
+        .unwrap()
+        .unwrap();
+    let before_events = store.events.lock().unwrap().clone();
     let summary = manager.recover_startup().await.expect("startup recovery");
-    assert!(summary.sessions_reconciled >= 1);
-    assert!(summary.approvals_reconciled >= 1);
-    let repaired = manager
-        .get_session("sess_recover")
-        .await
-        .expect("repaired session");
-    assert_eq!(repaired.active_turn_id, None);
-    assert_eq!(repaired.status, "ready");
-    let approvals = manager.approvals.read().await;
-    let approval = approvals.get("apr_orphan").expect("approval present");
-    assert_eq!(approval.status, "decline");
-    assert!(approval.resolved_at.is_some());
+    assert_eq!(summary.resumed_sessions, 0);
+    assert_eq!(summary.resumed_waits, 0);
+    assert_eq!(summary.sessions_reconciled, 0);
+    assert_eq!(summary.turns_reconciled, 0);
+    assert_eq!(summary.approvals_reconciled, 0);
+    assert!(summary
+        .notes
+        .iter()
+        .any(|note| note.contains("active logical turn is missing")));
+    assert_eq!(
+        store
+            .get_persisted_retirement_review_session("sess_recover")
+            .unwrap()
+            .unwrap(),
+        before,
+    );
+    assert_eq!(
+        manager.get_session("sess_recover").await.unwrap(),
+        before.session
+    );
+    assert_eq!(
+        manager.approvals.read().await["apr_orphan"],
+        before.approvals[0]
+    );
+    assert!(manager.turns.read().await.is_empty());
+    assert!(manager.turn_admissions.read().await.is_empty());
+    assert_eq!(*store.events.lock().unwrap(), before_events);
+    let ledger = store.startup.lock().unwrap();
+    assert!(ledger.operations.is_empty());
+    assert!(ledger.claims.is_empty());
 }
 
 #[tokio::test]

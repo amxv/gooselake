@@ -372,17 +372,14 @@ async fn crash_after_durable_policy_intent_before_native_call_becomes_manual_rev
     );
     let summary = reopened.recover_startup().await.unwrap();
     assert!(
-        summary
-            .notes
-            .iter()
-            .any(|note| { note.contains(operation_id) && note.contains("became manual_review") }),
+        summary.notes.iter().any(|note| note.contains(operation_id)
+            && note.contains("remains under manual review; no native effect was retried")),
         "{summary:?}"
     );
     assert!(
-        summary
-            .notes
-            .iter()
-            .any(|note| { note.contains(operation_id) && note.contains("resume withheld") }),
+        summary.notes.iter().any(|note| note.contains(operation_id)
+            && note.contains(&agent_id)
+            && note.contains("startup continuation withheld")),
         "{summary:?}"
     );
     assert_eq!(provider.preferences_mutation_calls(), native_calls);
@@ -407,13 +404,28 @@ async fn crash_after_durable_policy_intent_before_native_call_becomes_manual_rev
         )
         .unwrap();
     assert_eq!(active_claims, 1);
+    let quarantined = store
+        .repository()
+        .get_operation(operation_id)
+        .unwrap()
+        .unwrap();
     let second_recovery = reopened.recover_startup().await.unwrap();
     assert!(
         !second_recovery
             .notes
             .iter()
-            .any(|note| note.contains("became manual_review")),
-        "startup quarantine is idempotent, no duplicate operation transitions"
+            .any(|note| note.contains(operation_id)
+                && note.contains("remains under manual review; no native effect was retried")),
+        "the original operation was already quarantined: {second_recovery:?}"
+    );
+    assert_eq!(
+        store
+            .repository()
+            .get_operation(operation_id)
+            .unwrap()
+            .unwrap(),
+        quarantined,
+        "repeat startup must retain the exact transitions, claims, effects and receipts"
     );
     let (status, retry) = call(
         &router,
@@ -637,10 +649,9 @@ async fn ambiguous_native_preference_ack_quarantines_and_fences_new_turns() {
         Arc::new(RuntimeSessionManager::new(reloaded_store, Arc::new(registry), 128).unwrap());
     let summary = reloaded.recover_startup().await.unwrap();
     assert!(
-        summary
-            .notes
-            .iter()
-            .any(|note| note.contains(op_id) && note.contains("resume withheld")),
+        summary.notes.iter().any(|note| note.contains(op_id)
+            && note.contains(&agent_id)
+            && note.contains("startup continuation withheld")),
         "startup must respect the exact unresolved policy attachment: {:?}",
         summary.notes
     );

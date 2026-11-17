@@ -23,13 +23,16 @@ async fn unknown_native_outcome_event_fault_keeps_original_fence_and_restart_doe
     let (manager, store, sent) =
         manager_with_observable_send_provider(MockSendBehavior::Unknown, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
         .unwrap();
     *store.fail_next_event_append_for_kind.lock().unwrap() = Some("turn.dispatch_unknown".into());
@@ -95,13 +98,16 @@ async fn proven_no_send_failed_event_fault_does_not_clear_active_turn_or_resend(
     let (manager, store, sent) =
         manager_with_observable_send_provider(MockSendBehavior::NotDispatched, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
         .unwrap();
     *store.fail_next_event_append_for_kind.lock().unwrap() = Some("turn.failed".into());

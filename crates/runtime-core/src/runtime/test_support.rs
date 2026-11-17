@@ -25,6 +25,12 @@ use super::RuntimeSessionManager;
 
 #[derive(Default)]
 pub(super) struct MockStore {
+    pub(super) authority_transaction: Mutex<()>,
+    pub(super) startup: Mutex<startup_reattachment::MockStartupLedger>,
+    pub(super) startup_after_complete: Mutex<Option<Arc<AuthorityPause>>>,
+    pub(super) after_turn_admission: Mutex<Option<Arc<AuthorityPause>>>,
+    pub(super) terminal_commit_entered: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    pub(super) fail_next_startup_return_after_commit: Mutex<bool>,
     pub(super) sessions: Mutex<HashMap<String, SessionRecord>>,
     pub(super) turns: Mutex<HashMap<String, TurnRecord>>,
     pub(super) approvals: Mutex<HashMap<String, ApprovalRecord>>,
@@ -37,6 +43,14 @@ pub(super) struct MockStore {
     pub(super) native_approval_behavior: Mutex<Option<MockSendBehavior>>,
     pub(super) native_approval_calls: AtomicUsize,
 }
+
+#[path = "test_support_events.rs"]
+mod event_journal;
+#[path = "test_support_interleavings.rs"]
+mod interleavings;
+#[path = "test_support_startup_reattachment.rs"]
+mod startup_reattachment;
+pub(super) use interleavings::AuthorityPause;
 
 #[path = "test_support_dispatch_outcome.rs"]
 mod dispatch_outcome;
@@ -59,6 +73,7 @@ impl crate::OperatorUserTurnStore for MockStore {}
 #[async_trait]
 impl RuntimeStore for MockStore {
     legacy_obligations::mock_legacy_obligation_methods!();
+    startup_reattachment::mock_startup_methods!();
     terminal_conflict::mock_terminal_conflict_methods!();
     async fn initialize(&self) -> Result<(), RuntimeError> {
         Ok(())
@@ -72,44 +87,8 @@ impl RuntimeStore for MockStore {
         &self,
         event: &NewRuntimeEvent,
     ) -> Result<RuntimeEventRecord, RuntimeError> {
-        let mut failure = self
-            .fail_next_event_append_for_kind
-            .lock()
-            .expect("event failure mutex");
-        if failure.as_deref() == Some(event.kind.as_str()) {
-            failure.take();
-            return Err(RuntimeError::Io(
-                "injected postcommit projection failure".into(),
-            ));
-        }
-        drop(failure);
-        let mut events = self.events.lock().expect("events mutex");
-        let next_seq = events
-            .iter()
-            .filter(|row| row.scope == event.scope && row.scope_id == event.scope_id)
-            .map(|row| row.seq)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        let row_id = i64::try_from(events.len()).unwrap_or(0) + 1;
-        let record = RuntimeEventRecord {
-            row_id,
-            event_id: event.event_id.clone(),
-            scope: event.scope,
-            scope_id: event.scope_id.clone(),
-            session_id: event.session_id.clone(),
-            team_id: event.team_id.clone(),
-            turn_id: event.turn_id.clone(),
-            seq: next_seq,
-            kind: event.kind.clone(),
-            criticality: event.criticality,
-            payload: event.payload.clone(),
-            provider: event.provider.clone(),
-            provider_seq: event.provider_seq,
-            created_at: event.created_at,
-        };
-        events.push(record.clone());
-        Ok(record)
+        let _authority = self.authority_transaction.lock().unwrap();
+        self.append_runtime_event_locked(event)
     }
 
     fn list_runtime_events(
@@ -118,6 +97,7 @@ impl RuntimeStore for MockStore {
         after_seq: Option<i64>,
         limit: usize,
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         let events = self.events.lock().expect("events mutex");
         let mut rows = events.clone();
         if let Some((scope, scope_id)) = scope {
@@ -131,6 +111,7 @@ impl RuntimeStore for MockStore {
     }
 
     fn upsert_session(&self, record: &SessionRecord) -> Result<(), RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         if *self
             .fail_session_write
             .lock()
@@ -152,6 +133,13 @@ impl RuntimeStore for MockStore {
         session: &SessionRecord,
         approval: Option<&ApprovalRecord>,
     ) -> Result<(), RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
+        if let Some(operation_id) = self.startup_resume_owner_locked(&session.id) {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "native session attachment is already claimed",
+            ));
+        }
         if *self.fail_admission.lock().expect("fail admission mutex") {
             return Err(RuntimeError::Io("forced admission failure".to_string()));
         }
@@ -180,6 +168,12 @@ impl RuntimeStore for MockStore {
             .expect("turn admissions mutex")
             .insert(admission.turn_id.clone(), admission.clone());
         sessions.insert(session.id.clone(), session.clone());
+        drop(sessions);
+        drop(_authority);
+        let pause = self.after_turn_admission.lock().unwrap().clone();
+        if let Some(pause) = pause {
+            pause.pause();
+        }
         Ok(())
     }
 
@@ -188,6 +182,7 @@ impl RuntimeStore for MockStore {
     pre_dispatch_decline::delegate_mock_decline!();
 
     fn list_turn_admissions(&self) -> Result<Vec<TurnAdmissionRecord>, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         Ok(self
             .turn_admissions
             .lock()
@@ -198,6 +193,7 @@ impl RuntimeStore for MockStore {
     }
 
     fn upsert_turn(&self, record: &TurnRecord) -> Result<(), RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         if *self.fail_turn_write.lock().expect("fail turn write mutex") {
             return Err(RuntimeError::Io("forced turn write rejection".into()));
         }
@@ -216,6 +212,10 @@ impl RuntimeStore for MockStore {
         updated_session: Option<&SessionRecord>,
         event: &NewRuntimeEvent,
     ) -> Result<ProviderTerminalCommit, RuntimeError> {
+        if let Some(entered) = self.terminal_commit_entered.lock().unwrap().clone() {
+            entered.notify_one();
+        }
+        let _authority = self.authority_transaction.lock().unwrap();
         if *self.fail_turn_write.lock().unwrap() {
             return Err(RuntimeError::Io("forced turn write rejection".into()));
         }
@@ -232,7 +232,7 @@ impl RuntimeStore for MockStore {
             ));
         }
         // Simulated journal failure is injected before any projection write.
-        let event = self.append_runtime_event(event)?;
+        let event = self.append_runtime_event_locked(event)?;
         turns.insert(updated_turn.id.clone(), updated_turn.clone());
         if let Some(updated) = updated_session {
             sessions.insert(updated.id.clone(), updated.clone());
@@ -252,6 +252,7 @@ impl RuntimeStore for MockStore {
         updated_session: &SessionRecord,
         event: &NewRuntimeEvent,
     ) -> Result<ProviderTerminalCommit, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         if *self.fail_turn_write.lock().unwrap() || *self.fail_session_write.lock().unwrap() {
             return Err(RuntimeError::Io(
                 "forced provider failure projection rejection".into(),
@@ -268,7 +269,7 @@ impl RuntimeStore for MockStore {
         }
         // All simulated faults, including the critical receipt write, occur
         // before either cache or durable projection is published.
-        let receipt = self.append_runtime_event(event)?;
+        let receipt = self.append_runtime_event_locked(event)?;
         turns.insert(updated_turn.id.clone(), updated_turn.clone());
         sessions.insert(updated_session.id.clone(), updated_session.clone());
         Ok(ProviderTerminalCommit {
@@ -296,6 +297,7 @@ impl RuntimeStore for MockStore {
         approval: &ApprovalRecord,
         event: &NewRuntimeEvent,
     ) -> Result<ProviderApprovalAdmission, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         let mut turns = self.turns.lock().unwrap();
         let mut sessions = self.sessions.lock().unwrap();
         let mut approvals = self.approvals.lock().unwrap();
@@ -330,7 +332,7 @@ impl RuntimeStore for MockStore {
         }
         // Fault is checked inside the same exclusive in-memory authority
         // section, before any approval/turn/session write.
-        let receipt = self.append_runtime_event(event)?;
+        let receipt = self.append_runtime_event_locked(event)?;
         turns.insert(updated_turn.id.clone(), updated_turn.clone());
         sessions.insert(updated_session.id.clone(), updated_session.clone());
         approvals.insert(approval.id.clone(), approval.clone());
@@ -343,6 +345,7 @@ impl RuntimeStore for MockStore {
     }
 
     fn upsert_approval(&self, record: &ApprovalRecord) -> Result<(), RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         self.approvals
             .lock()
             .expect("approvals mutex")
@@ -358,6 +361,13 @@ impl RuntimeStore for MockStore {
         session: &SessionRecord,
         event: &NewRuntimeEvent,
     ) -> Result<ProviderApprovalDecisionReceipt, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
+        if let Some(operation_id) = self.startup_resume_owner_locked(&session.id) {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "native session attachment is already claimed",
+            ));
+        }
         let turns = self.turns.lock().unwrap();
         let sessions = self.sessions.lock().unwrap();
         let mut approvals = self.approvals.lock().unwrap();
@@ -369,7 +379,7 @@ impl RuntimeStore for MockStore {
                 "mock provider decision claim already changed".into(),
             ));
         }
-        let receipt = self.append_runtime_event(event)?;
+        let receipt = self.append_runtime_event_locked(event)?;
         approvals.insert(reserved.id.clone(), reserved.clone());
         Ok(ProviderApprovalDecisionReceipt {
             approval: reserved.clone(),
@@ -383,13 +393,14 @@ impl RuntimeStore for MockStore {
         pending: &ApprovalRecord,
         event: &NewRuntimeEvent,
     ) -> Result<ProviderApprovalDecisionReceipt, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         let mut approvals = self.approvals.lock().unwrap();
         if approvals.get(&reserved.id) != Some(reserved) {
             return Err(RuntimeError::Conflict(
                 "mock provider no-effect release lost reservation".into(),
             ));
         }
-        let receipt = self.append_runtime_event(event)?;
+        let receipt = self.append_runtime_event_locked(event)?;
         approvals.insert(pending.id.clone(), pending.clone());
         Ok(ProviderApprovalDecisionReceipt {
             approval: pending.clone(),
@@ -474,6 +485,7 @@ impl RuntimeStore for MockStore {
     }
 
     fn hydrate_runtime_state(&self) -> Result<crate::RuntimeHydratedState, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         let sessions = self
             .sessions
             .lock()

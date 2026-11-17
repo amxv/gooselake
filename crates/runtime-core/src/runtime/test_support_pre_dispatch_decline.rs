@@ -1,7 +1,7 @@
 use super::MockStore;
 use crate::{
-    ApprovalRecord, NewRuntimeEvent, PreDispatchApprovalDeclineCommit, RuntimeError, RuntimeStore,
-    SessionRecord, TurnAdmissionRecord, TurnRecord,
+    ApprovalRecord, NewRuntimeEvent, PreDispatchApprovalDeclineCommit, RuntimeError, SessionRecord,
+    TurnAdmissionRecord, TurnRecord,
 };
 
 impl MockStore {
@@ -18,6 +18,7 @@ impl MockStore {
         after_session: &SessionRecord,
         events: &[NewRuntimeEvent],
     ) -> Result<PreDispatchApprovalDeclineCommit, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         let mut admissions = self.turn_admissions.lock().unwrap();
         let mut turns = self.turns.lock().unwrap();
         let mut sessions = self.sessions.lock().unwrap();
@@ -36,7 +37,7 @@ impl MockStore {
         }
         let mut receipts = Vec::with_capacity(2);
         for event in events {
-            match self.append_runtime_event(event) {
+            match self.append_runtime_event_locked(event) {
                 Ok(receipt) => receipts.push(receipt),
                 Err(error) => {
                     let ids: Vec<_> = receipts

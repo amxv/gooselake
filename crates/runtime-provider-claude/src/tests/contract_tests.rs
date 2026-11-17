@@ -417,21 +417,56 @@ async fn runtime_manager_recovers_send_turn_after_bridge_session_not_found() {
     }));
     store.initialize().await.expect("initialize sqlite store");
 
+    let workspace_root = temp_dir.path().join("runtime-workspace");
+    std::fs::create_dir_all(&workspace_root).unwrap();
+    let actor = runtime_core::OperationActor::operator("claude-send-recovery");
+    let workspace = store
+        .register_workspace(
+            &runtime_core::prepare_workspace_registration(
+                runtime_core::WorkspaceRegisterRequest {
+                    canonical_root: workspace_root.display().to_string(),
+                    display_name: Some("Claude send recovery".into()),
+                },
+                actor.clone(),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .workspace;
     let manager = Arc::new(
-        RuntimeSessionManager::new(store, Arc::new(registry), 256)
+        RuntimeSessionManager::new(store.clone(), Arc::new(registry), 256)
             .expect("construct runtime session manager"),
     );
-
-    let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Claude,
-            model: Some("claude-sonnet-5-5".to_string()),
-            cwd: Some("/tmp/runtime".to_string()),
-            permission_mode: None,
-            metadata: None,
-        })
+    let request: runtime_core::WorkspaceAgentCreateRequest = serde_json::from_value(json!({
+        "provider":"claude", "model":"claude-sonnet-5-5", "cwd":workspace_root,
+        "permission_intent":{"kind":"inherit_provider_configuration"},
+        "setting_sources_intent":{"kind":"isolated"},
+    }))
+    .unwrap();
+    let (admission, command) = manager
+        .admit_workspace_agent_create_operator(
+            &workspace.workspace_id,
+            &request,
+            actor,
+            "claude-send-recovery-create".into(),
+        )
         .await
-        .expect("create runtime session");
+        .unwrap();
+    assert!(matches!(
+        admission,
+        runtime_core::OperatorAgentCreateAdmission::Execute { .. }
+    ));
+    let (agent, _) = manager
+        .execute_workspace_agent_create_operator(
+            command.expect("fixture native creation owner"),
+            request,
+        )
+        .await
+        .unwrap();
+    finish_runtime_test_onboarding(&manager, &store, &workspace.workspace_id, &agent.agent_id)
+        .await;
+    let session = manager.get_session(&agent.agent_id).await.unwrap();
 
     let send = manager
         .send_turn(
@@ -456,7 +491,22 @@ async fn runtime_manager_recovers_send_turn_after_bridge_session_not_found() {
     wait_for_ready_session(&manager, session.id.as_str()).await;
 
     let requests = harness.read_requests();
-    assert_eq!(requests_for_method(&requests, "session.send").len(), 2);
+    let sends = requests_for_method(&requests, "session.send");
+    assert_eq!(
+        sends.len(),
+        3,
+        "one onboarding send and two user-turn attempts"
+    );
+    assert_eq!(
+        sends
+            .iter()
+            .filter(|request| {
+                request["params"]["input"] == json!([{"type":"text", "text":"recover this turn"}])
+            })
+            .count(),
+        2,
+        "the original user turn still causes exactly one not-found retry"
+    );
     assert_eq!(requests_for_method(&requests, "session.resume").len(), 1);
 }
 
@@ -498,7 +548,7 @@ async fn runtime_manager_persists_admitted_turn_compaction_observations() {
     manager.start_provider_compaction_observers();
 
     let agent = manager
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace.workspace_id,
             runtime_core::WorkspaceAgentCreateRequest {
                 provider: ProviderKind::Claude,
@@ -615,7 +665,7 @@ async fn durable_permission_and_thinking_mutations_survive_runtime_restart() {
             .expect("construct manager"),
     );
     let agent = manager
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             workspace.workspace_id.as_str(),
             runtime_core::WorkspaceAgentCreateRequest {
                 provider: ProviderKind::Claude,
@@ -641,19 +691,23 @@ async fn durable_permission_and_thinking_mutations_survive_runtime_restart() {
         .await
         .expect("create workspace agent");
 
-    let permission = manager
-        .mutate_workspace_agent_permission(runtime_core::ProviderPermissionMutationRequest {
-            runtime_session_id: agent.agent_id.clone(),
-            expected_revision: Some(agent.revision),
-            permission_intent: runtime_core::ProviderPermissionIntent::Explicit {
-                mode: "acceptEdits".into(),
+    let (permission, _) = manager
+        .mutate_workspace_agent_permission_operator(
+            runtime_core::ProviderPermissionMutationRequest {
+                runtime_session_id: agent.agent_id.clone(),
+                expected_revision: Some(agent.revision),
+                permission_intent: runtime_core::ProviderPermissionIntent::Explicit {
+                    mode: "acceptEdits".into(),
+                },
             },
-        })
+            runtime_core::OperationActor::operator("claude-policy-test"),
+            "claude-permission-journaled".into(),
+        )
         .await
         .expect("mutate permission");
     assert_eq!(permission.revision, 1);
-    let preferences = manager
-        .mutate_workspace_agent_preferences(
+    let (preferences, _) = manager
+        .mutate_workspace_agent_preferences_operator(
             runtime_core::ProviderSessionPreferencesMutationRequest {
                 runtime_session_id: agent.agent_id.clone(),
                 expected_revision: Some(permission.revision),
@@ -661,18 +715,24 @@ async fn durable_permission_and_thinking_mutations_survive_runtime_restart() {
                     thinking_effort: Some(runtime_core::ProviderThinkingEffort::High),
                 },
             },
+            runtime_core::OperationActor::operator("claude-policy-test"),
+            "claude-preferences-journaled".into(),
         )
         .await
         .expect("mutate thinking preference");
     assert_eq!(preferences.revision, 2);
     assert!(matches!(
         manager
-            .mutate_workspace_agent_permission(runtime_core::ProviderPermissionMutationRequest {
-                runtime_session_id: agent.agent_id.clone(),
-                expected_revision: Some(1),
-                permission_intent:
-                    runtime_core::ProviderPermissionIntent::InheritProviderConfiguration,
-            })
+            .mutate_workspace_agent_permission_operator(
+                runtime_core::ProviderPermissionMutationRequest {
+                    runtime_session_id: agent.agent_id.clone(),
+                    expected_revision: Some(1),
+                    permission_intent:
+                        runtime_core::ProviderPermissionIntent::InheritProviderConfiguration,
+                },
+                runtime_core::OperationActor::operator("claude-policy-test"),
+                "claude-stale-permission-journaled".into(),
+            )
             .await,
         Err(RuntimeError::Conflict(_))
     ));
@@ -707,16 +767,11 @@ async fn durable_permission_and_thinking_mutations_survive_runtime_restart() {
         RuntimeSessionManager::new(store, Arc::new(restarted_registry), 256)
             .expect("construct restarted manager"),
     );
-    restarted_manager
-        .resume_session(
-            agent.agent_id.as_str(),
-            runtime_core::ResumeSessionInput {
-                provider_session_ref: None,
-                canonical_provider_session_ref: None,
-            },
-        )
+    let summary = restarted_manager
+        .recover_startup()
         .await
-        .expect("resume after restart");
+        .expect("recover startup");
+    assert_eq!(summary.resumed_sessions, 1, "{:?}", summary.notes);
     assert_eq!(
         restarted_manager
             .dispatch_workspace_system_notices()

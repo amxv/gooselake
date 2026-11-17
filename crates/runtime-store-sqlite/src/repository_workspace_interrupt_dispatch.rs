@@ -42,6 +42,7 @@ impl SqliteRuntimeRepository {
             )));
         }
         crate::repository_legacy_spawn_obligations::guard_legacy_native_session(&tx, agent_id)?;
+        crate::repository_startup_reattachment::guard_resume_claim(&tx, agent_id)?;
         let changed = tx
             .execute(
                 "UPDATE runtime_operation_effects

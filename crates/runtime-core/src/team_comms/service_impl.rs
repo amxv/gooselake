@@ -216,52 +216,12 @@ impl TeamCommsService for RuntimeTeamCommsService {
 
     async fn interrupt_all_team_turns(
         &self,
-        request: TeamInterruptAllRequest,
+        _request: TeamInterruptAllRequest,
     ) -> Result<TeamInterruptAllResponse, RuntimeError> {
-        self.ensure_enabled()?;
-        let team_id = normalize_non_empty(request.team_id.as_str(), "team_id")?;
-        let members = self.team_with_members(team_id.as_str()).await?.members;
-
-        let mut interrupted = Vec::new();
-        let mut skipped = Vec::new();
-        for member in members {
-            let session = match self.runtime.get_session(member.agent_id.as_str()).await {
-                Ok(session) => session,
-                Err(_) => {
-                    skipped.push(member.agent_id);
-                    continue;
-                }
-            };
-            let Some(turn_id) = session.active_turn_id.clone() else {
-                skipped.push(session.id);
-                continue;
-            };
-            match self
-                .runtime
-                .interrupt_turn(session.id.as_str(), turn_id.as_str())
-                .await
-            {
-                Ok(_) => interrupted.push(session.id),
-                Err(_) => skipped.push(session.id),
-            }
-        }
-
-        let response = TeamInterruptAllResponse {
-            team_id: team_id.clone(),
-            interrupted_session_ids: interrupted,
-            skipped_session_ids: skipped,
-        };
-
-        let _ = self
-            .append_team_event(
-                team_id.as_str(),
-                "team.interrupt_all",
-                serde_json::json!({ "result": response }),
-                None,
-            )
-            .await;
-
-        Ok(response)
+        Err(RuntimeError::Unsupported(
+            "legacy team interruption has no durable owner; use a journaled workspace interrupt"
+                .into(),
+        ))
     }
 
     async fn send_direct(

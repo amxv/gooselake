@@ -18,28 +18,81 @@ impl RuntimeSessionManager {
         native_turn_id: Option<String>,
         source: Option<&str>,
     ) -> Result<(), RuntimeError> {
-        let before_admission = self
-            .turn_admissions
-            .read()
-            .await
-            .get(turn_id)
-            .cloned()
-            .ok_or_else(|| RuntimeError::NotFound(format!("turn admission {turn_id}")))?;
-        let before_turn = self
-            .turns
-            .read()
-            .await
-            .get(turn_id)
-            .cloned()
-            .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
-        let before_session = self
-            .sessions
-            .read()
-            .await
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+        self.commit_provider_dispatch_started_from_snapshot(
+            session_id,
+            turn_id,
+            native_turn_id,
+            source,
+            None,
+        )
+        .await
+    }
 
+    pub(super) async fn commit_provider_dispatch_started_from_snapshot(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        native_turn_id: Option<String>,
+        source: Option<&str>,
+        snapshot: Option<&crate::RetirementReviewSessionProjection>,
+    ) -> Result<(), RuntimeError> {
+        let (before_admission, before_turn, before_session, _original_approvals) =
+            if let Some(snapshot) = snapshot {
+                if snapshot.session.id != session_id {
+                    return Err(RuntimeError::Conflict(
+                        "frozen dispatch snapshot belongs to another session".into(),
+                    ));
+                }
+                let admission = snapshot
+                    .admissions
+                    .iter()
+                    .find(|row| row.turn_id == turn_id)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::NotFound(format!("turn admission {turn_id}")))?;
+                let turn = snapshot
+                    .turns
+                    .iter()
+                    .find(|row| row.id == turn_id)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
+                (
+                    admission,
+                    turn,
+                    snapshot.session.clone(),
+                    snapshot.approvals.clone(),
+                )
+            } else {
+                let before_admission = self
+                    .turn_admissions
+                    .read()
+                    .await
+                    .get(turn_id)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::NotFound(format!("turn admission {turn_id}")))?;
+                let before_turn = self
+                    .turns
+                    .read()
+                    .await
+                    .get(turn_id)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::NotFound(format!("turn {turn_id}")))?;
+                let before_session = self
+                    .sessions
+                    .read()
+                    .await
+                    .get(session_id)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::NotFound(format!("session {session_id}")))?;
+
+                let approvals = self
+                    .approvals
+                    .read()
+                    .await
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                (before_admission, before_turn, before_session, approvals)
+            };
         if before_admission.dispatch_state != TurnDispatchState::Dispatching
             || before_admission.session_id != session_id
             || before_turn.session_id != session_id
@@ -84,6 +137,9 @@ impl RuntimeSessionManager {
             provider_seq: None,
             created_at: now,
         };
+        let mut turns = self.turns.write().await;
+        let mut sessions = self.sessions.write().await;
+        let mut admissions = self.turn_admissions.write().await;
         let committed = self.store.commit_provider_turn_started(
             &before_admission,
             &after_admission,
@@ -95,18 +151,12 @@ impl RuntimeSessionManager {
         )?;
         // Atomic SQLite is the authority. Live notifications are strictly
         // ancillary; an event listener failure cannot trigger native retry.
-        self.turn_admissions
-            .write()
-            .await
-            .insert(turn_id.into(), committed.admission);
-        self.turns
-            .write()
-            .await
-            .insert(turn_id.into(), committed.turn);
-        self.sessions
-            .write()
-            .await
-            .insert(session_id.into(), committed.session);
+        admissions.insert(turn_id.into(), committed.admission);
+        turns.insert(turn_id.into(), committed.turn);
+        sessions.insert(session_id.into(), committed.session);
+        drop(admissions);
+        drop(sessions);
+        drop(turns);
         let _ = self.event_tx.send(committed.event);
         Ok(())
     }

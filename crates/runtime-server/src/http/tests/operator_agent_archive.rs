@@ -598,7 +598,8 @@ async fn startup_quarantines_admitted_archive_intent_without_native_close_retry(
         recovery
             .notes
             .iter()
-            .any(|note| note.contains(&command.operation_id) && note.contains("manual_review")),
+            .any(|note| note.contains(&command.operation_id)
+                && note.contains("remains under manual review; no native effect was retried")),
         "{recovery:?}"
     );
     assert_eq!(provider.archive_close_count(), baseline);

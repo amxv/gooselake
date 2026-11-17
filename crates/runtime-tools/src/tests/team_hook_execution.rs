@@ -5,6 +5,52 @@ use runtime_core::{
     TeamHookEventName, TeamHookResolvedEntry, TeamHookScope,
 };
 
+fn assert_admitted_pre_add_failure(
+    store: &SqliteRuntimeStore,
+    result: Result<runtime_core::WorkspaceAgentRecord, RuntimeError>,
+    expected_cause: &str,
+) -> runtime_core::OperationDetails {
+    let RuntimeError::OperationUnresolved {
+        operation_id,
+        message,
+        ..
+    } = result.expect_err("admitted hook failure must remain unresolved")
+    else {
+        panic!("hook failure lost its original admitted operation")
+    };
+    assert!(message.contains(expected_cause), "{message}");
+    let original = store.get_operation(&operation_id).unwrap().unwrap();
+    assert_eq!(original.operation.kind, "operator_agent_create");
+    assert_eq!(
+        original.operation.phase,
+        runtime_core::OperationPhase::ManualReview
+    );
+    assert_eq!(
+        original.operation.error_code.as_deref(),
+        Some("outcome_unresolved")
+    );
+    let saved = original.operation.error_message.as_deref().unwrap();
+    assert!(!saved.is_empty() && message.contains(saved), "{saved}");
+    assert!(original.operation.exact_terminal_result.is_none());
+    assert_eq!(original.effects.len(), 1);
+    let effect = &original.effects[0];
+    assert_eq!(effect.effect_kind, "provider_session_create");
+    assert_eq!(effect.phase, "uncertain");
+    assert_eq!(effect.attempt_count, 1);
+    assert_eq!(original.claims.len(), 1);
+    let claim = &original.claims[0];
+    assert_eq!(claim.owner_operation_id, operation_id);
+    assert_eq!(claim.resource_kind, "operator_agent_create_native");
+    assert_eq!(claim.resource_id, effect.target_id);
+    assert_eq!(claim.claim_mode, "exclusive");
+    assert!(claim.fence_generation > 0);
+    assert_eq!(
+        original.transitions.last().unwrap().to_phase,
+        runtime_core::OperationPhase::ManualReview
+    );
+    original
+}
+
 fn pre_add_request(root: &std::path::Path) -> runtime_core::WorkspaceAgentCreateRequest {
     runtime_core::WorkspaceAgentCreateRequest {
         provider: runtime_core::ProviderKind::Codex,
@@ -129,7 +175,7 @@ async fn approved_pre_add_changes_only_eligible_route_and_commits_hook_onboardin
         .await;
 
     let agent = manager
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace.workspace_id,
             pre_add_request(&root),
             "runtime_operator",
@@ -199,13 +245,13 @@ async fn pre_add_rejects_outside_root_without_dispatching_provider() {
         .install_pre_add_hook_executor(Arc::new(NativeTeamHookExecutor::new(store.clone())))
         .await;
     let result = manager
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace.workspace_id,
             pre_add_request(&temp.path().join("workspace")),
             "runtime_operator",
         )
         .await;
-    assert!(matches!(result, Err(RuntimeError::InvalidState(_))));
+    assert_admitted_pre_add_failure(&store, result, "must be a directory within workspace");
     assert!(provider.state.lock().await.sessions.is_empty());
     assert!(store
         .list_workspace_agents(&workspace.workspace_id, None)
@@ -238,13 +284,13 @@ async fn pre_add_cannot_inject_into_unrelated_agents_or_impersonate_caller() {
         .install_pre_add_hook_executor(Arc::new(NativeTeamHookExecutor::new(store.clone())))
         .await;
     let result = manager
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace.workspace_id,
             pre_add_request(&temp.path().join("workspace")),
             "runtime_operator",
         )
         .await;
-    assert!(matches!(result, Err(RuntimeError::Conflict(_))));
+    assert_admitted_pre_add_failure(&store, result, "pre-add caller is not a workspace agent");
     assert!(provider.state.lock().await.sessions.is_empty());
     assert!(store
         .list_workspace_agents(&workspace.workspace_id, None)
@@ -276,9 +322,17 @@ async fn pre_add_cannot_rebind_explicit_root_route_to_another_directory() {
     request.cwd = None;
     request.worktree = Some(runtime_core::WorkspaceAgentInitialRoute::Root);
     let result = manager
-        .create_workspace_agent(&workspace.workspace_id, request, "runtime_operator")
+        .create_workspace_agent_journaled_fixture(
+            &workspace.workspace_id,
+            request,
+            "runtime_operator",
+        )
         .await;
-    assert!(matches!(result, Err(RuntimeError::Conflict(_))));
+    assert_admitted_pre_add_failure(
+        &store,
+        result,
+        "pre-add hook cannot override an explicit worktree route",
+    );
     assert!(provider.state.lock().await.sessions.is_empty());
 }
 
@@ -326,13 +380,17 @@ async fn conflicting_pre_add_scripts_fail_closed_without_creating_a_provider_or_
         .await;
 
     let result = manager
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace.workspace_id,
             pre_add_request(&root),
             "runtime_operator",
         )
         .await;
-    assert!(matches!(result, Err(RuntimeError::Conflict(_))));
+    let original = assert_admitted_pre_add_failure(
+        &store,
+        result,
+        "pre-add hooks proposed conflicting working directories",
+    );
     assert!(provider.state.lock().await.sessions.is_empty());
     assert!(store
         .list_workspace_agents(&workspace.workspace_id, None)
@@ -345,13 +403,18 @@ async fn conflicting_pre_add_scripts_fail_closed_without_creating_a_provider_or_
     assert!(effects.iter().all(|effect| {
         effect.phase == TeamHookEffectPhase::Succeeded
             && effect.application_state == "pending"
+            && effect.application_error_code.is_none()
+            && effect.applied_at_ms.is_none()
             && effect.attempt_count == 1
+            && effect.input["subject"]["member_agent_id"].as_str()
+                == Some(original.effects[0].target_id.as_str())
     }));
-    for marker in markers {
+    for marker in &markers {
         assert_eq!(std::fs::read_to_string(marker).unwrap(), "x");
     }
-    // The script's external effects happened; restart classifies their
-    // unattached outputs as rejected/unknown without creating the member.
+    // The completed shell receipts still belong to the original unresolved
+    // create. Restart preserves that exact owner and its unapplied output;
+    // it does not infer a provider result or authorize another execution.
     let restarted = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: store.database_path().to_path_buf(),
     });
@@ -359,13 +422,27 @@ async fn conflicting_pre_add_scripts_fail_closed_without_creating_a_provider_or_
         restarted.quarantine_started_team_hook_effects(100).unwrap(),
         0
     );
+    assert_eq!(
+        restarted
+            .list_team_hook_effects(&workspace.workspace_id, 10)
+            .unwrap(),
+        effects
+    );
+    assert_eq!(
+        restarted
+            .get_operation(&original.operation.operation_id)
+            .unwrap()
+            .unwrap(),
+        original
+    );
+    for marker in &markers {
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "x");
+    }
+    assert!(provider.state.lock().await.sessions.is_empty());
     assert!(restarted
-        .list_team_hook_effects(&workspace.workspace_id, 10)
+        .list_workspace_agents(&workspace.workspace_id, None)
         .unwrap()
-        .iter()
-        .all(|effect| effect.application_state == "rejected"
-            && effect.application_error_code.as_deref()
-                == Some("pre_add_provider_outcome_unknown")));
+        .is_empty());
 }
 
 struct RevokingPreAddExecutor {
@@ -402,13 +479,17 @@ async fn pre_add_revocation_during_provider_creation_cannot_commit_agent_or_cont
         .await;
 
     let result = manager
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace.workspace_id,
             pre_add_request(std::path::Path::new(&workspace.canonical_root)),
             "runtime_operator",
         )
         .await;
-    assert!(matches!(result, Err(RuntimeError::Conflict(_))));
+    assert_admitted_pre_add_failure(
+        &store,
+        result,
+        "pre-add hook approval changed before provider creation",
+    );
     assert!(store
         .list_workspace_agents(&workspace.workspace_id, None)
         .unwrap()

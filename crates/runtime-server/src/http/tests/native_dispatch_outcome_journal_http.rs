@@ -4,19 +4,6 @@ use std::sync::atomic::Ordering;
 
 /// Authentication, inert provider callback, fresh SQLite and operator event
 /// detail are all real. No external provider, credential, device or user DB.
-async fn new_session(runtime: &Arc<RuntimeSessionManager>) -> String {
-    runtime
-        .create_session(
-            serde_json::from_value(serde_json::json!({
-                "provider":"codex","model":"test-model","metadata":{}
-            }))
-            .unwrap(),
-        )
-        .await
-        .unwrap()
-        .id
-}
-
 async fn send(router: &Router, token: &str, session_id: &str) -> StatusCode {
     router
         .clone()
@@ -63,9 +50,12 @@ async fn authenticated_http_native_send_outcomes_have_one_reopened_critical_even
             "dispatch_unknown",
         ),
     ] {
-        let (router, token, temp, provider, runtime) =
-            build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
-        let session_id = new_session(&runtime).await;
+        let (router, token, temp, provider, runtime, _app, history) =
+            build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+                vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+            })
+            .await;
+        let session_id = history[0].id.clone();
         provider.send_failure_mode.store(mode, Ordering::SeqCst);
         assert!(!send(&router, &token, &session_id).await.is_success());
         assert_eq!(provider.send_invocations.load(Ordering::SeqCst), 1);
@@ -136,9 +126,12 @@ async fn authenticated_http_native_send_outcomes_have_one_reopened_critical_even
 #[tokio::test]
 async fn authenticated_http_late_sql_event_fault_rolls_back_unknown_and_no_send_outcomes() {
     for (mode, rejected_kind) in [(1, "turn.failed"), (2, "turn.dispatch_unknown")] {
-        let (router, token, temp, provider, runtime) =
-            build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
-        let session_id = new_session(&runtime).await;
+        let (router, token, temp, provider, runtime, _app, history) =
+            build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+                vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+            })
+            .await;
+        let session_id = history[0].id.clone();
         let connection = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
         connection
             .execute_batch(&format!(

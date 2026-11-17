@@ -569,8 +569,8 @@ async fn startup_quarantines_admitted_restore_without_native_dispatch_or_implici
         recovered
             .notes
             .iter()
-            .any(|note| note.contains("op_restore_crash_before_native_send")
-                && note.contains("manual_review")),
+            .any(|note| note.contains(&command.operation_id)
+                && note.contains("remains under manual review; no native effect was retried")),
         "{recovered:?}"
     );
     assert_eq!(

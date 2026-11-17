@@ -16,6 +16,7 @@ use runtime_tools::{
     ProcessManagerConfig, RuntimeProcessManager, RuntimeToolGateway, RuntimeToolGatewayDeps,
     RuntimeWorktreeService, TeamMcpPolicy, TeamModelPreset, WorktreeServiceConfig,
 };
+use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -55,13 +56,14 @@ mod durable_event_stream_idle;
 mod durable_event_stream_lag;
 mod durable_event_stream_restart;
 mod durable_event_stream_routes;
-use codex_runtime_smoke::{codex_test_model, create_test_session, prepare_codex_smoke_config};
+use codex_runtime_smoke::{codex_test_model, prepare_codex_smoke_config};
 mod agent_delivery_operator_retry;
 mod agent_delivery_pages;
 mod agent_message_routes;
 mod agent_session_controls;
 mod agent_session_controls_compaction;
 mod agent_session_controls_edit_rerun;
+mod delivery_startup_reciprocity;
 mod legacy_member_removal_claims_preflight;
 mod legacy_member_removal_rebind_fence;
 mod legacy_native_authority;
@@ -123,6 +125,7 @@ mod session_basics;
 mod session_lifecycle_journal_http;
 mod session_terminal_journal_http;
 mod sse_cursor_headers;
+mod startup_reattachment_http;
 mod team_routes;
 mod turn_native_boundaries;
 mod workspace_agent_routes;

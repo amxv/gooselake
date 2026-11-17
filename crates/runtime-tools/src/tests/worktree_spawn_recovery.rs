@@ -23,6 +23,8 @@ pub(super) async fn fixture() -> SpawnFixture {
     }));
     store.initialize().await.unwrap();
     let provider = Arc::new(WorktreeTestProvider::default());
+    let source = historical_test_session("sess_spawn_source", temp.path().to_str().unwrap());
+    persist_test_history(store.as_ref(), provider.as_ref(), &source).await;
     let mut registry = ProviderRegistry::new();
     registry.register(provider.clone()).unwrap();
     let runtime =
@@ -36,7 +38,6 @@ pub(super) async fn fixture() -> SpawnFixture {
         },
     )
     .unwrap();
-    let source = create_test_session(&runtime, temp.path().to_str().unwrap()).await;
     let team_id = comms
         .create_team(TeamCreateRequest {
             name: "Disposable spawn rollback".into(),

@@ -1,36 +1,8 @@
-use serde_json::Value;
-use std::collections::HashMap;
-
-use crate::{
-    NewRuntimeEvent, ProviderAuthStatus, ProviderCloseSessionRequest,
-    ProviderCreateSessionPolicyRequest, ProviderKind, RuntimeError, RuntimeEventCriticality,
-    RuntimeEventScope, SessionRecord, TurnRecord,
-};
-
 use super::helpers::now_ms;
 use super::{CreateSessionInput, ResumeSessionInput, RuntimeSessionManager};
-
-fn lifecycle_event(
-    record: &SessionRecord,
-    kind: &str,
-    event_id: String,
-    payload: Value,
-) -> NewRuntimeEvent {
-    NewRuntimeEvent {
-        event_id,
-        scope: RuntimeEventScope::Session,
-        scope_id: record.id.clone(),
-        session_id: Some(record.id.clone()),
-        team_id: None,
-        turn_id: None,
-        kind: kind.to_string(),
-        criticality: RuntimeEventCriticality::Critical,
-        payload,
-        provider: None,
-        provider_seq: None,
-        created_at: now_ms(),
-    }
-}
+use crate::{ProviderAuthStatus, ProviderKind, RuntimeError, SessionRecord, TurnRecord};
+use serde_json::Value;
+use std::collections::HashMap;
 
 impl RuntimeSessionManager {
     /// Deterministic /v1 provider-launch checks before an unrelated Git
@@ -179,374 +151,35 @@ impl RuntimeSessionManager {
 
     pub async fn create_session(
         &self,
-        input: CreateSessionInput,
+        _input: CreateSessionInput,
     ) -> Result<SessionRecord, RuntimeError> {
-        // Legacy /v1 still creates provider-native sessions before SQLite
-        // admission. Hold the same root lock as workspace retirement across
-        // that entire window; a later DB rejection must not orphan native
-        // activity outside the retired workspace's obligation inventory.
-        let matched_workspaces = if let Some(cwd) = input.cwd.as_deref() {
-            let candidate =
-                std::fs::canonicalize(cwd).unwrap_or_else(|_| std::path::PathBuf::from(cwd));
-            let workspaces = match self.store.list_workspaces() {
-                Ok(workspaces) => workspaces,
-                Err(RuntimeError::Unsupported(_)) => Vec::new(),
-                Err(error) => return Err(error),
-            };
-            let repository_root = crate::resolve_repository_identity(&candidate)
-                .ok()
-                .map(|identity| identity.canonical_root);
-            let checkout_roots = repository_root
-                .as_ref()
-                .map(|root| crate::repository_checkout_roots(std::path::Path::new(root)))
-                .transpose()?
-                .unwrap_or_default();
-            let managed_worktrees = if workspaces.is_empty() {
-                Vec::new()
-            } else {
-                self.store.list_managed_worktree_checkout_paths()?
-            };
-            workspaces
-                .into_iter()
-                .filter_map(|workspace| {
-                    let same_repository = checkout_roots.iter().any(|checkout| {
-                        crate::checkout_contains_workspace(
-                            checkout,
-                            std::path::Path::new(&workspace.canonical_root),
-                        )
-                    });
-                    let matches = candidate.starts_with(&workspace.canonical_root)
-                        || same_repository
-                        || managed_worktrees
-                            .iter()
-                            .any(|(worktree_root, worktree_cwd)| {
-                                (worktree_root == &workspace.canonical_root
-                                    || (same_repository
-                                        && repository_root.as_deref()
-                                            == Some(worktree_root.as_str())))
-                                    && std::path::Path::new(worktree_cwd).is_absolute()
-                                    && candidate.starts_with(worktree_cwd)
-                            });
-                    if matches {
-                        let lock_root = if same_repository {
-                            repository_root
-                                .clone()
-                                .unwrap_or_else(|| workspace.canonical_root.clone())
-                        } else {
-                            workspace.canonical_root.clone()
-                        };
-                        Some((workspace, lock_root))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        // All workspaces sharing a Git repository must be checked. Selecting
-        // only the longest root could choose an active nested workspace and
-        // silently bypass a retired sibling's native-effect freeze. Acquire
-        // each distinct repository lock once, in sorted order, to avoid
-        // self-deadlock when several workspace roots map to the same lock.
-        let mut roots = std::collections::BTreeSet::new();
-        for (_, root) in &matched_workspaces {
-            roots.insert(root.clone());
-        }
-        let mut _legacy_workspace_guards = Vec::with_capacity(roots.len());
-        for root in roots {
-            let lock = crate::repository_lifecycle_lock(&root).await;
-            _legacy_workspace_guards.push(lock.read_owned().await);
-        }
-        for (workspace, _) in matched_workspaces {
-            let current = self
-                .store
-                .get_workspace(&workspace.workspace_id)?
-                .ok_or_else(|| {
-                    RuntimeError::NotFound(format!("workspace {}", workspace.workspace_id))
-                })?;
-            if current.lifecycle_state != crate::WorkspaceLifecycleState::Active {
-                return Err(RuntimeError::Conflict(format!(
-                    "legacy provider create rejected for inactive workspace {}",
-                    workspace.workspace_id
-                )));
-            }
-            let preflight = self
-                .store
-                .workspace_retirement_preflight(&workspace.workspace_id)?;
-            if preflight
-                .blockers
-                .iter()
-                .any(|blocker| blocker.code == "retirement_in_progress")
-            {
-                return Err(RuntimeError::Conflict(format!(
-                    "legacy provider create rejected for retiring workspace {}",
-                    workspace.workspace_id
-                )));
-            }
-        }
-        let provider = self.providers.get(input.provider).ok_or_else(|| {
-            RuntimeError::ProviderNotRegistered(input.provider.as_str().to_string())
-        })?;
-        let now = now_ms();
-        let session_id = self.allocate_id("sess", input.provider.as_str());
-        let mut create_request = ProviderCreateSessionPolicyRequest::legacy_compatible(
-            session_id.clone(),
-            input.model.clone(),
-            input.cwd.clone(),
-            input.permission_mode.clone(),
-            input.metadata.clone(),
-        )?;
-        if input.provider == ProviderKind::Claude && input.permission_mode.is_none() {
-            create_request.launch_policy.permission_intent =
-                crate::ProviderPermissionIntent::InheritProviderConfiguration;
-        }
-        let created = provider.create_session_with_policy(create_request).await?;
-
-        if created.runtime_session_id != session_id {
-            return Err(RuntimeError::ProtocolViolation(format!(
-                "provider returned mismatched runtime session id (expected={session_id}, actual={})",
-                created.runtime_session_id
-            )));
-        }
-
-        let record = SessionRecord {
-            id: session_id.clone(),
-            provider: input.provider.as_str().to_string(),
-            status: "ready".to_string(),
-            cwd: input.cwd,
-            model: input.model,
-            permission_mode: input.permission_mode,
-            system_prompt: None,
-            metadata: input.metadata.unwrap_or(Value::Object(Default::default())),
-            provider_session_ref: Some(created.provider_session_ref),
-            canonical_provider_session_ref: created.canonical_provider_session_ref,
-            active_turn_id: None,
-            worktree_id: None,
-            created_at: now,
-            updated_at: now,
-            closed_at: None,
-            failure_code: None,
-            failure_message: None,
-        };
-
-        let event = lifecycle_event(
-            &record,
-            "session.created",
-            format!("evt_session_{}_created", session_id),
-            serde_json::json!({"provider":record.provider}),
-        );
-        let committed = self.store.commit_session_lifecycle(None, &record, &event);
-        let (record, event) = if let Err(error) = committed {
-            if let Err(native_error) = provider
-                .close_session(ProviderCloseSessionRequest {
-                    runtime_session_id: session_id.clone(),
-                    reason: Some("legacy_session_admission_failed".into()),
-                })
-                .await
-            {
-                tracing::warn!(session_id,error=%native_error,
-                    "legacy session native cleanup could not be verified after failed durable admission");
-            }
-            return Err(RuntimeError::provider_dispatch_unknown(
-                "native_session_creation_unjournaled",
-                format!("native session was created, but its critical durable admission failed ({error}); do not blindly retry a new provider session"),
-            ));
-        } else {
-            committed.expect("handled lifecycle journal error")
-        };
-        {
-            let mut sessions = self.sessions.write().await;
-            sessions.insert(session_id.clone(), record.clone());
-        }
-        if let Some(event) = event {
-            let _ = self.event_tx.send(event);
-        }
-        Ok(record)
+        Err(RuntimeError::Unsupported(
+            "legacy direct session creation is unsupported; use durable workspace-agent creation"
+                .into(),
+        ))
     }
-
     pub async fn close_session(
         &self,
-        session_id: &str,
-        reason: Option<String>,
+        _session_id: &str,
+        _reason: Option<String>,
     ) -> Result<SessionRecord, RuntimeError> {
-        let _guard = self.session_policy_mutation_lock.lock().await;
-        if let Some(operation_id) = self.store.retiring_operation_for_session(session_id)? {
-            return Err(RuntimeError::Conflict(format!(
-                "native close is owned by workspace retirement {operation_id}"
-            )));
-        }
-        if self.store.unresolved_session_edit_rerun(session_id)? {
-            return Err(RuntimeError::Conflict(
-                "cannot close a session with unresolved native edit-and-rerun".into(),
-            ));
-        }
-        self.fence_unresolved_operator_turn_native_effect(session_id)?;
-        let session = self.get_session(session_id).await?;
-        if session.status == "closed" {
-            return Ok(session);
-        }
-        let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
-            RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
-        })?;
-        let provider = self.providers.get(provider_kind).ok_or_else(|| {
-            RuntimeError::ProviderNotRegistered(provider_kind.as_str().to_string())
-        })?;
-
-        provider
-            .close_session(ProviderCloseSessionRequest {
-                runtime_session_id: session_id.to_string(),
-                reason: reason.clone(),
-            })
-            .await?;
-
-        self.finalize_session_close(
-            session_id,
-            reason.unwrap_or_else(|| "closed_by_request".to_string()),
-            true,
-        )
-        .await
+        Err(RuntimeError::Unsupported(
+            "legacy direct session close is unsupported; use journaled workspace-agent archive or retirement".into()))
     }
-
     pub async fn force_close_session(
         &self,
-        session_id: &str,
-        reason: Option<String>,
+        _session_id: &str,
+        _reason: Option<String>,
     ) -> Result<SessionRecord, RuntimeError> {
-        self.finalize_session_close(
-            session_id,
-            reason.unwrap_or_else(|| "closed_by_runtime_rollback".to_string()),
-            false,
-        )
-        .await
+        Err(RuntimeError::Unsupported(
+            "legacy forced session close is unsupported; inspect the original operation because this method cannot establish native closure".into()))
     }
-
     pub async fn resume_session(
         &self,
-        session_id: &str,
-        input: ResumeSessionInput,
+        _session_id: &str,
+        _input: ResumeSessionInput,
     ) -> Result<SessionRecord, RuntimeError> {
-        let _guard = self.session_policy_mutation_lock.lock().await;
-        if let Some(operation_id) = self.store.retiring_operation_for_session(session_id)? {
-            return Err(RuntimeError::Conflict(format!(
-                "native resume is frozen by workspace retirement {operation_id}"
-            )));
-        }
-        if self.store.unresolved_session_edit_rerun(session_id)? {
-            return Err(RuntimeError::Conflict(
-                "cannot resume a session with unresolved native edit-and-rerun".into(),
-            ));
-        }
-        self.fence_unresolved_operator_turn_native_effect(session_id)?;
-        let session = self.get_session(session_id).await?;
-        let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
-            RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
-        })?;
-        let provider = self.providers.get(provider_kind).ok_or_else(|| {
-            RuntimeError::ProviderNotRegistered(provider_kind.as_str().to_string())
-        })?;
-
-        let provider_session_ref = input
-            .provider_session_ref
-            .or_else(|| session.provider_session_ref.clone())
-            .ok_or_else(|| {
-                RuntimeError::InvalidState(format!(
-                    "session {} has no provider_session_ref to resume",
-                    session_id
-                ))
-            })?;
-        let canonical_provider_session_ref = input
-            .canonical_provider_session_ref
-            .or_else(|| session.canonical_provider_session_ref.clone());
-
-        let resume_request = self.provider_resume_request_for_session(
-            &session,
-            provider_session_ref.clone(),
-            canonical_provider_session_ref.clone(),
-        )?;
-        let resumed = provider.resume_session_with_policy(resume_request).await?;
-        if resumed.runtime_session_id != session_id {
-            return Err(RuntimeError::ProtocolViolation(format!(
-                "provider resume returned mismatched session id (expected={}, actual={})",
-                session_id, resumed.runtime_session_id
-            )));
-        }
-
-        let mut updated = session.clone();
-        updated.provider_session_ref = Some(resumed.provider_session_ref);
-        updated.canonical_provider_session_ref = resumed.canonical_provider_session_ref;
-        if updated.status != "closed" {
-            updated.status = "ready".to_string();
-        }
-        updated.updated_at = now_ms();
-        let event = lifecycle_event(
-            &updated,
-            "session.resumed",
-            format!(
-                "evt_session_{}_resumed_{}",
-                session_id,
-                self.allocate_id("run", "resume")
-            ),
-            serde_json::json!({}),
-        );
-        let (updated, committed_event) = self.store.commit_session_lifecycle(
-            Some(&session), &updated, &event,
-        ).map_err(|error| RuntimeError::provider_dispatch_unknown(
-            "native_session_resume_unjournaled",
-            format!("native resume was acknowledged, but critical state and event journal failed ({error}); native resume MUST NOT be retried automatically"),
-        ))?;
-        {
-            let mut sessions = self.sessions.write().await;
-            sessions.insert(session_id.to_string(), updated.clone());
-        }
-        if let Some(event) = committed_event {
-            let _ = self.event_tx.send(event);
-        }
-        Ok(updated)
-    }
-
-    async fn finalize_session_close(
-        &self,
-        session_id: &str,
-        reason: String,
-        native_acknowledged: bool,
-    ) -> Result<SessionRecord, RuntimeError> {
-        let session = self.get_session(session_id).await?;
-        if session.status == "closed" {
-            return Ok(session);
-        }
-        let mut updated = session.clone();
-        updated.status = "closed".to_string();
-        updated.closed_at = Some(now_ms());
-        updated.updated_at = now_ms();
-        updated.active_turn_id = None;
-        let event = lifecycle_event(
-            &updated,
-            "session.closed",
-            format!("evt_session_{}_closed", session_id),
-            serde_json::json!({"reason":reason}),
-        );
-        let committed = self
-            .store
-            .commit_session_lifecycle(Some(&session), &updated, &event);
-        let (updated, committed_event) = committed.map_err(|error| {
-            if native_acknowledged {
-                RuntimeError::provider_dispatch_unknown(
-                    "native_session_close_unjournaled",
-                    format!("native close acknowledged, but critical session close receipt failed ({error}); native close MUST NOT be retried blindly"),
-                )
-            } else {
-                error
-            }
-        })?;
-
-        {
-            let mut sessions = self.sessions.write().await;
-            sessions.insert(session_id.to_string(), updated.clone());
-        }
-        if let Some(event) = committed_event {
-            let _ = self.event_tx.send(event);
-        }
-        Ok(updated)
+        Err(RuntimeError::Unsupported(
+            "legacy direct session resume is unsupported; use runtime startup recovery for active stored sessions or the workspace-agent restore operation for archived agents".into()))
     }
 }

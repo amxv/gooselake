@@ -37,6 +37,95 @@ impl FakeAgentHarness {
     }
 }
 
+/// Open the real fake ACP child only behind the existing durable native
+/// creation owner. Permission and recovery tests then exercise normal turns.
+pub(super) async fn create_runtime_agent(
+    manager: &std::sync::Arc<runtime_core::RuntimeSessionManager>,
+    store: &std::sync::Arc<runtime_store_sqlite::SqliteRuntimeStore>,
+    root: &std::path::Path,
+    suite: &str,
+) -> runtime_core::SessionRecord {
+    use runtime_core::RuntimeStore;
+    std::fs::create_dir_all(root).unwrap();
+    let actor = runtime_core::OperationActor::operator(suite);
+    let workspace = store
+        .register_workspace(
+            &runtime_core::prepare_workspace_registration(
+                runtime_core::WorkspaceRegisterRequest {
+                    canonical_root: root.display().to_string(),
+                    display_name: Some(suite.into()),
+                },
+                actor.clone(),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .workspace;
+    let request: runtime_core::WorkspaceAgentCreateRequest = serde_json::from_value(json!({
+        "provider":"acp", "cwd":root, "title":suite,
+        "setting_sources_intent":{"kind":"isolated"},
+    }))
+    .unwrap();
+    let (admission, command) = manager
+        .admit_workspace_agent_create_operator(
+            &workspace.workspace_id,
+            &request,
+            actor,
+            format!("{suite}-create"),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        admission,
+        runtime_core::OperatorAgentCreateAdmission::Execute { .. }
+    ));
+    let (agent, _) = manager
+        .execute_workspace_agent_create_operator(
+            command.expect("new fixture owns native creation"),
+            request,
+        )
+        .await
+        .unwrap();
+    manager
+        .dispatch_workspace_system_notices()
+        .await
+        .expect("dispatch the real onboarding turn");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let notice = manager
+                .get_workspace_onboarding_notice(&workspace.workspace_id, &agent.agent_id)
+                .unwrap()
+                .expect("canonical creation records onboarding");
+            let (persisted, turns) = store
+                .get_persisted_session_with_turns(&agent.agent_id)
+                .unwrap()
+                .unwrap();
+            let cached = manager.get_session(&agent.agent_id).await.unwrap();
+            if notice.state == "delivered"
+                && persisted.status == "ready"
+                && persisted.active_turn_id.is_none()
+                && cached.status == "ready"
+                && cached.active_turn_id.is_none()
+                && turns.iter().any(|turn| {
+                    Some(turn.id.as_str()) == notice.turn_id.as_deref()
+                        && turn.status == "completed"
+                })
+            {
+                break;
+            }
+            assert!(
+                matches!(notice.state.as_str(), "pending" | "injecting" | "delivered"),
+                "onboarding must settle through the provider: {notice:?}"
+            );
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("durable onboarding completion before the tested user turn");
+    manager.get_session(&agent.agent_id).await.unwrap()
+}
+
 fn fake_agent_script(mode: &str) -> String {
     format!(
         r#"#!/usr/bin/env python3
@@ -200,6 +289,13 @@ for raw_line in sys.stdin:
             }})
             continue
         text = prompt_text(msg["params"].get("prompt", []))
+        # These manager fixtures send mandatory onboarding before their user
+        # scenario. Only the exact user inputs may exercise its fault branches.
+        if MODE == "runtime_user_turns" and text not in (
+            "crash now", "permission please", "split please 0", "split please 1"
+        ):
+            finish_prompt(session_id, request_id, "end_turn", ["Fixture onboarding complete."])
+            continue
         if "malformed" in text:
             sys.stdout.write("{{not-json\n")
             sys.stdout.flush()

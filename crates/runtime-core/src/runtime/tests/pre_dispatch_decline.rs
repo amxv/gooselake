@@ -10,13 +10,16 @@ async fn late_local_decline_event_fault_preserves_pending_cache_and_never_dispat
         let (manager, store, sent) =
             manager_with_observable_send_provider(MockSendBehavior::Success, None);
         let session = manager
-            .create_session(CreateSessionInput {
-                provider: ProviderKind::Codex,
-                model: None,
-                cwd: None,
-                permission_mode: None,
-                metadata: None,
-            })
+            .seed_stored_session_for_test(
+                CreateSessionInput {
+                    provider: ProviderKind::Codex,
+                    model: None,
+                    cwd: None,
+                    permission_mode: None,
+                    metadata: None,
+                },
+                "mock:",
+            )
             .await
             .unwrap();
         let admitted = manager

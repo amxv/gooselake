@@ -7,6 +7,7 @@ impl MockStore {
         after: &SessionRecord,
         event: &NewRuntimeEvent,
     ) -> Result<(SessionRecord, Option<RuntimeEventRecord>), RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         let mut sessions = self.sessions.lock().unwrap();
         if sessions.get(&after.id) != before || *self.fail_session_write.lock().unwrap() {
             return Err(RuntimeError::Conflict(
@@ -14,7 +15,7 @@ impl MockStore {
             ));
         }
         // Test fault surfaces before committing either session or event.
-        let receipt = self.append_runtime_event(event)?;
+        let receipt = self.append_runtime_event_locked(event)?;
         sessions.insert(after.id.clone(), after.clone());
         Ok((after.clone(), Some(receipt)))
     }

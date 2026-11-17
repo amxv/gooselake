@@ -34,7 +34,7 @@ async fn completion_waiting_for_approval_survives_retirement_until_explicit_rest
         mode: "require_approval".into(),
     };
     let agent = runtime
-        .create_workspace_agent(&workspace.workspace_id, request, "operator")
+        .create_workspace_agent_journaled_fixture(&workspace.workspace_id, request, "operator")
         .await
         .unwrap();
     // Complete the mandatory onboarding prerequisite through its real worker
@@ -229,7 +229,12 @@ async fn completion_waiting_for_approval_survives_retirement_until_explicit_rest
         "workspace reactivation must not reopen an archived member for completion input"
     );
     restored_runtime
-        .restore_workspace_agent(&workspace.workspace_id, &agent.agent_id)
+        .restore_workspace_agent_operator(
+            &workspace.workspace_id,
+            &agent.agent_id,
+            OperationActor::operator("completion-retirement"),
+            "completion-explicit-restore".into(),
+        )
         .await
         .unwrap();
     manager

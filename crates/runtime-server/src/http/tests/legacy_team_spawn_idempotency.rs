@@ -2,19 +2,12 @@ use super::*;
 
 #[tokio::test]
 async fn authenticated_legacy_spawn_key_replays_exact_http_response_and_conflicts_on_change() {
-    let (router, token, temp, provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy::default()).await;
-    let lead = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider":"codex", "model":"test-model",
-            "cwd": temp.path().display().to_string(),
-        }),
-    )
-    .await;
-    assert_eq!(lead.status(), StatusCode::OK);
-    let lead: Value =
-        serde_json::from_slice(&to_bytes(lead.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let (router, token, temp, provider, _runtime, app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            vec![json!({"provider":"codex","model":"test-model","cwd":root})]
+        })
+        .await;
+    let lead = historical_session_json(&history[0]);
     let source = lead["id"].as_str().unwrap();
 
     let team = router

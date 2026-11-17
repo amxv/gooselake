@@ -39,21 +39,13 @@ async fn version_route_is_available() {
 
 #[tokio::test]
 async fn session_stream_replays_from_cursor_before_live_events() {
-    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+        })
+        .await;
 
-    let create_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_payload = to_bytes(create_response.into_body(), usize::MAX)
-        .await
-        .expect("create payload");
-    let created: serde_json::Value = serde_json::from_slice(&create_payload).expect("create json");
+    let created = historical_session_json(&history[0]);
     let session_id = created
         .get("id")
         .and_then(serde_json::Value::as_str)
@@ -131,10 +123,13 @@ async fn session_stream_replays_from_cursor_before_live_events() {
         &session_id,
         &events,
     );
-    assert!(
-        events.len() >= 5,
-        "expected at least session.created + 2 turn start/terminal pairs"
-    );
+    for kind in ["turn.admitted", "turn.started", "turn.completed"] {
+        assert_eq!(
+            events.iter().filter(|event| event.kind == kind).count(),
+            2,
+            "each real turn must retain its {kind} event",
+        );
+    }
     let cursor = events
         .iter()
         .find(|event| event.kind == "turn.completed")
@@ -239,21 +234,13 @@ async fn openapi_yaml_route_serves_snapshot() {
 
 #[tokio::test]
 async fn session_stream_replays_exhaustive_backlog_across_pages() {
-    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, _temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+        })
+        .await;
 
-    let create_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_payload = to_bytes(create_response.into_body(), usize::MAX)
-        .await
-        .expect("create payload");
-    let created: serde_json::Value = serde_json::from_slice(&create_payload).expect("create json");
+    let created = historical_session_json(&history[0]);
     let session_id = created
         .get("id")
         .and_then(serde_json::Value::as_str)
@@ -385,21 +372,13 @@ async fn session_stream_replays_exhaustive_backlog_across_pages() {
 
 #[tokio::test]
 async fn session_stream_handoff_window_event_is_not_lost() {
-    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, _temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+        })
+        .await;
 
-    let create_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_payload = to_bytes(create_response.into_body(), usize::MAX)
-        .await
-        .expect("create payload");
-    let created: serde_json::Value = serde_json::from_slice(&create_payload).expect("create json");
+    let created = historical_session_json(&history[0]);
     let session_id = created
         .get("id")
         .and_then(serde_json::Value::as_str)
@@ -776,24 +755,33 @@ async fn acp_provider_public_surfaces_support_list_models_session_replay_and_str
         "ACP model list is allowed to be empty in v1"
     );
 
-    let create_response = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider": "acp",
-            "cwd": "/tmp/acp-http-surface",
-            "permission_mode": null,
-            "metadata": {}
-        }),
+    let workspace_root = temp_dir.path().join("acp-http-surface");
+    std::fs::create_dir_all(&workspace_root).unwrap();
+    let workspace = super::workspace_control_routes::register_control_workspace(
+        &router,
+        &token,
+        &workspace_root,
+        "ACP HTTP surface",
     )
     .await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_json: Value = serde_json::from_slice(
-        &to_bytes(create_response.into_body(), usize::MAX)
-            .await
-            .expect("create body"),
+    let (status, created, _) = super::operator_agent_create::create_http(
+        &router,
+        &token,
+        &workspace.workspace_id,
+        json!({
+            "provider":"acp", "title":"ACP HTTP surface",
+            "setting_sources_intent":{"kind":"isolated"},
+        }),
+        Some("acp-http-surface-create"),
     )
-    .expect("create json");
-    let session_id = create_json["id"].as_str().expect("session id").to_string();
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let session_id = created["agent_id"].as_str().unwrap().to_string();
+    finish_test_onboarding(&runtime, &workspace.workspace_id, &session_id).await;
+    assert_eq!(
+        runtime.get_session(&session_id).await.unwrap().cwd,
+        Some(workspace.canonical_root)
+    );
 
     let send_response = router
         .clone()
@@ -816,6 +804,13 @@ async fn acp_provider_public_surfaces_support_list_models_session_replay_and_str
         .await
         .expect("send response");
     assert_eq!(send_response.status(), StatusCode::OK);
+    let accepted: Value = serde_json::from_slice(
+        &to_bytes(send_response.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let turn_id = accepted["turn_id"].as_str().unwrap().to_string();
 
     let mut events = Vec::<runtime_core::RuntimeEventRecord>::new();
     for _ in 0..40 {
@@ -837,14 +832,18 @@ async fn acp_provider_public_surfaces_support_list_models_session_replay_and_str
                 .expect("events body"),
         )
         .expect("events json");
-        if events.iter().any(|event| event.kind == "turn.completed") {
+        if events.iter().any(|event| {
+            event.kind == "turn.completed" && event.turn_id.as_deref() == Some(turn_id.as_str())
+        }) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let completed = events
         .iter()
-        .find(|event| event.kind == "turn.completed")
+        .find(|event| {
+            event.kind == "turn.completed" && event.turn_id.as_deref() == Some(turn_id.as_str())
+        })
         .expect("turn.completed event");
     let assistant_text = completed
         .payload
@@ -859,7 +858,9 @@ async fn acp_provider_public_surfaces_support_list_models_session_replay_and_str
     assert_eq!(assistant_text, Some("Echo: runtime acp http"));
     let replay_cursor = events
         .iter()
-        .find(|event| event.kind == "turn.started")
+        .find(|event| {
+            event.kind == "turn.started" && event.turn_id.as_deref() == Some(turn_id.as_str())
+        })
         .map(|event| event.seq.saturating_sub(1))
         .expect("turn.started seq");
 

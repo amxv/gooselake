@@ -183,7 +183,7 @@ impl RuntimeSessionManager {
                 &command.operation.workspace_id,
                 request,
                 &command.operation.actor.identifier,
-                Some(&command.operation),
+                &command.operation,
             )
             .await?;
             self.store.member_agent_create_result(&command)

@@ -1,6 +1,6 @@
 use crate::{
-    ApprovalRecord, NewRuntimeEvent, ProviderDispatchOutcomeCommit, RuntimeError, RuntimeStore,
-    SessionRecord, TurnAdmissionRecord, TurnRecord,
+    ApprovalRecord, NewRuntimeEvent, ProviderDispatchOutcomeCommit, RuntimeError, SessionRecord,
+    TurnAdmissionRecord, TurnRecord,
 };
 
 use super::MockStore;
@@ -17,6 +17,7 @@ impl MockStore {
         approvals: &[(ApprovalRecord, ApprovalRecord)],
         event: &NewRuntimeEvent,
     ) -> Result<ProviderDispatchOutcomeCommit, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         let mut admissions = self.turn_admissions.lock().unwrap();
         let mut turns = self.turns.lock().unwrap();
         let mut sessions = self.sessions.lock().unwrap();
@@ -34,7 +35,7 @@ impl MockStore {
                 "mock dispatch authority changed".into(),
             ));
         }
-        let receipt = self.append_runtime_event(event)?;
+        let receipt = self.append_runtime_event_locked(event)?;
         admissions.insert(after_admission.turn_id.clone(), after_admission.clone());
         turns.insert(after_turn.id.clone(), after_turn.clone());
         sessions.insert(after_session.id.clone(), after_session.clone());

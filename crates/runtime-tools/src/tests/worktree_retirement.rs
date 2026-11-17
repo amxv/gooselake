@@ -23,7 +23,7 @@ fn git(root: &Path, args: &[&str]) -> String {
 }
 
 #[tokio::test]
-async fn retirement_freeze_prevents_native_worktrees_and_legacy_external_session_creation() {
+async fn retirement_freeze_prevents_native_worktrees_and_direct_session_creation_is_unsupported() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("repository");
     let nested_workspace_root = root.join("nested/project");
@@ -50,6 +50,8 @@ async fn retirement_freeze_prevents_native_worktrees_and_legacy_external_session
     }));
     store.initialize().await.unwrap();
     let provider = Arc::new(WorktreeTestProvider::default());
+    let source = historical_test_session("sess_retirement_source", outside.to_str().unwrap());
+    persist_test_history(store.as_ref(), provider.as_ref(), &source).await;
     let mut registry = ProviderRegistry::new();
     registry.register(provider.clone()).unwrap();
     let runtime =
@@ -63,7 +65,6 @@ async fn retirement_freeze_prevents_native_worktrees_and_legacy_external_session
         },
     )
     .unwrap();
-    let source = create_test_session(&runtime, outside.to_str().unwrap()).await;
     let workspace = store
         .register_workspace(
             &prepare_workspace_registration(
@@ -195,7 +196,7 @@ async fn retirement_freeze_prevents_native_worktrees_and_legacy_external_session
         })
         .await
         .unwrap_err();
-    assert!(matches!(native_error, RuntimeError::Conflict(_)));
+    assert!(matches!(native_error, RuntimeError::Unsupported(_)));
     assert_eq!(
         provider.state.lock().await.sessions.len(),
         before_provider_count

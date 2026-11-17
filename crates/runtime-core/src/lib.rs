@@ -26,6 +26,9 @@ mod services_workspace_status_trait;
 mod services_worktree_status_trait;
 pub mod session_compaction;
 pub mod session_control_recovery;
+mod session_transcript;
+mod startup_projection;
+pub mod startup_reattachment;
 pub use session_control_recovery::SessionControlCoordinate;
 pub mod state;
 pub mod team_comms;
@@ -225,3 +228,10 @@ pub use workspace_retirement_review::{
     WorkspaceRetirementReviewResolution,
 };
 pub use worktree_lock::{repository_lifecycle_lock, repository_worktree_lock};
+
+pub use session_transcript::{
+    startup_completion_metadata_event, terminal_session_metadata, terminal_turn_event_payload,
+    StartupTerminalMetadataEvidence,
+};
+pub use startup_projection::startup_projection_refusal;
+pub use startup_reattachment::*;

@@ -213,7 +213,8 @@ fn error_envelope(error: RuntimeError) -> Value {
         RuntimeError::ProviderDispatch { outcome, .. } if *outcome == "unknown" => {
             "outcome_unresolved"
         }
-        RuntimeError::OperationUnresolved { .. }
+        RuntimeError::TurnDispatchNotClaimed { .. }
+        | RuntimeError::OperationUnresolved { .. }
         | RuntimeError::LegacyNativeObligationBlocked { .. } => "outcome_unresolved",
         RuntimeError::LegacyNativeScanIncomplete { .. } => "legacy_native_scan_incomplete",
         RuntimeError::SessionControlUnresolved { code, .. } => code.as_str(),
@@ -226,6 +227,19 @@ fn error_envelope(error: RuntimeError) -> Value {
         "retryable": false,
     }});
     match &error {
+        RuntimeError::TurnDispatchNotClaimed {
+            turn_id,
+            blocking_operation_id,
+        } => {
+            let mut details = json!({"logical_turn_id":turn_id,"native_retry_authorized":false});
+            if let Some(operation_id) = blocking_operation_id {
+                details["blocking_operation_id"] = json!(operation_id);
+                details["blocking_inspection_path"] = json!(
+                    runtime_core::error::canonical_operation_inspection_path(operation_id)
+                );
+            }
+            envelope["error"]["details"] = details;
+        }
         RuntimeError::SessionControlUnresolved {
             coordinate,
             replacement_turn_id,

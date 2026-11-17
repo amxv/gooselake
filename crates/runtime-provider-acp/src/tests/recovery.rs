@@ -2,10 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use runtime_core::{
-    CreateSessionInput, ProviderApprovalResponseRequest, ProviderCreateSessionRequest,
-    ProviderKind, ProviderRegistry, ProviderRuntimeEvent, ProviderSendTurnRequest,
-    ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeProvider, RuntimeSessionManager,
-    RuntimeStore, SendTurnInput,
+    ProviderApprovalResponseRequest, ProviderCreateSessionRequest, ProviderRegistry,
+    ProviderRuntimeEvent, ProviderSendTurnRequest, ProviderTurnStatus, ProviderWaitTurnRequest,
+    RuntimeProvider, RuntimeSessionManager, RuntimeStore, SendTurnInput,
 };
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use serde_json::json;
@@ -14,7 +13,7 @@ use super::support::FakeAgentHarness;
 
 #[tokio::test]
 async fn crashed_acp_prompt_quarantines_admitted_turn_without_replaying() {
-    let harness = FakeAgentHarness::new("normal");
+    let harness = FakeAgentHarness::new("runtime_user_turns");
     let provider = Arc::new(harness.provider());
     let mut registry = ProviderRegistry::new();
     registry.register(provider).unwrap();
@@ -25,16 +24,13 @@ async fn crashed_acp_prompt_quarantines_admitted_turn_without_replaying() {
     store.initialize().await.unwrap();
     let manager =
         Arc::new(RuntimeSessionManager::new(store.clone(), Arc::new(registry), 256).unwrap());
-    let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Acp,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
-        .await
-        .unwrap();
+    let session = super::support::create_runtime_agent(
+        &manager,
+        &store,
+        &temp.path().join("workspace"),
+        "acp-crashed-prompt",
+    )
+    .await;
     let admitted = manager
         .send_turn(
             session.id.as_str(),

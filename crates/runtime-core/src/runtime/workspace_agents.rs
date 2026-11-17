@@ -2,15 +2,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::{
-    ProviderCloseSessionRequest, ProviderKind, ProviderPermissionIntent,
-    ProviderPermissionMutationRequest, ProviderPermissionMutationResult,
-    ProviderResumeSessionPolicyRequest, ProviderSessionLaunchPolicy, ProviderSessionPreferences,
+    ProviderKind, ProviderPermissionIntent, ProviderPermissionMutationRequest,
+    ProviderPermissionMutationResult, ProviderResumeSessionPolicyRequest,
+    ProviderSessionLaunchPolicy, ProviderSessionPreferences,
     ProviderSessionPreferencesMutationRequest, ProviderSessionPreferencesMutationResult,
     ProviderSettingSourcesIntent, RuntimeError, SessionRecord, WorkspaceAgentCreateRequest,
     WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
 };
 
-use super::helpers::now_ms;
 use super::RuntimeSessionManager;
 
 const ALIAS_ADJECTIVES: &[&str] = &[
@@ -60,452 +59,54 @@ impl RuntimeSessionManager {
 
     pub async fn mutate_workspace_agent_permission(
         self: &Arc<Self>,
-        request: ProviderPermissionMutationRequest,
+        _request: ProviderPermissionMutationRequest,
     ) -> Result<ProviderPermissionMutationResult, RuntimeError> {
-        let _mutation = self.session_policy_mutation_lock.lock().await;
-        if let Some(operation_id) = self
-            .store
-            .retiring_operation_for_session(&request.runtime_session_id)?
-        {
-            return Err(RuntimeError::Conflict(format!(
-                "permission policy is frozen by workspace retirement {operation_id}"
-            )));
-        }
-        if self
-            .store
-            .unresolved_session_edit_rerun(&request.runtime_session_id)?
-        {
-            return Err(RuntimeError::Conflict(
-                "cannot change permissions during unresolved native edit-and-rerun".into(),
-            ));
-        }
-        if self
-            .store
-            .unresolved_session_compaction(&request.runtime_session_id)?
-        {
-            return Err(RuntimeError::Conflict(
-                "cannot change permissions while provider compaction is unresolved".into(),
-            ));
-        }
-        self.fence_unresolved_operator_turn_native_effect(&request.runtime_session_id)?;
-        let agent = self
-            .store
-            .get_workspace_agent_by_id(request.runtime_session_id.trim())?
-            .ok_or_else(|| {
-                RuntimeError::NotFound(format!("workspace agent {}", request.runtime_session_id))
-            })?;
-        if agent.lifecycle_state != WorkspaceAgentLifecycleState::Active {
-            return Err(RuntimeError::InvalidState(format!(
-                "workspace agent {} is archived",
-                agent.agent_id
-            )));
-        }
-        if agent.recreation_policy.provider != ProviderKind::Claude {
-            return Err(RuntimeError::Unsupported(
-                "durable mutable permission selection is currently Claude-specific".to_string(),
-            ));
-        }
-        if let Some(expected_revision) = request.expected_revision {
-            if expected_revision != agent.revision {
-                return Err(RuntimeError::Conflict(format!(
-                    "workspace agent {} permission revision conflict: expected {expected_revision}, current {}",
-                    agent.agent_id, agent.revision
-                )));
-            }
-        }
-        validate_claude_mutable_permission(&request.permission_intent)?;
-        let mut session = self.get_session(agent.agent_id.as_str()).await?;
-        if session.active_turn_id.is_some() {
-            return Err(RuntimeError::InvalidState(format!(
-                "workspace agent {} has an active turn",
-                agent.agent_id
-            )));
-        }
-        let provider = self
-            .providers
-            .get(ProviderKind::Claude)
-            .ok_or_else(|| RuntimeError::ProviderNotRegistered("claude".to_string()))?;
-        let previous_intent = agent.recreation_policy.permission_intent.clone();
-        provider
-            .mutate_session_permission(ProviderPermissionMutationRequest {
-                runtime_session_id: agent.agent_id.clone(),
-                expected_revision: None,
-                permission_intent: request.permission_intent.clone(),
-            })
-            .await?;
-
-        let changed_at = now_ms();
-        let mut recreation_policy = agent.recreation_policy.clone();
-        recreation_policy.permission_intent = request.permission_intent.clone();
-        session.permission_mode = request.permission_intent.resolved_mode();
-        session.updated_at = changed_at;
-        let persisted = match self
-            .store
-            .compare_and_set_workspace_agent_recreation_policy(
-                &session,
-                agent.agent_id.as_str(),
-                agent.revision,
-                &recreation_policy,
-                changed_at,
-            ) {
-            Ok(record) => record,
-            Err(error) => {
-                if let Err(rollback_error) = provider
-                    .mutate_session_permission(ProviderPermissionMutationRequest {
-                        runtime_session_id: agent.agent_id.clone(),
-                        expected_revision: None,
-                        permission_intent: previous_intent,
-                    })
-                    .await
-                {
-                    return Err(RuntimeError::InvalidState(format!(
-                        "failed persisting Claude permission mutation ({error}); live rollback also failed: {rollback_error}"
-                    )));
-                }
-                return Err(error);
-            }
-        };
-        self.sessions
-            .write()
-            .await
-            .insert(session.id.clone(), session);
-        Ok(ProviderPermissionMutationResult {
-            revision: persisted.revision,
-            permission_intent: persisted.recreation_policy.permission_intent,
-        })
+        Err(RuntimeError::Unsupported(
+            "raw workspace-agent permission mutation is unsupported; use the journaled operator policy method".into(),
+        ))
     }
 
     pub async fn mutate_workspace_agent_preferences(
         self: &Arc<Self>,
-        request: ProviderSessionPreferencesMutationRequest,
+        _request: ProviderSessionPreferencesMutationRequest,
     ) -> Result<ProviderSessionPreferencesMutationResult, RuntimeError> {
-        let _mutation = self.session_policy_mutation_lock.lock().await;
-        self.mutate_workspace_agent_preferences_locked(request)
-            .await
-    }
-
-    /// The caller must hold `session_policy_mutation_lock`. A turn's selected
-    /// thinking level is a new durable current preference (not merely a
-    /// transport override) and must be committed before logical admission.
-    pub(super) async fn mutate_workspace_agent_preferences_locked(
-        &self,
-        request: ProviderSessionPreferencesMutationRequest,
-    ) -> Result<ProviderSessionPreferencesMutationResult, RuntimeError> {
-        if let Some(operation_id) = self
-            .store
-            .retiring_operation_for_session(&request.runtime_session_id)?
-        {
-            return Err(RuntimeError::Conflict(format!(
-                "session preferences are frozen by workspace retirement {operation_id}"
-            )));
-        }
-        if self
-            .store
-            .unresolved_workspace_agent_rebind(&request.runtime_session_id)?
-        {
-            return Err(RuntimeError::Conflict(
-                "cannot change preferences during unresolved workspace rebind".into(),
-            ));
-        }
-        if self
-            .store
-            .unresolved_session_compaction(&request.runtime_session_id)?
-        {
-            return Err(RuntimeError::Conflict(
-                "cannot change preferences while provider compaction is unresolved".into(),
-            ));
-        }
-        if self
-            .store
-            .unresolved_session_edit_rerun(&request.runtime_session_id)?
-        {
-            return Err(RuntimeError::Conflict(
-                "cannot change preferences during unresolved native edit-and-rerun".into(),
-            ));
-        }
-        self.fence_unresolved_operator_turn_native_effect(&request.runtime_session_id)?;
-        let agent = self
-            .store
-            .get_workspace_agent_by_id(request.runtime_session_id.trim())?
-            .ok_or_else(|| {
-                RuntimeError::NotFound(format!("workspace agent {}", request.runtime_session_id))
-            })?;
-        if agent.lifecycle_state != WorkspaceAgentLifecycleState::Active {
-            return Err(RuntimeError::InvalidState(format!(
-                "workspace agent {} is archived",
-                agent.agent_id
-            )));
-        }
-        if !matches!(
-            agent.recreation_policy.provider,
-            ProviderKind::Claude | ProviderKind::Codex
-        ) {
-            return Err(RuntimeError::Unsupported(
-                "this provider does not support mutable thinking preferences".to_string(),
-            ));
-        }
-        if let Some(expected_revision) = request.expected_revision {
-            if expected_revision != agent.revision {
-                return Err(RuntimeError::Conflict(format!(
-                    "workspace agent {} preference revision conflict: expected {expected_revision}, current {}",
-                    agent.agent_id, agent.revision
-                )));
-            }
-        }
-        let mut session = self.get_session(agent.agent_id.as_str()).await?;
-        if session.active_turn_id.is_some() {
-            return Err(RuntimeError::InvalidState(format!(
-                "workspace agent {} has an active turn",
-                agent.agent_id
-            )));
-        }
-        let provider_kind = agent.recreation_policy.provider;
-        let provider = self.providers.get(provider_kind).ok_or_else(|| {
-            RuntimeError::ProviderNotRegistered(provider_kind.as_str().to_string())
-        })?;
-        let previous_preferences = agent.recreation_policy.current_preferences.clone();
-        provider
-            .mutate_session_preferences(ProviderSessionPreferencesMutationRequest {
-                runtime_session_id: agent.agent_id.clone(),
-                expected_revision: None,
-                current_preferences: request.current_preferences.clone(),
-            })
-            .await?;
-
-        let changed_at = now_ms();
-        let mut recreation_policy = agent.recreation_policy.clone();
-        recreation_policy.current_preferences = request.current_preferences.clone();
-        session.updated_at = changed_at;
-        let persisted = match self
-            .store
-            .compare_and_set_workspace_agent_recreation_policy(
-                &session,
-                agent.agent_id.as_str(),
-                agent.revision,
-                &recreation_policy,
-                changed_at,
-            ) {
-            Ok(record) => record,
-            Err(error) => {
-                if let Err(rollback_error) = provider
-                    .mutate_session_preferences(ProviderSessionPreferencesMutationRequest {
-                        runtime_session_id: agent.agent_id.clone(),
-                        expected_revision: None,
-                        current_preferences: previous_preferences,
-                    })
-                    .await
-                {
-                    return Err(RuntimeError::InvalidState(format!(
-                        "failed persisting {} session preferences ({error}); live rollback also failed: {rollback_error}",
-                        provider_kind.as_str()
-                    )));
-                }
-                return Err(error);
-            }
-        };
-        self.sessions
-            .write()
-            .await
-            .insert(session.id.clone(), session);
-        Ok(ProviderSessionPreferencesMutationResult {
-            revision: persisted.revision,
-            current_preferences: persisted.recreation_policy.current_preferences,
-        })
+        Err(RuntimeError::Unsupported(
+            "raw workspace-agent preference mutation is unsupported; use the journaled operator policy method".into(),
+        ))
     }
 
     pub async fn archive_workspace_agent(
         self: &Arc<Self>,
-        workspace_id: &str,
-        agent_id: &str,
-        reason: Option<&str>,
+        _workspace_id: &str,
+        _agent_id: &str,
+        _reason: Option<&str>,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
-        self.archive_workspace_agent_with_initiator(workspace_id, agent_id, reason, None)
-            .await
+        Err(RuntimeError::Unsupported(
+            "raw workspace-agent archive is unsupported; use journaled operator or scoped member archival".into(),
+        ))
     }
 
     pub async fn archive_workspace_agent_with_initiator(
         self: &Arc<Self>,
-        workspace_id: &str,
-        agent_id: &str,
-        reason: Option<&str>,
-        initiator_agent_id: Option<&str>,
+        _workspace_id: &str,
+        _agent_id: &str,
+        _reason: Option<&str>,
+        _initiator_agent_id: Option<&str>,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
-        let _guard = self.session_policy_mutation_lock.lock().await;
-        if self
-            .store
-            .workspace_retirement_preflight(workspace_id)?
-            .blockers
-            .iter()
-            .any(|blocker| blocker.code == "retirement_in_progress")
-        {
-            return Err(RuntimeError::Conflict(format!(
-                "workspace {workspace_id} retirement is reconciling native sessions"
-            )));
-        }
-        if self.store.unresolved_session_edit_rerun(agent_id)?
-            || self.store.unresolved_session_compaction(agent_id)?
-        {
-            return Err(RuntimeError::Conflict(
-                "agent has unresolved native edit or compaction and cannot be archived".into(),
-            ));
-        }
-        let agent = self.get_workspace_agent(workspace_id, agent_id)?;
-        if self.store.unresolved_workspace_agent_rebind(agent_id)? {
-            return Err(RuntimeError::Conflict(
-                "agent has an unresolved worktree rebind and cannot be archived".into(),
-            ));
-        }
-        if agent.lifecycle_state == WorkspaceAgentLifecycleState::Archived {
-            return Ok(agent);
-        }
-        self.fence_unresolved_operator_turn_native_effect(agent_id)?;
-        let mut session = self.get_session(agent.agent_id.as_str()).await?;
-        if session.active_turn_id.is_some() {
-            return Err(RuntimeError::InvalidState(format!(
-                "workspace agent {} has an active turn",
-                agent.agent_id
-            )));
-        }
-        let changed_at = now_ms();
-        session.status = "closed".to_string();
-        session.closed_at = Some(changed_at);
-        session.updated_at = changed_at;
-        let archived = self.store.set_workspace_agent_lifecycle_with_initiator(
-            &session,
-            agent.agent_id.as_str(),
-            WorkspaceAgentLifecycleState::Archived,
-            normalize_optional(reason).as_deref(),
-            changed_at,
-            initiator_agent_id,
-        )?;
-        self.sessions
-            .write()
-            .await
-            .insert(session.id.clone(), session.clone());
-
-        let provider_kind = ProviderKind::from_str(session.provider.as_str()).ok_or_else(|| {
-            RuntimeError::ProtocolViolation(format!("unknown provider {}", session.provider))
-        })?;
-        if let Some(provider) = self.providers.get(provider_kind) {
-            let _ = provider
-                .close_session(ProviderCloseSessionRequest {
-                    runtime_session_id: session.id,
-                    reason: Some("workspace_agent_archived".to_string()),
-                })
-                .await;
-        }
-        Ok(archived)
+        Err(RuntimeError::Unsupported(
+            "raw workspace-agent archive is unsupported; use journaled operator or scoped member archival".into(),
+        ))
     }
 
     pub async fn restore_workspace_agent(
         self: &Arc<Self>,
-        workspace_id: &str,
-        agent_id: &str,
+        _workspace_id: &str,
+        _agent_id: &str,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
-        let _guard = self.session_policy_mutation_lock.lock().await;
-        if self
-            .store
-            .workspace_retirement_preflight(workspace_id)?
-            .blockers
-            .iter()
-            .any(|blocker| {
-                matches!(
-                    blocker.code.as_str(),
-                    "retirement_in_progress" | "workspace_not_active"
-                )
-            })
-        {
-            return Err(RuntimeError::Conflict(format!(
-                "workspace {workspace_id} is inactive or frozen for retirement"
-            )));
-        }
-        if self.store.unresolved_session_edit_rerun(agent_id)? {
-            return Err(RuntimeError::Conflict(
-                "agent has an unresolved native edit-and-rerun and cannot be restored".into(),
-            ));
-        }
-        let agent = self.get_workspace_agent(workspace_id, agent_id)?;
-        if self.store.unresolved_workspace_agent_rebind(agent_id)? {
-            return Err(RuntimeError::Conflict(
-                "agent has an unresolved worktree rebind and cannot be restored".into(),
-            ));
-        }
-        if agent.lifecycle_state == WorkspaceAgentLifecycleState::Active {
-            return Ok(agent);
-        }
-        self.fence_unresolved_operator_turn_native_effect(agent_id)?;
-        let mut session = self.get_session(agent.agent_id.as_str()).await?;
-        let provider = self
-            .providers
-            .get(agent.recreation_policy.provider)
-            .ok_or_else(|| {
-                RuntimeError::ProviderNotRegistered(
-                    agent.recreation_policy.provider.as_str().to_string(),
-                )
-            })?;
-        let provider_session_ref = agent
-            .provider_session_ref
-            .clone()
-            .or_else(|| session.provider_session_ref.clone())
-            .ok_or_else(|| {
-                RuntimeError::InvalidState(format!(
-                    "workspace agent {} has no provider session identity",
-                    agent.agent_id
-                ))
-            })?;
-        let resumed = provider
-            .resume_session_with_policy(ProviderResumeSessionPolicyRequest {
-                runtime_session_id: agent.agent_id.clone(),
-                provider_session_ref,
-                canonical_provider_session_ref: agent
-                    .canonical_provider_session_ref
-                    .clone()
-                    .or_else(|| session.canonical_provider_session_ref.clone()),
-                cwd: Some(agent.recreation_policy.authoritative_cwd.clone()),
-                model: agent.recreation_policy.model.clone(),
-                launch_policy: agent.recreation_policy.launch_policy(),
-                current_preferences: agent.recreation_policy.current_preferences.clone(),
-                metadata: Some(agent.metadata.clone()),
-            })
-            .await?;
-
-        let changed_at = now_ms();
-        session.provider = agent.recreation_policy.provider.as_str().to_string();
-        session.provider_session_ref = Some(resumed.provider_session_ref.clone());
-        session.canonical_provider_session_ref = resumed.canonical_provider_session_ref.clone();
-        session.cwd = Some(agent.recreation_policy.authoritative_cwd.clone());
-        session.model = agent.recreation_policy.model.clone();
-        session.permission_mode = agent.recreation_policy.permission_intent.resolved_mode();
-        session.system_prompt = agent.recreation_policy.system_prompt.clone();
-        session.status = "ready".to_string();
-        session.closed_at = None;
-        session.failure_code = None;
-        session.failure_message = None;
-        session.updated_at = changed_at;
-
-        let restored = match self.store.set_workspace_agent_lifecycle(
-            &session,
-            agent.agent_id.as_str(),
-            WorkspaceAgentLifecycleState::Active,
-            None,
-            changed_at,
-        ) {
-            Ok(record) => record,
-            Err(error) => {
-                let _ = provider
-                    .close_session(ProviderCloseSessionRequest {
-                        runtime_session_id: agent.agent_id,
-                        reason: Some("workspace_agent_restore_persist_failed".to_string()),
-                    })
-                    .await;
-                return Err(error);
-            }
-        };
-        self.sessions
-            .write()
-            .await
-            .insert(session.id.clone(), session);
-        Ok(restored)
+        Err(RuntimeError::Unsupported(
+            "raw workspace-agent restore is unsupported; use the journaled operator restore method"
+                .into(),
+        ))
     }
 
     pub(super) fn provider_resume_request_for_session(

@@ -324,6 +324,11 @@ impl SqliteRuntimeRepository {
         )?;
 
         let members = interrupt_roster(&tx, &command.workspace_id)?;
+        for (agent_id, turn_id) in &members {
+            if turn_id.is_some() {
+                crate::repository_startup_reattachment::guard_resume_claim(&tx, agent_id)?;
+            }
+        }
         let native_targets = members
             .iter()
             .filter_map(|(agent_id, turn_id)| {

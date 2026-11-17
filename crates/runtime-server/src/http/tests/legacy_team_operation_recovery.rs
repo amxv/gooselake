@@ -243,16 +243,12 @@ async fn legacy_operation_inspection_never_clears_review_from_weak_terminal_stag
 
 #[tokio::test]
 async fn legacy_operation_inspection_requires_original_typed_completion_not_mutable_roster() {
-    let (router, token, temp, provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy::default()).await;
-    let (status, source) = legacy_session_fixture_json(
-        &runtime,
-        serde_json::json!({
-            "provider":"codex","model":"test-model","cwd":temp.path(),
-        }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
+    let (router, token, temp, provider, _runtime, app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            vec![json!({"provider":"codex","model":"test-model","cwd":root})]
+        })
+        .await;
+    let source = historical_session_json(&history[0]);
     let source = source["id"].as_str().unwrap();
     let team = app
         .services

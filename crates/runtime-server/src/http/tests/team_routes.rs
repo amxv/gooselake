@@ -4,11 +4,14 @@ mod message_journal_proof;
 
 #[tokio::test]
 async fn team_routes_lifecycle_and_controls() {
-    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
-
-    let leader_session_id = create_test_session(&runtime, "phase5").await;
-    let member_one_session_id = create_test_session(&runtime, "phase5").await;
-    let member_two_session_id = create_test_session(&runtime, "phase5").await;
+    let (router, token, temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":codex_test_model(),"metadata":{"suite":"phase5"}}); 3]
+        })
+        .await;
+    let leader_session_id = history[0].id.clone();
+    let member_one_session_id = history[1].id.clone();
+    let member_two_session_id = history[2].id.clone();
 
     let create_team_response = router
         .clone()
@@ -412,11 +415,14 @@ async fn team_routes_lifecycle_and_controls() {
 
 #[tokio::test]
 async fn team_and_global_events_stream_replay_then_live() {
-    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
-
-    let lead_session_id = create_test_session(&runtime, "phase5").await;
-    let member_one_session_id = create_test_session(&runtime, "phase5").await;
-    let member_two_session_id = create_test_session(&runtime, "phase5").await;
+    let (router, token, _temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":codex_test_model(),"metadata":{"suite":"phase5"}}); 3]
+        })
+        .await;
+    let lead_session_id = history[0].id.clone();
+    let member_one_session_id = history[1].id.clone();
+    let member_two_session_id = history[2].id.clone();
 
     let create_team_response = router
         .clone()
@@ -648,10 +654,13 @@ async fn team_and_global_events_stream_replay_then_live() {
 
 #[tokio::test]
 async fn team_routes_direct_and_broadcast_create_deliveries_and_snapshot() {
-    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
-
-    let leader_session_id = create_test_session(&runtime, "phase5").await;
-    let teammate_session_id = create_test_session(&runtime, "phase5").await;
+    let (router, token, _temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":codex_test_model(),"metadata":{"suite":"phase5"}}); 2]
+        })
+        .await;
+    let leader_session_id = history[0].id.clone();
+    let teammate_session_id = history[1].id.clone();
 
     let create_team_response = router
         .clone()

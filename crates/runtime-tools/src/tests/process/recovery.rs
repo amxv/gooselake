@@ -382,8 +382,11 @@ async fn completion_turn_is_exactly_once_across_post_admission_restart_boundary(
         database_path: temp_dir.path().join("runtime.sqlite3"),
     }));
     store.initialize().await.expect("initialize store");
-    let (runtime, _team_comms) = build_runtime_and_team_comms(store.clone()).await;
-    let session = create_test_session(&runtime, temp_dir.path().to_string_lossy().as_ref()).await;
+    let session =
+        historical_test_session("sess_process_completion", temp_dir.path().to_str().unwrap());
+    let (runtime, _team_comms) =
+        build_runtime_and_team_comms_with_history(store.clone(), std::slice::from_ref(&session))
+            .await;
     let config = process_config(&temp_dir, 1, 1_000_000);
 
     let manager =
@@ -473,11 +476,16 @@ async fn completion_retry_survives_proven_provider_unavailability_without_duplic
     registry
         .register(provider.clone())
         .expect("register flaky provider");
+    let mut session =
+        historical_test_session("sess_flaky_completion", temp_dir.path().to_str().unwrap());
+    // This provider is stateless; preserve its fixture reference spelling.
+    session.provider_session_ref = Some(format!("flaky:{}", session.id));
+    assert!(store.get_persisted_session(&session.id).unwrap().is_none());
+    store.upsert_session(&session).unwrap();
     let runtime = Arc::new(
         RuntimeSessionManager::new(store.clone(), Arc::new(registry), 512)
             .expect("runtime manager"),
     );
-    let session = create_test_session(&runtime, temp_dir.path().to_string_lossy().as_ref()).await;
     let manager = RuntimeProcessManager::new_with_runtime(
         store.clone(),
         runtime.clone(),

@@ -17,6 +17,51 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::*;
 
+#[async_trait::async_trait]
+trait JournaledWorkspaceFixture {
+    async fn create_workspace_agent_journaled_fixture(
+        &self,
+        workspace_id: &str,
+        request: runtime_core::WorkspaceAgentCreateRequest,
+        actor_id: &str,
+    ) -> Result<runtime_core::WorkspaceAgentRecord, RuntimeError>;
+}
+
+#[async_trait::async_trait]
+impl JournaledWorkspaceFixture for Arc<RuntimeSessionManager> {
+    async fn create_workspace_agent_journaled_fixture(
+        &self,
+        workspace_id: &str,
+        request: runtime_core::WorkspaceAgentCreateRequest,
+        actor_id: &str,
+    ) -> Result<runtime_core::WorkspaceAgentRecord, RuntimeError> {
+        // Each setup call owns a distinct durable first-attempt key. This
+        // fixture never substitutes a synthetic native receipt or DB roster.
+        static NEXT_KEY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let key = format!(
+            "fixture-workspace-create-{}",
+            NEXT_KEY.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
+        let (admission, command) = self
+            .admit_workspace_agent_create_operator(
+                workspace_id,
+                &request,
+                runtime_core::OperationActor::operator(actor_id),
+                key,
+            )
+            .await?;
+        match command {
+            Some(command) => self
+                .execute_workspace_agent_create_operator(command, request)
+                .await
+                .map(|(agent, _)| agent),
+            None => self
+                .workspace_agent_create_replay_result(admission)
+                .map(|(agent, _)| agent),
+        }
+    }
+}
+
 mod canonical_team_preflight;
 mod gateway_basics;
 mod legacy_spawn_history_validation;
@@ -172,13 +217,61 @@ impl RuntimeProvider for WorktreeTestProvider {
     }
 }
 
+/// Explicit stored history for tool fixtures. No operation receipt, event or
+/// native provider call is synthesized by this constructor.
+fn historical_test_session(id: &str, cwd: &str) -> SessionRecord {
+    SessionRecord {
+        id: id.into(),
+        provider: "codex".into(),
+        status: "ready".into(),
+        cwd: Some(cwd.into()),
+        model: Some("test-model".into()),
+        permission_mode: None,
+        system_prompt: None,
+        metadata: json!({"suite":"runtime_tools_phase6"}),
+        provider_session_ref: Some(format!("test-thread-{id}")),
+        canonical_provider_session_ref: None,
+        active_turn_id: None,
+        worktree_id: None,
+        created_at: 100,
+        updated_at: 100,
+        closed_at: None,
+        failure_code: None,
+        failure_message: None,
+    }
+}
+
+async fn persist_test_history(
+    store: &SqliteRuntimeStore,
+    provider: &WorktreeTestProvider,
+    session: &SessionRecord,
+) {
+    assert_eq!(session.provider, "codex");
+    assert!(store.get_persisted_session(&session.id).unwrap().is_none());
+    store.upsert_session(session).unwrap();
+    let previous = provider.state.lock().await.sessions.insert(
+        session.id.clone(),
+        session.provider_session_ref.clone().unwrap(),
+    );
+    assert!(previous.is_none());
+}
+
 async fn build_runtime_and_team_comms(
     store: Arc<SqliteRuntimeStore>,
 ) -> (Arc<RuntimeSessionManager>, Arc<RuntimeTeamCommsService>) {
+    build_runtime_and_team_comms_with_history(store, &[]).await
+}
+
+async fn build_runtime_and_team_comms_with_history(
+    store: Arc<SqliteRuntimeStore>,
+    history: &[SessionRecord],
+) -> (Arc<RuntimeSessionManager>, Arc<RuntimeTeamCommsService>) {
+    let provider = Arc::new(WorktreeTestProvider::default());
+    for session in history {
+        persist_test_history(store.as_ref(), provider.as_ref(), session).await;
+    }
     let mut registry = ProviderRegistry::new();
-    registry
-        .register(Arc::new(WorktreeTestProvider::default()))
-        .expect("register test provider");
+    registry.register(provider).expect("register test provider");
     let runtime = Arc::new(
         RuntimeSessionManager::new(store.clone(), Arc::new(registry), 512).expect("runtime"),
     );
@@ -192,19 +285,6 @@ async fn build_runtime_and_team_comms(
     )
     .expect("team comms");
     (runtime, team_comms)
-}
-
-async fn create_test_session(runtime: &RuntimeSessionManager, cwd: &str) -> SessionRecord {
-    runtime
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: Some("test-model".to_string()),
-            cwd: Some(cwd.to_string()),
-            permission_mode: None,
-            metadata: Some(serde_json::json!({ "suite": "runtime_tools_phase6" })),
-        })
-        .await
-        .expect("create session")
 }
 
 async fn build_test_tool_gateway(policy: TeamMcpPolicy) -> RuntimeToolGateway {
@@ -247,15 +327,6 @@ async fn build_test_tool_gateway(policy: TeamMcpPolicy) -> RuntimeToolGateway {
     })
 }
 
-async fn build_team_gateway_fixture() -> (
-    RuntimeToolGateway,
-    Arc<RuntimeSessionManager>,
-    Arc<RuntimeTeamCommsService>,
-    tempfile::TempDir,
-) {
-    build_team_gateway_fixture_with_policy(TeamMcpPolicy::default()).await
-}
-
 async fn build_team_gateway_fixture_with_policy(
     team_policy: TeamMcpPolicy,
 ) -> (
@@ -264,12 +335,35 @@ async fn build_team_gateway_fixture_with_policy(
     Arc<RuntimeTeamCommsService>,
     tempfile::TempDir,
 ) {
+    let (gateway, runtime, comms, temp, _history) =
+        build_team_gateway_fixture_with_history(team_policy, 0).await;
+    (gateway, runtime, comms, temp)
+}
+
+async fn build_team_gateway_fixture_with_history(
+    team_policy: TeamMcpPolicy,
+    historical_count: usize,
+) -> (
+    RuntimeToolGateway,
+    Arc<RuntimeSessionManager>,
+    Arc<RuntimeTeamCommsService>,
+    tempfile::TempDir,
+    Vec<SessionRecord>,
+) {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp_dir.path().join("runtime.sqlite3"),
     }));
     store.initialize().await.expect("initialize store");
-    let (runtime, team_comms) = build_runtime_and_team_comms(store.clone()).await;
+    let history: Vec<_> = (0..historical_count)
+        .map(|index| {
+            let cwd = temp_dir.path().join(format!("session-{index}"));
+            std::fs::create_dir_all(&cwd).expect("create session cwd");
+            historical_test_session(&format!("sess_tool_history_{index}"), cwd.to_str().unwrap())
+        })
+        .collect();
+    let (runtime, team_comms) =
+        build_runtime_and_team_comms_with_history(store.clone(), &history).await;
     let process_manager = RuntimeProcessManager::new(
         store.clone(),
         ProcessManagerConfig {
@@ -305,21 +399,13 @@ async fn build_team_gateway_fixture_with_policy(
         team_policy,
         team_model_presets: crate::gateway::test_default_team_model_presets(),
     });
-    (gateway, runtime, team_comms, temp_dir)
+    (gateway, runtime, team_comms, temp_dir, history)
 }
 
-async fn create_team_gateway_sessions(
-    runtime: &RuntimeSessionManager,
+async fn create_team_gateway_from_history(
     team_comms: &RuntimeTeamCommsService,
-    temp_dir: &tempfile::TempDir,
-    member_count: usize,
-) -> (Vec<SessionRecord>, String) {
-    let mut sessions = Vec::new();
-    for idx in 0..member_count {
-        let cwd = temp_dir.path().join(format!("session-{idx}"));
-        std::fs::create_dir_all(&cwd).expect("create session cwd");
-        sessions.push(create_test_session(runtime, cwd.to_string_lossy().as_ref()).await);
-    }
+    sessions: &[SessionRecord],
+) -> String {
     let lead_id = sessions.first().expect("lead session").id.clone();
     let member_ids = sessions
         .iter()
@@ -337,5 +423,5 @@ async fn create_team_gateway_sessions(
         .expect("create team")
         .team
         .id;
-    (sessions, team_id)
+    team_id
 }

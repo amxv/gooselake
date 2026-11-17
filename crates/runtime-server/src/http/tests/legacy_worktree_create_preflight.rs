@@ -26,8 +26,16 @@ async fn call_legacy_create(
 #[tokio::test]
 async fn legacy_create_existing_retained_checkout_scopes_identity_and_claims_with_corrupt_foreign_session(
 ) {
-    let (router, token, temp, provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, _runtime, app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            vec![
+                json!({
+                    "provider":"codex", "model":"test-model", "cwd":root.join("repo"),
+                });
+                2
+            ]
+        })
+        .await;
     let repo = temp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     std::fs::write(repo.join("README.md"), "disposable Git workspace\n").unwrap();
@@ -66,11 +74,7 @@ async fn legacy_create_existing_retained_checkout_scopes_identity_and_claims_wit
         assert!(output.status.success());
         output.stdout
     };
-    let session_body = serde_json::json!({
-        "provider":"codex", "model":"test-model", "cwd":repo,
-    });
-    let (status, lead) = legacy_session_fixture_json(&runtime, session_body.clone()).await;
-    assert_eq!(status, StatusCode::OK, "{lead}");
+    let lead = historical_session_json(&history[0]);
     let lead_id = lead["id"].as_str().unwrap();
     let (status, team) = call_legacy_create(
         &router,
@@ -101,8 +105,7 @@ async fn legacy_create_existing_retained_checkout_scopes_identity_and_claims_wit
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{claim}");
-    let (status, foreign) = legacy_session_fixture_json(&runtime, session_body).await;
-    assert_eq!(status, StatusCode::OK, "{foreign}");
+    let foreign = historical_session_json(&history[1]);
     let foreign_id = foreign["id"].as_str().unwrap();
     let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
     assert_eq!(

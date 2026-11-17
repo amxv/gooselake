@@ -75,8 +75,12 @@ pub(super) async fn observed_sse_ids(response: Response, expected: &[i64]) -> St
 
 #[tokio::test]
 async fn global_session_and_team_sse_follow_durable_commits_without_duplicate_replay() {
-    let (router, token, temp, runtime) = build_test_router_with_runtime().await;
-    let session_id = create_test_session(&runtime, "durable-sse").await;
+    let (router, token, temp, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":codex_test_model(),"metadata":{"suite":"durable-sse"}})]
+        })
+        .await;
+    let session_id = history[0].id.clone();
     let team_response = router
         .clone()
         .oneshot(
@@ -112,8 +116,8 @@ async fn global_session_and_team_sse_follow_durable_commits_without_duplicate_re
         .list_runtime_events(Some((RuntimeEventScope::Session, &session_id)), None, 100)
         .unwrap()
         .last()
-        .unwrap()
-        .seq;
+        .map(|event| event.seq)
+        .unwrap_or(0);
     let team_cursor = repository
         .list_runtime_events(Some((RuntimeEventScope::Team, &team_id)), None, 100)
         .unwrap()
@@ -232,9 +236,20 @@ async fn committed_event_during_replay_handoff_is_delivered_exactly_once() {
 
 #[tokio::test]
 async fn process_sse_preserves_owner_visibility_and_catches_commits_during_handoff() {
-    let (router, token, temp, runtime) = build_test_router_with_runtime().await;
-    let owner = create_test_session(&runtime, "process-sse-owner").await;
-    let other = create_test_session(&runtime, "process-sse-other").await;
+    let (router, token, temp, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            ["process-sse-owner", "process-sse-other"]
+                .into_iter()
+                .map(|suite| {
+                    json!({
+                        "provider":"codex","model":codex_test_model(),"metadata":{"suite":suite},
+                    })
+                })
+                .collect()
+        })
+        .await;
+    let owner = history[0].id.clone();
+    let other = history[1].id.clone();
     let start = router
         .clone()
         .oneshot(

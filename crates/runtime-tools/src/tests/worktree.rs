@@ -198,8 +198,10 @@ async fn healthy_worktree_startup_does_not_rewrite_unchanged_authority_or_claims
         database_path: database_path.clone(),
     }));
     store.initialize().await.unwrap();
-    let (runtime, comms) = build_runtime_and_team_comms(store.clone()).await;
-    let session = create_test_session(runtime.as_ref(), temp.path().to_str().unwrap()).await;
+    let session = historical_test_session("sess_worktree_history", temp.path().to_str().unwrap());
+    let (runtime, comms) =
+        build_runtime_and_team_comms_with_history(store.clone(), std::slice::from_ref(&session))
+            .await;
 
     let worktree = ManagedWorktreeRecord {
         id: "wt_clean_startup".into(),

@@ -3,9 +3,9 @@ use runtime_core::ToolGateway;
 
 #[tokio::test]
 async fn team_status_gateway_invoke_returns_member_rows() {
-    let (gateway, runtime, team_comms, temp_dir) = build_team_gateway_fixture().await;
-    let (sessions, team_id) =
-        create_team_gateway_sessions(&runtime, &team_comms, &temp_dir, 2).await;
+    let (gateway, runtime, team_comms, _temp_dir, sessions) =
+        build_team_gateway_fixture_with_history(TeamMcpPolicy::default(), 2).await;
+    let team_id = create_team_gateway_from_history(&team_comms, &sessions).await;
     runtime
         .send_turn(
             sessions[0].id.as_str(),

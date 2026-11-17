@@ -2,7 +2,7 @@ use super::workspace_retirement_support::*;
 use super::*;
 
 #[tokio::test]
-async fn legacy_native_create_preflight_uses_worktree_paths_without_unrelated_session_hydration() {
+async fn legacy_direct_create_refuses_managed_checkout_paths_without_decoding_foreign_history() {
     let temp = tempfile::tempdir().unwrap();
     let active_root = temp.path().join("active-workspace");
     let retired_root = temp.path().join("retired-workspace");
@@ -63,44 +63,31 @@ async fn legacy_native_create_preflight_uses_worktree_paths_without_unrelated_se
     assert!(fixture.store.hydrate_runtime_state().is_err());
     let native_before = provider.native_session_count().await;
 
-    // A legacy session created inside a managed checkout still guards its
-    // owning workspace, but foreign corrupt sessions cannot mask the lookup.
-    let (status, response) = legacy_session_fixture_json(
-        &fixture.runtime,
-        serde_json::json!({
-            "provider":"codex",
-            "cwd":active_checkout,
-            "permission_mode":null,
-            "metadata":{}
-        }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{response}");
-    assert_eq!(provider.native_session_count().await, native_before + 1);
-    let session_id = response["id"].as_str().expect("legacy session ID");
-    assert_eq!(
-        fixture.runtime.get_session(session_id).await.unwrap().cwd,
-        Some(active_checkout.to_string_lossy().into())
-    );
-
-    // The retired workspace must remain fenced even though its checkout is
-    // outside the registered workspace canonical root. No native retry.
-    let (blocked, body) = legacy_session_fixture_json(
-        &fixture.runtime,
-        serde_json::json!({
-            "provider":"codex",
-            "cwd":retired_checkout,
-            "permission_mode":null,
-            "metadata":{}
-        }),
-    )
-    .await;
-    assert_eq!(blocked, StatusCode::CONFLICT, "{body}");
-    assert_eq!(
-        provider.native_session_count().await,
-        native_before + 1,
-        "retired checkout must fail before any further native session creation"
-    );
+    let events_before: i64 = db
+        .query_row("SELECT COUNT(*) FROM runtime_events", [], |row| row.get(0))
+        .unwrap();
+    // Both managed checkout identities remain inspectable history; neither
+    // can authorize the unjournaled direct native creation entry point.
+    for cwd in [&active_checkout, &retired_checkout] {
+        let error = fixture
+            .runtime
+            .create_session(
+                serde_json::from_value(json!({
+                    "provider":"codex", "cwd":cwd, "permission_mode":null, "metadata":{},
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(&error, RuntimeError::Unsupported(_)));
+        let response = ApiError::from(error).into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(provider.native_session_count().await, native_before);
+    }
+    let events_after: i64 = db
+        .query_row("SELECT COUNT(*) FROM runtime_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(events_after, events_before);
     assert!(fixture.store.hydrate_runtime_state().is_err());
     assert_eq!(
         db.query_row(
@@ -109,7 +96,7 @@ async fn legacy_native_create_preflight_uses_worktree_paths_without_unrelated_se
             |r| r.get::<_, i64>(0)
         )
         .unwrap(),
-        1
+        0
     );
     assert_eq!(
         active.lifecycle_state,

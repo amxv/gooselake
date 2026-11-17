@@ -2,7 +2,11 @@ use super::*;
 
 #[tokio::test]
 async fn agent_messages_route_cross_workspace_direct_and_snapshot_workspace_broadcasts() {
-    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model"})]
+        })
+        .await;
     let root_a = temp_dir.path().join("workspace-a");
     let root_b = temp_dir.path().join("workspace-b");
     std::fs::create_dir_all(&root_a).expect("root a");
@@ -185,7 +189,7 @@ async fn agent_messages_route_cross_workspace_direct_and_snapshot_workspace_broa
         .recipient_agent_ids
         .contains(&late.agent_id));
 
-    let legacy = create_legacy_session(&runtime).await;
+    let legacy = &history[0];
     let legacy_direct = create_message(
         &router,
         &token,
@@ -853,20 +857,6 @@ async fn create_agent_with_provider_and_permission(
     ).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
-}
-
-async fn create_legacy_session(
-    runtime: &Arc<RuntimeSessionManager>,
-) -> runtime_core::SessionRecord {
-    runtime
-        .create_session(
-            serde_json::from_value(serde_json::json!({
-                "provider":"codex","model":"test-model"
-            }))
-            .unwrap(),
-        )
-        .await
-        .expect("seed unowned legacy session")
 }
 
 pub(super) async fn create_message(

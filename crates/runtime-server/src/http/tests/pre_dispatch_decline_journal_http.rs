@@ -6,8 +6,11 @@ use std::sync::atomic::Ordering;
 /// inert provider that must never see a denied turn. No live credentials.
 #[tokio::test]
 async fn http_local_denial_rolls_back_late_event_fault_then_retries_without_native_send() {
-    let (router, token, temp, provider, runtime) =
-        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+        })
+        .await;
     let call = |method: &str, path: &str, body: Option<serde_json::Value>| {
         let router = router.clone();
         let token = token.clone();
@@ -18,12 +21,7 @@ async fn http_local_denial_rolls_back_late_event_fault_then_retries_without_nati
                 .await
         }
     };
-    let (status, created) = legacy_session_fixture_json(
-        &runtime,
-        serde_json::json!({"provider":"codex","model":"test-model","metadata":{}}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
+    let created = historical_session_json(&history[0]);
     let session_id = created["id"].as_str().unwrap();
     let (status, admitted) = call(
         "POST",

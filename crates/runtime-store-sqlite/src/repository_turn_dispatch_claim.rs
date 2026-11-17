@@ -34,9 +34,10 @@ impl SqliteRuntimeRepository {
         if current.dispatch_state != TurnDispatchState::Pending
             || current.provider_native_turn_id.is_some()
         {
-            return Err(RuntimeError::Conflict(
-                "provider dispatch was already claimed or settled; inspect the original turn without redispatching".into(),
-            ));
+            return Err(RuntimeError::TurnDispatchNotClaimed {
+                turn_id: requested.turn_id.clone(),
+                blocking_operation_id: None,
+            });
         }
         let mut expected = current;
         expected.dispatch_state = TurnDispatchState::Dispatching;
@@ -52,6 +53,16 @@ impl SqliteRuntimeRepository {
             &tx,
             &requested.session_id,
         )?;
+        if let Some(claim) = crate::repository_startup_reattachment::claim_for(
+            &tx,
+            crate::repository_startup_reattachment::RESUME_CLAIM,
+            &requested.session_id,
+        )? {
+            return Err(RuntimeError::TurnDispatchNotClaimed {
+                turn_id: requested.turn_id.clone(),
+                blocking_operation_id: Some(claim.owner_operation_id),
+            });
+        }
         let changed = tx.execute(
             "UPDATE turn_admissions SET dispatch_state='dispatching',dispatch_error_json=NULL,updated_at=?2
              WHERE turn_id=?1 AND session_id=?3 AND dispatch_state='pending'
@@ -59,9 +70,10 @@ impl SqliteRuntimeRepository {
             params![requested.turn_id, requested.updated_at, requested.session_id],
         ).map_err(|error| db_error("failed claiming first provider turn dispatch", error))?;
         if changed != 1 {
-            return Err(RuntimeError::Conflict(
-                "pending provider turn dispatch authority changed".into(),
-            ));
+            return Err(RuntimeError::TurnDispatchNotClaimed {
+                turn_id: requested.turn_id.clone(),
+                blocking_operation_id: None,
+            });
         }
         tx.commit()
             .map_err(|error| db_error("failed committing first turn dispatch claim", error))

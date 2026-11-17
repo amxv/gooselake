@@ -368,7 +368,7 @@ async fn process_visibility_is_workspace_scoped_but_model_cancellation_remains_o
     let workspace_b = register_workspace(&store, &workspace_b_root, "Workspace B");
     let (runtime, _team_comms) = build_runtime_and_team_comms(store.clone()).await;
     let owner = runtime
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace_a.workspace_id,
             workspace_agent_request(&workspace_a_root, "Owner"),
             "operator",
@@ -376,7 +376,7 @@ async fn process_visibility_is_workspace_scoped_but_model_cancellation_remains_o
         .await
         .expect("create owner agent");
     let peer = runtime
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace_a.workspace_id,
             workspace_agent_request(&workspace_a_root, "Peer"),
             "operator",
@@ -384,7 +384,7 @@ async fn process_visibility_is_workspace_scoped_but_model_cancellation_remains_o
         .await
         .expect("create peer agent");
     let outsider = runtime
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace_b.workspace_id,
             workspace_agent_request(&workspace_b_root, "Outsider"),
             "operator",

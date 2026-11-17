@@ -21,21 +21,17 @@ async fn invoke(router: &Router, token: Option<&str>, body: Value) -> (StatusCod
 
 #[tokio::test]
 async fn legacy_spawn_mcp_inspection_survives_closed_caller_and_disabled_current_policy() {
-    let (_initial_router, token, temp, provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy {
-            enabled: false,
-            non_lead_can_add_members: false,
-            non_lead_can_remove_members: false,
-        })
+    let (_initial_router, token, temp, provider, _runtime, app, history) =
+        build_test_router_with_history(
+            TeamMcpPolicy {
+                enabled: false,
+                non_lead_can_add_members: false,
+                non_lead_can_remove_members: false,
+            },
+            |root| vec![json!({"provider":"codex","model":"test-model","cwd":root})],
+        )
         .await;
-    let (status, source) = legacy_session_fixture_json(
-        &runtime,
-        json!({
-            "provider":"codex", "model":"test-model", "cwd":temp.path(),
-        }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
+    let source = historical_session_json(&history[0]);
     let source = source["id"].as_str().unwrap();
     let team = app
         .services
@@ -59,9 +55,13 @@ async fn legacy_spawn_mcp_inspection_survives_closed_caller_and_disabled_current
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{saved}");
-    provider.allow_lifecycle_close_for_test();
-    runtime.close_session(source, None).await.unwrap();
-    assert_eq!(runtime.get_session(source).await.unwrap().status, "closed");
+    // This test owns a closed historical caller; no current native close is
+    // claimed. Reopen every reader below after persisting that history.
+    let mut closed_source = history[0].clone();
+    closed_source.status = "closed".into();
+    closed_source.closed_at = Some(200);
+    closed_source.updated_at = 200;
+    app.services.store.upsert_session(&closed_source).unwrap();
     let (router, reopened_runtime, _reopened_app) = reopen_test_router_with_services(
         &app,
         temp.path(),
@@ -132,21 +132,17 @@ async fn legacy_spawn_mcp_inspection_survives_closed_caller_and_disabled_current
 
 #[tokio::test]
 async fn legacy_spawn_mcp_inspection_preserves_original_coordinate_after_preset_drift_or_removal() {
-    let (_initial_router, token, temp, provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy {
-            enabled: false,
-            non_lead_can_add_members: false,
-            non_lead_can_remove_members: false,
-        })
+    let (_initial_router, token, temp, provider, _runtime, app, history) =
+        build_test_router_with_history(
+            TeamMcpPolicy {
+                enabled: false,
+                non_lead_can_add_members: false,
+                non_lead_can_remove_members: false,
+            },
+            |root| vec![json!({"provider":"codex","model":"test-model","cwd":root})],
+        )
         .await;
-    let (status, source) = legacy_session_fixture_json(
-        &runtime,
-        json!({
-            "provider":"codex", "model":"test-model", "cwd":temp.path(),
-        }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
+    let source = historical_session_json(&history[0]);
     let source = source["id"].as_str().unwrap();
     let team = app
         .services
@@ -180,8 +176,13 @@ async fn legacy_spawn_mcp_inspection_preserves_original_coordinate_after_preset_
         assert_eq!(status, StatusCode::OK, "{saved}");
         originals.push((id, name, saved));
     }
-    provider.allow_lifecycle_close_for_test();
-    runtime.close_session(source, None).await.unwrap();
+    // This test owns a closed historical caller; no current native close is
+    // claimed. Reopen every reader below after persisting that history.
+    let mut closed_source = history[0].clone();
+    closed_source.status = "closed".into();
+    closed_source.closed_at = Some(200);
+    closed_source.updated_at = 200;
+    app.services.store.upsert_session(&closed_source).unwrap();
     let (router, reopened_runtime, _reopened_app) = reopen_test_router_with_services(
         &app,
         temp.path(),

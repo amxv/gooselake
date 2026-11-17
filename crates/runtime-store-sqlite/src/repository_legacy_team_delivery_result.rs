@@ -73,7 +73,7 @@ fn validate(
     Ok(())
 }
 
-fn verify_native_turn_admission(
+pub(crate) fn verify_native_turn_admission(
     tx: &Transaction<'_>,
     before: &TeamDeliveryRecord,
     turn_id: &str,
@@ -123,6 +123,41 @@ fn verify_native_turn_admission(
     if !admitted || elsewhere {
         return Err(RuntimeError::Conflict(
             "legacy delivery native turn has no matching unique committed runtime admission".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn require_claim_receipt(
+    tx: &Transaction<'_>,
+    before: &TeamDeliveryRecord,
+) -> Result<(), RuntimeError> {
+    let claim_id = format!(
+        "evt_legacy_delivery_{}_injecting_{}",
+        before.id, before.updated_at
+    );
+    let claim = fetch_runtime_event_by_event_id(tx, &claim_id)?
+        .ok_or_else(|| RuntimeError::Conflict("unproven native injection claim".into()))?;
+    if claim.kind != "team_delivery.injecting"
+        || claim.criticality != RuntimeEventCriticality::Critical
+        || claim.scope != RuntimeEventScope::Team
+        || claim.scope_id != before.team_id
+        || claim.team_id.as_deref() != Some(before.team_id.as_str())
+        || claim.session_id.as_deref() != Some(before.recipient_agent_id.as_str())
+        || claim.turn_id.is_some()
+        || claim.provider.is_some()
+        || claim.provider_seq.is_some()
+        || claim.created_at != before.updated_at
+        || claim.payload["delivery"] != serde_json::json!(before)
+        || !claim.payload["trigger"].as_str().is_some_and(|trigger| {
+            matches!(
+                trigger,
+                "queue" | "retry" | "turncompletedboundary" | "startuprecovery"
+            )
+        })
+    {
+        return Err(RuntimeError::Conflict(
+            "native injecting Critical claim differs from durable generation".into(),
         ));
     }
     Ok(())
@@ -207,34 +242,7 @@ impl SqliteRuntimeRepository {
             .into_iter()
             .find(|row| row.id == before.id)
             .ok_or_else(|| RuntimeError::Conflict("native legacy delivery row vanished".into()))?;
-        let claim_id = format!(
-            "evt_legacy_delivery_{}_injecting_{}",
-            before.id, before.updated_at
-        );
-        let claim = fetch_runtime_event_by_event_id(&tx, &claim_id)?
-            .ok_or_else(|| RuntimeError::Conflict("unproven native injection claim".into()))?;
-        if claim.kind != "team_delivery.injecting"
-            || claim.criticality != RuntimeEventCriticality::Critical
-            || claim.scope != RuntimeEventScope::Team
-            || claim.scope_id != before.team_id
-            || claim.team_id.as_deref() != Some(before.team_id.as_str())
-            || claim.session_id.as_deref() != Some(before.recipient_agent_id.as_str())
-            || claim.turn_id.is_some()
-            || claim.provider.is_some()
-            || claim.provider_seq.is_some()
-            || claim.created_at != before.updated_at
-            || claim.payload["delivery"] != serde_json::json!(before)
-            || !claim.payload["trigger"].as_str().is_some_and(|trigger| {
-                matches!(
-                    trigger,
-                    "queue" | "retry" | "turncompletedboundary" | "startuprecovery"
-                )
-            })
-        {
-            return Err(RuntimeError::Conflict(
-                "native injecting Critical claim differs from durable generation".into(),
-            ));
-        }
+        require_claim_receipt(&tx, before)?;
         let canonical: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM agent_deliveries WHERE id=?1)",

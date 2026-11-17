@@ -2,23 +2,13 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_body_limit_is_scoped_to_mcp_routes_only() {
-    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, _temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+        })
+        .await;
 
-    let create_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(create_response.into_body(), usize::MAX)
-            .await
-            .expect("create body"),
-    )
-    .expect("create json");
+    let create_json = historical_session_json(&history[0]);
     let session_id = create_json["id"].as_str().expect("session id").to_string();
 
     let oversized = "x".repeat(MCP_MAX_REQUEST_BODY_BYTES + 4096);
@@ -79,7 +69,11 @@ async fn mcp_body_limit_is_scoped_to_mcp_routes_only() {
 
 #[tokio::test]
 async fn max_concurrent_one_queues_second_process_until_first_finishes() {
-    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+        })
+        .await;
     let release_path = temp_dir.path().join("release-first-process");
     let waiter_path = temp_dir.path().join("wait-for-release.sh");
     std::fs::write(
@@ -92,21 +86,7 @@ async fn max_concurrent_one_queues_second_process_until_first_finishes() {
     .expect("write process waiter");
     let first_command = format!("sh {}", waiter_path.display());
 
-    let create_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(create_response.into_body(), usize::MAX)
-            .await
-            .expect("create body"),
-    )
-    .expect("create json");
+    let create_json = historical_session_json(&history[0]);
     let session_id = create_json["id"].as_str().expect("session id").to_string();
 
     let first_response = router
@@ -307,23 +287,13 @@ async fn max_concurrent_one_queues_second_process_until_first_finishes() {
 
 #[tokio::test]
 async fn process_events_stream_delivers_live_sampled_output() {
-    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, _temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+        })
+        .await;
 
-    let create_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(create_response.into_body(), usize::MAX)
-            .await
-            .expect("create body"),
-    )
-    .expect("create json");
+    let create_json = historical_session_json(&history[0]);
     let session_id = create_json["id"].as_str().expect("session id").to_string();
 
     let run_response = router

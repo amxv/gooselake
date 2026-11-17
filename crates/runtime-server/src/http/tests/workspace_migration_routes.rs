@@ -100,12 +100,19 @@ async fn persisted_migration_status_http_pages_large_private_evidence_without_ch
 
 #[tokio::test]
 async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessions() {
-    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            let git_root = root.join("migration-repo");
+            init_git_repo(&git_root);
+            vec![
+                json!({"provider":"codex","model":"test-model","cwd":git_root,"metadata":{}}),
+                json!({"provider":"codex","model":"test-model","cwd":null,"metadata":{}}),
+            ]
+        })
+        .await;
     let git_root = temp_dir.path().join("migration-repo");
-    init_git_repo(&git_root);
-
-    let mapped_id = create_session(&runtime, Some(git_root.to_string_lossy().as_ref())).await;
-    let orphan_id = create_session(&runtime, None).await;
+    let mapped_id = history[0].id.clone();
+    let orphan_id = history[1].id.clone();
 
     let unsupported_key = router
         .clone()
@@ -440,20 +447,6 @@ async fn workspace_migration_routes_require_bearer_auth() {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-async fn create_session(runtime: &Arc<RuntimeSessionManager>, cwd: Option<&str>) -> String {
-    runtime
-        .create_session(
-            serde_json::from_value(serde_json::json!({
-                "provider":"codex", "model":"test-model", "cwd":cwd,
-                "permission_mode":null, "metadata":{}
-            }))
-            .unwrap(),
-        )
-        .await
-        .expect("seed synthetic migration history")
-        .id
 }
 
 fn auth_request(

@@ -2,44 +2,31 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_invoke_team_manage_historical_add_and_enabled_remove_are_http_visible() {
-    let (router, token, temp_dir, _provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy {
-            enabled: true,
-            non_lead_can_add_members: true,
-            non_lead_can_remove_members: true,
-        })
+    let (router, token, temp_dir, _provider, _runtime, app, history) =
+        build_test_router_with_history(
+            TeamMcpPolicy {
+                enabled: true,
+                non_lead_can_add_members: true,
+                non_lead_can_remove_members: true,
+            },
+            |root| {
+                let cwd = root.join("mcp-team-policy-cwd");
+                std::fs::create_dir_all(&cwd).expect("create mcp team cwd");
+                ["lead", "non-lead", "removable"]
+                    .into_iter()
+                    .map(|label| {
+                        json!({
+                            "provider":"codex", "model":"test-model", "cwd":cwd,
+                            "metadata":{"suite":"mcp_team_policy", "label":label},
+                        })
+                    })
+                    .collect()
+            },
+        )
         .await;
-    let session_cwd = temp_dir.path().join("mcp-team-policy-cwd");
-    std::fs::create_dir_all(&session_cwd).expect("create mcp team cwd");
-
-    let create_session = |label: &'static str| {
-        let runtime = runtime.clone();
-        let cwd = session_cwd.display().to_string();
-        async move {
-            let response = legacy_session_fixture_response(
-                &runtime,
-                serde_json::json!({
-                    "provider": "codex",
-                    "model": "test-model",
-                    "cwd": cwd,
-                    "metadata": {"suite": "mcp_team_policy", "label": label}
-                }),
-            )
-            .await;
-            assert_eq!(response.status(), StatusCode::OK);
-            let body: serde_json::Value = serde_json::from_slice(
-                &to_bytes(response.into_body(), usize::MAX)
-                    .await
-                    .expect("session body"),
-            )
-            .expect("session json");
-            body["id"].as_str().expect("session id").to_string()
-        }
-    };
-
-    let lead_session_id = create_session("lead").await;
-    let non_lead_session_id = create_session("non-lead").await;
-    let removable_session_id = create_session("removable").await;
+    let lead_session_id = history[0].id.clone();
+    let non_lead_session_id = history[1].id.clone();
+    let removable_session_id = history[2].id.clone();
 
     let create_team_response = router
             .clone()
@@ -190,23 +177,12 @@ async fn mcp_invoke_team_manage_historical_add_and_enabled_remove_are_http_visib
 
 #[tokio::test]
 async fn process_output_events_are_sampled_while_logs_remain_authoritative() {
-    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
-
-    let create_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(create_response.into_body(), usize::MAX)
-            .await
-            .expect("create body"),
-    )
-    .expect("create json");
+    let (router, token, _temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+        })
+        .await;
+    let create_json = historical_session_json(&history[0]);
     let session_id = create_json["id"].as_str().expect("session id").to_string();
 
     let run_response = router
@@ -341,34 +317,18 @@ async fn process_output_events_are_sampled_while_logs_remain_authoritative() {
 
 #[tokio::test]
 async fn process_http_ownership_enforced_by_session_identity() {
-    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
-
-    let create_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let create_one = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    let create_one_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(create_one.into_body(), usize::MAX)
-            .await
-            .expect("create one body"),
-    )
-    .expect("create one json");
+    let (router, token, _temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}}); 2]
+        })
+        .await;
+    let create_one_json = historical_session_json(&history[0]);
     let owner_session_id = create_one_json["id"]
         .as_str()
         .expect("owner session id")
         .to_string();
 
-    let create_two = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    let create_two_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(create_two.into_body(), usize::MAX)
-            .await
-            .expect("create two body"),
-    )
-    .expect("create two json");
+    let create_two_json = historical_session_json(&history[1]);
     let other_session_id = create_two_json["id"]
         .as_str()
         .expect("other session id")

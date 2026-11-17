@@ -386,12 +386,11 @@ async fn runtime_manager_durably_admits_provider_permission_before_reply() {
     use std::sync::Arc;
 
     use runtime_core::{
-        ApprovalResponseInput, CreateSessionInput, ProviderRegistry, RuntimeSessionManager,
-        RuntimeStore, SendTurnInput,
+        ApprovalResponseInput, ProviderRegistry, RuntimeSessionManager, RuntimeStore, SendTurnInput,
     };
     use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 
-    let harness = FakeAgentHarness::new("normal");
+    let harness = FakeAgentHarness::new("runtime_user_turns");
     let provider = Arc::new(harness.provider());
     let mut registry = ProviderRegistry::new();
     registry.register(provider).unwrap();
@@ -402,16 +401,13 @@ async fn runtime_manager_durably_admits_provider_permission_before_reply() {
     store.initialize().await.unwrap();
     let manager =
         Arc::new(RuntimeSessionManager::new(store.clone(), Arc::new(registry), 256).unwrap());
-    let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Acp,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
-        .await
-        .unwrap();
+    let session = super::support::create_runtime_agent(
+        &manager,
+        &store,
+        &temp.path().join("workspace"),
+        "acp-durable-permission",
+    )
+    .await;
     let admitted = manager
         .send_turn(
             session.id.as_str(),
@@ -732,12 +728,10 @@ async fn ambiguous_native_prompt_outcome_cannot_be_rebound_as_idle() {
 async fn runtime_manager_lazily_resumes_idle_agent_after_acp_child_replacement() {
     use std::sync::Arc;
 
-    use runtime_core::{
-        CreateSessionInput, ProviderRegistry, RuntimeSessionManager, RuntimeStore, SendTurnInput,
-    };
+    use runtime_core::{ProviderRegistry, RuntimeSessionManager, RuntimeStore, SendTurnInput};
     use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 
-    let harness = FakeAgentHarness::new("normal");
+    let harness = FakeAgentHarness::new("runtime_user_turns");
     let provider = Arc::new(harness.provider());
     let mut registry = ProviderRegistry::new();
     registry.register(provider.clone()).unwrap();
@@ -746,17 +740,15 @@ async fn runtime_manager_lazily_resumes_idle_agent_after_acp_child_replacement()
         database_path: temp.path().join("acp-rebind.sqlite3"),
     }));
     store.initialize().await.unwrap();
-    let manager = Arc::new(RuntimeSessionManager::new(store, Arc::new(registry), 256).unwrap());
-    let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Acp,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
-        .await
-        .unwrap();
+    let manager =
+        Arc::new(RuntimeSessionManager::new(store.clone(), Arc::new(registry), 256).unwrap());
+    let session = super::support::create_runtime_agent(
+        &manager,
+        &store,
+        &temp.path().join("workspace"),
+        "acp-idle-replacement",
+    )
+    .await;
 
     for (index, restart) in [false, true].into_iter().enumerate() {
         if restart {

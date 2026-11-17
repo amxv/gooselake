@@ -175,9 +175,10 @@ impl RuntimeTeamCommsService {
             .await?;
         if let Some(active_turn_id) = interrupt_active_turn {
             self.runtime
-                .interrupt_turn(&recipient_session.id, &active_turn_id)
+                .interrupt_legacy_delivery_turn(&injecting, &active_turn_id)
                 .await
                 .map_err(|error| {
+                    if error.legacy_native_recovery().is_some() { return error; }
                     RuntimeError::InvalidState(format!(
                         "legacy delivery {} reserved native injection; interrupt outcome requires review: {}",
                         delivery.id, error

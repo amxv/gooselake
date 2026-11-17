@@ -19,15 +19,18 @@ use super::super::{ApprovalResponseInput, CreateSessionInput, SendTurnInput};
 async fn send_turn_failure_does_not_leave_session_bricked() {
     let manager = manager_with_failing_send_provider();
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
 
     let send = manager
         .send_turn(
@@ -89,15 +92,18 @@ async fn turn_admission_is_durable_before_provider_dispatch_and_preserves_proven
         Some("native-turn-42".to_string()),
     );
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let snapshot = PersistedUserInputSnapshot {
         prompt_text: "automated prompt".to_string(),
         image_refs: vec![PersistedUserInputSnapshotImageRef {
@@ -171,13 +177,16 @@ async fn postcommit_turn_event_projection_failure_does_not_retry_or_strand_provi
         Some("native-once".into()),
     );
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
         .unwrap();
     *store
@@ -232,13 +241,16 @@ async fn postcommit_approval_projection_failure_preserves_pending_authority_with
     let (manager, store, send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
         .unwrap();
     *store.fail_next_event_append_for_kind.lock().unwrap() = Some("approval.requested".into());
@@ -288,15 +300,18 @@ async fn failed_durable_admission_never_calls_provider() {
     let (manager, store, send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     *store.fail_admission.lock().expect("fail admission") = true;
 
     let result = manager
@@ -336,15 +351,18 @@ async fn pre_dispatch_policy_approval_blocks_provider_until_acceptance() {
         Some("native-after-approval".to_string()),
     );
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
 
     let accepted = manager
         .send_turn(
@@ -416,15 +434,18 @@ async fn declining_pre_dispatch_policy_approval_never_calls_provider() {
     let (manager, store, send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),
@@ -486,15 +507,18 @@ async fn unknown_provider_dispatch_is_quarantined_and_not_blindly_retried() {
     let (manager, store, send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Unknown, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let first = manager
         .send_turn(
             session.id.as_str(),
@@ -560,15 +584,18 @@ async fn startup_recovery_replays_committed_pending_turn_once_after_approval_was
     let (manager, store, initial_send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),
@@ -633,15 +660,18 @@ async fn startup_recovery_quarantines_dispatching_turn_without_resending() {
     let (manager, store, initial_send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),
@@ -701,15 +731,18 @@ async fn startup_recovery_preserves_native_mapping_without_resending_dispatched_
         Some("native-before-restart".to_string()),
     );
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),
@@ -768,15 +801,18 @@ async fn durable_native_turn_mapping_cannot_be_rewritten_or_regressed() {
         Some("native-stable".to_string()),
     );
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),
@@ -813,7 +849,10 @@ async fn durable_native_turn_mapping_cannot_be_rewritten_or_regressed() {
         .await;
     assert!(matches!(
         regression,
-        Err(RuntimeError::ProtocolViolation(_))
+        Err(RuntimeError::TurnDispatchNotClaimed {
+            turn_id,
+            blocking_operation_id: None,
+        }) if turn_id == accepted.turn_id
     ));
 }
 
@@ -822,15 +861,18 @@ async fn startup_recovery_keeps_pending_pre_dispatch_approval_undispatched() {
     let (manager, store, send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),
@@ -873,15 +915,18 @@ async fn startup_recovery_refuses_replay_when_persisted_input_attachment_is_miss
     let (manager, store, send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let missing_path = format!(
         "/tmp/gooselake-missing-attachment-{}-{}.png",
         std::process::id(),

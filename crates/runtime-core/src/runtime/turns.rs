@@ -120,6 +120,14 @@ impl RuntimeSessionManager {
                     session_id,
                     &normalized_request_hash,
                 )?;
+                if matches!(&error, RuntimeError::TurnDispatchNotClaimed { .. }) {
+                    return match admitted {
+                        Some(replay) => replay
+                            .into_result()
+                            .map_err(|error| self.restore_legacy_native_recovery(error)),
+                        None => Err(error),
+                    };
+                }
                 if !matches!(
                     admitted.as_ref(),
                     Some(OperatorUserTurnReplay::Unresolved { operation_id })
@@ -364,36 +372,38 @@ impl RuntimeSessionManager {
             updated_at: now,
         };
 
-        if let Some(command) = operator_command {
-            self.store.admit_operator_user_turn(
-                command,
-                &admission,
-                &turn,
-                &updated_session,
-                approval.as_ref(),
-            )?;
-        } else {
-            self.store
-                .admit_turn(&admission, &turn, &updated_session, approval.as_ref())?;
-        }
         {
+            // Reserve the same cache publication interval as startup refresh
+            // and native receipt commits. A committed admission must not be
+            // observed before its original in-process bundle is published.
             let mut turns = self.turns.write().await;
-            turns.insert(turn_id.clone(), turn.clone());
-        }
-        {
             let mut sessions = self.sessions.write().await;
+            let mut approvals = self.approvals.write().await;
+            let mut admissions = self.turn_admissions.write().await;
+            if sessions.get(session_id) != Some(&session) {
+                return Err(RuntimeError::Conflict(
+                    "session authority changed before logical turn admission".into(),
+                ));
+            }
+            if let Some(command) = operator_command {
+                self.store.admit_operator_user_turn(
+                    command,
+                    &admission,
+                    &turn,
+                    &updated_session,
+                    approval.as_ref(),
+                )?;
+            } else {
+                self.store
+                    .admit_turn(&admission, &turn, &updated_session, approval.as_ref())?;
+            }
+            turns.insert(turn_id.clone(), turn.clone());
             sessions.insert(session_id.to_string(), updated_session.clone());
-        }
-        if let Some(approval) = approval.clone() {
-            {
-                let mut approvals = self.approvals.write().await;
+            if let Some(approval) = approval.clone() {
                 approvals.insert(approval.id.clone(), approval);
             }
+            admissions.insert(turn_id.clone(), admission);
         }
-        self.turn_admissions
-            .write()
-            .await
-            .insert(turn_id.clone(), admission);
         drop(policy_mutation_guard);
         if let Err(error) = self
             .append_event(
@@ -550,13 +560,19 @@ impl RuntimeSessionManager {
         provider_native_turn_id: Option<String>,
         dispatch_error: Option<Value>,
     ) -> Result<TurnAdmissionRecord, RuntimeError> {
-        let current = self
-            .turn_admissions
-            .read()
-            .await
+        let mut admissions = self.turn_admissions.write().await;
+        let current = admissions
             .get(turn_id)
             .cloned()
             .ok_or_else(|| RuntimeError::NotFound(format!("turn admission {turn_id}")))?;
+        if state == TurnDispatchState::Dispatching
+            && current.dispatch_state != TurnDispatchState::Pending
+        {
+            return Err(RuntimeError::TurnDispatchNotClaimed {
+                turn_id: turn_id.into(),
+                blocking_operation_id: None,
+            });
+        }
         if !is_valid_dispatch_transition(current.dispatch_state, state) {
             return Err(RuntimeError::ProtocolViolation(format!(
                 "invalid provider dispatch transition for turn {turn_id}: {} -> {}",
@@ -597,10 +613,7 @@ impl RuntimeSessionManager {
         updated.dispatch_error = dispatch_error;
         updated.updated_at = now_ms();
         self.store.upsert_turn_admission(&updated)?;
-        self.turn_admissions
-            .write()
-            .await
-            .insert(turn_id.to_string(), updated.clone());
+        admissions.insert(turn_id.to_string(), updated.clone());
         Ok(updated)
     }
 

@@ -250,6 +250,14 @@ impl SqliteRuntimeRepository {
         if stored != *previous {
             return Ok(false);
         }
+        crate::repository_startup_reattachment::guard_resume_claim(
+            &tx,
+            &previous.recipient_agent_id,
+        )?;
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_session(
+            &tx,
+            &previous.recipient_agent_id,
+        )?;
         let changed = tx
             .execute(
                 "UPDATE team_deliveries SET status='injecting', updated_at=?1

@@ -1,31 +1,5 @@
 use super::*;
 
-/// Explicit synthetic history setup through the internal manager. This never
-/// sends a request to a disabled legacy HTTP mutation. Response wrapping lets
-/// existing event/process fixtures keep their JSON decoding assertions.
-pub(super) async fn legacy_session_fixture_response(
-    runtime: &Arc<RuntimeSessionManager>,
-    input: Value,
-) -> Response {
-    let input: CreateSessionInput = serde_json::from_value(input).expect("legacy fixture input");
-    let session = runtime
-        .create_session(input)
-        .await
-        .expect("seed synthetic legacy session");
-    Json(session).into_response()
-}
-
-/// Internal legacy fixture/domain probe; no HTTP route is bypassed or enabled.
-pub(super) async fn legacy_session_fixture_json(
-    runtime: &Arc<RuntimeSessionManager>,
-    input: Value,
-) -> (StatusCode, Value) {
-    let result = runtime
-        .create_session(serde_json::from_value(input).unwrap())
-        .await;
-    legacy_fixture_result(result).await
-}
-
 pub(super) async fn legacy_worktree_fixture_json(
     app: &Arc<RuntimeApp>,
     input: Value,

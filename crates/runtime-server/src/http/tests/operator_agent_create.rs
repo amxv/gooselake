@@ -659,7 +659,8 @@ async fn restart_quarantines_admitted_agent_create_without_reexecuting_any_nativ
         recovered
             .notes
             .iter()
-            .any(|note| note.contains(&command.operation_id) && note.contains("manual_review")),
+            .any(|note| note.contains(&command.operation_id)
+                && note.contains("remains under manual review; no native effect was retried")),
         "{recovered:?}"
     );
     assert_eq!(provider.create_call_count(), baseline);

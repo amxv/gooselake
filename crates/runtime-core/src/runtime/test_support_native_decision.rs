@@ -11,6 +11,7 @@ impl MockStore {
         after_session: &SessionRecord,
         event: &NewRuntimeEvent,
     ) -> Result<ProviderApprovalFinalization, RuntimeError> {
+        let _authority = self.authority_transaction.lock().unwrap();
         let mut turns = self.turns.lock().unwrap();
         let mut sessions = self.sessions.lock().unwrap();
         let mut approvals = self.approvals.lock().unwrap();
@@ -30,7 +31,7 @@ impl MockStore {
             ));
         }
         // Inject journal errors before any projection/cache state is changed.
-        let receipt = self.append_runtime_event(event)?;
+        let receipt = self.append_runtime_event_locked(event)?;
         approvals.insert(outcome.id.clone(), outcome.clone());
         turns.insert(after_turn.id.clone(), after_turn.clone());
         sessions.insert(after_session.id.clone(), after_session.clone());

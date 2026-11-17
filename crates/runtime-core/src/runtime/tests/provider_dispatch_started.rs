@@ -11,13 +11,16 @@ async fn positive_native_ack_critical_start_fault_keeps_dispatch_fenced_without_
         Some("native-already-acknowledged".into()),
     );
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
         .unwrap();
     *store.fail_next_event_append_for_kind.lock().unwrap() = Some("turn.started".into());

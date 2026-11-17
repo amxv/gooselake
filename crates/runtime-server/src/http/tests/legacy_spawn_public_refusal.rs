@@ -34,16 +34,12 @@ async fn fixture() -> (
     String,
     String,
 ) {
-    let (router, token, temp, provider, runtime, _app) =
-        build_test_router_with_services(TeamMcpPolicy::default()).await;
-    let (status, source) = legacy_session_fixture_json(
-        &runtime,
-        serde_json::json!({
-            "provider":"codex","model":"test-model","cwd":temp.path(),
-        }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{source}");
+    let (router, token, temp, provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            vec![json!({"provider":"codex","model":"test-model","cwd":root})]
+        })
+        .await;
+    let source = historical_session_json(&history[0]);
     let source_id = source["id"].as_str().unwrap().to_string();
     let (status, team) = post(
         &router,

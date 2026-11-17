@@ -343,11 +343,10 @@ async fn unknown_provider_user_turn_is_nonretryable_and_fences_every_new_key() {
         rebind_error,
         RuntimeError::OperationUnresolved { operation_id: id, .. } if id == operation_id
     ));
+    let before_close = runtime.get_session(&agent_id).await.unwrap();
     let close_error = runtime.close_session(&agent_id, None).await.unwrap_err();
-    assert!(matches!(
-        close_error,
-        RuntimeError::OperationUnresolved { operation_id: id, .. } if id == operation_id
-    ));
+    assert!(matches!(close_error, RuntimeError::Unsupported(_)));
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), before_close);
     assert_eq!(prompt_count(&provider), first_count + 1);
     let (status, operation) = call(
         &router,

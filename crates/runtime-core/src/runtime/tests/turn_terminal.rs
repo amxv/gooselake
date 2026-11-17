@@ -177,13 +177,16 @@ async fn fixture(
 ) {
     let (manager, store) = manager_with_provider_and_store(0);
     let mut session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
         .unwrap();
     let turn = TurnRecord {

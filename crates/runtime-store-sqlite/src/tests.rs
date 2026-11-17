@@ -61,6 +61,7 @@ mod retirement_review_projection_scale;
 mod retirement_turn_projection_scale;
 mod session_lifecycle_events;
 mod signed_counter_headroom;
+mod startup_reattachment;
 mod team_operation_journal_scale;
 mod team_spawn_onboarding_scale;
 mod workspace_active_route_pages;

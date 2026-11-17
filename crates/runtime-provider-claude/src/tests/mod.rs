@@ -15,14 +15,59 @@ use crate::paths::{
     sidecar_command_path_from_executable, workspace_root_from_target_binary_path,
 };
 use runtime_core::{
-    CreateSessionInput, ProviderApprovalResponseRequest, ProviderCloseSessionRequest,
-    ProviderCreateSessionRequest, ProviderDiscoveryMode, ProviderInterruptTurnRequest,
-    ProviderKind, ProviderModelDiscoveryRequest, ProviderRegistry, ProviderResumeSessionRequest,
+    ProviderApprovalResponseRequest, ProviderCloseSessionRequest, ProviderCreateSessionRequest,
+    ProviderDiscoveryMode, ProviderInterruptTurnRequest, ProviderKind,
+    ProviderModelDiscoveryRequest, ProviderRegistry, ProviderResumeSessionRequest,
     ProviderSendTurnRequest, ProviderThinkingEffort, ProviderTurnStatus, ProviderWaitTurnRequest,
     RuntimeError, RuntimeProvider, RuntimeSessionManager, RuntimeStore, SendTurnInput,
 };
 use runtime_store_sqlite::{SqliteRuntimeStore, SqliteStoreConfig};
 use serde_json::Value;
+
+#[async_trait::async_trait]
+trait JournaledWorkspaceFixture {
+    async fn create_workspace_agent_journaled_fixture(
+        &self,
+        workspace_id: &str,
+        request: runtime_core::WorkspaceAgentCreateRequest,
+        actor_id: &str,
+    ) -> Result<runtime_core::WorkspaceAgentRecord, RuntimeError>;
+}
+
+#[async_trait::async_trait]
+impl JournaledWorkspaceFixture for Arc<RuntimeSessionManager> {
+    async fn create_workspace_agent_journaled_fixture(
+        &self,
+        workspace_id: &str,
+        request: runtime_core::WorkspaceAgentCreateRequest,
+        actor_id: &str,
+    ) -> Result<runtime_core::WorkspaceAgentRecord, RuntimeError> {
+        // Each setup call owns a distinct durable first-attempt key. This
+        // fixture never substitutes a synthetic native receipt or DB roster.
+        static NEXT_KEY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let key = format!(
+            "fixture-workspace-create-{}",
+            NEXT_KEY.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
+        let (admission, command) = self
+            .admit_workspace_agent_create_operator(
+                workspace_id,
+                &request,
+                runtime_core::OperationActor::operator(actor_id),
+                key,
+            )
+            .await?;
+        match command {
+            Some(command) => self
+                .execute_workspace_agent_create_operator(command, request)
+                .await
+                .map(|(agent, _)| agent),
+            None => self
+                .workspace_agent_create_replay_result(admission)
+                .map(|(agent, _)| agent),
+        }
+    }
+}
 
 mod auth_tests;
 mod bridge_path_tests;
@@ -162,8 +207,13 @@ for raw_line in sys.stdin:
     continue
 
   if method == "session.send":
-    if scenario == "send_not_found_once" and state["send_calls"] == 0:
-      state["send_calls"] = 1
+    if (
+      scenario == "send_not_found_once"
+      and params.get("input") == [{"type": "text", "text": "recover this turn"}]
+      and not state.get("send_not_found_injected", False)
+    ):
+      state["send_not_found_injected"] = True
+      state["send_calls"] = state["send_calls"] + 1
       emit_error(
         rpc_id,
         "SESSION_NOT_FOUND",
@@ -471,6 +521,50 @@ fn expected_gg_mcp_config(
         "args": args,
         "env": env,
     })
+}
+
+async fn finish_runtime_test_onboarding(
+    manager: &Arc<RuntimeSessionManager>,
+    store: &SqliteRuntimeStore,
+    workspace_id: &str,
+    agent_id: &str,
+) {
+    manager
+        .dispatch_workspace_system_notices()
+        .await
+        .expect("dispatch the real onboarding turn");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let notice = manager
+                .get_workspace_onboarding_notice(workspace_id, agent_id)
+                .unwrap()
+                .expect("canonical creation records onboarding");
+            let (persisted, turns) = store
+                .get_persisted_session_with_turns(agent_id)
+                .unwrap()
+                .unwrap();
+            let cached = manager.get_session(agent_id).await.unwrap();
+            if notice.state == "delivered"
+                && persisted.status == "ready"
+                && persisted.active_turn_id.is_none()
+                && cached.status == "ready"
+                && cached.active_turn_id.is_none()
+                && turns.iter().any(|turn| {
+                    Some(turn.id.as_str()) == notice.turn_id.as_deref()
+                        && turn.status == "completed"
+                })
+            {
+                break;
+            }
+            assert!(
+                matches!(notice.state.as_str(), "pending" | "injecting" | "delivered"),
+                "onboarding must settle through the provider: {notice:?}"
+            );
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("durable onboarding completion before the tested user turn");
 }
 
 async fn wait_for_ready_session(manager: &Arc<RuntimeSessionManager>, session_id: &str) {

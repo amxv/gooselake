@@ -30,8 +30,16 @@ async fn call_legacy(
 
 #[tokio::test]
 async fn historical_reuse_receipt_ignores_unrelated_corrupt_session_without_native_effects() {
-    let (router, token, temp, provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, _runtime, app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            vec![
+                json!({
+                    "provider":"codex", "model":"test-model", "cwd":root.join("source-repository"),
+                });
+                2
+            ]
+        })
+        .await;
     let repo = temp.path().join("source-repository");
     std::fs::create_dir_all(&repo).unwrap();
     std::fs::write(repo.join("README.md"), "disposable source\n").unwrap();
@@ -57,11 +65,7 @@ async fn historical_reuse_receipt_ignores_unrelated_corrupt_session_without_nati
             .status
             .success());
     }
-    let create_session = serde_json::json!({
-        "provider":"codex", "model":"test-model", "cwd":repo,
-    });
-    let (status, lead) = legacy_session_fixture_json(&runtime, create_session.clone()).await;
-    assert_eq!(status, StatusCode::OK, "{lead}");
+    let lead = historical_session_json(&history[0]);
     let source = lead["id"].as_str().unwrap();
     let (status, team) = call_legacy(
         &router,
@@ -86,8 +90,7 @@ async fn historical_reuse_receipt_ignores_unrelated_corrupt_session_without_nati
     assert_eq!(status, StatusCode::OK, "{created}");
     let worktree_id = created["worktree"]["id"].as_str().unwrap().to_owned();
 
-    let (status, foreign) = legacy_session_fixture_json(&runtime, create_session).await;
-    assert_eq!(status, StatusCode::OK, "{foreign}");
+    let foreign = historical_session_json(&history[1]);
     let foreign_id = foreign["id"].as_str().unwrap();
     let body = serde_json::json!({
         "source_session_id":source,

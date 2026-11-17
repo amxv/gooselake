@@ -51,6 +51,30 @@ macro_rules! message_operator_methods {
                 "atomic agent delivery acknowledgement unavailable".into(),
             ))
         }
+
+        /// Verify an existing fresh-winner delivery owner before interruption.
+        /// This read is not permission to retry a previously injecting delivery.
+        fn verify_agent_delivery_interrupt_owner(
+            &self,
+            _claim: &crate::AgentDeliveryRecord,
+            _session: &crate::SessionRecord,
+            _turn: &crate::TurnRecord,
+        ) -> Result<(), crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "durable agent delivery interrupt owner verification unavailable".into(),
+            ))
+        }
+
+        fn verify_legacy_delivery_interrupt_owner(
+            &self,
+            _claim: &crate::TeamDeliveryRecord,
+            _session: &crate::SessionRecord,
+            _turn: &crate::TurnRecord,
+        ) -> Result<(), crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "durable legacy delivery interrupt owner verification unavailable".into(),
+            ))
+        }
     };
 }
 

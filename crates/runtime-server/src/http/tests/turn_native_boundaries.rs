@@ -394,7 +394,22 @@ async fn native_approval_lost_receipt_keeps_original_decision_without_startup_re
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp.path().join("runtime.sqlite3"),
     }));
-    let snapshot = store.repository().hydrate_runtime_state().unwrap();
+    let snapshot = store
+        .repository()
+        .get_persisted_retirement_review_session(&agent.agent_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.session.status, "waiting_for_approval");
+    assert_eq!(snapshot.session.active_turn_id.as_deref(), Some(turn_id));
+    assert_eq!(
+        snapshot
+            .turns
+            .iter()
+            .find(|row| row.id == turn_id)
+            .unwrap()
+            .status,
+        "waiting_for_approval"
+    );
     let reserved = snapshot
         .approvals
         .iter()
@@ -422,15 +437,17 @@ async fn native_approval_lost_receipt_keeps_original_decision_without_startup_re
     );
     assert!(events.iter().all(|event| event.kind != "approval.resolved"));
     assert_eq!(
-        store
-            .repository()
-            .list_turn_admissions()
-            .unwrap()
+        snapshot
+            .admissions
             .iter()
             .find(|row| row.turn_id == turn_id)
             .unwrap()
             .dispatch_state,
         runtime_core::TurnDispatchState::Dispatched
+    );
+    assert!(
+        events.len() < 100,
+        "the complete scoped fixture journal must fit this read"
     );
     db.execute_batch("DROP TRIGGER fail_native_decision_receipt")
         .unwrap();
@@ -438,7 +455,17 @@ async fn native_approval_lost_receipt_keeps_original_decision_without_startup_re
     providers.register(provider.clone()).unwrap();
     let reopened =
         Arc::new(RuntimeSessionManager::new(store.clone(), Arc::new(providers), 128).unwrap());
-    reopened.recover_startup().await.unwrap();
+    let recovery = reopened.recover_startup().await.unwrap();
+    assert_eq!(recovery.resumed_sessions, 0, "{recovery:?}");
+    assert!(
+        recovery
+            .notes
+            .iter()
+            .any(|note| note.contains(&agent.agent_id)
+                && note.contains("startup continuation withheld")
+                && note.contains("provider approval decision is unresolved")),
+        "{recovery:?}"
+    );
     assert_eq!(provider.resumes.load(Ordering::SeqCst), before_resume);
     assert_eq!(provider.approval_responses.load(Ordering::SeqCst), 1);
     assert_eq!(
@@ -447,7 +474,11 @@ async fn native_approval_lost_receipt_keeps_original_decision_without_startup_re
             .await,
         1
     );
-    let after = store.repository().hydrate_runtime_state().unwrap();
+    let after = store
+        .repository()
+        .get_persisted_retirement_review_session(&agent.agent_id)
+        .unwrap()
+        .unwrap();
     let approval = after
         .approvals
         .iter()
@@ -459,17 +490,23 @@ async fn native_approval_lost_receipt_keeps_original_decision_without_startup_re
         attempt_id
     );
     assert_eq!(
-        after
-            .turns
-            .iter()
-            .find(|row| row.id == turn_id)
-            .unwrap()
-            .status,
-        "approval_decision_unknown"
+        after, snapshot,
+        "startup must retain the exact session, turns, approvals and original dispatch admission"
+    );
+    assert_eq!(
+        store
+            .repository()
+            .list_runtime_events(
+                Some((RuntimeEventScope::Session, &agent.agent_id)),
+                None,
+                100,
+            )
+            .unwrap(),
+        events,
+        "withholding startup must not manufacture a native-decision or quarantine receipt"
     );
     let session = reopened.get_session(&agent.agent_id).await.unwrap();
-    assert_eq!(session.status, "turn_recovery_required");
-    assert_eq!(session.active_turn_id.as_deref(), Some(turn_id));
+    assert_eq!(session, snapshot.session);
     let (status, replay) = fixture
         .call("POST", &uri, Some(json!({"decision":"accept"})), None)
         .await;

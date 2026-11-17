@@ -3,16 +3,29 @@ use super::*;
 
 #[tokio::test]
 async fn legacy_member_removal_does_not_unreserve_unresolved_native_provider_rebind() {
-    let (router, token, temp, provider, workspace, agent, linked, runtime) =
+    let (_initial_router, token, temp, provider, workspace, agent, linked, _initial_runtime) =
         fixture_with_runtime().await;
-    let (status, lead) = legacy_session_fixture_json(
-        &runtime,
-        serde_json::json!({
-            "provider":"codex", "model":"test-model", "cwd":workspace.canonical_root,
-        }),
+    let history = build_history_records(vec![json!({
+        "provider":"codex", "model":"test-model", "cwd":workspace.canonical_root,
+    })]);
+    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    }));
+    provider.seed_historical_session(&history[0]).await;
+    persist_historical_session(store.as_ref(), &history[0]);
+    let mut registry = runtime_core::ProviderRegistry::new();
+    registry.register(provider.clone()).unwrap();
+    // All work below starts on readers opened after the historical lead was
+    // persisted, before any rebind claim or team-removal side effect.
+    let (router, _runtime, _app) = assemble_test_router(
+        temp.path(),
+        store,
+        Arc::new(registry),
+        &token,
+        TeamMcpPolicy::default(),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{lead}");
+    let lead = historical_session_json(&history[0]);
     let (status, team) = call(
         &router,
         &token,

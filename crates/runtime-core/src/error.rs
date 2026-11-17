@@ -41,6 +41,14 @@ pub enum RuntimeError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// This caller never acquired a first-send grant. This is not a global
+    /// assertion that the admitted native effect did not occur.
+    #[error("first native dispatch for turn {turn_id} was not claimed by this caller; inspect the original durable authority")]
+    TurnDispatchNotClaimed {
+        turn_id: String,
+        blocking_operation_id: Option<String>,
+    },
+
     /// A write-ahead operation may already have reached a non-idempotent
     /// native effect. Callers must inspect the durable operation rather than
     /// interpreting a lost response as permission to dispatch again.

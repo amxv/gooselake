@@ -141,6 +141,14 @@ impl SqliteRuntimeRepository {
         if updated.status == "injecting" {
             // Claim and retirement check must use the same database lock;
             // an independent process cannot freeze retirement between them.
+            crate::repository_startup_reattachment::guard_resume_claim(
+                &tx,
+                &observed.recipient_agent_id,
+            )?;
+            crate::repository_legacy_spawn_obligations::guard_legacy_native_session(
+                &tx,
+                &observed.recipient_agent_id,
+            )?;
             require_active_delivery_owners(&tx, &observed)?;
         }
         let legacy: Option<(String, i64)> = tx

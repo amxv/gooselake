@@ -908,15 +908,18 @@ async fn create_test_session_for(
     provider: ProviderKind,
 ) -> String {
     runtime
-        .create_session(CreateSessionInput {
-            provider,
-            model: Some("test-model".to_string()),
-            cwd: None,
-            permission_mode: None,
-            metadata: Some(serde_json::json!({ "suite": "team_comms" })),
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider,
+                model: Some("test-model".to_string()),
+                cwd: None,
+                permission_mode: None,
+                metadata: Some(serde_json::json!({ "suite": "team_comms" })),
+            },
+            "test-thread-",
+        )
         .await
-        .expect("create session")
+        .expect("seed stored session")
         .id
 }
 

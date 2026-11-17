@@ -330,6 +330,23 @@ impl From<RuntimeError> for ApiError {
                 error.details = Some(details);
                 error
             }
+            RuntimeError::TurnDispatchNotClaimed {
+                turn_id,
+                blocking_operation_id,
+            } => {
+                let mut error=Self::new(StatusCode::CONFLICT,"outcome_unresolved",
+                    "this caller did not acquire the original turn's first native dispatch; inspect its durable authority".into());
+                let mut details =
+                    serde_json::json!({"logical_turn_id":turn_id,"native_retry_authorized":false});
+                if let Some(operation_id) = blocking_operation_id {
+                    details["blocking_inspection_path"] = serde_json::Value::String(
+                        runtime_core::error::canonical_operation_inspection_path(&operation_id),
+                    );
+                    details["blocking_operation_id"] = serde_json::Value::String(operation_id);
+                }
+                error.details = Some(details);
+                error
+            }
             RuntimeError::SessionControlUnresolved {
                 coordinate,
                 code,

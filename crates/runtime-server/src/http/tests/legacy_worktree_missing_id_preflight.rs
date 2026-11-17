@@ -26,27 +26,19 @@ async fn post_legacy_worktree(
 #[tokio::test]
 async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_sessions_or_touch_native_state(
 ) {
-    let (router, token, temp, provider, runtime) =
-        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            let cwd = root.join("disposable-repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            vec![json!({"provider":"codex", "model":"test-model", "cwd":cwd}); 3]
+        })
+        .await;
     let root = temp.path().join("disposable-repo");
-    std::fs::create_dir_all(&root).unwrap();
-    let source_body = serde_json::json!({
-        "provider":"codex", "model":"test-model", "cwd":root,
-    });
-    let (status, first) = legacy_session_fixture_json(&runtime, source_body.clone()).await;
-    assert_eq!(status, StatusCode::OK, "{first}");
+    let first = historical_session_json(&history[0]);
     let session_id = first["id"].as_str().unwrap();
-    let (status, foreign) = legacy_session_fixture_json(&runtime, source_body).await;
-    assert_eq!(status, StatusCode::OK, "{foreign}");
+    let foreign = historical_session_json(&history[1]);
     let foreign_id = foreign["id"].as_str().unwrap();
-    let (status, unclaimed) = legacy_session_fixture_json(
-        &runtime,
-        serde_json::json!({
-            "provider":"codex", "model":"test-model", "cwd":root,
-        }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{unclaimed}");
+    let unclaimed = historical_session_json(&history[2]);
     let unclaimed_id = unclaimed["id"].as_str().unwrap();
 
     let database_path = temp.path().join("runtime.sqlite3");

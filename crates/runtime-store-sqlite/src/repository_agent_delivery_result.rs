@@ -14,7 +14,7 @@ use crate::repository_agent_delivery_cas::{
 use crate::repository_legacy_team_messages::event_matches;
 use crate::SqliteRuntimeRepository;
 
-fn require_claim_receipt(
+pub(crate) fn require_claim_receipt(
     tx: &Transaction<'_>,
     before: &AgentDeliveryRecord,
 ) -> Result<(), RuntimeError> {
@@ -63,7 +63,7 @@ fn require_claim_receipt(
     Ok(())
 }
 
-fn require_correlated_admitted_turn(
+pub(crate) fn require_correlated_admitted_turn(
     tx: &Transaction<'_>,
     before: &AgentDeliveryRecord,
     turn_id: &str,

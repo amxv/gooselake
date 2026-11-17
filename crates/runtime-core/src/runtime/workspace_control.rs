@@ -80,7 +80,11 @@ impl RuntimeSessionManager {
                     session_id,
                     turn_id,
                 } => match self
-                    .interrupt_turn_under_policy_guard(&session_id, &turn_id)
+                    .interrupt_retirement_turn_under_policy_guard(
+                        &session_id,
+                        &turn_id,
+                        operation_id,
+                    )
                     .await
                 {
                     Ok(()) => {
@@ -326,42 +330,27 @@ impl RuntimeSessionManager {
 
     pub async fn create_workspace_agent_as_member(
         self: &Arc<Self>,
-        workspace_id: &str,
-        request: WorkspaceAgentCreateRequest,
-        caller_agent_id: &str,
-        policy: WorkspaceMembershipPolicy,
+        _workspace_id: &str,
+        _request: WorkspaceAgentCreateRequest,
+        _caller_agent_id: &str,
+        _policy: WorkspaceMembershipPolicy,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
-        self.authorize_workspace_membership(
-            workspace_id,
-            caller_agent_id,
-            WorkspaceMembershipAction::Add,
-            policy,
-        )?;
-        self.create_workspace_agent(workspace_id, request, caller_agent_id)
-            .await
+        Err(RuntimeError::Unsupported(
+            "raw member creation is unsupported; use the scoped member creation journal".into(),
+        ))
     }
 
     pub async fn archive_workspace_agent_as_member(
         self: &Arc<Self>,
-        workspace_id: &str,
-        agent_id: &str,
-        caller_agent_id: &str,
-        reason: Option<&str>,
-        policy: WorkspaceMembershipPolicy,
+        _workspace_id: &str,
+        _agent_id: &str,
+        _caller_agent_id: &str,
+        _reason: Option<&str>,
+        _policy: WorkspaceMembershipPolicy,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
-        self.authorize_workspace_membership(
-            workspace_id,
-            caller_agent_id,
-            WorkspaceMembershipAction::Remove,
-            policy,
-        )?;
-        self.archive_workspace_agent_with_initiator(
-            workspace_id,
-            agent_id,
-            reason,
-            Some(caller_agent_id),
-        )
-        .await
+        Err(RuntimeError::Unsupported(
+            "raw member archival is unsupported; use the scoped member archival journal".into(),
+        ))
     }
 
     pub async fn interrupt_workspace(
@@ -399,7 +388,7 @@ impl RuntimeSessionManager {
                 .interrupt_turn_for_operation(
                     target.agent_id.as_str(),
                     target.turn_id.as_str(),
-                    Some(&plan.operation_id),
+                    &plan.operation_id,
                 )
                 .await
             {

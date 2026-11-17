@@ -27,8 +27,17 @@ async fn call_member_removal_fixture(
 #[tokio::test]
 async fn removing_legacy_team_member_releases_own_claim_despite_foreign_corrupt_history_without_native_cleanup(
 ) {
-    let (router, token, temp, provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, _runtime, app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            vec![
+                json!({
+                    "provider":"codex", "model":"test-model",
+                    "cwd":root.join("disposable-git-repo"),
+                });
+                3
+            ]
+        })
+        .await;
     let repo = temp.path().join("disposable-git-repo");
     std::fs::create_dir_all(&repo).unwrap();
     std::fs::write(repo.join("README.md"), "fake provider, temporary Git\n").unwrap();
@@ -67,15 +76,7 @@ async fn removing_legacy_team_member_releases_own_claim_despite_foreign_corrupt_
         assert!(result.status.success());
         result.stdout
     };
-    let session_body = serde_json::json!({
-        "provider":"codex", "model":"test-model", "cwd":repo,
-    });
-    let mut ids = Vec::new();
-    for _ in 0..3 {
-        let (status, result) = legacy_session_fixture_json(&runtime, session_body.clone()).await;
-        assert_eq!(status, StatusCode::OK, "{result}");
-        ids.push(result["id"].as_str().unwrap().to_owned());
-    }
+    let ids: Vec<_> = history.iter().map(|row| row.id.clone()).collect();
     let (lead, member, foreign) = (&ids[0], &ids[1], &ids[2]);
     let (status, team) = call_member_removal_fixture(
         &router,

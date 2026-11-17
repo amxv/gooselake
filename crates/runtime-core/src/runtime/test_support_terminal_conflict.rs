@@ -10,6 +10,7 @@ macro_rules! mock_terminal_conflict_methods {
             event: &crate::NewRuntimeEvent,
         ) -> Result<(crate::SessionRecord, Option<crate::RuntimeEventRecord>), crate::RuntimeError>
         {
+            let _authority = self.authority_transaction.lock().unwrap();
             if *self.fail_session_write.lock().unwrap() {
                 return Err(crate::RuntimeError::Io(
                     "forced terminal conflict session write rejection".into(),
@@ -53,7 +54,7 @@ macro_rules! mock_terminal_conflict_methods {
                     "terminal conflict session owner changed".into(),
                 ));
             }
-            let receipt = self.append_runtime_event(event)?;
+            let receipt = self.append_runtime_event_locked(event)?;
             sessions.insert(failed_session.id.clone(), failed_session.clone());
             Ok((failed_session.clone(), Some(receipt)))
         }

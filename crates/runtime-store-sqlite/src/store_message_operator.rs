@@ -32,6 +32,26 @@ macro_rules! delegate_message_operator_methods {
             self.repository
                 .commit_agent_delivery_injected(claim, turn_id, updated_at)
         }
+
+        fn verify_agent_delivery_interrupt_owner(
+            &self,
+            claim: &runtime_core::AgentDeliveryRecord,
+            session: &runtime_core::SessionRecord,
+            turn: &runtime_core::TurnRecord,
+        ) -> Result<(), runtime_core::RuntimeError> {
+            self.repository
+                .verify_agent_delivery_interrupt_owner(claim, session, turn)
+        }
+
+        fn verify_legacy_delivery_interrupt_owner(
+            &self,
+            claim: &runtime_core::TeamDeliveryRecord,
+            session: &runtime_core::SessionRecord,
+            turn: &runtime_core::TurnRecord,
+        ) -> Result<(), runtime_core::RuntimeError> {
+            self.repository
+                .verify_legacy_delivery_interrupt_owner(claim, session, turn)
+        }
     };
 }
 

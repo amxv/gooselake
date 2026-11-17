@@ -195,11 +195,24 @@ async fn retirement_observes_delivery_claim_before_a_racing_native_interrupt() {
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{blocked_interrupt}");
-    let internal = fixture
-        .runtime
-        .interrupt_turn(&recipient.agent_id, turn["turn_id"].as_str().unwrap())
-        .await;
-    assert!(matches!(internal, Err(RuntimeError::Conflict(_))));
+    let interrupt_command = runtime_core::prepare_workspace_interrupt(
+        &workspace.workspace_id,
+        runtime_core::OperationActor::operator("runtime_operator"),
+        Some("retirement-fenced-workspace-interrupt".into()),
+    )
+    .unwrap();
+    let rejected_operation = interrupt_command.operation_id.clone();
+    let internal = fixture.runtime.interrupt_workspace(interrupt_command).await;
+    assert!(matches!(internal, Err(RuntimeError::Bootstrap(ref detail))
+        if detail.contains("failed acquiring operation resource claim")));
+    assert!(
+        fixture
+            .store
+            .get_operation(&rejected_operation)
+            .unwrap()
+            .is_none(),
+        "the retirement owner must reject and roll back the competing interrupt admission"
+    );
     assert_eq!(provider.interrupts.load(Ordering::SeqCst), 1);
     let replay = fixture
         .advance(
@@ -668,11 +681,31 @@ async fn retirement_cancels_native_approval_receipts_and_prevents_post_restore_r
         )
         .await
         .unwrap();
-    fixture
+    let interrupt = fixture
         .runtime
-        .interrupt_turn(&agent.agent_id, current_turn_id)
+        .interrupt_workspace(
+            runtime_core::prepare_workspace_interrupt(
+                &workspace.workspace_id,
+                runtime_core::OperationActor::operator("runtime_operator"),
+                Some("retirement-terminal-native-approval-interrupt".into()),
+            )
+            .unwrap(),
+        )
         .await
         .unwrap();
+    let interrupt_receipt = fixture
+        .store
+        .get_operation(&interrupt.operation_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        interrupt_receipt.operation.phase,
+        runtime_core::OperationPhase::Completed
+    );
+    assert_eq!(
+        interrupt_receipt.operation.exact_terminal_result,
+        Some(serde_json::to_value(&interrupt).unwrap())
+    );
     timeout(Duration::from_secs(5), async {
         let mut tick = tokio::time::interval(Duration::from_millis(10));
         while fixture

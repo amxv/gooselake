@@ -25,13 +25,16 @@ async fn native_decision_fixture() -> (
     let (manager, store, _) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
         .unwrap();
     let accepted = manager
@@ -249,15 +252,18 @@ async fn duplicate_provider_approval_event_converges_on_one_durable_record() {
     let (manager, store, _send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),
@@ -332,13 +338,16 @@ async fn native_approval_journal_failure_never_publishes_partial_caches_or_durab
     let (manager, store, _send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
         .unwrap();
     let accepted = manager
@@ -428,13 +437,16 @@ async fn native_decision_reservation_event_fault_prevents_provider_side_effect_a
     let (manager, store, _send_count) =
         manager_with_observable_send_provider(MockSendBehavior::Success, None);
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "mock:",
+        )
         .await
         .unwrap();
     let accepted = manager
@@ -524,15 +536,18 @@ async fn native_decision_reservation_event_fault_prevents_provider_side_effect_a
 async fn provider_approval_emitted_before_ack_is_durable_and_deduplicated() {
     let (manager, store, wait_count) = manager_with_provider_approval_events();
     let session = manager
-        .create_session(CreateSessionInput {
-            provider: ProviderKind::Codex,
-            model: None,
-            cwd: None,
-            permission_mode: None,
-            metadata: None,
-        })
+        .seed_stored_session_for_test(
+            CreateSessionInput {
+                provider: ProviderKind::Codex,
+                model: None,
+                cwd: None,
+                permission_mode: None,
+                metadata: None,
+            },
+            "approval-events:",
+        )
         .await
-        .expect("create session");
+        .expect("seed stored session");
     let accepted = manager
         .send_turn(
             session.id.as_str(),

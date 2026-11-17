@@ -702,6 +702,13 @@ skill invocation objects reject unknown properties too, so a misspelled
 `thinking_effort` or invented skill option never silently selects a default;
 the same rule applies to preference mutation requests.
 
+For ACP workspace creation, explicitly set `setting_sources_intent` to
+`{"kind":"isolated"}`. This sends no Gooselake-managed setting sources to
+the adapter; ACP continues to own its internal policy. The standard setting
+source selection resolves to direct-provider settings and is rejected by ACP.
+Do not supply a direct model, system prompt, tool policy or harness override
+for an ACP-owned session.
+
 The runtime uses the opaque `sess_*` value as the durable public agent ID and allocates a separate friendly alias for display and human references. The alias does **not** replace provider-native session references. Creation commits the session, immutable workspace ownership, workspace profile, active roster membership, recreation policy, **and a deterministic system onboarding notice** atomically; there is no normal `/v2/agents` unowned-creation route and no separate join step. The notice is created even without `onboarding` input. It includes the workspace name, new agent alias/title, and either the current lead alias or an explicit leadless statement, followed by any optional task prompt, native ordered images, and supported Codex skill invocation. The notice is an `automation_context` turn, never a forged user message or a lead-authored DM. ACP image attachments and unsupported skill formats are rejected before creation.
 
 The creation response confirms the **queued intent**, not delivery. The runtime injects when the recipient is idle; busy recipients remain pending. A direct user turn before mandatory onboarding has reached the provider returns `409 Conflict`. Pending message deliveries are **deferred**, and pending process completions remain queued, rather than being marked as terminal provider failures; neither may overtake onboarding. Only the worker's exact claimed onboarding automation input may pass this admission fence. Dispatch outcomes are tracked against a stable correlation ID. Unknown provider outcomes require review, never automatic redelivery. Inspect with `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding`; `state` is `pending`, `injecting`, `delivered`, `manual_review`, or `cancelled`, and `turn_id` is present only after admission/observation. The runtime retries safe pending work after restart. A notice cancelled before any turn admission because its recipient was archived is safely requeued with its original identity on restore; ambiguous or already-delivered onboarding is never resubmitted.
@@ -1427,6 +1434,75 @@ Before dispatching a canonical delivery, the SQLite runtime acquires a transacti
 
 An ambiguous native outcome remains `injecting` for explicit reconciliation: a missing correlated admission after restart is **not** proof that the provider did nothing and does not make the delivery retryable. Historic unjournaled `injecting` rows are not automatically certified, and no durable turn ID is fabricated from a provider-native ID. This improves receipt atomicity and native dispatch fencing; it does not claim that every possible provider-side effect is already reconciled or that native execution is globally exactly once.
 
+Fresh canonical and legacy delivery claims also check the recipient's original
+legacy native obligations and exclusive startup attachment claim before
+entering `injecting`. Startup checks the reciprocal delivery authority in its
+own admission transaction. An unresolved injecting row withholds attachment
+and identifies its original message/delivery inspection resource. A unique
+correlated child may permit attachment when the original claim and existing
+result rules prove a `dispatched` admission, or a still-pending admission
+behind its original local approval. Missing, duplicate or inconsistent child
+authority cannot supply that proof. A legacy row with a same-ID canonical row
+is treated as a mirror only when every shared delivery field matches.
+Known delivery-result receipts can still commit or replay; this does not
+permit another interrupt or send.
+
+Delivery-triggered interruption is internal to the worker that just won the
+original injecting claim. It additionally requires the exact active recipient,
+native identity, interrupt policy and original `dispatched` turn admission.
+An old active-turn pointer, unresolved dispatch, pending native approval
+decision, startup claim or blocked legacy native obligation cannot authorize
+an interrupt. Inspect the original delivery or recovery coordinate instead
+of creating a new delivery to retry an uncertain effect.
+
+### Startup attachment recovery
+
+Startup reads fresh stored authority before each native attachment. It records
+a System-owned `startup_session_reattach` operation, the frozen session and
+launch policy, an exclusive native-attachment claim, and one consumed
+`provider_session_reattach` attempt before calling the provider. Admission and
+operation transitions include their Critical journal rows in the same SQLite
+transaction. A journal failure cannot grant native execution without the
+corresponding durable authority.
+
+A completed attachment requires an acknowledgement for the original runtime
+and native session identities and a matching current authority snapshot.
+Codex and ACP may fill a previously absent canonical reference with the
+original primary native reference. Concurrent policy or attachment drift is
+not silently overwritten. An original dispatched turn may complete while
+attachment is in progress: only its exact canonical terminal receipt and
+expected transcript update permit that metadata change to survive completion.
+Unrelated metadata changes or a new quarantine withhold completion.
+
+An error, process exit, mismatched acknowledgement, or receipt failure before
+durable completion retains the original operation and exclusive claim. If the
+hold receipt commits, a known matching acknowledgement is retained as observed
+evidence. If both completion and hold persistence fail, the original requested
+operation, started effect and exclusive claim remain authoritative; inspection
+does not fabricate an acknowledgement. A completed receipt recovered after a
+lost return retains its completed result and released claim. Repeating startup
+in the same or another runtime does not authorize a second attempt for an
+unresolved session. Inspect the original operation at
+`GET /v2/operations/{operation_id}`; the startup diagnostic identifies that
+coordinate. Historical prose-reviewed statuses do not provide new native
+attachment authority, and no startup resolution endpoint is implied here.
+
+Startup settles an original keyed operator turn from an already recorded
+`dispatched`, `not_dispatched`, or genuine local approval-wait result before
+considering another attachment. A pending input remains bound to its original
+logical turn, policy, snapshot and admission receipt. After attachment, only a
+successful first-dispatch claim permits its one native send. An original
+sender that loses this claim preserves pending or already-known authority;
+it does not rewrite it as a new failed or unknown send. When no admitted
+keyed parent governs the response, a first-dispatch deferral returns HTTP
+`409 outcome_unresolved` with `error.details.logical_turn_id` and
+`native_retry_authorized: false`; when a startup operation owns the claim,
+`blocking_operation_id` and `blocking_inspection_path` identify it. An admitted
+keyed operator request follows its original parent operation: an unresolved
+parent returns `operation_id` and `inspection_path`, while an existing exact
+terminal receipt replays its original outcome. MCP errors preserve the
+applicable coordinates and remain nonretryable.
+
 ## Legacy sessions and retained turn history
 
 New provider sessions belong to workspace agents. Use
@@ -1525,19 +1601,31 @@ instead preserves the active turn for recovery and commits its
 all affected state; neither outcome can blindly resend possibly executed
 native work, and a later wait error cannot clear an existing quarantine.
 
-Legacy `/v1` session **create, resume and close** also use separate guarded
-SQLite transactions to couple their session projection and critical
-`session.created`, `session.resumed` or `session.closed` receipt. SQLite event
-faults roll back the corresponding session change; stale owners cannot
-overwrite a concurrent session transition, and replay of an identical
-committed receipt does not append an event. Following an acknowledged native
-action, a missing/failed local receipt is an uncertain native-effect result,
-**never authorization to automatically repeat the native provider call**.
-The legacy native-create fallback attempts provider cleanup, but does not
-claim exactly-once provider creation if its effect is uncertain. Closing an
-already-closed session is state-preserving and does not call the provider
-again. These lifecycle receipts do not assert authority over independent
-legacy `/v1` team events or every nonterminal dispatch transition.
+Retained SQLite session-lifecycle receipt helpers couple a known session
+projection with its Critical `session.created`, `session.resumed` or
+`session.closed` row. Event faults roll back the corresponding projection;
+exact receipt replay does not append another event. These helpers preserve
+history and known-result validation. They do not authorize a provider call.
+
+The public runtime manager's legacy `create_session`, `resume_session`,
+`close_session` and `force_close_session` methods now return `Unsupported`
+before reading or changing authority or calling a provider, including for
+missing or already-closed sessions. The legacy HTTP routes above retain their
+pure refusal. Use workspace agent create, restore and archive for supported
+operator lifecycle work; startup attachment uses the separately admitted
+recovery operation described above. No legacy fallback performs unjournaled
+provider cleanup or treats prose as proof of a native result.
+
+The legacy manager workspace methods `create_workspace_agent`,
+`mutate_workspace_agent_permission`, `mutate_workspace_agent_preferences`,
+`archive_workspace_agent`, `archive_workspace_agent_with_initiator`,
+`restore_workspace_agent`, `create_workspace_agent_as_member` and
+`archive_workspace_agent_as_member` also return `Unsupported` before any
+lookup or effect. Supported operator routes and scoped `gg_team` calls use
+their admitted operation owners. The direct `interrupt_turn` and legacy
+`interrupt_all_team_turns` methods likewise refuse; use the journaled
+workspace interruption workflow. These refusals do not create an operation
+or change an existing session, roster or native provider.
 
 A **provider-native approval request** observed after turn dispatch now also
 commits its pending approval identity, the waiting turn/session state, and one

@@ -156,6 +156,7 @@ impl SqliteRuntimeRepository {
             &tx,
             &pending.session_id,
         )?;
+        crate::repository_startup_reattachment::guard_resume_claim(&tx, &pending.session_id)?;
         let changed = tx
             .execute(
                 "UPDATE approvals SET status='decision_pending', response_json=?1

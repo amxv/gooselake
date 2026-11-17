@@ -2,8 +2,14 @@ use super::*;
 
 #[tokio::test]
 async fn historical_created_checkout_preserves_roster_delivery_and_cleanup_guards() {
-    let (router, token, temp_dir, _provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy::default()).await;
+    let (router, token, temp_dir, _provider, _runtime, app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            vec![json!({
+                "provider":"codex", "model":"test-model", "cwd":root.join("repo"),
+                "metadata":{"suite":"phase6"},
+            })]
+        })
+        .await;
     let repo_dir = temp_dir.path().join("repo");
     std::fs::create_dir_all(&repo_dir).expect("create repo dir");
     std::fs::write(repo_dir.join("README.md"), "phase6\n").expect("write readme");
@@ -38,23 +44,7 @@ async fn historical_created_checkout_preserves_roster_delivery_and_cleanup_guard
         .expect("git commit");
     assert!(commit_status.success(), "git commit should succeed");
 
-    let lead_response = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider": "codex",
-            "model": "test-model",
-            "cwd": repo_dir.display().to_string(),
-            "metadata": {"suite":"phase6"}
-        }),
-    )
-    .await;
-    assert_eq!(lead_response.status(), StatusCode::OK);
-    let lead_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(lead_response.into_body(), usize::MAX)
-            .await
-            .expect("lead body"),
-    )
-    .expect("lead json");
+    let lead_json = historical_session_json(&history[0]);
     let lead_session_id = lead_json["id"].as_str().expect("lead id").to_string();
 
     let create_team_response = router
@@ -204,8 +194,14 @@ async fn historical_created_checkout_preserves_roster_delivery_and_cleanup_guard
 
 #[tokio::test]
 async fn historical_use_existing_receipt_preserves_original_worktree_identity() {
-    let (router, token, temp_dir, _provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy::default()).await;
+    let (router, token, temp_dir, _provider, _runtime, app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            vec![json!({
+                "provider":"codex", "model":"test-model", "cwd":root.join("repo"),
+                "metadata":{"suite":"phase6"},
+            })]
+        })
+        .await;
     let repo_dir = temp_dir.path().join("repo");
     std::fs::create_dir_all(&repo_dir).expect("create repo dir");
     std::fs::write(repo_dir.join("README.md"), "phase6 use_existing\n").expect("write readme");
@@ -240,23 +236,7 @@ async fn historical_use_existing_receipt_preserves_original_worktree_identity() 
         .expect("git commit");
     assert!(commit_status.success(), "git commit should succeed");
 
-    let lead_response = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider": "codex",
-            "model": "test-model",
-            "cwd": repo_dir.display().to_string(),
-            "metadata": {"suite":"phase6"}
-        }),
-    )
-    .await;
-    assert_eq!(lead_response.status(), StatusCode::OK);
-    let lead_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(lead_response.into_body(), usize::MAX)
-            .await
-            .expect("lead body"),
-    )
-    .expect("lead json");
+    let lead_json = historical_session_json(&history[0]);
     let lead_session_id = lead_json["id"].as_str().expect("lead id").to_string();
 
     let create_team_response = router

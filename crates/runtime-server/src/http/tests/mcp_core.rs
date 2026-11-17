@@ -2,47 +2,19 @@ use super::*;
 
 #[tokio::test]
 async fn mixed_provider_team_flow_uses_shared_runtime_services() {
-    let (router, token, _temp_dir, _acp_provider, runtime) =
-        build_mixed_provider_test_router_with_runtime().await;
-
-    let codex_session_response = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider": "codex",
-            "model": "test-model",
-            "cwd": null,
-            "permission_mode": null,
-            "metadata": {}
-        }),
-    )
-    .await;
-    assert_eq!(codex_session_response.status(), StatusCode::OK);
-    let codex_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(codex_session_response.into_body(), usize::MAX)
-            .await
-            .expect("codex body"),
-    )
-    .expect("codex json");
+    let (router, token, _temp_dir, _acp_provider, _claude, _runtime, _app, history) =
+        build_mixed_provider_test_router_with_history(|_| {
+            vec![
+                json!({"provider":"codex","model":"test-model","metadata":{}}),
+                json!({"provider":"claude","model":"test-claude-model","metadata":{}}),
+                json!({"provider":"acp","metadata":{}}),
+            ]
+        })
+        .await;
+    let codex_json = historical_session_json(&history[0]);
     let codex_session_id = codex_json["id"].as_str().expect("codex session id");
 
-    let claude_session_response = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider": "claude",
-            "model": "test-claude-model",
-            "cwd": null,
-            "permission_mode": null,
-            "metadata": {}
-        }),
-    )
-    .await;
-    assert_eq!(claude_session_response.status(), StatusCode::OK);
-    let claude_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(claude_session_response.into_body(), usize::MAX)
-            .await
-            .expect("claude body"),
-    )
-    .expect("claude json");
+    let claude_json = historical_session_json(&history[1]);
     let claude_session_id = claude_json["id"].as_str().expect("claude session id");
 
     let create_team_response = router
@@ -95,23 +67,7 @@ async fn mixed_provider_team_flow_uses_shared_runtime_services() {
         .expect("join member");
     assert_eq!(join_member_response.status(), StatusCode::OK);
 
-    let acp_session_response = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider": "acp",
-            "cwd": null,
-            "permission_mode": null,
-            "metadata": {}
-        }),
-    )
-    .await;
-    assert_eq!(acp_session_response.status(), StatusCode::OK);
-    let acp_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(acp_session_response.into_body(), usize::MAX)
-            .await
-            .expect("acp body"),
-    )
-    .expect("acp json");
+    let acp_json = historical_session_json(&history[2]);
     let acp_session_id = acp_json["id"].as_str().expect("acp session id");
 
     let join_acp_response = router
@@ -207,46 +163,18 @@ async fn mixed_provider_team_flow_uses_shared_runtime_services() {
 
 #[tokio::test]
 async fn mcp_process_acp_session_can_use_runtime_process_gateway_and_ownership_rules() {
-    let (router, token, _temp_dir, _acp_provider, runtime) =
-        build_mixed_provider_test_router_with_runtime().await;
-
-    let acp_session_response = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider": "acp",
-            "cwd": null,
-            "permission_mode": null,
-            "metadata": {}
-        }),
-    )
-    .await;
-    assert_eq!(acp_session_response.status(), StatusCode::OK);
-    let acp_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(acp_session_response.into_body(), usize::MAX)
-            .await
-            .expect("acp body"),
-    )
-    .expect("acp json");
+    let (router, token, _temp_dir, _acp_provider, _claude, _runtime, _app, history) =
+        build_mixed_provider_test_router_with_history(|_| {
+            vec![
+                json!({"provider":"acp","metadata":{}}),
+                json!({"provider":"codex","model":"test-model","metadata":{}}),
+            ]
+        })
+        .await;
+    let acp_json = historical_session_json(&history[0]);
     let acp_session_id = acp_json["id"].as_str().expect("acp session id").to_string();
 
-    let codex_session_response = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider": "codex",
-            "model": "test-model",
-            "cwd": null,
-            "permission_mode": null,
-            "metadata": {}
-        }),
-    )
-    .await;
-    assert_eq!(codex_session_response.status(), StatusCode::OK);
-    let codex_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(codex_session_response.into_body(), usize::MAX)
-            .await
-            .expect("codex body"),
-    )
-    .expect("codex json");
+    let codex_json = historical_session_json(&history[1]);
     let codex_session_id = codex_json["id"]
         .as_str()
         .expect("codex session id")
@@ -367,10 +295,11 @@ async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
     config.providers.acp.command = Some("python3".to_string());
     config.providers.acp.args = vec![fake_agent.script_path.display().to_string()];
 
-    let bootstrapped = bootstrap_runtime(config).await.expect("bootstrap");
+    let bootstrapped = bootstrap_runtime(config.clone()).await.expect("bootstrap");
     let token = bootstrapped.auth.bearer_token.clone();
     let runtime = bootstrapped.runtime.clone();
-    let _router = build_router(AppState {
+    let app = bootstrapped.app.clone();
+    let router = build_router(AppState {
         app: bootstrapped.app,
         runtime: bootstrapped.runtime,
         bearer_token: token.clone(),
@@ -378,39 +307,80 @@ async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
         startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
     });
 
-    let create_response = legacy_session_fixture_response(
-        &runtime,
-        serde_json::json!({
-            "provider": "acp",
-            "cwd": "/tmp/acp-create",
-            "permission_mode": null,
-            "metadata": {}
-        }),
+    let workspace_root = temp_dir.path().join("acp-create");
+    std::fs::create_dir_all(&workspace_root).unwrap();
+    let workspace = super::workspace_control_routes::register_control_workspace(
+        &router,
+        &token,
+        &workspace_root,
+        "ACP MCP lifecycle",
     )
     .await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(create_response.into_body(), usize::MAX)
-            .await
-            .expect("create body"),
+    let (status, created, _) = super::operator_agent_create::create_http(
+        &router,
+        &token,
+        &workspace.workspace_id,
+        json!({
+            "provider":"acp", "title":"ACP MCP lifecycle",
+            "setting_sources_intent":{"kind":"isolated"},
+        }),
+        Some("acp-mcp-create"),
     )
-    .expect("create json");
-    let session_id = create_json["id"].as_str().expect("session id").to_string();
-
-    runtime
-        .close_session(&session_id, None)
-        .await
-        .expect("internal fake ACP close");
-    runtime
-        .resume_session(
-            &session_id,
-            ResumeSessionInput {
-                provider_session_ref: None,
-                canonical_provider_session_ref: None,
-            },
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let session_id = created["agent_id"].as_str().unwrap().to_string();
+    finish_test_onboarding(&runtime, &workspace.workspace_id, &session_id).await;
+    let original = runtime.get_session(&session_id).await.unwrap();
+    // Model process restart with a new adapter and registry. The original
+    // adapter is still attached and correctly refuses an in-place rebind.
+    // Keep the same durable identity and actual bootstrap MCP configuration;
+    // the startup claim and receipt authorize this one native reattachment.
+    let restarted_provider = Arc::new(runtime_provider_acp::AcpProvider::new(
+        runtime_provider_acp::AcpProviderConfig {
+            enabled: config.providers.acp.enabled,
+            provider_dir: config.resolve_provider_dir("acp"),
+            max_instances: config.providers.acp.max_instances,
+            max_sessions_per_instance: config.providers.acp.max_sessions_per_instance,
+            command: config.providers.acp.command.clone(),
+            args: config.providers.acp.args.clone(),
+            env: config.providers.acp.env.clone(),
+            transport: config.providers.acp.transport.clone(),
+            request_timeout_secs: config.providers.acp.request_timeout_secs,
+            wait_timeout_secs: config.providers.acp.wait_timeout_secs,
+            gg_mcp_enabled: true,
+            gg_mcp_server_name: "gg".to_string(),
+            gg_mcp_command: std::env::var("GG_MCP_SERVER_PATH").unwrap_or_else(|_| {
+                runtime_provider_claude::standalone_gg_mcp_server_command_path()
+                    .display()
+                    .to_string()
+            }),
+            gg_mcp_args: Vec::new(),
+            gg_mcp_enable_process_tools: config.processes.enabled,
+            gg_mcp_gateway_url: Some(format!(
+                "{}/v2/mcp",
+                config.server.public_base_url.trim_end_matches('/')
+            )),
+            gg_mcp_gateway_token: Some(token.clone()),
+        },
+    ));
+    let mut restarted_providers = runtime_core::ProviderRegistry::new();
+    restarted_providers.register(restarted_provider).unwrap();
+    let restarted = Arc::new(
+        RuntimeSessionManager::new(
+            app.services.store.clone(),
+            Arc::new(restarted_providers),
+            512,
         )
-        .await
-        .expect("internal fake ACP resume");
+        .unwrap(),
+    );
+    let summary = restarted.recover_startup().await.unwrap();
+    assert_eq!(summary.resumed_sessions, 1, "{:?}", summary.notes);
+    let resumed = restarted.get_session(&session_id).await.unwrap();
+    assert_eq!(resumed.provider_session_ref, original.provider_session_ref);
+    assert_eq!(
+        resumed.canonical_provider_session_ref,
+        original.canonical_provider_session_ref
+    );
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let requests = read_logged_jsonl(fake_agent.log_path.as_path());
@@ -422,11 +392,27 @@ async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
         .iter()
         .find(|entry| entry["method"].as_str() == Some("session/resume"))
         .expect("session/resume request");
+    assert_eq!(
+        resume_request["params"]["sessionId"].as_str(),
+        original.provider_session_ref.as_deref()
+    );
 
-    for (entry, expected_cwd) in [
-        (create_request, "/tmp/acp-create"),
-        (resume_request, "/tmp/acp-create"),
-    ] {
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|entry| entry["method"] == "session/new")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|entry| entry["method"] == "session/resume")
+            .count(),
+        1
+    );
+    for entry in [create_request, resume_request] {
+        let expected_cwd = workspace.canonical_root.as_str();
         assert_eq!(entry["params"]["cwd"].as_str(), Some(expected_cwd));
         let gg_server = entry["params"]["mcpServers"]
             .as_array()
@@ -464,21 +450,12 @@ async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
 
 #[tokio::test]
 async fn mcp_process_run_and_logs_share_runtime_process_service() {
-    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
-
-    let create_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
-    assert_eq!(create_response.status(), StatusCode::OK);
-    let create_bytes = to_bytes(create_response.into_body(), usize::MAX)
-        .await
-        .expect("create body");
-    let created: serde_json::Value = serde_json::from_slice(&create_bytes).expect("create json");
+    let (router, token, _temp_dir, _provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model","metadata":{}})]
+        })
+        .await;
+    let created = historical_session_json(&history[0]);
     let session_id = created["id"].as_str().expect("session id").to_string();
 
     let invoke_body = serde_json::json!({
@@ -583,39 +560,24 @@ async fn mcp_process_run_and_logs_share_runtime_process_service() {
 
 #[tokio::test]
 async fn mcp_invoke_team_tools_share_http_team_services() {
-    let (router, token, temp_dir, _provider, runtime, app) =
-        build_test_router_with_services(TeamMcpPolicy::default()).await;
-    let session_cwd = temp_dir.path().join("mcp-team-cwd");
-    std::fs::create_dir_all(&session_cwd).expect("create mcp team cwd");
-
-    let create_session = |label: &'static str| {
-        let runtime = runtime.clone();
-        let cwd = session_cwd.display().to_string();
-        async move {
-            let response = legacy_session_fixture_response(
-                &runtime,
-                serde_json::json!({
-                    "provider": "codex",
-                    "model": "test-model",
-                    "cwd": cwd,
-                    "metadata": {"suite": "mcp_team", "label": label}
-                }),
-            )
-            .await;
-            assert_eq!(response.status(), StatusCode::OK);
-            let body: serde_json::Value = serde_json::from_slice(
-                &to_bytes(response.into_body(), usize::MAX)
-                    .await
-                    .expect("session body"),
-            )
-            .expect("session json");
-            body["id"].as_str().expect("session id").to_string()
-        }
-    };
-
-    let lead_session_id = create_session("lead").await;
-    let member_session_id = create_session("member").await;
-    let observer_session_id = create_session("observer").await;
+    let (router, token, temp_dir, _provider, _runtime, app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            let cwd = root.join("mcp-team-cwd");
+            std::fs::create_dir_all(&cwd).expect("create mcp team cwd");
+            ["lead", "member", "observer"]
+                .into_iter()
+                .map(|label| {
+                    json!({
+                        "provider":"codex", "model":"test-model", "cwd":cwd,
+                        "metadata":{"suite":"mcp_team", "label":label},
+                    })
+                })
+                .collect()
+        })
+        .await;
+    let lead_session_id = history[0].id.clone();
+    let member_session_id = history[1].id.clone();
+    let observer_session_id = history[2].id.clone();
 
     let create_team_response = router
         .clone()

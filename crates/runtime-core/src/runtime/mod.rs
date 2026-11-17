@@ -32,6 +32,8 @@ mod operator_native_policy;
 mod recovery;
 mod session_control_recovery;
 mod sessions;
+mod startup_reattachment;
+mod startup_turn_recovery;
 mod turn_dispatch_outcome;
 mod turn_dispatch_start;
 mod turn_dispatch_transitions;
@@ -53,6 +55,8 @@ pub use worktree_routes::WorkspaceWorktreeStatusSummary;
 
 #[cfg(test)]
 mod test_support;
+#[cfg(test)]
+mod test_support_session_fixture;
 #[cfg(test)]
 mod tests;
 
@@ -131,6 +135,9 @@ pub struct RuntimeSessionManager {
     pub(super) approvals: RwLock<HashMap<String, ApprovalRecord>>,
     pub(super) turn_admissions: RwLock<HashMap<String, TurnAdmissionRecord>>,
     pub(super) session_policy_mutation_lock: Mutex<()>,
+    pub(super) startup_instance_id: String,
+    pub(super) startup_recovery_lock: Mutex<()>,
+    pub(super) startup_commands: Mutex<HashMap<String, crate::StartupReattachCommand>>,
     // Also holds the keyset cursor so older undeliverable notices cannot
     // permanently starve later notices in a large workspace.
     pub(super) system_notice_dispatch_lock: Mutex<Option<WorkspaceSystemNoticeRecord>>,
@@ -177,6 +184,9 @@ impl RuntimeSessionManager {
             approvals: RwLock::new(approvals),
             turn_admissions: RwLock::new(turn_admissions),
             session_policy_mutation_lock: Mutex::new(()),
+            startup_instance_id: format!("startup_{:032x}", rand::random::<u128>()),
+            startup_recovery_lock: Mutex::new(()),
+            startup_commands: Mutex::new(HashMap::new()),
             system_notice_dispatch_lock: Mutex::new(None),
             pre_add_hook_executor: RwLock::new(None),
             next_id: AtomicU64::new(1),

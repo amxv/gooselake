@@ -477,7 +477,8 @@ async fn model_remove_startup_quarantines_admitted_child_without_native_replay()
             .notes
             .iter()
             .any(|note| note.contains(&target.agent_id)
-                && note.contains("native provider resume withheld")),
+                && note.contains(&plans[0].operation_id)
+                && note.contains("startup continuation withheld")),
         "{recovery:?}"
     );
     // Only the unrelated caller can resume; the admitted target stays fenced.

@@ -33,7 +33,7 @@ async fn fixture_with_policy(
         .unwrap()
         .workspace;
     let caller = runtime
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             &workspace.workspace_id,
             WorkspaceAgentCreateRequest {
                 provider: ProviderKind::Codex,

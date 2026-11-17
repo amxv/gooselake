@@ -4,7 +4,7 @@ use runtime_core::{
 };
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
-use crate::db::{db_error, json_to_string, open_connection};
+use crate::db::{db_error, open_connection};
 use crate::operation_tx::OperationAuthorityTransaction;
 use crate::repository_turn_authority::{
     OPERATOR_TURN_CLAIM, OPERATOR_TURN_EFFECT, OPERATOR_TURN_KIND,
@@ -45,169 +45,6 @@ impl SqliteRuntimeRepository {
         operation_by_idempotency(&connection, actor.kind, &actor.identifier, Some(key))?
             .map(|operation| classify_operator_turn(operation, agent_id, normalized_request_hash))
             .transpose()
-    }
-
-    pub fn complete_operator_user_turn(
-        &self,
-        operation_id: &str,
-        accepted: &SendTurnAccepted,
-        at_ms: i64,
-    ) -> Result<(), RuntimeError> {
-        if !matches!(
-            accepted.status.as_str(),
-            "in_progress" | "waiting_for_approval"
-        ) {
-            return Err(RuntimeError::InvalidState(
-                "operator turn receipt must describe an accepted logical turn".into(),
-            ));
-        }
-        let mut connection = open_connection(&self.database_path)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| db_error("failed starting operator turn receipt", error))?;
-        let operation = requested_operator_turn(&transaction, operation_id)?;
-        let turn_id = operation_turn_id(&transaction, operation_id)?;
-        if accepted.turn_id != turn_id
-            || operation.normalized_request["agent_id"] != accepted.session_id
-        {
-            return Err(RuntimeError::Conflict(
-                "operator turn receipt does not match admitted logical turn".into(),
-            ));
-        }
-        let persisted: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT t.session_id, a.dispatch_state
-                 FROM turns t JOIN turn_admissions a ON a.turn_id=t.id
-                 WHERE t.id=?1",
-                [&turn_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(|error| db_error("failed verifying accepted logical turn", error))?;
-        let Some((session_id, dispatch_state)) = persisted else {
-            return Err(RuntimeError::Conflict(
-                "operator turn receipt lacks durable turn admission".into(),
-            ));
-        };
-        if session_id != accepted.session_id
-            || (accepted.status == "in_progress" && dispatch_state != "dispatched")
-            || (accepted.status == "waiting_for_approval" && dispatch_state == "not_dispatched")
-        {
-            return Err(RuntimeError::Conflict(
-                "operator turn receipt has no matching accepted dispatch evidence".into(),
-            ));
-        }
-        let exact = serde_json::to_value(accepted).map_err(|error| {
-            RuntimeError::Bootstrap(format!("failed serializing accepted turn: {error}"))
-        })?;
-        let changed = transaction
-            .execute(
-                "UPDATE runtime_operation_effects SET phase='finalized',
-                 evidence_json=?2, attempt_count=1, updated_at=?3
-                 WHERE operation_id=?1 AND effect_kind=?4 AND phase='intended'",
-                params![
-                    operation_id,
-                    json_to_string(&exact)?,
-                    at_ms,
-                    OPERATOR_TURN_EFFECT
-                ],
-            )
-            .map_err(|error| db_error("failed recording accepted operator turn", error))?;
-        if changed != 1 {
-            return Err(RuntimeError::Conflict(
-                "operator native turn intent has already been settled".into(),
-            ));
-        }
-        let authority = OperationAuthorityTransaction::new(&transaction);
-        authority.terminalize(
-            operation_id,
-            OperationPhase::Requested,
-            OperationPhase::Completed,
-            operation.workspace_id.as_deref(),
-            &exact,
-            None,
-            None,
-            at_ms,
-        )?;
-        append_terminal_transition(&authority, operation_id, OperationPhase::Completed, at_ms)?;
-        release_operator_turn_claim(&transaction, operation_id, &session_id)?;
-        transaction
-            .commit()
-            .map_err(|error| db_error("failed committing exact operator turn receipt", error))
-    }
-
-    pub fn fail_operator_user_turn_not_dispatched(
-        &self,
-        operation_id: &str,
-        code: &str,
-        message: &str,
-        at_ms: i64,
-    ) -> Result<(), RuntimeError> {
-        let mut connection = open_connection(&self.database_path)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| db_error("failed starting operator non-dispatch receipt", error))?;
-        let operation = requested_operator_turn(&transaction, operation_id)?;
-        let turn_id = operation_turn_id(&transaction, operation_id)?;
-        let state: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT t.session_id, a.dispatch_state FROM turns t
-                 JOIN turn_admissions a ON a.turn_id=t.id WHERE t.id=?1",
-                [&turn_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(|error| db_error("failed checking rejected provider dispatch", error))?;
-        let Some((session_id, state)) = state else {
-            return Err(RuntimeError::Conflict(
-                "operator non-dispatch lacks logical turn evidence".into(),
-            ));
-        };
-        if state != "not_dispatched" || operation.normalized_request["agent_id"] != session_id {
-            return Err(RuntimeError::Conflict(
-                "provider native non-dispatch was not durably proven".into(),
-            ));
-        }
-        let exact = serde_json::json!({
-            "code":code,
-            "message":message,
-            "dispatch_outcome":"not_dispatched",
-            "logical_turn_id":turn_id,
-        });
-        let changed = transaction
-            .execute(
-                "UPDATE runtime_operation_effects SET phase='finalized',
-                 evidence_json=?2, attempt_count=1, updated_at=?3
-                 WHERE operation_id=?1 AND effect_kind=?4 AND phase='intended'",
-                params![
-                    operation_id,
-                    json_to_string(&exact)?,
-                    at_ms,
-                    OPERATOR_TURN_EFFECT
-                ],
-            )
-            .map_err(|error| db_error("failed recording provider non-dispatch", error))?;
-        if changed != 1 {
-            return Err(RuntimeError::Conflict(
-                "operator turn non-dispatch receipt was already settled".into(),
-            ));
-        }
-        let authority = OperationAuthorityTransaction::new(&transaction);
-        authority.terminalize(
-            operation_id,
-            OperationPhase::Requested,
-            OperationPhase::Failed,
-            operation.workspace_id.as_deref(),
-            &exact,
-            Some("not_dispatched"),
-            Some(message),
-            at_ms,
-        )?;
-        append_terminal_transition(&authority, operation_id, OperationPhase::Failed, at_ms)?;
-        release_operator_turn_claim(&transaction, operation_id, &session_id)?;
-        transaction
-            .commit()
-            .map_err(|error| db_error("failed committing exact non-dispatch receipt", error))
     }
 
     pub fn mark_operator_user_turn_uncertain(
@@ -321,7 +158,7 @@ fn classify_operator_turn(
     })
 }
 
-fn requested_operator_turn(
+pub(crate) fn requested_operator_turn(
     transaction: &Transaction<'_>,
     operation_id: &str,
 ) -> Result<OperationRecord, RuntimeError> {
@@ -335,7 +172,7 @@ fn requested_operator_turn(
     Ok(operation)
 }
 
-fn operation_turn_id(
+pub(crate) fn operation_turn_id(
     transaction: &Transaction<'_>,
     operation_id: &str,
 ) -> Result<String, RuntimeError> {
@@ -351,7 +188,7 @@ fn operation_turn_id(
         .ok_or_else(|| RuntimeError::Conflict("operator turn native intent is absent".into()))
 }
 
-fn append_terminal_transition(
+pub(crate) fn append_terminal_transition(
     authority: &OperationAuthorityTransaction<'_, '_>,
     operation_id: &str,
     phase: OperationPhase,
@@ -367,7 +204,7 @@ fn append_terminal_transition(
     })
 }
 
-fn release_operator_turn_claim(
+pub(crate) fn release_operator_turn_claim(
     transaction: &Transaction<'_>,
     operation_id: &str,
     agent_id: &str,

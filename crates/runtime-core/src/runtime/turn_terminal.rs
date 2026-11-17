@@ -3,10 +3,7 @@ use crate::{
     RuntimeEventScope, SessionRecord, TurnRecord,
 };
 
-use super::helpers::{
-    append_session_transcript, extract_assistant_text_from_usage, extract_turn_user_text,
-    is_terminal_turn_status, now_ms,
-};
+use super::helpers::{is_terminal_turn_status, now_ms};
 use super::RuntimeSessionManager;
 
 fn terminal_turn(turn: &TurnRecord) -> bool {
@@ -307,21 +304,7 @@ impl RuntimeSessionManager {
             if session.status != "failed" {
                 session.status = "ready".into();
             }
-            if matches!(
-                result.status,
-                ProviderTurnStatus::Completed | ProviderTurnStatus::Interrupted
-            ) {
-                if let Some(text) = extract_turn_user_text(turn.input.as_array()) {
-                    append_session_transcript(&mut session.metadata, "user", &text);
-                }
-                if let Some(text) = result
-                    .usage
-                    .as_ref()
-                    .and_then(extract_assistant_text_from_usage)
-                {
-                    append_session_transcript(&mut session.metadata, "assistant", &text);
-                }
-            }
+            session.metadata = crate::terminal_session_metadata(&session.metadata, &turn);
             session.updated_at = now_ms();
         }
         let event_kind = match result.status {
@@ -334,10 +317,6 @@ impl RuntimeSessionManager {
                 ))
             }
         };
-        let assistant_text = result
-            .usage
-            .as_ref()
-            .and_then(extract_assistant_text_from_usage);
         let event = NewRuntimeEvent {
             event_id: format!("evt_turn_{}_terminal", result.turn_id),
             scope: RuntimeEventScope::Session,
@@ -347,10 +326,7 @@ impl RuntimeSessionManager {
             turn_id: Some(result.turn_id.clone()),
             kind: event_kind.into(),
             criticality: RuntimeEventCriticality::Critical,
-            payload: serde_json::json!({
-                "status":result.status.as_str(),"usage":result.usage,
-                "error":result.error,"assistant_text":assistant_text,
-            }),
+            payload: crate::terminal_turn_event_payload(&turn),
             provider: None,
             provider_seq: None,
             created_at: now_ms(),

@@ -23,6 +23,23 @@ pub(super) async fn build_mixed_provider_test_router_with_services() -> (
     Arc<RuntimeSessionManager>,
     Arc<RuntimeApp>,
 ) {
+    let (router, token, temp, acp, claude, runtime, app, _history) =
+        build_mixed_provider_test_router_with_history(|_| Vec::new()).await;
+    (router, token, temp, acp, claude, runtime, app)
+}
+
+pub(super) async fn build_mixed_provider_test_router_with_history(
+    seed: impl FnOnce(&Path) -> Vec<Value>,
+) -> (
+    Router,
+    String,
+    tempfile::TempDir,
+    Arc<TestAcpProvider>,
+    Arc<TestClaudeProvider>,
+    Arc<RuntimeSessionManager>,
+    Arc<RuntimeApp>,
+    Vec<runtime_core::SessionRecord>,
+) {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp_dir.path().join("runtime.sqlite3"),
@@ -30,10 +47,11 @@ pub(super) async fn build_mixed_provider_test_router_with_services() -> (
     store.initialize().await.expect("initialize store");
 
     let mut registry = runtime_core::ProviderRegistry::new();
+    let codex_provider = Arc::new(TestProvider::default());
     let acp_provider = Arc::new(TestAcpProvider::default());
     let claude_provider = Arc::new(TestClaudeProvider::default());
     registry
-        .register(Arc::new(TestProvider::default()))
+        .register(codex_provider.clone())
         .expect("register codex test provider");
     registry
         .register(claude_provider.clone())
@@ -42,6 +60,16 @@ pub(super) async fn build_mixed_provider_test_router_with_services() -> (
         .register(acp_provider.clone())
         .expect("register acp test provider");
     let provider_registry = Arc::new(registry);
+    let history = build_history_records(seed(temp_dir.path()));
+    for session in &history {
+        match session.provider.as_str() {
+            "codex" => codex_provider.seed_historical_session(session).await,
+            "claude" => claude_provider.seed_historical_session(session).await,
+            "acp" => acp_provider.seed_historical_session(session).await,
+            provider => panic!("unsupported history provider {provider}"),
+        }
+        persist_historical_session(store.as_ref(), session);
+    }
     let runtime = Arc::new(
         RuntimeSessionManager::new(store.clone(), provider_registry.clone(), 512)
             .expect("build runtime"),
@@ -139,5 +167,6 @@ pub(super) async fn build_mixed_provider_test_router_with_services() -> (
         claude_provider,
         runtime,
         app,
+        history,
     )
 }

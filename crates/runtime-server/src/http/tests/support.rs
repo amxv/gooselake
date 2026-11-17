@@ -1,8 +1,14 @@
 use super::*;
 #[path = "support/session_create.rs"]
 mod session_create;
+#[path = "support/session_history.rs"]
+mod session_history;
 #[path = "support/session_lifecycle_close.rs"]
 mod session_lifecycle_close;
+pub(super) use session_history::{
+    build_history_records, build_test_router_with_history, historical_session_json,
+    persist_historical_session,
+};
 
 pub(super) fn test_team_model_presets() -> Vec<TeamModelPreset> {
     vec![
@@ -864,28 +870,9 @@ pub(super) async fn build_test_router_with_services(
     Arc<RuntimeSessionManager>,
     Arc<RuntimeApp>,
 ) {
-    let temp_dir = tempfile::tempdir().expect("temp dir");
-    let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
-        database_path: temp_dir.path().join("runtime.sqlite3"),
-    }));
-    store.initialize().await.expect("initialize store");
-
-    let test_provider = Arc::new(TestProvider::default());
-    let mut registry = runtime_core::ProviderRegistry::new();
-    registry
-        .register(test_provider.clone())
-        .expect("register test provider");
-    let provider_registry = Arc::new(registry);
-    let bearer_token = "test-token".to_string();
-    let (router, runtime, app) = assemble_test_router(
-        temp_dir.path(),
-        store,
-        provider_registry,
-        &bearer_token,
-        team_policy,
-    )
-    .await;
-    (router, bearer_token, temp_dir, test_provider, runtime, app)
+    let (router, token, temp, provider, runtime, app, _history) =
+        build_test_router_with_history(team_policy, |_| Vec::new()).await;
+    (router, token, temp, provider, runtime, app)
 }
 
 pub(super) async fn build_mixed_provider_test_router(

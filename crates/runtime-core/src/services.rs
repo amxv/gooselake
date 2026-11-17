@@ -10,6 +10,8 @@ mod message_operator;
 mod provider_terminal;
 #[path = "services_session_control_store_trait.rs"]
 mod session_control_store_trait;
+#[path = "services_startup_store_trait.rs"]
+mod startup_store_trait;
 #[path = "services_team_comms_trait.rs"]
 mod team_comms_trait;
 #[path = "services_team_models.rs"]
@@ -94,6 +96,7 @@ pub trait RuntimeStore:
     operator_create_store_trait::operator_agent_create_store_methods!();
     operator_archive_store_trait::operator_agent_archive_store_methods!();
     agent_tool_store_trait::agent_tool_store_methods!();
+    startup_store_trait::startup_reattachment_store_methods!();
 
     /// Admission precedes native pre-add hooks and provider creation.
     fn admit_pre_add_team_hooks(

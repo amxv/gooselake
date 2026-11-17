@@ -910,22 +910,6 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     smoke_server_handle.abort();
 }
 
-pub(super) async fn create_test_session(
-    runtime: &Arc<RuntimeSessionManager>,
-    suite: &str,
-) -> String {
-    runtime
-        .create_session(
-            serde_json::from_value(serde_json::json!({
-                "provider":"codex", "model":codex_test_model(), "metadata":{"suite":suite}
-            }))
-            .unwrap(),
-        )
-        .await
-        .expect("seed legacy session history")
-        .id
-}
-
 pub(super) fn codex_test_model() -> String {
     "gpt-6-luna".to_string()
 }

@@ -27,9 +27,14 @@ struct Fixture {
     service: Arc<RuntimeWorktreeService>,
     worktree: ManagedWorktreeRecord,
     workspace_id: String,
+    independent_session: Option<SessionRecord>,
 }
 
 async fn fixture() -> Fixture {
+    fixture_with_history(false).await
+}
+
+async fn fixture_with_history(released_claim_history: bool) -> Fixture {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("repository");
     std::fs::create_dir_all(&root).unwrap();
@@ -55,7 +60,15 @@ async fn fixture() -> Fixture {
         database_path: temp.path().join("runtime.sqlite3"),
     }));
     store.initialize().await.unwrap();
-    let (runtime, comms) = build_runtime_and_team_comms(store.clone()).await;
+    let history = if released_claim_history {
+        vec![historical_test_session(
+            "sess_cleanup_history",
+            root.to_str().unwrap(),
+        )]
+    } else {
+        Vec::new()
+    };
+    let (runtime, comms) = build_runtime_and_team_comms_with_history(store.clone(), &history).await;
     let workspace_id = store
         .register_workspace(
             &prepare_workspace_registration(
@@ -115,6 +128,7 @@ async fn fixture() -> Fixture {
         service,
         worktree,
         workspace_id,
+        independent_session: history.into_iter().next(),
     }
 }
 
@@ -138,12 +152,11 @@ fn cleanup_operation(store: &SqliteRuntimeStore) -> String {
 
 #[tokio::test]
 async fn native_worktree_cleanup_is_exactly_receipted_and_replayed_across_restart() {
-    let fixture = fixture().await;
+    let fixture = fixture_with_history(true).await;
     // A historical released claim must survive cleanup. Startup repair
     // re-upserts this released history; the database fence must reject only
     // new active claims, not recovery of already-released evidence.
-    let independent_session =
-        create_test_session(&fixture.service.runtime, fixture.root.to_str().unwrap()).await;
+    let independent_session = fixture.independent_session.as_ref().unwrap();
     fixture
         .store
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {

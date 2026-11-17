@@ -3,7 +3,7 @@ use super::workspace_agent_preflight::{validate_agent_onboarding, validate_initi
 use super::workspace_agents::{friendly_alias, normalize_optional, normalize_recreation_policy};
 use super::RuntimeSessionManager;
 use crate::{
-    OperatorAgentCreateCommand, OperatorAgentCreateLaunchSnapshot, ProviderCloseSessionRequest,
+    OperatorAgentCreateCommand, OperatorAgentCreateLaunchSnapshot,
     ProviderCreateSessionPolicyRequest, RuntimeError, SessionRecord, WorkspaceAgentCreateRequest,
     WorkspaceAgentInitialRoute, WorkspaceAgentLifecycleState, WorkspaceAgentProfile,
     WorkspaceAgentRecord, WorkspaceLifecycleState,
@@ -13,12 +13,13 @@ use std::sync::Arc;
 impl RuntimeSessionManager {
     pub async fn create_workspace_agent(
         self: &Arc<Self>,
-        workspace_id: &str,
-        request: WorkspaceAgentCreateRequest,
-        added_by: &str,
+        _workspace_id: &str,
+        _request: WorkspaceAgentCreateRequest,
+        _added_by: &str,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
-        self.create_workspace_agent_inner(workspace_id, request, added_by, None)
-            .await
+        Err(RuntimeError::Unsupported(
+            "raw workspace-agent creation is unsupported; use journaled operator or scoped member creation".into(),
+        ))
     }
 
     pub(super) async fn create_workspace_agent_inner(
@@ -26,7 +27,7 @@ impl RuntimeSessionManager {
         workspace_id: &str,
         request: WorkspaceAgentCreateRequest,
         added_by: &str,
-        operator: Option<&OperatorAgentCreateCommand>,
+        operator: &OperatorAgentCreateCommand,
     ) -> Result<WorkspaceAgentRecord, RuntimeError> {
         let workspace_id = workspace_id.trim();
         let workspace = self
@@ -68,11 +69,10 @@ impl RuntimeSessionManager {
             .creator_compaction_subscription
             .as_deref()
             .unwrap_or("auto");
-        let member = operator
-            .filter(|command| command.actor.kind == crate::OperationActorKind::Agent)
-            .map(|command| {
+        let member = (operator.actor.kind == crate::OperationActorKind::Agent)
+            .then(|| {
                 serde_json::from_value::<crate::MemberAgentCreateIntent>(
-                    command.normalized_request["member_intent"].clone(),
+                    operator.normalized_request["member_intent"].clone(),
                 )
                 .map_err(|error| {
                     RuntimeError::Conflict(format!(
@@ -165,10 +165,7 @@ impl RuntimeSessionManager {
         let provider = self.providers.get_enabled(policy.provider).ok_or_else(|| {
             RuntimeError::ProviderNotRegistered(policy.provider.as_str().to_string())
         })?;
-        let session_id = operator.map_or_else(
-            || self.allocate_id("sess", policy.provider.as_str()),
-            |cmd| cmd.reserved_agent_id.clone(),
-        );
+        let session_id = operator.reserved_agent_id.clone();
         let (hook_cwd, pre_add_context) = self
             .prepare_pre_add_hooks(
                 &workspace,
@@ -245,18 +242,16 @@ impl RuntimeSessionManager {
             updated_at: created_at,
         };
 
-        if let Some(command) = operator {
-            self.store.freeze_operator_agent_create_launch(
-                command,
-                &OperatorAgentCreateLaunchSnapshot {
-                    session: session.clone(),
-                    agent: record.clone(),
-                    onboarding: onboarding.clone(),
-                    hooks: pre_add_context.clone(),
-                    worktree_operation_id: command.worktree_operation_id.clone(),
-                },
-            )?;
-        }
+        self.store.freeze_operator_agent_create_launch(
+            operator,
+            &OperatorAgentCreateLaunchSnapshot {
+                session: session.clone(),
+                agent: record.clone(),
+                onboarding: onboarding.clone(),
+                hooks: pre_add_context.clone(),
+                worktree_operation_id: operator.worktree_operation_id.clone(),
+            },
+        )?;
         // This is the first provider create call. For /v2 operator creation,
         // its exact ID, policy, onboard/hook context and native intent have
         // already committed. Unknown outcomes never trigger a second call.
@@ -285,35 +280,16 @@ impl RuntimeSessionManager {
         record.canonical_provider_session_ref = session.canonical_provider_session_ref.clone();
         record.updated_at = received_at;
 
-        let persisted = if let Some(command) = operator {
-            self.store.create_workspace_agent_with_operator_receipt(
-                command,
-                &session,
-                &record,
-                &onboarding,
-                pre_add_context.as_ref(),
-            )
-        } else {
-            self.store.create_workspace_agent_with_hook_context(
-                &session,
-                &record,
-                &onboarding,
-                pre_add_context.as_ref(),
-            )
-        };
-        if let Err(error) = persisted {
-            // The operator's unresolved native claim is the recovery owner:
-            // don't try a second irreversible provider close/rollback here.
-            if operator.is_none() {
-                let _ = provider
-                    .close_session(ProviderCloseSessionRequest {
-                        runtime_session_id: session_id,
-                        reason: Some("workspace_agent_admission_failed".to_string()),
-                    })
-                    .await;
-            }
-            return Err(error);
-        }
+        // Both operator and scoped member callers own an admitted journal
+        // command. A failed receipt retains that authority; no blind close
+        // or unjournaled roster fallback can run here.
+        self.store.create_workspace_agent_with_operator_receipt(
+            operator,
+            &session,
+            &record,
+            &onboarding,
+            pre_add_context.as_ref(),
+        )?;
         self.sessions
             .write()
             .await

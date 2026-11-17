@@ -156,6 +156,7 @@ async fn workspace_interrupt_lost_ack_retains_original_target_across_replay_and_
             matches!(error, RuntimeError::OperationUnresolved {operation_id:id,..} if id==operation_id)
         );
     }
+    let before_resume = fresh.get_session(&agent.agent_id).await.unwrap();
     let error = fresh
         .resume_session(
             &agent.agent_id,
@@ -166,8 +167,10 @@ async fn workspace_interrupt_lost_ack_retains_original_target_across_replay_and_
         )
         .await
         .unwrap_err();
-    assert!(
-        matches!(error, RuntimeError::OperationUnresolved {operation_id:id,..} if id==operation_id)
+    assert!(matches!(error, RuntimeError::Unsupported(_)));
+    assert_eq!(
+        fresh.get_session(&agent.agent_id).await.unwrap(),
+        before_resume
     );
     assert_eq!(
         provider.send_invocations.load(Ordering::SeqCst),
@@ -215,12 +218,13 @@ async fn raw_legacy_native_session_creation_is_refused_without_provider_or_store
 
 #[tokio::test]
 async fn raw_legacy_lifecycle_and_interrupt_refuse_for_existing_and_missing_targets() {
-    let (router, token, temp, provider, runtime) =
-        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |_| {
+            vec![json!({"provider":"codex","model":"test-model"})]
+        })
+        .await;
     provider.allow_lifecycle_close_for_test();
-    let (_, legacy) =
-        legacy_session_fixture_json(&runtime, json!({"provider":"codex","model":"test-model"}))
-            .await;
+    let legacy = historical_session_json(&history[0]);
     let id = legacy["id"].as_str().unwrap();
     let before = runtime.get_session(id).await.unwrap();
     let root = temp.path().join("canonical-refusal-target");
@@ -287,15 +291,15 @@ async fn raw_legacy_lifecycle_and_interrupt_refuse_for_existing_and_missing_targ
 
 #[tokio::test]
 async fn raw_legacy_worktree_refuses_before_git_hooks_or_claims() {
-    let (router, token, temp, provider, runtime) =
-        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, _runtime, _app, history) =
+        build_test_router_with_history(TeamMcpPolicy::default(), |root| {
+            let repo = root.join("raw-refusal-repo");
+            super::workspace_worktree_routes::seeded_repo(&repo);
+            vec![json!({"provider":"codex","model":"test-model","cwd":repo})]
+        })
+        .await;
     let repo = temp.path().join("raw-refusal-repo");
-    super::workspace_worktree_routes::seeded_repo(&repo);
-    let (_, source) = legacy_session_fixture_json(
-        &runtime,
-        json!({"provider":"codex","model":"test-model","cwd":repo}),
-    )
-    .await;
+    let source = historical_session_json(&history[0]);
     let native = || {
         std::process::Command::new("git")
             .arg("-C")

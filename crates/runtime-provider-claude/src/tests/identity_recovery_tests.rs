@@ -32,7 +32,7 @@ async fn late_sdk_identity_is_durable_before_restart_and_reused_for_resume() {
         RuntimeSessionManager::new(store.clone(), Arc::new(registry), 256).expect("start manager"),
     );
     let agent = manager
-        .create_workspace_agent(
+        .create_workspace_agent_journaled_fixture(
             registered.workspace.workspace_id.as_str(),
             WorkspaceAgentCreateRequest {
                 provider: ProviderKind::Claude,

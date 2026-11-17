@@ -1,8 +1,13 @@
-use runtime_core::{ProviderSession, RuntimeError, SessionEditRerunOperation};
+use runtime_core::{
+    EditRerunTransitionReceipt, ProviderSession, RuntimeError, SessionEditRerunOperation,
+};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{json, Value};
 
 use crate::db::{db_error, open_connection};
+use crate::repository_edit_rerun_receipt::{
+    journal_edit_transition_tx, unchanged, verify_edit_transition_receipt_tx,
+};
 use crate::SqliteRuntimeRepository;
 
 fn encode(operation: &SessionEditRerunOperation) -> Result<String, RuntimeError> {
@@ -149,6 +154,62 @@ fn fork_prefix_metadata(
     })
 }
 
+fn validate_transition_arguments(
+    operation: &SessionEditRerunOperation,
+    phase: &str,
+    child: Option<&ProviderSession>,
+    replacement_turn_id: Option<&str>,
+    error_code: Option<&str>,
+) -> Result<(), RuntimeError> {
+    let valid = match phase {
+        "fork_observed" => {
+            child.is_some_and(|child| {
+                child.runtime_session_id == operation.agent_id
+                    && !child.provider_session_ref.trim().is_empty()
+                    && child.provider_session_ref != operation.source_provider_session_ref
+            }) && replacement_turn_id.is_none()
+                && error_code.is_none()
+        }
+        "completed" => {
+            child.is_none() && replacement_turn_id.is_some_and(|id| !id.trim().is_empty())
+        }
+        "intended" | "native_started" => {
+            child.is_none() && replacement_turn_id.is_none() && error_code.is_none()
+        }
+        "manual_review" | "failed" => child.is_none() && replacement_turn_id.is_none(),
+        _ => false,
+    };
+    if !valid {
+        return Err(RuntimeError::InvalidState(
+            "contradictory edit transition evidence".into(),
+        ));
+    }
+    Ok(())
+}
+
+// Run shape validation first, then use this only when operation.phase == phase.
+fn exact_phase_replay(
+    operation: &SessionEditRerunOperation,
+    phase: &str,
+    child: Option<&ProviderSession>,
+    replacement_turn_id: Option<&str>,
+    error_code: Option<&str>,
+) -> bool {
+    operation.error_code.as_deref() == error_code
+        && match phase {
+            "fork_observed" => {
+                child.is_some_and(|child| {
+                    operation.child_provider_session_ref.as_deref()
+                        == Some(child.provider_session_ref.as_str())
+                        && operation.child_canonical_provider_session_ref
+                            == child.canonical_provider_session_ref
+                }) && operation.replacement_turn_id.is_none()
+            }
+            "completed" => operation.replacement_turn_id.as_deref() == replacement_turn_id,
+            _ => operation.replacement_turn_id.is_none(),
+        }
+}
+
 impl SqliteRuntimeRepository {
     pub fn get_session_edit_rerun(
         &self,
@@ -192,11 +253,22 @@ impl SqliteRuntimeRepository {
         &self,
         operation: &SessionEditRerunOperation,
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        self.begin_session_edit_rerun_with_receipt(operation)
+            .map(|receipt| receipt.operation)
+    }
+
+    pub fn begin_session_edit_rerun_with_receipt(
+        &self,
+        operation: &SessionEditRerunOperation,
+    ) -> Result<EditRerunTransitionReceipt, RuntimeError> {
         operation.validate()?;
         if operation.phase != "intended"
             || operation.legacy_native_recovery_evidence.is_some()
             || operation.child_provider_session_ref.is_some()
+            || operation.child_canonical_provider_session_ref.is_some()
             || operation.replacement_turn_id.is_some()
+            || operation.error_code.is_some()
+            || operation.review_evidence.is_some()
         {
             return Err(RuntimeError::InvalidState(
                 "new edit must have intended state".into(),
@@ -218,7 +290,7 @@ impl SqliteRuntimeRepository {
                         "Idempotency-Key reused with different edit input".into(),
                     ));
                 }
-                return Ok(previous);
+                return Ok(unchanged(previous));
             }
         }
         // Exact replay must precede competing-native-effect checks: the
@@ -291,9 +363,15 @@ impl SqliteRuntimeRepository {
                 operation.idempotency_key,operation.request_hash,encode(operation)?,
                 operation.created_at_ms,operation.updated_at_ms]
         ).map_err(|e| db_error("failed admitting edit before native fork",e))?;
+        let journal_event = journal_edit_transition_tx(&tx, operation, None, "request")?;
         tx.commit()
             .map_err(|e| db_error("failed committing edit admission", e))?;
-        Ok(operation.clone())
+        Ok(EditRerunTransitionReceipt {
+            operation: operation.clone(),
+            changed: true,
+            journal_event: Some(journal_event),
+            committed_session: None,
+        })
     }
 
     pub fn advance_session_edit_rerun(
@@ -305,18 +383,36 @@ impl SqliteRuntimeRepository {
         error_code: Option<&str>,
         now: i64,
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        self.advance_session_edit_rerun_with_receipt(
+            operation_id,
+            phase,
+            child,
+            replacement_turn_id,
+            error_code,
+            now,
+        )
+        .map(|receipt| receipt.operation)
+    }
+
+    pub fn advance_session_edit_rerun_with_receipt(
+        &self,
+        operation_id: &str,
+        phase: &str,
+        child: Option<&ProviderSession>,
+        replacement_turn_id: Option<&str>,
+        error_code: Option<&str>,
+        now: i64,
+    ) -> Result<EditRerunTransitionReceipt, RuntimeError> {
         let mut conn = open_connection(&self.database_path)?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| db_error("failed starting edit transition", e))?;
         let mut operation = read(&tx, operation_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("edit operation {operation_id}")))?;
+        validate_transition_arguments(&operation, phase, child, replacement_turn_id, error_code)?;
         if operation.phase == phase {
-            if operation.child_provider_session_ref.as_deref()
-                == child.map(|c| c.provider_session_ref.as_str())
-                && operation.replacement_turn_id.as_deref() == replacement_turn_id
-            {
-                return Ok(operation);
+            if exact_phase_replay(&operation, phase, child, replacement_turn_id, error_code) {
+                return Ok(unchanged(operation));
             }
             return Err(RuntimeError::Conflict(
                 "conflicting edit operation replay".into(),
@@ -423,18 +519,11 @@ impl SqliteRuntimeRepository {
             let replacement_id = replacement_turn_id.ok_or_else(|| {
                 RuntimeError::InvalidState("missing admitted replacement turn".into())
             })?;
-            let evidence: i64 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM turn_admissions WHERE turn_id=?1 AND session_id=?2
-                 AND json_extract(correlation_json,'$.correlation_id')=?3
-                 AND projection_source='user_visible'",
-                    params![replacement_id, operation.agent_id, operation.operation_id],
-                    |row| row.get(0),
-                )
-                .map_err(|e| db_error("failed checking replacement admission", e))?;
-            if evidence != 1 {
+            let replacement =
+                crate::repository_edit_rerun_authority::verified_edit_replacement(&tx, &operation)?;
+            if replacement.as_ref().map(|row| row.turn_id.as_str()) != Some(replacement_id) {
                 return Err(RuntimeError::Conflict(
-                    "replacement was not durably admitted for this edit".into(),
+                    "replacement was not uniquely admitted for the original edit input".into(),
                 ));
             }
             operation.replacement_turn_id = Some(replacement_id.to_string());
@@ -444,15 +533,51 @@ impl SqliteRuntimeRepository {
         operation.error_code = error_code.map(str::to_string);
         operation.updated_at_ms = now.max(operation.updated_at_ms);
         update(&tx, &operation, &previous)?;
+        let committed_session = if phase == "fork_observed" {
+            Some(crate::repository_turn_terminal::read_session(
+                &tx,
+                &operation.agent_id,
+            )?)
+        } else {
+            None
+        };
+        let journal_event =
+            journal_edit_transition_tx(&tx, &operation, Some(&previous), "request")?;
+        if let Some(expected) = committed_session.as_ref() {
+            if crate::repository_turn_terminal::read_session(&tx, &operation.agent_id)? != *expected
+            {
+                return Err(RuntimeError::Conflict(
+                    "fork session changed while journaling its receipt".into(),
+                ));
+            }
+        }
         tx.commit()
             .map_err(|e| db_error("failed committing edit operation", e))?;
-        Ok(operation)
+        Ok(EditRerunTransitionReceipt {
+            operation,
+            changed: true,
+            journal_event: Some(journal_event),
+            committed_session,
+        })
     }
 
     pub fn recover_session_edit_reruns(
         &self,
         now: i64,
     ) -> Result<Vec<SessionEditRerunOperation>, RuntimeError> {
+        self.recover_session_edit_reruns_with_receipts(now)
+            .map(|receipts| {
+                receipts
+                    .into_iter()
+                    .map(|receipt| receipt.operation)
+                    .collect()
+            })
+    }
+
+    pub fn recover_session_edit_reruns_with_receipts(
+        &self,
+        now: i64,
+    ) -> Result<Vec<EditRerunTransitionReceipt>, RuntimeError> {
         let mut conn = open_connection(&self.database_path)?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -480,16 +605,12 @@ impl SqliteRuntimeRepository {
                 RuntimeError::Bootstrap(format!("corrupt edit during recovery: {e}"))
             })?;
             let before = op.phase.clone();
-            let replacement: Option<String> = tx
-                .query_row(
-                    "SELECT turn_id FROM turn_admissions WHERE session_id=?1
-                 AND json_extract(correlation_json,'$.correlation_id')=?2
-                 ORDER BY admitted_at DESC,turn_id DESC LIMIT 1",
-                    params![op.agent_id, op.operation_id],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(|e| db_error("failed reconciling edited turn admission", e))?;
+            let replacement = if matches!(before.as_str(), "fork_observed" | "manual_review") {
+                crate::repository_edit_rerun_authority::verified_edit_replacement(&tx, &op)?
+                    .map(|row| row.turn_id)
+            } else {
+                None
+            };
             if matches!(before.as_str(), "fork_observed" | "manual_review") && replacement.is_some()
             {
                 op.phase = "completed".into();
@@ -503,7 +624,22 @@ impl SqliteRuntimeRepository {
             }
             op.updated_at_ms = now.max(op.updated_at_ms);
             update(&tx, &op, &before)?;
-            recovered.push(op);
+            let journal_event = journal_edit_transition_tx(&tx, &op, Some(&before), "startup")?;
+            recovered.push(EditRerunTransitionReceipt {
+                operation: op,
+                changed: true,
+                journal_event: Some(journal_event),
+                committed_session: None,
+            });
+        }
+        // A later row's event can run database triggers after an earlier
+        // receipt was checked. Retain and verify the exact changed bundle at
+        // the final boundary, without re-admitting or replaying any edit.
+        for receipt in &recovered {
+            let event = receipt.journal_event.as_ref().ok_or_else(|| {
+                RuntimeError::Conflict("changed edit recovery lacks its receipt".into())
+            })?;
+            verify_edit_transition_receipt_tx(&tx, &receipt.operation, event)?;
         }
         tx.commit()
             .map_err(|e| db_error("failed committing edit recovery", e))?;
@@ -519,6 +655,16 @@ impl SqliteRuntimeRepository {
         evidence: &str,
         now: i64,
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        self.resolve_session_edit_rerun_review_with_receipt(operation_id, evidence, now)
+            .map(|receipt| receipt.operation)
+    }
+
+    pub fn resolve_session_edit_rerun_review_with_receipt(
+        &self,
+        operation_id: &str,
+        evidence: &str,
+        now: i64,
+    ) -> Result<EditRerunTransitionReceipt, RuntimeError> {
         if !(8..=2048).contains(&evidence.trim().len()) {
             return Err(RuntimeError::InvalidState(
                 "edit review evidence must be 8-2048 characters".into(),
@@ -530,6 +676,12 @@ impl SqliteRuntimeRepository {
             .map_err(|e| db_error("failed beginning edit review", e))?;
         let mut op = read(&tx, operation_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("edit operation {operation_id}")))?;
+        if op.phase == "failed"
+            && op.error_code.as_deref() == Some("operator_verified_no_replacement_turn")
+            && op.review_evidence.as_deref() == Some(evidence.trim())
+        {
+            return Ok(unchanged(op));
+        }
         if op.phase != "manual_review" {
             return Err(RuntimeError::Conflict(
                 "only unresolved edit operations may be reviewed".into(),
@@ -572,8 +724,15 @@ impl SqliteRuntimeRepository {
         op.review_evidence = Some(evidence.trim().to_string());
         op.updated_at_ms = now.max(op.updated_at_ms);
         update(&tx, &op, &previous)?;
+        let journal_event =
+            journal_edit_transition_tx(&tx, &op, Some(&previous), "operator_review")?;
         tx.commit()
             .map_err(|e| db_error("failed committing edit review", e))?;
-        Ok(op)
+        Ok(EditRerunTransitionReceipt {
+            operation: op,
+            changed: true,
+            journal_event: Some(journal_event),
+            committed_session: None,
+        })
     }
 }

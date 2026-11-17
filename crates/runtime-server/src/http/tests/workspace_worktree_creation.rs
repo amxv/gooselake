@@ -754,6 +754,35 @@ async fn verified_rebind_cleanup_retries_safely_after_an_interrupted_native_clea
         Some("pending")
     );
 
+    let repository =
+        runtime_store_sqlite::SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    let original_receipt = sqlite.get_operation(operation_id).unwrap().unwrap();
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let observation_count =
+        || -> i64 {
+            db.query_row(
+            "SELECT COUNT(*) FROM runtime_events WHERE kind='workspace.rebind_cleanup_observed'",
+            [], |row| row.get(0),
+        ).unwrap()
+        };
+    assert_eq!(observation_count(), 1);
+    let same = repository
+        .record_workspace_agent_rebind_cleanup(
+            operation_id,
+            "skipped_dirty_worktree",
+            persisted.updated_at + 100,
+        )
+        .unwrap();
+    assert_eq!(
+        same, persisted,
+        "identical observation cannot churn its timestamp"
+    );
+    assert_eq!(observation_count(), 1);
+    assert_eq!(
+        sqlite.get_operation(operation_id).unwrap().unwrap(),
+        original_receipt
+    );
+
     // Idempotent replay must not secretly retry a previously blocked native
     // cleanup. Only the explicit recovery endpoint authorizes that effect.
     std::fs::remove_file(&untracked).unwrap();
@@ -841,13 +870,75 @@ async fn verified_rebind_cleanup_retries_safely_after_an_interrupted_native_clea
         "ignored If-Match must not delete Git worktree"
     );
     assert_eq!(provider.rebind_calls().await, 1);
+    db.execute_batch(
+        "CREATE TRIGGER fail_rebind_observation BEFORE INSERT ON runtime_events
+         WHEN NEW.kind='workspace.rebind_cleanup_observed'
+         BEGIN SELECT RAISE(ABORT,'injected cleanup observation event failure'); END;",
+    )
+    .unwrap();
+    let (status, failure) = call(&router, &token, "POST", &retry, None, None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{failure:?}");
+    assert!(
+        !Path::new(previous).exists(),
+        "the original cleanup already succeeded"
+    );
+    assert_eq!(provider.rebind_calls().await, 1);
+    assert_eq!(
+        repository
+            .get_workspace_agent_rebind(operation_id)
+            .unwrap()
+            .unwrap(),
+        persisted
+    );
+    assert_eq!(
+        observation_count(),
+        1,
+        "projection and event roll back together"
+    );
+    assert_eq!(
+        sqlite.get_operation(operation_id).unwrap().unwrap(),
+        original_receipt
+    );
+    let cleanup_id: String = db
+        .query_row(
+            "SELECT operation_id FROM runtime_operations WHERE kind='managed_worktree_cleanup'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let cleanup_receipt = sqlite.get_operation(&cleanup_id).unwrap().unwrap();
+    assert_eq!(
+        cleanup_receipt.operation.phase,
+        runtime_core::OperationPhase::Completed
+    );
+    db.execute_batch("DROP TRIGGER fail_rebind_observation")
+        .unwrap();
     let (status, result) = call(&router, &token, "POST", &retry, None, None).await;
     assert_eq!(status, StatusCode::OK, "{result:?}");
     assert_eq!(result["previous_cleanup_status"], "deleted");
+    assert_eq!(observation_count(), 2);
+    assert_eq!(
+        sqlite.get_operation(&cleanup_id).unwrap().unwrap(),
+        cleanup_receipt
+    );
+    assert_eq!(
+        sqlite.get_operation(operation_id).unwrap().unwrap(),
+        original_receipt
+    );
     assert!(!Path::new(previous).exists());
     assert_eq!(provider.rebind_calls().await, 1);
     let (status, again) = call(&router, &token, "POST", &retry, None, None).await;
     assert_eq!(status, StatusCode::OK, "{again:?}");
     assert_eq!(again["previous_cleanup_status"], "deleted");
+    assert_eq!(observation_count(), 2);
+    assert_eq!(again, result, "terminal observation is an exact no-op");
+    assert_eq!(
+        sqlite.get_operation(&cleanup_id).unwrap().unwrap(),
+        cleanup_receipt
+    );
+    assert_eq!(
+        sqlite.get_operation(operation_id).unwrap().unwrap(),
+        original_receipt
+    );
     assert_eq!(provider.rebind_calls().await, 1);
 }

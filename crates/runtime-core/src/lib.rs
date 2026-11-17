@@ -51,7 +51,7 @@ pub use agent_comms::{
     AgentRetryDeliveryMutationResponse, AgentRetryDeliveryRequest,
 };
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
-pub use edit_rerun::{EditAndRerunRequest, SessionEditRerunOperation};
+pub use edit_rerun::{EditAndRerunRequest, EditRerunTransitionReceipt, SessionEditRerunOperation};
 pub use error::{ProviderDispatchOutcome, RuntimeError};
 pub use harness::{
     harness_contract_metadata, harness_sections, provider_harness_text, HarnessContractMetadata,

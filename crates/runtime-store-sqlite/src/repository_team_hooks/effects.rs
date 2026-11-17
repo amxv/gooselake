@@ -5,6 +5,7 @@ use runtime_core::{
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
+use super::journal::{intended_hook, journal_hook_change_tx};
 use crate::db::{db_error, json_to_string, open_connection};
 use crate::SqliteRuntimeRepository;
 
@@ -192,6 +193,20 @@ impl SqliteRuntimeRepository {
             &admission.hook.name,
         )?
         .ok_or_else(|| RuntimeError::Bootstrap("admitted hook effect missing".into()))?;
+        let expected = intended_hook(
+            &admission.workspace_id,
+            &admission.parent_event_id,
+            &admission.hook,
+            &admission.input,
+            admission.created_at_ms,
+        );
+        journal_hook_change_tx(
+            &tx,
+            None,
+            &expected,
+            "direct_admission",
+            admission.created_at_ms,
+        )?;
         tx.commit()
             .map_err(|error| db_error("failed committing hook effect intent", error))?;
         Ok(result)
@@ -268,6 +283,13 @@ impl SqliteRuntimeRepository {
         .map_err(|error| db_error("failed claiming hook effect", error))?;
         let claimed = read_effect(&tx, workspace_id, parent_event_id, event, hook_name)?
             .ok_or_else(|| RuntimeError::Bootstrap("claimed hook effect missing".into()))?;
+        let mut expected = current.clone();
+        expected.phase = TeamHookEffectPhase::Started;
+        expected.attempt_count = expected.attempt_count.checked_add(1).ok_or_else(|| {
+            RuntimeError::InvalidState("hook attempt count cannot advance".into())
+        })?;
+        expected.updated_at_ms = at_ms;
+        journal_hook_change_tx(&tx, Some(&current), &expected, "execution_claim", at_ms)?;
         tx.commit()
             .map_err(|error| db_error("failed committing hook claim", error))?;
         Ok(claimed)
@@ -334,59 +356,22 @@ impl SqliteRuntimeRepository {
         .map_err(|error| db_error("failed recording hook receipt", error))?;
         let recorded = read_effect(&tx, workspace_id, parent_event_id, event, hook_name)?
             .ok_or_else(|| RuntimeError::Bootstrap("received hook effect missing".into()))?;
+        let mut expected = prior.clone();
+        expected.phase = outcome;
+        expected.receipt = Some(receipt);
+        expected.updated_at_ms = at_ms;
+        expected.application_state = if prior.application_state == "rejected" {
+            "rejected"
+        } else if outcome == TeamHookEffectPhase::Succeeded {
+            "pending"
+        } else {
+            "rejected"
+        }
+        .into();
+        journal_hook_change_tx(&tx, Some(&prior), &expected, "execution_receipt", at_ms)?;
         tx.commit()
             .map_err(|error| db_error("failed committing hook receipt", error))?;
         Ok(recorded)
-    }
-
-    /// Run only at a single-runtime restart boundary, before new hook work.
-    /// A shell may have run, so never transition this state back to intended.
-    pub fn quarantine_started_team_hook_effects(&self, at_ms: i64) -> Result<usize, RuntimeError> {
-        let mut connection = open_connection(&self.database_path)?;
-        let tx = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| db_error("failed opening hook recovery transaction", error))?;
-        let quarantined = tx
-            .execute(
-                "UPDATE workspace_hook_effects SET phase='manual_review',updated_at_ms=?1
-                 WHERE phase='started'",
-                [at_ms],
-            )
-            .map_err(|error| db_error("failed quarantining ambiguous hook execution", error))?;
-        // Pre-add is blocking: it has no background dispatcher or agent yet.
-        // After a crash we cannot infer whether native creation happened from
-        // the shell receipt. Preserve evidence and require operator review.
-        tx.execute(
-            "UPDATE workspace_hook_effects SET phase='manual_review',
-               application_state='rejected',
-               application_error_code='pre_add_orphaned_before_execution',
-               updated_at_ms=?1
-             WHERE event_name='pre_teammate_add' AND phase='intended'",
-            [at_ms],
-        )
-        .map_err(|error| db_error("failed classifying abandoned pre-add intents", error))?;
-        tx.execute(
-            "UPDATE workspace_hook_effects SET application_state='rejected',
-               application_error_code='pre_add_provider_outcome_unknown',updated_at_ms=?1
-             WHERE event_name='pre_teammate_add' AND application_state='pending'
-               AND NOT EXISTS (
-                 SELECT 1 FROM runtime_operations op
-                   JOIN runtime_operation_effects effect
-                     ON effect.operation_id=op.operation_id
-                 WHERE op.kind='operator_agent_create'
-                   AND op.workspace_id=workspace_hook_effects.workspace_id
-                   AND op.phase IN ('requested','manual_review')
-                   AND effect.effect_kind='provider_session_create'
-                   AND effect.phase IN ('intended','uncertain')
-                   AND effect.target_id=json_extract(
-                     workspace_hook_effects.input_json,'$.subject.member_agent_id')
-               )",
-            [at_ms],
-        )
-        .map_err(|error| db_error("failed classifying unapplied pre-add outputs", error))?;
-        tx.commit()
-            .map_err(|error| db_error("failed committing hook restart review", error))?;
-        Ok(quarantined)
     }
 
     pub fn list_team_hook_effects(

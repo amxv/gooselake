@@ -496,6 +496,15 @@ For a successful current durable-fact recheck, the immutable receipt reports
 required effect is independently settled can the original operation resume
 its remaining admitted work. Inspect that operation for terminal completion.
 
+Local hook settlement, retirement startup classification and a durable-fact
+review that leaves other effects unresolved each record a Critical observation
+with the affected state. A changed retirement operation phase also records its
+Critical transition. These local mutations and their verified receipts commit
+together; a journal failure rolls back the affected batch. The observations
+bind the original effect and immutable review outcome without exposing hook
+commands or output, replaying native work, or treating an operator explanation
+as new native evidence.
+
 Close receipts used for retirement completion, reuse, reactivation, or
 cancellation of an undispatched pending input must use supported strong proof:
 `native_session_close_acknowledged` or `native_process_terminated`, with the
@@ -609,9 +618,22 @@ failed, timed-out, or invalid-output script never rolls back an already-committe
 message or membership mutation. The operator-facing effect history reports
 both script execution and the independently receipted output application.
 
-Hook effect intents, single-execution claims, terminal script and context
-application receipts, and ambiguous-start `manual_review` classifications
-are persisted separately.
+Each changed hook intent, single-execution claim, terminal script receipt,
+ordinary context application or startup classification commits with a Critical
+`workspace.hook_effect_transitioned` event. Event payloads identify the hook and
+its before/after state and bind private input and output through hashes; they
+do not expose the approved command or script output. Failed event receipts
+roll back the associated local changes, including all affected rows of a
+startup batch. Exact stored receipts replay without another event or shell
+execution. A claim whose receipt did not commit cannot start a script; a
+script that already started is never repeated to repair a missing terminal
+receipt.
+
+For supported agent creation, consuming successful pre-add output remains part
+of the atomic agent-create completion receipt. If native provider creation
+occurred but that completion cannot commit, the original unresolved create
+operation retains its claim and pending hook output. Startup does not discard
+that output or use it as proof that provider creation completed.
 `GET /v2/workspaces/{workspace_id}/hooks/effects?limit=50` returns
 newest-first, indexed operator effect summaries, with `limit` from 1 to 100
 and an optional `cursor`. When another page exists, pass the response's
@@ -893,6 +915,27 @@ Until an outstanding or ambiguous run is settled, new turns, permission updates,
 
 `POST /v2/agents/{agent_id}/turns/{turn_id}/edit-rerun` is the manager-owned historical edit path. It requires an idle workspace agent, a **completed user-visible** target turn with persisted input/native turn identity, and a provider advertising verified hard-fork support (Codex and Claude advertise this capability; ACP does not). Its body is `{"edited_snapshot":{"prompt_text":"Updated request","image_refs":[],"invocation":null}}`; optional `Idempotency-Key` makes exact retries return the original operation and rejects a different edit under the same key. Unknown properties in `edited_snapshot`, its individual `image_refs`, or `invocation` are rejected with `422 invalid_request` **before any native fork or operation admission**. The manager rebuilds native structured inputs from the edited snapshot, including ordered persisted image paths and a **Codex-only** skill invocation when supplied, rejecting missing files and unsupported invocation types. It records an `edit_*` operation **before** provider fork, verifies the provider-native child, atomically commits the child attachment, retained transcript prefix and superseded-turn lineage, then durably admits a **new logical user turn** with operation correlation. Previous turns remain durably available for audit; no source turn is overwritten. `completed` on the edit operation means the replacement turn was admitted, not that model work finished. The new turn's own state and provider dispatch outcome remain canonical. If the process-local admission cache was not refreshed following a provider fork, the manager checks only the **persisted admission for that exact agent and edit-operation correlation**. It does not scan unrelated agents’ historical admissions to classify the replacement, nor does a missing or uncertain native response authorize a provider retry.
 
+Every changed edit phase commits its durable operation and Critical event
+together: `turn.edit_admitted`, `turn.edit_native_started`,
+`turn.edit_fork_observed`, `turn.edit_completed`, `turn.edit_manual_review`,
+`turn.edit_failed`, or the known-child local review `turn.edit_reviewed`.
+A replayed phase is a stored receipt and grants no new provider preparation or
+fork. A failed admission receipt prevents provider preparation. A failed
+`native_started` receipt prevents the hard fork; provider preparation may
+already have occurred, so the admitted operation remains the inspection
+authority. An unresolved failure after native execution identifies the original
+edit and never authorizes another fork.
+
+The verified child attachment is published before another runtime turn can
+observe it. Replacement admission rechecks the original edit correlation,
+current fork phase, exact child attachment and edited input under SQLite's
+write transaction. A stale editor cannot admit a replacement after that edit
+was locally reviewed or otherwise settled, or after a replacement was already
+admitted. Completion and restart settlement require one exact correlated
+replacement admission with its original Critical `turn.admitted` witness;
+missing or conflicting history cannot be inferred as a successful replacement.
+The replacement's own dispatch classification is retained.
+
 After edit or compaction admission, unresolved responses identify the **original family-owned record** in `error.details`. Follow that exact `inspection_path`, including when the request omitted an idempotency key:
 
 | Family | Original owner fields | Inspection resource |
@@ -1070,6 +1113,14 @@ the original provider-rebind key cannot safely promise another Git deletion
 receipt. Inspect the rebind by operation ID after an interrupted retry.
 Unsupported `force` or other options fail before any Git deletion or record
 change.
+
+Each changed cleanup status or diagnostic commits with a Critical
+`workspace.rebind_cleanup_observed` event. An identical observation preserves
+its saved timestamp and creates no event. These observations do not rewrite
+the original completed provider-rebind receipt. If Git cleanup succeeded but
+recording its rebind observation failed, the explicit retry uses the existing
+completed cleanup receipt; it does not repeat the deletion or provider rebind.
+An unresolved native cleanup still requires its original safety evidence.
 
 Only checkout paths under the configured managed root with verified Git identity/branch, no uncommitted changes, and no unmerged branch commits are eligible for automatic deletion. This retry is a separate cleanup action, not a retry of provider rebinding: replaying the original `Idempotency-Key` does not implicitly retry pending native cleanup, even if the checkout has since become clean. Recovery from an ambiguous provider rebind still requires operator investigation and is not implicitly resolved by this endpoint.
 
@@ -1261,7 +1312,11 @@ Nonempty JSON options such as
 `{"dry_run":true}` returns `400 invalid_request` without interrupting turns
 or allocating an operation.
 
-The response contains the durable `operation_id`, `workspace_id`, and deterministic `interrupted_agent_ids` / `skipped_agent_ids` sets. The runtime snapshots only active workspace members, records per-agent interrupt intent before provider calls, skips idle members, and cannot target a session outside the workspace. An exact idempotency-key retry replays the stored terminal result without issuing another provider interrupt. If a process dies after the provider acknowledged an interrupt but before the effect was finalized, recovery requires a durable `turn.interrupt_requested` event correlated with the original operation, agent, and turn. Missing or foreign-operation events cannot settle it. Provider timeouts (including adapter InvalidState/NotFound after dispatch), failed event receipts, and uncertain targets return `409 outcome_unresolved` with the original operation ID; same-key retries never interrupt again. A later absent or changed active turn does not turn uncertainty into skipped success. Startup withholds native session resume and turn replay for unresolved targets. Inspect `/v2/operations/{operation_id}`; no evidence-only resolution endpoint for these interruption effects is provided yet. Per-target Critical transition completeness remains a separate closure item.
+The response contains the durable `operation_id`, `workspace_id`, and deterministic `interrupted_agent_ids` / `skipped_agent_ids` sets. The runtime snapshots only active workspace members, records per-agent interrupt intent before provider calls, skips idle members, and cannot target a session outside the workspace. An exact idempotency-key retry replays the stored terminal result without issuing another provider interrupt.
+
+For each target, the first dispatch claim and its Critical `workspace.interrupt_target_started` event commit together before a provider call. Recording a final or uncertain target outcome likewise commits the effect state with a Critical `workspace.interrupt_target_finalized` or `workspace.interrupt_target_uncertain` event. Each event identifies the original operation, agent, turn and effect, with the transition and its evidence. A missing or inconsistent event receipt prevents that state change from committing. If this happens before the first dispatch claim commits, the original intent remains undispatched; a same-key retry can continue that original attempt after the receipt failure is resolved. Replaying an unchanged stored outcome creates no additional target event.
+
+Once a target has a committed first dispatch claim, an unresolved retry does not repeat its native interrupt. If a process dies after the provider acknowledged an interrupt but before the effect was finalized, recovery requires a durable `turn.interrupt_requested` event correlated with the original operation, agent and turn. Recovery then records the target completion without another provider call. Missing or foreign-operation events cannot settle it. Provider timeouts, adapter InvalidState/NotFound after dispatch, and unavailable outcome receipts return `409 outcome_unresolved` with the original operation ID. A later absent or changed active turn does not turn uncertainty into skipped success. Startup withholds native session resume and turn replay for unresolved targets. Inspect `/v2/operations/{operation_id}`; no evidence-only resolution endpoint for these interruption effects is provided yet.
 
 ### Migrating legacy workspace authority
 
@@ -2024,6 +2079,10 @@ curl -fsS -X POST \
   -d '{"process_id":"proc_a","before_process_id":"proc_b"}' \
   "$BASE_URL/v1/processes/queue/reorder"
 ```
+
+Scheduler updates merge omitted fields with the runtime's current scheduler snapshot and replace the stored settings. The replacement retains the existing last-write behavior; it is not a revision compare-and-swap operation. These legacy scheduler and reorder routes do not parse `Idempotency-Key` or `If-Match`, so supplying either header adds no retry or concurrency guarantee. For a reorder, both the moving process and the referenced process must still be queued when the change is recorded.
+
+A meaningful settings change records a Critical `process.scheduler_settings_changed` event, and a changed queue order records a Critical `process.queue_reordered` event. These events use the system scope `process_scheduler` and include the previous and resulting settings or order. The change and its verified event receipt commit together; a failed receipt leaves the stored settings or queue unchanged. A request that leaves the stored settings or current queue order unchanged emits no event. Changing only the settings timestamp does not rewrite the saved settings. Initial scheduler defaults do not create an operator-change event.
 
 Read logs:
 

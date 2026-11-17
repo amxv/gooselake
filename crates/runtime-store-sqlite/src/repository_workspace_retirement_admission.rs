@@ -81,41 +81,140 @@ impl SqliteRuntimeRepository {
             .map_err(|error| {
                 db_error("failed beginning retirement restart reconciliation", error)
             })?;
-        let changed = tx
-            .execute(
-                "UPDATE runtime_operation_effects SET phase='manual_review',
-             evidence_json=json_object('outcome','native_effect_unverified_after_restart',
-               'prior_evidence',json(evidence_json)),updated_at=?1
-             WHERE operation_id IN (SELECT operation_id FROM workspace_retirement_fences
-                 WHERE phase='frozen')
-               AND effect_kind IN ('workspace_provider_close','workspace_turn_interrupt')
-               AND phase IN ('started','observed')",
-                [at_ms],
-            )
-            .map_err(|error| {
-                db_error(
-                    "failed quarantining unknown external retirement effects",
-                    error,
+        let owners = {
+            let mut statement = tx
+                .prepare(
+                    "SELECT f.operation_id,f.workspace_id FROM workspace_retirement_fences f
+                 JOIN runtime_operations op ON op.operation_id=f.operation_id
+                 WHERE (f.phase='frozen' AND EXISTS(
+                    SELECT 1 FROM runtime_operation_effects e WHERE e.operation_id=f.operation_id
+                      AND e.effect_kind IN ('workspace_provider_close','workspace_turn_interrupt')
+                      AND e.phase IN ('started','observed','manual_review')))
+                    OR (op.phase='requested' AND f.phase='manual_review')
+                 ORDER BY f.operation_id",
                 )
-            })?;
-        tx.execute(
-            "UPDATE workspace_retirement_fences SET phase='manual_review',updated_at=?1
-            WHERE phase='frozen' AND EXISTS(
-              SELECT 1 FROM runtime_operation_effects e
-              WHERE e.operation_id=workspace_retirement_fences.operation_id
-                AND e.effect_kind IN ('workspace_provider_close','workspace_turn_interrupt')
-                AND e.phase='manual_review')",
-            [at_ms],
-        )
-        .map_err(|error| db_error("failed freezing restarted uncertain retirement", error))?;
-        tx.execute(
-            "UPDATE runtime_operations SET phase='manual_review',updated_at=?1
-            WHERE phase='requested' AND EXISTS(
-                SELECT 1 FROM workspace_retirement_fences f
-                WHERE f.operation_id=runtime_operations.operation_id AND f.phase='manual_review')",
-            [at_ms],
-        )
-        .map_err(|error| db_error("failed persisting retirement manual review", error))?;
+                .map_err(|error| {
+                    db_error("failed preparing changed retirement restart owners", error)
+                })?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| {
+                    db_error("failed reading changed retirement restart owners", error)
+                })?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| {
+                    db_error("failed decoding changed retirement restart owners", error)
+                })?;
+            rows
+        };
+        // Freeze only selected owners and unresolved effects before the first write.
+        let mut selected = Vec::with_capacity(owners.len());
+        for (operation_id, workspace_id) in owners {
+            let before = restart_retirement_snapshot(&tx, &operation_id)?;
+            selected.push((operation_id, workspace_id, before));
+        }
+        let mut changed = 0;
+        let mut owner_proofs = Vec::new();
+        let mut phase_proofs = Vec::new();
+        for (operation_id, workspace_id, before) in selected {
+            if restart_retirement_snapshot(&tx, &operation_id)? != before {
+                return Err(RuntimeError::Conflict(
+                    "selected retirement restart authority changed before classification".into(),
+                ));
+            }
+            changed += tx
+                .execute(
+                    "UPDATE runtime_operation_effects SET phase='manual_review',
+                 evidence_json=json_object('outcome','native_effect_unverified_after_restart',
+                   'prior_evidence',json(evidence_json)),updated_at=?2
+                 WHERE operation_id=?1 AND operation_id IN (
+                    SELECT operation_id FROM workspace_retirement_fences WHERE phase='frozen')
+                   AND effect_kind IN ('workspace_provider_close','workspace_turn_interrupt')
+                   AND phase IN ('started','observed')",
+                    params![operation_id, at_ms],
+                )
+                .map_err(|error| {
+                    db_error(
+                        "failed quarantining unknown external retirement effects",
+                        error,
+                    )
+                })?;
+            tx.execute(
+                "UPDATE workspace_retirement_fences SET phase='manual_review',updated_at=?2
+                 WHERE operation_id=?1 AND phase='frozen' AND EXISTS(
+                   SELECT 1 FROM runtime_operation_effects e
+                   WHERE e.operation_id=workspace_retirement_fences.operation_id
+                     AND e.effect_kind IN ('workspace_provider_close','workspace_turn_interrupt')
+                     AND e.phase='manual_review')",
+                params![operation_id, at_ms],
+            )
+            .map_err(|error| db_error("failed freezing restarted uncertain retirement", error))?;
+            let phase_changed = tx.execute(
+                "UPDATE runtime_operations SET phase='manual_review',updated_at=?2
+                 WHERE operation_id=?1 AND phase='requested' AND EXISTS(
+                   SELECT 1 FROM workspace_retirement_fences f
+                   WHERE f.operation_id=runtime_operations.operation_id AND f.phase='manual_review')",
+                params![operation_id,at_ms],
+            ).map_err(|error|db_error("failed persisting retirement manual review",error))?;
+            if phase_changed == 1 {
+                phase_proofs.push(
+                    crate::repository_workspace_retirement_events::journal_retirement_phase_tx(
+                        &tx,
+                        &operation_id,
+                        &workspace_id,
+                        OperationPhase::Requested,
+                        OperationPhase::ManualReview,
+                        "restart_retirement",
+                        at_ms,
+                    )?,
+                );
+            }
+            let after = restart_retirement_snapshot(&tx, &operation_id)?;
+            if after != expected_restart_retirement_snapshot(&before, at_ms)? {
+                return Err(RuntimeError::Conflict(
+                    "retirement restart classification differs from its expected authority".into(),
+                ));
+            }
+            let proof =
+                crate::repository_workspace_retirement_events::journal_retirement_observation_tx(
+                    &tx,
+                    &operation_id,
+                    &workspace_id,
+                    "workspace.retirement_restart_classified",
+                    &operation_id,
+                    &before,
+                    &after,
+                    at_ms,
+                )?
+                .ok_or_else(|| {
+                    RuntimeError::Conflict("changed restart owner lacks a receipt".into())
+                })?;
+            owner_proofs.push((
+                operation_id.clone(),
+                runtime_core::normalized_json_hash(&after)?,
+                proof,
+            ));
+            if restart_retirement_snapshot(&tx, &operation_id)? != after {
+                return Err(RuntimeError::Conflict(
+                    "retirement restart authority changed during its receipt".into(),
+                ));
+            }
+        }
+        for (operation_id, expected_hash, proof) in &owner_proofs {
+            if runtime_core::normalized_json_hash(&restart_retirement_snapshot(&tx, operation_id)?)?
+                != *expected_hash
+            {
+                return Err(RuntimeError::Conflict(
+                    "retirement restart owner changed before commit".into(),
+                ));
+            }
+            crate::repository_team_hooks::verify_critical_proof_tx(&tx, proof)?;
+        }
+        for proof in &phase_proofs {
+            crate::repository_workspace_retirement_events::verify_retirement_phase_tx(&tx, proof)?;
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing retirement restart quarantine", error))?;
         Ok(changed)
@@ -461,4 +560,101 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed committing workspace retirement admission", error))?;
         Ok(WorkspaceRetirementAdmission::New(plan))
     }
+}
+
+// This projection reads only the exact affected owner and its still-unresolved
+// native-close/interrupt effects. Startup enumeration never scans record bodies.
+fn restart_retirement_snapshot(
+    tx: &rusqlite::Transaction<'_>,
+    operation_id: &str,
+) -> Result<serde_json::Value, RuntimeError> {
+    let owner: (String, i64, String, i64) = tx
+        .query_row(
+            "SELECT op.phase,op.updated_at,f.phase,f.updated_at FROM runtime_operations op
+         JOIN workspace_retirement_fences f ON f.operation_id=op.operation_id
+         WHERE op.operation_id=?1",
+            [operation_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|error| db_error("failed reading exact restarted retirement authority", error))?;
+    let mut statement = tx
+        .prepare(
+            "SELECT effect_id,effect_kind,target_id,phase,attempt_count,evidence_json,updated_at
+         FROM runtime_operation_effects WHERE operation_id=?1
+           AND effect_kind IN ('workspace_provider_close','workspace_turn_interrupt')
+           AND phase IN ('started','observed','manual_review') ORDER BY effect_id",
+        )
+        .map_err(|error| db_error("failed preparing exact restarted retirement effects", error))?;
+    let rows = statement
+        .query_map([operation_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })
+        .map_err(|error| db_error("failed reading exact restarted retirement effects", error))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| db_error("failed decoding exact restarted retirement effects", error))?;
+    let effects = rows
+        .into_iter()
+        .map(|row| {
+            let evidence = row
+                .5
+                .map(|raw| serde_json::from_str::<serde_json::Value>(&raw))
+                .transpose()
+                .map_err(|error| {
+                    RuntimeError::Bootstrap(format!("invalid retirement restart evidence: {error}"))
+                })?;
+            Ok(
+                serde_json::json!({"effect_id":row.0,"kind":row.1,"target_id":row.2,
+            "phase":row.3,"attempt_count":row.4,"evidence":evidence,"updated_at":row.6}),
+            )
+        })
+        .collect::<Result<Vec<_>, RuntimeError>>()?;
+    Ok(
+        serde_json::json!({"owner":{"phase":owner.0,"updated_at":owner.1,
+        "fence_phase":owner.2,"fence_updated_at":owner.3},"effects":effects}),
+    )
+}
+
+fn expected_restart_retirement_snapshot(
+    before: &serde_json::Value,
+    at_ms: i64,
+) -> Result<serde_json::Value, RuntimeError> {
+    let mut after = before.clone();
+    let frozen = before["owner"]["fence_phase"] == "frozen";
+    if frozen {
+        let effects = after["effects"].as_array_mut().ok_or_else(|| {
+            RuntimeError::Bootstrap("invalid internal retirement snapshot".into())
+        })?;
+        for effect in effects {
+            if matches!(effect["phase"].as_str(), Some("started" | "observed")) {
+                effect["phase"] = serde_json::json!("manual_review");
+                effect["evidence"] = serde_json::json!({
+                    "outcome":"native_effect_unverified_after_restart",
+                    "prior_evidence":effect["evidence"],
+                });
+                effect["updated_at"] = serde_json::json!(at_ms);
+            }
+        }
+        if after["effects"]
+            .as_array()
+            .expect("snapshot array")
+            .iter()
+            .any(|effect| effect["phase"] == "manual_review")
+        {
+            after["owner"]["fence_phase"] = serde_json::json!("manual_review");
+            after["owner"]["fence_updated_at"] = serde_json::json!(at_ms);
+        }
+    }
+    if before["owner"]["phase"] == "requested" && after["owner"]["fence_phase"] == "manual_review" {
+        after["owner"]["phase"] = serde_json::json!("manual_review");
+        after["owner"]["updated_at"] = serde_json::json!(at_ms);
+    }
+    Ok(after)
 }

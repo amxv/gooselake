@@ -191,30 +191,14 @@ impl SqliteRuntimeRepository {
                 session.id
             )));
         }
-        // Only the replacement belonging to the durably verified child fork
-        // may enter while an edit operation owns this session. Callers cannot
-        // bypass this fence by issuing ordinary API send requests.
-        let pending_edit: Option<(String, String)> = transaction
-            .query_row(
-                "SELECT operation_id,phase FROM session_edit_reruns WHERE session_id=?1
-                 AND phase IN ('intended','native_started','fork_observed','manual_review')",
-                params![session.id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(|error| {
-                db_error("failed checking native edit before turn admission", error)
-            })?;
-        if let Some((operation_id, phase)) = pending_edit {
-            if phase != "fork_observed"
-                || admission.correlation.correlation_id.as_deref() != Some(operation_id.as_str())
-            {
-                return Err(RuntimeError::Conflict(format!(
-                    "session {} has an unresolved edit-and-rerun; inspect operation {}",
-                    session.id, operation_id
-                )));
-            }
-        }
+        // Recheck the original correlation across every edit phase. A stale
+        // editor cannot admit after recovery/review has revoked this grant.
+        crate::repository_edit_rerun_authority::guard_edit_replacement_admission(
+            &transaction,
+            admission,
+            turn,
+            session,
+        )?;
 
         let persisted = transaction
             .query_row(
@@ -747,6 +731,38 @@ fn admission_params(
         record.updated_at.into(),
     ];
     Ok(rusqlite::params_from_iter(values))
+}
+
+/// Verify original positive admission evidence without writing or backfilling.
+/// Known-result receipt replay chooses whether to require this witness.
+pub(crate) fn verified_turn_admitted_receipt(
+    tx: &Transaction<'_>,
+    admission: &TurnAdmissionRecord,
+) -> Result<Option<runtime_core::RuntimeEventRecord>, RuntimeError> {
+    let event_id = format!("evt_turn_{}_admitted", admission.turn_id);
+    let Some(event) = fetch_runtime_event_by_event_id(tx, &event_id)? else {
+        return Ok(None);
+    };
+    if event.event_id != event_id
+        || event.scope != RuntimeEventScope::Session
+        || event.scope_id != admission.session_id
+        || event.session_id.as_deref() != Some(admission.session_id.as_str())
+        || event.turn_id.as_deref() != Some(admission.turn_id.as_str())
+        || event.team_id.is_some()
+        || event.provider.is_some()
+        || event.provider_seq.is_some()
+        || event.kind != "turn.admitted"
+        || event.criticality != RuntimeEventCriticality::Critical
+        || event.created_at != admission.admitted_at
+        || event.payload
+            != serde_json::json!({
+                "projection_source":admission.projection_source.as_str(),
+                "requires_approval":admission.dispatch_policy.pre_dispatch_approval_required,
+            })
+    {
+        return Ok(None);
+    }
+    Ok(Some(event))
 }
 
 pub(crate) fn turn_admission_from_row(

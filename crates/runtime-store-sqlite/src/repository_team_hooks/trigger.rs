@@ -12,6 +12,9 @@ use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::{json, Value};
 
 use super::effects::read_effect;
+use super::journal::{
+    intended_hook, journal_hook_change_tx, verify_hook_proofs_tx, HookTriggerReceipt,
+};
 use crate::db::{db_error, json_to_string, open_connection};
 use crate::SqliteRuntimeRepository;
 
@@ -25,7 +28,7 @@ pub(crate) fn queue_team_hook_trigger_tx(
     subject: Value,
     eligible_targets: &[String],
     created_at: i64,
-) -> Result<Vec<TeamHookResolvedEntry>, RuntimeError> {
+) -> Result<HookTriggerReceipt, RuntimeError> {
     // Generation-1 migration fixtures may legitimately create workspace
     // agents while the schema is only at v8. Hook storage was introduced in
     // v16, so post-hooks are inert until that migration is committed.
@@ -37,7 +40,10 @@ pub(crate) fn queue_team_hook_trigger_tx(
         )
         .map_err(|error| db_error("failed checking hook schema readiness", error))?;
     if !hook_schema_ready {
-        return Ok(Vec::new());
+        return Ok(HookTriggerReceipt {
+            hooks: Vec::new(),
+            proofs: Vec::new(),
+        });
     }
     let approved_json: Option<String> = tx
         .query_row(
@@ -48,7 +54,10 @@ pub(crate) fn queue_team_hook_trigger_tx(
         .optional()
         .map_err(|error| db_error("failed snapshotting approved team hooks", error))?;
     let Some(approved_json) = approved_json else {
-        return Ok(Vec::new());
+        return Ok(HookTriggerReceipt {
+            hooks: Vec::new(),
+            proofs: Vec::new(),
+        });
     };
     let approved: Vec<TeamHookResolvedEntry> = serde_json::from_str(&approved_json)
         .map_err(|error| RuntimeError::Bootstrap(format!("corrupt approved hooks: {error}")))?;
@@ -57,7 +66,10 @@ pub(crate) fn queue_team_hook_trigger_tx(
         .filter(|hook| hook.event_name == event)
         .collect();
     if active_hooks.is_empty() {
-        return Ok(Vec::new());
+        return Ok(HookTriggerReceipt {
+            hooks: Vec::new(),
+            proofs: Vec::new(),
+        });
     }
 
     // Only a presently active workspace member can receive `inject.caller`.
@@ -105,6 +117,7 @@ pub(crate) fn queue_team_hook_trigger_tx(
     )
     .map_err(|error| db_error("failed atomically admitting hook parent event", error))?;
 
+    let mut proofs = Vec::with_capacity(active_hooks.len());
     for hook in &active_hooks {
         let hook_json = json_to_string(&json!(hook))?;
         tx.execute(
@@ -123,8 +136,19 @@ pub(crate) fn queue_team_hook_trigger_tx(
             ],
         )
         .map_err(|error| db_error("failed atomically admitting approved hook intent", error))?;
+        let intended = intended_hook(workspace_id, event_id, hook, &input, created_at);
+        proofs.push(journal_hook_change_tx(
+            tx,
+            None,
+            &intended,
+            "parent_trigger",
+            created_at,
+        )?);
     }
-    Ok(active_hooks.into_iter().map(Clone::clone).collect())
+    Ok(HookTriggerReceipt {
+        hooks: active_hooks.into_iter().map(Clone::clone).collect(),
+        proofs,
+    })
 }
 
 impl SqliteRuntimeRepository {
@@ -231,7 +255,7 @@ impl SqliteRuntimeRepository {
             return Ok(effects);
         }
         let targets = request.actor_agent_id.iter().cloned().collect::<Vec<_>>();
-        let hooks = queue_team_hook_trigger_tx(
+        let queued = queue_team_hook_trigger_tx(
             &tx,
             &request.workspace_id,
             TeamHookEventName::PreTeammateAdd,
@@ -241,8 +265,8 @@ impl SqliteRuntimeRepository {
             &targets,
             request.created_at_ms,
         )?;
-        let mut effects = Vec::with_capacity(hooks.len());
-        for hook in hooks {
+        let mut effects = Vec::with_capacity(queued.hooks.len());
+        for hook in queued.hooks {
             let effect = read_effect(
                 &tx,
                 &request.workspace_id,
@@ -253,6 +277,7 @@ impl SqliteRuntimeRepository {
             .ok_or_else(|| RuntimeError::Bootstrap("pre-add admitted effect missing".into()))?;
             effects.push(effect);
         }
+        verify_hook_proofs_tx(&tx, &queued.proofs)?;
         tx.commit()
             .map_err(|error| db_error("failed committing pre-add effects", error))?;
         Ok(effects)

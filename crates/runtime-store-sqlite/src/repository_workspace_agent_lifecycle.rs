@@ -45,7 +45,7 @@ impl SqliteRuntimeRepository {
                     error,
                 )
             })?;
-        let updated = apply_workspace_agent_lifecycle_tx(
+        let (updated, hook_proofs) = apply_workspace_agent_lifecycle_tx(
             &tx,
             session,
             agent_id,
@@ -55,6 +55,7 @@ impl SqliteRuntimeRepository {
             initiator_agent_id,
             None,
         )?;
+        crate::repository_team_hooks::verify_hook_proofs_tx(&tx, &hook_proofs)?;
         tx.commit()
             .map_err(|error| db_error("failed committing workspace agent lifecycle", error))?;
         Ok(updated)
@@ -73,7 +74,13 @@ pub(crate) fn apply_workspace_agent_lifecycle_tx(
     changed_at: i64,
     initiator_agent_id: Option<&str>,
     allowed_lifecycle_operation: Option<&str>,
-) -> Result<WorkspaceAgentRecord, RuntimeError> {
+) -> Result<
+    (
+        WorkspaceAgentRecord,
+        Vec<crate::repository_team_hooks::HookJournalProof>,
+    ),
+    RuntimeError,
+> {
     if session.id != agent_id {
         return Err(RuntimeError::ProtocolViolation(
             "workspace agent lifecycle session mismatch".to_string(),
@@ -156,6 +163,7 @@ pub(crate) fn apply_workspace_agent_lifecycle_tx(
         )
         .map_err(|error| db_error("failed requeueing safe onboarding on restore", error))?;
     }
+    let mut hook_proofs = Vec::new();
     if prior_lifecycle != lifecycle.as_str() {
         let alias: String = tx
             .query_row(
@@ -186,7 +194,7 @@ pub(crate) fn apply_workspace_agent_lifecycle_tx(
             changed_at,
         )?;
         if lifecycle == WorkspaceAgentLifecycleState::Archived {
-            queue_team_hook_trigger_tx(
+            let queued = queue_team_hook_trigger_tx(
                 &tx,
                 &workspace_id,
                 runtime_core::TeamHookEventName::PostTeammateRemove,
@@ -202,6 +210,7 @@ pub(crate) fn apply_workspace_agent_lifecycle_tx(
                 &active_workspace_hook_targets_tx(&tx, &workspace_id)?,
                 changed_at,
             )?;
+            hook_proofs = queued.proofs;
         }
     }
     tx.query_row(
@@ -212,6 +221,7 @@ pub(crate) fn apply_workspace_agent_lifecycle_tx(
     .optional()
     .map_err(|error| db_error("failed reading transactional lifecycle result", error))?
     .ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))
+    .map(|agent| (agent, hook_proofs))
 }
 
 pub(crate) fn reject_unresolved_route(

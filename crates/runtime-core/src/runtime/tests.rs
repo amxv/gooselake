@@ -14,6 +14,7 @@ use super::test_support::{
 use super::{ApprovalResponseInput, CreateSessionInput, SendTurnInput};
 use crate::session_transcript::{append_session_transcript, extract_assistant_text_from_usage};
 
+mod edit_receipt_interleavings;
 mod pre_dispatch_decline;
 mod provider_approvals;
 mod provider_dispatch_outcome;

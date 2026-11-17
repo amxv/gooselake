@@ -3,8 +3,9 @@ macro_rules! delegate_session_control_methods {
         fn begin_session_edit_rerun(
             &self,
             operation: &SessionEditRerunOperation,
-        ) -> Result<SessionEditRerunOperation, RuntimeError> {
-            self.repository.begin_session_edit_rerun(operation)
+        ) -> Result<runtime_core::EditRerunTransitionReceipt, RuntimeError> {
+            self.repository
+                .begin_session_edit_rerun_with_receipt(operation)
         }
         fn get_session_edit_rerun(
             &self,
@@ -30,8 +31,8 @@ macro_rules! delegate_session_control_methods {
             replacement_turn_id: Option<&str>,
             error_code: Option<&str>,
             now: i64,
-        ) -> Result<SessionEditRerunOperation, RuntimeError> {
-            self.repository.advance_session_edit_rerun(
+        ) -> Result<runtime_core::EditRerunTransitionReceipt, RuntimeError> {
+            self.repository.advance_session_edit_rerun_with_receipt(
                 operation_id,
                 phase,
                 child,
@@ -43,17 +44,18 @@ macro_rules! delegate_session_control_methods {
         fn recover_session_edit_reruns(
             &self,
             now: i64,
-        ) -> Result<Vec<SessionEditRerunOperation>, RuntimeError> {
-            self.repository.recover_session_edit_reruns(now)
+        ) -> Result<Vec<runtime_core::EditRerunTransitionReceipt>, RuntimeError> {
+            self.repository
+                .recover_session_edit_reruns_with_receipts(now)
         }
         fn resolve_session_edit_rerun_review(
             &self,
             operation_id: &str,
             evidence: &str,
             now: i64,
-        ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        ) -> Result<runtime_core::EditRerunTransitionReceipt, RuntimeError> {
             self.repository
-                .resolve_session_edit_rerun_review(operation_id, evidence, now)
+                .resolve_session_edit_rerun_review_with_receipt(operation_id, evidence, now)
         }
         fn begin_session_compaction(
             &self,

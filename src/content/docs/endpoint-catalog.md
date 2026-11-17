@@ -316,7 +316,7 @@ Process query parameters:
 - logs: `session_id`, `stream`, `head_lines`, `tail_lines`, `max_bytes`
 - events replay/stream: `session_id`, `after_seq`, `limit` (+ `Last-Event-ID` fallback for stream)
 
-Process scheduler mutations are durable. `POST /v1/processes/scheduler` accepts optional `max_concurrent`, `workspace_max_concurrent`, `capture_limit_bytes`, `paused`, and `pause_reason`. Queue reorder accepts `process_id` plus exactly one of `before_process_id` or `after_process_id`.
+Process scheduler mutations are durable. `POST /v1/processes/scheduler` accepts optional `max_concurrent`, `workspace_max_concurrent`, `capture_limit_bytes`, `paused`, and `pause_reason`. Queue reorder accepts `process_id` plus exactly one of `before_process_id` or `after_process_id`. Meaningful settings changes and changed queue orders commit with Critical events in the `process_scheduler` system scope; unchanged stored state creates no event. These retained routes do not parse `Idempotency-Key` or `If-Match`; settings replacement retains last-write behavior.
 
 ## Worktrees
 

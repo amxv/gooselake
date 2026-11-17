@@ -111,7 +111,7 @@ impl SqliteRuntimeRepository {
             ));
         }
 
-        let exact = apply_workspace_agent_lifecycle_tx(
+        let (exact, hook_proofs) = apply_workspace_agent_lifecycle_tx(
             &tx,
             session,
             &command.agent_id,
@@ -178,6 +178,7 @@ impl SqliteRuntimeRepository {
             created_at: at_ms,
         })?;
         authority.release_claim(&claim)?;
+        crate::repository_team_hooks::verify_hook_proofs_tx(&tx, &hook_proofs)?;
         tx.commit()
             .map_err(|error| db_error("failed committing atomic native restore receipt", error))?;
         Ok(exact)

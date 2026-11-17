@@ -920,3 +920,6 @@ fn workspace_interrupt_recovery_uses_durable_interrupt_event_without_redispatch(
     assert_eq!(completed.interrupted_agent_ids, vec![active.agent_id]);
     assert!(completed.skipped_agent_ids.is_empty());
 }
+
+#[path = "workspace_interrupt_target_events.rs"]
+mod interrupt_target_events;

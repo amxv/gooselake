@@ -59,7 +59,8 @@ impl RuntimeSessionManager {
                 receipt.run.run_id, receipt.run.agent_id
             ));
         }
-        for operation in self.store.recover_session_edit_reruns(started_at)? {
+        for receipt in self.store.recover_session_edit_reruns(started_at)? {
+            let operation = self.publish_edit_transition(receipt);
             summary.notes.push(format!(
                 "edit-and-rerun {} for {} remains in {}",
                 operation.operation_id, operation.agent_id, operation.phase

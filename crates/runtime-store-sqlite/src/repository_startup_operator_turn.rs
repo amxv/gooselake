@@ -14,13 +14,12 @@ pub(crate) fn startup_operator_turn_tx(
     at_ms: i64,
     settle_known: bool,
 ) -> Result<Option<runtime_core::StartupPendingOperatorTurn>, RuntimeError> {
-    use crate::db::fetch_runtime_event_by_event_id;
     use crate::repository_startup_reattachment::{claim_for, conflict, sole_effect, value};
     use crate::repository_turn_dispatch_outcome::read_approval;
     use crate::repository_turn_start::read_admission;
     use crate::repository_turn_terminal::read_turn;
     use runtime_core::{
-        OperationActorKind, RuntimeEventCriticality, StartupPendingOperatorTurn, TurnDispatchState,
+        OperationActorKind, StartupPendingOperatorTurn, TurnDispatchState,
         TurnInputProjectionSource,
     };
     let claim = claim_for(tx, OPERATOR_TURN_CLAIM, &session.id)?;
@@ -147,23 +146,8 @@ pub(crate) fn startup_operator_turn_tx(
         Some(serde_json::Value::Null) => {}
         _ => return Err(unresolved()),
     }
-    let admitted = fetch_runtime_event_by_event_id(tx, &format!("evt_turn_{}_admitted", turn.id))?
+    crate::repository_turn_authority::verified_turn_admitted_receipt(tx, &admission)?
         .ok_or_else(unresolved)?;
-    if admitted.scope != runtime_core::RuntimeEventScope::Session
-        || admitted.scope_id != session.id
-        || admitted.session_id.as_deref() != Some(session.id.as_str())
-        || admitted.turn_id.as_deref() != Some(turn.id.as_str())
-        || admitted.team_id.is_some()
-        || admitted.provider.is_some()
-        || admitted.provider_seq.is_some()
-        || admitted.kind != "turn.admitted"
-        || admitted.criticality != RuntimeEventCriticality::Critical
-        || admitted.created_at != admission.admitted_at
-        || admitted.payload
-            != serde_json::json!({"projection_source":admission.projection_source.as_str(),"requires_approval":admission.dispatch_policy.pre_dispatch_approval_required})
-    {
-        return Err(unresolved());
-    }
     let mut statement=tx.prepare("SELECT id FROM approvals WHERE session_id=?1 AND turn_id=?2 AND origin='runtime_pre_dispatch_policy' ORDER BY id LIMIT 2").map_err(|e|db_error("failed preparing startup policy approval",e))?;
     let approval_ids = statement
         .query_map(params![session.id, turn.id], |r| r.get::<_, String>(0))

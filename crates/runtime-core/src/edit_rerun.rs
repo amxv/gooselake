@@ -77,3 +77,15 @@ impl SessionEditRerunOperation {
 pub struct EditAndRerunRequest {
     pub edited_snapshot: PersistedUserInputSnapshot,
 }
+
+#[derive(Debug, Clone)]
+pub struct EditRerunTransitionReceipt {
+    pub operation: SessionEditRerunOperation,
+    /// True only when this call committed a new transition. Native work
+    /// additionally requires the expected grant phase.
+    pub changed: bool,
+    pub journal_event: Option<crate::RuntimeEventRecord>,
+    /// Present only for a changed fork receipt. Read inside the same SQLite
+    /// transaction and publish while holding turns -> sessions cache locks.
+    pub committed_session: Option<crate::SessionRecord>,
+}

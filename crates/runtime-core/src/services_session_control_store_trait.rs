@@ -3,7 +3,7 @@ macro_rules! session_control_store_methods {
         fn begin_session_edit_rerun(
             &self,
             _operation: &SessionEditRerunOperation,
-        ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        ) -> Result<crate::EditRerunTransitionReceipt, RuntimeError> {
             unsupported_store("edit-and-rerun persistence unavailable")
         }
         fn get_session_edit_rerun(
@@ -30,13 +30,13 @@ macro_rules! session_control_store_methods {
             _replacement_turn_id: Option<&str>,
             _error_code: Option<&str>,
             _now: i64,
-        ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        ) -> Result<crate::EditRerunTransitionReceipt, RuntimeError> {
             unsupported_store("edit-and-rerun transition unavailable")
         }
         fn recover_session_edit_reruns(
             &self,
             _now: i64,
-        ) -> Result<Vec<SessionEditRerunOperation>, RuntimeError> {
+        ) -> Result<Vec<crate::EditRerunTransitionReceipt>, RuntimeError> {
             Ok(Vec::new())
         }
         fn resolve_session_edit_rerun_review(
@@ -44,7 +44,7 @@ macro_rules! session_control_store_methods {
             _operation_id: &str,
             _evidence: &str,
             _now: i64,
-        ) -> Result<SessionEditRerunOperation, RuntimeError> {
+        ) -> Result<crate::EditRerunTransitionReceipt, RuntimeError> {
             unsupported_store("edit-and-rerun review unavailable")
         }
         fn begin_session_compaction(

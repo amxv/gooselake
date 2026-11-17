@@ -136,7 +136,7 @@ impl SqliteRuntimeRepository {
                 _ => None,
             };
             if let Some(event) = event {
-                queue_team_hook_trigger_tx(
+                let queued = queue_team_hook_trigger_tx(
                     &tx,
                     workspace_id,
                     event,
@@ -153,6 +153,7 @@ impl SqliteRuntimeRepository {
                     &message.recipient_agent_ids,
                     message.created_at,
                 )?;
+                crate::repository_team_hooks::verify_hook_proofs_tx(&tx, &queued.proofs)?;
             }
         }
 

@@ -171,10 +171,17 @@ fn operator_recheck_only_releases_independently_terminal_obligations_and_preserv
         VALUES('review-parent','workspace',?1,
           (SELECT COALESCE(MAX(seq),0)+1 FROM runtime_events WHERE scope='workspace' AND scope_id=?1),
           'test',0,'{}',101)",[&workspace.workspace_id]).unwrap();
+    let hook = runtime_core::TeamHookResolvedEntry {
+        event_name: runtime_core::TeamHookEventName::PostDirectMessageSend,
+        name: "review-hook".into(),
+        command: "printf '{}'".into(),
+        timeout_ms: 500,
+        scope: runtime_core::TeamHookScope::Project,
+    };
     db.execute("INSERT INTO workspace_hook_effects(workspace_id,parent_event_id,event_name,hook_name,
         hook_json,input_json,phase,attempt_count,created_at_ms,updated_at_ms)
-        VALUES(?1,'review-parent','post_direct_message_send','review-hook','{}','{}','started',1,101,101)",
-        [&workspace.workspace_id]).unwrap();
+        VALUES(?1,'review-parent','post_direct_message_send','review-hook',?2,'{}','started',1,101,101)",
+        params![workspace.workspace_id, serde_json::to_string(&hook).unwrap()]).unwrap();
     let workspace = repository
         .get_workspace(&workspace.workspace_id)
         .unwrap()
@@ -236,8 +243,12 @@ fn operator_recheck_only_releases_independently_terminal_obligations_and_preserv
     repository.upsert_session(&session).unwrap();
     db.execute("UPDATE agent_deliveries SET status='injected',injected_turn_id='review-turn' WHERE id='review-delivery'",[]).unwrap();
     db.execute("UPDATE workspace_system_notices SET state='delivered',turn_id='review-turn' WHERE notice_id='review-notice'",[]).unwrap();
-    db.execute("UPDATE workspace_hook_effects SET phase='succeeded',receipt_json='{}',application_state='pending'
-        WHERE hook_name='review-hook'",[]).unwrap();
+    let receipt = runtime_core::TeamHookEffectReceipt {
+        validated_output: Some(serde_json::json!({})),
+        error_code: None,
+    };
+    db.execute("UPDATE workspace_hook_effects SET phase='succeeded',receipt_json=?1,application_state='pending'
+        WHERE hook_name='review-hook'",[serde_json::to_string(&receipt).unwrap()]).unwrap();
     for (index, kind) in targets.into_iter().enumerate() {
         let effect = original
             .effects

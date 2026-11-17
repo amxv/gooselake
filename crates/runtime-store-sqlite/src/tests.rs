@@ -47,6 +47,7 @@ mod process_admission_order_scale;
 mod process_completion_authority;
 mod process_diagnostics_scale;
 mod process_lifecycle_events;
+mod process_scheduler_control_events;
 mod provider_approval_decisions;
 mod provider_approval_resolution;
 mod provider_dispatch_outcome;
@@ -861,3 +862,5 @@ mod legacy_spawn_obligations_schema;
 mod legacy_spawn_obligations_support;
 mod workspace_notice;
 mod workspace_notice_queue_scale;
+
+mod hook_retirement_critical;

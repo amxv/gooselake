@@ -20,6 +20,9 @@ const WORKSPACE_INTERRUPT_KIND: &str = "workspace_interrupt";
 const WORKSPACE_RESOURCE_KIND: &str = "workspace";
 pub(crate) const INTERRUPT_EFFECT_KIND: &str = "workspace_turn_interrupt";
 
+#[path = "repository_workspace_interrupt_receipts.rs"]
+pub(crate) mod interrupt_receipts;
+
 impl SqliteRuntimeRepository {
     pub fn transition_workspace_lead(
         &self,
@@ -399,90 +402,6 @@ impl SqliteRuntimeRepository {
         unresolved_interrupt(&connection, session_id)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn finalize_workspace_interrupt_effect(
-        &self,
-        operation_id: &str,
-        agent_id: &str,
-        turn_id: &str,
-        interrupted: bool,
-        reason: &str,
-        changed_at: i64,
-    ) -> Result<(), RuntimeError> {
-        let connection = open_connection(&self.database_path)?;
-        let outcome = if interrupted {
-            "interrupted"
-        } else {
-            "skipped"
-        };
-        let evidence = json_to_string(&serde_json::json!({
-            "turn_id": turn_id,
-            "outcome": outcome,
-            "reason": reason,
-        }))?;
-        let changed = connection
-            .execute(
-                "UPDATE runtime_operation_effects
-                 SET phase = 'finalized', evidence_json = json_set(?4, '$.prior_evidence', json(evidence_json)), updated_at = ?5
-                 WHERE operation_id = ?1 AND effect_kind = ?6 AND target_id = ?2
-                   AND phase = 'started' AND json_extract(evidence_json, '$.turn_id') = ?3",
-                params![
-                    operation_id,
-                    agent_id,
-                    turn_id,
-                    evidence,
-                    changed_at,
-                    INTERRUPT_EFFECT_KIND,
-                ],
-            )
-            .map_err(|error| db_error("failed finalizing workspace interrupt effect", error))?;
-        if changed != 1 {
-            return Err(RuntimeError::Conflict(format!(
-                "workspace interrupt effect for agent {agent_id} is not in started state"
-            )));
-        }
-        Ok(())
-    }
-
-    pub fn mark_workspace_interrupt_uncertain(
-        &self,
-        operation_id: &str,
-        agent_id: &str,
-        turn_id: &str,
-        error: &serde_json::Value,
-        changed_at: i64,
-    ) -> Result<(), RuntimeError> {
-        let connection = open_connection(&self.database_path)?;
-        let evidence = json_to_string(&serde_json::json!({
-            "turn_id": turn_id,
-            "outcome": null,
-            "reason": "provider_interrupt_outcome_uncertain",
-            "error": error,
-        }))?;
-        let changed = connection
-            .execute(
-                "UPDATE runtime_operation_effects
-                 SET phase = 'uncertain', evidence_json = json_set(?4, '$.prior_evidence', json(evidence_json)), updated_at = ?5
-                 WHERE operation_id = ?1 AND effect_kind = ?6 AND target_id = ?2
-                   AND phase = 'started' AND json_extract(evidence_json, '$.turn_id') = ?3",
-                params![
-                    operation_id,
-                    agent_id,
-                    turn_id,
-                    evidence,
-                    changed_at,
-                    INTERRUPT_EFFECT_KIND,
-                ],
-            )
-            .map_err(|db| db_error("failed recording uncertain workspace interrupt", db))?;
-        if changed != 1 {
-            return Err(RuntimeError::Conflict(format!(
-                "workspace interrupt effect for agent {agent_id} could not enter uncertain state"
-            )));
-        }
-        Ok(())
-    }
-
     pub fn complete_workspace_interrupt(
         &self,
         operation_id: &str,
@@ -692,6 +611,7 @@ fn recover_interrupt_plan(
 ) -> Result<WorkspaceInterruptPlan, RuntimeError> {
     let effects = interrupt_outcomes(tx, operation_id)?;
     let mut targets = Vec::new();
+    let mut recovered_receipts = Vec::new();
     for (agent_id, phase, evidence) in effects {
         let turn_id = evidence
             .get("turn_id")
@@ -713,14 +633,15 @@ fn recover_interrupt_plan(
                     ))
                 })?;
                 if interrupt_requested_event_exists(tx, operation_id, &agent_id, &turn_id)? {
-                    recover_finalize_effect(
+                    recovered_receipts.push(recover_finalize_effect(
                         tx,
                         operation_id,
                         &agent_id,
                         &turn_id,
+                        &phase,
                         true,
                         "recovered_interrupt_request_event",
-                    )?;
+                    )?);
                 } else {
                     return Err(RuntimeError::operation_unresolved(operation_id, format!(
                         "workspace interrupt outcome is unresolved for agent {agent_id}; refusing duplicate provider interrupt"
@@ -735,6 +656,11 @@ fn recover_interrupt_plan(
             }
         }
     }
+    // A later target's event trigger must not invalidate an earlier receipt
+    // or carrier before the shared recovery transaction commits.
+    for receipt in &recovered_receipts {
+        receipt.verify(tx)?;
+    }
     Ok(WorkspaceInterruptPlan {
         operation_id: operation_id.to_string(),
         workspace_id: workspace_id.to_string(),
@@ -747,9 +673,20 @@ fn recover_finalize_effect(
     operation_id: &str,
     agent_id: &str,
     turn_id: &str,
+    from_phase: &str,
     interrupted: bool,
     reason: &str,
-) -> Result<(), RuntimeError> {
+) -> Result<interrupt_receipts::TargetEventReceipt, RuntimeError> {
+    let mut expected = interrupt_receipts::target(tx, operation_id, agent_id, turn_id)?;
+    if expected.phase != from_phase {
+        return Err(RuntimeError::Conflict(
+            "workspace interrupt recovery carrier changed from its original phase".into(),
+        ));
+    }
+    expected.phase = "finalized".to_owned();
+    expected.updated_at = expected.updated_at.checked_add(1).ok_or_else(|| {
+        RuntimeError::Conflict("workspace interrupt recovery lost signed timestamp headroom".into())
+    })?;
     let outcome = if interrupted {
         "interrupted"
     } else {
@@ -760,6 +697,12 @@ fn recover_finalize_effect(
         "outcome": outcome,
         "reason": reason,
     }))?;
+    expected.evidence = serde_json::json!({
+        "turn_id": turn_id,
+        "outcome": outcome,
+        "reason": reason,
+        "prior_evidence": expected.evidence,
+    });
     let changed = tx
         .execute(
             "UPDATE runtime_operation_effects
@@ -783,7 +726,15 @@ fn recover_finalize_effect(
             "workspace interrupt recovery for {agent_id} lost signed timestamp headroom or durable effect authority"
         )));
     }
-    Ok(())
+    interrupt_receipts::append_target_event(
+        tx,
+        operation_id,
+        agent_id,
+        turn_id,
+        from_phase,
+        "finalized",
+        &expected,
+    )
 }
 
 fn interrupt_outcomes(

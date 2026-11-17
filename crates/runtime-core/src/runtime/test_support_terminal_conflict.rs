@@ -10,6 +10,9 @@ macro_rules! mock_terminal_conflict_methods {
             event: &crate::NewRuntimeEvent,
         ) -> Result<(crate::SessionRecord, Option<crate::RuntimeEventRecord>), crate::RuntimeError>
         {
+            if let Some(entered) = self.terminal_commit_entered.lock().unwrap().as_ref() {
+                entered.notify_one();
+            }
             let _authority = self.authority_transaction.lock().unwrap();
             if *self.fail_session_write.lock().unwrap() {
                 return Err(crate::RuntimeError::Io(

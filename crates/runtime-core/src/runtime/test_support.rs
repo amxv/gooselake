@@ -26,6 +26,8 @@ use super::RuntimeSessionManager;
 #[derive(Default)]
 pub(super) struct MockStore {
     pub(super) authority_transaction: Mutex<()>,
+    pub(super) edit_fixture: Mutex<Option<MockEditFixture>>,
+    pub(super) edit_after_fork: Mutex<Option<Arc<AuthorityPause>>>,
     pub(super) startup: Mutex<startup_reattachment::MockStartupLedger>,
     pub(super) startup_after_complete: Mutex<Option<Arc<AuthorityPause>>>,
     pub(super) after_turn_admission: Mutex<Option<Arc<AuthorityPause>>>,
@@ -44,6 +46,9 @@ pub(super) struct MockStore {
     pub(super) native_approval_calls: AtomicUsize,
 }
 
+#[path = "test_support_edit_receipt.rs"]
+mod edit_receipts;
+pub(super) use edit_receipts::{EditReceiptRace, MockEditFixture};
 #[path = "test_support_events.rs"]
 mod event_journal;
 #[path = "test_support_interleavings.rs"]
@@ -72,6 +77,7 @@ impl crate::OperatorUserTurnStore for MockStore {}
 
 #[async_trait]
 impl RuntimeStore for MockStore {
+    edit_receipts::mock_edit_receipt_methods!();
     legacy_obligations::mock_legacy_obligation_methods!();
     startup_reattachment::mock_startup_methods!();
     terminal_conflict::mock_terminal_conflict_methods!();

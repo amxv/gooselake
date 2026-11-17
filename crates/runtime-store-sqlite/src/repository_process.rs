@@ -11,6 +11,9 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 use crate::db::{db_error, json_to_string, open_connection, string_to_json};
 use crate::SqliteRuntimeRepository;
 
+#[path = "repository_process_control.rs"]
+mod control;
+
 const PROCESS_COLUMNS: &str = r#"
 process_id, owner_session_id, workspace_id, tool_call_id, command_json, cwd,
 timeout_ms, status, admission_order, queue_order, claim_generation, claimed_at,
@@ -717,76 +720,6 @@ impl SqliteRuntimeRepository {
             )
         })?;
         Ok(result)
-    }
-
-    pub fn replace_process_scheduler_settings(
-        &self,
-        settings: &ProcessSchedulerSettings,
-    ) -> Result<ProcessSchedulerSettings, RuntimeError> {
-        let normalized = settings.clone().normalized();
-        let connection = open_connection(&self.database_path)?;
-        write_scheduler_settings(&connection, &normalized)?;
-        Ok(normalized)
-    }
-
-    pub fn reorder_queued_managed_process(
-        &self,
-        process_id: &str,
-        before_process_id: Option<&str>,
-        after_process_id: Option<&str>,
-        updated_at: i64,
-    ) -> Result<Vec<String>, RuntimeError> {
-        if before_process_id.is_some() == after_process_id.is_some() {
-            return Err(RuntimeError::InvalidState(
-                "exactly one of before_process_id or after_process_id is required".to_string(),
-            ));
-        }
-        let mut connection = open_connection(&self.database_path)?;
-        let transaction = immediate(&mut connection, "managed-process queue reorder")?;
-        let mut ids = {
-            let mut statement = transaction
-                .prepare(
-                    "SELECT process_id FROM managed_processes WHERE status = 'queued'
-                     ORDER BY queue_order ASC, admission_order ASC, process_id ASC",
-                )
-                .map_err(|error| db_error("failed preparing managed-process reorder", error))?;
-            let rows = statement
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(|error| db_error("failed querying managed-process reorder", error))?;
-            rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|error| db_error("failed decoding managed-process reorder", error))?
-        };
-        let Some(current_index) = ids.iter().position(|id| id == process_id) else {
-            return Err(RuntimeError::NotFound(format!(
-                "queued process {process_id}"
-            )));
-        };
-        let moving = ids.remove(current_index);
-        let target = before_process_id
-            .or(after_process_id)
-            .expect("validated target");
-        let Some(target_index) = ids.iter().position(|id| id == target) else {
-            return Err(RuntimeError::NotFound(format!("queued process {target}")));
-        };
-        let insert_at = if before_process_id.is_some() {
-            target_index
-        } else {
-            target_index + 1
-        };
-        ids.insert(insert_at, moving);
-        for (index, id) in ids.iter().enumerate() {
-            transaction
-                .execute(
-                    "UPDATE managed_processes SET queue_order = ?2, updated_at = ?3
-                     WHERE process_id = ?1 AND status = 'queued'",
-                    params![id, (index as i64) + 1, updated_at],
-                )
-                .map_err(|error| db_error("failed updating managed-process queue order", error))?;
-        }
-        transaction
-            .commit()
-            .map_err(|error| db_error("failed committing managed-process queue reorder", error))?;
-        Ok(ids)
     }
 }
 

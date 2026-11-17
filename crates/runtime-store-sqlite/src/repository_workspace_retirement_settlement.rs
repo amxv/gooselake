@@ -8,6 +8,10 @@ use crate::db::{db_error, json_to_string, open_connection};
 use crate::operation_tx::OperationAuthorityTransaction;
 use crate::repository_workspace::workspace_by_id;
 use crate::repository_workspace_retirement::retirement_blockers;
+use crate::repository_workspace_retirement_events::{
+    journal_retirement_observation_tx, journal_retirement_phase_tx, retirement_effect_authority_tx,
+    retirement_effect_snapshot_tx,
+};
 use crate::SqliteRuntimeRepository;
 
 fn effect_phase(
@@ -33,7 +37,23 @@ fn settle_effect(
     phase: &str,
     evidence: &str,
     at_ms: i64,
+    proofs: &mut Vec<(
+        String,
+        String,
+        String,
+        crate::repository_team_hooks::CriticalEventProof,
+    )>,
 ) -> Result<(), RuntimeError> {
+    let before = if kind == "workspace_hook_settle" {
+        Some(retirement_effect_snapshot_tx(
+            db,
+            operation_id,
+            kind,
+            target_id,
+        )?)
+    } else {
+        None
+    };
     let updated = db
         .execute(
             "UPDATE runtime_operation_effects SET phase=?4, evidence_json=?5, updated_at=?6
@@ -54,6 +74,51 @@ fn settle_effect(
         return Err(RuntimeError::Conflict(format!(
             "retirement effect {kind}/{target_id} changed while settling"
         )));
+    }
+    if let Some(before) = before {
+        let after = retirement_effect_snapshot_tx(db, operation_id, kind, target_id)?;
+        let mut expected = before.clone();
+        expected["phase"] = serde_json::json!(phase);
+        expected["evidence"] = serde_json::json!(json_to_string(&serde_json::json!({
+            "outcome":evidence,"native_effect":false,"at_ms":at_ms
+        }))?);
+        expected["updated_at"] = serde_json::json!(at_ms);
+        if after != expected {
+            return Err(RuntimeError::Conflict(
+                "retirement hook settlement differs from its expected target".into(),
+            ));
+        }
+        let workspace_id: String = db
+            .query_row(
+                "SELECT workspace_id FROM runtime_operations WHERE operation_id=?1",
+                [operation_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed reading hook retirement workspace", error))?;
+        let proof = journal_retirement_observation_tx(
+            db,
+            operation_id,
+            &workspace_id,
+            "workspace.retirement_hook_settled",
+            target_id,
+            &before,
+            &after,
+            at_ms,
+        )?
+        .ok_or_else(|| {
+            RuntimeError::Conflict("changed retirement hook target lacks a receipt".into())
+        })?;
+        proofs.push((
+            kind.into(),
+            target_id.into(),
+            runtime_core::normalized_json_hash(&after)?,
+            proof,
+        ));
+        if retirement_effect_snapshot_tx(db, operation_id, kind, target_id)? != after {
+            return Err(RuntimeError::Conflict(
+                "retirement hook effect changed during its receipt".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -147,7 +212,20 @@ impl SqliteRuntimeRepository {
             RuntimeError::Bootstrap(format!("invalid durable retirement plan: {error}"))
         })?;
 
+        // Select and freeze only initially intended hook targets before any
+        // local receipt. Already-settled historical hook bodies remain unread.
+        let mut selected_hooks = Vec::new();
+        for id in &plan.hook_effect_ids {
+            if effect_phase(&tx, operation_id, "workspace_hook_settle", id)? == "intended" {
+                selected_hooks.push((
+                    id,
+                    retirement_effect_snapshot_tx(&tx, operation_id, "workspace_hook_settle", id)?,
+                ));
+            }
+        }
         let mut quarantine = false;
+        let mut hook_proofs = Vec::new();
+        let mut target_proofs = Vec::new();
         for id in &plan.managed_process_ids {
             if effect_phase(&tx, operation_id, "workspace_process_settle", id)? != "intended" {
                 continue;
@@ -198,6 +276,7 @@ impl SqliteRuntimeRepository {
                     phase,
                     reason,
                     at_ms,
+                    &mut target_proofs,
                 )?;
             }
         }
@@ -239,6 +318,7 @@ impl SqliteRuntimeRepository {
                 outcome.0,
                 outcome.1,
                 at_ms,
+                &mut target_proofs,
             )?;
         }
         for id in &plan.notice_ids {
@@ -277,12 +357,22 @@ impl SqliteRuntimeRepository {
                 outcome.0,
                 outcome.1,
                 at_ms,
+                &mut target_proofs,
             )?;
         }
-        for id in &plan.hook_effect_ids {
-            if effect_phase(&tx, operation_id, "workspace_hook_settle", id)? != "intended" {
-                continue;
+        for (id, before_target) in selected_hooks {
+            if retirement_effect_snapshot_tx(&tx, operation_id, "workspace_hook_settle", id)?
+                != before_target
+            {
+                return Err(RuntimeError::Conflict(
+                    "selected retirement hook changed before settlement".into(),
+                ));
             }
+            let mut authority_before = before_target;
+            authority_before
+                .as_object_mut()
+                .expect("effect snapshot is an object")
+                .remove("hook_record");
             let keys: Vec<String> = serde_json::from_str(id).map_err(|error| {
                 RuntimeError::Bootstrap(format!("invalid hook retirement identity: {error}"))
             })?;
@@ -291,16 +381,18 @@ impl SqliteRuntimeRepository {
                     "invalid hook retirement key width".into(),
                 ));
             }
-            let state: Option<(String, String)> = tx
-                .query_row(
-                    "SELECT phase,application_state FROM workspace_hook_effects
-                 WHERE workspace_id=?1 AND parent_event_id=?2 AND event_name=?3 AND hook_name=?4",
-                    params![plan.workspace_id, keys[0], keys[1], keys[2]],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()
-                .map_err(|error| db_error("failed reading pending hook retirement", error))?;
-            let outcome = match state.as_ref().map(|(phase, _)| phase.as_str()) {
+            let event = runtime_core::TeamHookEventName::ALL
+                .into_iter()
+                .find(|event| event.as_str() == keys[1])
+                .ok_or_else(|| RuntimeError::Bootstrap("invalid hook retirement event".into()))?;
+            let state = crate::repository_team_hooks::read_team_hook_effect(
+                &tx,
+                &plan.workspace_id,
+                &keys[0],
+                event,
+                &keys[2],
+            )?;
+            let outcome = match state.as_ref().map(|effect| effect.phase.as_str()) {
                 Some("intended") | Some("succeeded") => {
                     tx.execute("UPDATE workspace_hook_effects SET
                         phase=CASE WHEN phase='intended' THEN 'failed' ELSE phase END,
@@ -309,6 +401,21 @@ impl SqliteRuntimeRepository {
                         WHERE workspace_id=?1 AND parent_event_id=?2 AND event_name=?3 AND hook_name=?4",
                         params![plan.workspace_id,keys[0],keys[1],keys[2],at_ms])
                         .map_err(|error|db_error("failed preventing retired hook output",error))?;
+                    let before = state.as_ref().expect("matched existing hook");
+                    let mut after = before.clone();
+                    if after.phase == runtime_core::TeamHookEffectPhase::Intended {
+                        after.phase = runtime_core::TeamHookEffectPhase::Failed;
+                    }
+                    after.application_state = "rejected".into();
+                    after.application_error_code = Some("workspace_retirement".into());
+                    after.updated_at_ms = at_ms;
+                    hook_proofs.push(crate::repository_team_hooks::journal_hook_change_tx(
+                        &tx,
+                        Some(before),
+                        &after,
+                        "passive_retirement",
+                        at_ms,
+                    )?);
                     ("finalized", "hook_context_rejected")
                 }
                 Some("failed" | "timed_out") => ("finalized", "hook_already_terminal"),
@@ -317,6 +424,13 @@ impl SqliteRuntimeRepository {
                     ("manual_review", "hook_dispatch_outcome_unresolved")
                 }
             };
+            if retirement_effect_authority_tx(&tx, operation_id, "workspace_hook_settle", id)?
+                != authority_before
+            {
+                return Err(RuntimeError::Conflict(
+                    "retirement target authority changed during hook settlement".into(),
+                ));
+            }
             settle_effect(
                 &tx,
                 operation_id,
@@ -325,6 +439,7 @@ impl SqliteRuntimeRepository {
                 outcome.0,
                 outcome.1,
                 at_ms,
+                &mut target_proofs,
             )?;
         }
         for id in &plan.preserved_worktree_ids {
@@ -406,6 +521,7 @@ impl SqliteRuntimeRepository {
                     "worktree_identity_unresolved"
                 },
                 at_ms,
+                &mut target_proofs,
             )?;
         }
         if quarantine {
@@ -415,12 +531,39 @@ impl SqliteRuntimeRepository {
                 params![operation_id, at_ms],
             )
             .map_err(|error| db_error("failed quarantining retirement fence", error))?;
-            tx.execute(
-                "UPDATE runtime_operations SET phase='manual_review',updated_at=?2
+            let changed = tx
+                .execute(
+                    "UPDATE runtime_operations SET phase='manual_review',updated_at=?2
                 WHERE operation_id=?1 AND phase='requested'",
-                params![operation_id, at_ms],
-            )
-            .map_err(|error| db_error("failed quarantining retirement operation", error))?;
+                    params![operation_id, at_ms],
+                )
+                .map_err(|error| db_error("failed quarantining retirement operation", error))?;
+            if changed == 1 {
+                journal_retirement_phase_tx(
+                    &tx,
+                    operation_id,
+                    &plan.workspace_id,
+                    OperationPhase::Requested,
+                    OperationPhase::ManualReview,
+                    "passive_retirement",
+                    at_ms,
+                )?;
+            }
+        }
+        crate::repository_team_hooks::verify_hook_proofs_tx(&tx, &hook_proofs)?;
+        for (kind, target, expected_hash, proof) in &target_proofs {
+            if runtime_core::normalized_json_hash(&retirement_effect_snapshot_tx(
+                &tx,
+                operation_id,
+                kind,
+                target,
+            )?)? != *expected_hash
+            {
+                return Err(RuntimeError::Conflict(
+                    "retirement hook target changed before commit".into(),
+                ));
+            }
+            crate::repository_team_hooks::verify_critical_proof_tx(&tx, proof)?;
         }
         tx.commit()
             .map_err(|error| db_error("failed committing passive retirement settlement", error))?;

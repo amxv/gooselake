@@ -43,6 +43,17 @@ impl SqliteRuntimeRepository {
         }
         crate::repository_legacy_spawn_obligations::guard_legacy_native_session(&tx, agent_id)?;
         crate::repository_startup_reattachment::guard_resume_claim(&tx, agent_id)?;
+        let mut expected = crate::repository_workspace_control::interrupt_receipts::target(
+            &tx,
+            operation_id,
+            agent_id,
+            turn_id,
+        )?;
+        expected.phase = "started".to_owned();
+        expected.attempt_count = expected.attempt_count.checked_add(1).ok_or_else(|| {
+            RuntimeError::Conflict("workspace interrupt attempt count exhausted".into())
+        })?;
+        expected.updated_at = changed_at;
         let changed = tx
             .execute(
                 "UPDATE runtime_operation_effects
@@ -66,6 +77,15 @@ impl SqliteRuntimeRepository {
                 "workspace interrupt effect for agent {agent_id} is not safely dispatchable"
             )));
         }
+        crate::repository_workspace_control::interrupt_receipts::append_target_event(
+            &tx,
+            operation_id,
+            agent_id,
+            turn_id,
+            "intended",
+            "started",
+            &expected,
+        )?;
         tx.commit()
             .map_err(|error| db_error("failed committing first workspace interrupt", error))?;
         Ok(())

@@ -83,7 +83,8 @@ impl SqliteRuntimeRepository {
         let review = json!({"review_id":command.review_id,"operator":command.actor.identifier,
             "evidence":command.request.evidence,"resolution":command.request.resolution,
             "reviewed_at":command.reviewed_at});
-        let settled = match &command.request.resolution {
+        let mut hook_proofs = Vec::new();
+        let (settled, expected_effect) = match &command.request.resolution {
             WorkspaceRetirementReviewResolution::ProviderClosed { identity } => {
                 if kind != "workspace_provider_close" || identity.agent_id != target {
                     return Err(RuntimeError::Conflict(
@@ -104,13 +105,34 @@ impl SqliteRuntimeRepository {
                 ));
             }
             WorkspaceRetirementReviewResolution::RecheckSettled => {
+                // Local hook reconciliation may journal its own change. Freeze
+                // the retirement carrier before that receipt can affect it.
+                let authority_before =
+                    crate::repository_workspace_retirement_events::retirement_effect_authority_tx(
+                        &tx,
+                        &command.operation_id,
+                        &kind,
+                        &target,
+                    )?;
                 let observed = independently_settled(
                     &tx,
                     &command.workspace_id,
                     &kind,
                     &target,
                     command.reviewed_at,
+                    &mut hook_proofs,
                 )?;
+                if crate::repository_workspace_retirement_events::retirement_effect_authority_tx(
+                    &tx,
+                    &command.operation_id,
+                    &kind,
+                    &target,
+                )? != authority_before
+                {
+                    return Err(RuntimeError::Conflict(
+                        "retirement target authority changed during local reconciliation".into(),
+                    ));
+                }
                 let settled = observed.is_some();
                 let outcome = observed
                     .as_ref()
@@ -121,6 +143,19 @@ impl SqliteRuntimeRepository {
                     } else {
                         "operator_recheck_still_unresolved"
                     });
+                let mut expected_effect =
+                    crate::repository_workspace_retirement_events::retirement_effect_snapshot_tx(
+                        &tx,
+                        &command.operation_id,
+                        &kind,
+                        &target,
+                    )?;
+                let evidence = json_to_string(&json!({"outcome":outcome,"observed":observed,
+                    "operator_review":review,"prior_evidence":prior}))?;
+                let target_phase = if settled { "finalized" } else { phase.as_str() };
+                expected_effect["phase"] = json!(target_phase);
+                expected_effect["evidence"] = json!(evidence);
+                expected_effect["updated_at"] = json!(command.reviewed_at);
                 let changed = tx
                     .execute(
                         "UPDATE runtime_operation_effects SET phase=?3,evidence_json=?4,
@@ -128,9 +163,8 @@ impl SqliteRuntimeRepository {
                         params![
                             command.operation_id,
                             command.request.effect_id,
-                            if settled { "finalized" } else { phase.as_str() },
-                            json_to_string(&json!({"outcome":outcome,"observed":observed,
-                            "operator_review":review,"prior_evidence":prior}))?,
+                            target_phase,
+                            evidence,
                             command.reviewed_at,
                             phase
                         ],
@@ -143,7 +177,18 @@ impl SqliteRuntimeRepository {
                         "retirement review effect changed concurrently".into(),
                     ));
                 }
-                settled
+                if crate::repository_workspace_retirement_events::retirement_effect_snapshot_tx(
+                    &tx,
+                    &command.operation_id,
+                    &kind,
+                    &target,
+                )? != expected_effect
+                {
+                    return Err(RuntimeError::Conflict(
+                        "retirement recheck target differs from its intended receipt".into(),
+                    ));
+                }
+                (settled, expected_effect)
             }
         };
         let unresolved = unresolved_effects(&tx, &command.operation_id)?;
@@ -193,6 +238,70 @@ impl SqliteRuntimeRepository {
                 error,
             )
         })?;
+        if crate::repository_workspace_retirement_events::retirement_effect_snapshot_tx(
+            &tx,
+            &command.operation_id,
+            &kind,
+            &target,
+        )? != expected_effect
+        {
+            return Err(RuntimeError::Conflict(
+                "retirement recheck target changed before its receipt".into(),
+            ));
+        }
+        if !resume {
+            let effect_after = expected_effect;
+            let review_row = || -> Result<String, RuntimeError> {
+                tx.query_row(
+                    "SELECT receipt_json FROM workspace_retirement_reviews WHERE review_id=?1
+                    AND operation_id=?2 AND effect_id=?3",
+                    params![
+                        command.review_id,
+                        command.operation_id,
+                        command.request.effect_id
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(|error| db_error("failed verifying immutable retirement review", error))
+            };
+            let stored = review_row()?;
+            let expected = serde_json::to_value(&receipt).map_err(|error| {
+                RuntimeError::Bootstrap(format!("invalid retirement review receipt: {error}"))
+            })?;
+            if serde_json::from_str::<Value>(&stored).map_err(|error| {
+                RuntimeError::Bootstrap(format!("invalid stored retirement review: {error}"))
+            })? != expected
+            {
+                return Err(RuntimeError::Conflict(
+                    "retirement review receipt differs from its result".into(),
+                ));
+            }
+            let _ =
+                crate::repository_workspace_retirement_events::journal_retirement_observation_tx(
+                    &tx,
+                    &command.operation_id,
+                    &command.workspace_id,
+                    "workspace.retirement_review_recorded",
+                    &command.review_id,
+                    &json!({"phase":phase,"prior_evidence":prior}),
+                    &json!({"receipt":expected,"effect":effect_after,
+                    "request_hash":command.normalized_request_hash}),
+                    command.reviewed_at,
+                )?;
+            if review_row()? != stored
+                || crate::repository_workspace_retirement_events::retirement_effect_snapshot_tx(
+                    &tx,
+                    &command.operation_id,
+                    &kind,
+                    &target,
+                )? != effect_after
+            {
+                return Err(RuntimeError::Conflict(
+                    "retirement review changed during its journal receipt".into(),
+                ));
+            }
+        }
+        crate::repository_team_hooks::verify_hook_proofs_tx(&tx, &hook_proofs)?;
         tx.commit().map_err(|error| {
             db_error(
                 "failed committing operator retirement reconciliation",

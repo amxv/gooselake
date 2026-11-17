@@ -12,6 +12,7 @@ use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::Value;
 
 use super::effects::{hook_is_approved, read_effect};
+use super::journal::journal_hook_change_tx;
 use crate::db::{db_error, open_connection};
 use crate::SqliteRuntimeRepository;
 
@@ -140,14 +141,14 @@ impl SqliteRuntimeRepository {
         }
 
         let prepared = prepare_scoped_notices(&tx, &record, now)?;
-        let (application_state, error_code) = match prepared {
+        let (application_state, error_code, notices) = match prepared {
             Ok(notices) => {
                 for notice in &notices {
                     SqliteRuntimeRepository::insert_workspace_system_notice_tx(&tx, notice)?;
                 }
-                ("applied", None)
+                ("applied", None, notices)
             }
-            Err(reason) => ("rejected", Some(reason)),
+            Err(reason) => ("rejected", Some(reason), Vec::new()),
         };
         tx.execute(
             "UPDATE workspace_hook_effects
@@ -173,6 +174,28 @@ impl SqliteRuntimeRepository {
             &record.hook.name,
         )?
         .ok_or_else(|| RuntimeError::Bootstrap("hook application receipt disappeared".into()))?;
+        let mut expected = record.clone();
+        expected.application_state = application_state.into();
+        expected.application_error_code = error_code.map(str::to_string);
+        expected.applied_at_ms = Some(now);
+        journal_hook_change_tx(&tx, Some(&record), &expected, "output_application", now)?;
+        for notice in &notices {
+            let stored = tx
+                .query_row(
+                    "SELECT notice_id,workspace_id,recipient_agent_id,kind,correlation_id,
+                    input_json,state,turn_id,attempt_count,last_error,created_at_ms,updated_at_ms
+                 FROM workspace_system_notices WHERE notice_id=?1",
+                    [&notice.notice_id],
+                    crate::repository_workspace_notice::notice_from_row,
+                )
+                .optional()
+                .map_err(|error| db_error("failed verifying committed hook notice", error))?;
+            if stored.as_ref() != Some(notice) {
+                return Err(RuntimeError::Conflict(
+                    "hook notice changed before its application committed".into(),
+                ));
+            }
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing hook context notices", error))?;
         Ok(settled)

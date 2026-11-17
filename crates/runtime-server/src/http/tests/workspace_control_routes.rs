@@ -855,3 +855,6 @@ fn membership_agent_request(root: &Path, title: &str) -> runtime_core::Workspace
         onboarding: None,
     }
 }
+
+#[path = "workspace_interrupt_target_events.rs"]
+mod interrupt_target_events;

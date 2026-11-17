@@ -1,6 +1,7 @@
 use super::workspace_worktree_routes::call;
 use super::*;
 
+mod critical_receipts;
 mod native_recovery;
 
 async fn ready_edit_agent(

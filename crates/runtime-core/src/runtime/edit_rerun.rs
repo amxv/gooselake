@@ -6,8 +6,7 @@ use serde_json::{json, Value};
 use crate::{
     normalized_json_hash, PersistedUserInputSnapshot, ProviderCapabilitySupport,
     ProviderHardForkEditRerunRequest, ProviderKind, ProviderSession, RuntimeError,
-    RuntimeEventCriticality, RuntimeEventScope, SessionEditRerunOperation,
-    TurnInputProjectionSource,
+    SessionEditRerunOperation, TurnInputProjectionSource,
 };
 
 use super::helpers::now_ms;
@@ -64,6 +63,16 @@ pub(super) fn edited_input_from_snapshot(
 }
 
 impl RuntimeSessionManager {
+    pub(super) fn publish_edit_transition(
+        &self,
+        receipt: crate::EditRerunTransitionReceipt,
+    ) -> SessionEditRerunOperation {
+        if let Some(event) = receipt.journal_event {
+            let _ = self.event_tx.send(event);
+        }
+        receipt.operation
+    }
+
     pub fn session_edit_rerun_operation(
         &self,
         agent_id: &str,
@@ -93,6 +102,7 @@ impl RuntimeSessionManager {
         self.session_edit_rerun_operation(agent_id, operation_id)?;
         self.store
             .resolve_session_edit_rerun_review(operation_id, evidence, now_ms())
+            .map(|receipt| self.publish_edit_transition(receipt))
     }
 
     /// A verified provider fork is a distinct durable effect. A replacement
@@ -242,10 +252,11 @@ impl RuntimeSessionManager {
             created_at_ms: at,
             updated_at_ms: at,
         };
-        let admitted = self.store.begin_session_edit_rerun(&operation)?;
-        if admitted.operation_id != operation.operation_id {
-            // Another manager may have raced the same idempotent request.
-            return Ok(admitted);
+        let receipt = self.store.begin_session_edit_rerun(&operation)?;
+        let execute = receipt.changed && receipt.operation.operation_id == operation.operation_id;
+        let admitted = self.publish_edit_transition(receipt);
+        if !execute {
+            return Ok(admitted); // Historical inspection is never preparation/fork authority.
         }
         let operation = admitted;
         let owner = crate::SessionControlCoordinate::EditRerun {
@@ -319,12 +330,16 @@ impl RuntimeSessionManager {
                 Some("edit_preparation_identity_unverified"),
                 now_ms(),
             ) {
-                Ok(_) => error,
+                Ok(receipt) => {
+                    self.publish_edit_transition(receipt);
+                    error
+                }
                 Err(failure) => self.session_control_quarantine_failed(error, failure),
             };
             return Err(error);
         }
-        self.store
+        let receipt = self
+            .store
             .advance_session_edit_rerun(
                 &operation.operation_id,
                 "native_started",
@@ -336,6 +351,11 @@ impl RuntimeSessionManager {
             .map_err(|error| {
                 self.session_control_error(&owner, "edit_receipt_unavailable", error, None)
             })?;
+        if !receipt.changed {
+            return Ok(self.publish_edit_transition(receipt));
+        }
+        self.publish_edit_transition(receipt);
+        // Only this changed committed receipt reaches the existing hard_fork_edit_rerun call.
         let child: ProviderSession = match adapter
             .hard_fork_edit_rerun(ProviderHardForkEditRerunRequest {
                 runtime_session_id: agent_id.into(),
@@ -362,67 +382,65 @@ impl RuntimeSessionManager {
                     Some("native_fork_outcome_unknown"),
                     now_ms(),
                 ) {
-                    Ok(_) => error,
+                    Ok(receipt) => {
+                        self.publish_edit_transition(receipt);
+                        error
+                    }
                     Err(failure) => self.session_control_quarantine_failed(error, failure),
                 };
                 return Err(error);
             }
         };
-        // Atomic SQLite session child identity + supersession ledger + edit
-        // transition. Failure keeps the native effect quarantined.
-        let persisted = self
-            .store
-            .advance_session_edit_rerun(
-                &operation.operation_id,
-                "fork_observed",
-                Some(&child),
-                None,
-                None,
-                now_ms(),
-            )
-            .map_err(|error| {
-                self.session_control_error(&owner, "edit_receipt_unavailable", error, None)
-            })?;
-        let committed_agent = self
-            .store
-            .get_workspace_agent_by_id(agent_id)
-            .and_then(|agent| {
-                agent.ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))
-            })
-            .map_err(|error| {
-                self.session_control_error(&owner, "edit_receipt_unavailable", error, None)
-            })?;
-        {
+        let receipt = {
+            let _turns = self.turns.write().await;
             let mut sessions = self.sessions.write().await;
-            let current = sessions.get_mut(agent_id).ok_or_else(|| {
+            let receipt = self
+                .store
+                .advance_session_edit_rerun(
+                    &operation.operation_id,
+                    "fork_observed",
+                    Some(&child),
+                    None,
+                    None,
+                    now_ms(),
+                )
+                .map_err(|error| {
+                    self.session_control_error(&owner, "edit_receipt_unavailable", error, None)
+                })?;
+            if !receipt.changed {
+                return Ok(self.publish_edit_transition(receipt));
+            }
+            let committed = receipt.committed_session.as_ref().ok_or_else(|| {
                 self.session_control_error(
                     &owner,
                     "edit_receipt_unavailable",
-                    RuntimeError::NotFound(format!("session {agent_id}")),
+                    RuntimeError::ProtocolViolation(
+                        "fork receipt lacks committed session projection".into(),
+                    ),
                     None,
                 )
             })?;
-            current.provider_session_ref = Some(child.provider_session_ref);
-            current.canonical_provider_session_ref = child.canonical_provider_session_ref;
-            // The durable fork rebuilt the active transcript against the
-            // retained provider prefix. Keep the in-memory projection equal
-            // before the replacement turn can append its new messages.
-            current.metadata = committed_agent.metadata;
-            current.updated_at = persisted
-                .updated_at_ms
-                .max(session.updated_at.saturating_add(1));
-        }
-        let _ = self
-            .append_event(
-                RuntimeEventScope::Session,
-                agent_id,
-                Some(agent_id),
-                Some(target_turn_id),
-                "turn.edit_fork_observed",
-                RuntimeEventCriticality::Critical,
-                json!({"operation_id":operation.operation_id}),
-            )
-            .await;
+            if committed.id != agent_id
+                || committed.provider != operation.provider.as_str()
+                || committed.provider_session_ref != receipt.operation.child_provider_session_ref
+                || committed.canonical_provider_session_ref
+                    != receipt.operation.child_canonical_provider_session_ref
+                || !sessions.contains_key(agent_id)
+            {
+                return Err(self.session_control_error(
+                    &owner,
+                    "edit_receipt_unavailable",
+                    RuntimeError::ProtocolViolation(
+                        "fork receipt has inconsistent child projection".into(),
+                    ),
+                    None,
+                ));
+            }
+            sessions.insert(agent_id.to_string(), committed.clone());
+            receipt
+        };
+        let persisted = self.publish_edit_transition(receipt);
+        // Continue the existing replacement send; remove the postcommit append_event block.
         let replacement = self
             .send_turn_under_policy_guard(
                 agent_id,
@@ -506,7 +524,7 @@ impl RuntimeSessionManager {
                 now_ms(),
             );
             match completion {
-                Ok(completed) => return Ok(completed),
+                Ok(receipt) => return Ok(self.publish_edit_transition(receipt)),
                 Err(error) => {
                     // A lost acknowledgement can follow the committed exact
                     // completion. Inspect once; never replay a native command.
@@ -569,7 +587,10 @@ impl RuntimeSessionManager {
             Some("replacement_admission_unverified"),
             now_ms(),
         ) {
-            Ok(_) => error,
+            Ok(receipt) => {
+                self.publish_edit_transition(receipt);
+                error
+            }
             Err(failure) => self.session_control_quarantine_failed(error, failure),
         };
         Err(error)

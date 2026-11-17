@@ -352,33 +352,42 @@ fn archiving_a_workspace_lead_must_not_commit_real_workspace_revision() {
 
 #[test]
 fn interrupt_effect_start_must_not_persist_real_attempt_before_native_work() {
-    let temp = tempfile::tempdir().unwrap();
-    let repository = repo(&temp);
-    repository.initialize_schema().unwrap();
-    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
-    db.execute(
-        "INSERT INTO runtime_operations(operation_id,kind,actor_kind,actor_id,
-          normalized_request_hash,normalized_request_json,phase,created_at,updated_at)
-         VALUES('op_signed_interrupt','workspace_interrupt','operator','synthetic',
-          'synthetic_hash','{}','requested',1,1)",
-        [],
+    let (temp, repository, mut session, agent) = agent_fixture();
+    session.active_turn_id = Some("turn_signed".into());
+    session.status = "turn_running".into();
+    repository.upsert_session(&session).unwrap();
+    let command = prepare_workspace_interrupt(
+        &agent.workspace_id,
+        OperationActor::operator("signed-attempt-test"),
+        Some("signed-attempt-interrupt".into()),
     )
     .unwrap();
+    let plan = match repository.begin_workspace_interrupt(&command).unwrap() {
+        WorkspaceInterruptAdmission::Execute(plan) => plan,
+        other => panic!("unexpected initial interrupt admission: {other:?}"),
+    };
+    assert_eq!(plan.targets.len(), 1);
+    let started_events = || {
+        repository
+            .list_runtime_events(
+                Some((RuntimeEventScope::Workspace, &agent.workspace_id)),
+                None,
+                100,
+            )
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.kind == "workspace.interrupt_target_started")
+            .collect::<Vec<_>>()
+    };
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
     db.execute(
-        "INSERT INTO runtime_operation_effects(effect_id,operation_id,effect_kind,
-          target_kind,target_id,phase,idempotency_key,evidence_json,attempt_count,created_at,updated_at)
-         VALUES('eff_signed_interrupt','op_signed_interrupt','workspace_turn_interrupt',
-          'workspace_agent','agent_signed_interrupt','intended','interrupt:agent_signed_interrupt',
-          '{\"turn_id\":\"turn_signed\"}',?1,1,1)",
-        [i64::MAX],
-    ).unwrap();
+        "UPDATE runtime_operation_effects SET attempt_count=?2
+         WHERE operation_id=?1 AND effect_kind='workspace_turn_interrupt'",
+        params![plan.operation_id, i64::MAX],
+    )
+    .unwrap();
     let error = repository
-        .mark_workspace_interrupt_started(
-            "op_signed_interrupt",
-            "agent_signed_interrupt",
-            "turn_signed",
-            500,
-        )
+        .mark_workspace_interrupt_started(&plan.operation_id, &session.id, "turn_signed", 500)
         .unwrap_err();
     assert!(
         matches!(
@@ -388,29 +397,48 @@ fn interrupt_effect_start_must_not_persist_real_attempt_before_native_work() {
         "{error}"
     );
     let (attempt, kind, phase): (i64, String, String) = db
-        .query_row("SELECT attempt_count,typeof(attempt_count),phase FROM runtime_operation_effects WHERE effect_id='eff_signed_interrupt'", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))
+        .query_row(
+            "SELECT attempt_count,typeof(attempt_count),phase FROM runtime_operation_effects
+             WHERE operation_id=?1 AND effect_kind='workspace_turn_interrupt'",
+            [&plan.operation_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
         .unwrap();
     assert_eq!(
         (attempt, kind, phase),
         (i64::MAX, "integer".into(), "intended".into())
     );
+    assert!(started_events().is_empty());
 
-    db.execute("UPDATE runtime_operation_effects SET attempt_count=?1 WHERE effect_id='eff_signed_interrupt'", [i64::MAX - 1]).unwrap();
+    db.execute(
+        "UPDATE runtime_operation_effects SET attempt_count=?2
+         WHERE operation_id=?1 AND effect_kind='workspace_turn_interrupt'",
+        params![plan.operation_id, i64::MAX - 1],
+    )
+    .unwrap();
     repository
-        .mark_workspace_interrupt_started(
-            "op_signed_interrupt",
-            "agent_signed_interrupt",
-            "turn_signed",
-            501,
-        )
+        .mark_workspace_interrupt_started(&plan.operation_id, &session.id, "turn_signed", 501)
         .unwrap();
     let (attempt, kind, phase): (i64, String, String) = db
-        .query_row("SELECT attempt_count,typeof(attempt_count),phase FROM runtime_operation_effects WHERE effect_id='eff_signed_interrupt'", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))
+        .query_row(
+            "SELECT attempt_count,typeof(attempt_count),phase FROM runtime_operation_effects
+             WHERE operation_id=?1 AND effect_kind='workspace_turn_interrupt'",
+            [&plan.operation_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
         .unwrap();
     assert_eq!(
         (attempt, kind, phase),
         (i64::MAX, "integer".into(), "started".into())
     );
+    let events = started_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].criticality, RuntimeEventCriticality::Critical);
+    assert_eq!(events[0].payload["operation_id"], plan.operation_id);
+    assert_eq!(events[0].scope_id, agent.workspace_id);
+    assert_eq!(events[0].session_id.as_deref(), Some(session.id.as_str()));
+    assert_eq!(events[0].turn_id.as_deref(), Some("turn_signed"));
+    assert_eq!(events[0].payload["attempt_count"], i64::MAX);
 }
 
 #[test]

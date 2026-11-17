@@ -125,7 +125,7 @@ impl SqliteRuntimeRepository {
             ));
         }
 
-        let exact = apply_workspace_agent_lifecycle_tx(
+        let (exact, hook_proofs) = apply_workspace_agent_lifecycle_tx(
             &tx,
             session,
             &command.agent_id,
@@ -197,6 +197,7 @@ impl SqliteRuntimeRepository {
             "native_close_confirmed",
             at_ms,
         )?;
+        crate::repository_team_hooks::verify_hook_proofs_tx(&tx, &hook_proofs)?;
         tx.commit().map_err(|error| {
             db_error(
                 "failed committing atomic native archive close receipt",

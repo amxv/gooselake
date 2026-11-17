@@ -94,7 +94,7 @@ impl SqliteRuntimeRepository {
             .map_err(|error| {
                 db_error("failed starting workspace agent create transaction", error)
             })?;
-        self.persist_workspace_agent_create_tx(
+        let hook_proofs = self.persist_workspace_agent_create_tx(
             &tx,
             session,
             agent,
@@ -116,6 +116,7 @@ impl SqliteRuntimeRepository {
                 hooks,
             )?;
         }
+        crate::repository_team_hooks::verify_hook_proofs_tx(&tx, &hook_proofs)?;
         tx.commit()
             .map_err(|error| db_error("failed committing workspace agent create", error))?;
         Ok(())
@@ -133,7 +134,7 @@ impl SqliteRuntimeRepository {
         onboarding: Option<&WorkspaceAgentOnboardingRequest>,
         hooks: Option<&TeamHookPreAddContext>,
         source_operation_id: Option<&str>,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<Vec<crate::repository_team_hooks::HookJournalProof>, RuntimeError> {
         if session.id != agent.agent_id
             || session.provider != agent.recreation_policy.provider.as_str()
             || session.cwd.as_deref() != Some(agent.recreation_policy.authoritative_cwd.as_str())
@@ -434,7 +435,7 @@ impl SqliteRuntimeRepository {
                 agent.created_at,
             )?;
         }
-        queue_team_hook_trigger_tx(
+        let queued = queue_team_hook_trigger_tx(
             tx,
             &agent.workspace_id,
             runtime_core::TeamHookEventName::PostTeammateAdd,
@@ -467,7 +468,7 @@ impl SqliteRuntimeRepository {
                 ));
             }
         }
-        Ok(())
+        Ok(queued.proofs)
     }
 
     pub fn list_workspace_agents(

@@ -488,9 +488,11 @@ impl SqliteRuntimeRepository {
                 "concurrent compaction state update".into(),
             ));
         }
-        if phase == "completed" {
-            admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?;
-        }
+        let hook_proofs = if phase == "completed" {
+            admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?
+        } else {
+            Vec::new()
+        };
         let nonce: String = tx
             .query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))
             .map_err(|error| db_error("failed allocating compaction request event", error))?;
@@ -511,6 +513,7 @@ impl SqliteRuntimeRepository {
                 created_at: run.updated_at_ms,
             },
         )?;
+        crate::repository_team_hooks::verify_hook_proofs_tx(&tx, &hook_proofs)?;
         tx.commit()
             .map_err(|error| db_error("failed committing compaction transition", error))?;
         Ok(CompactionTransitionReceipt {

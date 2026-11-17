@@ -1,3 +1,5 @@
+mod critical_receipts;
+mod replacement_authority;
 pub(super) mod session_control_recovery;
 
 use super::workspace_agent::{registered_workspace, workspace_agent_fixture};
@@ -307,7 +309,10 @@ fn historical_edit_fork_admission_and_replacement_are_atomic_and_replay_safe() {
     pending_admission.updated_at = 106;
     assert!(matches!(
         repo.admit_turn(&pending_admission, &pending, &submitted, None),
-        Err(RuntimeError::Conflict(_))
+        Err(RuntimeError::SessionControlUnresolved {
+            coordinate: runtime_core::SessionControlCoordinate::EditRerun { agent_id, operation_id },
+            code, replacement_turn_id: None, dispatch_outcome: None, ..
+        }) if agent_id == session.id && operation_id == "edit_1" && code == "edit_operation_unresolved"
     ));
     assert!(repo.unresolved_session_edit_rerun(&session.id).unwrap());
     let child = ProviderSession {
@@ -338,7 +343,10 @@ fn historical_edit_fork_admission_and_replacement_are_atomic_and_replay_safe() {
     // pass the SQLite edit fence, not a competing uncorrelated turn.
     assert!(matches!(
         repo.admit_turn(&pending_admission, &pending, &submitted, None),
-        Err(RuntimeError::Conflict(_))
+        Err(RuntimeError::SessionControlUnresolved {
+            coordinate: runtime_core::SessionControlCoordinate::EditRerun { agent_id, operation_id },
+            code, replacement_turn_id: None, dispatch_outcome: None, ..
+        }) if agent_id == session.id && operation_id == "edit_1" && code == "edit_operation_unresolved"
     ));
     let loaded = repo.hydrate_runtime_state().unwrap();
     let mut updated = loaded
@@ -354,7 +362,10 @@ fn historical_edit_fork_admission_and_replacement_are_atomic_and_replay_safe() {
     updated.status = "turn_admitted".into();
     updated.updated_at = 107;
     pending_admission.correlation.correlation_id = Some("edit_1".into());
-    repo.admit_turn(&pending_admission, &pending, &updated, None)
+    pending_admission.user_input_snapshot = operation.edited_snapshot.clone();
+    let mut replacement = pending.clone();
+    replacement.input = serde_json::json!([{"type":"text","text":"after"}]);
+    repo.admit_turn(&pending_admission, &replacement, &updated, None)
         .unwrap();
     let terminal = repo
         .advance_session_edit_rerun(

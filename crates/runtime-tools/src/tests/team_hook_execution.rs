@@ -942,3 +942,5 @@ async fn legacy_launch_refusal_still_applies_saved_terminal_hook_output() {
         }
     }
 }
+
+mod critical_receipts;

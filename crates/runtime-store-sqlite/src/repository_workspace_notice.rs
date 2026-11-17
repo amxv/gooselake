@@ -201,7 +201,7 @@ pub(crate) fn queue_membership_lead_notice_tx(
     )
 }
 
-fn notice_from_row(row: &Row<'_>) -> rusqlite::Result<WorkspaceSystemNoticeRecord> {
+pub(crate) fn notice_from_row(row: &Row<'_>) -> rusqlite::Result<WorkspaceSystemNoticeRecord> {
     let input_json: String = row.get(5)?;
     let input = serde_json::from_str(&input_json).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(5, Type::Text, Box::new(error))

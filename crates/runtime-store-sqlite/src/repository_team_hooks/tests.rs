@@ -987,3 +987,6 @@ fn indexed_hook_history_pages_preserve_tied_keys_scope_privacy_and_upgrade() {
 
 #[path = "tests/signed_attempt_ceiling.rs"]
 mod signed_attempt_ceiling;
+
+mod critical_receipts;
+mod recovery_receipts;

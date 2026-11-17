@@ -13,6 +13,7 @@ pub(crate) fn independently_settled(
     kind: &str,
     target_id: &str,
     at_ms: i64,
+    hook_proofs: &mut Vec<crate::repository_team_hooks::HookJournalProof>,
 ) -> Result<Option<Value>, RuntimeError> {
     match kind {
         "workspace_turn_interrupt" => {
@@ -59,7 +60,7 @@ pub(crate) fn independently_settled(
         }
         "workspace_delivery_settle" => delivery(tx, workspace_id, target_id, at_ms),
         "workspace_notice_settle" => notice(tx, workspace_id, target_id, at_ms),
-        "workspace_hook_settle" => hook(tx, workspace_id, target_id, at_ms),
+        "workspace_hook_settle" => hook(tx, workspace_id, target_id, at_ms, hook_proofs),
         _ => Err(RuntimeError::Conflict(
             "this retirement effect has no safe local reconciliation rule".into(),
         )),
@@ -263,6 +264,7 @@ fn hook(
     workspace_id: &str,
     id: &str,
     at_ms: i64,
+    hook_proofs: &mut Vec<crate::repository_team_hooks::HookJournalProof>,
 ) -> Result<Option<Value>, RuntimeError> {
     let keys: Vec<String> = serde_json::from_str(id).map_err(|error| {
         RuntimeError::Bootstrap(format!("invalid retirement hook identity: {error}"))
@@ -272,19 +274,23 @@ fn hook(
             "invalid retirement hook identity width".into(),
         ));
     }
-    let row: Option<(String, String)> = tx
-        .query_row(
-            "SELECT phase,application_state FROM workspace_hook_effects WHERE workspace_id=?1
-         AND parent_event_id=?2 AND event_name=?3 AND hook_name=?4",
-            params![workspace_id, keys[0], keys[1], keys[2]],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(|error| db_error("failed checking retired hook terminal facts", error))?;
-    let Some((phase, application)) = row else {
+    let event = runtime_core::TeamHookEventName::ALL
+        .into_iter()
+        .find(|event| event.as_str() == keys[1])
+        .ok_or_else(|| RuntimeError::Bootstrap("invalid reviewed hook event".into()))?;
+    let Some(before) = crate::repository_team_hooks::read_team_hook_effect(
+        tx,
+        workspace_id,
+        &keys[0],
+        event,
+        &keys[2],
+    )?
+    else {
         return Ok(None);
     };
-    if !matches!(phase.as_str(), "succeeded" | "failed" | "timed_out") {
+    let phase = before.phase.as_str();
+    let application = before.application_state.as_str();
+    if !matches!(phase, "succeeded" | "failed" | "timed_out") {
         return Ok(None);
     }
     if application == "pending" || application == "not_ready" {
@@ -300,6 +306,17 @@ fn hook(
                 error,
             )
         })?;
+        let mut after = before.clone();
+        after.application_state = "rejected".into();
+        after.application_error_code = Some("workspace_retirement".into());
+        after.updated_at_ms = at_ms;
+        hook_proofs.push(crate::repository_team_hooks::journal_hook_change_tx(
+            tx,
+            Some(&before),
+            &after,
+            "retirement_recheck",
+            at_ms,
+        )?);
     }
     Ok(Some(
         json!({"hook_phase":phase,"prior_application_state":application}),

@@ -439,3 +439,5 @@ fn revoked_pre_add_output_cannot_be_applied_to_new_member_authority() {
         .unwrap()
         .is_none());
 }
+
+mod critical_receipts;

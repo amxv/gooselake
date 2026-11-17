@@ -27,7 +27,7 @@ pub(crate) fn admit_compaction_completion_tx(
     tx: &Transaction<'_>,
     run: &SessionCompactionRun,
     at_ms: i64,
-) -> Result<(), RuntimeError> {
+) -> Result<Vec<crate::repository_team_hooks::HookJournalProof>, RuntimeError> {
     let (workspace_id, alias, creator_id, subscription): (String, String, Option<String>, String) =
         tx.query_row(
             "SELECT a.workspace_id,a.identity_alias,p.creator_session_id,
@@ -100,7 +100,7 @@ pub(crate) fn admit_compaction_completion_tx(
         SqliteRuntimeRepository::insert_workspace_system_notice_tx(tx, &notice)?;
     }
     let targets = active_workspace_hook_targets_tx(tx, &workspace_id)?;
-    queue_team_hook_trigger_tx(
+    let queued = queue_team_hook_trigger_tx(
         tx,
         &workspace_id,
         TeamHookEventName::PostCompaction,
@@ -119,7 +119,7 @@ pub(crate) fn admit_compaction_completion_tx(
         &targets,
         at_ms,
     )?;
-    Ok(())
+    Ok(queued.proofs)
 }
 
 impl SqliteRuntimeRepository {
@@ -397,9 +397,11 @@ impl SqliteRuntimeRepository {
             )
             .map_err(|error| db_error("failed recording native compaction", error))?;
         }
-        if run.phase == "completed" && (!was_pending || before != "completed") {
-            admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?;
-        }
+        let hook_proofs = if run.phase == "completed" && (!was_pending || before != "completed") {
+            admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?
+        } else {
+            Vec::new()
+        };
         // The native compaction transition, approved post-compaction hooks,
         // system notices AND the replayable Critical lifecycle event must be
         // one authority transaction. A late journal failure must never leave
@@ -432,6 +434,7 @@ impl SqliteRuntimeRepository {
                 created_at: run.updated_at_ms,
             },
         )?;
+        crate::repository_team_hooks::verify_hook_proofs_tx(&tx, &hook_proofs)?;
         tx.commit()
             .map_err(|error| db_error("failed committing native compaction", error))?;
         Ok(CompactionObservationReceipt {

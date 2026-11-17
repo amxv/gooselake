@@ -225,6 +225,16 @@ impl SqliteRuntimeRepository {
             ));
         }
 
+        // Legacy pre-fix native intents may still reach this receipt with a
+        // signed-MAX revision. A u64 successor exists, but SQLite would
+        // silently persist revision+1 as REAL. Keep the original intent and
+        // claim unresolved rather than inventing a durable native success.
+        if revision >= i64::MAX {
+            return Err(RuntimeError::InvalidState(
+                "provider policy receipt cannot advance signed SQLite agent revision".into(),
+            ));
+        }
+
         update_session(&tx, session)?;
         let changed = tx.execute(
             "UPDATE workspace_agents SET recreation_policy_json=?3,revision=revision+1,updated_at=?4

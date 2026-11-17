@@ -120,6 +120,107 @@ fn lead_command(
 }
 
 #[test]
+fn signed_workspace_lead_ceiling_preserves_noop_and_exact_replay() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let root = temp.path().join("synthetic-lead-ceiling");
+    std::fs::create_dir_all(&root).unwrap();
+    let workspace = registered_workspace(&repository, &root, "Signed Lead Ceiling");
+    let (_session, agent) = create_agent(
+        &repository,
+        &workspace,
+        "signed-lead-agent",
+        "signed-lead-agent",
+        "Signed",
+        None,
+    );
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE workspaces SET revision=?2 WHERE workspace_id=?1",
+        params![workspace.workspace_id, i64::MAX],
+    )
+    .unwrap();
+
+    let changed = lead_command(
+        &workspace.workspace_id,
+        Some(&agent.agent_id),
+        i64::MAX as u64,
+        "signed-lead-change-max",
+    );
+    assert!(repository.transition_workspace_lead(&changed).is_err());
+    let (revision, kind, lead): (i64, String, Option<String>) = db
+        .query_row(
+            "SELECT revision,typeof(revision),lead_agent_id FROM workspaces WHERE workspace_id=?1",
+            [&workspace.workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!((revision, kind, lead), (i64::MAX, "integer".into(), None));
+    assert!(repository
+        .get_operation(&changed.operation_id)
+        .unwrap()
+        .is_none());
+
+    // A legitimate no-op at MAX consumes no workspace revision and the
+    // original durable key replays its exact response, not another mutation.
+    let noop = lead_command(
+        &workspace.workspace_id,
+        None,
+        i64::MAX as u64,
+        "signed-lead-noop-max",
+    );
+    let accepted = repository.transition_workspace_lead(&noop).unwrap();
+    assert_eq!(accepted.workspace.revision, i64::MAX as u64);
+    assert_eq!(accepted.workspace.lead_agent_id, None);
+    assert_eq!(
+        repository.transition_workspace_lead(&noop).unwrap(),
+        accepted
+    );
+    let (revision, kind): (i64, String) = db
+        .query_row(
+            "SELECT revision,typeof(revision) FROM workspaces WHERE workspace_id=?1",
+            [&workspace.workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((revision, kind), (i64::MAX, "integer".into()));
+
+    db.execute(
+        "UPDATE workspaces SET revision=?2 WHERE workspace_id=?1",
+        params![workspace.workspace_id, i64::MAX - 1],
+    )
+    .unwrap();
+    let final_change = lead_command(
+        &workspace.workspace_id,
+        Some(&agent.agent_id),
+        (i64::MAX - 1) as u64,
+        "signed-lead-change-last",
+    );
+    let accepted = repository.transition_workspace_lead(&final_change).unwrap();
+    assert_eq!(accepted.workspace.revision, i64::MAX as u64);
+    assert_eq!(
+        accepted.workspace.lead_agent_id,
+        Some(agent.agent_id.clone())
+    );
+    assert_eq!(
+        repository.transition_workspace_lead(&final_change).unwrap(),
+        accepted
+    );
+    let (revision, kind, lead): (i64, String, Option<String>) = db
+        .query_row(
+            "SELECT revision,typeof(revision),lead_agent_id FROM workspaces WHERE workspace_id=?1",
+            [&workspace.workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (revision, kind, lead),
+        (i64::MAX, "integer".into(), Some(agent.agent_id))
+    );
+}
+
+#[test]
 fn direct_sqlite_rebind_intent_rejects_signed_roster_revision_ceiling() {
     let temp = tempfile::tempdir().unwrap();
     let repository = repo(&temp);

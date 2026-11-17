@@ -348,11 +348,32 @@ impl SqliteRuntimeRepository {
             if outstanding != 0 {
                 continue;
             }
+            let has_signed_headroom: Option<bool> = tx
+                .query_row(
+                    "SELECT typeof(revision)='integer' AND revision >= 0 AND revision < ?3
+                     FROM managed_worktrees
+                     WHERE id=?1 AND repo_root=(SELECT canonical_root FROM workspaces WHERE workspace_id=?2)",
+                    params![id, plan.workspace_id, i64::MAX],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    db_error("failed checking retained worktree signed revision", error)
+                })?;
+            if has_signed_headroom == Some(false) {
+                // The worktree/claim/effect settlement is atomic. Even though
+                // retaining files is passive, a REAL revision would erase
+                // trusted route authority and falsely finalize the effect.
+                return Err(RuntimeError::InvalidState(format!(
+                    "retirement worktree {id} cannot advance signed SQLite revision"
+                )));
+            }
             let changed=tx.execute(
                 "UPDATE managed_worktrees SET deletion_policy='retain_on_last_claim',
                     updated_at=?3,revision=revision+1
-                 WHERE id=?1 AND repo_root=(SELECT canonical_root FROM workspaces WHERE workspace_id=?2)",
-                params![id,plan.workspace_id,at_ms],
+                 WHERE id=?1 AND repo_root=(SELECT canonical_root FROM workspaces WHERE workspace_id=?2)
+                   AND typeof(revision)='integer' AND revision >= 0 AND revision < ?4",
+                params![id,plan.workspace_id,at_ms,i64::MAX],
             ).map_err(|error|db_error("failed preserving workspace worktree",error))?;
             if changed == 1 {
                 tx.execute(

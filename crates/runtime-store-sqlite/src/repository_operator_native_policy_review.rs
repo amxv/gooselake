@@ -269,6 +269,14 @@ impl SqliteRuntimeRepository {
 
         let mut revised_policy = policy;
         let applied = input.resolution == OperatorNativePolicyReviewResolution::Applied;
+        // A pre-fix durable manual-review intent may have admitted revision
+        // i64::MAX. Only Applied consumes another revision; NotApplied must
+        // remain resolvable without a revision bump at the signed ceiling.
+        if applied && expected_revision >= i64::MAX {
+            return Err(RuntimeError::InvalidState(
+                "verified native policy review cannot advance signed SQLite revision".into(),
+            ));
+        }
         let new_revision = if applied {
             input
                 .expected_revision

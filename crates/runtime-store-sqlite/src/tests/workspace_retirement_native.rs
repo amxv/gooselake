@@ -7,6 +7,79 @@ use runtime_core::{
 };
 
 #[test]
+fn retirement_native_close_claim_refuses_exhausted_attempt_before_dispatch() {
+    let (temp, repo, workspace) = setup();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let mut native = sample_session();
+    native.cwd = Some(workspace.canonical_root.clone());
+    native.active_turn_id = None;
+    native.worktree_id = None;
+    native.provider_session_ref = Some("synthetic-close-attempt".into());
+    repo.upsert_session(&native).unwrap();
+    db.execute(
+        "INSERT INTO workspace_session_ownership(session_id,workspace_id,source,created_at)
+         VALUES (?1,?2,'synthetic',1)",
+        params![native.id, workspace.workspace_id],
+    )
+    .unwrap();
+    let command = retirement_command(&workspace, "synthetic-close-attempt-ceiling");
+    let plan = match repo.admit_workspace_retirement(&command).unwrap() {
+        WorkspaceRetirementAdmission::New(plan) => plan,
+        other => panic!("unexpected retirement admission: {other:?}"),
+    };
+    let effect = "workspace_provider_close";
+    db.execute(
+        "UPDATE runtime_operation_effects SET attempt_count=?1
+         WHERE operation_id=?2 AND effect_kind=?3 AND target_id=?4",
+        params![i64::MAX, plan.operation_id, effect, native.id],
+    )
+    .unwrap();
+    let error = repo
+        .claim_workspace_retirement_native_close(&plan.operation_id, &native.id, 105)
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            RuntimeError::InvalidState(_) | RuntimeError::Conflict(_)
+        ),
+        "{error}"
+    );
+    let (attempt, kind, phase): (i64, String, String) = db
+        .query_row(
+            "SELECT attempt_count,typeof(attempt_count),phase FROM runtime_operation_effects
+             WHERE operation_id=?1 AND effect_kind=?2 AND target_id=?3",
+            params![plan.operation_id, effect, native.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (attempt, kind, phase),
+        (i64::MAX, "integer".into(), "intended".into())
+    );
+
+    db.execute(
+        "UPDATE runtime_operation_effects SET attempt_count=?1
+         WHERE operation_id=?2 AND effect_kind=?3 AND target_id=?4",
+        params![i64::MAX - 1, plan.operation_id, effect, native.id],
+    )
+    .unwrap();
+    repo.claim_workspace_retirement_native_close(&plan.operation_id, &native.id, 106)
+        .unwrap();
+    let (attempt, kind, phase): (i64, String, String) = db
+        .query_row(
+            "SELECT attempt_count,typeof(attempt_count),phase FROM runtime_operation_effects
+             WHERE operation_id=?1 AND effect_kind=?2 AND target_id=?3",
+            params![plan.operation_id, effect, native.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (attempt, kind, phase),
+        (i64::MAX, "integer".into(), "started".into())
+    );
+}
+
+#[test]
 fn retirement_native_close_rechecks_signed_workspace_ceiling_after_freeze() {
     let (temp, repo, workspace) = setup();
     let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();

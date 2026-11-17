@@ -378,13 +378,16 @@ impl SqliteRuntimeRepository {
                 "UPDATE runtime_operation_effects
                  SET phase = 'started', attempt_count = attempt_count + 1, updated_at = ?4
                  WHERE operation_id = ?1 AND effect_kind = ?5 AND target_id = ?2
-                   AND phase = 'intended' AND json_extract(evidence_json, '$.turn_id') = ?3",
+                   AND phase = 'intended' AND json_extract(evidence_json, '$.turn_id') = ?3
+                   AND typeof(attempt_count)='integer' AND attempt_count >= 0
+                   AND attempt_count < ?6",
                 params![
                     operation_id,
                     agent_id,
                     turn_id,
                     changed_at,
-                    INTERRUPT_EFFECT_KIND
+                    INTERRUPT_EFFECT_KIND,
+                    i64::MAX
                 ],
             )
             .map_err(|error| db_error("failed marking workspace interrupt started", error))?;
@@ -766,21 +769,29 @@ fn recover_finalize_effect(
         "outcome": outcome,
         "reason": reason,
     }))?;
-    tx.execute(
-        "UPDATE runtime_operation_effects
+    let changed = tx
+        .execute(
+            "UPDATE runtime_operation_effects
          SET phase = 'finalized', evidence_json = ?4, updated_at = updated_at + 1
          WHERE operation_id = ?1 AND effect_kind = ?5 AND target_id = ?2
            AND phase IN ('started', 'uncertain')
-           AND json_extract(evidence_json, '$.turn_id') = ?3",
-        params![
-            operation_id,
-            agent_id,
-            turn_id,
-            evidence,
-            INTERRUPT_EFFECT_KIND
-        ],
-    )
-    .map_err(|error| db_error("failed recovering workspace interrupt effect", error))?;
+           AND json_extract(evidence_json, '$.turn_id') = ?3
+           AND typeof(updated_at)='integer' AND updated_at < ?6",
+            params![
+                operation_id,
+                agent_id,
+                turn_id,
+                evidence,
+                INTERRUPT_EFFECT_KIND,
+                i64::MAX,
+            ],
+        )
+        .map_err(|error| db_error("failed recovering workspace interrupt effect", error))?;
+    if changed != 1 {
+        return Err(RuntimeError::Conflict(format!(
+            "workspace interrupt recovery for {agent_id} lost signed timestamp headroom or durable effect authority"
+        )));
+    }
     Ok(())
 }
 

@@ -217,14 +217,23 @@ fn migrate_persisted_provider_models(transaction: &Transaction<'_>) -> Result<()
                 "failed encoding workspace-agent recreation policy {session_id} during model migration: {error}"
             ))
         })?;
-        transaction
+        let changed = transaction
             .execute(
                 "UPDATE workspace_agents
                  SET recreation_policy_json = ?2, revision = revision + 1
-                 WHERE session_id = ?1",
-                params![session_id, migrated_json],
+                 WHERE session_id = ?1 AND typeof(revision)='integer'
+                   AND revision >= 0 AND revision < ?3",
+                params![session_id, migrated_json, i64::MAX],
             )
             .map_err(|error| db_error("failed migrating workspace-agent model policy", error))?;
+        if changed != 1 {
+            // Migration 9 may have rewritten session models earlier in this
+            // transaction. Fail the WHOLE migration rather than committing a
+            // REAL revision or a session/policy split-brain at signed MAX.
+            return Err(RuntimeError::InvalidState(format!(
+                "workspace agent {session_id} model migration requires signed revision headroom"
+            )));
+        }
     }
     Ok(())
 }

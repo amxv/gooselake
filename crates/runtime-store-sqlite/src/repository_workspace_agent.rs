@@ -663,6 +663,14 @@ impl SqliteRuntimeRepository {
                 "workspace agent {agent_id} revision conflict: expected {expected_revision}, current {current_revision}"
             )));
         }
+        // SQLite promotes INTEGER overflow to REAL, even under CHECK(revision >= 0).
+        // Reject inside the writer transaction before changing the session row:
+        // returning a post-commit decode error would leave corrupted authority.
+        if current_revision >= i64::MAX {
+            return Err(RuntimeError::InvalidState(
+                "workspace agent revision cannot advance beyond SQLite signed range".into(),
+            ));
+        }
         update_session(&tx, session)?;
         let policy_json = serde_json::to_string(recreation_policy).map_err(|error| {
             RuntimeError::Bootstrap(format!(

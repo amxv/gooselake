@@ -143,7 +143,9 @@ impl SqliteRuntimeRepository {
                 "UPDATE runtime_operation_effects SET phase='started',
                 evidence_json=?4,attempt_count=attempt_count+1,updated_at=?5
              WHERE operation_id=?1 AND effect_kind='workspace_provider_close' AND target_id=?2
-               AND phase='intended' AND idempotency_key=?3",
+               AND phase='intended' AND idempotency_key=?3
+               AND typeof(attempt_count)='integer' AND attempt_count >= 0
+               AND attempt_count < ?6",
                 params![
                     operation_id,
                     agent_id,
@@ -152,7 +154,8 @@ impl SqliteRuntimeRepository {
                     "provider_session_ref":attempt.provider_session_ref,
                     "native_identity":identity,
                     "started_at":at_ms}))?,
-                    at_ms
+                    at_ms,
+                    i64::MAX
                 ],
             )
             .map_err(|error| {

@@ -590,3 +590,103 @@ fn running_cancel_and_terminal_race_has_one_terminal_and_at_most_one_kill_intent
         (1..=events.len() as i64).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn signed_process_scheduler_claim_rejects_max_without_reserving_native_launch() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    repository
+        .admit_managed_process(&admission("proc_signed_claim", "call_signed_claim"))
+        .unwrap();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE managed_processes SET claim_generation=?2 WHERE process_id=?1",
+        params!["proc_signed_claim", i64::MAX],
+    )
+    .unwrap();
+    assert!(repository
+        .claim_managed_processes(&scheduler(), 150)
+        .is_err());
+    let (status, generation, kind): (String, i64, String) = db
+        .query_row(
+            "SELECT status,claim_generation,typeof(claim_generation)
+         FROM managed_processes WHERE process_id='proc_signed_claim'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (status, generation, kind),
+        ("queued".into(), i64::MAX, "integer".into())
+    );
+    assert_eq!(scoped(&repository, "proc_signed_claim").len(), 1);
+
+    db.execute(
+        "UPDATE managed_processes SET claim_generation=?1 WHERE process_id='proc_signed_claim'",
+        [i64::MAX - 1],
+    )
+    .unwrap();
+    let claimed = repository
+        .claim_managed_processes(&scheduler(), 151)
+        .unwrap();
+    assert_eq!(claimed.len(), 1);
+    assert_eq!(claimed[0].claim_generation, i64::MAX);
+    assert_eq!(claimed[0].status, "launch_reserved");
+    let (generation, kind): (i64, String) = db
+        .query_row(
+            "SELECT claim_generation,typeof(claim_generation)
+         FROM managed_processes WHERE process_id='proc_signed_claim'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((generation, kind), (i64::MAX, "integer".into()));
+}
+
+#[test]
+fn signed_process_admission_order_refuses_max_before_any_new_process_receipt() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    repository
+        .admit_managed_process(&admission("proc_order_first", "call_order_first"))
+        .unwrap();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE managed_processes SET admission_order=?1,queue_order=?1 WHERE process_id='proc_order_first'",
+        [i64::MAX],
+    ).unwrap();
+    assert!(repository
+        .admit_managed_process(&admission("proc_order_second", "call_order_second"))
+        .is_err());
+    let count: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM managed_processes WHERE process_id='proc_order_second'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
+    assert!(scoped(&repository, "proc_order_second").is_empty());
+    let (order_kind, queue_kind): (String, String) = db
+        .query_row(
+            "SELECT typeof(admission_order),typeof(queue_order)
+         FROM managed_processes WHERE process_id='proc_order_first'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (order_kind, queue_kind),
+        ("integer".into(), "integer".into())
+    );
+
+    db.execute("UPDATE managed_processes SET admission_order=?1,queue_order=?1 WHERE process_id='proc_order_first'", [i64::MAX-1]).unwrap();
+    let admitted = repository
+        .admit_managed_process(&admission("proc_order_second", "call_order_second"))
+        .unwrap();
+    assert_eq!(admitted.admission_order, i64::MAX);
+    assert_eq!(admitted.queue_order, i64::MAX);
+    assert_eq!(scoped(&repository, "proc_order_second").len(), 1);
+}

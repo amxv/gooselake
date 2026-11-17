@@ -30,32 +30,42 @@ pub(crate) fn upsert_managed_worktree_in_transaction(
         ..record.clone()
     };
     if existing_id.is_some() {
-        tx.execute(
-            "UPDATE managed_worktrees
+        let changed = tx
+            .execute(
+                "UPDATE managed_worktrees
              SET repo_root = ?2, worktree_root = ?3, worktree_cwd = ?4,
                  branch_name = ?5, worktree_name = ?6, unified_workspace_path = ?7,
                  deletion_policy = ?8, created_by_session_id = ?9,
                  created_by_operation_id = ?10, created_at = ?11,
-                 updated_at = ?12, revision = revision + 1 WHERE id = ?1",
-            params![
-                effective.id,
-                effective.repo_root,
-                effective.worktree_root,
-                effective.worktree_cwd,
-                effective.branch_name,
-                effective.worktree_name,
-                effective.unified_workspace_path,
-                effective.deletion_policy,
-                effective.created_by_session_id,
-                effective.created_by_operation_id,
-                effective.created_at,
-                effective.updated_at,
-            ],
-        )
-        .map_err(|error| db_error("failed updating managed worktree by identity key", error))?;
+                 updated_at = ?12, revision = revision + 1
+             WHERE id = ?1 AND typeof(revision)='integer'
+               AND revision >= 0 AND revision < ?13",
+                params![
+                    effective.id,
+                    effective.repo_root,
+                    effective.worktree_root,
+                    effective.worktree_cwd,
+                    effective.branch_name,
+                    effective.worktree_name,
+                    effective.unified_workspace_path,
+                    effective.deletion_policy,
+                    effective.created_by_session_id,
+                    effective.created_by_operation_id,
+                    effective.created_at,
+                    effective.updated_at,
+                    i64::MAX,
+                ],
+            )
+            .map_err(|error| db_error("failed updating managed worktree by identity key", error))?;
+        if changed != 1 {
+            return Err(RuntimeError::InvalidState(
+                "managed worktree revision cannot advance beyond SQLite signed range".into(),
+            ));
+        }
     } else {
-        tx.execute(
-            "INSERT INTO managed_worktrees (
+        let changed = tx
+            .execute(
+                "INSERT INTO managed_worktrees (
                 id, repo_root, worktree_root, worktree_cwd, branch_name, worktree_name,
                 unified_workspace_path, deletion_policy, created_by_session_id,
                 created_by_operation_id, created_at, updated_at
@@ -72,23 +82,32 @@ pub(crate) fn upsert_managed_worktree_in_transaction(
                 created_by_operation_id = excluded.created_by_operation_id,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
-                revision = managed_worktrees.revision + 1",
-            params![
-                effective.id,
-                effective.repo_root,
-                effective.worktree_root,
-                effective.worktree_cwd,
-                effective.branch_name,
-                effective.worktree_name,
-                effective.unified_workspace_path,
-                effective.deletion_policy,
-                effective.created_by_session_id,
-                effective.created_by_operation_id,
-                effective.created_at,
-                effective.updated_at,
-            ],
-        )
-        .map_err(|error| db_error("failed upserting managed worktree", error))?;
+                revision = managed_worktrees.revision + 1
+             WHERE typeof(managed_worktrees.revision)='integer'
+               AND managed_worktrees.revision >= 0
+               AND managed_worktrees.revision < ?13",
+                params![
+                    effective.id,
+                    effective.repo_root,
+                    effective.worktree_root,
+                    effective.worktree_cwd,
+                    effective.branch_name,
+                    effective.worktree_name,
+                    effective.unified_workspace_path,
+                    effective.deletion_policy,
+                    effective.created_by_session_id,
+                    effective.created_by_operation_id,
+                    effective.created_at,
+                    effective.updated_at,
+                    i64::MAX,
+                ],
+            )
+            .map_err(|error| db_error("failed upserting managed worktree", error))?;
+        if changed != 1 {
+            return Err(RuntimeError::InvalidState(
+                "managed worktree revision cannot advance beyond SQLite signed range".into(),
+            ));
+        }
     }
     Ok(effective)
 }

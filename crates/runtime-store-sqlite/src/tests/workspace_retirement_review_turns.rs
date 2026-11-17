@@ -8,6 +8,96 @@ use runtime_core::{
 };
 
 #[test]
+fn retirement_turn_claim_requires_signed_attempt_headroom_before_native_interrupt() {
+    let (temp, repository, workspace) = setup();
+    let (mut session, agent) = workspace_agent_fixture(
+        &workspace,
+        "synthetic-retirement-turn-agent",
+        "synthetic-retirement-heron",
+    );
+    repository.create_workspace_agent(&session, &agent).unwrap();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "INSERT INTO turns(id,session_id,status,input_json,provider_turn_ref)
+         VALUES('signed-retirement-turn',?1,'running','[]','native-signed-turn')",
+        [&session.id],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO turn_admissions(turn_id,session_id,provider,projection_source,
+         user_input_snapshot_json,dispatch_policy_json,correlation_json,dispatch_state,
+         provider_native_turn_id,admitted_at,updated_at)
+         VALUES('signed-retirement-turn',?1,'codex','user_visible','{}','{}','{}',
+                'dispatched','native-signed-turn',101,101)",
+        [&session.id],
+    )
+    .unwrap();
+    session.active_turn_id = Some("signed-retirement-turn".into());
+    session.updated_at = 101;
+    repository.upsert_session(&session).unwrap();
+    let command = retirement_command(&workspace, "signed-retirement-turn-attempt");
+    repository.admit_workspace_retirement(&command).unwrap();
+    let effect = "workspace_turn_interrupt";
+    db.execute(
+        "UPDATE runtime_operation_effects SET attempt_count=?1
+         WHERE operation_id=?2 AND effect_kind=?3 AND target_id='signed-retirement-turn'",
+        params![i64::MAX, command.operation_id, effect],
+    )
+    .unwrap();
+    let error = repository
+        .progress_workspace_retirement_turn(&command.operation_id, "signed-retirement-turn", 102)
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            runtime_core::RuntimeError::Conflict(_) | runtime_core::RuntimeError::InvalidState(_)
+        ),
+        "{error}"
+    );
+    let (attempt, kind, phase): (i64, String, String) = db
+        .query_row(
+            "SELECT attempt_count,typeof(attempt_count),phase FROM runtime_operation_effects
+             WHERE operation_id=?1 AND effect_kind=?2 AND target_id='signed-retirement-turn'",
+            params![command.operation_id, effect],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (attempt, kind, phase),
+        (i64::MAX, "integer".into(), "intended".into())
+    );
+
+    db.execute(
+        "UPDATE runtime_operation_effects SET attempt_count=?1
+         WHERE operation_id=?2 AND effect_kind=?3 AND target_id='signed-retirement-turn'",
+        params![i64::MAX - 1, command.operation_id, effect],
+    )
+    .unwrap();
+    assert!(matches!(
+        repository
+            .progress_workspace_retirement_turn(
+                &command.operation_id,
+                "signed-retirement-turn",
+                103
+            )
+            .unwrap(),
+        runtime_core::WorkspaceRetirementTurnStep::Interrupt { .. }
+    ));
+    let (attempt, kind, phase): (i64, String, String) = db
+        .query_row(
+            "SELECT attempt_count,typeof(attempt_count),phase FROM runtime_operation_effects
+             WHERE operation_id=?1 AND effect_kind=?2 AND target_id='signed-retirement-turn'",
+            params![command.operation_id, effect],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (attempt, kind, phase),
+        (i64::MAX, "integer".into(), "started".into())
+    );
+}
+
+#[test]
 fn restarted_operator_close_settles_exact_active_turn_without_rewriting_unknown_dispatch() {
     active_turn_review_case("dispatched");
 }

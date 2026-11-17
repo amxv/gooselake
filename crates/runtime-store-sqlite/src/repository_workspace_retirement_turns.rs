@@ -187,7 +187,9 @@ impl SqliteRuntimeRepository {
              attempt_count=attempt_count+1,
              evidence_json=json_set(?3,'$.prior_evidence',json(evidence_json)),updated_at=?4
              WHERE operation_id=?1 AND effect_kind='workspace_turn_interrupt'
-               AND target_id=?2 AND phase='intended'",
+               AND target_id=?2 AND phase='intended'
+               AND typeof(attempt_count)='integer' AND attempt_count >= 0
+               AND attempt_count < ?5",
                 params![
                     operation_id,
                     turn_id,
@@ -195,7 +197,8 @@ impl SqliteRuntimeRepository {
                         "outcome":"native_interrupt_intended","session_id":session_id,
                         "turn_id":turn_id,"at_ms":at_ms,
                     }))?,
-                    at_ms
+                    at_ms,
+                    i64::MAX
                 ],
             )
             .map_err(|error| db_error("failed claiming retirement turn interrupt", error))?;

@@ -2,6 +2,78 @@ use super::workspace_agent::{registered_workspace, workspace_agent_fixture};
 use super::*;
 
 #[test]
+fn notice_policy_signed_revision_ceiling_refuses_without_record_change() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("notice-ceiling-fixture");
+    std::fs::create_dir_all(&root).unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let workspace = registered_workspace(&repository, &root);
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let mut policy = repository
+        .get_workspace_notice_policy(&workspace.workspace_id)
+        .unwrap()
+        .policy;
+    policy.lead_transitions = false;
+    db.execute(
+        "INSERT INTO workspace_notice_policies(workspace_id,revision,policy_json)
+         VALUES(?1,?2,?3)",
+        params![
+            workspace.workspace_id,
+            i64::MAX,
+            serde_json::to_string(
+                &repository
+                    .get_workspace_notice_policy(&workspace.workspace_id)
+                    .unwrap()
+                    .policy
+            )
+            .unwrap()
+        ],
+    )
+    .unwrap();
+    let update = runtime_core::WorkspaceNoticePolicyUpdate {
+        expected_revision: i64::MAX as u64,
+        policy: policy.clone(),
+    };
+    assert!(repository
+        .update_workspace_notice_policy(&workspace.workspace_id, &update)
+        .is_err());
+    let (revision, kind, json): (i64,String,String) = db.query_row(
+        "SELECT revision,typeof(revision),policy_json FROM workspace_notice_policies WHERE workspace_id=?1",
+        [&workspace.workspace_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+    ).unwrap();
+    assert_eq!((revision, kind), (i64::MAX, "integer".into()));
+    assert!(
+        serde_json::from_str::<runtime_core::WorkspaceNoticePolicy>(&json)
+            .unwrap()
+            .lead_transitions
+    );
+
+    db.execute(
+        "UPDATE workspace_notice_policies SET revision=?2 WHERE workspace_id=?1",
+        params![workspace.workspace_id, i64::MAX - 1],
+    )
+    .unwrap();
+    let last = runtime_core::WorkspaceNoticePolicyUpdate {
+        expected_revision: (i64::MAX - 1) as u64,
+        policy,
+    };
+    let saved = repository
+        .update_workspace_notice_policy(&workspace.workspace_id, &last)
+        .unwrap();
+    assert_eq!(saved.revision, i64::MAX as u64);
+    assert!(!saved.policy.lead_transitions);
+    let (revision, kind): (i64, String) = db
+        .query_row(
+            "SELECT revision,typeof(revision) FROM workspace_notice_policies WHERE workspace_id=?1",
+            [&workspace.workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((revision, kind), (i64::MAX, "integer".into()));
+}
+
+#[test]
 fn notice_queue_pages_past_busy_older_entries_without_dropping_or_repeating_rows() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("workspace");

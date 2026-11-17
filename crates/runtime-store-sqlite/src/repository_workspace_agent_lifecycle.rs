@@ -89,6 +89,29 @@ pub(crate) fn apply_workspace_agent_lifecycle_tx(
             .optional()
             .map_err(|error| db_error("failed reading workspace agent lifecycle", error))?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))?;
+    if prior_revision >= i64::MAX {
+        return Err(RuntimeError::InvalidState(
+            "workspace agent lifecycle revision cannot advance beyond SQLite signed range".into(),
+        ));
+    }
+    if lifecycle == WorkspaceAgentLifecycleState::Archived {
+        // Archiving a lead changes *two* durable revisions. The result
+        // rereads only the agent, so without this check a lead at signed MAX
+        // would commit a REAL workspace revision before returning success.
+        let lead_revision: Option<i64> = tx
+            .query_row(
+                "SELECT revision FROM workspaces WHERE workspace_id=?1 AND lead_agent_id=?2",
+                params![workspace_id, agent_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed checking lead archive revision headroom", error))?;
+        if lead_revision.is_some_and(|revision| revision >= i64::MAX) {
+            return Err(RuntimeError::InvalidState(
+                "workspace lead archive revision cannot advance beyond SQLite signed range".into(),
+            ));
+        }
+    }
     update_session(&tx, session)?;
     let (archived_at, archive_reason) = match lifecycle {
         WorkspaceAgentLifecycleState::Active => (None, None),

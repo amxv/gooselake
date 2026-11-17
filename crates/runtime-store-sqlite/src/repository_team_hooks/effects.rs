@@ -18,7 +18,7 @@ const EFFECT_SELECT: &str = "SELECT hook_json, input_json, phase, attempt_count,
     application_error_code, applied_at_ms FROM workspace_hook_effects
     WHERE workspace_id = ?1 AND parent_event_id = ?2 AND event_name = ?3 AND hook_name = ?4";
 
-pub(super) fn read_effect(
+pub(crate) fn read_effect(
     connection: &Connection,
     workspace_id: &str,
     parent_event_id: &str,
@@ -248,6 +248,7 @@ impl SqliteRuntimeRepository {
                 "hook approval was revoked or changed before execution".into(),
             ));
         }
+        crate::repository_member_agent_create_hooks::authorize_hook_claim(&tx, &current)?;
         tx.execute(
             "UPDATE workspace_hook_effects SET phase='started',attempt_count=attempt_count+1,updated_at_ms=?5
              WHERE workspace_id=?1 AND parent_event_id=?2 AND event_name=?3 AND hook_name=?4 AND phase='intended'",
@@ -314,7 +315,8 @@ impl SqliteRuntimeRepository {
         }
         tx.execute(
             "UPDATE workspace_hook_effects SET phase=?5,receipt_json=?6,updated_at_ms=?7,
-             application_state=CASE WHEN ?5='succeeded' THEN 'pending' ELSE 'rejected' END
+             application_state=CASE WHEN application_state='rejected' THEN 'rejected'
+               WHEN ?5='succeeded' THEN 'pending' ELSE 'rejected' END
              WHERE workspace_id=?1 AND parent_event_id=?2 AND event_name=?3 AND hook_name=?4 AND phase='started'",
             params![workspace_id, parent_event_id, event.as_str(), hook_name, outcome.as_str(), receipt_json, at_ms],
         )

@@ -1,5 +1,36 @@
 macro_rules! delegate_agent_tool_methods {
     () => {
+        fn plan_member_agent_create(
+            &self,
+            command: &runtime_core::MemberAgentCreateCommand,
+        ) -> Result<runtime_core::MemberAgentCreateCommand, RuntimeError> {
+            self.repository.plan_member_agent_create(command)
+        }
+        fn replay_member_agent_create(
+            &self,
+            command: &runtime_core::MemberAgentCreateCommand,
+        ) -> Result<Option<runtime_core::OperatorAgentCreateAdmission>, RuntimeError> {
+            self.repository.replay_member_agent_create(command)
+        }
+        fn admit_member_agent_create(
+            &self,
+            command: &runtime_core::MemberAgentCreateCommand,
+        ) -> Result<runtime_core::OperatorAgentCreateAdmission, RuntimeError> {
+            self.repository.admit_member_agent_create(command)
+        }
+        fn member_agent_create_result(
+            &self,
+            command: &runtime_core::MemberAgentCreateCommand,
+        ) -> Result<Value, RuntimeError> {
+            self.repository.member_agent_create_result(command)
+        }
+        fn admit_member_worktree_creation(
+            &self,
+            command: &runtime_core::MemberAgentCreateCommand,
+            git: &runtime_core::WorkspaceWorktreeCreationCommand,
+        ) -> Result<runtime_core::WorkspaceWorktreeCreationAdmission, RuntimeError> {
+            self.repository.admit_member_worktree_creation(command, git)
+        }
         fn plan_member_agent_rebind(
             &self,
             parent: &str,

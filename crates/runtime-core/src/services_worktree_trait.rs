@@ -3,6 +3,25 @@ use crate::OperationActor;
 
 #[async_trait]
 pub trait WorktreeService: Send + Sync {
+    fn plan_member_agent_create_route(
+        &self,
+        _workspace_id: &str,
+        _worktree_name: &str,
+    ) -> Result<crate::MemberAgentCreateRoute, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "member worktree planning unavailable".into(),
+        ))
+    }
+
+    async fn execute_member_agent_create_worktree(
+        &self,
+        _command: &crate::MemberAgentCreateCommand,
+    ) -> Result<WorktreeCreateResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "member worktree execution unavailable".into(),
+        ))
+    }
+
     async fn healthcheck(&self) -> Result<(), RuntimeError>;
 
     async fn list_worktrees(&self) -> Result<Vec<ManagedWorktreeRecord>, RuntimeError>;

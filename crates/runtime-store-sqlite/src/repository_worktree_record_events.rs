@@ -157,6 +157,56 @@ pub(crate) fn repair_historical_records_in_transaction(
     Ok(())
 }
 
+pub(crate) fn record_managed_worktree_event_tx(
+    tx: &Transaction<'_>,
+    record: &ManagedWorktreeRecord,
+    init_script_status: &str,
+    recovered: bool,
+    session_id: Option<&str>,
+    team_id: Option<&str>,
+) -> Result<ManagedWorktreeRecord, RuntimeError> {
+    let effective = upsert_managed_worktree_in_transaction(tx, record)?;
+    let next_seq: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM runtime_events
+             WHERE scope = 'worktree' AND scope_id = ?1",
+            [&effective.id],
+            |row| row.get(0),
+        )
+        .map_err(|error| db_error("failed computing worktree evidence identity", error))?;
+    insert_runtime_event_in_transaction(
+        tx,
+        &NewRuntimeEvent {
+            event_id: format!(
+                "evt_wt_record_{}_{}_{}",
+                effective.id.len(),
+                effective.id,
+                next_seq
+            ),
+            scope: RuntimeEventScope::Worktree,
+            scope_id: effective.id.clone(),
+            session_id: session_id.map(str::to_owned),
+            team_id: team_id.map(str::to_owned),
+            turn_id: None,
+            kind: if recovered {
+                "worktree.recovered"
+            } else {
+                "worktree.created"
+            }
+            .into(),
+            criticality: RuntimeEventCriticality::Critical,
+            payload: serde_json::json!({
+                "worktree": effective,
+                "init_script_status": init_script_status,
+            }),
+            provider: None,
+            provider_seq: None,
+            created_at: effective.updated_at,
+        },
+    )?;
+    Ok(effective)
+}
+
 impl SqliteRuntimeRepository {
     /// Startup may normalize a legacy worktree row hydrated before a second
     /// SQLite writer committed a new policy, revision or tombstone. Require
@@ -212,44 +262,13 @@ impl SqliteRuntimeRepository {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed beginning managed worktree evidence", error))?;
-        let effective = upsert_managed_worktree_in_transaction(&tx, record)?;
-        let next_seq: i64 = tx
-            .query_row(
-                "SELECT COALESCE(MAX(seq), 0) + 1 FROM runtime_events
-                 WHERE scope = 'worktree' AND scope_id = ?1",
-                [&effective.id],
-                |row| row.get(0),
-            )
-            .map_err(|error| db_error("failed computing worktree evidence identity", error))?;
-        insert_runtime_event_in_transaction(
+        let effective = record_managed_worktree_event_tx(
             &tx,
-            &NewRuntimeEvent {
-                event_id: format!(
-                    "evt_wt_record_{}_{}_{}",
-                    effective.id.len(),
-                    effective.id,
-                    next_seq
-                ),
-                scope: RuntimeEventScope::Worktree,
-                scope_id: effective.id.clone(),
-                session_id: session_id.map(str::to_owned),
-                team_id: team_id.map(str::to_owned),
-                turn_id: None,
-                kind: if recovered {
-                    "worktree.recovered"
-                } else {
-                    "worktree.created"
-                }
-                .into(),
-                criticality: RuntimeEventCriticality::Critical,
-                payload: serde_json::json!({
-                    "worktree": effective,
-                    "init_script_status": init_script_status,
-                }),
-                provider: None,
-                provider_seq: None,
-                created_at: effective.updated_at,
-            },
+            record,
+            init_script_status,
+            recovered,
+            session_id,
+            team_id,
         )?;
         tx.commit()
             .map_err(|error| db_error("failed committing managed worktree event", error))?;

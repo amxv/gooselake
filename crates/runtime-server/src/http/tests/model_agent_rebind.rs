@@ -143,6 +143,7 @@ async fn model_assign_child_keeps_real_agent_and_original_parent_receipt() {
         runtime_core::OperationActorKind::Agent
     );
     assert_eq!(child.operation.actor.identifier, fixture.caller.agent_id);
+    assert!(child.operation.idempotency_key.as_ref().unwrap().len() > 128);
     assert_ne!(
         child.operation.idempotency_key.as_deref(),
         Some("model-assign-original")

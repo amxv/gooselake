@@ -70,6 +70,18 @@ impl SqliteRuntimeRepository {
             evidence: Some(serde_json::json!({"reason":"native_create_outcome_unknown"})),
             created_at: at_ms,
         })?;
+        if let Some(member) =
+            crate::repository_member_agent_create::command_for_child(&tx, &record)?
+        {
+            crate::repository_member_agent_create::record_outcome(
+                &tx,
+                &member,
+                "uncertain",
+                "outcome_unresolved",
+                None,
+                at_ms,
+            )?;
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing uncertain native creation", error))
     }

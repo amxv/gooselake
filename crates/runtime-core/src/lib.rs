@@ -3,6 +3,7 @@ pub mod app;
 pub mod edit_rerun;
 pub mod error;
 pub mod harness;
+pub mod member_agent_create;
 pub mod model_policy;
 pub mod operator_agent_archive;
 pub mod operator_agent_create;
@@ -48,6 +49,10 @@ pub use error::{ProviderDispatchOutcome, RuntimeError};
 pub use harness::{
     harness_contract_metadata, harness_sections, provider_harness_text, HarnessContractMetadata,
     HarnessInjectionMode, HarnessSections, HARNESS_VERSION,
+};
+pub use member_agent_create::{
+    MemberAgentCreateCommand, MemberAgentCreateIntent, MemberAgentCreatePreset,
+    MemberAgentCreateRoute,
 };
 pub use model_policy::{
     claude_model_catalog, codex_model_catalog, codex_model_policy, default_model_presets,
@@ -184,14 +189,15 @@ pub use workspace_agent::{
     WorkspaceWorktreeInventory, WorkspaceWorktreeInventoryEntry,
 };
 pub use workspace_control::{
-    authorize_workspace_membership_mutation, prepare_workspace_interrupt,
-    prepare_workspace_lead_transition, prepare_workspace_retirement, WorkspaceInterruptAdmission,
-    WorkspaceInterruptCommand, WorkspaceInterruptPlan, WorkspaceInterruptResponse,
-    WorkspaceInterruptTarget, WorkspaceLeadTransitionCommand, WorkspaceLeadTransitionRequest,
-    WorkspaceLeadTransitionResponse, WorkspaceMembershipAction, WorkspaceMembershipPolicy,
-    WorkspaceRetirementAdmission, WorkspaceRetirementBlocker, WorkspaceRetirementCloseAttempt,
-    WorkspaceRetirementCommand, WorkspaceRetirementPlan, WorkspaceRetirementPreflight,
-    WorkspaceRetirementRequest, WorkspaceRetirementResponse, WorkspaceRetirementTurnStep,
+    authorize_workspace_membership_mutation, member_native_idempotency_key,
+    prepare_workspace_interrupt, prepare_workspace_lead_transition, prepare_workspace_retirement,
+    WorkspaceInterruptAdmission, WorkspaceInterruptCommand, WorkspaceInterruptPlan,
+    WorkspaceInterruptResponse, WorkspaceInterruptTarget, WorkspaceLeadTransitionCommand,
+    WorkspaceLeadTransitionRequest, WorkspaceLeadTransitionResponse, WorkspaceMembershipAction,
+    WorkspaceMembershipPolicy, WorkspaceRetirementAdmission, WorkspaceRetirementBlocker,
+    WorkspaceRetirementCloseAttempt, WorkspaceRetirementCommand, WorkspaceRetirementPlan,
+    WorkspaceRetirementPreflight, WorkspaceRetirementRequest, WorkspaceRetirementResponse,
+    WorkspaceRetirementTurnStep,
 };
 pub use workspace_migration::{
     plan_legacy_workspace_migration, prepare_legacy_workspace_migration_apply,

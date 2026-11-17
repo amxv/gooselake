@@ -1,5 +1,36 @@
 macro_rules! agent_tool_store_methods {
     () => {
+        fn plan_member_agent_create(
+            &self,
+            _command: &crate::MemberAgentCreateCommand,
+        ) -> Result<crate::MemberAgentCreateCommand, RuntimeError> {
+            unsupported_store("durable member create planning unavailable")
+        }
+        fn replay_member_agent_create(
+            &self,
+            _command: &crate::MemberAgentCreateCommand,
+        ) -> Result<Option<crate::OperatorAgentCreateAdmission>, RuntimeError> {
+            unsupported_store("durable member create replay unavailable")
+        }
+        fn admit_member_agent_create(
+            &self,
+            _command: &crate::MemberAgentCreateCommand,
+        ) -> Result<crate::OperatorAgentCreateAdmission, RuntimeError> {
+            unsupported_store("durable member create admission unavailable")
+        }
+        fn member_agent_create_result(
+            &self,
+            _command: &crate::MemberAgentCreateCommand,
+        ) -> Result<Value, RuntimeError> {
+            unsupported_store("durable member create result unavailable")
+        }
+        fn admit_member_worktree_creation(
+            &self,
+            _command: &crate::MemberAgentCreateCommand,
+            _git: &crate::WorkspaceWorktreeCreationCommand,
+        ) -> Result<crate::WorkspaceWorktreeCreationAdmission, RuntimeError> {
+            unsupported_store("durable member Git admission unavailable")
+        }
         fn plan_member_agent_rebind(
             &self,
             _parent_operation_id: &str,

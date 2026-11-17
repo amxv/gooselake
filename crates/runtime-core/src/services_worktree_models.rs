@@ -52,7 +52,7 @@ pub struct WorktreeCreateResponse {
 
 /// Exact operator intent and expected native Git identity, committed before
 /// worktree creation or an optional initialization script can execute.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceWorktreeCreationCommand {
     pub operation_id: String,
     pub workspace_id: String,

@@ -1,4 +1,6 @@
 use super::*;
+#[path = "support/session_create.rs"]
+mod session_create;
 #[path = "support/session_lifecycle_close.rs"]
 mod session_lifecycle_close;
 
@@ -56,6 +58,7 @@ pub(super) struct TestProvider {
     restore_failure_mode: std::sync::atomic::AtomicU8,
     create_failure_mode: std::sync::atomic::AtomicU8,
     create_calls: std::sync::atomic::AtomicUsize,
+    create_barrier: std::sync::Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
     archive_close_mode: std::sync::atomic::AtomicU8,
     archive_close_calls: std::sync::atomic::AtomicUsize,
     disabled: std::sync::atomic::AtomicBool,
@@ -252,46 +255,7 @@ impl RuntimeProvider for TestProvider {
         &self,
         req: ProviderCreateSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
-        use std::sync::atomic::Ordering;
-        self.create_calls.fetch_add(1, Ordering::SeqCst);
-        let mode = self.create_failure_mode.load(Ordering::SeqCst);
-        if mode == 4 {
-            return Err(RuntimeError::provider_not_dispatched(
-                "test_create_proven_absent",
-                "provider refused native session creation",
-            ));
-        }
-        let native_ref = format!("test-thread-{}", req.runtime_session_id);
-        let canonical_ref = (self.edit_mode.load(std::sync::atomic::Ordering::SeqCst) != 0)
-            .then(|| native_ref.clone());
-        let mut state = self.state.lock().await;
-        state.sessions.insert(
-            req.runtime_session_id.clone(),
-            TestProviderSession {
-                provider_session_ref: native_ref.clone(),
-                cwd: req.cwd,
-                ..Default::default()
-            },
-        );
-        if mode == 2 {
-            return Err(RuntimeError::provider_dispatch_unknown(
-                "test_create_ack_lost",
-                "provider created the native session but lost its acknowledgement",
-            ));
-        }
-        Ok(ProviderSession {
-            runtime_session_id: if mode == 5 {
-                format!("{}-wrong-reserved-runtime-id", req.runtime_session_id)
-            } else {
-                req.runtime_session_id.clone()
-            },
-            provider_session_ref: if mode == 3 {
-                format!("{native_ref}-wrong-native-attachment")
-            } else {
-                native_ref
-            },
-            canonical_provider_session_ref: canonical_ref,
-        })
+        self.perform_test_session_create(req).await
     }
 
     async fn resume_session(

@@ -46,6 +46,70 @@ impl RuntimeSessionManager {
             .0)
     }
 
+    /// Select the same first name/ID match as the full inventory while only
+    /// retaining one candidate. The store visitor scans one bounded snapshot;
+    /// unrelated rows do not require native Git eligibility probes.
+    pub fn plan_existing_member_create_route(
+        &self,
+        workspace_id: &str,
+        name: &str,
+    ) -> Result<(RepositoryIdentity, Option<crate::MemberAgentCreateRoute>), RuntimeError> {
+        let workspace = self
+            .store
+            .get_workspace(workspace_id)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("workspace {workspace_id}")))?;
+        let identity = resolve_repository_identity(Path::new(&workspace.canonical_root))?;
+        let mut selected: Option<(ManagedWorktreeStatusProjection, Vec<String>)> = None;
+        self.store.visit_managed_worktree_status_for_root(
+            &identity.canonical_root,
+            workspace_id,
+            &mut |projection, attached| {
+                let record = &projection.worktree;
+                if record.worktree_name != name
+                    || record.worktree_cwd.starts_with("__gg_tombstoned__/")
+                {
+                    return Ok(());
+                }
+                if selected.as_ref().is_none_or(|(old, _)| {
+                    (&record.worktree_name, &record.id)
+                        < (&old.worktree.worktree_name, &old.worktree.id)
+                }) {
+                    selected = Some((projection, attached));
+                }
+                Ok(())
+            },
+        )?;
+        let Some((projection, attached)) = selected else {
+            return Ok((identity, None));
+        };
+        let worktree = projection.worktree.clone();
+        let revision = projection.revision;
+        let entry = project_worktree_inventory_entry(
+            &identity,
+            workspace.lifecycle_state == WorkspaceLifecycleState::Active,
+            projection,
+            attached,
+        )
+        .ok_or_else(|| RuntimeError::Conflict("named member checkout is not inspectable".into()))?;
+        if !entry.eligible_for_assignment {
+            return Err(RuntimeError::Conflict(
+                "named worktree is not eligible for assignment".into(),
+            ));
+        }
+        let canonical_cwd = std::fs::canonicalize(&worktree.worktree_cwd)?
+            .to_string_lossy()
+            .into_owned();
+        Ok((
+            identity.clone(),
+            Some(crate::MemberAgentCreateRoute::Existing {
+                repository: identity,
+                worktree,
+                revision,
+                canonical_cwd: Some(canonical_cwd),
+            }),
+        ))
+    }
+
     /// HTTP needs only one keyset page, never every persisted worktree in the
     /// repository. The second result preserves the exact original cursor
     /// membership check (including aliases and tombstones).

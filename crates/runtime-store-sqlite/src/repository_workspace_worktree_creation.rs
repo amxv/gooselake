@@ -81,7 +81,33 @@ impl SqliteRuntimeRepository {
         &self,
         command: &WorkspaceWorktreeCreationCommand,
     ) -> Result<WorkspaceWorktreeCreationAdmission, RuntimeError> {
-        if command.actor.kind != OperationActorKind::Operator
+        if command.actor.kind != OperationActorKind::Operator {
+            return Err(RuntimeError::InvalidState(
+                "operator Git admission requires an Operator".into(),
+            ));
+        }
+        self.admit_workspace_worktree_creation_internal(command, None)
+    }
+
+    pub fn admit_member_worktree_creation(
+        &self,
+        member: &runtime_core::MemberAgentCreateCommand,
+        command: &WorkspaceWorktreeCreationCommand,
+    ) -> Result<WorkspaceWorktreeCreationAdmission, RuntimeError> {
+        self.admit_workspace_worktree_creation_internal(command, Some(member))
+    }
+
+    fn admit_workspace_worktree_creation_internal(
+        &self,
+        command: &WorkspaceWorktreeCreationCommand,
+        member: Option<&runtime_core::MemberAgentCreateCommand>,
+    ) -> Result<WorkspaceWorktreeCreationAdmission, RuntimeError> {
+        if command.actor.kind
+            != if member.is_some() {
+                OperationActorKind::Agent
+            } else {
+                OperationActorKind::Operator
+            }
             || command.actor.identifier.is_empty()
             || command.workspace_id.is_empty()
             || command.idempotency_key.is_empty()
@@ -100,6 +126,14 @@ impl SqliteRuntimeRepository {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting native worktree admission", error))?;
+        if let Some(member) = member {
+            crate::repository_member_agent_create::validate_link(&transaction, member)?;
+            if member.worktree_command()? != *command {
+                return Err(RuntimeError::Conflict(
+                    "member Git replay identity differs from original intent".into(),
+                ));
+            }
+        }
 
         // Resolve the *original* receipt before any mutable workspace state.
         if let Some(existing) = operation_by_idempotency(
@@ -131,8 +165,9 @@ impl SqliteRuntimeRepository {
         }
         // A workspace may be registered at a subdirectory of its Git root;
         // its persisted authority root must still remain within that repo.
-        if !std::path::Path::new(&workspace.canonical_root)
-            .starts_with(std::path::Path::new(&command.repository_root))
+        if member.is_none()
+            && !std::path::Path::new(&workspace.canonical_root)
+                .starts_with(std::path::Path::new(&command.repository_root))
         {
             return Err(RuntimeError::Conflict(
                 "workspace is not within the admitted Git repository".into(),
@@ -170,6 +205,13 @@ impl SqliteRuntimeRepository {
             )));
         }
 
+        if let Some(member) = member {
+            crate::repository_member_agent_create_routes::before_git_admission(
+                &transaction,
+                member,
+                command,
+            )?;
+        }
         let authority = OperationAuthorityTransaction::new(&transaction);
         authority.insert_operation(&OperationRecord {
             operation_id: command.operation_id.clone(),
@@ -250,6 +292,11 @@ impl SqliteRuntimeRepository {
                 "operation {operation_id} cannot be completed from its current phase"
             )));
         }
+        let member = crate::repository_member_agent_create_routes::prepare_git_receipt(
+            &transaction,
+            &operation,
+            response,
+        )?;
         let recorded: Option<(String, String)> = transaction
             .query_row(
                 "SELECT target_id, evidence_json FROM runtime_operation_effects
@@ -368,6 +415,13 @@ impl SqliteRuntimeRepository {
                 })?,
                 acquired_at,
             })?;
+        }
+        if let Some(member) = member.as_ref() {
+            crate::repository_member_agent_create_routes::transfer_git_pins(
+                &transaction,
+                member,
+                at_ms,
+            )?;
         }
         transaction
             .commit()

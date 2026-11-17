@@ -172,8 +172,33 @@ impl SqliteRuntimeRepository {
         &self,
         command: &OperatorAgentCreateCommand,
     ) -> Result<OperatorAgentCreateAdmission, RuntimeError> {
+        if command.actor.kind != OperationActorKind::Operator {
+            return Err(RuntimeError::InvalidState(
+                "operator create admission requires an Operator".into(),
+            ));
+        }
+        self.admit_agent_create_internal(command, None)
+    }
+
+    pub fn admit_member_agent_create(
+        &self,
+        command: &runtime_core::MemberAgentCreateCommand,
+    ) -> Result<OperatorAgentCreateAdmission, RuntimeError> {
+        self.admit_agent_create_internal(&command.operation, Some(command))
+    }
+
+    fn admit_agent_create_internal(
+        &self,
+        command: &OperatorAgentCreateCommand,
+        member: Option<&runtime_core::MemberAgentCreateCommand>,
+    ) -> Result<OperatorAgentCreateAdmission, RuntimeError> {
         let provider = &command.normalized_request["request"]["provider"];
-        if command.actor.kind != OperationActorKind::Operator
+        if command.actor.kind
+            != if member.is_some() {
+                OperationActorKind::Agent
+            } else {
+                OperationActorKind::Operator
+            }
             || command.actor.identifier.trim().is_empty()
             || command.idempotency_key.is_empty()
             || command.idempotency_key.len() > 512
@@ -200,6 +225,9 @@ impl SqliteRuntimeRepository {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting native agent create admission", error))?;
+        if let Some(member) = member {
+            crate::repository_member_agent_create::validate_link(&tx, member)?;
+        }
         if let Some(existing) = operation_by_idempotency(
             &tx,
             command.actor.kind,
@@ -252,6 +280,10 @@ impl SqliteRuntimeRepository {
             ));
         }
 
+        if let Some(member) = member {
+            crate::repository_member_agent_create::authorize_stage(&tx, member)?;
+        }
+
         let authority = OperationAuthorityTransaction::new(&tx);
         authority.insert_operation(&OperationRecord {
             operation_id: command.operation_id.clone(),
@@ -301,6 +333,17 @@ impl SqliteRuntimeRepository {
             created_at: command.requested_at,
             updated_at: command.requested_at,
         })?;
+        if let Some(member) = member {
+            crate::repository_member_agent_create_routes::reserve_initial_route(&tx, member)?;
+            crate::repository_member_agent_create::record_outcome(
+                &tx,
+                member,
+                "started",
+                "native_admitted",
+                None,
+                command.requested_at,
+            )?;
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing provider creation intent", error))?;
         Ok(OperatorAgentCreateAdmission::Execute {
@@ -338,6 +381,25 @@ impl SqliteRuntimeRepository {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed freezing provider launch plan", error))?;
         verify_requested_create(&tx, command)?;
+        let child = operation_by_id(&tx, &command.operation_id)?
+            .ok_or_else(|| RuntimeError::Conflict("create authority disappeared".into()))?;
+        let member = crate::repository_member_agent_create::command_for_child(&tx, &child)?;
+        let member_hook_history = if let Some(member) = member.as_ref() {
+            if member.operation != *command {
+                return Err(RuntimeError::Conflict(
+                    "member provider launch command changed".into(),
+                ));
+            }
+            crate::repository_member_agent_create::authorize_stage(&tx, member)?;
+            crate::repository_member_agent_create_routes::validate_route(&tx, member, true)?;
+            Some(
+                crate::repository_member_agent_create_hooks::validate_launch(
+                    &tx, member, snapshot,
+                )?,
+            )
+        } else {
+            None
+        };
         let old: String = tx
             .query_row(
                 "SELECT evidence_json FROM runtime_operation_effects
@@ -366,6 +428,7 @@ impl SqliteRuntimeRepository {
             "child_worktree_key":value["child_worktree_key"],
             "stage":"launch_frozen_before_provider",
             "launch_snapshot":snapshot,
+            "member_hook_history":member_hook_history,
         });
         let updated = tx
             .execute(

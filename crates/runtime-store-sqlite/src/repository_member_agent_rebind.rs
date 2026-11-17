@@ -44,7 +44,7 @@ fn authorize_member(
     Ok(())
 }
 
-fn worktree_snapshot(
+pub(crate) fn worktree_snapshot(
     connection: &Connection,
     id: &str,
 ) -> Result<(ManagedWorktreeRecord, u64), RuntimeError> {
@@ -552,7 +552,9 @@ impl SqliteRuntimeRepository {
             operation_id: format!("rebind_member_{suffix}"),
             workspace_id: workspace.into(),
             agent_id: id.into(),
-            idempotency_key: Some(format!("member-rebind:{suffix}")),
+            idempotency_key: Some(runtime_core::member_native_idempotency_key(
+                "rebind", &suffix,
+            )?),
             expected_revision: agent.revision,
             previous_worktree_id: session.worktree_id.clone(),
             destination_worktree_id: Some(destination.id.clone()),

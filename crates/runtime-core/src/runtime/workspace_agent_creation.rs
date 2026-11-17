@@ -68,14 +68,30 @@ impl RuntimeSessionManager {
             .creator_compaction_subscription
             .as_deref()
             .unwrap_or("auto");
-        let creator_agent_id = self
-            .store
-            .get_workspace_agent_by_id(&added_by)?
-            .filter(|creator| {
-                creator.workspace_id == workspace_id
-                    && creator.lifecycle_state == WorkspaceAgentLifecycleState::Active
+        let member = operator
+            .filter(|command| command.actor.kind == crate::OperationActorKind::Agent)
+            .map(|command| {
+                serde_json::from_value::<crate::MemberAgentCreateIntent>(
+                    command.normalized_request["member_intent"].clone(),
+                )
+                .map_err(|error| {
+                    RuntimeError::Conflict(format!(
+                        "invalid frozen member creation intent: {error}"
+                    ))
+                })
             })
-            .map(|creator| creator.agent_id);
+            .transpose()?;
+        let creator_agent_id = if let Some(member) = member.as_ref() {
+            Some(member.caller.agent_id.clone())
+        } else {
+            self.store
+                .get_workspace_agent_by_id(&added_by)?
+                .filter(|creator| {
+                    creator.workspace_id == workspace_id
+                        && creator.lifecycle_state == WorkspaceAgentLifecycleState::Active
+                })
+                .map(|creator| creator.agent_id)
+        };
         // Creating a provider session in an existing checkout must not race
         // native cleanup before its durable ownership claim is admitted.
         let repository_lock = if matches!(
@@ -109,8 +125,23 @@ impl RuntimeSessionManager {
                         "managed worktree route cannot also specify an arbitrary cwd".into(),
                     ));
                 }
-                policy.authoritative_cwd =
-                    self.eligible_workspace_worktree_cwd(&workspace, worktree_id)?;
+                policy.authoritative_cwd = if let Some(member) = member.as_ref() {
+                    if member.route.worktree().map(|worktree| &worktree.id) != Some(worktree_id) {
+                        return Err(RuntimeError::Conflict(
+                            "member execution selected a different managed route".into(),
+                        ));
+                    }
+                    let cwd = std::fs::canonicalize(member.route.cwd())
+                        .map_err(|error| RuntimeError::Io(error.to_string()))?;
+                    if !cwd.is_dir() || cwd.to_string_lossy() != member.route.canonical_cwd() {
+                        return Err(RuntimeError::Conflict(
+                            "frozen member checkout is no longer accessible".into(),
+                        ));
+                    }
+                    member.route.cwd().into()
+                } else {
+                    self.eligible_workspace_worktree_cwd(&workspace, worktree_id)?
+                };
                 Some(worktree_id.clone())
             }
             Some(WorkspaceAgentInitialRoute::New { .. }) => {
@@ -120,6 +151,14 @@ impl RuntimeSessionManager {
                 ));
             }
         };
+        if member
+            .as_ref()
+            .is_some_and(|member| member.recreation_policy != policy)
+        {
+            return Err(RuntimeError::Conflict(
+                "member execution policy differs from its original plan".into(),
+            ));
+        }
         policy
             .setting_sources_intent
             .resolved_sources(Some(policy.authoritative_cwd.as_str()))?;

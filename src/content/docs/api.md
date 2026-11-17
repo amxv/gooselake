@@ -2387,6 +2387,53 @@ Tool envelopes are compact and consistent:
 
 Invalid request-only values, such as empty titles, duplicate removal targets or unsupported worktree cleanup, are rejected before consuming a new host invocation ID. For a new invocation, an unknown configured model preset is also rejected without writing an intent. Existing invocation outcomes are looked up before applying current semantic validation or consulting the preset catalog: stricter duplicate-target rules or removal of a configured preset cannot hide a historical exact successful receipt, original unresolved operation coordinate or conflicting-input error. Current caller authentication, feature access and structural deserialization still apply to replays.
 
+For `gg_team add`, the original invocation freezes the authenticated Agent
+creator, reserved agent ID, inherited policy, effective preset, onboarding
+input and selected route before native creation. The native child keeps that
+Agent actor; it does not borrow Operator identity. Only the first durable child
+admission grants execution. Its successful receipt commits the session,
+workspace ownership, roster/profile, mandatory onboarding and parent target
+outcome together. Exact successful tool replays return the original compact
+result, including the onboarding state recorded at completion, rather than
+reconstructing it from the current roster or notice queue.
+
+An Add without `worktree_name` uses the workspace root, including an ordinary
+non-Git directory. A named existing route freezes its full managed record,
+revision, repository identity and canonical destination while retaining the
+record's original checkout and branch claim identities. A new named route
+freezes a unique checkout, branch and exact base commit, with
+`retain_on_last_claim` and no init script. Git creation has its own Agent-origin
+child. The managed record, Git receipt and transfer of both checkout/branch
+reservations to the provider-create child commit in one SQLite transaction.
+Neither native checkout adoption nor automatic compensation is authorized by
+this model route.
+
+Approved pre-add hooks recheck current caller/lead authority, inherited policy,
+route and hook approval before each shell claim. Provider launch repeats those
+checks and freezes the exact successful hook history. If authority or hook
+approval changes after native provider admission, the admitted session may
+still settle under its original creator, but unconsumed hook onboarding and
+caller context are withheld. Mandatory ordinary onboarding remains. A changed
+or substituted hook receipt cannot authorize a provider launch or settle an
+already-admitted creation.
+
+An incomplete Add exposes its original parent and reserved child in
+`error.details.targets`, with statuses `not_admitted`, `native_admitted`,
+`outcome_unresolved`, `native_create_confirmed` or `verified_not_created`.
+Ambiguous Git, shell or provider outcomes are not retried. Startup quarantines
+an unreceipted native create without creating or resuming its reserved session.
+An authenticated Operator may use the agent-creation evidence-review route
+for the original child; review preserves the Agent actor and records the
+reviewer separately. A `created` review requires the exact saved launch and
+independent attachment evidence, then requires fresh exact reattachment.
+A `not_created` review releases the provider-session reservation and rejects
+unapplied hook context, but preserves an unresolved Git operation and retains
+checkout/branch reservations if an attempted pre-add shell still has an unknown
+outcome. Its saved evidence identifies the reservation owner and hook parent.
+Provider absence alone does not authorize checkout cleanup, and a late shell
+receipt cannot revive rejected context. Reviewing a child does not manufacture
+a missing whole-tool receipt or authorize another native call.
+
 For `gg_team remove`, the runtime freezes the complete target set beneath the original invocation, then admits each native close separately under the actual Agent identity and current workspace membership/lead policy. Removal succeeds only when every original target has a confirmed native close and an atomic archived-agent receipt. The result retains `removed` and `preserve_worktrees: true`, adds the parent `operation_id`, and includes each target's child `operation_id` and `native_close: "confirmed"`. A target whose provider outcome is unknown stays active and exclusively fenced; the runtime does not advance to later targets or repeat the close.
 
 An incomplete removal returns the original parent coordinate in `error.details.operation_id` and an ordered `targets` projection containing each `agent_id`, child `operation_id` and status: `not_admitted`, `rejected_before_dispatch`, `admitted`, `outcome_unresolved`, `native_close_confirmed` or `verified_not_closed`. A partial batch or missing aggregate receipt returns non-retryable `outcome_unresolved`, even if earlier targets closed successfully. If inspection itself is unavailable, the same parent coordinate is retained with `inspection: "unavailable"`. Operators can inspect the existing operation records and use the archive evidence-review route for an uncertain child; review records the Operator separately and preserves the original Agent actor. Settling a child does not authorize unfinished targets or manufacture a missing whole-tool receipt. Startup quarantines an admitted but unreceipted child without native replay, and worktrees remain preserved.

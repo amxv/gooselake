@@ -158,7 +158,15 @@ impl SqliteRuntimeRepository {
             )));
         }
 
-        let verified_pre_add_actor = if let Some(hooks) = hooks {
+        let member_application = crate::repository_member_agent_create_hooks::settlement(
+            tx,
+            source_operation_id,
+            agent,
+            hooks,
+        )?;
+        let verified_pre_add_actor = if let Some(application) = member_application.as_ref() {
+            application.actor.clone()
+        } else if let Some(hooks) = hooks {
             if hooks.completed_hook_names.is_empty()
                 || hooks.completed_hook_names.len() > 32
                 || hooks
@@ -257,7 +265,10 @@ impl SqliteRuntimeRepository {
         } else {
             None
         };
-        if let Some(actor) = verified_pre_add_actor.as_deref() {
+        if let Some(actor) = verified_pre_add_actor
+            .as_deref()
+            .filter(|_| member_application.is_none())
+        {
             let actor_active: bool = tx
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM workspace_agents
@@ -364,6 +375,10 @@ impl SqliteRuntimeRepository {
             )
             .map_err(|error| db_error("failed claiming initial managed worktree", error))?;
         }
+        let apply_context = member_application
+            .as_ref()
+            .is_none_or(|application| application.apply);
+        let applied_hooks = if apply_context { hooks } else { None };
         if let Some(onboarding) = onboarding {
             let (display_name, lead_alias): (String, Option<String>) = tx.query_row(
                 "SELECT w.display_name, lead.identity_alias
@@ -377,13 +392,13 @@ impl SqliteRuntimeRepository {
                 &display_name,
                 lead_alias.as_deref(),
                 onboarding,
-                hooks.and_then(|hooks| hooks.onboarding_context_append_text.as_deref()),
+                applied_hooks.and_then(|hooks| hooks.onboarding_context_append_text.as_deref()),
             )?;
             Self::insert_workspace_system_notice_tx(tx, &notice)?;
             if let (Some(hooks), Some(actor), Some(text)) = (
-                hooks,
+                applied_hooks,
                 verified_pre_add_actor.as_deref(),
-                hooks.and_then(|h| h.caller_context_text.as_deref()),
+                applied_hooks.and_then(|h| h.caller_context_text.as_deref()),
             ) {
                 let caller_active: bool = tx
                     .query_row(
@@ -435,12 +450,15 @@ impl SqliteRuntimeRepository {
         if let Some(hooks) = hooks {
             let changed = tx
                 .execute(
-                    "UPDATE workspace_hook_effects SET application_state='applied',
-                    applied_at_ms=?3
+                    "UPDATE workspace_hook_effects SET application_state=?4,
+                    applied_at_ms=CASE WHEN ?4='applied' THEN ?3 ELSE NULL END,
+                    application_error_code=CASE WHEN ?4='rejected' THEN 'member_create_context_authority_revoked' ELSE NULL END,
+                    updated_at_ms=?3
                  WHERE workspace_id=?1 AND parent_event_id=?2
                    AND event_name='pre_teammate_add' AND phase='succeeded'
                    AND application_state='pending'",
-                    params![agent.workspace_id, hooks.parent_event_id, agent.created_at],
+                    params![agent.workspace_id, hooks.parent_event_id, agent.updated_at,
+                        if apply_context { "applied" } else { "rejected" }],
                 )
                 .map_err(|error| db_error("failed acknowledging applied pre-add hooks", error))?;
             if changed != hooks.completed_hook_names.len() {

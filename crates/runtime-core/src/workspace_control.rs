@@ -3,6 +3,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::workspace::{normalize_idempotency_key, normalized_json_hash, opaque_id, unix_time_ms};
+
+/// Host model-tool invocation IDs are limited to 128 bytes. Internal native
+/// children share the actor/key index, so prefixes alone cannot separate
+/// their identities. This deterministic ASCII domain is always >128 and
+/// <512 bytes; saved historical commands retain their original keys.
+pub fn member_native_idempotency_key(domain: &str, identity: &str) -> Result<String, RuntimeError> {
+    let digest = normalized_json_hash(&serde_json::json!([domain, identity]))?;
+    Ok(format!("gg-member-native-child:{digest}:{digest}"))
+}
 use crate::{
     OperationActor, RuntimeError, WorkspaceAgentLifecycleState, WorkspaceAgentRecord,
     WorkspaceRecord,

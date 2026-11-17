@@ -112,6 +112,12 @@ pub(crate) fn finalize_agent_create_receipt_tx(
         ));
     }
     let claim = exact_create_claim(tx, command)?;
+    let frozen_raw: String = tx.query_row("SELECT evidence_json FROM runtime_operation_effects WHERE operation_id=?1 AND effect_kind=?2",
+        params![command.operation_id,EFFECT_KIND],|row|row.get(0)).map_err(|error|db_error("failed preserving native creation launch history",error))?;
+    let frozen_evidence: serde_json::Value =
+        serde_json::from_str(&frozen_raw).map_err(|error| {
+            RuntimeError::Bootstrap(format!("invalid native launch evidence: {error}"))
+        })?;
     let effect_evidence = json!({
         "native_result":"provider_session_created",
         "provider":session.provider,
@@ -119,6 +125,7 @@ pub(crate) fn finalize_agent_create_receipt_tx(
         "canonical_provider_session_ref":session.canonical_provider_session_ref,
         "agent_id":agent.agent_id,
         "launch_snapshot":snapshot,
+        "member_hook_history":frozen_evidence["member_hook_history"],
     });
     let changed = tx
         .execute(
@@ -162,5 +169,17 @@ pub(crate) fn finalize_agent_create_receipt_tx(
         created_at: session.updated_at,
     })?;
     authority.release_claim(&claim)?;
+    let child = crate::repository_workspace::operation_by_id(tx, &command.operation_id)?
+        .ok_or_else(|| RuntimeError::Conflict("completed create child missing".into()))?;
+    if let Some(member) = crate::repository_member_agent_create::command_for_child(tx, &child)? {
+        crate::repository_member_agent_create_routes::validate_route(tx, &member, true)?;
+        crate::repository_member_agent_create_routes::release_create_pins(tx, &member, false)?;
+        crate::repository_member_agent_create::complete_parent(
+            tx,
+            &member,
+            agent,
+            session.updated_at,
+        )?;
+    }
     Ok(())
 }

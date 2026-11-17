@@ -22,7 +22,7 @@ pub(super) fn attach_operation_details(
             .filter(|effect| {
                 matches!(
                     effect.effect_kind.as_str(),
-                    "model_member_archive" | "model_member_rebind"
+                    "model_member_archive" | "model_member_rebind" | "model_member_create"
                 )
             })
             .collect::<Vec<_>>();

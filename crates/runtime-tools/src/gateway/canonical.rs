@@ -6,9 +6,8 @@ use std::collections::{HashMap, HashSet};
 use runtime_core::{
     normalized_json_hash, AgentBroadcastMessageRequest, AgentDirectMessageRequest,
     AgentToolMutationAdmission, AgentToolMutationCommand, ProcessGetRequest, ProcessKillRequest,
-    ProcessListRequest, ProcessManager, ProcessRunRequest, ProviderThinkingEffort, RuntimeError,
-    ToolInvokeRequest, WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute,
-    WorkspaceAgentOnboardingRequest, WorkspaceMembershipPolicy, WorkspaceWorktreeCreateRequest,
+    ProcessListRequest, ProcessManager, ProcessRunRequest, RuntimeError, ToolInvokeRequest,
+    WorkspaceMembershipPolicy,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -16,6 +15,7 @@ use serde_json::{json, Value};
 use super::team_helpers::status_state_for_session;
 use super::RuntimeToolGateway;
 
+mod create;
 mod preflight;
 mod receipts;
 use preflight::{validate_team_mode, validate_team_model_preset};
@@ -536,139 +536,9 @@ impl RuntimeToolGateway {
                     "available_worktrees_error":inventory_error,
                 }))
             }
-            TeamMode::Add {
-                title,
-                prompt,
-                image_paths,
-                model_preset,
-                worktree_name,
-                creator_compaction_subscription,
-            } => {
-                runtime.authorize_workspace_membership(
-                    workspace_id,
-                    caller,
-                    runtime_core::WorkspaceMembershipAction::Add,
-                    self.membership_policy(),
-                )?;
-                if let Some(value) = title.as_deref() {
-                    nonempty(value, "title")?;
-                }
-                if let Some(value) = prompt.as_deref() {
-                    nonempty(value, "prompt")?;
-                }
-                let images = image_paths.unwrap_or_default();
-                image_count_valid(&images)?;
-                if let Some(value) = creator_compaction_subscription.as_deref() {
-                    if !matches!(value, "auto" | "unsubscribed") {
-                        return Err(RuntimeError::InvalidState(
-                            "creator_compaction_subscription must be auto or unsubscribed".into(),
-                        ));
-                    }
-                }
-                let preset = match model_preset.as_deref() {
-                    Some(name) => {
-                        Some(self.team_model_presets.resolve(name).ok_or_else(|| {
-                            RuntimeError::NotFound(format!("model preset {name}"))
-                        })?)
-                    }
-                    None => None,
-                };
-                let provider = preset
-                    .as_ref()
-                    .map_or(agent.recreation_policy.provider, |p| p.provider);
-                if !images.is_empty() && provider == runtime_core::ProviderKind::Acp {
-                    return Err(RuntimeError::Unsupported(
-                        "ACP onboarding images are not supported".into(),
-                    ));
-                }
-                let route = match worktree_name {
-                    Some(name) => {
-                        nonempty(&name, "worktree_name")?;
-                        let inventory = runtime.list_workspace_worktree_inventory(workspace_id)?;
-                        match inventory
-                            .worktrees
-                            .into_iter()
-                            .find(|item| item.normalized_name == name)
-                        {
-                            Some(existing) if existing.eligible_for_assignment => {
-                                Some(WorkspaceAgentInitialRoute::Existing {
-                                    worktree_id: existing.worktree_id,
-                                })
-                            }
-                            Some(_) => {
-                                return Err(RuntimeError::Conflict(
-                                    "named worktree is not eligible for assignment".into(),
-                                ))
-                            }
-                            None => {
-                                let created = self
-                                    .worktrees
-                                    .create_workspace_worktree(WorkspaceWorktreeCreateRequest {
-                                        workspace_id: workspace_id.clone(),
-                                        worktree_name: name,
-                                        branch_prefix: None,
-                                        base_ref: None,
-                                        deletion_policy: None,
-                                        run_init_script: None,
-                                    })
-                                    .await?;
-                                Some(WorkspaceAgentInitialRoute::Existing {
-                                    worktree_id: created.worktree.id,
-                                })
-                            }
-                        }
-                    }
-                    None => Some(WorkspaceAgentInitialRoute::Root),
-                };
-                let mut preferences = agent.recreation_policy.current_preferences.clone();
-                if let Some(preset) = preset.as_ref().and_then(|p| p.thinking_effort.as_deref()) {
-                    preferences.thinking_effort = Some(ProviderThinkingEffort::parse(preset)?);
-                }
-                let new_agent = runtime
-                    .create_workspace_agent_as_member(
-                        workspace_id,
-                        WorkspaceAgentCreateRequest {
-                            provider,
-                            model: preset
-                                .as_ref()
-                                .map(|p| p.model.clone())
-                                .or_else(|| agent.recreation_policy.model.clone()),
-                            permission_intent: agent.recreation_policy.permission_intent.clone(),
-                            setting_sources_intent: agent
-                                .recreation_policy
-                                .setting_sources_intent
-                                .clone(),
-                            current_preferences: preferences,
-                            system_prompt: agent.recreation_policy.system_prompt.clone(),
-                            allowed_tools: agent.recreation_policy.allowed_tools.clone(),
-                            disallowed_tools: agent.recreation_policy.disallowed_tools.clone(),
-                            cwd: None,
-                            worktree: route,
-                            harness_version_slot: agent
-                                .recreation_policy
-                                .harness_version_slot
-                                .clone(),
-                            title,
-                            metadata: None,
-                            onboarding: Some(WorkspaceAgentOnboardingRequest {
-                                prompt,
-                                image_paths: images,
-                                skill: None,
-                                creator_compaction_subscription,
-                            }),
-                        },
-                        caller,
-                        self.membership_policy(),
-                    )
-                    .await?;
-                let onboarding =
-                    runtime.get_workspace_onboarding_notice(workspace_id, &new_agent.agent_id)?;
-                Ok(
-                    json!({"operation":"add","agent_id":new_agent.agent_id,"alias":new_agent.alias,
-                    "workspace_id":new_agent.workspace_id,"onboarding":onboarding.map(|notice| json!({
-                        "notice_id":notice.notice_id,"state":notice.state
-                    }))}),
-                )
+            mode @ TeamMode::Add { .. } => {
+                self.canonical_team_add(caller, &agent, mode, parent_operation_id)
+                    .await
             }
             TeamMode::Remove { .. } => {
                 let parent = parent_operation_id.ok_or_else(|| {

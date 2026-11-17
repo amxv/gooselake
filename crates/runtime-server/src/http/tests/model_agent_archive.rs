@@ -147,6 +147,7 @@ async fn model_remove_lost_close_ack_preserves_active_target_and_original_child_
     );
     assert_eq!(child.operation.actor, parent.operation.actor);
     assert_eq!(child.operation.actor.identifier, fixture.caller);
+    assert!(child.operation.idempotency_key.as_ref().unwrap().len() > 128);
     assert_eq!(
         child.operation.phase,
         runtime_core::OperationPhase::ManualReview

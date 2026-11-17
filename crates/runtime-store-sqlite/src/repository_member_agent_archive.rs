@@ -466,7 +466,7 @@ impl SqliteRuntimeRepository {
             let command = OperatorAgentArchiveCommand {
                 operation_id: child_id,
                 actor: parent.actor.clone(),
-                idempotency_key: format!("member-archive:{suffix}"),
+                idempotency_key: runtime_core::member_native_idempotency_key("archive", &suffix)?,
                 workspace_id: workspace.into(),
                 agent_id: id.into(),
                 reason: Some("gg_team_remove".into()),

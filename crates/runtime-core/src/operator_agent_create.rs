@@ -10,7 +10,7 @@ use crate::{
 /// Immutable operator intent admitted before any worktree, shell hook, or
 /// provider create effect. `reserved_agent_id` is allocated only once and is
 /// never replaced by a retry of the original key.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OperatorAgentCreateCommand {
     pub operation_id: String,
     pub actor: OperationActor,

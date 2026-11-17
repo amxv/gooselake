@@ -112,9 +112,14 @@ async fn configured_preset_removal_never_hides_existing_host_outcomes() {
         store.begin_agent_tool_mutation(&command).unwrap();
         let exact = json!({"ok":true,"result":{"operation":"add","agent_id":"historical-child"}});
         if completed {
-            store
+            assert!(store
                 .finish_agent_tool_mutation(&command.operation_id, &exact, 110)
-                .unwrap();
+                .is_err());
+            // Seed a pre-journal historical receipt; the current writer must
+            // reject a fabricated success without native-child evidence.
+            rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap().execute(
+                "UPDATE runtime_operations SET phase='completed',exact_terminal_result_json=?2 WHERE operation_id=?1",
+                rusqlite::params![command.operation_id,exact.to_string()]).unwrap();
         }
         drop(store);
         let result = gateway

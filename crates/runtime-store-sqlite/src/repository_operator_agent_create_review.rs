@@ -61,8 +61,9 @@ impl SqliteRuntimeRepository {
                 command.operation_id
             ))
         })?;
+        let member = crate::repository_member_agent_create::command_for_child(&tx, &record)?;
         if record.kind != OPERATION_KIND
-            || record.actor != command.actor
+            || (record.actor != command.actor && member.is_none())
             || record.workspace_id.as_deref() != Some(&command.workspace_id)
             || record.normalized_request["workspace_id"] != command.workspace_id
             || record.normalized_request["action"] != "create"
@@ -140,22 +141,28 @@ impl SqliteRuntimeRepository {
                 "cannot settle native creation inside a retired/frozen workspace".into(),
             ));
         }
-        let admitted = OperatorAgentCreateCommand {
-            operation_id: record.operation_id.clone(),
-            actor: record.actor.clone(),
-            idempotency_key: record.idempotency_key.clone().ok_or_else(|| {
-                RuntimeError::Bootstrap("native create lost its immutable key".into())
-            })?,
-            workspace_id: command.workspace_id.clone(),
-            reserved_agent_id: input.reserved_agent_id.clone(),
-            normalized_request: record.normalized_request.clone(),
-            normalized_request_hash: record.normalized_request_hash.clone(),
-            requested_at: record.created_at,
-            worktree_operation_id: None,
-        };
+        let admitted = member
+            .as_ref()
+            .map(|member| member.operation.clone())
+            .unwrap_or(OperatorAgentCreateCommand {
+                operation_id: record.operation_id.clone(),
+                actor: record.actor.clone(),
+                idempotency_key: record.idempotency_key.clone().ok_or_else(|| {
+                    RuntimeError::Bootstrap("native create lost its immutable key".into())
+                })?,
+                workspace_id: command.workspace_id.clone(),
+                reserved_agent_id: input.reserved_agent_id.clone(),
+                normalized_request: record.normalized_request.clone(),
+                normalized_request_hash: record.normalized_request_hash.clone(),
+                requested_at: record.created_at,
+                worktree_operation_id: None,
+            });
         let claim = exact_create_claim(&tx, &admitted)?;
         let created = input.resolution == OperatorAgentCreateResolution::Created;
         let (exact, restart_required) = if created {
+            if let Some(member) = member.as_ref() {
+                crate::repository_member_agent_create_routes::validate_route(&tx, member, true)?;
+            }
             // Without a durably frozen launch policy, claiming a native
             // attachment is not enough to reconstruct an authorized agent.
             let snapshot = read_frozen_create_plan(&tx, &admitted)?.ok_or_else(|| {
@@ -209,12 +216,14 @@ impl SqliteRuntimeRepository {
                      application_error_code='operator_verified_agent_not_created',
                      updated_at_ms=?3
                  WHERE workspace_id=?1 AND event_name='pre_teammate_add'
-                   AND application_state='pending'
+                   AND parent_event_id=?4
+                   AND application_state IN ('not_ready','pending')
                    AND json_extract(input_json,'$.subject.member_agent_id')=?2",
                 params![
                     command.workspace_id,
                     input.reserved_agent_id,
-                    command.reviewed_at
+                    command.reviewed_at,
+                    format!("workspace-hook:pre-add:{}", input.reserved_agent_id)
                 ],
             )
             .map_err(|error| {
@@ -246,11 +255,26 @@ impl SqliteRuntimeRepository {
             "input":request_json, "response":response,
             "actor":command.actor, "reviewed_at_ms":command.reviewed_at,
         });
+        let retained_route_reservations = if let Some(member) = member.as_ref() {
+            if !created
+                && member.intent.route.worktree().is_some()
+                && crate::repository_member_agent_create_hooks::unresolved_execution(&tx, member)?
+            {
+                Some(json!({"reason":"pre_add_execution_outcome_unresolved",
+                    "owner_operation_id":member.operation.operation_id,
+                    "hook_parent_event_id":format!("workspace-hook:pre-add:{}",member.operation.reserved_agent_id)}))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let effect = json!({
             "reserved_agent_id":input.reserved_agent_id,
             "provider":input.provider,
             "original_intent":original_effect,
             "operator_review":review,
+            "retained_route_reservations":retained_route_reservations,
         });
         let changed = tx.execute(
             "UPDATE runtime_operation_effects SET phase='finalized',updated_at=?2,evidence_json=?3
@@ -286,6 +310,31 @@ impl SqliteRuntimeRepository {
             created_at: command.reviewed_at,
         })?;
         authority.release_claim(&claim)?;
+        if let Some(member) = member.as_ref() {
+            crate::repository_member_agent_create_routes::release_create_pins(
+                &tx, member, !created,
+            )?;
+            if created {
+                let agent = serde_json::from_value(exact.clone()).map_err(|error| {
+                    RuntimeError::Bootstrap(format!("invalid reviewed member receipt: {error}"))
+                })?;
+                crate::repository_member_agent_create::complete_parent(
+                    &tx,
+                    member,
+                    &agent,
+                    command.reviewed_at,
+                )?;
+            } else {
+                crate::repository_member_agent_create::record_outcome(
+                    &tx,
+                    member,
+                    "finalized",
+                    "verified_not_created",
+                    None,
+                    command.reviewed_at,
+                )?;
+            }
+        }
         tx.commit().map_err(|error| {
             db_error(
                 "failed committing independently verified agent creation",

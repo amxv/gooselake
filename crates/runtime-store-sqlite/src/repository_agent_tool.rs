@@ -153,6 +153,11 @@ impl SqliteRuntimeRepository {
             &operation,
             exact_result,
         )?;
+        crate::repository_member_agent_create::verify_model_add_result(
+            &transaction,
+            &operation,
+            exact_result,
+        )?;
         let authority = OperationAuthorityTransaction::new(&transaction);
         authority.terminalize(
             operation_id,
@@ -260,8 +265,40 @@ mod tests {
         );
 
         let result = json!({"ok":true,"result":{"agent_id":"sess_new","alias":"worker"}});
-        repo.finish_agent_tool_mutation(&first.operation_id, &result, 102)
+        assert!(repo
+            .finish_agent_tool_mutation(&first.operation_id, &result, 102)
+            .is_err());
+        // Historical replay remains compatible with pre-native-journal
+        // receipts, while the current finalizer refuses this fabricated Add.
+        let mut connection = open_connection(&temp.path().join("runtime.sqlite")).unwrap();
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .unwrap();
+        let authority = OperationAuthorityTransaction::new(&tx);
+        authority
+            .terminalize(
+                &first.operation_id,
+                OperationPhase::Requested,
+                OperationPhase::Completed,
+                Some(&workspace),
+                &result,
+                None,
+                None,
+                102,
+            )
+            .unwrap();
+        authority
+            .append_transition(&OperationTransitionRecord {
+                operation_id: first.operation_id.clone(),
+                sequence: 2,
+                from_phase: Some(OperationPhase::Requested),
+                to_phase: OperationPhase::Completed,
+                evidence: Some(json!({"fixture":"historical_receipt"})),
+                created_at: 102,
+            })
+            .unwrap();
+        tx.commit().unwrap();
+        drop(connection);
         drop(repo);
         let reopened = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite"));
         assert_eq!(

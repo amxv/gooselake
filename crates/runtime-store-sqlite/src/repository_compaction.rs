@@ -155,7 +155,7 @@ impl SqliteRuntimeRepository {
         run_id: &str,
         phase: &str,
         evidence: &str,
-        now_ms: i64,
+        _now_ms: i64,
     ) -> Result<CompactionTransitionReceipt, RuntimeError> {
         let evidence = evidence.trim();
         if !matches!(phase, "completed" | "failed") || evidence.len() < 8 || evidence.len() > 2048 {
@@ -164,77 +164,20 @@ impl SqliteRuntimeRepository {
                     .into(),
             ));
         }
-        let mut connection = open_connection(&self.database_path)?;
-        let tx = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| db_error("failed beginning compaction review", error))?;
-        let mut run = load(&tx, run_id)?
+        let connection = open_connection(&self.database_path)?;
+        let run = load(&connection, run_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("compaction run {run_id}")))?;
         if run.phase != "manual_review" {
             return Err(RuntimeError::Conflict(
                 "only unresolved manual-review compactions can be explicitly settled".into(),
             ));
         }
-        if phase == "completed" {
-            let current: i64 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM sessions s
-                     JOIN workspace_agents a ON a.session_id = s.id
-                     WHERE s.id = ?1 AND s.provider = ?2
-                       AND s.provider_session_ref = ?3
-                       AND s.canonical_provider_session_ref IS ?4
-                       AND a.revision = ?5 AND a.lifecycle_state = 'active'",
-                    params![
-                        run.agent_id,
-                        run.provider.as_str(),
-                        run.provider_session_ref,
-                        run.canonical_provider_session_ref,
-                        i64::try_from(run.agent_revision).unwrap_or(-1),
-                    ],
-                    |row| row.get(0),
-                )
-                .map_err(|error| {
-                    db_error("failed checking reviewed compaction attachment", error)
-                })?;
-            if current != 1 {
-                return Err(RuntimeError::Conflict(
-                    "cannot confirm completion against a superseded provider attachment".into(),
-                ));
-            }
-        }
-        run.phase = phase.into();
-        run.outcome = (phase == "completed").then_some(ProviderCompactSessionOutcome::Accepted);
-        run.error_code = (phase == "failed").then_some("operator_verified_not_completed".into());
-        run.review_evidence = Some(evidence.into());
-        run.updated_at_ms = now_ms.max(run.updated_at_ms);
-        run.validate()?;
-        let changed = tx.execute(
-            "UPDATE session_compaction_runs SET phase = ?2, record_json = ?3, updated_at_ms = ?4
-             WHERE run_id = ?1 AND phase = 'manual_review'",
-            params![run_id, phase, encode(&run)?, run.updated_at_ms],
-        )
-        .map_err(|error| db_error("failed committing operator compaction review", error))?;
-        if changed != 1 {
-            return Err(RuntimeError::Conflict(
-                "concurrent compaction review settlement".into(),
-            ));
-        }
-        if phase == "completed" {
-            admit_compaction_completion_tx(&tx, &run, run.updated_at_ms)?;
-        }
-        let journal_event = journal_compaction_event_tx(
-            &tx,
-            &run,
-            "compaction.review_resolved",
-            Some("manual_review"),
-        )?;
-        tx.commit()
-            .map_err(|error| db_error("failed committing reviewed compaction outcome", error))?;
-        Ok(CompactionTransitionReceipt {
-            run,
-            changed: true,
-            journal_event: Some(journal_event),
-        })
+        // Prose is not an independent native outcome receipt. Keep the
+        // original run and its admission fence intact until supported evidence
+        // exists; this refusal does not authorize another native attempt.
+        Err(RuntimeError::Unsupported(
+            "prose assertions cannot settle an uncertain native compaction outcome; inspect the original run; native retry is not authorized".into(),
+        ))
     }
 
     pub fn get_session_compaction(
@@ -295,7 +238,10 @@ impl SqliteRuntimeRepository {
         run: &SessionCompactionRun,
     ) -> Result<CompactionTransitionReceipt, RuntimeError> {
         run.validate()?;
-        if run.phase != "intended" || run.outcome.is_some() {
+        if run.phase != "intended"
+            || run.outcome.is_some()
+            || run.legacy_native_recovery_evidence.is_some()
+        {
             return Err(RuntimeError::InvalidState(
                 "new compaction must be an intended operation".into(),
             ));

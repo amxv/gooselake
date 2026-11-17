@@ -2,7 +2,7 @@
 use super::RuntimeError;
 use crate::legacy_spawn_obligations::LegacyNativeRecovery;
 
-fn path_segment(value: &str) -> String {
+pub(crate) fn path_segment(value: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut result = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -103,6 +103,9 @@ impl RuntimeError {
             }
             Self::OperationUnresolved {
                 legacy_recovery, ..
+            }
+            | Self::SessionControlUnresolved {
+                legacy_recovery, ..
             } => legacy_recovery.as_deref().cloned(),
             _ => None,
         }
@@ -110,6 +113,9 @@ impl RuntimeError {
 
     pub fn with_legacy_native_recovery(mut self, recovery: Option<LegacyNativeRecovery>) -> Self {
         if let Self::OperationUnresolved {
+            legacy_recovery, ..
+        }
+        | Self::SessionControlUnresolved {
             legacy_recovery, ..
         } = &mut self
         {

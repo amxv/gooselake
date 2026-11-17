@@ -258,6 +258,7 @@ fn provider_completion_before_manual_acceptance_reuses_the_admitted_run() {
         outcome: None,
         error_code: None,
         review_evidence: None,
+        legacy_native_recovery_evidence: None,
         source: "manual".into(),
         confidence: None,
         observed_turn_id: None,
@@ -300,7 +301,7 @@ fn provider_completion_before_manual_acceptance_reuses_the_admitted_run() {
 }
 
 #[test]
-fn unresolved_automatic_compaction_fences_recovery_until_review() {
+fn unresolved_automatic_compaction_cannot_be_settled_by_prose() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("workspace");
     std::fs::create_dir_all(&root).unwrap();
@@ -335,16 +336,20 @@ fn unresolved_automatic_compaction_fences_recovery_until_review() {
         ),
         "a weak post-restart alias cannot claim a reviewed run"
     );
-    let reviewed = restarted
-        .resolve_session_compaction_review(
+    assert!(matches!(
+        restarted.resolve_session_compaction_review(
             &started.run_id,
             "completed",
             "Operator verified current provider compaction completion",
             202,
-        )
-        .unwrap();
-    assert_eq!(reviewed.phase, "completed");
-    assert!(!restarted
+        ),
+        Err(RuntimeError::Unsupported(_))
+    ));
+    assert_eq!(
+        restarted.get_session_compaction(&started.run_id).unwrap(),
+        Some(unresolved[0].clone())
+    );
+    assert!(restarted
         .unresolved_session_compaction(&agent.agent_id)
         .unwrap());
     assert!(restarted

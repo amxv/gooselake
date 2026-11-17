@@ -1,3 +1,5 @@
+pub(super) mod session_control_recovery;
+
 use super::workspace_agent::{registered_workspace, workspace_agent_fixture};
 use super::*;
 use runtime_core::{ProviderKind, RuntimeError};
@@ -79,6 +81,7 @@ fn signed_edit_revision_fixture(
         replacement_turn_id: None,
         error_code: None,
         review_evidence: None,
+        legacy_native_recovery_evidence: None,
         created_at_ms: 104,
         updated_at_ms: 104,
     };
@@ -261,6 +264,7 @@ fn historical_edit_fork_admission_and_replacement_are_atomic_and_replay_safe() {
         replacement_turn_id: None,
         error_code: None,
         review_evidence: None,
+        legacy_native_recovery_evidence: None,
         created_at_ms: 104,
         updated_at_ms: 104,
     };
@@ -449,6 +453,7 @@ fn incomplete_native_edit_is_quarantined_on_restart_and_cannot_be_asserted_safe(
         replacement_turn_id: None,
         error_code: None,
         review_evidence: None,
+        legacy_native_recovery_evidence: None,
         created_at_ms: 104,
         updated_at_ms: 104,
     };
@@ -560,6 +565,7 @@ fn same_millisecond_historical_turns_use_durable_admission_order_not_lexical_ids
         replacement_turn_id: None,
         error_code: None,
         review_evidence: None,
+        legacy_native_recovery_evidence: None,
         created_at_ms: 104,
         updated_at_ms: 104,
     };

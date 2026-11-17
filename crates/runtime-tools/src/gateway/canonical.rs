@@ -216,6 +216,7 @@ fn error_envelope(error: RuntimeError) -> Value {
         RuntimeError::OperationUnresolved { .. }
         | RuntimeError::LegacyNativeObligationBlocked { .. } => "outcome_unresolved",
         RuntimeError::LegacyNativeScanIncomplete { .. } => "legacy_native_scan_incomplete",
+        RuntimeError::SessionControlUnresolved { code, .. } => code.as_str(),
         RuntimeError::ProtocolViolation(_) => "provider_error",
         _ => "tool_failed",
     };
@@ -225,6 +226,18 @@ fn error_envelope(error: RuntimeError) -> Value {
         "retryable": false,
     }});
     match &error {
+        RuntimeError::SessionControlUnresolved {
+            coordinate,
+            replacement_turn_id,
+            dispatch_outcome,
+            ..
+        } => {
+            let mut details = coordinate.error_details(replacement_turn_id.as_deref());
+            if let Some(outcome) = dispatch_outcome {
+                details["dispatch_outcome"] = Value::String(outcome.as_str().into());
+            }
+            envelope["error"]["details"] = details;
+        }
         RuntimeError::OperationUnresolved { operation_id, .. } => {
             envelope["error"]["details"] = json!({"operation_id":operation_id,
                 "inspection_path":runtime_core::error::canonical_operation_inspection_path(operation_id),

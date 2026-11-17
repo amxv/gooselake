@@ -238,6 +238,7 @@ impl RuntimeSessionManager {
             replacement_turn_id: None,
             error_code: None,
             review_evidence: None,
+            legacy_native_recovery_evidence: None,
             created_at_ms: at,
             updated_at_ms: at,
         };
@@ -246,6 +247,11 @@ impl RuntimeSessionManager {
             // Another manager may have raced the same idempotent request.
             return Ok(admitted);
         }
+        let operation = admitted;
+        let owner = crate::SessionControlCoordinate::EditRerun {
+            agent_id: operation.agent_id.clone(),
+            operation_id: operation.operation_id.clone(),
+        };
 
         // Ensure the real adapter has the exact persisted native attachment
         // and historical mapping before the irreversible fork intent.
@@ -300,24 +306,36 @@ impl RuntimeSessionManager {
         if let Err(error) = prepare {
             // No hard fork was requested, but provider resume itself can
             // have changed external state. Keep it fenced for reconciliation.
-            let _ = self.store.advance_session_edit_rerun(
+            let code = error
+                .provider_dispatch_code()
+                .unwrap_or("edit_preparation_identity_unverified")
+                .to_owned();
+            let error = self.session_control_error(&owner, &code, error, None);
+            let error = match self.store.advance_session_edit_rerun(
                 &operation.operation_id,
                 "manual_review",
                 None,
                 None,
                 Some("edit_preparation_identity_unverified"),
                 now_ms(),
-            );
+            ) {
+                Ok(_) => error,
+                Err(failure) => self.session_control_quarantine_failed(error, failure),
+            };
             return Err(error);
         }
-        self.store.advance_session_edit_rerun(
-            &operation.operation_id,
-            "native_started",
-            None,
-            None,
-            None,
-            now_ms(),
-        )?;
+        self.store
+            .advance_session_edit_rerun(
+                &operation.operation_id,
+                "native_started",
+                None,
+                None,
+                None,
+                now_ms(),
+            )
+            .map_err(|error| {
+                self.session_control_error(&owner, "edit_receipt_unavailable", error, None)
+            })?;
         let child: ProviderSession = match adapter
             .hard_fork_edit_rerun(ProviderHardForkEditRerunRequest {
                 runtime_session_id: agent_id.into(),
@@ -328,39 +346,62 @@ impl RuntimeSessionManager {
         {
             Ok(child) => child,
             Err(error) => {
-                let _ = self.store.advance_session_edit_rerun(
+                let recovery = error.legacy_native_recovery();
+                let error = self.session_control_error_with_recovery(
+                    &owner, "native_fork_outcome_unknown",
+                    RuntimeError::provider_dispatch_unknown(
+                        "native_fork_outcome_unknown",
+                        format!("edit {} may have forked the provider; inspect the original edit instead of retrying: {error}", operation.operation_id),
+                    ), recovery, None,
+                );
+                let error = match self.store.advance_session_edit_rerun(
                     &operation.operation_id,
                     "manual_review",
                     None,
                     None,
                     Some("native_fork_outcome_unknown"),
                     now_ms(),
-                );
-                return Err(RuntimeError::provider_dispatch_unknown(
-                    "native_fork_outcome_unknown",
-                    format!("edit {} may have forked the provider; inspect operation instead of retrying: {error}",operation.operation_id)
-                ));
+                ) {
+                    Ok(_) => error,
+                    Err(failure) => self.session_control_quarantine_failed(error, failure),
+                };
+                return Err(error);
             }
         };
         // Atomic SQLite session child identity + supersession ledger + edit
         // transition. Failure keeps the native effect quarantined.
-        let persisted = self.store.advance_session_edit_rerun(
-            &operation.operation_id,
-            "fork_observed",
-            Some(&child),
-            None,
-            None,
-            now_ms(),
-        )?;
+        let persisted = self
+            .store
+            .advance_session_edit_rerun(
+                &operation.operation_id,
+                "fork_observed",
+                Some(&child),
+                None,
+                None,
+                now_ms(),
+            )
+            .map_err(|error| {
+                self.session_control_error(&owner, "edit_receipt_unavailable", error, None)
+            })?;
         let committed_agent = self
             .store
-            .get_workspace_agent_by_id(agent_id)?
-            .ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))?;
+            .get_workspace_agent_by_id(agent_id)
+            .and_then(|agent| {
+                agent.ok_or_else(|| RuntimeError::NotFound(format!("workspace agent {agent_id}")))
+            })
+            .map_err(|error| {
+                self.session_control_error(&owner, "edit_receipt_unavailable", error, None)
+            })?;
         {
             let mut sessions = self.sessions.write().await;
-            let current = sessions
-                .get_mut(agent_id)
-                .ok_or_else(|| RuntimeError::NotFound(format!("session {agent_id}")))?;
+            let current = sessions.get_mut(agent_id).ok_or_else(|| {
+                self.session_control_error(
+                    &owner,
+                    "edit_receipt_unavailable",
+                    RuntimeError::NotFound(format!("session {agent_id}")),
+                    None,
+                )
+            })?;
             current.provider_session_ref = Some(child.provider_session_ref);
             current.canonical_provider_session_ref = child.canonical_provider_session_ref;
             // The durable fork rebuilt the active transcript against the
@@ -409,26 +450,54 @@ impl RuntimeSessionManager {
             )
             .await;
 
-        // A dispatch error may follow successful durable admission; detect
-        // that exact operation correlation before declaring an unknown loss.
+        // A dispatch error may follow successful durable admission. Preserve
+        // the original cause and correlate only this edit's actual admission.
+        let recovery = replacement
+            .as_ref()
+            .err()
+            .and_then(RuntimeError::legacy_native_recovery);
+        let replacement_failure = replacement.as_ref().err().map(ToString::to_string);
         let correlated = self
             .latest_turn_admission_for_correlation(agent_id, &operation.operation_id)
             .await;
         let correlated = match correlated {
             Some(admission) => Some(admission),
-            // A durable SQLite receipt can exist even if the process-local
-            // admission cache was not refreshed. Never decode other agents'
-            // historical admissions to classify this native fork.
-            None => self
-                .store
-                .get_persisted_turn_admission_for_correlation(agent_id, &operation.operation_id)?,
+            None => self.store.get_persisted_turn_admission_for_correlation(agent_id, &operation.operation_id)
+                .map_err(|error| self.session_control_error_with_recovery(
+                    &owner, "edit_receipt_unavailable",
+                    RuntimeError::Bootstrap(format!("verified fork replacement lookup failed ({error}); dispatch context: {}", replacement_failure.as_deref().unwrap_or("no dispatch error"))),
+                    recovery.clone(), None,
+                ))?,
         };
         if let Some(admission) = correlated {
-            let dispatch_error_code = replacement
+            if admission.session_id != operation.agent_id
+                || admission.provider != operation.provider.as_str()
+                || admission.correlation.correlation_id.as_deref()
+                    != Some(operation.operation_id.as_str())
+                || admission.projection_source != TurnInputProjectionSource::UserVisible
+                || admission.user_input_snapshot != operation.edited_snapshot
+            {
+                return Err(self.session_control_error_with_recovery(
+                    &owner,
+                    "replacement_admission_unverified",
+                    RuntimeError::ProtocolViolation(
+                        "replacement admission does not belong to the original edit".into(),
+                    ),
+                    recovery,
+                    None,
+                ));
+            }
+            if let Some(cause) = recovery.as_ref() {
+                self.persist_session_control_legacy_recovery(
+                    &owner,
+                    cause,
+                    Some(admission.turn_id.clone()),
+                )?;
+            }
+            let dispatch_error_code = replacement_failure
                 .as_ref()
-                .err()
                 .map(|_| "replacement_turn_dispatch_outcome_requires_inspection");
-            return self.store.advance_session_edit_rerun(
+            let completion = self.store.advance_session_edit_rerun(
                 &operation.operation_id,
                 "completed",
                 None,
@@ -436,22 +505,74 @@ impl RuntimeSessionManager {
                 dispatch_error_code,
                 now_ms(),
             );
+            match completion {
+                Ok(completed) => return Ok(completed),
+                Err(error) => {
+                    // A lost acknowledgement can follow the committed exact
+                    // completion. Inspect once; never replay a native command.
+                    if let Ok(Some(saved)) =
+                        self.store.get_session_edit_rerun(&operation.operation_id)
+                    {
+                        let matching = saved.operation_id == operation.operation_id
+                            && saved.agent_id == operation.agent_id
+                            && saved.target_turn_id == operation.target_turn_id
+                            && saved.provider == operation.provider
+                            && saved.source_provider_session_ref
+                                == operation.source_provider_session_ref
+                            && saved.source_canonical_provider_session_ref
+                                == operation.source_canonical_provider_session_ref
+                            && saved.agent_revision == operation.agent_revision
+                            && saved.expected_session_updated_at
+                                == operation.expected_session_updated_at
+                            && saved.request_hash == operation.request_hash
+                            && saved.idempotency_key == operation.idempotency_key
+                            && saved.edited_snapshot == operation.edited_snapshot
+                            && saved.created_at_ms == operation.created_at_ms
+                            && saved.child_provider_session_ref
+                                == persisted.child_provider_session_ref
+                            && saved.child_canonical_provider_session_ref
+                                == persisted.child_canonical_provider_session_ref
+                            && saved.phase == "completed"
+                            && saved.replacement_turn_id.as_deref()
+                                == Some(admission.turn_id.as_str())
+                            && saved.error_code.as_deref() == dispatch_error_code;
+                        let evidence_matches = recovery.as_ref().is_none_or(|cause| {
+                            matches!(self.store.read_session_control_legacy_recovery(&owner), Ok(Some(saved)) if saved == *cause)
+                        });
+                        if matching && evidence_matches {
+                            return Ok(saved);
+                        }
+                    }
+                    return Err(self.session_control_error_with_recovery(
+                        &owner,
+                        "edit_receipt_unavailable",
+                        error,
+                        recovery,
+                        Some(admission.turn_id),
+                    ));
+                }
+            }
         }
-        let _ = self.store.advance_session_edit_rerun(
+        let error = self.session_control_error_with_recovery(
+            &owner, "replacement_admission_unverified",
+            RuntimeError::provider_dispatch_unknown(
+                "replacement_admission_unverified",
+                format!("verified edit fork {} has no verified durable replacement admission: {}; inspect the original edit before resending",
+                    operation.operation_id, replacement_failure.as_deref().unwrap_or("unknown admission outcome")),
+            ), recovery, None,
+        );
+        let error = match self.store.advance_session_edit_rerun(
             &operation.operation_id,
             "manual_review",
             None,
             None,
             Some("replacement_admission_unverified"),
             now_ms(),
-        );
-        Err(RuntimeError::provider_dispatch_unknown(
-            "replacement_admission_unverified",
-            format!("verified edit fork {} has no durable replacement admission: {}; inspect operation before resending",
-                operation.operation_id,
-                replacement.err().map_or_else(||"unknown admission outcome".into(),|e|e.to_string())
-            )
-        ))
+        ) {
+            Ok(_) => error,
+            Err(failure) => self.session_control_quarantine_failed(error, failure),
+        };
+        Err(error)
     }
 }
 

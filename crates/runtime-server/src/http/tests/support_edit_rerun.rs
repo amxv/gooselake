@@ -44,6 +44,13 @@ impl TestProvider {
             .sessions
             .get(agent_id)
             .ok_or_else(|| RuntimeError::NotFound(format!("fake provider session {agent_id}")))?;
+        // Refuse preparation explicitly before any resume or hard fork.
+        if self.edit_mode.load(Ordering::SeqCst) == 3 {
+            return Err(RuntimeError::provider_not_dispatched(
+                "fixture_edit_preparation_not_dispatched",
+                "fixture declined edit preparation before native dispatch",
+            ));
+        }
         if self.edit_mode.load(Ordering::SeqCst) == 0
             || native_turn_id != format!("native-{logical_turn_id}")
             || !session.completed.contains_key(logical_turn_id)

@@ -247,6 +247,7 @@ fn native_archive_claim_fences_stale_persistence_policy_lifecycle_and_compaction
         outcome: None,
         error_code: None,
         review_evidence: None,
+        legacy_native_recovery_evidence: None,
         source: "manual".into(),
         confidence: None,
         observed_turn_id: None,

@@ -26,6 +26,10 @@ pub struct SessionEditRerunOperation {
     pub replacement_turn_id: Option<String>,
     pub error_code: Option<String>,
     pub review_evidence: Option<String>,
+    /// Raw retained diagnostic evidence, not native authority or a verified
+    /// observation. Typed restoration requires its matching Critical event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_native_recovery_evidence: Option<serde_json::Value>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
 }

@@ -330,6 +330,26 @@ impl From<RuntimeError> for ApiError {
                 error.details = Some(details);
                 error
             }
+            RuntimeError::SessionControlUnresolved {
+                coordinate,
+                code,
+                message,
+                legacy_recovery,
+                replacement_turn_id,
+                dispatch_outcome,
+            } => {
+                let mut error = Self::new(StatusCode::CONFLICT, code, message);
+                let mut details = coordinate.error_details(replacement_turn_id.as_deref());
+                if let Some(outcome) = dispatch_outcome {
+                    details["dispatch_outcome"] =
+                        serde_json::Value::String(outcome.as_str().into());
+                }
+                if let Some(recovery) = legacy_recovery {
+                    details["legacy_recovery"] = recovery.error_details();
+                }
+                error.details = Some(details);
+                error
+            }
             RuntimeError::LegacyNativeObligationBlocked { coordinate, reason } => {
                 let inspection_path = runtime_core::error::legacy_team_operation_inspection_path(
                     &coordinate.operation_id,

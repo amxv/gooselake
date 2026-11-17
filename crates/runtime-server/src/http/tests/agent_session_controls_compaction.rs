@@ -245,11 +245,19 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
         call(&router, &token, "POST", &compact_uri, None, Some("no-op")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(no_compact["phase"], "not_performed");
+    assert_eq!(no_compact["outcome"], "not_performed");
     assert_eq!(provider.compaction_calls(), 2);
 
     provider.set_compaction_mode(3);
-    let (status, _) = call(&router, &token, "POST", &compact_uri, None, Some("unknown")).await;
-    assert_ne!(status, StatusCode::OK);
+    let (status, unknown) =
+        call(&router, &token, "POST", &compact_uri, None, Some("unknown")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(unknown["error"]["details"]["dispatch_outcome"], "unknown");
+    assert_eq!(unknown["error"]["details"]["family"], "compaction");
+    assert_eq!(
+        unknown["error"]["details"]["native_retry_authorized"],
+        false
+    );
     let (status, review) = call(&router, &token, "POST", &compact_uri, None, Some("unknown")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(review["phase"], "manual_review");
@@ -309,54 +317,51 @@ async fn manual_compaction_is_admitted_once_observed_and_never_replayed_ambiguou
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, settled) = call(
+    let (status, refusal) = call(
         &router, &token, "POST", &review_uri,
         Some(serde_json::json!({"phase":"failed","evidence":"Operator verified native compaction did not complete"})), None,
     ).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(settled["phase"], "failed");
-    assert!(settled["review_evidence"].as_str().unwrap().len() > 8);
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        refusal["error"]["code"],
+        "compaction_resolution_unsupported"
+    );
+    assert_eq!(refusal["error"]["details"]["run_id"], review["run_id"]);
     let (status, after_review) = call(&router, &token, "GET", &events_uri, None, None).await;
     assert_eq!(status, StatusCode::OK);
-    let review_events: Vec<_> = after_review
+    assert!(!after_review
         .as_array()
         .unwrap()
         .iter()
-        .filter(|event| event["kind"] == "compaction.review_resolved")
-        .collect();
-    assert_eq!(review_events.len(), 1);
-    assert_eq!(review_events[0]["criticality"], "critical");
-    let (status, review_detail) = call(
+        .any(|event| event["kind"] == "compaction.review_resolved"));
+    let (status, retained) = call(
         &router,
         &token,
         "GET",
-        &format!(
-            "/v2/events/{}",
-            review_events[0]["event_id"].as_str().unwrap()
-        ),
+        refusal["error"]["details"]["inspection_path"]
+            .as_str()
+            .unwrap(),
         None,
         None,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(review_detail["payload"]["run_id"], review["run_id"]);
-    assert_eq!(review_detail["payload"]["phase"], "failed");
-    assert!(review_detail["payload"].get("review_evidence").is_none());
-    assert_eq!(provider.compaction_calls(), 3, "review must not redispatch");
+    assert_eq!(retained, review);
+    assert_eq!(provider.compaction_calls(), 3);
     let (status, _) = call(
         &router, &token, "POST", &review_uri,
         Some(serde_json::json!({"phase":"failed","evidence":"Operator verified native compaction did not complete"})), None,
     ).await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let (status, next) = call(
+    let (status, _) = call(
         &router,
         &token,
         "POST",
         &format!("/v2/agents/{agent_id}/turns"),
-        Some(serde_json::json!({"input":[{"type":"text","text":"safe now"}]})),
+        Some(serde_json::json!({"input":[{"type":"text","text":"still fenced"}]})),
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(next["turn_id"].as_str().is_some());
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(provider.compaction_calls(), 3);
 }

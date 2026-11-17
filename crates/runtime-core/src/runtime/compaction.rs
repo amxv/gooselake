@@ -189,8 +189,8 @@ impl RuntimeSessionManager {
         Ok(run)
     }
 
-    /// A trusted operator can settle a quarantined native outcome only after
-    /// verifying it externally. This never redispatches the provider request.
+    /// Inspect the existing review target. Prose-only resolution remains
+    /// unsupported until the family has independently approved evidence.
     pub fn resolve_compaction_review(
         &self,
         agent_id: &str,
@@ -199,9 +199,22 @@ impl RuntimeSessionManager {
         evidence: &str,
     ) -> Result<SessionCompactionRun, RuntimeError> {
         self.session_compaction_run(agent_id, run_id)?;
-        let receipt =
-            self.store
-                .resolve_session_compaction_review(run_id, phase, evidence, now_ms())?;
+        let owner = crate::SessionControlCoordinate::Compaction {
+            agent_id: agent_id.into(),
+            run_id: run_id.into(),
+        };
+        let receipt = self
+            .store
+            .resolve_session_compaction_review(run_id, phase, evidence, now_ms())
+            .map_err(|error| match error {
+                RuntimeError::Unsupported(_) => self.session_control_error(
+                    &owner,
+                    "compaction_resolution_unsupported",
+                    error,
+                    None,
+                ),
+                other => other,
+            })?;
         if let Some(event) = receipt.journal_event {
             let _ = self.event_tx.send(event);
         }
@@ -284,6 +297,7 @@ impl RuntimeSessionManager {
             outcome: None,
             error_code: None,
             review_evidence: None,
+            legacy_native_recovery_evidence: None,
             source: "manual".into(),
             confidence: None,
             observed_turn_id: None,
@@ -301,9 +315,19 @@ impl RuntimeSessionManager {
         if !admission.changed {
             return Ok(admission.run);
         }
+        let run = admission.run;
+        let owner = crate::SessionControlCoordinate::Compaction {
+            agent_id: run.agent_id.clone(),
+            run_id: run.run_id.clone(),
+        };
         let Some(event) = admission.journal_event else {
-            return Err(RuntimeError::Bootstrap(
-                "compaction admission committed without a Critical journal receipt".into(),
+            return Err(self.session_control_error(
+                &owner,
+                "compaction_receipt_unavailable",
+                RuntimeError::Bootstrap(
+                    "compaction admission committed without a Critical journal receipt".into(),
+                ),
+                None,
             ));
         };
         let _ = self.event_tx.send(event);
@@ -343,6 +367,33 @@ impl RuntimeSessionManager {
             }
             result => result,
         };
+        let recovery = native_result
+            .as_ref()
+            .err()
+            .and_then(RuntimeError::legacy_native_recovery);
+        let native_context = match &native_result {
+            Ok(ProviderCompactSessionOutcome::Accepted) => {
+                "provider explicitly accepted compaction".to_owned()
+            }
+            Ok(ProviderCompactSessionOutcome::NotPerformed) => {
+                "provider explicitly reported compaction not_performed".to_owned()
+            }
+            Err(error) => format!("native compaction response unavailable: {error}"),
+        };
+        let receipt_failure = |error: RuntimeError| -> Result<SessionCompactionRun, RuntimeError> {
+            let context = match self.verified_terminal_compaction_receipt(&run) {
+                Ok(Some(saved)) => return Ok(saved),
+                Ok(None) => format!("{native_context}; original receipt unavailable ({error})"),
+                Err(recheck) => format!("{native_context}; original receipt unavailable ({error}); terminal inspection failed ({recheck})"),
+            };
+            Err(self.session_control_error_with_recovery(
+                &owner,
+                "compaction_receipt_unavailable",
+                RuntimeError::Bootstrap(context),
+                recovery.clone(),
+                None,
+            ))
+        };
         let (phase, outcome, error_code) = match &native_result {
             Ok(ProviderCompactSessionOutcome::Accepted) => (
                 "accepted",
@@ -360,20 +411,21 @@ impl RuntimeSessionManager {
                 Some("native_compaction_outcome_unknown"),
             ),
         };
-        if let Some(observed) = self.store.get_session_compaction(&run.run_id)? {
-            if observed.phase == "completed" {
-                // Native terminal evidence is stronger than a late or
-                // contradictory synchronous response.
-                return Ok(observed);
-            }
+        match self.verified_terminal_compaction_receipt(&run) {
+            Ok(Some(observed)) => return Ok(observed),
+            Ok(None) => {}
+            Err(error) => return receipt_failure(error),
         }
-        let receipt = self.store.transition_session_compaction(
+        let receipt = match self.store.transition_session_compaction(
             &run.run_id,
             phase,
             outcome,
             error_code,
             now_ms(),
-        )?;
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => return receipt_failure(error),
+        };
         let persisted = receipt.run;
         if receipt.changed {
             if let Some(event) = receipt.journal_event {
@@ -396,11 +448,14 @@ impl RuntimeSessionManager {
                     .await;
             }
         }
+        if matches!(
+            persisted.phase.as_str(),
+            "completed" | "failed" | "cancelled" | "not_performed"
+        ) {
+            return Ok(persisted);
+        }
         match native_result {
             Ok(ProviderCompactSessionOutcome::Accepted) => {
-                if persisted.phase == "completed" {
-                    return Ok(persisted);
-                }
                 if self.provider_compaction_observer_flags.load(Ordering::Acquire)
                     & Self::compaction_observer_flag(provider) != 0
                 {
@@ -417,22 +472,22 @@ impl RuntimeSessionManager {
                     // An adapter that accepts compaction but cannot surface
                     // terminal events must not leave an unresolvable forever-
                     // accepted request in the durable manager state.
-                    self.store.transition_session_compaction(
-                        &persisted.run_id,
-                        "manual_review",
-                        None,
-                        Some("provider_compaction_observer_unavailable"),
-                        now_ms(),
-                    ).map(|receipt| receipt.run)
+                    match self.store.transition_session_compaction(
+                        &persisted.run_id, "manual_review", None,
+                        Some("provider_compaction_observer_unavailable"), now_ms(),
+                    ) {
+                        Ok(receipt) => Ok(receipt.run),
+                        Err(error) => receipt_failure(error),
+                    }
                 }
             }
             Ok(ProviderCompactSessionOutcome::NotPerformed) => Ok(persisted),
-            Err(error) => Err(RuntimeError::provider_dispatch_unknown(
-                "native_compaction_outcome_unknown",
-                format!(
-                    "manual compaction {} may have reached the provider; inspect its durable status instead of resubmitting: {error}",
-                    persisted.run_id
-                ),
+            Err(error) => Err(self.session_control_error_with_recovery(
+                &owner, "native_compaction_outcome_unknown",
+                RuntimeError::provider_dispatch_unknown(
+                    "native_compaction_outcome_unknown",
+                    format!("manual compaction {} may have reached the provider; inspect its durable status instead of resubmitting: {error}", persisted.run_id),
+                ), recovery, None,
             )),
         }
     }

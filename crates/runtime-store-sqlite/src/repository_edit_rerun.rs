@@ -194,6 +194,7 @@ impl SqliteRuntimeRepository {
     ) -> Result<SessionEditRerunOperation, RuntimeError> {
         operation.validate()?;
         if operation.phase != "intended"
+            || operation.legacy_native_recovery_evidence.is_some()
             || operation.child_provider_session_ref.is_some()
             || operation.replacement_turn_id.is_some()
         {

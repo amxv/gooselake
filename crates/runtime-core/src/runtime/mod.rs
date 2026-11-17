@@ -30,6 +30,7 @@ mod operator_agent_create;
 mod operator_agent_restore;
 mod operator_native_policy;
 mod recovery;
+mod session_control_recovery;
 mod sessions;
 mod turn_dispatch_outcome;
 mod turn_dispatch_start;

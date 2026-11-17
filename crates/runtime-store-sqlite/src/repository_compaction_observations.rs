@@ -303,6 +303,7 @@ impl SqliteRuntimeRepository {
                 outcome: None,
                 error_code: None,
                 review_evidence: None,
+                legacy_native_recovery_evidence: None,
                 source: "provider".into(),
                 confidence: Some(if observation.turn_id.is_some() {
                     "native_turn".into()

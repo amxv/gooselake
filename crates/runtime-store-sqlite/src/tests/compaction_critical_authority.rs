@@ -1,3 +1,5 @@
+mod session_control_recovery;
+
 use super::workspace_agent::{registered_workspace, workspace_agent_fixture};
 use super::*;
 use runtime_core::{
@@ -29,6 +31,7 @@ fn run_for(
         outcome: None,
         error_code: None,
         review_evidence: None,
+        legacy_native_recovery_evidence: None,
         source: "manual".into(),
         confidence: None,
         observed_turn_id: None,
@@ -260,7 +263,7 @@ fn startup_quarantine_batch_journals_every_changed_run_or_none() {
 }
 
 #[test]
-fn operator_review_critical_failure_rolls_back_and_never_replays_native() {
+fn prose_failed_review_never_admits_a_terminal_receipt() {
     let (temp, repository, workspace) = setup();
     let run = run_for(
         &repository,
@@ -294,22 +297,18 @@ fn operator_review_critical_failure_rolls_back_and_never_replays_native() {
         .execute_batch("DROP TRIGGER reject_review_critical")
         .unwrap();
 
-    let receipt = repository
-        .resolve_session_compaction_review_with_receipt(&run.run_id, "failed", evidence, 202)
-        .unwrap();
-    assert!(receipt.changed);
-    assert_eq!(receipt.run.phase, "failed");
-    assert_eq!(receipt.run.review_evidence.as_deref(), Some(evidence));
+    assert!(matches!(
+        repository.resolve_session_compaction_review_with_receipt(
+            &run.run_id,
+            "failed",
+            evidence,
+            202,
+        ),
+        Err(RuntimeError::Unsupported(_))
+    ));
     assert_eq!(
-        receipt.journal_event.as_ref().unwrap().criticality,
-        RuntimeEventCriticality::Critical
-    );
-    let observed = events(&repository, &run.agent_id, "compaction.review_resolved");
-    assert_eq!(observed.len(), 1);
-    assert_eq!(observed[0].payload["phase"], "failed");
-    assert!(
-        observed[0].payload.get("review_evidence").is_none(),
-        "evidence remains in protected operation"
+        repository.get_session_compaction(&run.run_id).unwrap(),
+        Some(unresolved.clone())
     );
     let restarted = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
     assert!(matches!(
@@ -317,18 +316,22 @@ fn operator_review_critical_failure_rolls_back_and_never_replays_native() {
             &run.run_id,
             "failed",
             evidence,
-            203
+            203,
         ),
-        Err(RuntimeError::Conflict(_))
+        Err(RuntimeError::Unsupported(_))
     ));
     assert_eq!(
-        events(&restarted, &run.agent_id, "compaction.review_resolved").len(),
-        1
+        restarted.get_session_compaction(&run.run_id).unwrap(),
+        Some(unresolved)
     );
+    assert!(events(&restarted, &run.agent_id, "compaction.review_resolved").is_empty());
+    assert!(restarted
+        .unresolved_session_compaction(&run.agent_id)
+        .unwrap());
 }
 
 #[test]
-fn completed_operator_review_critical_failure_rolls_back_notices_and_hooks() {
+fn prose_completed_review_never_admits_notices_or_hooks() {
     let (temp, repository, workspace) = setup();
     let (lead_session, lead) =
         workspace_agent_fixture(&workspace, "session_review_lead", "review-lead");
@@ -405,43 +408,40 @@ fn completed_operator_review_critical_failure_rolls_back_notices_and_hooks() {
         .execute_batch("DROP TRIGGER reject_review_completion")
         .unwrap();
 
-    let receipt = repository
-        .resolve_session_compaction_review_with_receipt(&run.run_id, "completed", evidence, 202)
-        .unwrap();
-    assert!(receipt.changed);
-    assert_eq!(receipt.run.phase, "completed");
-    assert_eq!(
-        receipt.journal_event.unwrap().kind,
-        "compaction.review_resolved"
-    );
+    let before = repository.get_session_compaction(&run.run_id).unwrap();
+    assert!(matches!(
+        repository.resolve_session_compaction_review_with_receipt(
+            &run.run_id,
+            "completed",
+            evidence,
+            202,
+        ),
+        Err(RuntimeError::Unsupported(_))
+    ));
     let reopened = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
-    assert_eq!(
-        events(&reopened, &run.agent_id, "compaction.review_resolved").len(),
-        1
-    );
-    assert_eq!(reopened.list_workspace_system_notices(10).unwrap().len(), 1);
-    assert_eq!(
-        reopened
-            .list_team_hook_effects(&workspace.workspace_id, 10)
-            .unwrap()
-            .len(),
-        1
-    );
     assert!(matches!(
         reopened.resolve_session_compaction_review_with_receipt(
             &run.run_id,
             "completed",
             evidence,
-            203
+            203,
         ),
-        Err(RuntimeError::Conflict(_))
+        Err(RuntimeError::Unsupported(_))
     ));
-    assert_eq!(reopened.list_workspace_system_notices(10).unwrap().len(), 1);
     assert_eq!(
-        reopened
-            .list_team_hook_effects(&workspace.workspace_id, 10)
-            .unwrap()
-            .len(),
-        1
+        reopened.get_session_compaction(&run.run_id).unwrap(),
+        before
     );
+    assert!(events(&reopened, &run.agent_id, "compaction.review_resolved").is_empty());
+    assert!(reopened
+        .list_workspace_system_notices(10)
+        .unwrap()
+        .is_empty());
+    assert!(reopened
+        .list_team_hook_effects(&workspace.workspace_id, 10)
+        .unwrap()
+        .is_empty());
+    assert!(reopened
+        .unresolved_session_compaction(&run.agent_id)
+        .unwrap());
 }

@@ -25,6 +25,8 @@ mod services_session_lookup;
 mod services_workspace_status_trait;
 mod services_worktree_status_trait;
 pub mod session_compaction;
+pub mod session_control_recovery;
+pub use session_control_recovery::SessionControlCoordinate;
 pub mod state;
 pub mod team_comms;
 pub mod team_hooks;

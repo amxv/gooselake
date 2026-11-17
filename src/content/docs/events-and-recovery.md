@@ -143,18 +143,18 @@ Manual compaction request-state transitions (`accepted`, `not_performed`,
 `compaction.request_state_changed` receipt in the same SQLite transaction as
 the changed run state. A failed event insert retains the prior state and
 leaves uncertain native effects fenced; an exact phase replay emits nothing.
-Initial native-request admission (`compaction.admitted`), restart quarantine
-(`compaction.restart_quarantined` with the previous phase) and explicit
-operator settlement (`compaction.review_resolved`) also publish Critical
+Initial native-request admission (`compaction.admitted`) and restart quarantine
+(`compaction.restart_quarantined` with the previous phase) also publish Critical
 receipts **in the same transaction** as their changed durable run state.
 Startup quarantine is all-or-nothing across the pending batch; injected event
 failure rolls back all affected phases, retaining native uncertainty until a
 later authorized recovery attempt. A same-key admission replay, including one
 that races between independent runtime processes, returns the existing run and
-must not dispatch another native request. Operator review events omit the
-review evidence itself, which remains on the protected durable run record;
-review always requires external native-outcome verification. Journal replay is
-authoritative; broadcasts may be lost without changing the persisted state.
+must not dispatch another native request. Prose-only compaction review returns
+`409 compaction_resolution_unsupported`; it cannot emit a new
+`compaction.review_resolved` event, release the fence, or admit completion
+notices and hooks. Existing historical records remain readable. Journal replay
+is authoritative; broadcasts may be lost without changing the persisted state.
 This proof covers the named compaction mutation paths, not arbitrary native
 effect exactly-once identity, legacy historical event backfills or safe
 destructive retention.
@@ -592,3 +592,14 @@ reported count is zero. Inspect the original data's ownership/legacy lineage,
 review every unknown or outstanding obligation, rehearse ordered migrations
 and restart on a separate writable copy, and obtain explicit cutover approval
 before irreversible changes. The snapshot audit cannot establish those proofs.
+
+### Session-control recovery observations
+
+An edit or compaction response keeps its original family-owned inspection
+coordinate. A legacy native refusal can add a diagnostic observation to that
+record and a Critical `session_control.legacy_native_recovery_observed` event
+in one transaction. Their owner, cause and first observation time must match;
+replays retain the first pair and do not append another event. An absent,
+changed or malformed half is never silently repaired or treated as verified
+recovery evidence. Raw retained evidence stays inspectable, and a separately
+verified terminal native result can still settle without discarding it.

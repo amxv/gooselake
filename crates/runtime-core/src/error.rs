@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 mod legacy_native;
+pub(crate) use legacy_native::path_segment as encode_inspection_path_segment;
 pub use legacy_native::{
     canonical_operation_inspection_path, legacy_team_operation_inspection_path,
 };
@@ -50,6 +51,20 @@ pub enum RuntimeError {
         /// Historical evidence that blocked a newer admitted operation. This
         /// is observational only and never authorizes replay or clearance.
         legacy_recovery: Option<Box<crate::legacy_spawn_obligations::LegacyNativeRecovery>>,
+    },
+
+    /// An existing edit/compaction owns this ambiguity. Its family-specific
+    /// lookup is explicit; it is never a synthetic runtime_operations owner.
+    #[error("session control {coordinate:?} outcome unresolved: {message}")]
+    SessionControlUnresolved {
+        coordinate: crate::SessionControlCoordinate,
+        code: String,
+        message: String,
+        legacy_recovery: Option<Box<crate::legacy_spawn_obligations::LegacyNativeRecovery>>,
+        replacement_turn_id: Option<String>,
+        /// Explicit classification from the error previously returned at this
+        /// boundary. It never authorizes retry of the family operation.
+        dispatch_outcome: Option<ProviderDispatchOutcome>,
     },
 
     #[error("legacy native obligation unresolved: {coordinate:?}; reason {reason:?}; native retry is not authorized")]
@@ -176,6 +191,10 @@ impl RuntimeError {
             {
                 ProviderDispatchOutcome::NotDispatched
             }
+            Self::SessionControlUnresolved {
+                dispatch_outcome: Some(outcome),
+                ..
+            } => *outcome,
             _ => ProviderDispatchOutcome::Unknown,
         }
     }
@@ -183,7 +202,9 @@ impl RuntimeError {
     pub fn provider_dispatch_code(&self) -> Option<&str> {
         match self {
             Self::OperatorTurnNotDispatched { code, .. } => Some(code.as_str()),
-            Self::ProviderDispatch { code, .. } => Some(code.as_str()),
+            Self::ProviderDispatch { code, .. } | Self::SessionControlUnresolved { code, .. } => {
+                Some(code.as_str())
+            }
             _ => None,
         }
     }

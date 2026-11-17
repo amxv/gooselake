@@ -1,6 +1,8 @@
 use super::workspace_worktree_routes::call;
 use super::*;
 
+mod native_recovery;
+
 async fn ready_edit_agent(
     mode: u8,
 ) -> (
@@ -209,7 +211,7 @@ async fn unknown_native_edit_is_fenced_across_idempotent_retries_and_cannot_be_g
     let body = serde_json::json!({"edited_snapshot":{
         "prompt_text":"never duplicate this","image_refs":[],"invocation":null,
     }});
-    let (status, _) = call(
+    let (status, unknown) = call(
         &router,
         &token,
         "POST",
@@ -218,7 +220,13 @@ async fn unknown_native_edit_is_fenced_across_idempotent_retries_and_cannot_be_g
         Some("unknown-fork"),
     )
     .await;
-    assert_ne!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(unknown["error"]["details"]["dispatch_outcome"], "unknown");
+    assert_eq!(unknown["error"]["details"]["family"], "edit_rerun");
+    assert_eq!(
+        unknown["error"]["details"]["native_retry_authorized"],
+        false
+    );
     assert_eq!(provider.edit_calls(), 1);
     let (status, replay) = call(
         &router,

@@ -8,6 +8,9 @@ use serde_json::{json, Value};
 
 use crate::db::{db_error, json_to_string, open_connection};
 use crate::operation_tx::OperationAuthorityTransaction;
+use crate::repository_member_agent_archive::{
+    update_member_archive_parent, validate_member_archive_record,
+};
 use crate::repository_operator_agent_archive::{CLAIM_KIND, EFFECT_KIND, OPERATION_KIND};
 use crate::repository_operator_agent_restore::{restore_state, restored_session_snapshot};
 use crate::repository_workspace::operation_by_id;
@@ -71,7 +74,7 @@ impl SqliteRuntimeRepository {
             RuntimeError::NotFound(format!("archive operation {}", command.operation_id))
         })?;
         if record.kind != OPERATION_KIND
-            || record.actor != command.actor
+            || (record.actor.kind != OperationActorKind::Agent && record.actor != command.actor)
             || record.workspace_id.as_deref() != Some(&command.workspace_id)
             || record.normalized_request["workspace_id"] != command.workspace_id
             || record.normalized_request["agent_id"] != command.agent_id
@@ -82,6 +85,11 @@ impl SqliteRuntimeRepository {
             return Err(RuntimeError::Conflict(
                 "archive review does not match immutable operator authority".into(),
             ));
+        }
+        if record.actor.kind == OperationActorKind::Agent {
+            // Operator authentication authorizes independent evidence review;
+            // it never rewrites the original model caller or its parent link.
+            validate_member_archive_record(&tx, &record)?;
         }
         let (phase, raw_effect): (String, String) = tx
             .query_row(
@@ -200,7 +208,8 @@ impl SqliteRuntimeRepository {
                 WorkspaceAgentLifecycleState::Archived,
                 reason,
                 changed_at,
-                None,
+                (record.actor.kind == OperationActorKind::Agent)
+                    .then_some(record.actor.identifier.as_str()),
                 Some(&command.operation_id),
             )?;
             (
@@ -286,6 +295,17 @@ impl SqliteRuntimeRepository {
             created_at: changed_at,
         })?;
         authority.release_claim(&claim)?;
+        update_member_archive_parent(
+            &tx,
+            &record,
+            "finalized",
+            if closed {
+                "native_close_confirmed"
+            } else {
+                "verified_not_closed"
+            },
+            changed_at,
+        )?;
         tx.commit()
             .map_err(|error| db_error("failed committing exact native archive review", error))?;
         Ok(response)

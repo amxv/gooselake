@@ -1,5 +1,11 @@
 macro_rules! operator_agent_archive_store_methods {
     () => {
+        fn admit_member_agent_archive(
+            &self,
+            _command: &crate::OperatorAgentArchiveCommand,
+        ) -> Result<crate::OperatorAgentArchiveAdmission, RuntimeError> {
+            unsupported_store("durable member agent archive admission unavailable")
+        }
         fn replay_operator_agent_archive(
             &self,
             _actor: &crate::OperationActor,

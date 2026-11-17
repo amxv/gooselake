@@ -6,7 +6,7 @@ use crate::{OperationActor, RuntimeError, WorkspaceAgentRecord};
 
 /// Immutable admission identity for a provider-backed archive close. Persist
 /// it before the provider can observe the close RPC or process termination.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OperatorAgentArchiveCommand {
     pub operation_id: String,
     pub actor: OperationActor,

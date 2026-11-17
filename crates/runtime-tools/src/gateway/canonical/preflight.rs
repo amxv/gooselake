@@ -57,7 +57,7 @@ pub(super) fn validate_team_mode(mode: &TeamMode) -> Result<(), RuntimeError> {
             let mut seen = HashSet::new();
             if remove_agent_ids
                 .iter()
-                .any(|id| id.trim().is_empty() || !seen.insert(id))
+                .any(|id| id.trim().is_empty() || !seen.insert(id.trim()))
             {
                 return Err(RuntimeError::InvalidState(
                     "remove_agent_ids must be distinct nonempty agent IDs".into(),

@@ -8,8 +8,8 @@ use runtime_core::{
     AgentToolMutationAdmission, AgentToolMutationCommand, ProcessGetRequest, ProcessKillRequest,
     ProcessListRequest, ProcessManager, ProcessRunRequest, ProviderThinkingEffort, RuntimeError,
     ToolInvokeRequest, WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute,
-    WorkspaceAgentLifecycleState, WorkspaceAgentOnboardingRequest, WorkspaceAgentRebindRequest,
-    WorkspaceMembershipPolicy, WorkspaceWorktreeCreateRequest,
+    WorkspaceAgentOnboardingRequest, WorkspaceAgentRebindRequest, WorkspaceMembershipPolicy,
+    WorkspaceWorktreeCreateRequest,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -18,7 +18,9 @@ use super::team_helpers::status_state_for_session;
 use super::RuntimeToolGateway;
 
 mod preflight;
+mod receipts;
 use preflight::{validate_team_mode, validate_team_model_preset};
+use receipts::{attach_operation_details, unresolved_team_operation};
 
 const STATUS_MEMBER_LIMIT: usize = 100;
 const STATUS_AVAILABLE_WORKTREE_LIMIT: usize = 20;
@@ -212,28 +214,24 @@ fn error_envelope(error: RuntimeError) -> Value {
         RuntimeError::ProviderDispatch { outcome, .. } if *outcome == "unknown" => {
             "outcome_unresolved"
         }
+        RuntimeError::OperationUnresolved { .. } => "outcome_unresolved",
         RuntimeError::ProtocolViolation(_) => "provider_error",
         _ => "tool_failed",
     };
-    json!({"ok": false, "error": {
+    let mut envelope = json!({"ok": false, "error": {
         "code": code,
         "message": error.to_string(),
         "retryable": false,
-    }})
+    }});
+    if let RuntimeError::OperationUnresolved { operation_id, .. } = &error {
+        envelope["error"]["details"] = json!({"operation_id":operation_id});
+    }
+    envelope
 }
 
 fn invalid_schema(error: serde_json::Error) -> Value {
     json!({"ok": false, "error": {
         "code": "bad_request", "message": format!("invalid tool arguments: {error}"), "retryable": false
-    }})
-}
-
-fn unresolved_team_operation(operation_id: &str) -> Value {
-    json!({"ok":false,"error":{
-        "code":"outcome_unresolved",
-        "message":"The workspace mutation may have been applied, but its durable receipt is not available. Do not repeat it; inspect workspace status or request operator recovery.",
-        "retryable":false,
-        "details":{"operation_id":operation_id}
     }})
 }
 
@@ -280,13 +278,6 @@ impl RuntimeToolGateway {
                 Ok(agent) => agent,
                 Err(error) => return error_envelope(error),
             };
-            // All request-only invalid values must be rejected before writing
-            // an irreversible host-ID intent. Do not preflight mutable roster,
-            // route or native state here: exact successful replay must remain
-            // possible after the originally affected resource has changed.
-            if let Err(error) = validate_team_mode(&mode) {
-                return error_envelope(error);
-            }
             let normalized_request = json!({"tool_name":"gg_team","args":request.args.clone()});
             let request_hash = match normalized_json_hash(&normalized_request) {
                 Ok(hash) => hash,
@@ -302,7 +293,9 @@ impl RuntimeToolGateway {
                 normalized_request,
                 admitted_at: crate::now_ms(),
             };
-            // Existing terminal/unknown outcomes outlive configured presets.
+            // Existing terminal/unknown outcomes outlive configured presets
+            // and semantic validator changes. Authenticate and deserialize
+            // first, but never hide a historical exact-input durable outcome.
             // This read does not admit work; the transactional begin below
             // still arbitrates concurrent first admissions of the host key.
             match runtime_core_store(self).replay_agent_tool_mutation(&command) {
@@ -310,13 +303,18 @@ impl RuntimeToolGateway {
                     return exact_result;
                 }
                 Ok(Some(AgentToolMutationAdmission::Unresolved { operation_id })) => {
-                    return unresolved_team_operation(&operation_id);
+                    return unresolved_team_operation(self, &operation_id);
                 }
                 Ok(Some(AgentToolMutationAdmission::Execute { operation_id })) => {
-                    return unresolved_team_operation(&operation_id);
+                    return unresolved_team_operation(self, &operation_id);
                 }
                 Ok(None) => {}
                 Err(error) => return error_envelope(error),
+            }
+            // Reject invalid new input before consuming a host-ID intent.
+            // Mutable roster/native validation belongs to child admission.
+            if let Err(error) = validate_team_mode(&mode) {
+                return error_envelope(error);
             }
             if let Err(error) = validate_team_model_preset(&mode, &self.team_model_presets) {
                 return error_envelope(error);
@@ -328,7 +326,7 @@ impl RuntimeToolGateway {
                 }
                 Ok(AgentToolMutationAdmission::Replay { exact_result }) => return exact_result,
                 Ok(AgentToolMutationAdmission::Unresolved { operation_id }) => {
-                    return unresolved_team_operation(&operation_id);
+                    return unresolved_team_operation(self, &operation_id);
                 }
                 Err(error) => return error_envelope(error),
             }
@@ -342,8 +340,13 @@ impl RuntimeToolGateway {
             }
             "gg_team" => match serde_json::from_value::<TeamMode>(request.args) {
                 Ok(mode) => {
-                    self.canonical_team(caller, mode, request.invocation_id)
-                        .await
+                    self.canonical_team(
+                        caller,
+                        mode,
+                        request.invocation_id,
+                        admitted_team_operation.as_deref(),
+                    )
+                    .await
                 }
                 Err(error) => return invalid_schema(error),
             },
@@ -373,8 +376,19 @@ impl RuntimeToolGateway {
                     .finish_agent_tool_mutation(&operation_id, &envelope, crate::now_ms())
                     .is_err()
                 {
-                    return unresolved_team_operation(&operation_id);
+                    // A transport/commit acknowledgement may have been lost
+                    // after the exact parent receipt committed. Inspect only.
+                    if let Ok(Some(saved)) = runtime_core_store(self).get_operation(&operation_id) {
+                        if saved.operation.phase == runtime_core::OperationPhase::Completed {
+                            if let Some(exact) = saved.operation.exact_terminal_result {
+                                return exact;
+                            }
+                        }
+                    }
+                    return unresolved_team_operation(self, &operation_id);
                 }
+            } else {
+                return attach_operation_details(self, &operation_id, envelope);
             }
         }
         // Hold the same-caller serialization gate through durable receipt
@@ -406,6 +420,7 @@ impl RuntimeToolGateway {
         caller: &str,
         mode: TeamMode,
         invocation_id: Option<String>,
+        parent_operation_id: Option<&str>,
     ) -> Result<Value, RuntimeError> {
         let agent = self.canonical_caller(caller)?;
         let runtime = self.runtime.as_ref().expect("caller checked runtime");
@@ -656,60 +671,27 @@ impl RuntimeToolGateway {
                     }))}),
                 )
             }
-            TeamMode::Remove {
-                remove_agent_ids,
-                preserve_worktrees,
-            } => {
-                runtime.authorize_workspace_membership(
-                    workspace_id,
-                    caller,
-                    runtime_core::WorkspaceMembershipAction::Remove,
-                    self.membership_policy(),
-                )?;
-                if remove_agent_ids.is_empty() {
-                    return Err(RuntimeError::InvalidState(
-                        "remove_agent_ids cannot be empty".into(),
-                    ));
-                }
-                if remove_agent_ids.len() > 100 {
-                    return Err(RuntimeError::InvalidState(
-                        "remove_agent_ids cannot contain more than 100 agents".into(),
-                    ));
-                }
-                if preserve_worktrees == Some(false) {
-                    return Err(RuntimeError::Unsupported("managed worktree cleanup on model removal is not available; omit preserve_worktrees or set true".into()));
-                }
-                let mut seen = HashSet::new();
-                if remove_agent_ids
-                    .iter()
-                    .any(|id| id.trim().is_empty() || !seen.insert(id))
-                {
-                    return Err(RuntimeError::InvalidState(
-                        "remove_agent_ids must be distinct nonempty agent IDs".into(),
-                    ));
-                }
-                for agent_id in &remove_agent_ids {
-                    let target = runtime.get_workspace_agent(workspace_id, agent_id)?;
-                    if target.lifecycle_state != WorkspaceAgentLifecycleState::Active {
-                        return Err(RuntimeError::Conflict(format!(
-                            "agent {agent_id} is not active"
-                        )));
-                    }
-                }
-                let mut removed = Vec::new();
-                for agent_id in remove_agent_ids {
-                    let target = runtime
-                        .archive_workspace_agent_as_member(
-                            workspace_id,
-                            &agent_id,
-                            caller,
-                            Some("gg_team_remove"),
-                            self.membership_policy(),
-                        )
-                        .await?;
-                    removed.push(json!({"agent_id":target.agent_id,"alias":target.alias,"lifecycle":target.lifecycle_state}));
-                }
-                Ok(json!({"operation":"remove","removed":removed,"preserve_worktrees":true}))
+            TeamMode::Remove { .. } => {
+                let parent = parent_operation_id.ok_or_else(|| {
+                    RuntimeError::InvalidState(
+                        "model removal requires its admitted host operation".into(),
+                    )
+                })?;
+                let receipts = runtime
+                    .remove_workspace_agents_as_member(
+                        workspace_id,
+                        caller,
+                        parent,
+                        self.membership_policy(),
+                    )
+                    .await?;
+                let removed = receipts.into_iter().map(|(target, child)| json!({
+                    "agent_id":target.agent_id,"alias":target.alias,"lifecycle":target.lifecycle_state,
+                    "operation_id":child,"native_close":"confirmed",
+                })).collect::<Vec<_>>();
+                Ok(
+                    json!({"operation":"remove","operation_id":parent,"removed":removed,"preserve_worktrees":true}),
+                )
             }
             TeamMode::AssignWorktree { assign_worktree } => {
                 nonempty(&assign_worktree.agent_id, "assign_worktree.agent_id")?;

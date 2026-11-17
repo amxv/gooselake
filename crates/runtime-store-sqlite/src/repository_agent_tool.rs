@@ -143,6 +143,11 @@ impl SqliteRuntimeRepository {
         if operation.kind != MODEL_TOOL_KIND {
             return Err(RuntimeError::Conflict("not a model-tool operation".into()));
         }
+        crate::repository_member_agent_archive::verify_model_remove_result(
+            &transaction,
+            &operation,
+            exact_result,
+        )?;
         let authority = OperationAuthorityTransaction::new(&transaction);
         authority.terminalize(
             operation_id,

@@ -7,6 +7,9 @@ use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 use crate::db::{db_error, json_to_string, open_connection};
 use crate::operation_tx::OperationAuthorityTransaction;
+use crate::repository_member_agent_archive::{
+    update_member_archive_parent, validate_member_archive_admission,
+};
 use crate::repository_operator_agent_archive::{
     assert_archive_identity, CLAIM_KIND, EFFECT_KIND, OPERATION_KIND,
 };
@@ -65,6 +68,9 @@ impl SqliteRuntimeRepository {
             return Err(RuntimeError::Conflict(
                 "native archive intent changed after provider close".into(),
             ));
+        }
+        if operation.actor.kind == runtime_core::OperationActorKind::Agent {
+            validate_member_archive_admission(&tx, command, false)?;
         }
         let effect_count: i64 = tx
             .query_row(
@@ -126,7 +132,8 @@ impl SqliteRuntimeRepository {
             WorkspaceAgentLifecycleState::Archived,
             command.reason.as_deref(),
             at_ms,
-            None,
+            (operation.actor.kind == runtime_core::OperationActorKind::Agent)
+                .then_some(operation.actor.identifier.as_str()),
             Some(&command.operation_id),
         )?;
         if exact.revision
@@ -183,6 +190,13 @@ impl SqliteRuntimeRepository {
             created_at: at_ms,
         })?;
         authority.release_claim(&claim)?;
+        update_member_archive_parent(
+            &tx,
+            &operation,
+            "finalized",
+            "native_close_confirmed",
+            at_ms,
+        )?;
         tx.commit().map_err(|error| {
             db_error(
                 "failed committing atomic native archive close receipt",
@@ -251,6 +265,7 @@ impl SqliteRuntimeRepository {
             ),
             created_at: at_ms,
         })?;
+        update_member_archive_parent(&tx, &record, "uncertain", "outcome_unresolved", at_ms)?;
         tx.commit()
             .map_err(|error| db_error("failed committing native archival quarantine", error))
     }

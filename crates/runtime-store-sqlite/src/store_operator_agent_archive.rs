@@ -1,5 +1,11 @@
 macro_rules! delegate_operator_agent_archive_methods {
     () => {
+        fn admit_member_agent_archive(
+            &self,
+            command: &runtime_core::OperatorAgentArchiveCommand,
+        ) -> Result<runtime_core::OperatorAgentArchiveAdmission, RuntimeError> {
+            self.repository().admit_member_agent_archive(command)
+        }
         fn replay_operator_agent_archive(
             &self,
             actor: &runtime_core::OperationActor,

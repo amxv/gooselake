@@ -7,10 +7,13 @@ use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 use crate::db::{db_error, open_connection};
 use crate::operation_tx::OperationAuthorityTransaction;
+use crate::repository_member_agent_archive::{
+    update_member_archive_parent, validate_member_archive_admission,
+};
 use crate::repository_operator_agent_restore::{restore_state, RestoreState};
 use crate::repository_operator_native_policy::CLAIM_KIND as POLICY_CLAIM;
 use crate::repository_turn_authority::OPERATOR_TURN_CLAIM;
-use crate::repository_workspace::operation_by_idempotency;
+use crate::repository_workspace::{operation_by_id, operation_by_idempotency};
 use crate::repository_workspace_agent::{workspace_agent_from_row, AGENT_SELECT};
 use crate::SqliteRuntimeRepository;
 
@@ -126,7 +129,28 @@ impl SqliteRuntimeRepository {
         &self,
         command: &OperatorAgentArchiveCommand,
     ) -> Result<OperatorAgentArchiveAdmission, RuntimeError> {
-        if command.actor.kind != OperationActorKind::Operator
+        self.admit_agent_archive(command, false)
+    }
+
+    pub fn admit_member_agent_archive(
+        &self,
+        command: &OperatorAgentArchiveCommand,
+    ) -> Result<OperatorAgentArchiveAdmission, RuntimeError> {
+        self.admit_agent_archive(command, true)
+    }
+
+    fn admit_agent_archive(
+        &self,
+        command: &OperatorAgentArchiveCommand,
+        member: bool,
+    ) -> Result<OperatorAgentArchiveAdmission, RuntimeError> {
+        if command.actor.kind
+            != if member {
+                OperationActorKind::Agent
+            } else {
+                OperationActorKind::Operator
+            }
+            || (!member && !command.normalized_request["model_tool_parent"].is_null())
             || command.actor.identifier.trim().is_empty()
             || command.operation_id.trim().is_empty()
             || command.workspace_id.trim().is_empty()
@@ -154,6 +178,9 @@ impl SqliteRuntimeRepository {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting operator agent archive admission", error))?;
+        if member {
+            validate_member_archive_admission(&tx, command, false)?;
+        }
         if let Some(existing) = operation_by_idempotency(
             &tx,
             command.actor.kind,
@@ -167,7 +194,26 @@ impl SqliteRuntimeRepository {
                 &command.normalized_request_hash,
             );
         }
+        // The durable child admission is the authorization boundary. Later
+        // caller revocation must not prevent receipt of an admitted close.
+        if member {
+            validate_member_archive_admission(&tx, command, true)?;
+        }
         let state = restore_state(&tx, &command.agent_id)?;
+        if member
+            && (serde_json::json!(state.cwd) != command.normalized_request["original_route"]["cwd"]
+                || serde_json::json!(state.model)
+                    != command.normalized_request["original_route"]["model"])
+        {
+            return Err(RuntimeError::Conflict(
+                "planned model archive native route changed".into(),
+            ));
+        }
+        if member && state.agent_lifecycle != "active" {
+            return Err(RuntimeError::Conflict(
+                "planned model archive target is no longer active".into(),
+            ));
+        }
         if state.workspace_id != command.workspace_id || state.workspace_lifecycle != "active" {
             return Err(RuntimeError::Conflict(
                 "workspace is not active for agent archival".into(),
@@ -336,6 +382,18 @@ impl SqliteRuntimeRepository {
             created_at: command.requested_at,
             updated_at: command.requested_at,
         })?;
+        if member {
+            let record = operation_by_id(&tx, &command.operation_id)?.ok_or_else(|| {
+                RuntimeError::Conflict("admitted member archive disappeared".into())
+            })?;
+            update_member_archive_parent(
+                &tx,
+                &record,
+                "started",
+                "admitted",
+                command.requested_at,
+            )?;
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing durable archive intent", error))?;
         Ok(OperatorAgentArchiveAdmission::Execute {

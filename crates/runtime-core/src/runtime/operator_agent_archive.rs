@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use crate::{
-    OperationActor, OperatorAgentArchiveAdmission, OperatorAgentArchiveCommand,
+    OperationActor, OperationActorKind, OperatorAgentArchiveAdmission, OperatorAgentArchiveCommand,
     OperatorAgentArchiveReviewCommand, OperatorAgentArchiveReviewInput,
     OperatorAgentArchiveReviewResponse, ProviderCloseSessionRequest,
-    ProviderRetirementCloseProofKind, RuntimeError, WorkspaceAgentLifecycleState,
-    WorkspaceAgentRecord, WorkspaceLifecycleState,
+    ProviderRetirementCloseProofKind, RuntimeError, RuntimeProvider, SessionRecord,
+    WorkspaceAgentLifecycleState, WorkspaceAgentRecord, WorkspaceLifecycleState,
 };
 
 use super::helpers::now_ms;
@@ -25,6 +25,11 @@ impl RuntimeSessionManager {
         actor: OperationActor,
         idempotency_key: String,
     ) -> Result<(WorkspaceAgentRecord, String), RuntimeError> {
+        if actor.kind != OperationActorKind::Operator {
+            return Err(RuntimeError::InvalidState(
+                "operator archive requires operator identity".into(),
+            ));
+        }
         let workspace_id = workspace_id.trim();
         let agent_id = agent_id.trim();
         let reason = reason
@@ -159,6 +164,19 @@ impl RuntimeSessionManager {
                 "archive provider vanished after durable intent admission",
             )
         })?;
+        self.execute_admitted_agent_archive(command, session, provider)
+            .await
+    }
+
+    /// Both operator and model entry points use one strong native-close and
+    /// atomic receipt implementation after their distinct admission checks.
+    pub(super) async fn execute_admitted_agent_archive(
+        &self,
+        command: OperatorAgentArchiveCommand,
+        session: SessionRecord,
+        provider: Arc<dyn RuntimeProvider>,
+    ) -> Result<(WorkspaceAgentRecord, String), RuntimeError> {
+        let agent_id = command.agent_id.as_str();
         let evidence = provider
             .close_session_for_retirement(ProviderCloseSessionRequest {
                 runtime_session_id: agent_id.into(),

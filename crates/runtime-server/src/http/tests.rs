@@ -65,6 +65,7 @@ mod legacy_worktree_missing_id_preflight;
 mod legacy_worktree_reuse_preflight;
 mod mcp_core;
 mod mcp_policy_process;
+mod model_agent_archive;
 mod native_approval_journal_http;
 mod native_dispatch_outcome_journal_http;
 mod operator_agent_archive;

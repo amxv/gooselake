@@ -184,6 +184,10 @@ async fn malformed_pure_team_modes_never_admit_an_irreversible_host_intent() {
             "bad_request",
         ),
         (
+            json!({"mode":"remove","remove_agent_ids":["a"," a "]}),
+            "bad_request",
+        ),
+        (
             json!({"mode":"remove","remove_agent_ids":[" "]}),
             "bad_request",
         ),
@@ -279,8 +283,14 @@ async fn exact_completed_host_receipt_replays_without_rechecking_mutated_roster(
         "operation":"remove","removed":[{"agent_id":"synthetic-already-removed","lifecycle":"archived"}],
         "preserve_worktrees":true,
     }});
-    store
-        .finish_agent_tool_mutation(&command.operation_id, &exact, 110)
+    // Seed a historical receipt from before target-specific native journals;
+    // the new finalizer intentionally refuses to fabricate such a success.
+    rusqlite::Connection::open(temp.path().join("runtime.sqlite3"))
+        .unwrap()
+        .execute(
+            "UPDATE runtime_operations SET phase='completed',exact_terminal_result_json=?2 WHERE operation_id=?1",
+            rusqlite::params![command.operation_id, exact.to_string()],
+        )
         .unwrap();
     assert_eq!(
         gateway
@@ -347,4 +357,76 @@ async fn an_invalid_pure_request_does_not_poison_the_same_host_invocation_id() {
         .unwrap();
     assert_eq!(replay["error"]["code"], "outcome_unresolved", "{replay}");
     assert_eq!(model_operation_count(&temp), 1);
+}
+
+#[tokio::test]
+async fn historical_whitespace_duplicate_keeps_original_receipt_and_unresolved_coordinate() {
+    for completed in [false, true] {
+        let (gateway, caller, temp) = fixture().await;
+        let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+            database_path: temp.path().join("runtime.sqlite3"),
+        });
+        let workspace_id = store
+            .get_workspace_agent_by_id(&caller)
+            .unwrap()
+            .unwrap()
+            .workspace_id;
+        // Older preflight treated these raw strings as distinct, while the
+        // old target lookup trimmed both IDs. Validator evolution must not
+        // hide an outcome admitted under that earlier contract.
+        let args =
+            json!({"mode":"remove","remove_agent_ids":["historical-target"," historical-target "]});
+        let normalized_request = json!({"tool_name":"gg_team","args":args});
+        let command = AgentToolMutationCommand {
+            operation_id: "historical-whitespace-duplicate".into(),
+            workspace_id,
+            caller_agent_id: caller.clone(),
+            idempotency_key: "historical-whitespace-host-key".into(),
+            tool_name: "gg_team".into(),
+            normalized_request_hash: normalized_json_hash(&normalized_request).unwrap(),
+            normalized_request,
+            admitted_at: 100,
+        };
+        store.begin_agent_tool_mutation(&command).unwrap();
+        let exact = json!({"ok":true,"result":{"operation":"remove","removed":[
+            {"agent_id":"historical-target","lifecycle":"archived"},
+            {"agent_id":"historical-target","lifecycle":"archived"}],"preserve_worktrees":true}});
+        if completed {
+            rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap().execute(
+                "UPDATE runtime_operations SET phase='completed',exact_terminal_result_json=?2 WHERE operation_id=?1",
+                rusqlite::params![command.operation_id,exact.to_string()]).unwrap();
+        }
+        let result = gateway
+            .invoke_tool(model_request(
+                &caller,
+                &command.idempotency_key,
+                args.clone(),
+            ))
+            .await
+            .unwrap();
+        if completed {
+            assert_eq!(result, exact);
+        } else {
+            assert_eq!(result["error"]["code"], "outcome_unresolved", "{result}");
+            assert_eq!(
+                result["error"]["details"]["operation_id"],
+                command.operation_id
+            );
+        }
+        let changed = gateway
+            .invoke_tool(model_request(
+                &caller,
+                &command.idempotency_key,
+                json!({"mode":"remove","remove_agent_ids":["other"," other "]}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(changed["error"]["code"], "conflict", "{changed}");
+        let new_request = gateway
+            .invoke_tool(model_request(&caller, "new-whitespace-host-key", args))
+            .await
+            .unwrap();
+        assert_eq!(new_request["error"]["code"], "bad_request");
+        assert_eq!(model_operation_count(&temp), 1);
+    }
 }

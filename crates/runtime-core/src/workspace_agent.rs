@@ -217,6 +217,35 @@ pub struct WorkspaceAgentRebindResponse {
     pub newly_completed: bool,
 }
 
+/// Immutable member intent beneath the authenticated model-tool parent.
+/// A saved command is a target snapshot, never permission to redispatch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemberAgentRebindCommand {
+    pub parent_operation_id: String,
+    pub parent_effect_id: String,
+    pub actor: crate::OperationActor,
+    pub operation: WorkspaceAgentRebindOperation,
+    pub original_session: crate::SessionRecord,
+    pub original_agent: WorkspaceAgentRecord,
+    pub destination: crate::ManagedWorktreeRecord,
+    pub destination_revision: u64,
+    pub repository: crate::RepositoryIdentity,
+    pub non_lead_can_add_members: bool,
+    pub normalized_request: Value,
+    pub normalized_request_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MemberAgentRebindAdmission {
+    Execute,
+    Replay {
+        response: WorkspaceAgentRebindResponse,
+    },
+    Unresolved {
+        operation_id: String,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

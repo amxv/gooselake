@@ -177,10 +177,11 @@ pub use workspace::{
     WorkspaceRegisterResponse,
 };
 pub use workspace_agent::{
-    WorkspaceAgentArchiveRequest, WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute,
-    WorkspaceAgentLifecycleState, WorkspaceAgentProfile, WorkspaceAgentRebindOperation,
-    WorkspaceAgentRebindRequest, WorkspaceAgentRebindResponse, WorkspaceAgentRecord,
-    WorkspaceAgentRecreationPolicy, WorkspaceWorktreeInventory, WorkspaceWorktreeInventoryEntry,
+    MemberAgentRebindAdmission, MemberAgentRebindCommand, WorkspaceAgentArchiveRequest,
+    WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute, WorkspaceAgentLifecycleState,
+    WorkspaceAgentProfile, WorkspaceAgentRebindOperation, WorkspaceAgentRebindRequest,
+    WorkspaceAgentRebindResponse, WorkspaceAgentRecord, WorkspaceAgentRecreationPolicy,
+    WorkspaceWorktreeInventory, WorkspaceWorktreeInventoryEntry,
 };
 pub use workspace_control::{
     authorize_workspace_membership_mutation, prepare_workspace_interrupt,

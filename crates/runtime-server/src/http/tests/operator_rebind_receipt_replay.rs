@@ -1,7 +1,7 @@
 use super::workspace_worktree_routes::{call, git};
 use super::*;
 
-async fn fixture() -> (
+pub(super) async fn fixture() -> (
     AppState,
     tempfile::TempDir,
     Arc<TestProvider>,

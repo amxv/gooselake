@@ -175,6 +175,28 @@ impl SqliteRuntimeRepository {
         &self,
         operation: &WorkspaceAgentRebindOperation,
     ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        self.begin_workspace_agent_rebind_internal(operation, None)
+            .map(|(operation, _)| operation)
+    }
+
+    pub fn admit_member_agent_rebind(
+        &self,
+        command: &runtime_core::MemberAgentRebindCommand,
+    ) -> Result<runtime_core::MemberAgentRebindAdmission, RuntimeError> {
+        let (_, first) =
+            self.begin_workspace_agent_rebind_internal(&command.operation, Some(command))?;
+        if first {
+            return Ok(runtime_core::MemberAgentRebindAdmission::Execute);
+        }
+        self.replay_member_agent_rebind(command)?
+            .ok_or_else(|| RuntimeError::Conflict("admitted member rebind disappeared".into()))
+    }
+
+    fn begin_workspace_agent_rebind_internal(
+        &self,
+        operation: &WorkspaceAgentRebindOperation,
+        member: Option<&runtime_core::MemberAgentRebindCommand>,
+    ) -> Result<(WorkspaceAgentRebindOperation, bool), RuntimeError> {
         if operation.phase != "intended" {
             return Err(RuntimeError::ProtocolViolation(
                 "worktree rebind must begin as intended".into(),
@@ -184,6 +206,9 @@ impl SqliteRuntimeRepository {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting worktree rebind intent", error))?;
+        if let Some(command) = member {
+            crate::repository_member_agent_rebind::validate_member_admission(&tx, command, false)?;
+        }
 
         if let Some(key) = operation.idempotency_key.as_deref() {
             let existing: Option<String> = tx
@@ -208,8 +233,16 @@ impl SqliteRuntimeRepository {
                         "reused worktree rebind idempotency key with different input".into(),
                     ));
                 }
-                return Ok(prior);
+                if member.is_some() && prior.operation_id != operation.operation_id {
+                    return Err(RuntimeError::Conflict(
+                        "member rebind key belongs to another child".into(),
+                    ));
+                }
+                return Ok((prior, false));
             }
+        }
+        if let Some(command) = member {
+            crate::repository_member_agent_rebind::validate_member_admission(&tx, command, true)?;
         }
         let (
             revision,
@@ -303,11 +336,13 @@ impl SqliteRuntimeRepository {
         let conflicting_native_lifecycle: Option<String> = tx
             .query_row(
                 "SELECT owner_operation_id FROM runtime_operation_resource_claims
-             WHERE resource_kind IN (?1,?3) AND resource_id=?2 AND claim_mode='exclusive' LIMIT 1",
+             WHERE resource_kind IN (?1,?3,?4,?5) AND resource_id=?2 AND claim_mode='exclusive' LIMIT 1",
                 params![
                     crate::repository_operator_agent_restore::CLAIM_KIND,
                     operation.agent_id,
                     crate::repository_operator_agent_archive::CLAIM_KIND,
+                    crate::repository_operator_native_policy::CLAIM_KIND,
+                    crate::repository_turn_authority::OPERATOR_TURN_CLAIM,
                 ],
                 |row| row.get(0),
             )
@@ -316,7 +351,7 @@ impl SqliteRuntimeRepository {
         if let Some(operation_id) = conflicting_native_lifecycle {
             return Err(RuntimeError::operation_unresolved(
                 operation_id,
-                "native agent archival/restoration is unproven; provider rebind is fenced",
+                "another native agent effect is unproven; provider rebind is fenced",
             ));
         }
         // The manager lock protects a single process. Native compaction and
@@ -349,20 +384,26 @@ impl SqliteRuntimeRepository {
                 "cannot rebind an agent with unresolved native edit-and-rerun".into(),
             ));
         }
-        let normalized_request = json!({
-            "workspace_id": operation.workspace_id,
-            "agent_id": operation.agent_id,
-            "expected_revision": operation.expected_revision,
-            "destination_worktree_id": operation.destination_worktree_id,
-            "destination_cwd": operation.destination_cwd,
-            "cleanup_previous_worktree": operation.cleanup_previous_worktree,
-        });
+        let normalized_request = member
+            .map(|command| command.normalized_request.clone())
+            .unwrap_or_else(|| {
+                json!({
+                    "workspace_id": operation.workspace_id,
+                    "agent_id": operation.agent_id,
+                    "expected_revision": operation.expected_revision,
+                    "destination_worktree_id": operation.destination_worktree_id,
+                    "destination_cwd": operation.destination_cwd,
+                    "cleanup_previous_worktree": operation.cleanup_previous_worktree,
+                })
+            });
         let authority = OperationAuthorityTransaction::new(&tx);
-        authority.insert_operation(&OperationRecord {
+        let canonical = OperationRecord {
             operation_id: operation.operation_id.clone(),
             workspace_id: Some(operation.workspace_id.clone()),
             kind: "workspace_agent_rebind".into(),
-            actor: OperationActor::operator("runtime_operator"),
+            actor: member
+                .map(|command| command.actor.clone())
+                .unwrap_or_else(|| OperationActor::operator("runtime_operator")),
             idempotency_key: operation.idempotency_key.clone(),
             normalized_request_hash: normalized_json_hash(&normalized_request)?,
             normalized_request,
@@ -372,7 +413,8 @@ impl SqliteRuntimeRepository {
             error_message: None,
             created_at: operation.created_at,
             updated_at: operation.updated_at,
-        })?;
+        };
+        authority.insert_operation(&canonical)?;
         authority.append_transition(&OperationTransitionRecord {
             operation_id: operation.operation_id.clone(),
             sequence: 1,
@@ -425,9 +467,16 @@ impl SqliteRuntimeRepository {
                 params![target, operation.agent_id, operation.created_at],
             ).map_err(|error| db_error("failed reserving destination managed worktree", error))?;
         }
+        crate::repository_member_agent_rebind::update_parent(
+            &tx,
+            &canonical,
+            "started",
+            "native_admitted",
+            operation.created_at,
+        )?;
         tx.commit()
             .map_err(|error| db_error("failed committing worktree rebind intent", error))?;
-        Ok(operation.clone())
+        Ok((operation.clone(), true))
     }
 
     fn unresolved_workspace_agent_rebind_in_tx(
@@ -462,6 +511,25 @@ impl SqliteRuntimeRepository {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting worktree rebind classification", error))?;
+        let current = Self::classify_workspace_agent_rebind_in_tx(
+            &tx,
+            operation_id,
+            phase,
+            error_code,
+            changed_at,
+        )?;
+        tx.commit()
+            .map_err(|error| db_error("failed committing worktree rebind classification", error))?;
+        Ok(current)
+    }
+
+    pub(crate) fn classify_workspace_agent_rebind_in_tx(
+        tx: &Transaction<'_>,
+        operation_id: &str,
+        phase: &str,
+        error_code: &str,
+        changed_at: i64,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
         let mut current = get(&tx, operation_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("worktree rebind {operation_id}")))?;
         if current.phase != "intended" {
@@ -530,8 +598,23 @@ impl SqliteRuntimeRepository {
             evidence: Some(json!({"classification": phase, "error_code": error_code})),
             created_at: changed_at,
         })?;
-        tx.commit()
-            .map_err(|error| db_error("failed committing worktree rebind classification", error))?;
+        let canonical = crate::repository_workspace::operation_by_id(&tx, operation_id)?
+            .ok_or_else(|| RuntimeError::NotFound("canonical rebind operation".into()))?;
+        crate::repository_member_agent_rebind::update_parent(
+            &tx,
+            &canonical,
+            if phase == "rejected" {
+                "finalized"
+            } else {
+                "uncertain"
+            },
+            if phase == "rejected" {
+                "verified_not_rebound"
+            } else {
+                "outcome_unresolved"
+            },
+            changed_at,
+        )?;
         Ok(current)
     }
 
@@ -549,6 +632,19 @@ impl SqliteRuntimeRepository {
             .map_err(|error| db_error("failed starting verified rebind finalization", error))?;
         let mut operation = get(&tx, operation_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("worktree rebind {operation_id}")))?;
+        let canonical = crate::repository_workspace::operation_by_id(&tx, operation_id)?
+            .ok_or_else(|| RuntimeError::NotFound("canonical rebind operation".into()))?;
+        let member = crate::repository_member_agent_rebind::command_for_record(&tx, &canonical)?;
+        if let Some(command) = &member {
+            crate::repository_member_agent_rebind::validate_member_receipt(
+                &tx,
+                command,
+                updated_session,
+                updated_policy,
+                evidence,
+                changed_at,
+            )?;
+        }
         if operation.phase != "intended"
             || updated_session.id != operation.agent_id
             || updated_session.worktree_id != operation.destination_worktree_id
@@ -701,13 +797,32 @@ impl SqliteRuntimeRepository {
             params![operation_id, encode(&operation)?, changed_at],
         ).map_err(|error| db_error("failed terminalizing verified worktree rebind", error))?;
         let authority = OperationAuthorityTransaction::new(&tx);
+        let exact_result = if member.is_some() {
+            let agent = tx
+                .query_row(
+                    &format!(
+                        "{} WHERE a.session_id=?1",
+                        crate::repository_workspace_agent::AGENT_SELECT
+                    ),
+                    [&operation.agent_id],
+                    crate::repository_workspace_agent::workspace_agent_from_row,
+                )
+                .map_err(|error| db_error("failed freezing member rebind response", error))?;
+            serde_json::to_value(runtime_core::WorkspaceAgentRebindResponse {
+                operation: operation.clone(),
+                agent: Some(agent),
+                newly_completed: true,
+            })
+        } else {
+            serde_json::to_value(&operation)
+        }
+        .map_err(|error| RuntimeError::Bootstrap(error.to_string()))?;
         authority.terminalize(
             operation_id,
             OperationPhase::Requested,
             OperationPhase::Completed,
             Some(&operation.workspace_id),
-            &serde_json::to_value(&operation)
-                .map_err(|error| RuntimeError::Bootstrap(error.to_string()))?,
+            &exact_result,
             None,
             None,
             changed_at,
@@ -725,6 +840,13 @@ impl SqliteRuntimeRepository {
             created_at: changed_at,
         })?;
         release_route_claim(&tx, operation_id, &operation.agent_id)?;
+        crate::repository_member_agent_rebind::update_parent(
+            &tx,
+            &canonical,
+            "finalized",
+            "native_rebind_confirmed",
+            changed_at,
+        )?;
         if workspace_notice_policy_tx(&tx, &operation.workspace_id)?
             .policy
             .worktree_reassignment

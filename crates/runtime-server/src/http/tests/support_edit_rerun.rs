@@ -104,6 +104,15 @@ impl TestProvider {
 }
 
 impl TestProvider {
+    pub(crate) async fn native_cwd(&self, session_id: &str) -> Option<String> {
+        self.state
+            .lock()
+            .await
+            .sessions
+            .get(session_id)
+            .and_then(|session| session.cwd.clone())
+    }
+
     pub(crate) fn inject_missing_session_send(&self) -> Result<(), RuntimeError> {
         if self
             .send_failure_mode
@@ -168,5 +177,52 @@ impl TestProvider {
 
     pub(crate) async fn resumed_requests(&self) -> Vec<ProviderResumeSessionRequest> {
         self.resumed_requests.lock().await.clone()
+    }
+}
+
+impl TestProvider {
+    pub(crate) async fn rebind_for_test(
+        &self,
+        req: runtime_core::ProviderWorkspaceRebindRequest,
+    ) -> Result<runtime_core::ProviderWorkspaceRebindEvidence, RuntimeError> {
+        self.rebind_calls.lock().await.push(req.clone());
+        match self.rebind_mode.lock().await.as_deref() {
+            Some("unknown") => {
+                return Err(RuntimeError::provider_dispatch_unknown(
+                    "reassignment_recovery_required",
+                    "native provider route is unresolved",
+                ))
+            }
+            Some("unsupported") => {
+                return Err(RuntimeError::Unsupported(
+                    "native provider rebind unavailable".into(),
+                ))
+            }
+            _ => {}
+        }
+        let mut state = self.state.lock().await;
+        let session = state
+            .sessions
+            .get_mut(&req.runtime_session_id)
+            .ok_or_else(|| RuntimeError::NotFound(format!("session {}", req.runtime_session_id)))?;
+        session.cwd = Some(req.cwd.clone());
+        if self.rebind_mode.lock().await.as_deref() == Some("applied_unknown") {
+            return Err(RuntimeError::provider_dispatch_unknown(
+                "reassignment_recovery_required",
+                "fake native cwd changed but its acknowledgement was lost",
+            ));
+        }
+        let bad_evidence = self.rebind_mode.lock().await.as_deref() == Some("bad_evidence");
+        Ok(runtime_core::ProviderWorkspaceRebindEvidence {
+            runtime_session_id: req.runtime_session_id,
+            cwd: if bad_evidence {
+                "/wrong-route".into()
+            } else {
+                req.cwd
+            },
+            provider_session_ref: Some(session.provider_session_ref.clone()),
+            canonical_provider_session_ref: None,
+            binding_generation: None,
+        })
     }
 }

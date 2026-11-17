@@ -21,6 +21,7 @@ mod edit_rerun;
 mod events;
 mod helpers;
 mod member_agent_archive;
+mod member_agent_rebind;
 mod native_effect_fence;
 mod operator_agent_archive;
 mod operator_agent_create;

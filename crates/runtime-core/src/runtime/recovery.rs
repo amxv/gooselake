@@ -15,6 +15,14 @@ impl RuntimeSessionManager {
             started_at,
             ..Default::default()
         };
+        for operation_id in self
+            .store
+            .quarantine_started_workspace_agent_rebinds(started_at)?
+        {
+            summary.notes.push(format!(
+                "workspace rebind {operation_id} became manual_review after restart; no native rebind or resume was retried"
+            ));
+        }
         let native_policy_intents = self
             .store
             .quarantine_started_operator_native_policies(started_at)?;
@@ -113,6 +121,15 @@ impl RuntimeSessionManager {
         }
 
         for session_id in session_ids {
+            if let Some(operation_id) = self
+                .store
+                .unresolved_workspace_agent_rebind_operation(&session_id)?
+            {
+                summary.notes.push(format!(
+                    "session {session_id} native resume withheld by unresolved workspace rebind {operation_id}"
+                ));
+                continue;
+            }
             if let Some(operation_id) = self
                 .store
                 .unresolved_operator_agent_archive_for_agent(&session_id)?

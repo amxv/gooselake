@@ -27,7 +27,7 @@ fn authorize_member(
          JOIN workspace_agents a ON a.workspace_id=w.workspace_id
          JOIN sessions s ON s.id=a.session_id
          WHERE w.workspace_id=?1 AND w.lifecycle_state='active'
-           AND a.session_id=?2 AND a.lifecycle_state='active' AND s.status='ready'",
+           AND a.session_id=?2 AND a.lifecycle_state='active' AND s.status NOT IN ('closed','failed')",
             params![workspace_id, caller],
             |row| row.get(0),
         )

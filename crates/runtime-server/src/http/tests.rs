@@ -66,6 +66,8 @@ mod legacy_worktree_reuse_preflight;
 mod mcp_core;
 mod mcp_policy_process;
 mod model_agent_archive;
+mod model_agent_rebind;
+mod model_member_caller_lifecycle;
 mod native_approval_journal_http;
 mod native_dispatch_outcome_journal_http;
 mod operator_agent_archive;

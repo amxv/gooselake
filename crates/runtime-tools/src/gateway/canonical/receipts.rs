@@ -19,7 +19,12 @@ pub(super) fn attach_operation_details(
         let mut effects = details
             .effects
             .into_iter()
-            .filter(|effect| effect.effect_kind == "model_member_archive")
+            .filter(|effect| {
+                matches!(
+                    effect.effect_kind.as_str(),
+                    "model_member_archive" | "model_member_rebind"
+                )
+            })
             .collect::<Vec<_>>();
         effects.sort_by_key(|effect| {
             effect
@@ -35,8 +40,11 @@ pub(super) fn attach_operation_details(
             let status = evidence["outcome"]["status"]
                 .as_str()
                 .unwrap_or("outcome_unresolved");
+            let child_id = evidence["snapshot"]["operation_id"]
+                .as_str()
+                .or_else(|| evidence["snapshot"]["operation"]["operation_id"].as_str());
             targets.push(json!({"agent_id":effect.target_id,
-                "operation_id":evidence["snapshot"]["operation_id"],"status":status}));
+                "operation_id":child_id,"status":status}));
         }
     }
     if targets.iter().any(|target| {

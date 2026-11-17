@@ -411,39 +411,7 @@ impl RuntimeProvider for TestProvider {
         &self,
         req: runtime_core::ProviderWorkspaceRebindRequest,
     ) -> Result<runtime_core::ProviderWorkspaceRebindEvidence, RuntimeError> {
-        self.rebind_calls.lock().await.push(req.clone());
-        match self.rebind_mode.lock().await.as_deref() {
-            Some("unknown") => {
-                return Err(RuntimeError::provider_dispatch_unknown(
-                    "reassignment_recovery_required",
-                    "native provider route is unresolved",
-                ))
-            }
-            Some("unsupported") => {
-                return Err(RuntimeError::Unsupported(
-                    "native provider rebind unavailable".into(),
-                ))
-            }
-            _ => {}
-        }
-        let mut state = self.state.lock().await;
-        let session = state
-            .sessions
-            .get_mut(&req.runtime_session_id)
-            .ok_or_else(|| RuntimeError::NotFound(format!("session {}", req.runtime_session_id)))?;
-        session.cwd = Some(req.cwd.clone());
-        let bad_evidence = self.rebind_mode.lock().await.as_deref() == Some("bad_evidence");
-        Ok(runtime_core::ProviderWorkspaceRebindEvidence {
-            runtime_session_id: req.runtime_session_id,
-            cwd: if bad_evidence {
-                "/wrong-route".into()
-            } else {
-                req.cwd
-            },
-            provider_session_ref: Some(session.provider_session_ref.clone()),
-            canonical_provider_session_ref: None,
-            binding_generation: None,
-        })
+        self.rebind_for_test(req).await
     }
 
     async fn send_turn(
@@ -495,6 +463,14 @@ impl RuntimeProvider for TestProvider {
         }
 
         let user_text = TestProvider::extract_text(req.input.as_slice());
+        if user_text == "model_assign_wait_for_interrupt" {
+            session.history.push(user_text);
+            return Ok(ProviderTurnAck {
+                runtime_session_id: req.runtime_session_id,
+                turn_id: req.turn_id,
+                provider_native_turn_id: None,
+            });
+        }
         let first_prompt = session
             .history
             .first()
@@ -609,6 +585,17 @@ impl RuntimeProvider for TestProvider {
             .ok_or_else(|| {
                 RuntimeError::NotFound(format!("test session {}", req.runtime_session_id))
             })?;
+        if !session.completed.contains_key(&req.turn_id)
+            && session
+                .history
+                .last()
+                .is_some_and(|text| text == "model_assign_wait_for_interrupt")
+        {
+            // Keep the real runtime turn active until this isolated test's
+            // runtime shuts down; never hold the native fixture state lock.
+            drop(state);
+            return std::future::pending().await;
+        }
         session
             .completed
             .get(req.turn_id.as_str())

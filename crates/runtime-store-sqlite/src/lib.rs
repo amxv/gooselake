@@ -30,6 +30,7 @@ mod repository_legacy_team_delivery_transition;
 mod repository_legacy_team_events;
 mod repository_legacy_team_messages;
 mod repository_member_agent_archive;
+mod repository_member_agent_rebind;
 mod repository_operator_agent_archive;
 mod repository_operator_agent_archive_receipt;
 mod repository_operator_agent_archive_recovery;

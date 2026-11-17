@@ -423,6 +423,30 @@ impl RuntimeSessionManager {
             ));
         }
 
+        let operation = self
+            .execute_admitted_workspace_rebind(operation, session, agent, identity, provider)
+            .await?;
+        Ok(WorkspaceAgentRebindResponse {
+            agent: Some(self.get_workspace_agent(workspace_id, agent_id)?),
+            operation,
+            newly_completed: true,
+        })
+    }
+
+    pub(super) async fn execute_admitted_workspace_rebind(
+        &self,
+        operation: WorkspaceAgentRebindOperation,
+        session: crate::SessionRecord,
+        agent: crate::WorkspaceAgentRecord,
+        identity: RepositoryIdentity,
+        provider: Arc<dyn crate::RuntimeProvider>,
+    ) -> Result<WorkspaceAgentRebindOperation, RuntimeError> {
+        let agent_id = operation.agent_id.clone();
+        let destination_worktree_id = operation.destination_worktree_id.clone();
+        let destination_cwd = operation.destination_cwd.clone();
+        let provider_kind = ProviderKind::from_str(&session.provider).ok_or_else(|| {
+            RuntimeError::ProtocolViolation("unknown admitted rebind provider".into())
+        })?;
         let evidence = match provider
             .rebind_workspace(ProviderWorkspaceRebindRequest {
                 runtime_session_id: agent_id.to_string(),
@@ -441,7 +465,7 @@ impl RuntimeSessionManager {
                 } else {
                     "manual_review"
                 };
-                let _ = self.store.classify_workspace_agent_rebind(
+                let classification = self.store.classify_workspace_agent_rebind(
                     &operation.operation_id,
                     phase,
                     if safe_rejection {
@@ -451,6 +475,10 @@ impl RuntimeSessionManager {
                     },
                     now_ms(),
                 );
+                if let Err(receipt_error) = classification {
+                    return Err(RuntimeError::operation_unresolved(&operation.operation_id,
+                        format!("{error}; native rebind classification could not commit: {receipt_error}")));
+                }
                 if safe_rejection {
                     return Err(error);
                 }
@@ -546,11 +574,7 @@ impl RuntimeSessionManager {
             .write()
             .await
             .insert(agent_id.to_string(), updated_session);
-        Ok(WorkspaceAgentRebindResponse {
-            agent: Some(self.get_workspace_agent(workspace_id, agent_id)?),
-            operation,
-            newly_completed: true,
-        })
+        Ok(operation)
     }
 }
 

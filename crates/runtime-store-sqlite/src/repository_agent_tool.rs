@@ -148,6 +148,11 @@ impl SqliteRuntimeRepository {
             &operation,
             exact_result,
         )?;
+        crate::repository_member_agent_rebind::verify_model_assign_result(
+            &transaction,
+            &operation,
+            exact_result,
+        )?;
         let authority = OperationAuthorityTransaction::new(&transaction);
         authority.terminalize(
             operation_id,

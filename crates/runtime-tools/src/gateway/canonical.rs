@@ -8,8 +8,7 @@ use runtime_core::{
     AgentToolMutationAdmission, AgentToolMutationCommand, ProcessGetRequest, ProcessKillRequest,
     ProcessListRequest, ProcessManager, ProcessRunRequest, ProviderThinkingEffort, RuntimeError,
     ToolInvokeRequest, WorkspaceAgentCreateRequest, WorkspaceAgentInitialRoute,
-    WorkspaceAgentOnboardingRequest, WorkspaceAgentRebindRequest, WorkspaceMembershipPolicy,
-    WorkspaceWorktreeCreateRequest,
+    WorkspaceAgentOnboardingRequest, WorkspaceMembershipPolicy, WorkspaceWorktreeCreateRequest,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -419,7 +418,7 @@ impl RuntimeToolGateway {
         &self,
         caller: &str,
         mode: TeamMode,
-        invocation_id: Option<String>,
+        _invocation_id: Option<String>,
         parent_operation_id: Option<&str>,
     ) -> Result<Value, RuntimeError> {
         let agent = self.canonical_caller(caller)?;
@@ -693,49 +692,22 @@ impl RuntimeToolGateway {
                     json!({"operation":"remove","operation_id":parent,"removed":removed,"preserve_worktrees":true}),
                 )
             }
-            TeamMode::AssignWorktree { assign_worktree } => {
-                nonempty(&assign_worktree.agent_id, "assign_worktree.agent_id")?;
-                nonempty(
-                    &assign_worktree.worktree_name,
-                    "assign_worktree.worktree_name",
-                )?;
-                if assign_worktree.preserve_previous_worktree == Some(false) {
-                    return Err(RuntimeError::Unsupported(
-                        "previous-worktree cleanup is not currently available through gg_team; preserve the prior worktree".into(),
-                    ));
-                }
-                runtime.authorize_workspace_membership(
-                    workspace_id,
-                    caller,
-                    runtime_core::WorkspaceMembershipAction::Add,
-                    self.membership_policy(),
-                )?;
-                let target =
-                    runtime.get_workspace_agent(workspace_id, &assign_worktree.agent_id)?;
-                let inventory = runtime.list_workspace_worktree_inventory(workspace_id)?;
-                let worktree_id = inventory
-                    .worktrees
-                    .into_iter()
-                    .find(|entry| {
-                        entry.normalized_name == assign_worktree.worktree_name
-                            && entry.eligible_for_assignment
-                    })
-                    .map(|entry| entry.worktree_id)
-                    .ok_or_else(|| RuntimeError::NotFound("eligible worktree name".into()))?;
+            TeamMode::AssignWorktree { .. } => {
+                let parent = parent_operation_id.ok_or_else(|| {
+                    RuntimeError::InvalidState(
+                        "model assignment requires its admitted host operation".into(),
+                    )
+                })?;
                 let response = runtime
-                    .rebind_workspace_agent(
+                    .rebind_workspace_agent_as_member(
                         workspace_id,
-                        &target.agent_id,
-                        WorkspaceAgentRebindRequest {
-                            worktree_id: Some(worktree_id),
-                            expected_revision: target.revision,
-                            cleanup_previous_worktree: false,
-                        },
-                        invocation_id,
+                        caller,
+                        parent,
+                        self.membership_policy(),
                     )
                     .await?;
                 Ok(
-                    json!({"operation":"assign_worktree","agent_id":target.agent_id,"rebind":response}),
+                    json!({"operation":"assign_worktree","agent_id":response.operation.agent_id,"rebind":response}),
                 )
             }
         }

@@ -2,6 +2,16 @@ use super::RuntimeSessionManager;
 use crate::RuntimeError;
 
 impl RuntimeSessionManager {
+    pub(super) fn fence_legacy_native_session(&self, agent_id: &str) -> Result<(), RuntimeError> {
+        use crate::legacy_spawn_obligations::{LegacyNativeTarget, LegacySpawnScanBudget};
+        self.store
+            .classify_legacy_spawn_obligations(
+                &[LegacyNativeTarget::Session(agent_id.to_owned())],
+                LegacySpawnScanBudget::default(),
+            )?
+            .require_all_clear()
+    }
+
     /// Unknown native user-turn dispatch holds an agent-level durable claim.
     /// Other provider-native mutations must honor it too: a stale in-memory
     /// `active_turn_id` cannot establish that the original turn is finished.
@@ -9,6 +19,7 @@ impl RuntimeSessionManager {
         &self,
         agent_id: &str,
     ) -> Result<(), RuntimeError> {
+        self.fence_legacy_native_session(agent_id)?;
         if let Some(operation_id) = self
             .store
             .unresolved_workspace_interrupt_for_session(agent_id)?

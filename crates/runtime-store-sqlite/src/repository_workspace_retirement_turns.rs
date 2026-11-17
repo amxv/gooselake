@@ -181,6 +181,7 @@ impl SqliteRuntimeRepository {
         if active_turn_id.as_deref() != Some(turn_id) {
             return Ok(WorkspaceRetirementTurnStep::NeedsReview);
         }
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_session(&tx, &session_id)?;
         let updated = tx
             .execute(
                 "UPDATE runtime_operation_effects SET phase='started',

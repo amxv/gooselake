@@ -1,3 +1,5 @@
+mod legacy_native_recovery;
+
 use super::operator_native_policy::operator_policy_fixture;
 use super::workspace_worktree_routes::call;
 use super::*;

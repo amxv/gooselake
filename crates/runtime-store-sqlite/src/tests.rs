@@ -27,6 +27,8 @@ mod event_cursor_recovery_scale;
 mod event_subject_reconciliation;
 mod event_subject_scale;
 mod event_subject_scopes;
+mod legacy_native_boundaries;
+mod legacy_native_turn_guards;
 mod legacy_operation_inspection;
 mod legacy_team_cancellation;
 mod legacy_team_deletion;
@@ -850,5 +852,8 @@ async fn store_initialize_and_healthcheck_use_schema() {
     assert!(hydrated.sessions.is_empty());
 }
 
+mod legacy_spawn_obligations;
+mod legacy_spawn_obligations_schema;
+mod legacy_spawn_obligations_support;
 mod workspace_notice;
 mod workspace_notice_queue_scale;

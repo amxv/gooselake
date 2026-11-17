@@ -45,6 +45,7 @@ impl SqliteRuntimeRepository {
                 RuntimeError::OperationUnresolved {
                     operation_id: existing.operation_id,
                     message: "delivery retry admission has no terminal receipt".into(),
+                    legacy_recovery: None,
                 }
             })?;
             let receipt = serde_json::from_value(exact).map_err(|error| {

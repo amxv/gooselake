@@ -213,7 +213,9 @@ fn error_envelope(error: RuntimeError) -> Value {
         RuntimeError::ProviderDispatch { outcome, .. } if *outcome == "unknown" => {
             "outcome_unresolved"
         }
-        RuntimeError::OperationUnresolved { .. } => "outcome_unresolved",
+        RuntimeError::OperationUnresolved { .. }
+        | RuntimeError::LegacyNativeObligationBlocked { .. } => "outcome_unresolved",
+        RuntimeError::LegacyNativeScanIncomplete { .. } => "legacy_native_scan_incomplete",
         RuntimeError::ProtocolViolation(_) => "provider_error",
         _ => "tool_failed",
     };
@@ -222,8 +224,24 @@ fn error_envelope(error: RuntimeError) -> Value {
         "message": error.to_string(),
         "retryable": false,
     }});
-    if let RuntimeError::OperationUnresolved { operation_id, .. } = &error {
-        envelope["error"]["details"] = json!({"operation_id":operation_id});
+    match &error {
+        RuntimeError::OperationUnresolved { operation_id, .. } => {
+            envelope["error"]["details"] = json!({"operation_id":operation_id,
+                "inspection_path":runtime_core::error::canonical_operation_inspection_path(operation_id),
+                "native_retry_authorized":false});
+        }
+        RuntimeError::LegacyNativeObligationBlocked { coordinate, .. } => {
+            envelope["error"]["details"] = json!({"operation_id":coordinate.operation_id,
+                "inspection_path":runtime_core::error::legacy_team_operation_inspection_path(&coordinate.operation_id),
+                "native_retry_authorized":false});
+        }
+        _ => {}
+    }
+    if let Some(recovery) = error.legacy_native_recovery() {
+        if !envelope["error"]["details"].is_object() {
+            envelope["error"]["details"] = json!({"native_retry_authorized":false});
+        }
+        envelope["error"]["details"]["legacy_recovery"] = recovery.error_details();
     }
     envelope
 }

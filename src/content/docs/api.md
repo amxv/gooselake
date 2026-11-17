@@ -88,7 +88,8 @@ complete. Use `GET /v2/operations/{operation_id}` for the shared journal;
 provider rebinds and historical edits also have their specialized operation
 inspection routes. An ordinary unjournaled action must not invent an ID.
 Common codes include `invalid_request`, `invalid_state`, `not_found`,
-`conflict`, `outcome_unresolved`, `onboarding_pending`, `unsupported_capability`,
+`conflict`, `outcome_unresolved`, `legacy_native_scan_incomplete`,
+`onboarding_pending`, `unsupported_capability`,
 `idempotency_not_supported`, and `internal_error`. Provider-dispatch conflicts retain their typed code and
 `details.dispatch_outcome`. Do not blindly repeat an effectful request after
 an unknown native dispatch outcome; inspect its durable operation/turn state.
@@ -2199,6 +2200,61 @@ These inspection surfaces and
 the general `/v2/operations/{operation_id}` API never convert a legacy intent
 into repeatable native authority. Native outcome review remains separately
 scoped where independently verified Git/provider evidence is unavailable.
+
+### Historical obligations before new native work
+
+New session-native admission and first dispatch inspect retained spawn obligations
+under the SQLite transaction that grants their authority. This includes fresh
+turn admission, the first pending-to-dispatching claim, agent create/archive/
+restore and policy admission, provider approval decisions, workspace interrupt
+admission and first dispatch, and retirement's first interrupt or provider close.
+The common runtime session fence also refuses unresolved historical evidence.
+A dispatch claim must match the complete persisted pending turn and can be won
+by only one writer. Supplied session identity cannot redirect that claim.
+
+Only an original, correctly typed and identity-matched saved spawn completion
+clears the historical obligation. Missing journals, malformed evidence and weak
+terminal labels remain unresolved. A known child can establish that a different
+session is unrelated; an unknown child cannot. These checks do not certify
+checkout alias identity, native absence or permission to repair history.
+The bounded classifier examines keyed admissions and all spawn journal stages
+from one snapshot. If its row, metadata or copied-evidence allowance is exhausted,
+it withholds new work rather than treating omitted history as empty. The default
+allowances are implementation limits, not a measured workload or latency guarantee.
+Startup still uses the strict behavior described above while the remaining
+maintenance safeguards are being completed.
+
+A refusal before canonical admission returns HTTP `409 outcome_unresolved` with
+`error.details.operation_id` naming the original legacy operation and
+`error.details.inspection_path` selecting the legacy diagnostic endpoint.
+`error.details.legacy_recovery` contains `kind: "blocked"`, the original
+`coordinate`, its blocking `reason`, and `native_retry_authorized: false`.
+The operation family is explicit; an ID prefix never selects the lookup API.
+
+If an operation was already durably admitted, the top-level `operation_id` and
+`inspection_path` continue to identify that canonical `/v2/operations` owner.
+Its separate `legacy_recovery` describes the historical cause. The runtime saves
+that first observation on the exact existing target effect together with a
+Critical `operation.legacy_native_recovery_observed` event. It does not add a
+second target effect, increment the native attempt, release a claim or fabricate
+a terminal receipt. Exact observation replay is immutable. A persistence failure
+keeps native work withheld and reports that inspection could not be saved;
+absence of a saved observation is not clearance. Canonical MCP error details
+preserve the parent coordinate, target projection and original typed observation;
+`recorded_legacy_recoveries` may contain the distinct saved causes for its targets.
+Saved restoration verifies the matching original Critical event too. A missing
+or incompatible pair reports inspection unavailable without repairing either
+record. Raw carrier evidence may remain visible as `unverified_legacy_recoveries`;
+it is not a verified saved observation or permission for native work.
+
+An incomplete scan returns HTTP `409 legacy_native_scan_incomplete` before
+admission, with `legacy_recovery.kind: "scan_incomplete"` and the scan's bounded
+progress. Its cursor is diagnostic and is never promoted to an operation ID or
+inspection URL. If the incomplete scan interrupts an already admitted operation,
+that real canonical owner remains inspectable with the same separate cause.
+Neither error permits native retry. Exact completed receipts and settlement of
+already-known native results retain their own authority; later historical damage
+does not require replaying those native effects.
 
 Historical split MCP `gg_team_manage` Add follows the same inspection-only
 contract through operator `/v1/mcp/invoke`. It uses the original caller and

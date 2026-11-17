@@ -106,7 +106,7 @@ async fn exact_spawn_recovery_stage_is_authenticated_and_survives_independent_sq
         .unwrap();
     assert_eq!(not_found.status(), StatusCode::NOT_FOUND);
 
-    let error = ApiError::from(RuntimeError::operation_unresolved(
+    let error = ApiError::from_legacy_spawn(RuntimeError::operation_unresolved(
         op_id,
         "ambiguous native effect",
     ));

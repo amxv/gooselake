@@ -152,6 +152,10 @@ impl SqliteRuntimeRepository {
             ));
         }
 
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_session(
+            &tx,
+            &pending.session_id,
+        )?;
         let changed = tx
             .execute(
                 "UPDATE approvals SET status='decision_pending', response_json=?1

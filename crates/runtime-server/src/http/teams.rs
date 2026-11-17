@@ -145,7 +145,7 @@ pub(super) async fn spawn_team_member(
             creator_agent_id: input.creator_agent_id,
             creator_compaction_subscription: input.creator_compaction_subscription,
         })
-        .map_err(ApiError::from)?;
+        .map_err(ApiError::from_legacy_spawn)?;
     Ok(Json(response))
 }
 

@@ -227,6 +227,9 @@ fn reject_unresolved_route_with_lifecycle_claim(
     allowed_lifecycle_operation: Option<&str>,
 ) -> Result<(), RuntimeError> {
     if allowed_lifecycle_operation.is_none() {
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_session(
+            connection, agent_id,
+        )?;
         crate::repository_workspace_control::guard_unresolved_interrupt(connection, agent_id)?;
     }
     // Lifecycle transitions change the authoritative attachment state. A

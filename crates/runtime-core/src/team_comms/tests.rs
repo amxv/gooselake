@@ -1,5 +1,6 @@
 use super::*;
 
+mod legacy_native_mock;
 mod native_start_mock;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -53,6 +54,7 @@ impl crate::OperatorUserTurnStore for TestStore {}
 
 #[async_trait]
 impl RuntimeStore for TestStore {
+    legacy_native_mock::empty_legacy_history_methods!();
     async fn initialize(&self) -> Result<(), RuntimeError> {
         Ok(())
     }

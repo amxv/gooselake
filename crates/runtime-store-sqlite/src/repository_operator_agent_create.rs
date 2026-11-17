@@ -240,6 +240,10 @@ impl SqliteRuntimeRepository {
                 &command.normalized_request_hash,
             );
         }
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_session(
+            &tx,
+            &command.reserved_agent_id,
+        )?;
         let workspace: Option<String> = tx
             .query_row(
                 "SELECT lifecycle_state FROM workspaces WHERE workspace_id=?1",

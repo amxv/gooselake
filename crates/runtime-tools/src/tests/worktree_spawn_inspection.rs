@@ -69,6 +69,7 @@ fn assert_original_unresolved(error: RuntimeError, original: &str) {
         RuntimeError::OperationUnresolved {
             operation_id,
             message,
+            ..
         } => {
             assert_eq!(operation_id, original);
             assert!(

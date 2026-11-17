@@ -24,7 +24,7 @@ impl TeamToolFailure {
                 message: error.to_string(),
                 inspection: Some(json!({
                     "operation_id": operation_id,
-                    "inspection_path": format!("/v1/diagnostics/team-operations/{operation_id}"),
+                    "inspection_path": runtime_core::error::legacy_team_operation_inspection_path(operation_id),
                     "native_retry_authorized": false,
                 })),
             },

@@ -292,6 +292,10 @@ impl SqliteRuntimeRepository {
             );
         }
 
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_session(
+            &tx,
+            &command.agent_id,
+        )?;
         crate::repository_workspace_control::guard_unresolved_interrupt(&tx, &command.agent_id)?;
         let state = restore_state(&tx, &command.agent_id)?;
         if state.workspace_id != command.workspace_id || state.workspace_lifecycle != "active" {

@@ -72,13 +72,20 @@ impl RuntimeSessionManager {
         match self.execute_member_agent_rebind(command.clone()).await {
             Ok(response) => Ok(response),
             Err(error) => {
+                self.preserve_legacy_native_recovery(
+                    parent_id,
+                    "model_member_rebind",
+                    &command.operation.agent_id,
+                    error.legacy_native_recovery(),
+                )?;
                 if let Err(record_error) =
                     self.store
                         .reject_member_agent_rebind(&command, &error.to_string(), now_ms())
                 {
-                    return Err(RuntimeError::operation_unresolved(
+                    return Err(RuntimeError::operation_unresolved_with_legacy_recovery(
                         parent_id,
                         format!("{error}; target refusal could not be persisted: {record_error}"),
+                        error.legacy_native_recovery(),
                     ));
                 }
                 Err(error)

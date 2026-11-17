@@ -20,6 +20,7 @@ mod context_limit;
 mod edit_rerun;
 mod events;
 mod helpers;
+mod legacy_native_recovery;
 mod member_agent_archive;
 mod member_agent_create;
 mod member_agent_rebind;

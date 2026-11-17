@@ -17,8 +17,8 @@ use crate::{
     ProviderSendTurnRequest, ProviderSession, ProviderTerminalCommit, ProviderTurnAck,
     ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeError,
     RuntimeEventRecord, RuntimeEventScope, RuntimeProvider, RuntimeStore, SessionRecord,
-    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
-    TeamOperationJournalRecord, TeamRecord, TurnAdmissionRecord, TurnRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamRecord, TurnAdmissionRecord,
+    TurnRecord,
 };
 
 use super::RuntimeSessionManager;
@@ -42,6 +42,8 @@ pub(super) struct MockStore {
 mod dispatch_outcome;
 #[path = "test_support_dispatch_start.rs"]
 mod dispatch_start;
+#[path = "test_support_legacy_obligations.rs"]
+mod legacy_obligations;
 #[path = "test_support_native_decision.rs"]
 mod native_decision;
 #[path = "test_support_pre_dispatch_decline.rs"]
@@ -56,6 +58,7 @@ impl crate::OperatorUserTurnStore for MockStore {}
 
 #[async_trait]
 impl RuntimeStore for MockStore {
+    legacy_obligations::mock_legacy_obligation_methods!();
     terminal_conflict::mock_terminal_conflict_methods!();
     async fn initialize(&self) -> Result<(), RuntimeError> {
         Ok(())
@@ -468,48 +471,6 @@ impl RuntimeStore for MockStore {
 
     fn upsert_process(&self, _record: &ProcessRecord) -> Result<(), RuntimeError> {
         Ok(())
-    }
-
-    fn upsert_team_operation_journal(
-        &self,
-        _record: &TeamOperationJournalRecord,
-    ) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn append_team_operation_diagnostic(
-        &self,
-        _operation_id: Option<&str>,
-        _team_id: Option<&str>,
-        _code: &str,
-        _message: &str,
-        _payload: &Value,
-        _created_at: i64,
-    ) -> Result<TeamOperationDiagnosticRecord, RuntimeError> {
-        Ok(TeamOperationDiagnosticRecord {
-            id: 1,
-            operation_id: None,
-            team_id: None,
-            code: "stub".to_string(),
-            message: "stub".to_string(),
-            payload: serde_json::json!({}),
-            created_at: 0,
-        })
-    }
-
-    fn list_team_operation_journal(
-        &self,
-        _team_id: Option<&str>,
-    ) -> Result<Vec<TeamOperationJournalRecord>, RuntimeError> {
-        Ok(Vec::new())
-    }
-
-    fn list_team_operation_diagnostics(
-        &self,
-        _team_id: Option<&str>,
-        _operation_id: Option<&str>,
-    ) -> Result<Vec<TeamOperationDiagnosticRecord>, RuntimeError> {
-        Ok(Vec::new())
     }
 
     fn hydrate_runtime_state(&self) -> Result<crate::RuntimeHydratedState, RuntimeError> {

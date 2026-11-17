@@ -1,5 +1,42 @@
 macro_rules! delegate_agent_tool_methods {
     () => {
+        fn read_operation_effect_legacy_recovery(
+            &self,
+            operation_id: &str,
+            effect_id: &str,
+            effect_kind: &str,
+            target_id: &str,
+        ) -> Result<
+            Option<runtime_core::legacy_spawn_obligations::LegacyNativeRecovery>,
+            RuntimeError,
+        > {
+            self.repository.read_operation_effect_legacy_recovery(
+                operation_id,
+                effect_id,
+                effect_kind,
+                target_id,
+            )
+        }
+
+        fn record_operation_effect_legacy_recovery(
+            &self,
+            operation_id: &str,
+            effect_id: &str,
+            effect_kind: &str,
+            target_id: &str,
+            recovery: &runtime_core::legacy_spawn_obligations::LegacyNativeRecovery,
+            at_ms: i64,
+        ) -> Result<(), RuntimeError> {
+            self.repository.record_operation_effect_legacy_recovery(
+                operation_id,
+                effect_id,
+                effect_kind,
+                target_id,
+                recovery,
+                at_ms,
+            )
+        }
+
         fn plan_member_agent_create(
             &self,
             command: &runtime_core::MemberAgentCreateCommand,

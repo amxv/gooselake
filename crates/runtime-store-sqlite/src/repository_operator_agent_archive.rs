@@ -194,6 +194,10 @@ impl SqliteRuntimeRepository {
                 &command.normalized_request_hash,
             );
         }
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_session(
+            &tx,
+            &command.agent_id,
+        )?;
         crate::repository_workspace_control::guard_unresolved_interrupt(&tx, &command.agent_id)?;
         // The durable child admission is the authorization boundary. Later
         // caller revocation must not prevent receipt of an admitted close.

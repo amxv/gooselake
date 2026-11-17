@@ -167,12 +167,16 @@ fn frozen_workspace_allows_native_settlement_upserts_but_rejects_reopening() {
             turn_settings: Default::default(),
         },
         correlation: TurnCorrelationState::default(),
-        dispatch_state: TurnDispatchState::Dispatching,
+        dispatch_state: TurnDispatchState::Pending,
         provider_native_turn_id: None,
         dispatch_error: None,
         admitted_at: 1,
         updated_at: 1,
     };
+    repository.upsert_turn_admission(&admission).unwrap();
+    // Admit the immutable turn before consuming its first dispatch claim.
+    // Retirement below must still allow this already admitted native result.
+    admission.dispatch_state = TurnDispatchState::Dispatching;
     repository.upsert_turn_admission(&admission).unwrap();
     let mut claim = ManagedWorktreeClaimRecord {
         worktree_id: worktree.id.clone(),

@@ -63,6 +63,18 @@ pub(crate) use default_worktree_record_journal;
 
 macro_rules! default_team_spawn_admission {
     () => {
+        /// One bounded snapshot of legacy spawn history. Read-only preflight
+        /// never substitutes for a transaction-owned new-effect admission.
+        fn classify_legacy_spawn_obligations(
+            &self,
+            _targets: &[crate::legacy_spawn_obligations::LegacyNativeTarget],
+            _budget: crate::legacy_spawn_obligations::LegacySpawnScanBudget,
+        ) -> Result<crate::legacy_spawn_obligations::LegacySpawnScan, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "bounded legacy native obligation classification unavailable".into(),
+            ))
+        }
+
         /// Tolerant bounded historical inspection must not replace strict
         /// authority reads or grant permission to repeat native work.
         fn inspect_legacy_team_operation(

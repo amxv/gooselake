@@ -1,5 +1,31 @@
 macro_rules! agent_tool_store_methods {
     () => {
+        /// Inspect an exact existing carrier and its original Critical event
+        /// together. Missing or inconsistent pairs never authorize native work.
+        fn read_operation_effect_legacy_recovery(
+            &self,
+            _operation_id: &str,
+            _effect_id: &str,
+            _effect_kind: &str,
+            _target_id: &str,
+        ) -> Result<Option<crate::legacy_spawn_obligations::LegacyNativeRecovery>, RuntimeError> {
+            unsupported_store("verified legacy native recovery observation unavailable")
+        }
+
+        /// Record only a typed classifier observation in an exact existing
+        /// effect. This does not admit, settle, retry or release native work.
+        fn record_operation_effect_legacy_recovery(
+            &self,
+            _operation_id: &str,
+            _effect_id: &str,
+            _effect_kind: &str,
+            _target_id: &str,
+            _recovery: &crate::legacy_spawn_obligations::LegacyNativeRecovery,
+            _at_ms: i64,
+        ) -> Result<(), RuntimeError> {
+            unsupported_store("durable legacy native recovery observation unavailable")
+        }
+
         fn plan_member_agent_create(
             &self,
             _command: &crate::MemberAgentCreateCommand,

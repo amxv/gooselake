@@ -34,6 +34,12 @@ impl RuntimeSessionManager {
             match self.execute_member_agent_archive(command.clone()).await {
                 Ok(receipt) => removed.push(receipt),
                 Err(error) => {
+                    self.preserve_legacy_native_recovery(
+                        parent_operation_id,
+                        "model_member_archive",
+                        &command.agent_id,
+                        error.legacy_native_recovery(),
+                    )?;
                     // The store records this only when NO child was admitted.
                     // Once a child exists its native claim remains authoritative.
                     if let Err(record_error) = self.store.reject_member_agent_archive(
@@ -41,8 +47,9 @@ impl RuntimeSessionManager {
                         &error.to_string(),
                         now_ms(),
                     ) {
-                        return Err(RuntimeError::operation_unresolved(parent_operation_id,
-                            format!("{error}; target classification could not be persisted: {record_error}")));
+                        return Err(RuntimeError::operation_unresolved_with_legacy_recovery(parent_operation_id,
+                            format!("{error}; target classification could not be persisted: {record_error}"),
+                            error.legacy_native_recovery()));
                     }
                     return Err(error);
                 }

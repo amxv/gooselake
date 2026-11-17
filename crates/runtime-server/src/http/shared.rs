@@ -261,6 +261,34 @@ impl ApiError {
     pub(super) fn not_found(message: String) -> Self {
         Self::new(StatusCode::NOT_FOUND, "not_found", message)
     }
+
+    /// This route is explicitly a legacy inspector. Its family comes from
+    /// the trusted handler, never from an operation ID prefix.
+    pub(super) fn from_legacy_spawn(error: RuntimeError) -> Self {
+        match error {
+            RuntimeError::OperationUnresolved {
+                operation_id,
+                message,
+                legacy_recovery,
+            } => {
+                let path =
+                    runtime_core::error::legacy_team_operation_inspection_path(&operation_id);
+                let mut error = Self::new(
+                    StatusCode::CONFLICT,
+                    "outcome_unresolved",
+                    format!("{message}; inspect {path}"),
+                );
+                let mut details = serde_json::json!({"operation_id":operation_id,
+                    "inspection_path":path,"native_retry_authorized":false});
+                if let Some(recovery) = legacy_recovery {
+                    details["legacy_recovery"] = recovery.error_details();
+                }
+                error.details = Some(details);
+                error
+            }
+            other => Self::from(other),
+        }
+    }
 }
 
 impl From<RuntimeError> for ApiError {
@@ -285,18 +313,49 @@ impl From<RuntimeError> for ApiError {
             RuntimeError::OperationUnresolved {
                 operation_id,
                 message,
+                legacy_recovery,
             } => {
-                let inspection_path = if operation_id.starts_with("op_spawn_") {
-                    format!("/v1/diagnostics/team-operations/{operation_id}")
-                } else {
-                    format!("/v2/operations/{operation_id}")
-                };
+                let inspection_path =
+                    runtime_core::error::canonical_operation_inspection_path(&operation_id);
                 let mut error = Self::new(
                     StatusCode::CONFLICT,
                     "outcome_unresolved",
                     format!("{message}; inspect {inspection_path}"),
                 );
-                error.details = Some(serde_json::json!({"operation_id": operation_id}));
+                let mut details = serde_json::json!({"operation_id":operation_id,
+                    "inspection_path":inspection_path,"native_retry_authorized":false});
+                if let Some(recovery) = legacy_recovery {
+                    details["legacy_recovery"] = recovery.error_details();
+                }
+                error.details = Some(details);
+                error
+            }
+            RuntimeError::LegacyNativeObligationBlocked { coordinate, reason } => {
+                let inspection_path = runtime_core::error::legacy_team_operation_inspection_path(
+                    &coordinate.operation_id,
+                );
+                let operation_id = coordinate.operation_id.clone();
+                let recovery =
+                    runtime_core::legacy_spawn_obligations::LegacyNativeRecovery::Blocked {
+                        coordinate,
+                        reason,
+                    };
+                let mut error = Self::new(StatusCode::CONFLICT, "outcome_unresolved",
+                    format!("An unresolved legacy spawn obligation blocks new native work; inspect {inspection_path}. Native retry is not authorized."));
+                error.details = Some(serde_json::json!({"operation_id":operation_id,
+                    "inspection_path":inspection_path,"native_retry_authorized":false,
+                    "legacy_recovery":recovery.error_details()}));
+                error
+            }
+            RuntimeError::LegacyNativeScanIncomplete { incomplete } => {
+                let recovery =
+                    runtime_core::legacy_spawn_obligations::LegacyNativeRecovery::ScanIncomplete {
+                        incomplete,
+                    };
+                let mut error = Self::new(StatusCode::CONFLICT, "legacy_native_scan_incomplete",
+                    "Historical native obligations could not be completely classified; no new native work was admitted. The scan cursor is diagnostic only.".into());
+                error.details = Some(serde_json::json!({"native_retry_authorized":false,
+                    "legacy_recovery":recovery.error_details()}));
                 error
             }
             RuntimeError::OperatorPolicyNotApplied { operation_id } => {

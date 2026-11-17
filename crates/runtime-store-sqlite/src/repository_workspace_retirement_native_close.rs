@@ -138,10 +138,29 @@ impl SqliteRuntimeRepository {
                 "retiring agent revision cannot advance beyond SQLite signed range".into(),
             ));
         }
+        let first_close: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM runtime_operation_effects
+             WHERE operation_id=?1 AND effect_kind='workspace_provider_close' AND target_id=?2
+               AND phase='intended' AND idempotency_key=?3)",
+                params![
+                    operation_id,
+                    agent_id,
+                    format!("workspace_provider_close:{agent_id}")
+                ],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed checking original first retirement close", error))?;
+        if !first_close {
+            return Err(RuntimeError::Conflict(format!(
+                "agent {agent_id} native close was already dispatched or requires reconciliation"
+            )));
+        }
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_session(&tx, agent_id)?;
         let updated = tx
             .execute(
                 "UPDATE runtime_operation_effects SET phase='started',
-                evidence_json=?4,attempt_count=attempt_count+1,updated_at=?5
+                evidence_json=json_set(?4,'$.prior_evidence',json(evidence_json)),attempt_count=attempt_count+1,updated_at=?5
              WHERE operation_id=?1 AND effect_kind='workspace_provider_close' AND target_id=?2
                AND phase='intended' AND idempotency_key=?3
                AND typeof(attempt_count)='integer' AND attempt_count >= 0

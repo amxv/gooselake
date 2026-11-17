@@ -51,9 +51,17 @@ impl RuntimeSessionManager {
         }
         let mut pending_native_turns = false;
         for turn_id in &plan.turn_ids {
-            let step =
-                self.store
-                    .progress_workspace_retirement_turn(operation_id, turn_id, now_ms())?;
+            let step = self
+                .store
+                .progress_workspace_retirement_turn(operation_id, turn_id, now_ms())
+                .map_err(|error| {
+                    self.admitted_legacy_guard_error(
+                        operation_id,
+                        "workspace_turn_interrupt",
+                        turn_id,
+                        error,
+                    )
+                })?;
             match step {
                 WorkspaceRetirementTurnStep::Finalized => {
                     self.sync_retirement_settled_turn(turn_id).await?;
@@ -81,11 +89,17 @@ impl RuntimeSessionManager {
                             &turn_id,
                             now_ms(),
                         )?;
-                        let settled = self.store.progress_workspace_retirement_turn(
-                            operation_id,
-                            &turn_id,
-                            now_ms(),
-                        )?;
+                        let settled = self
+                            .store
+                            .progress_workspace_retirement_turn(operation_id, &turn_id, now_ms())
+                            .map_err(|error| {
+                                self.admitted_legacy_guard_error(
+                                    operation_id,
+                                    "workspace_turn_interrupt",
+                                    &turn_id,
+                                    error,
+                                )
+                            })?;
                         if settled == WorkspaceRetirementTurnStep::Finalized {
                             self.sync_retirement_settled_turn(&turn_id).await?;
                         } else {
@@ -156,11 +170,17 @@ impl RuntimeSessionManager {
             if !pending {
                 continue;
             }
-            let attempt = self.store.claim_workspace_retirement_native_close(
-                operation_id,
-                agent_id,
-                now_ms(),
-            )?;
+            let attempt = self
+                .store
+                .claim_workspace_retirement_native_close(operation_id, agent_id, now_ms())
+                .map_err(|error| {
+                    self.admitted_legacy_guard_error(
+                        operation_id,
+                        "workspace_provider_close",
+                        agent_id,
+                        error,
+                    )
+                })?;
             let adapter =
                 ProviderKind::from_str(&attempt.provider).and_then(|kind| self.providers.get(kind));
             let outcome = match adapter {
@@ -353,21 +373,28 @@ impl RuntimeSessionManager {
             WorkspaceInterruptAdmission::Execute(plan) => plan,
         };
         let unresolved = |error: RuntimeError| {
-            RuntimeError::operation_unresolved(
+            RuntimeError::operation_unresolved_with_legacy_recovery(
             &plan.operation_id,
             format!("workspace interrupt requires inspection; native retry is not authorized: {error}"),
+            error.legacy_native_recovery(),
         )
         };
 
         for target in plan.targets {
-            self.store
-                .mark_workspace_interrupt_started(
+            if let Err(error) = self.store.mark_workspace_interrupt_started(
+                &plan.operation_id,
+                &target.agent_id,
+                &target.turn_id,
+                now_ms(),
+            ) {
+                self.preserve_legacy_native_recovery(
                     &plan.operation_id,
+                    "workspace_turn_interrupt",
                     &target.agent_id,
-                    &target.turn_id,
-                    now_ms(),
-                )
-                .map_err(&unresolved)?;
+                    error.legacy_native_recovery(),
+                )?;
+                return Err(unresolved(error));
+            }
             match self
                 .interrupt_turn_for_operation(
                     target.agent_id.as_str(),
@@ -400,6 +427,12 @@ impl RuntimeSessionManager {
                         .map_err(&unresolved)?;
                 }
                 Err(error) => {
+                    self.preserve_legacy_native_recovery(
+                        &plan.operation_id,
+                        "workspace_turn_interrupt",
+                        &target.agent_id,
+                        error.legacy_native_recovery(),
+                    )?;
                     self.store
                         .mark_workspace_interrupt_uncertain(
                             &plan.operation_id,

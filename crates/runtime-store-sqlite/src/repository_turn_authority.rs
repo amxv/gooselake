@@ -82,6 +82,10 @@ impl SqliteRuntimeRepository {
             }
         }
 
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_session(
+            &transaction,
+            &session.id,
+        )?;
         crate::repository_workspace_control::guard_unresolved_interrupt(&transaction, &session.id)?;
         let active_native_claim: Option<String> = transaction
             .query_row(
@@ -382,6 +386,9 @@ impl SqliteRuntimeRepository {
     }
 
     pub fn upsert_turn_admission(&self, record: &TurnAdmissionRecord) -> Result<(), RuntimeError> {
+        if record.dispatch_state == TurnDispatchState::Dispatching {
+            return self.claim_pending_turn_dispatch(record);
+        }
         let connection = open_connection(&self.database_path)?;
         connection
             .execute(

@@ -18,7 +18,7 @@ use crate::SqliteRuntimeRepository;
 const WORKSPACE_LEAD_KIND: &str = "workspace_lead_transition";
 const WORKSPACE_INTERRUPT_KIND: &str = "workspace_interrupt";
 const WORKSPACE_RESOURCE_KIND: &str = "workspace";
-const INTERRUPT_EFFECT_KIND: &str = "workspace_turn_interrupt";
+pub(crate) const INTERRUPT_EFFECT_KIND: &str = "workspace_turn_interrupt";
 
 impl SqliteRuntimeRepository {
     pub fn transition_workspace_lead(
@@ -324,6 +324,20 @@ impl SqliteRuntimeRepository {
         )?;
 
         let members = interrupt_roster(&tx, &command.workspace_id)?;
+        let native_targets = members
+            .iter()
+            .filter_map(|(agent_id, turn_id)| {
+                turn_id.as_ref().map(|_| {
+                    runtime_core::legacy_spawn_obligations::LegacyNativeTarget::Session(
+                        agent_id.clone(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        crate::repository_legacy_spawn_obligations::guard_legacy_native_targets(
+            &tx,
+            &native_targets,
+        )?;
         let mut targets = Vec::new();
         for (agent_id, turn_id) in members {
             let effect_id = format!("{}:interrupt:{agent_id}", command.operation_id);
@@ -372,40 +386,6 @@ impl SqliteRuntimeRepository {
         ))
     }
 
-    pub fn mark_workspace_interrupt_started(
-        &self,
-        operation_id: &str,
-        agent_id: &str,
-        turn_id: &str,
-        changed_at: i64,
-    ) -> Result<(), RuntimeError> {
-        let connection = open_connection(&self.database_path)?;
-        let changed = connection
-            .execute(
-                "UPDATE runtime_operation_effects
-                 SET phase = 'started', attempt_count = attempt_count + 1, updated_at = ?4
-                 WHERE operation_id = ?1 AND effect_kind = ?5 AND target_id = ?2
-                   AND phase = 'intended' AND json_extract(evidence_json, '$.turn_id') = ?3
-                   AND typeof(attempt_count)='integer' AND attempt_count >= 0
-                   AND attempt_count < ?6",
-                params![
-                    operation_id,
-                    agent_id,
-                    turn_id,
-                    changed_at,
-                    INTERRUPT_EFFECT_KIND,
-                    i64::MAX
-                ],
-            )
-            .map_err(|error| db_error("failed marking workspace interrupt started", error))?;
-        if changed != 1 {
-            return Err(RuntimeError::Conflict(format!(
-                "workspace interrupt effect for agent {agent_id} is not safely dispatchable"
-            )));
-        }
-        Ok(())
-    }
-
     pub fn unresolved_workspace_interrupt_for_session(
         &self,
         session_id: &str,
@@ -438,7 +418,7 @@ impl SqliteRuntimeRepository {
         let changed = connection
             .execute(
                 "UPDATE runtime_operation_effects
-                 SET phase = 'finalized', evidence_json = ?4, updated_at = ?5
+                 SET phase = 'finalized', evidence_json = json_set(?4, '$.prior_evidence', json(evidence_json)), updated_at = ?5
                  WHERE operation_id = ?1 AND effect_kind = ?6 AND target_id = ?2
                    AND phase = 'started' AND json_extract(evidence_json, '$.turn_id') = ?3",
                 params![
@@ -477,7 +457,7 @@ impl SqliteRuntimeRepository {
         let changed = connection
             .execute(
                 "UPDATE runtime_operation_effects
-                 SET phase = 'uncertain', evidence_json = ?4, updated_at = ?5
+                 SET phase = 'uncertain', evidence_json = json_set(?4, '$.prior_evidence', json(evidence_json)), updated_at = ?5
                  WHERE operation_id = ?1 AND effect_kind = ?6 AND target_id = ?2
                    AND phase = 'started' AND json_extract(evidence_json, '$.turn_id') = ?3",
                 params![
@@ -778,7 +758,7 @@ fn recover_finalize_effect(
     let changed = tx
         .execute(
             "UPDATE runtime_operation_effects
-         SET phase = 'finalized', evidence_json = ?4, updated_at = updated_at + 1
+         SET phase = 'finalized', evidence_json = json_set(?4, '$.prior_evidence', json(evidence_json)), updated_at = updated_at + 1
          WHERE operation_id = ?1 AND effect_kind = ?5 AND target_id = ?2
            AND phase IN ('started', 'uncertain')
            AND json_extract(evidence_json, '$.turn_id') = ?3

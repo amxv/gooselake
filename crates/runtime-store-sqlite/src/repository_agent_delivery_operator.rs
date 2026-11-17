@@ -43,6 +43,7 @@ impl SqliteRuntimeRepository {
                 RuntimeError::OperationUnresolved {
                     operation_id: existing.operation_id,
                     message: "message cancellation has no terminal receipt".into(),
+                    legacy_recovery: None,
                 }
             })?;
             let result = serde_json::from_value(exact).map_err(|error| {

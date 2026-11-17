@@ -1,5 +1,10 @@
 use thiserror::Error;
 
+mod legacy_native;
+pub use legacy_native::{
+    canonical_operation_inspection_path, legacy_team_operation_inspection_path,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderDispatchOutcome {
     NotDispatched,
@@ -42,6 +47,20 @@ pub enum RuntimeError {
     OperationUnresolved {
         operation_id: String,
         message: String,
+        /// Historical evidence that blocked a newer admitted operation. This
+        /// is observational only and never authorizes replay or clearance.
+        legacy_recovery: Option<Box<crate::legacy_spawn_obligations::LegacyNativeRecovery>>,
+    },
+
+    #[error("legacy native obligation unresolved: {coordinate:?}; reason {reason:?}; native retry is not authorized")]
+    LegacyNativeObligationBlocked {
+        coordinate: crate::legacy_spawn_obligations::LegacySpawnCoordinate,
+        reason: crate::legacy_spawn_obligations::LegacyTargetBlockReason,
+    },
+
+    #[error("legacy_native_scan_incomplete: {incomplete:?}; no new native work admitted")]
+    LegacyNativeScanIncomplete {
+        incomplete: crate::legacy_spawn_obligations::LegacyScanIncomplete,
     },
 
     /// A reviewed native policy change was proven absent. The original key
@@ -112,6 +131,7 @@ impl RuntimeError {
         Self::OperationUnresolved {
             operation_id: operation_id.into(),
             message: message.into(),
+            legacy_recovery: None,
         }
     }
 

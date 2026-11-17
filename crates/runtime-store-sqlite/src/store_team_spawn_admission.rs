@@ -3,6 +3,18 @@
 /// transaction implementation rather than in an in-process cache.
 macro_rules! delegate_team_spawn_admission {
     () => {
+        fn classify_legacy_spawn_obligations(
+            &self,
+            targets: &[runtime_core::legacy_spawn_obligations::LegacyNativeTarget],
+            budget: runtime_core::legacy_spawn_obligations::LegacySpawnScanBudget,
+        ) -> Result<
+            runtime_core::legacy_spawn_obligations::LegacySpawnScan,
+            runtime_core::RuntimeError,
+        > {
+            self.repository()
+                .classify_legacy_spawn_obligations(targets, budget)
+        }
+
         fn inspect_legacy_team_operation(
             &self,
             operation_id: &str,

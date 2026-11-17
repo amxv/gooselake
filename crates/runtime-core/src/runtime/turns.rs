@@ -62,7 +62,9 @@ impl RuntimeSessionManager {
             session_id,
             &normalized_request_hash,
         )? {
-            return replay.into_result();
+            return replay
+                .into_result()
+                .map_err(|error| self.restore_legacy_native_recovery(error));
         }
         let agent = self.get_active_workspace_agent_by_id(session_id)?;
         // Selecting a *new* persistent thinking preference invokes provider
@@ -149,14 +151,21 @@ impl RuntimeSessionManager {
                         message: message.clone(),
                     });
                 }
+                self.preserve_legacy_native_recovery(
+                    &command.operation_id,
+                    "operator_turn_dispatch",
+                    session_id,
+                    error.legacy_native_recovery(),
+                )?;
                 let _ = self.store.mark_operator_user_turn_uncertain(
                     &command.operation_id,
                     &error.to_string(),
                     now_ms(),
                 );
-                Err(RuntimeError::operation_unresolved(
+                Err(RuntimeError::operation_unresolved_with_legacy_recovery(
                     command.operation_id,
                     format!("original turn dispatch or its receipt is unresolved: {error}"),
+                    error.legacy_native_recovery(),
                 ))
             }
         }
@@ -171,6 +180,7 @@ impl RuntimeSessionManager {
         operator_command: Option<&OperatorUserTurnCommand>,
         policy_mutation_guard: MutexGuard<'_, ()>,
     ) -> Result<SendTurnAccepted, RuntimeError> {
+        self.fence_legacy_native_session(session_id)?;
         if let Some(operation_id) = self.store.retiring_operation_for_session(session_id)? {
             return Err(RuntimeError::Conflict(format!(
                 "session {session_id} is frozen by workspace retirement {operation_id}"

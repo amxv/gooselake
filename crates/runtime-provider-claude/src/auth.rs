@@ -721,7 +721,9 @@ pub(crate) fn is_missing_gg_mcp_server_bad_request(error: &RuntimeError) -> bool
         | RuntimeError::ProviderDispatch { message, .. } => {
             message.contains(GG_MCP_MISSING_BAD_REQUEST)
         }
-        RuntimeError::OperationUnresolved { .. } => false,
+        RuntimeError::OperationUnresolved { .. }
+        | RuntimeError::LegacyNativeObligationBlocked { .. }
+        | RuntimeError::LegacyNativeScanIncomplete { .. } => false,
         RuntimeError::OperatorPolicyNotApplied { .. } => false,
         RuntimeError::OperatorRestoreNotResumed { .. } => false,
         RuntimeError::OperatorArchiveNotClosed { .. } => false,

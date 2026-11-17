@@ -324,6 +324,12 @@ Process scheduler mutations are durable. `POST /v1/processes/scheduler` accepts 
 - `GET /v1/diagnostics/worktrees` (Bearer)
 - `GET /v1/diagnostics/recovery` (Bearer)
 - `GET /v1/diagnostics/team-operations` (Bearer)
+- `GET /v1/diagnostics/team-operations/{operation_id}` (Bearer; bounded original journal/admission inspection even when saved JSON is damaged; optional `limit=1..100` and nonnegative `after_diagnostic_id`; never authorizes native retry)
+
+Historical native-obligation refusals preserve the original diagnostic coordinate
+separately from any admitted canonical operation. An incomplete scan has no
+invented operation ID. See [Historical obligations before new native work](/docs/api#historical-obligations-before-new-native-work)
+for the typed HTTP/MCP recovery details and verified saved-observation contract.
 
 Diagnostics query parameters:
 - team operations: `team_id`, `operation_id`

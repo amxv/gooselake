@@ -17,6 +17,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::*;
 
+mod canonical_team_preflight;
 mod gateway_basics;
 mod process;
 mod team_hook_execution;

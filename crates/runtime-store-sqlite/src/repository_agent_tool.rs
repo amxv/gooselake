@@ -12,24 +12,67 @@ use crate::SqliteRuntimeRepository;
 
 const MODEL_TOOL_KIND: &str = "agent_model_tool_mutation";
 
+fn validate_command(command: &AgentToolMutationCommand) -> Result<(), RuntimeError> {
+    if command.caller_agent_id.is_empty()
+        || command.workspace_id.is_empty()
+        || command.tool_name != "gg_team"
+        || command.idempotency_key.trim() != command.idempotency_key
+        || command.idempotency_key.is_empty()
+        || command.idempotency_key.len() > 128
+        || command.normalized_request_hash
+            != runtime_core::normalized_json_hash(&command.normalized_request)?
+    {
+        return Err(RuntimeError::InvalidState(
+            "invalid authenticated model-tool mutation admission".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn classify_existing(
+    existing: OperationRecord,
+    command: &AgentToolMutationCommand,
+) -> Result<AgentToolMutationAdmission, RuntimeError> {
+    if existing.kind != MODEL_TOOL_KIND
+        || existing.workspace_id.as_deref() != Some(command.workspace_id.as_str())
+        || existing.normalized_request_hash != command.normalized_request_hash
+    {
+        return Err(RuntimeError::Conflict(
+            "model-tool invocation ID was already used for different arguments".into(),
+        ));
+    }
+    Ok(match existing.exact_terminal_result {
+        Some(exact_result) if existing.phase == OperationPhase::Completed => {
+            AgentToolMutationAdmission::Replay { exact_result }
+        }
+        _ => AgentToolMutationAdmission::Unresolved {
+            operation_id: existing.operation_id,
+        },
+    })
+}
+
 impl SqliteRuntimeRepository {
+    pub fn replay_agent_tool_mutation(
+        &self,
+        command: &AgentToolMutationCommand,
+    ) -> Result<Option<AgentToolMutationAdmission>, RuntimeError> {
+        validate_command(command)?;
+        let connection = open_connection(&self.database_path)?;
+        operation_by_idempotency(
+            &connection,
+            OperationActorKind::Agent,
+            &command.caller_agent_id,
+            Some(&command.idempotency_key),
+        )?
+        .map(|existing| classify_existing(existing, command))
+        .transpose()
+    }
+
     pub fn begin_agent_tool_mutation(
         &self,
         command: &AgentToolMutationCommand,
     ) -> Result<AgentToolMutationAdmission, RuntimeError> {
-        if command.caller_agent_id.is_empty()
-            || command.workspace_id.is_empty()
-            || command.tool_name != "gg_team"
-            || command.idempotency_key.trim() != command.idempotency_key
-            || command.idempotency_key.is_empty()
-            || command.idempotency_key.len() > 128
-            || command.normalized_request_hash
-                != runtime_core::normalized_json_hash(&command.normalized_request)?
-        {
-            return Err(RuntimeError::InvalidState(
-                "invalid authenticated model-tool mutation admission".into(),
-            ));
-        }
+        validate_command(command)?;
 
         let mut connection = open_connection(&self.database_path)?;
         let transaction = connection
@@ -42,22 +85,7 @@ impl SqliteRuntimeRepository {
             &command.caller_agent_id,
             Some(&command.idempotency_key),
         )? {
-            if existing.kind != MODEL_TOOL_KIND
-                || existing.workspace_id.as_deref() != Some(command.workspace_id.as_str())
-                || existing.normalized_request_hash != command.normalized_request_hash
-            {
-                return Err(RuntimeError::Conflict(
-                    "model-tool invocation ID was already used for different arguments".into(),
-                ));
-            }
-            return Ok(match existing.exact_terminal_result {
-                Some(exact_result) if existing.phase == OperationPhase::Completed => {
-                    AgentToolMutationAdmission::Replay { exact_result }
-                }
-                _ => AgentToolMutationAdmission::Unresolved {
-                    operation_id: existing.operation_id,
-                },
-            });
+            return classify_existing(existing, command);
         }
 
         let authority = OperationAuthorityTransaction::new(&transaction);

@@ -76,6 +76,7 @@ impl RuntimeStore for SqliteRuntimeStore {
     crate::store_operator_agent_archive::delegate_operator_agent_archive_methods!();
     crate::store_operator_agent_create::delegate_operator_agent_create_methods!();
     crate::store_provider_events::delegate_provider_event_methods!();
+    crate::store_agent_tool::delegate_agent_tool_methods!();
 
     fn admit_pre_add_team_hooks(
         &self,
@@ -196,21 +197,6 @@ impl RuntimeStore for SqliteRuntimeStore {
     }
     fn quarantine_started_team_hook_effects(&self, at_ms: i64) -> Result<usize, RuntimeError> {
         self.repository.quarantine_started_team_hook_effects(at_ms)
-    }
-    fn begin_agent_tool_mutation(
-        &self,
-        command: &AgentToolMutationCommand,
-    ) -> Result<AgentToolMutationAdmission, RuntimeError> {
-        self.repository.begin_agent_tool_mutation(command)
-    }
-    fn finish_agent_tool_mutation(
-        &self,
-        operation_id: &str,
-        exact_result: &Value,
-        finished_at: i64,
-    ) -> Result<(), RuntimeError> {
-        self.repository
-            .finish_agent_tool_mutation(operation_id, exact_result, finished_at)
     }
     fn begin_session_edit_rerun(
         &self,

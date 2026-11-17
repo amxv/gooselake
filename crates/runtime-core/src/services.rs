@@ -1,3 +1,5 @@
+#[path = "services_agent_tool_store_trait.rs"]
+mod agent_tool_store_trait;
 #[path = "services_event_history.rs"]
 mod event_history;
 #[path = "services_message_history.rs"]
@@ -89,6 +91,7 @@ pub trait RuntimeStore:
     operator_restore_store_trait::operator_agent_restore_store_methods!();
     operator_create_store_trait::operator_agent_create_store_methods!();
     operator_archive_store_trait::operator_agent_archive_store_methods!();
+    agent_tool_store_trait::agent_tool_store_methods!();
 
     /// Admission precedes native pre-add hooks and provider creation.
     fn admit_pre_add_team_hooks(
@@ -199,21 +202,6 @@ pub trait RuntimeStore:
     /// Never blindly retry uncertain native hook execution after restart.
     fn quarantine_started_team_hook_effects(&self, _at_ms: i64) -> Result<usize, RuntimeError> {
         Ok(0)
-    }
-    /// Commit admission before any native effect, and fail closed on ambiguity.
-    fn begin_agent_tool_mutation(
-        &self,
-        _command: &AgentToolMutationCommand,
-    ) -> Result<AgentToolMutationAdmission, RuntimeError> {
-        unsupported_store("durable model-tool mutation admission unavailable")
-    }
-    fn finish_agent_tool_mutation(
-        &self,
-        _operation_id: &str,
-        _exact_result: &Value,
-        _finished_at: i64,
-    ) -> Result<(), RuntimeError> {
-        unsupported_store("durable model-tool mutation receipt unavailable")
     }
     fn begin_session_edit_rerun(
         &self,

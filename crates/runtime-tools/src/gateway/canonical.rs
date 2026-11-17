@@ -17,6 +17,9 @@ use serde_json::{json, Value};
 use super::team_helpers::status_state_for_session;
 use super::RuntimeToolGateway;
 
+mod preflight;
+use preflight::{validate_team_mode, validate_team_model_preset};
+
 const STATUS_MEMBER_LIMIT: usize = 100;
 const STATUS_AVAILABLE_WORKTREE_LIMIT: usize = 20;
 
@@ -260,9 +263,10 @@ impl RuntimeToolGateway {
             && self.team_policy.enabled
             && request.args.get("mode").and_then(Value::as_str) != Some("status")
         {
-            if let Err(error) = serde_json::from_value::<TeamMode>(request.args.clone()) {
-                return invalid_schema(error);
-            }
+            let mode = match serde_json::from_value::<TeamMode>(request.args.clone()) {
+                Ok(mode) => mode,
+                Err(error) => return invalid_schema(error),
+            };
             let Some(invocation_id) = request
                 .invocation_id
                 .as_deref()
@@ -276,22 +280,48 @@ impl RuntimeToolGateway {
                 Ok(agent) => agent,
                 Err(error) => return error_envelope(error),
             };
+            // All request-only invalid values must be rejected before writing
+            // an irreversible host-ID intent. Do not preflight mutable roster,
+            // route or native state here: exact successful replay must remain
+            // possible after the originally affected resource has changed.
+            if let Err(error) = validate_team_mode(&mode) {
+                return error_envelope(error);
+            }
             let normalized_request = json!({"tool_name":"gg_team","args":request.args.clone()});
             let request_hash = match normalized_json_hash(&normalized_request) {
                 Ok(hash) => hash,
                 Err(error) => return error_envelope(error),
             };
-            let admission =
-                runtime_core_store(self).begin_agent_tool_mutation(&AgentToolMutationCommand {
-                    operation_id: format!("op_{:032x}", rand::random::<u128>()),
-                    workspace_id: agent.workspace_id,
-                    caller_agent_id: caller.into(),
-                    idempotency_key: invocation_id.into(),
-                    tool_name: "gg_team".into(),
-                    normalized_request_hash: request_hash,
-                    normalized_request,
-                    admitted_at: crate::now_ms(),
-                });
+            let command = AgentToolMutationCommand {
+                operation_id: format!("op_{:032x}", rand::random::<u128>()),
+                workspace_id: agent.workspace_id,
+                caller_agent_id: caller.into(),
+                idempotency_key: invocation_id.into(),
+                tool_name: "gg_team".into(),
+                normalized_request_hash: request_hash,
+                normalized_request,
+                admitted_at: crate::now_ms(),
+            };
+            // Existing terminal/unknown outcomes outlive configured presets.
+            // This read does not admit work; the transactional begin below
+            // still arbitrates concurrent first admissions of the host key.
+            match runtime_core_store(self).replay_agent_tool_mutation(&command) {
+                Ok(Some(AgentToolMutationAdmission::Replay { exact_result })) => {
+                    return exact_result;
+                }
+                Ok(Some(AgentToolMutationAdmission::Unresolved { operation_id })) => {
+                    return unresolved_team_operation(&operation_id);
+                }
+                Ok(Some(AgentToolMutationAdmission::Execute { operation_id })) => {
+                    return unresolved_team_operation(&operation_id);
+                }
+                Ok(None) => {}
+                Err(error) => return error_envelope(error),
+            }
+            if let Err(error) = validate_team_model_preset(&mode, &self.team_model_presets) {
+                return error_envelope(error);
+            }
+            let admission = runtime_core_store(self).begin_agent_tool_mutation(&command);
             match admission {
                 Ok(AgentToolMutationAdmission::Execute { operation_id }) => {
                     admitted_team_operation = Some(operation_id);

@@ -2377,6 +2377,8 @@ Tool envelopes are compact and consistent:
 
 `gg_team` mutations first record a durable intent keyed to the trusted caller and invocation ID, then persist the exact successful response. Exact replays return the receipt; conflicting payloads return `conflict`. After a crash or ambiguous failure, an unreceipted operation returns non-retryable `outcome_unresolved` rather than silently applying the change twice. All ambiguous mutation transport failures use `outcome_unresolved` and must not be blindly retried. See [MCP and Sidecars](/docs/mcp-and-sidecars) for the provider wiring.
 
+Invalid request-only values, such as empty titles, duplicate removal targets or unsupported worktree cleanup, are rejected before consuming the host invocation ID. For a new invocation, an unknown configured model preset is also rejected without writing an intent. Existing invocation outcomes are looked up before consulting the current preset catalog: removing a preset during a configuration change cannot hide its exact successful receipt, original unresolved operation coordinate or conflicting-input error. Current caller authentication and feature access still apply to replays.
+
 ## Error mapping
 
 The following legacy error shapes apply to `/v1` endpoints. Operator

@@ -93,6 +93,7 @@ mod repository_worktree_status;
 mod repository_worktree_status_stream;
 mod schema;
 mod store;
+mod store_agent_tool;
 mod store_comms_diagnostics;
 mod store_context_limit;
 mod store_event_history;

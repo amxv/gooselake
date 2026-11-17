@@ -2,8 +2,9 @@ use super::HttpMethod;
 use crate::http::{
     AgentDeliveryListQuery, AgentMessageListQuery, MigrationSubjectPageQuery, OperationListQuery,
     OperatorEventHistoryQuery, OperatorEventStreamQuery, OperatorGlobalEventStreamQuery,
-    OperatorProcessListQuery, ResourcePageQuery, WorkspaceAgentListQuery,
-    WorkspaceHookEffectsQuery, WorkspaceHooksQuery, WorktreeInventoryPageQuery,
+    OperatorProcessListQuery, ResourcePageQuery, TeamOperationInspectionQuery,
+    WorkspaceAgentListQuery, WorkspaceHookEffectsQuery, WorkspaceHooksQuery,
+    WorktreeInventoryPageQuery,
 };
 use schemars::generate::{Contract, SchemaSettings};
 use schemars::JsonSchema;
@@ -14,6 +15,9 @@ use serde_json::{json, Value};
 /// collection of query DTOs or infer fields by scraping HTTP source strings.
 pub(super) fn fields(path: &str, method: HttpMethod) -> Option<Vec<QueryField>> {
     match (method, path) {
+        (HttpMethod::Get, "/v1/diagnostics/team-operations/{operation_id}") => {
+            Some(schema_fields::<TeamOperationInspectionQuery>())
+        }
         (HttpMethod::Get, "/v2/workspaces") => Some(schema_fields::<ResourcePageQuery>()),
         (HttpMethod::Get, "/v2/workspaces/{workspace_id}/worktrees") => {
             Some(schema_fields::<WorktreeInventoryPageQuery>())

@@ -464,38 +464,35 @@ pub(super) async fn list_team_operation_diagnostics(
     Ok(Json(rows))
 }
 
-#[derive(Debug, Serialize)]
-pub(super) struct TeamOperationRecoveryView {
-    operation: runtime_core::TeamOperationJournalRecord,
-    diagnostics: Vec<runtime_core::TeamOperationDiagnosticRecord>,
-    /// This endpoint never grants permission to repeat native side effects.
-    native_retry_authorized: bool,
-    requires_manual_review: bool,
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TeamOperationInspectionQuery {
+    #[schemars(range(min = 0))]
+    after_diagnostic_id: Option<i64>,
+    #[schemars(range(min = 1, max = 100))]
+    limit: Option<usize>,
 }
 
-/// Exact indexed recovery lookup, including the durable stage that the
-/// diagnostics-only list cannot expose. Auth is enforced by the /v1 scope.
+/// Tolerant, bounded evidence inspection. Strict authority readers stay
+/// separate, and this endpoint never grants permission for native replay.
 pub(super) async fn get_team_operation_recovery(
     State(state): State<AppState>,
     Path(operation_id): Path<String>,
-) -> Result<Json<TeamOperationRecoveryView>, ApiError> {
+    Query(query): Query<TeamOperationInspectionQuery>,
+) -> Result<Json<runtime_core::legacy_operation_inspection::LegacyTeamOperationInspection>, ApiError>
+{
     let operation_id = operation_id.trim();
-    let operation = state
+    let inspection = state
         .app
         .services
         .store
-        .get_team_operation_journal(operation_id)?
+        .inspect_legacy_team_operation(
+            operation_id,
+            query.after_diagnostic_id,
+            query.limit.unwrap_or(
+                runtime_core::legacy_operation_inspection::LEGACY_INSPECTION_DEFAULT_DIAGNOSTICS,
+            ),
+        )?
         .ok_or_else(|| ApiError::not_found(format!("team operation {operation_id}")))?;
-    let diagnostics = state
-        .app
-        .services
-        .store
-        .list_team_operation_diagnostics(None, Some(operation_id))?;
-    let requires_manual_review = !matches!(operation.stage.as_str(), "completed" | "rolled_back");
-    Ok(Json(TeamOperationRecoveryView {
-        operation,
-        diagnostics,
-        native_retry_authorized: false,
-        requires_manual_review,
-    }))
+    Ok(Json(inspection))
 }

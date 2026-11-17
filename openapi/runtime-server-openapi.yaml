@@ -182,20 +182,34 @@ paths:
                 $ref: "#/components/schemas/JsonObject"
   /v1/diagnostics/team-operations/{operation_id}:
     get:
-      summary: Inspect exact legacy team operation recovery stage
+      summary: Inspect bounded original legacy operation evidence
       parameters:
         - name: operation_id
           in: path
           required: true
           schema:
             type: string
+        - name: after_diagnostic_id
+          in: query
+          required: false
+          schema: {"format":"int64","minimum":0,"type":"integer"}
+        - name: limit
+          in: query
+          required: false
+          schema: {"default":50,"format":"uint","maximum":100,"minimum":1,"type":"integer"}
       responses:
         "200":
-          description: JSON response
+          description: Original journal or admission and bounded diagnostic page; damaged payload metadata retained; no native retry authorized
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: '#/components/schemas/JsonObject'
+        "400":
+          description: Invalid diagnostic cursor or page limit
+        "401":
+          description: Missing or invalid operator bearer token
+        "404":
+          description: Neither original journal nor admission exists
   /v1/diagnostics/worktrees:
     get:
       summary: Worktree diagnostics

@@ -2157,9 +2157,41 @@ saving an exact successful response.
 
 Use operator-authenticated
 `GET /v1/diagnostics/team-operations/{operation_id}` to inspect a saved legacy
-journal and its diagnostics. The list endpoint with `?operation_id=...`
-returns diagnostics, not authoritative journal stage. Unknown IDs return
-404; bearer authentication remains required. These inspection surfaces and
+journal, independent original spawn admission, and a bounded diagnostic page
+from one SQLite read snapshot. If the journal is missing but the original
+admission remains, the response is 200 with `operation:null` and its original
+`admission`; 404 means neither record exists. Conflicting original team IDs
+remain visible. Bearer authentication remains required.
+
+Malformed, non-text or oversized JSON retains its record metadata and reports
+`payload:null`, its original byte length, and `payload_decode_error`. Valid JSON
+`null` has no decode error. The strict journal reader and full history export
+still reject malformed data; inspection never repairs it. Invalid UTF-8 in
+SQLite TEXT is retained as an explicit decode error too. Startup continues to
+use strict full hydration and may refuse to start over damaged legacy history.
+This endpoint can inspect damage while the runtime is already available;
+restart access remains pending the legacy native and maintenance safeguards.
+Inspection does not certify recovery, close, claim repair or checkout cleanup.
+
+Use `limit=1..100` (default 50) and nonnegative `after_diagnostic_id` to page
+forward. Supply the returned `next_diagnostic_id` for the next page; a null
+cursor means that snapshot had no further rows. Each page has its own read
+snapshot. An oversized row still advances the cursor. JSON materialized from
+SQLite is limited to 64 KiB per payload and 256 KiB total, including any saved
+completion response inspected internally. These limits do not claim to bound
+all identity metadata or SQLite physical I/O. Diagnostic messages carry a
+UTF-8 preview of at most 4096 output bytes with `message_bytes`,
+`message_truncated`, and `message_utf8_replaced`; damaged or partial UTF-8 is
+reported and replaced, then the rendered preview is capped at a character boundary. Omitted JSON is explicit and can
+never be mistaken for valid empty evidence.
+
+`requires_manual_review:false` requires a typed saved completion matching the
+original admission, operation ID, team, kind and completed journal stage.
+A `completed` or `rolled_back` label alone does not clear review. Even certified
+completion always reports `native_retry_authorized:false`; it is not permission
+to close providers, release claims or delete checkouts. The list endpoint with
+`?operation_id=...` retains its existing strict diagnostics-only contract.
+These inspection surfaces and
 the general `/v2/operations/{operation_id}` API never convert a legacy intent
 into repeatable native authority. Native outcome review remains separately
 scoped where independently verified Git/provider evidence is unavailable.

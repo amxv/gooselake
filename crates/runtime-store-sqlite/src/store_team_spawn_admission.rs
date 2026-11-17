@@ -3,6 +3,22 @@
 /// transaction implementation rather than in an in-process cache.
 macro_rules! delegate_team_spawn_admission {
     () => {
+        fn inspect_legacy_team_operation(
+            &self,
+            operation_id: &str,
+            after_diagnostic_id: Option<i64>,
+            limit: usize,
+        ) -> Result<
+            Option<runtime_core::legacy_operation_inspection::LegacyTeamOperationInspection>,
+            runtime_core::RuntimeError,
+        > {
+            self.repository().inspect_legacy_team_operation(
+                operation_id,
+                after_diagnostic_id,
+                limit,
+            )
+        }
+
         fn find_team_member_spawn_operation(
             &self,
             team_id: &str,

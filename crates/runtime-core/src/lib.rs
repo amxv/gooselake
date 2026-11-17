@@ -3,6 +3,7 @@ pub mod app;
 pub mod edit_rerun;
 pub mod error;
 pub mod harness;
+pub mod legacy_operation_inspection;
 pub mod member_agent_create;
 pub mod model_policy;
 pub mod operator_agent_archive;

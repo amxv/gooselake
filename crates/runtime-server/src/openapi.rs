@@ -229,7 +229,7 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
             "Team operations diagnostics".to_string()
         }
         (HttpMethod::Get, "/v1/diagnostics/team-operations/{operation_id}") => {
-            "Inspect exact legacy team operation recovery stage".to_string()
+            "Inspect bounded original legacy operation evidence".to_string()
         }
         (HttpMethod::Post, "/v1/teams") => "Create team".to_string(),
         (HttpMethod::Get, "/v1/teams") => "List teams".to_string(),
@@ -635,6 +635,10 @@ fn append_operator_default_error(out: &mut String) {
 }
 
 fn append_response(out: &mut String, path: &str, method: HttpMethod) {
+    if method == HttpMethod::Get && path == "/v1/diagnostics/team-operations/{operation_id}" {
+        out.push_str("      responses:\n        \"200\":\n          description: Original journal or admission and bounded diagnostic page; damaged payload metadata retained; no native retry authorized\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/JsonObject'\n        \"400\":\n          description: Invalid diagnostic cursor or page limit\n        \"401\":\n          description: Missing or invalid operator bearer token\n        \"404\":\n          description: Neither original journal nor admission exists\n");
+        return;
+    }
     if method == HttpMethod::Post && path == "/v1/teams/{team_id}/members/spawn" {
         out.push_str("      responses:\n        \"200\":\n          description: Original certified historical spawn response; no native effects\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/JsonObject'\n        \"400\":\n          description: Fresh legacy spawn unsupported or invalid original request\n        \"401\":\n          description: Missing or invalid operator bearer token\n        \"409\":\n          description: Original outcome unresolved or immutable keyed request conflict; no native retry authorized\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/JsonObject'\n");
         return;

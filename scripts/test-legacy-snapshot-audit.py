@@ -17,7 +17,7 @@ import unittest
 SCRIPT = Path(__file__).with_name("audit-legacy-snapshot.py")
 # Deliberately pinned fixture expectation: bump with each additive source
 # migration, independently of the audit script's source-version discovery.
-EXPECTED_SOURCE_SCHEMA_VERSION = 49
+EXPECTED_SOURCE_SCHEMA_VERSION = 50
 
 
 def run_audit(path: Path) -> subprocess.CompletedProcess[str]:

@@ -27,6 +27,7 @@ mod event_cursor_recovery_scale;
 mod event_subject_reconciliation;
 mod event_subject_scale;
 mod event_subject_scopes;
+mod legacy_operation_inspection;
 mod legacy_team_cancellation;
 mod legacy_team_deletion;
 mod legacy_team_delivery_claim;

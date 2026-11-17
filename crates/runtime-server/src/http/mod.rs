@@ -75,6 +75,7 @@ mod worktrees;
 
 use agent_controls::*;
 use auth::*;
+pub(crate) use diagnostics::TeamOperationInspectionQuery;
 use diagnostics::*;
 use durable_event_stream::*;
 use events::*;

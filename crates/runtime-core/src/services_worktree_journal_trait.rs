@@ -63,6 +63,22 @@ pub(crate) use default_worktree_record_journal;
 
 macro_rules! default_team_spawn_admission {
     () => {
+        /// Tolerant bounded historical inspection must not replace strict
+        /// authority reads or grant permission to repeat native work.
+        fn inspect_legacy_team_operation(
+            &self,
+            _operation_id: &str,
+            _after_diagnostic_id: Option<i64>,
+            _limit: usize,
+        ) -> Result<
+            Option<crate::legacy_operation_inspection::LegacyTeamOperationInspection>,
+            crate::RuntimeError,
+        > {
+            Err(crate::RuntimeError::Unsupported(
+                "bounded historical team operation inspection unavailable".into(),
+            ))
+        }
+
         /// A coordinate is inspection evidence only, never success or native
         /// execution authority when an old preset expansion cannot be proved.
         fn find_team_member_spawn_operation(

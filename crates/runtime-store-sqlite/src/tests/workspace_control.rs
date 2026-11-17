@@ -120,6 +120,188 @@ fn lead_command(
 }
 
 #[test]
+fn direct_sqlite_rebind_intent_rejects_signed_roster_revision_ceiling() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let root = temp.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    let workspace = registered_workspace(&repository, &root, "Direct Rebind Revision Ceiling");
+    let (_session, agent) = create_agent(
+        &repository,
+        &workspace,
+        "signed-ceiling-agent",
+        "signed-ceiling-agent",
+        "Agent",
+        None,
+    );
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+        params![i64::MAX, agent.agent_id],
+    )
+    .unwrap();
+    let operation = runtime_core::WorkspaceAgentRebindOperation {
+        operation_id: "direct-rebind-signed-max".into(),
+        workspace_id: workspace.workspace_id.clone(),
+        agent_id: agent.agent_id.clone(),
+        idempotency_key: Some("direct-rebind-signed-max".into()),
+        expected_revision: i64::MAX as u64,
+        previous_worktree_id: None,
+        destination_worktree_id: None,
+        previous_cwd: workspace.canonical_root.clone(),
+        destination_cwd: temp
+            .path()
+            .join("different-root")
+            .to_string_lossy()
+            .into_owned(),
+        cleanup_previous_worktree: false,
+        previous_cleanup_status: None,
+        previous_cleanup_diagnostic: None,
+        phase: "intended".into(),
+        provider_evidence: None,
+        error_code: None,
+        created_at: 1,
+        updated_at: 1,
+    };
+    let error = repository
+        .begin_workspace_agent_rebind(&operation)
+        .unwrap_err();
+    assert!(
+        matches!(error, runtime_core::RuntimeError::InvalidState(_)),
+        "{error}"
+    );
+    assert!(repository
+        .get_workspace_agent_rebind(&operation.operation_id)
+        .unwrap()
+        .is_none());
+    assert!(repository
+        .get_operation(&operation.operation_id)
+        .unwrap()
+        .is_none());
+    assert!(!repository
+        .unresolved_workspace_agent_rebind(&agent.agent_id)
+        .unwrap());
+}
+
+#[test]
+fn direct_sqlite_rebind_finalization_refuses_exhausted_signed_successor_atomically() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let root = temp.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    let workspace = registered_workspace(&repository, &root, "Final Rebind Ceiling");
+    let (session, agent) = create_agent(
+        &repository,
+        &workspace,
+        "final-ceiling-agent",
+        "final-ceiling-agent",
+        "Agent",
+        None,
+    );
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+        params![i64::MAX - 1, agent.agent_id],
+    )
+    .unwrap();
+    let destination = temp
+        .path()
+        .join("different-root")
+        .to_string_lossy()
+        .into_owned();
+    let operation = runtime_core::WorkspaceAgentRebindOperation {
+        operation_id: "final-rebind-signed-max".into(),
+        workspace_id: workspace.workspace_id.clone(),
+        agent_id: agent.agent_id.clone(),
+        idempotency_key: Some("final-rebind-signed-max".into()),
+        expected_revision: (i64::MAX - 1) as u64,
+        previous_worktree_id: None,
+        destination_worktree_id: None,
+        previous_cwd: workspace.canonical_root.clone(),
+        destination_cwd: destination.clone(),
+        cleanup_previous_worktree: false,
+        previous_cleanup_status: None,
+        previous_cleanup_diagnostic: None,
+        phase: "intended".into(),
+        provider_evidence: None,
+        error_code: None,
+        created_at: 1,
+        updated_at: 1,
+    };
+    assert_eq!(
+        repository
+            .begin_workspace_agent_rebind(&operation)
+            .unwrap()
+            .phase,
+        "intended"
+    );
+    // Model a pre-fix unresolved native intent that was admitted at the signed
+    // maximum before the new admission fence existed. On upgrade it must not
+    // be finalized, even with otherwise matching provider evidence.
+    db.execute(
+        "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+        params![i64::MAX, agent.agent_id],
+    )
+    .unwrap();
+    let mut legacy_intent = operation.clone();
+    legacy_intent.expected_revision = i64::MAX as u64;
+    db.execute(
+        "UPDATE workspace_agent_rebinds SET record_json=?1 WHERE operation_id=?2",
+        params![
+            serde_json::to_string(&legacy_intent).unwrap(),
+            operation.operation_id
+        ],
+    )
+    .unwrap();
+    let mut updated_session = session.clone();
+    updated_session.cwd = Some(destination.clone());
+    let mut updated_policy = agent.recreation_policy.clone();
+    updated_policy.authoritative_cwd = destination.clone();
+    let evidence = runtime_core::ProviderWorkspaceRebindEvidence {
+        binding_generation: None,
+        canonical_provider_session_ref: None,
+        runtime_session_id: agent.agent_id.clone(),
+        cwd: destination,
+        provider_session_ref: session.provider_session_ref.clone(),
+    };
+    let error = repository
+        .finalize_workspace_agent_rebind(
+            &operation.operation_id,
+            &updated_session,
+            &updated_policy,
+            &evidence,
+            2,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, runtime_core::RuntimeError::InvalidState(_)),
+        "{error}"
+    );
+    // The finalizer must roll everything back and retain the unresolved
+    // legacy intent for external review, not forge a completed receipt.
+    let (revision, cwd): (i64, String) = db
+        .query_row(
+            "SELECT a.revision,s.cwd FROM workspace_agents a JOIN sessions s ON s.id=a.session_id
+             WHERE a.session_id=?1",
+            [&agent.agent_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(revision, i64::MAX);
+    assert_eq!(cwd, workspace.canonical_root);
+    assert_eq!(
+        repository
+            .get_workspace_agent_rebind(&operation.operation_id)
+            .unwrap()
+            .unwrap()
+            .phase,
+        "intended"
+    );
+}
+
+#[test]
 fn workspace_lead_set_reassign_clear_archive_restore_preserves_titles_and_never_auto_elects() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let repository = repo(&temp_dir);

@@ -86,6 +86,7 @@ mod operator_operation_pages;
 mod operator_process_pages;
 mod operator_rebind_etag;
 mod operator_rebind_receipt_replay;
+mod operator_rebind_revision_ceiling;
 mod operator_rebind_unknown;
 mod operator_success_headers;
 mod operator_unjournaled_idempotency;

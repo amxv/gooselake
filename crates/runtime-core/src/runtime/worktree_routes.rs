@@ -332,6 +332,13 @@ impl RuntimeSessionManager {
                 request.expected_revision, agent.revision
             )));
         }
+        // SQLite stores roster revisions as signed integers. Admit no native
+        // provider rebind when its successful receipt cannot advance the row.
+        if agent.revision >= i64::MAX as u64 {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         if session.cwd.as_deref() != Some(agent.recreation_policy.authoritative_cwd.as_str()) {
             return Err(RuntimeError::ProtocolViolation(
                 "session cwd differs from durable workspace-agent route".into(),

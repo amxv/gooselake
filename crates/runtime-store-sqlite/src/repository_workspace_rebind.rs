@@ -268,6 +268,14 @@ impl SqliteRuntimeRepository {
                 "workspace agent route, activity or revision changed before provider rebind".into(),
             ));
         }
+        // The native provider effect must not start if a signed SQLite
+        // successor cannot be committed. This write-transaction check also
+        // fences concurrent and direct-to-store callers of rebind admission.
+        if revision >= i64::MAX {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         if let Some(target) = operation.destination_worktree_id.as_deref() {
             let expected: Option<(String, String)> = tx
                 .query_row(
@@ -577,6 +585,13 @@ impl SqliteRuntimeRepository {
         {
             return Err(RuntimeError::Conflict(
                 "worktree rebind session or policy changed".into(),
+            ));
+        }
+        // Defend a previously admitted intent against later signed-revision
+        // exhaustion, before any session/route write in this transaction.
+        if revision >= i64::MAX {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
             ));
         }
         if let Some(target) = operation.destination_worktree_id.as_deref() {

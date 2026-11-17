@@ -1031,6 +1031,8 @@ curl -fsS -X POST \
 
 `expected_revision` is the current workspace-agent revision, not the workspace revision. Optionally send the matching strong `If-Match: "0"` header; a missing header retains compatibility, but a weak, duplicate or mismatched precondition returns typed `412 revision_precondition_failed` **before** provider work or native intent. A successful verified rebind includes the resulting agent revision `ETag` and `X-Operation-ID`. The agent's public identity and provider session identity remain stable. The runtime persists a worktree-rebind intent **before** calling a provider, and only after provider-native cwd/session evidence is verified does one SQLite transaction update the session cwd, workspace-agent recreation policy/revision, and managed-worktree associations. A repeat with the same `Idempotency-Key` and identical input returns the original completed operation without calling the provider again; conflicting input or revision fails with HTTP `409`.
 
+SQLite agent revisions have a signed 64-bit ceiling. At that maximum, a new worktree rebind returns `400 invalid_state` **before** admitting an intent or invoking the native provider, because its verified route change cannot commit another revision. Durable SQLite admission and finalization independently guard the same boundary; a previously completed exact-key receipt remains replayable at the ceiling, with no additional native rebind.
+
 Completed keyed rebind receipts remain readable during a later unresolved
 native edit or compaction, including after reopening the store without a
 registered provider. This returns the saved operation and current agent

@@ -204,7 +204,7 @@ impl ClaudeProvider {
         let credentials_path = env.auth_paths.credentials_path.as_path();
         if !credentials_path.exists() {
             return Err(RuntimeError::NotFound(format!(
-                "Claude OAuth credentials file missing at {}. Run `claude login`, or import credentials via /v1/providers/claude/auth/import-json or /v1/providers/claude/auth/import-file.",
+                "Claude OAuth credentials file missing at {}. Use the configured credential source or complete `claude login` before starting native sessions. HTTP credential mutations are unavailable.",
                 credentials_path.display()
             )));
         }

@@ -51,6 +51,8 @@ pub(super) struct TestProvider {
     edit_inputs: Mutex<Vec<Vec<serde_json::Value>>>,
     pub(super) send_failure_mode: std::sync::atomic::AtomicU8,
     pub(super) send_invocations: std::sync::atomic::AtomicUsize,
+    pub(super) interrupt_failure_mode: std::sync::atomic::AtomicU8,
+    pub(super) interrupt_invocations: std::sync::atomic::AtomicUsize,
     allow_lifecycle_close: std::sync::atomic::AtomicBool,
     supports_thinking: std::sync::atomic::AtomicBool,
     preferences_mutation_calls: std::sync::atomic::AtomicUsize,
@@ -490,7 +492,38 @@ impl RuntimeProvider for TestProvider {
         self.fake_observe_session(agent_id).await
     }
 
-    async fn interrupt_turn(&self, _req: ProviderInterruptTurnRequest) -> Result<(), RuntimeError> {
+    async fn interrupt_turn(&self, req: ProviderInterruptTurnRequest) -> Result<(), RuntimeError> {
+        self.interrupt_invocations
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self
+            .interrupt_failure_mode
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 1
+        {
+            let mut state = self.state.lock().await;
+            let session = state.sessions.get_mut(&req.runtime_session_id).unwrap();
+            assert!(
+                session
+                    .history
+                    .last()
+                    .is_some_and(|text| text == "model_assign_wait_for_interrupt"),
+                "lost-ACK fixture requires an actual dispatched native turn"
+            );
+            session.pending.clear();
+            session.completed.insert(
+                req.turn_id.clone(),
+                ProviderTurnResult {
+                    runtime_session_id: req.runtime_session_id,
+                    turn_id: req.turn_id,
+                    status: ProviderTurnStatus::Interrupted,
+                    usage: None,
+                    error: None,
+                },
+            );
+            return Err(RuntimeError::InvalidState(
+                "fake native turn was interrupted but its acknowledgement timed out".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -816,6 +849,21 @@ pub(super) async fn build_test_router_with_provider_and_runtime(
     Arc<TestProvider>,
     Arc<RuntimeSessionManager>,
 ) {
+    let (router, token, temp, provider, runtime, _app) =
+        build_test_router_with_services(team_policy).await;
+    (router, token, temp, provider, runtime)
+}
+
+pub(super) async fn build_test_router_with_services(
+    team_policy: TeamMcpPolicy,
+) -> (
+    Router,
+    String,
+    tempfile::TempDir,
+    Arc<TestProvider>,
+    Arc<RuntimeSessionManager>,
+    Arc<RuntimeApp>,
+) {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp_dir.path().join("runtime.sqlite3"),
@@ -914,15 +962,16 @@ pub(super) async fn build_test_router_with_provider_and_runtime(
     app.initialize().await.expect("initialize app");
     let bearer_token = "test-token".to_string();
 
+    let app = Arc::new(app);
     let router = build_router(AppState {
-        app: Arc::new(app),
+        app: app.clone(),
         runtime: runtime.clone(),
         bearer_token: bearer_token.clone(),
         public_base_url: "http://localhost:8080".to_string(),
         startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
     });
 
-    (router, bearer_token, temp_dir, test_provider, runtime)
+    (router, bearer_token, temp_dir, test_provider, runtime, app)
 }
 
 pub(super) async fn build_mixed_provider_test_router(

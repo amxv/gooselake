@@ -441,6 +441,12 @@ pub trait RuntimeStore:
     ) -> Result<WorkspaceInterruptAdmission, RuntimeError> {
         unsupported_store("workspace interrupt authority is not implemented by this runtime store")
     }
+    fn unresolved_workspace_interrupt_for_session(
+        &self,
+        _session_id: &str,
+    ) -> Result<Option<String>, RuntimeError> {
+        Ok(None)
+    }
     fn mark_workspace_interrupt_started(
         &self,
         _operation_id: &str,

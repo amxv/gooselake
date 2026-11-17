@@ -26,25 +26,21 @@ async fn post_legacy_worktree(
 #[tokio::test]
 async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_sessions_or_touch_native_state(
 ) {
-    let (router, token, temp, provider) =
-        build_test_router_with_provider(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, runtime) =
+        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
     let root = temp.path().join("disposable-repo");
     std::fs::create_dir_all(&root).unwrap();
     let source_body = serde_json::json!({
         "provider":"codex", "model":"test-model", "cwd":root,
     });
-    let (status, first) =
-        post_legacy_worktree(&router, Some(&token), "/v1/sessions", source_body.clone()).await;
+    let (status, first) = legacy_session_fixture_json(&runtime, source_body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{first}");
     let session_id = first["id"].as_str().unwrap();
-    let (status, foreign) =
-        post_legacy_worktree(&router, Some(&token), "/v1/sessions", source_body).await;
+    let (status, foreign) = legacy_session_fixture_json(&runtime, source_body).await;
     assert_eq!(status, StatusCode::OK, "{foreign}");
     let foreign_id = foreign["id"].as_str().unwrap();
-    let (status, unclaimed) = post_legacy_worktree(
-        &router,
-        Some(&token),
-        "/v1/sessions",
+    let (status, unclaimed) = legacy_session_fixture_json(
+        &runtime,
         serde_json::json!({
             "provider":"codex", "model":"test-model", "cwd":root,
         }),

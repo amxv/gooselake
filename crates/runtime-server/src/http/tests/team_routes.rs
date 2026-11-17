@@ -4,11 +4,11 @@ mod message_journal_proof;
 
 #[tokio::test]
 async fn team_routes_lifecycle_and_controls() {
-    let (router, token, temp_dir) = build_test_router().await;
+    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
 
-    let leader_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
-    let member_one_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
-    let member_two_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
+    let leader_session_id = create_test_session(&runtime, "phase5").await;
+    let member_one_session_id = create_test_session(&runtime, "phase5").await;
+    let member_two_session_id = create_test_session(&runtime, "phase5").await;
 
     let create_team_response = router
         .clone()
@@ -368,17 +368,17 @@ async fn team_routes_lifecycle_and_controls() {
         )
         .await
         .expect("interrupt-all response");
-    assert_eq!(interrupt_all_response.status(), StatusCode::OK);
-    let interrupt_all_json: serde_json::Value = serde_json::from_slice(
+    assert_eq!(interrupt_all_response.status(), StatusCode::BAD_REQUEST);
+    let refused: Value = serde_json::from_slice(
         &to_bytes(interrupt_all_response.into_body(), usize::MAX)
             .await
-            .expect("interrupt-all body"),
+            .unwrap(),
     )
-    .expect("interrupt-all json");
-    assert_eq!(
-        interrupt_all_json["team_id"].as_str(),
-        Some(team_id.as_str())
-    );
+    .unwrap();
+    assert!(refused["error"]
+        .as_str()
+        .unwrap()
+        .contains("legacy native mutation is unavailable"));
 
     let delete_team_response = router
         .clone()
@@ -412,11 +412,11 @@ async fn team_routes_lifecycle_and_controls() {
 
 #[tokio::test]
 async fn team_and_global_events_stream_replay_then_live() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
 
-    let lead_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
-    let member_one_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
-    let member_two_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
+    let lead_session_id = create_test_session(&runtime, "phase5").await;
+    let member_one_session_id = create_test_session(&runtime, "phase5").await;
+    let member_two_session_id = create_test_session(&runtime, "phase5").await;
 
     let create_team_response = router
         .clone()
@@ -648,10 +648,10 @@ async fn team_and_global_events_stream_replay_then_live() {
 
 #[tokio::test]
 async fn team_routes_direct_and_broadcast_create_deliveries_and_snapshot() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
 
-    let leader_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
-    let teammate_session_id = create_test_session(router.clone(), token.as_str(), "phase5").await;
+    let leader_session_id = create_test_session(&runtime, "phase5").await;
+    let teammate_session_id = create_test_session(&runtime, "phase5").await;
 
     let create_team_response = router
         .clone()

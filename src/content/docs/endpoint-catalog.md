@@ -175,10 +175,10 @@ Message creation commits the canonical message and every recipient delivery atom
 - `GET /v1/providers/codex/auth/status` (Bearer)
 - `GET /v1/providers/acp/auth/status` (Bearer)
 - `GET /v1/providers/claude/auth/status` (Bearer)
-- `POST /v1/providers/claude/auth/api-key` (Bearer)
-- `POST /v1/providers/claude/auth/import-json` (Bearer)
-- `POST /v1/providers/claude/auth/import-file` (Bearer, `multipart/form-data`, field `file`)
-- `POST /v1/providers/claude/auth/logout` (Bearer)
+- `POST /v1/providers/claude/auth/api-key` (Bearer; **unsupported**, HTTP `400`, no credential writes or native session recycling; no replacement mutation HTTP operation yet)
+- `POST /v1/providers/claude/auth/import-json` (Bearer; **unsupported**, HTTP `400`, no credential writes or native session recycling; no replacement mutation HTTP operation yet)
+- `POST /v1/providers/claude/auth/import-file` (Bearer; **unsupported**, HTTP `400`, no credential writes or native session recycling; no replacement mutation HTTP operation yet)
+- `POST /v1/providers/claude/auth/logout` (Bearer; **unsupported**, HTTP `400`, no credential writes or native session recycling; no replacement mutation HTTP operation yet)
 - `GET /v2/providers/{provider}/capabilities` (Bearer; only enabled providers; disabled or absent adapters return `404 not_found`)
 - `POST /v2/providers/{provider}/models/discover` (Bearer; only enabled providers; unknown properties rejected; `Idempotency-Key` not supported; disabled adapters cannot be probed)
 - `POST /v2/providers/{provider}/skills/discover` (Bearer; only enabled providers; unknown properties rejected; `Idempotency-Key` not supported; disabled adapters cannot be probed)
@@ -196,13 +196,13 @@ Provider behavior notes:
 
 ## Sessions
 
-- `POST /v1/sessions` (Bearer)
+- `POST /v1/sessions` (Bearer; **unsupported**, HTTP `400`, no native effects; use the applicable workspace operation)
 - `GET /v1/sessions` (Bearer)
 - `GET /v1/sessions/{session_id}` (Bearer)
-- `POST /v1/sessions/{session_id}/resume` (Bearer)
-- `POST /v1/sessions/{session_id}/close` (Bearer)
+- `POST /v1/sessions/{session_id}/resume` (Bearer; **unsupported**, HTTP `400`, no native effects; use the applicable workspace operation)
+- `POST /v1/sessions/{session_id}/close` (Bearer; **unsupported**, HTTP `400`, no native effects; use the applicable workspace operation)
 - `POST /v1/sessions/{session_id}/turns` (Bearer)
-- `POST /v1/sessions/{session_id}/turns/{turn_id}/interrupt` (Bearer, returns `202`)
+- `POST /v1/sessions/{session_id}/turns/{turn_id}/interrupt` (Bearer; **unsupported**, HTTP `400`, no native effects; use the applicable workspace operation)
 - `POST /v1/sessions/{session_id}/approvals/{approval_id}` (Bearer)
 - `GET /v1/sessions/{session_id}/events` (Bearer)
 - `GET /v1/sessions/{session_id}/events/stream` (Bearer, SSE)
@@ -268,7 +268,7 @@ must never be inferred from ambiguous proxy-provided headers.
 - `GET /v1/teams/{team_id}/view` (Bearer)
 - `GET /v1/teams/{team_id}/events` (Bearer)
 - `GET /v1/teams/{team_id}/events/stream` (Bearer, SSE)
-- `POST /v1/teams/{team_id}/interrupt-all` (Bearer)
+- `POST /v1/teams/{team_id}/interrupt-all` (Bearer; **unsupported**, HTTP `400`, no native effects; use the applicable workspace operation)
 
 Legacy `/v1` teams still require a non-null lead. Removing the current legacy lead is rejected until another lead is explicitly assigned; the runtime no longer promotes the oldest remaining member automatically.
 
@@ -308,7 +308,7 @@ Process scheduler mutations are durable. `POST /v1/processes/scheduler` accepts 
 
 ## Worktrees
 
-- `POST /v1/worktrees` (Bearer)
+- `POST /v1/worktrees` (Bearer; **unsupported**, HTTP `400`, no native effects; use the applicable workspace operation)
 - `GET /v1/worktrees` (Bearer)
 - `GET /v1/worktrees/{worktree_id}` (Bearer)
 - `POST /v1/worktrees/{worktree_id}/claims` (Bearer)

@@ -1010,16 +1010,11 @@ Git operation journal as `POST /v2/workspaces/{workspace_id}/worktrees`, includi
 an operator-owned operation and exact native result; its ID is persisted as
 `created_by_operation_id` on the managed-worktree record. A native Git outcome
 that cannot be proven returns `409 outcome_unresolved` with the operation ID
-for explicit inspection rather than automatically repeating Git. The agent
-creation endpoint itself is **not yet** a durable idempotent provider-creation
-operation; its worktree step uses a one-shot server key, not a replayable
-caller key. The existing default retention policy for agent-created worktrees
-remains `retain_on_last_claim` when no policy is supplied.
-
-Until native provider-agent creation is journaled, callers must **not** assume
-that an `Idempotency-Key` makes the entire agent request replay-safe. The
-endpoint rejects that header with HTTP `400 idempotency_not_supported`, before
-admitting a provider or native Git mutation; it does not silently ignore it.
+for explicit inspection rather than automatically repeating Git. Agent creation also has durable provider intent and exact native outcome receipts.
+Supply `Idempotency-Key` for replayable whole-request results; an unkeyed request
+uses a server-generated one-shot key. Unknown Git, hook, or provider effects
+retain their original operation and claims. The default retention policy for
+agent-created worktrees remains `retain_on_last_claim` when none is supplied.
 
 The provider cwd, workspace-agent recreation policy, session worktree ID, and
 owned managed-worktree claim are persisted consistently. `cwd` must not also
@@ -1071,7 +1066,7 @@ change.
 
 Only checkout paths under the configured managed root with verified Git identity/branch, no uncommitted changes, and no unmerged branch commits are eligible for automatic deletion. This retry is a separate cleanup action, not a retry of provider rebinding: replaying the original `Idempotency-Key` does not implicitly retry pending native cleanup, even if the checkout has since become clean. Recovery from an ambiguous provider rebind still requires operator investigation and is not implicitly resolved by this endpoint.
 
-Older agent creation requests without a `worktree` selector still accept a `cwd` inside the registered root. The legacy `/v1/worktrees` endpoints remain temporarily available to existing clients; the workspace-scoped endpoint is the preferred creation path. Unresolved provider rebinds still require explicit operator recovery rather than automatic guessing or replay.
+Older agent creation requests without a `worktree` selector still accept a `cwd` inside the registered root. Legacy worktree reads and guarded claim/release/cleanup remain available; raw `/v1/worktrees` creation is unsupported. Unresolved provider rebinds still require explicit operator recovery rather than automatic guessing or replay.
 
 Archive and restore without changing identity or policy:
 
@@ -1264,7 +1259,7 @@ Nonempty JSON options such as
 `{"dry_run":true}` returns `400 invalid_request` without interrupting turns
 or allocating an operation.
 
-The response contains the durable `operation_id`, `workspace_id`, and deterministic `interrupted_agent_ids` / `skipped_agent_ids` sets. The runtime snapshots only active workspace members, records per-agent interrupt intent before provider calls, skips idle members, and cannot target a session outside the workspace. An exact idempotency-key retry replays the stored terminal result without issuing another provider interrupt. If a process dies after the provider accepted an interrupt but before the effect was finalized, recovery uses the durable `turn.interrupt_requested` event instead of blindly dispatching a duplicate; genuinely ambiguous effects remain non-terminal for explicit recovery rather than being guessed.
+The response contains the durable `operation_id`, `workspace_id`, and deterministic `interrupted_agent_ids` / `skipped_agent_ids` sets. The runtime snapshots only active workspace members, records per-agent interrupt intent before provider calls, skips idle members, and cannot target a session outside the workspace. An exact idempotency-key retry replays the stored terminal result without issuing another provider interrupt. If a process dies after the provider acknowledged an interrupt but before the effect was finalized, recovery requires a durable `turn.interrupt_requested` event correlated with the original operation, agent, and turn. Missing or foreign-operation events cannot settle it. Provider timeouts (including adapter InvalidState/NotFound after dispatch), failed event receipts, and uncertain targets return `409 outcome_unresolved` with the original operation ID; same-key retries never interrupt again. A later absent or changed active turn does not turn uncertainty into skipped success. Startup withholds native session resume and turn replay for unresolved targets. Inspect `/v2/operations/{operation_id}`; no evidence-only resolution endpoint for these interruption effects is provided yet. Per-target Critical transition completeness remains a separate closure item.
 
 ### Migrating legacy workspace authority
 
@@ -1437,43 +1432,33 @@ Before dispatching a canonical delivery, the SQLite runtime acquires a transacti
 
 An ambiguous native outcome remains `injecting` for explicit reconciliation: a missing correlated admission after restart is **not** proof that the provider did nothing and does not make the delivery retryable. Historic unjournaled `injecting` rows are not automatically certified, and no durable turn ID is fabricated from a provider-native ID. This improves receipt atomicity and native dispatch fencing; it does not claim that every possible provider-side effect is already reconciled or that native execution is globally exactly once.
 
-## Sessions
+## Legacy sessions and retained turn history
 
-Create a provider-backed runtime session:
+New provider sessions belong to workspace agents. Use
+`POST /v2/workspaces/{workspace_id}/agents` with an `Idempotency-Key`, then
+inspect onboarding before submitting a user turn. The agent ID is also its
+session ID in retained session/event views. Existing unowned legacy sessions
+remain historical inspection subjects; their cwd does not authorize a guessed
+workspace binding.
 
-```bash
-SESSION_JSON=$(curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider":"codex",
-    "model":"gpt-6-astra",
-    "cwd":"/workspace/repo",
-    "permission_mode":"default",
-    "metadata":{"purpose":"docs smoke"}
-  }' \
-  "$BASE_URL/v1/sessions")
+The following authenticated legacy native mutations return HTTP `400` with
+`{"error":"..."}` explaining the unsupported capability. They refuse before
+provider calls, Git/init hooks, credential changes, or new operation admission;
+a supplied key or operation ID does not authorize a raw effect:
 
-SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.id')
-```
+| Legacy POST | Supported operator workflow |
+| --- | --- |
+| `/v1/sessions` | Workspace agent creation |
+| `/v1/sessions/{session_id}/resume` | Workspace agent restore |
+| `/v1/sessions/{session_id}/close` | Workspace agent archive |
+| `/v1/sessions/{session_id}/turns/{turn_id}/interrupt` | Workspace interruption |
+| `/v1/teams/{team_id}/interrupt-all` | Workspace interruption |
+| `/v1/worktrees` | Workspace managed-worktree creation |
+| `/v1/providers/claude/auth/{api-key,import-json,import-file,logout}` | No replacement mutation HTTP operation yet; configured credential sources and status inspection remain supported |
 
-`POST /v1/sessions` accepts:
-
-| Field | Required | Notes |
-| --- | --- | --- |
-| `provider` | yes | `codex`, `claude`, or `acp`. |
-| `model` | no | Provider-specific model ID. ACP can ignore global model catalogs. |
-| `cwd` | no | Working directory for provider session. |
-| `permission_mode` | no | Passed to providers; `require_approval` enables runtime approval gating where supported. |
-| `metadata` | no | Arbitrary JSON object/value stored with the session. |
-
-Legacy session creation checks every matching registered workspace, including
-managed checkout paths outside its canonical root, for active lifecycle and
-in-progress retirement **before** attempting provider-native creation. The
-SQLite preflight reads only durable managed-checkout root/CWD paths rather
-than hydrating unrelated historical sessions. An inactive or retiring matching
-workspace still rejects creation; this narrower read does not bypass native
-creation fences or establish that unrelated historical data is healthy.
+These refusals also apply when the supplied session ID belongs to a canonical
+workspace agent. Read/list/event endpoints and the separately admitted turn,
+approval, process, and cleanup authorities retain their documented contracts.
 
 Send a turn:
 
@@ -1598,22 +1583,10 @@ The response is an accepted turn, not necessarily terminal output:
 {"session_id":"...","turn_id":"...","status":"accepted"}
 ```
 
-Interrupt a turn:
-
-```bash
-curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/v1/sessions/$SESSION_ID/turns/$TURN_ID/interrupt"
-```
-
-Close a session:
-
-```bash
-curl -fsS -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"reason":"done"}' \
-  "$BASE_URL/v1/sessions/$SESSION_ID/close"
-```
+Interrupt through `POST /v2/workspaces/{workspace_id}/interrupt`, and archive
+through `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/archive`.
+Use the original operation ID to inspect ambiguous results. A later terminal
+turn or a new idempotency key is not proof that an earlier native action failed.
 
 ## Approvals
 
@@ -1990,35 +1963,20 @@ Session-owned terminal processes deliver a completion turn back to the owning mo
 
 ## Worktrees
 
-Create:
+Create managed worktrees with the workspace-scoped operation:
 
 ```bash
 curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: create-feature-docs" \
   -H "Content-Type: application/json" \
-  -d '{
-    "source_session_id":"'"$SESSION_ID"'",
-    "repo_root":"/workspace/repo",
-    "worktree_name":"feature-docs",
-    "branch_prefix":"gg",
-    "base_ref":"main",
-    "run_init_script":false
-  }' \
-  "$BASE_URL/v1/worktrees"
+  -d '{"worktree_name":"feature-docs","branch_prefix":"gg","base_ref":"main","run_init_script":false}' \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/worktrees"
 ```
 
-Important request fields:
-
-| Field | Notes |
-| --- | --- |
-| `source_session_id` | Session used as source/owner context. |
-| `repo_root` | Optional repo root; implementation can infer from session cwd when available. |
-| `worktree_name` | Stable human-readable worktree identity. |
-| `branch_prefix` | Optional generated branch prefix. |
-| `base_ref` | Optional base branch/ref. |
-| `deletion_policy` | Optional cleanup policy override. |
-| `run_init_script` | Whether to run configured init script. |
-| `team_id` / `operation_id` | Optional team/spawn traceability fields. |
+The workspace supplies repository authority. `POST /v1/worktrees` is
+unsupported; caller-supplied `operation_id` cannot borrow an existing native
+reservation. Historical read/claim/release/cleanup contracts follow below.
 
 Authenticated `GET /v1/worktrees` returns the legacy full inventory of
 non-tombstoned managed worktrees, ordered by creation time with stable ID ties.
@@ -2463,7 +2421,7 @@ Common legacy behavior:
 
 Special status codes:
 
-- `POST /v1/sessions/{session_id}/turns/{turn_id}/interrupt` returns `202 Accepted`
+- Retired raw legacy native mutations return HTTP `400` without native effects.
 - `DELETE /v1/teams/{team_id}` returns `204 No Content`
 
 ## OpenAPI generation and sync

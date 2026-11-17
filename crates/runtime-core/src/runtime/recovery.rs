@@ -123,6 +123,15 @@ impl RuntimeSessionManager {
         for session_id in session_ids {
             if let Some(operation_id) = self
                 .store
+                .unresolved_workspace_interrupt_for_session(&session_id)?
+            {
+                summary.notes.push(format!(
+                    "session {session_id} native resume/turn replay withheld by unresolved workspace interrupt {operation_id}"
+                ));
+                continue;
+            }
+            if let Some(operation_id) = self
+                .store
                 .unresolved_workspace_agent_rebind_operation(&session_id)?
             {
                 summary.notes.push(format!(

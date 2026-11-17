@@ -39,7 +39,7 @@ async fn version_route_is_available() {
 
 #[tokio::test]
 async fn session_stream_replays_from_cursor_before_live_events() {
-    let (router, token, temp_dir) = build_test_router().await;
+    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -48,19 +48,7 @@ async fn session_stream_replays_from_cursor_before_live_events() {
         "permission_mode": null,
         "metadata": {}
     });
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create response");
+    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_payload = to_bytes(create_response.into_body(), usize::MAX)
         .await
@@ -251,7 +239,7 @@ async fn openapi_yaml_route_serves_snapshot() {
 
 #[tokio::test]
 async fn session_stream_replays_exhaustive_backlog_across_pages() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -260,19 +248,7 @@ async fn session_stream_replays_exhaustive_backlog_across_pages() {
         "permission_mode": null,
         "metadata": {}
     });
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create response");
+    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_payload = to_bytes(create_response.into_body(), usize::MAX)
         .await
@@ -409,7 +385,7 @@ async fn session_stream_replays_exhaustive_backlog_across_pages() {
 
 #[tokio::test]
 async fn session_stream_handoff_window_event_is_not_lost() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -418,19 +394,7 @@ async fn session_stream_handoff_window_event_is_not_lost() {
         "permission_mode": null,
         "metadata": {}
     });
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create response");
+    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_payload = to_bytes(create_response.into_body(), usize::MAX)
         .await
@@ -753,6 +717,7 @@ async fn acp_provider_public_surfaces_support_list_models_session_replay_and_str
 
     let bootstrapped = bootstrap_runtime(config).await.expect("bootstrap");
     let token = bootstrapped.auth.bearer_token.clone();
+    let runtime = bootstrapped.runtime.clone();
     let router = build_router(AppState {
         app: bootstrapped.app,
         runtime: bootstrapped.runtime,
@@ -811,27 +776,16 @@ async fn acp_provider_public_surfaces_support_list_models_session_replay_and_str
         "ACP model list is allowed to be empty in v1"
     );
 
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "provider": "acp",
-                        "cwd": "/tmp/acp-http-surface",
-                        "permission_mode": null,
-                        "metadata": {}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("create response");
+    let create_response = legacy_session_fixture_response(
+        &runtime,
+        serde_json::json!({
+            "provider": "acp",
+            "cwd": "/tmp/acp-http-surface",
+            "permission_mode": null,
+            "metadata": {}
+        }),
+    )
+    .await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_json: Value = serde_json::from_slice(
         &to_bytes(create_response.into_body(), usize::MAX)

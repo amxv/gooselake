@@ -54,7 +54,7 @@ pub(super) fn git(repo: &Path, args: &[&str]) {
     );
 }
 
-fn seeded_repo(path: &Path) {
+pub(super) fn seeded_repo(path: &Path) {
     std::fs::create_dir_all(path).expect("create repo");
     git(path, &["init"]);
     git(path, &["config", "user.email", "runtime@example.invalid"]);
@@ -73,8 +73,23 @@ pub(super) async fn fixture() -> (
     runtime_core::WorkspaceAgentRecord,
     String,
 ) {
-    let (router, token, temp, provider) =
-        build_test_router_with_provider(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, workspace, agent, linked, _runtime) =
+        fixture_with_runtime().await;
+    (router, token, temp, provider, workspace, agent, linked)
+}
+
+pub(super) async fn fixture_with_runtime() -> (
+    Router,
+    String,
+    tempfile::TempDir,
+    Arc<TestProvider>,
+    runtime_core::WorkspaceRecord,
+    runtime_core::WorkspaceAgentRecord,
+    String,
+    Arc<RuntimeSessionManager>,
+) {
+    let (router, token, temp, provider, runtime) =
+        build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
     let repo = temp.path().join("repo");
     seeded_repo(&repo);
     let (status, workspace) = call(
@@ -138,6 +153,7 @@ pub(super) async fn fixture() -> (
         workspace.workspace,
         agent,
         linked.to_string_lossy().to_string(),
+        runtime,
     )
 }
 

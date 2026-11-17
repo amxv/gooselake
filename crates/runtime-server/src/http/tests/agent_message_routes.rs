@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn agent_messages_route_cross_workspace_direct_and_snapshot_workspace_broadcasts() {
-    let (router, token, temp_dir) = build_test_router().await;
+    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
     let root_a = temp_dir.path().join("workspace-a");
     let root_b = temp_dir.path().join("workspace-b");
     std::fs::create_dir_all(&root_a).expect("root a");
@@ -185,7 +185,7 @@ async fn agent_messages_route_cross_workspace_direct_and_snapshot_workspace_broa
         .recipient_agent_ids
         .contains(&late.agent_id));
 
-    let legacy = create_legacy_session(&router, &token).await;
+    let legacy = create_legacy_session(&runtime).await;
     let legacy_direct = create_message(
         &router,
         &token,
@@ -855,22 +855,18 @@ async fn create_agent_with_provider_and_permission(
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
 }
 
-async fn create_legacy_session(router: &Router, token: &str) -> runtime_core::SessionRecord {
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(r#"{"provider":"codex","model":"test-model"}"#))
-                .unwrap(),
+async fn create_legacy_session(
+    runtime: &Arc<RuntimeSessionManager>,
+) -> runtime_core::SessionRecord {
+    runtime
+        .create_session(
+            serde_json::from_value(serde_json::json!({
+                "provider":"codex","model":"test-model"
+            }))
+            .unwrap(),
         )
         .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
+        .expect("seed unowned legacy session")
 }
 
 pub(super) async fn create_message(

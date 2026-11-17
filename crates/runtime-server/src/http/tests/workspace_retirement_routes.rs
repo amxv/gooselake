@@ -194,7 +194,12 @@ async fn retirement_observes_delivery_claim_before_a_racing_native_interrupt() {
             None,
         )
         .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{blocked_interrupt}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{blocked_interrupt}");
+    let internal = fixture
+        .runtime
+        .interrupt_turn(&recipient.agent_id, turn["turn_id"].as_str().unwrap())
+        .await;
+    assert!(matches!(internal, Err(RuntimeError::Conflict(_))));
     assert_eq!(provider.interrupts.load(Ordering::SeqCst), 1);
     let replay = fixture
         .advance(

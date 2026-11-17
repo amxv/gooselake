@@ -2,26 +2,15 @@ use super::*;
 
 #[tokio::test]
 async fn authenticated_legacy_spawn_key_replays_exact_http_response_and_conflicts_on_change() {
-    let (router, token, temp) = build_test_router().await;
-    let lead = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "provider":"codex", "model":"test-model",
-                        "cwd": temp.path().display().to_string(),
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (router, token, temp, runtime) = build_test_router_with_runtime().await;
+    let lead = legacy_session_fixture_response(
+        &runtime,
+        serde_json::json!({
+            "provider":"codex", "model":"test-model",
+            "cwd": temp.path().display().to_string(),
+        }),
+    )
+    .await;
     assert_eq!(lead.status(), StatusCode::OK);
     let lead: Value =
         serde_json::from_slice(&to_bytes(lead.into_body(), usize::MAX).await.unwrap()).unwrap();

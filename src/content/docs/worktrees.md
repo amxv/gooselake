@@ -64,18 +64,20 @@ The worktree service owns:
 
 ## Create a worktree
 
+Use the registered workspace's durable creation authority:
+
 ```bash
-curl -X POST "$BASE_URL/v1/worktrees"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{
-    "source_session_id": "sess_codex_...",
-    "repo_root": "/path/to/repo",
-    "worktree_name": "agent-branch",
-    "branch_prefix": "gg",
-    "base_ref": "main",
-    "deletion_policy": "delete_on_last_claim"
-  }'
+curl -X POST "$BASE_URL/v2/workspaces/$WORKSPACE_ID/worktrees" \
+  "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: worktree-agent-branch' \
+  -d '{"worktree_name":"agent-branch","branch_prefix":"gg","base_ref":"main","deletion_policy":"retain_on_last_claim","run_init_script":false}'
 ```
 
-The runtime stores the resulting worktree path and branch metadata. If configured, it can also run an init script after creation.
+The runtime freezes Git/init intent before native work and returns an operation
+ID for exact receipt replay or unresolved-outcome inspection. The workspace
+supplies repository identity. `POST /v1/worktrees` is unsupported and never runs
+Git or an init script. Legacy claim/release/cleanup endpoints below retain their
+separate guarded contracts.
 
 ## Claim a worktree
 

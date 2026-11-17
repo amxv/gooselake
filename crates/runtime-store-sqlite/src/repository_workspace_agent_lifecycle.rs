@@ -226,6 +226,9 @@ fn reject_unresolved_route_with_lifecycle_claim(
     agent_id: &str,
     allowed_lifecycle_operation: Option<&str>,
 ) -> Result<(), RuntimeError> {
+    if allowed_lifecycle_operation.is_none() {
+        crate::repository_workspace_control::guard_unresolved_interrupt(connection, agent_id)?;
+    }
     // Lifecycle transitions change the authoritative attachment state. A
     // stale manager or a direct store caller must not archive/restore around
     // an unresolved operator-native turn/policy intent, even if its in-memory

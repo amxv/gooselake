@@ -221,10 +221,10 @@ trusted provider bridge supplies caller identity rather than taking it
 from tool JSON. Process completion is pushed to the model instead of
 requiring polling.
 
-Existing `/v1/sessions` and `/v1/teams` endpoints remain for migration
-compatibility. They are not the recommended way to build new coordination
-clients, and a final legacy cutover still requires independent migration
-acceptance.
+Legacy read/history and selected coordination endpoints remain for synthetic
+compatibility inspection. Raw v1 session create/resume/close, worktree creation,
+and interrupt endpoints are unsupported; use durable workspace operations.
+Clean v2 does not require migration of real user data.
 
 ## What You Get
 
@@ -527,7 +527,7 @@ every legacy database has been accepted.
 
 - Codex: machine login via `codex login`, staged runtime auth from `~/.gg/codex/auth.json`, and a CLI build that exposes the persistent `codex app-server` runtime primitive
 - Claude default: `host_machine`, which uses machine login material
-- Claude optional: `runtime_managed`, which lets the runtime own imported auth/config files
+- Claude optional: `runtime_managed`, which consumes configured runtime-owned auth/config files; HTTP credential mutation is unsupported
 - ACP: configured agent command over stdio, with auth handled by the agent itself in v1
 
 ACP first-release limits:

@@ -31,43 +31,37 @@ async fn invoke(
 }
 
 #[tokio::test]
-async fn native_session_lifecycle_http_and_reopened_sqlite_share_three_critical_receipts() {
-    let (router, bearer, tmp, provider, _) =
+async fn internal_legacy_lifecycle_and_http_inspection_share_three_critical_receipts() {
+    let (router, bearer, tmp, provider, runtime) =
         build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
     provider.allow_lifecycle_close_for_test();
-    let (status, created) = invoke(
-        &router,
-        &bearer,
-        "POST",
-        "/v1/sessions",
-        Some(serde_json::json!({
-            "provider":"codex", "model":"test-model", "cwd":null,
-            "permission_mode":null,"metadata":{"test":"journal_session_lifecycle"}
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
-    let session_id = created["id"].as_str().unwrap();
-    let (status, resumed) = invoke(
-        &router,
-        &bearer,
-        "POST",
-        &format!("/v1/sessions/{session_id}/resume"),
-        Some(serde_json::json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{resumed}");
-    assert_eq!(resumed["id"], session_id);
-    let (status, closed) = invoke(
-        &router,
-        &bearer,
-        "POST",
-        &format!("/v1/sessions/{session_id}/close"),
-        Some(serde_json::json!({"reason":"offline_http_test"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{closed}");
-    assert_eq!(closed["status"], "closed");
+    let created = runtime
+        .create_session(
+            serde_json::from_value(serde_json::json!({
+                "provider":"codex", "model":"test-model", "cwd":null,
+                "permission_mode":null,"metadata":{"test":"journal_session_lifecycle"}
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let session_id = created.id.as_str();
+    let resumed = runtime
+        .resume_session(
+            session_id,
+            ResumeSessionInput {
+                provider_session_ref: None,
+                canonical_provider_session_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(resumed.id, session_id);
+    let closed = runtime
+        .close_session(session_id, Some("offline_http_test".into()))
+        .await
+        .unwrap();
+    assert_eq!(closed.status, "closed");
 
     let reopened =
         runtime_store_sqlite::SqliteRuntimeRepository::new(tmp.path().join("runtime.sqlite3"));
@@ -127,15 +121,10 @@ async fn native_session_lifecycle_http_and_reopened_sqlite_share_three_critical_
     );
     assert_eq!(lifecycle[2].payload["reason"], "offline_http_test");
 
-    let (status, repeated) = invoke(
-        &router,
-        &bearer,
-        "POST",
-        &format!("/v1/sessions/{session_id}/close"),
-        Some(serde_json::json!({"reason":"different_late_reason"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{repeated}");
+    let repeated = runtime
+        .close_session(session_id, Some("different_late_reason".into()))
+        .await
+        .unwrap();
     assert_eq!(repeated, closed);
     let restarted_events = reopened
         .list_runtime_events(Some((RuntimeEventScope::Session, session_id)), None, 100)

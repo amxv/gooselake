@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::openapi::generated_openapi_yaml;
 use axum::body::Body;
-use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -11,17 +11,16 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use runtime_core::{
-    ApprovalResponseInput, CreateSessionInput, ProcessGetRequest, ProcessKillRequest,
-    ProcessListRequest, ProcessLogReadRequest, ProcessRunRequest, ProcessSchedulerSettings,
-    ProviderKind, ResumeSessionInput, RuntimeApp, RuntimeError, RuntimeEventRecord,
-    RuntimeEventScope, RuntimeSessionManager, SendTurnAccepted, SendTurnInput,
-    StartupRecoverySummary, TeamBroadcastRequest, TeamCancelMessageRequest, TeamCreateRequest,
-    TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamInterruptAllRequest, TeamJoinRequest,
+    ApprovalResponseInput, ProcessGetRequest, ProcessKillRequest, ProcessListRequest,
+    ProcessLogReadRequest, ProcessRunRequest, ProcessSchedulerSettings, ProviderKind, RuntimeApp,
+    RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeSessionManager, SendTurnAccepted,
+    SendTurnInput, StartupRecoverySummary, TeamBroadcastRequest, TeamCancelMessageRequest,
+    TeamCreateRequest, TeamDeliveryRecord, TeamGetDeliveriesRequest, TeamJoinRequest,
     TeamListMessagesRequest, TeamMemberSpawnRequest, TeamMemberSpawnResponse,
     TeamMemberSpawnWorktreeInput, TeamRemoveMemberRequest, TeamRetryDeliveryRequest,
     TeamSendDirectRequest, TeamSetLeadRequest, TeamViewSnapshotRequest, ToolInvokeRequest,
-    WorktreeClaimRequest, WorktreeCleanupRequest, WorktreeCreateRequest,
-    WorktreeMemberRemovedRequest, WorktreeReleaseRequest,
+    WorktreeClaimRequest, WorktreeCleanupRequest, WorktreeMemberRemovedRequest,
+    WorktreeReleaseRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

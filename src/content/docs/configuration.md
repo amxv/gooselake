@@ -148,9 +148,9 @@ Claude runs through the `sidecars/claude-bridge` process. The runtime also injec
 Claude auth modes:
 
 - `host_machine`: use the machine's existing Claude login/config when available; also considers runtime-managed files and API key fallback.
-- `runtime_managed`: prefer runtime-owned imported files under the runtime provider directory; can still use explicit bridge overrides.
+- `runtime_managed`: prefer configured runtime-owned files under the runtime provider directory; can still use explicit bridge overrides.
 
-Claude auth mutations currently exist for Claude only:
+These legacy Claude HTTP auth mutations are explicitly unsupported (HTTP `400`); they neither write credentials nor recycle native sessions:
 
 - `POST /v1/providers/claude/auth/api-key`
 - `POST /v1/providers/claude/auth/import-json`

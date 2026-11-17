@@ -292,6 +292,7 @@ impl SqliteRuntimeRepository {
             );
         }
 
+        crate::repository_workspace_control::guard_unresolved_interrupt(&tx, &command.agent_id)?;
         let state = restore_state(&tx, &command.agent_id)?;
         if state.workspace_id != command.workspace_id || state.workspace_lifecycle != "active" {
             return Err(RuntimeError::Conflict(

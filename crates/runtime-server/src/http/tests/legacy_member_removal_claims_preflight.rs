@@ -27,8 +27,8 @@ async fn call_member_removal_fixture(
 #[tokio::test]
 async fn removing_legacy_team_member_releases_own_claim_despite_foreign_corrupt_history_without_native_cleanup(
 ) {
-    let (router, token, temp, provider) =
-        build_test_router_with_provider(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, runtime, app) =
+        build_test_router_with_services(TeamMcpPolicy::default()).await;
     let repo = temp.path().join("disposable-git-repo");
     std::fs::create_dir_all(&repo).unwrap();
     std::fs::write(repo.join("README.md"), "fake provider, temporary Git\n").unwrap();
@@ -72,14 +72,7 @@ async fn removing_legacy_team_member_releases_own_claim_despite_foreign_corrupt_
     });
     let mut ids = Vec::new();
     for _ in 0..3 {
-        let (status, result) = call_member_removal_fixture(
-            &router,
-            Some(&token),
-            "POST",
-            "/v1/sessions",
-            session_body.clone(),
-        )
-        .await;
+        let (status, result) = legacy_session_fixture_json(&runtime, session_body.clone()).await;
         assert_eq!(status, StatusCode::OK, "{result}");
         ids.push(result["id"].as_str().unwrap().to_owned());
     }
@@ -103,11 +96,8 @@ async fn removing_legacy_team_member_releases_own_claim_despite_foreign_corrupt_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{joined}");
-    let (status, created) = call_member_removal_fixture(
-        &router,
-        Some(&token),
-        "POST",
-        "/v1/worktrees",
+    let (status, created) = legacy_worktree_fixture_json(
+        &app,
         serde_json::json!({
             "source_session_id":lead,"team_id":team_id,
             "worktree_name":"member-removal-corrupt-foreign-history", "branch_prefix":"gg",

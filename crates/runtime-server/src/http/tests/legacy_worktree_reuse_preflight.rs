@@ -30,8 +30,8 @@ async fn call_legacy(
 
 #[tokio::test]
 async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new_git_effect() {
-    let (router, token, temp, provider) =
-        build_test_router_with_provider(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, runtime, app) =
+        build_test_router_with_services(TeamMcpPolicy::default()).await;
     let repo = temp.path().join("source-repository");
     std::fs::create_dir_all(&repo).unwrap();
     std::fs::write(repo.join("README.md"), "disposable source\n").unwrap();
@@ -60,15 +60,7 @@ async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new
     let create_session = serde_json::json!({
         "provider":"codex", "model":"test-model", "cwd":repo,
     });
-    let (status, lead) = call_legacy(
-        &router,
-        Some(&token),
-        "POST",
-        "/v1/sessions",
-        create_session.clone(),
-        None,
-    )
-    .await;
+    let (status, lead) = legacy_session_fixture_json(&runtime, create_session.clone()).await;
     assert_eq!(status, StatusCode::OK, "{lead}");
     let source = lead["id"].as_str().unwrap();
     let (status, team) = call_legacy(
@@ -82,31 +74,19 @@ async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new
     .await;
     assert_eq!(status, StatusCode::OK, "{team}");
     let team_id = team["team"]["id"].as_str().unwrap();
-    let (status, created) = call_legacy(
-        &router,
-        Some(&token),
-        "POST",
-        "/v1/worktrees",
+    let (status, created) = legacy_worktree_fixture_json(
+        &app,
         serde_json::json!({
             "team_id":team_id,"source_session_id":source,
             "worktree_name":"reuse-corrupt-history", "branch_prefix":"gg",
             "run_init_script":false,"deletion_policy":"retain_on_last_claim",
         }),
-        None,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{created}");
     let worktree_id = created["worktree"]["id"].as_str().unwrap().to_owned();
 
-    let (status, foreign) = call_legacy(
-        &router,
-        Some(&token),
-        "POST",
-        "/v1/sessions",
-        create_session,
-        None,
-    )
-    .await;
+    let (status, foreign) = legacy_session_fixture_json(&runtime, create_session).await;
     assert_eq!(status, StatusCode::OK, "{foreign}");
     let foreign_id = foreign["id"].as_str().unwrap();
     let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();

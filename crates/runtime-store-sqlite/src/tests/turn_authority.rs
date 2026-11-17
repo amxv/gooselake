@@ -769,3 +769,48 @@ fn admission_record() -> TurnAdmissionRecord {
         updated_at: 11,
     }
 }
+
+#[test]
+fn workspace_interrupt_unknown_fences_direct_turn_admission_after_active_projection_clears() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let base = admission_session();
+    repository.upsert_session(&base).unwrap();
+    let connection = open_connection(&repository.database_path).unwrap();
+    // Retained native-effect authority, independent of the new turn's session
+    // projection and regardless of whether the old turn still exists locally.
+    connection.execute_batch("INSERT INTO runtime_operations
+        (operation_id,kind,actor_kind,actor_id,normalized_request_hash,normalized_request_json,phase,created_at,updated_at)
+        VALUES ('op_original_interrupt','workspace_interrupt','operator','fixture','hash','{}','requested',1,1);
+        INSERT INTO runtime_operation_effects
+        (effect_id,operation_id,effect_kind,target_kind,target_id,phase,idempotency_key,evidence_json,attempt_count,created_at,updated_at)
+        VALUES ('original_interrupt_effect','op_original_interrupt','workspace_turn_interrupt','agent','session_admission','uncertain','effect-key','{\"turn_id\":\"original_native_turn\"}',1,1,1);").unwrap();
+    let mut session = base.clone();
+    session.active_turn_id = Some("turn_admission".into());
+    session.status = "turn_admitted".into();
+    session.updated_at = 11;
+    let error = repository
+        .admit_turn(
+            &admission_record(),
+            &admission_turn(),
+            &session,
+            Some(&admission_approval()),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, RuntimeError::OperationUnresolved {operation_id,..} if operation_id=="op_original_interrupt")
+    );
+    for table in ["turns", "turn_admissions", "approvals"] {
+        let count: i64 = connection
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+    assert_eq!(
+        repository.hydrate_runtime_state().unwrap().sessions,
+        vec![base]
+    );
+}

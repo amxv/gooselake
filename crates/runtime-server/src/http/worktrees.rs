@@ -1,42 +1,9 @@
 use super::*;
 
-#[derive(Debug, Deserialize)]
-pub(super) struct WorktreeCreateInput {
-    source_session_id: String,
-    repo_root: Option<String>,
-    worktree_name: String,
-    branch_prefix: Option<String>,
-    base_ref: Option<String>,
-    deletion_policy: Option<String>,
-    run_init_script: Option<bool>,
-    created_by_session_id: Option<String>,
-    operation_id: Option<String>,
-    team_id: Option<String>,
-}
-
-pub(super) async fn create_worktree(
-    State(state): State<AppState>,
-    Json(input): Json<WorktreeCreateInput>,
-) -> Result<Json<runtime_core::WorktreeCreateResponse>, ApiError> {
-    let response = state
-        .app
-        .services
-        .worktrees
-        .create_worktree(WorktreeCreateRequest {
-            team_id: input.team_id,
-            source_session_id: input.source_session_id,
-            repo_root: input.repo_root,
-            worktree_name: input.worktree_name,
-            branch_prefix: input.branch_prefix,
-            base_ref: input.base_ref,
-            deletion_policy: input.deletion_policy,
-            run_init_script: input.run_init_script,
-            created_by_session_id: input.created_by_session_id,
-            operation_id: input.operation_id,
-        })
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(response))
+pub(super) async fn create_worktree() -> Result<StatusCode, ApiError> {
+    Err(legacy_native_refusal(
+        "create a managed worktree through /v2/workspaces/{workspace_id}/worktrees",
+    ))
 }
 
 pub(super) async fn list_worktrees(

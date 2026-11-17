@@ -100,13 +100,12 @@ async fn persisted_migration_status_http_pages_large_private_evidence_without_ch
 
 #[tokio::test]
 async fn workspace_migration_routes_preview_apply_resolve_and_preserve_v1_sessions() {
-    let (router, token, temp_dir) = build_test_router().await;
+    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
     let git_root = temp_dir.path().join("migration-repo");
     init_git_repo(&git_root);
 
-    let mapped_id =
-        create_session(&router, &token, Some(git_root.to_string_lossy().as_ref())).await;
-    let orphan_id = create_session(&router, &token, None).await;
+    let mapped_id = create_session(&runtime, Some(git_root.to_string_lossy().as_ref())).await;
+    let orphan_id = create_session(&runtime, None).await;
 
     let unsupported_key = router
         .clone()
@@ -443,28 +442,18 @@ async fn workspace_migration_routes_require_bearer_auth() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-async fn create_session(router: &Router, token: &str, cwd: Option<&str>) -> String {
-    let body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": cwd,
-        "permission_mode": null,
-        "metadata": {}
-    });
-    let response = router
-        .clone()
-        .oneshot(auth_request(
-            "POST",
-            "/v1/sessions",
-            token,
-            Some(body),
-            None,
-        ))
+async fn create_session(runtime: &Arc<RuntimeSessionManager>, cwd: Option<&str>) -> String {
+    runtime
+        .create_session(
+            serde_json::from_value(serde_json::json!({
+                "provider":"codex", "model":"test-model", "cwd":cwd,
+                "permission_mode":null, "metadata":{}
+            }))
+            .unwrap(),
+        )
         .await
-        .expect("create session response");
-    assert_eq!(response.status(), StatusCode::OK);
-    let session: runtime_core::SessionRecord = decode(response).await;
-    session.id
+        .expect("seed synthetic migration history")
+        .id
 }
 
 fn auth_request(

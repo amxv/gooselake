@@ -2,30 +2,20 @@ use super::*;
 
 #[tokio::test]
 async fn mixed_provider_team_flow_uses_shared_runtime_services() {
-    let (router, token, _temp_dir, _acp_provider) = build_mixed_provider_test_router().await;
+    let (router, token, _temp_dir, _acp_provider, runtime) =
+        build_mixed_provider_test_router_with_runtime().await;
 
-    let codex_session_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "provider": "codex",
-                        "model": "test-model",
-                        "cwd": null,
-                        "permission_mode": null,
-                        "metadata": {}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("create codex session");
+    let codex_session_response = legacy_session_fixture_response(
+        &runtime,
+        serde_json::json!({
+            "provider": "codex",
+            "model": "test-model",
+            "cwd": null,
+            "permission_mode": null,
+            "metadata": {}
+        }),
+    )
+    .await;
     assert_eq!(codex_session_response.status(), StatusCode::OK);
     let codex_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(codex_session_response.into_body(), usize::MAX)
@@ -35,28 +25,17 @@ async fn mixed_provider_team_flow_uses_shared_runtime_services() {
     .expect("codex json");
     let codex_session_id = codex_json["id"].as_str().expect("codex session id");
 
-    let claude_session_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "provider": "claude",
-                        "model": "test-claude-model",
-                        "cwd": null,
-                        "permission_mode": null,
-                        "metadata": {}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("create claude session");
+    let claude_session_response = legacy_session_fixture_response(
+        &runtime,
+        serde_json::json!({
+            "provider": "claude",
+            "model": "test-claude-model",
+            "cwd": null,
+            "permission_mode": null,
+            "metadata": {}
+        }),
+    )
+    .await;
     assert_eq!(claude_session_response.status(), StatusCode::OK);
     let claude_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(claude_session_response.into_body(), usize::MAX)
@@ -116,27 +95,16 @@ async fn mixed_provider_team_flow_uses_shared_runtime_services() {
         .expect("join member");
     assert_eq!(join_member_response.status(), StatusCode::OK);
 
-    let acp_session_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "provider": "acp",
-                        "cwd": null,
-                        "permission_mode": null,
-                        "metadata": {}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("create acp session");
+    let acp_session_response = legacy_session_fixture_response(
+        &runtime,
+        serde_json::json!({
+            "provider": "acp",
+            "cwd": null,
+            "permission_mode": null,
+            "metadata": {}
+        }),
+    )
+    .await;
     assert_eq!(acp_session_response.status(), StatusCode::OK);
     let acp_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(acp_session_response.into_body(), usize::MAX)
@@ -239,29 +207,19 @@ async fn mixed_provider_team_flow_uses_shared_runtime_services() {
 
 #[tokio::test]
 async fn mcp_process_acp_session_can_use_runtime_process_gateway_and_ownership_rules() {
-    let (router, token, _temp_dir, _acp_provider) = build_mixed_provider_test_router().await;
+    let (router, token, _temp_dir, _acp_provider, runtime) =
+        build_mixed_provider_test_router_with_runtime().await;
 
-    let acp_session_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "provider": "acp",
-                        "cwd": null,
-                        "permission_mode": null,
-                        "metadata": {}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("create acp session");
+    let acp_session_response = legacy_session_fixture_response(
+        &runtime,
+        serde_json::json!({
+            "provider": "acp",
+            "cwd": null,
+            "permission_mode": null,
+            "metadata": {}
+        }),
+    )
+    .await;
     assert_eq!(acp_session_response.status(), StatusCode::OK);
     let acp_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(acp_session_response.into_body(), usize::MAX)
@@ -271,28 +229,17 @@ async fn mcp_process_acp_session_can_use_runtime_process_gateway_and_ownership_r
     .expect("acp json");
     let acp_session_id = acp_json["id"].as_str().expect("acp session id").to_string();
 
-    let codex_session_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "provider": "codex",
-                        "model": "test-model",
-                        "cwd": null,
-                        "permission_mode": null,
-                        "metadata": {}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("create codex session");
+    let codex_session_response = legacy_session_fixture_response(
+        &runtime,
+        serde_json::json!({
+            "provider": "codex",
+            "model": "test-model",
+            "cwd": null,
+            "permission_mode": null,
+            "metadata": {}
+        }),
+    )
+    .await;
     assert_eq!(codex_session_response.status(), StatusCode::OK);
     let codex_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(codex_session_response.into_body(), usize::MAX)
@@ -422,7 +369,8 @@ async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
 
     let bootstrapped = bootstrap_runtime(config).await.expect("bootstrap");
     let token = bootstrapped.auth.bearer_token.clone();
-    let router = build_router(AppState {
+    let runtime = bootstrapped.runtime.clone();
+    let _router = build_router(AppState {
         app: bootstrapped.app,
         runtime: bootstrapped.runtime,
         bearer_token: token.clone(),
@@ -430,27 +378,16 @@ async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
         startup_recovery: Arc::new(runtime_core::StartupRecoverySummary::default()),
     });
 
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "provider": "acp",
-                        "cwd": "/tmp/acp-create",
-                        "permission_mode": null,
-                        "metadata": {}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("create acp session");
+    let create_response = legacy_session_fixture_response(
+        &runtime,
+        serde_json::json!({
+            "provider": "acp",
+            "cwd": "/tmp/acp-create",
+            "permission_mode": null,
+            "metadata": {}
+        }),
+    )
+    .await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(create_response.into_body(), usize::MAX)
@@ -460,33 +397,20 @@ async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
     .expect("create json");
     let session_id = create_json["id"].as_str().expect("session id").to_string();
 
-    let close_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/sessions/{session_id}/close"))
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
+    runtime
+        .close_session(&session_id, None)
+        .await
+        .expect("internal fake ACP close");
+    runtime
+        .resume_session(
+            &session_id,
+            ResumeSessionInput {
+                provider_session_ref: None,
+                canonical_provider_session_ref: None,
+            },
         )
         .await
-        .expect("close");
-    assert_eq!(close_response.status(), StatusCode::OK);
-
-    let resume_response = router
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/sessions/{session_id}/resume"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from("{}".to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("resume");
-    assert_eq!(resume_response.status(), StatusCode::OK);
+        .expect("internal fake ACP resume");
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let requests = read_logged_jsonl(fake_agent.log_path.as_path());
@@ -540,7 +464,7 @@ async fn mcp_process_acp_provider_injects_gg_mcp_server_on_create_and_resume() {
 
 #[tokio::test]
 async fn mcp_process_run_and_logs_share_runtime_process_service() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -549,19 +473,7 @@ async fn mcp_process_run_and_logs_share_runtime_process_service() {
         "permission_mode": null,
         "metadata": {}
     });
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create session");
+    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_bytes = to_bytes(create_response.into_body(), usize::MAX)
         .await
@@ -671,35 +583,24 @@ async fn mcp_process_run_and_logs_share_runtime_process_service() {
 
 #[tokio::test]
 async fn mcp_invoke_team_tools_share_http_team_services() {
-    let (router, token, temp_dir) = build_test_router().await;
+    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
     let session_cwd = temp_dir.path().join("mcp-team-cwd");
     std::fs::create_dir_all(&session_cwd).expect("create mcp team cwd");
 
     let create_session = |label: &'static str| {
-        let router = router.clone();
-        let token = token.clone();
+        let runtime = runtime.clone();
         let cwd = session_cwd.display().to_string();
         async move {
-            let response = router
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/v1/sessions")
-                        .header(header::CONTENT_TYPE, "application/json")
-                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                        .body(Body::from(
-                            serde_json::json!({
-                                "provider": "codex",
-                                "model": "test-model",
-                                "cwd": cwd,
-                                "metadata": {"suite": "mcp_team", "label": label}
-                            })
-                            .to_string(),
-                        ))
-                        .unwrap(),
-                )
-                .await
-                .expect("create session");
+            let response = legacy_session_fixture_response(
+                &runtime,
+                serde_json::json!({
+                    "provider": "codex",
+                    "model": "test-model",
+                    "cwd": cwd,
+                    "metadata": {"suite": "mcp_team", "label": label}
+                }),
+            )
+            .await;
             assert_eq!(response.status(), StatusCode::OK);
             let body: serde_json::Value = serde_json::from_slice(
                 &to_bytes(response.into_body(), usize::MAX)

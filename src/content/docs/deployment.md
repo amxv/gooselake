@@ -242,27 +242,33 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 
 An empty list is valid in v1 because ACP model selection can be session-scoped inside the configured agent.
 
-4. Create an ACP session:
+4. Create an ACP agent in a registered disposable workspace:
 
 ```bash
-SESSION_JSON=$(curl -fsS -X POST \
+AGENT_JSON=$(curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: acp-acceptance-agent" \
   -H "Content-Type: application/json" \
-  -d '{"provider":"acp"}' \
-  "$BASE_URL/v1/sessions")
-
-SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.id')
+  -d '{"provider":"acp","worktree":{"mode":"root"}}' \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents")
+AGENT_ID=$(printf '%s' "$AGENT_JSON" | jq -r '.agent_id')
 ```
 
-5. Send a test turn:
+5. Inspect onboarding and wait for its successful delivery before a user turn:
 
 ```bash
+curl -fsS -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/onboarding"
 curl -fsS -X POST \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Idempotency-Key: acp-acceptance-turn" \
   -H "Content-Type: application/json" \
   -d '{"input":[{"type":"text","text":"Reply with the word ok."}]}' \
-  "$BASE_URL/v1/sessions/$SESSION_ID/turns"
+  "$BASE_URL/v2/agents/$AGENT_ID/turns"
 ```
+
+Raw legacy session creation is unsupported. These provider-native acceptance
+steps require separately configured and authorized disposable provider scope.
 
 6. If the turn fails, inspect likely ACP-specific causes:
 - `acp command is not configured`

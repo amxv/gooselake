@@ -11,6 +11,15 @@ impl RuntimeSessionManager {
     ) -> Result<(), RuntimeError> {
         if let Some(operation_id) = self
             .store
+            .unresolved_workspace_interrupt_for_session(agent_id)?
+        {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "an earlier workspace interrupt has unresolved native effects; inspect its original operation before changing this provider attachment",
+            ));
+        }
+        if let Some(operation_id) = self
+            .store
             .unresolved_operator_native_policy_for_agent(agent_id)?
         {
             return Err(RuntimeError::operation_unresolved(

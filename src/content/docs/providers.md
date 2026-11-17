@@ -136,23 +136,15 @@ curl "$BASE_URL/v1/providers/claude/models" "${AUTH[@]}"
 Claude supports two auth modes:
 
 - `host_machine`: use host-machine credentials.
-- `runtime_managed`: manage auth through runtime API endpoints.
+- `runtime_managed`: consume configured runtime-owned credential/config files.
 
-Runtime-managed auth endpoints:
-
-```bash
-# API key
-curl -X POST "$BASE_URL/v1/providers/claude/auth/api-key"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{"api_key":"..."}'
-
-# JSON import
-curl -X POST "$BASE_URL/v1/providers/claude/auth/import-json"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{"auth_json":{}}'
-
-# File upload
-curl -X POST "$BASE_URL/v1/providers/claude/auth/import-file"   "${AUTH[@]}"   -F "file=@claude-auth.json"
-
-# Logout runtime-managed Claude auth
-curl -X POST "$BASE_URL/v1/providers/claude/auth/logout" "${AUTH[@]}"
-```
+The four legacy HTTP credential mutation routes (`api-key`, `import-json`,
+`import-file`, and `logout`) return HTTP `400` with an unsupported-capability
+message before parsing uploads, changing credentials, or recycling sessions.
+Credential changes affect all native Claude bridges and require a separately
+scoped durable control-plane operation. Status inspection and consumption of
+already configured credential sources remain available. This is a capability
+limitation; offline fixtures do not establish live authentication acceptance.
 
 Inspect status:
 

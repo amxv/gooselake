@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_body_limit_is_scoped_to_mcp_routes_only() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -11,19 +11,7 @@ async fn mcp_body_limit_is_scoped_to_mcp_routes_only() {
         "permission_mode": null,
         "metadata": {}
     });
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create session");
+    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(create_response.into_body(), usize::MAX)
@@ -60,34 +48,38 @@ async fn mcp_body_limit_is_scoped_to_mcp_routes_only() {
         StatusCode::PAYLOAD_TOO_LARGE
     );
 
-    let oversized_metadata = "m".repeat(MCP_MAX_REQUEST_BODY_BYTES + 4096);
+    let oversized_input = "m".repeat(MCP_MAX_REQUEST_BODY_BYTES + 4096);
     let non_mcp_large_body = serde_json::json!({
-        "provider": "codex",
-        "model": "test-model",
-        "cwd": null,
-        "permission_mode": null,
-        "metadata": {
-            "oversized": oversized_metadata
-        }
+        "input":[{"type":"text","text":oversized_input}]
     });
     let non_mcp_response = router
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/sessions")
+                .uri(format!("/v1/sessions/{session_id}/turns"))
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::from(non_mcp_large_body.to_string()))
                 .unwrap(),
         )
         .await
-        .expect("non mcp response");
+        .unwrap();
     assert_eq!(non_mcp_response.status(), StatusCode::OK);
+    let accepted: SendTurnAccepted = serde_json::from_slice(
+        &to_bytes(non_mcp_response.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !accepted.turn_id.is_empty(),
+        "large non-MCP input reached turn admission"
+    );
 }
 
 #[tokio::test]
 async fn max_concurrent_one_queues_second_process_until_first_finishes() {
-    let (router, token, temp_dir) = build_test_router().await;
+    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
     let release_path = temp_dir.path().join("release-first-process");
     let waiter_path = temp_dir.path().join("wait-for-release.sh");
     std::fs::write(
@@ -107,19 +99,7 @@ async fn max_concurrent_one_queues_second_process_until_first_finishes() {
         "permission_mode": null,
         "metadata": {}
     });
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create session");
+    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(create_response.into_body(), usize::MAX)
@@ -327,7 +307,7 @@ async fn max_concurrent_one_queues_second_process_until_first_finishes() {
 
 #[tokio::test]
 async fn process_events_stream_delivers_live_sampled_output() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -336,19 +316,7 @@ async fn process_events_stream_delivers_live_sampled_output() {
         "permission_mode": null,
         "metadata": {}
     });
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create session");
+    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(create_response.into_body(), usize::MAX)

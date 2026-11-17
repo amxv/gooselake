@@ -910,32 +910,20 @@ async fn smoke_real_codex_gg_process_tool_uses_session_scoped_caller_identity() 
     smoke_server_handle.abort();
 }
 
-pub(super) async fn create_test_session(router: Router, token: &str, suite: &str) -> String {
-    let response = router
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "provider": "codex",
-                        "model": codex_test_model(),
-                        "metadata": {"suite": suite}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
+pub(super) async fn create_test_session(
+    runtime: &Arc<RuntimeSessionManager>,
+    suite: &str,
+) -> String {
+    runtime
+        .create_session(
+            serde_json::from_value(serde_json::json!({
+                "provider":"codex", "model":codex_test_model(), "metadata":{"suite":suite}
+            }))
+            .unwrap(),
         )
         .await
-        .expect("create session response");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("create session body");
-    let json: serde_json::Value = serde_json::from_slice(&body).expect("create session json");
-    json["id"].as_str().expect("session id").to_string()
+        .expect("seed legacy session history")
+        .id
 }
 
 pub(super) fn codex_test_model() -> String {

@@ -9,6 +9,8 @@ use runtime_core::{
 };
 use rusqlite::params;
 
+mod interrupt_recovery;
+
 fn agent_fixture() -> (
     tempfile::TempDir,
     SqliteRuntimeRepository,
@@ -490,90 +492,6 @@ fn passive_retirement_worktree_preservation_requires_signed_revision_headroom() 
         .find(|effect| effect.effect_kind == "workspace_worktree_preserve")
         .unwrap();
     assert_eq!(effect.phase, "finalized");
-}
-
-#[test]
-fn recovered_interrupt_effect_timestamp_must_not_promote_to_real() {
-    let (temp, repository, mut session, agent) = agent_fixture();
-    session.active_turn_id = Some("synthetic-active-turn".into());
-    session.status = "turn_running".into();
-    repository.upsert_session(&session).unwrap();
-    let command = prepare_workspace_interrupt(
-        &agent.workspace_id,
-        OperationActor::operator("signed-timestamp-test"),
-        Some("signed-timestamp-recovery".into()),
-    )
-    .unwrap();
-    let plan = match repository.begin_workspace_interrupt(&command).unwrap() {
-        WorkspaceInterruptAdmission::Execute(plan) => plan,
-        other => panic!("unexpected initial interrupt admission: {other:?}"),
-    };
-    assert_eq!(plan.targets.len(), 1);
-    repository
-        .mark_workspace_interrupt_started(
-            &plan.operation_id,
-            &session.id,
-            "synthetic-active-turn",
-            200,
-        )
-        .unwrap();
-    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
-    db.execute(
-        "UPDATE runtime_operation_effects SET updated_at=?2
-         WHERE operation_id=?1 AND effect_kind='workspace_turn_interrupt'",
-        params![plan.operation_id, i64::MAX],
-    )
-    .unwrap();
-    // The active turn independently finished. Recovery must not redispatch a
-    // native interrupt, and its local finalization must not commit REAL time.
-    db.execute(
-        "UPDATE sessions SET active_turn_id=NULL WHERE id=?1",
-        [&session.id],
-    )
-    .unwrap();
-    let error = repository.begin_workspace_interrupt(&command).unwrap_err();
-    assert!(
-        matches!(
-            error,
-            RuntimeError::Conflict(_) | RuntimeError::InvalidState(_)
-        ),
-        "{error}"
-    );
-    let (updated, kind, phase): (i64, String, String) = db
-        .query_row(
-            "SELECT updated_at,typeof(updated_at),phase FROM runtime_operation_effects
-         WHERE operation_id=?1 AND effect_kind='workspace_turn_interrupt'",
-            [&plan.operation_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .unwrap();
-    assert_eq!(
-        (updated, kind, phase),
-        (i64::MAX, "integer".into(), "started".into())
-    );
-
-    db.execute(
-        "UPDATE runtime_operation_effects SET updated_at=?2
-         WHERE operation_id=?1 AND effect_kind='workspace_turn_interrupt'",
-        params![plan.operation_id, i64::MAX - 1],
-    )
-    .unwrap();
-    let replay = repository.begin_workspace_interrupt(&command).unwrap();
-    assert!(
-        matches!(replay, WorkspaceInterruptAdmission::Execute(plan) if plan.targets.is_empty())
-    );
-    let (updated, kind, phase): (i64, String, String) = db
-        .query_row(
-            "SELECT updated_at,typeof(updated_at),phase FROM runtime_operation_effects
-         WHERE operation_id=?1 AND effect_kind='workspace_turn_interrupt'",
-            [&plan.operation_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .unwrap();
-    assert_eq!(
-        (updated, kind, phase),
-        (i64::MAX, "integer".into(), "finalized".into())
-    );
 }
 
 fn legacy_native_policy_fixture() -> (

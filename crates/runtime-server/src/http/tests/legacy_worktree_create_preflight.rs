@@ -26,8 +26,8 @@ async fn call_legacy_create(
 #[tokio::test]
 async fn legacy_create_existing_retained_checkout_scopes_identity_and_claims_with_corrupt_foreign_session(
 ) {
-    let (router, token, temp, provider) =
-        build_test_router_with_provider(TeamMcpPolicy::default()).await;
+    let (router, token, temp, provider, runtime, app) =
+        build_test_router_with_services(TeamMcpPolicy::default()).await;
     let repo = temp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     std::fs::write(repo.join("README.md"), "disposable Git workspace\n").unwrap();
@@ -69,8 +69,7 @@ async fn legacy_create_existing_retained_checkout_scopes_identity_and_claims_wit
     let session_body = serde_json::json!({
         "provider":"codex", "model":"test-model", "cwd":repo,
     });
-    let (status, lead) =
-        call_legacy_create(&router, Some(&token), "/v1/sessions", session_body.clone()).await;
+    let (status, lead) = legacy_session_fixture_json(&runtime, session_body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{lead}");
     let lead_id = lead["id"].as_str().unwrap();
     let (status, team) = call_legacy_create(
@@ -87,8 +86,7 @@ async fn legacy_create_existing_retained_checkout_scopes_identity_and_claims_wit
         "worktree_name":"legacy-create-snapshot", "branch_prefix":"gg",
         "deletion_policy":"retain_on_last_claim","run_init_script":false,
     });
-    let (status, first) =
-        call_legacy_create(&router, Some(&token), "/v1/worktrees", body.clone()).await;
+    let (status, first) = legacy_worktree_fixture_json(&app, body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{first}");
     assert_eq!(first["created"], true);
     let worktree_id = first["worktree"]["id"].as_str().unwrap();
@@ -103,8 +101,7 @@ async fn legacy_create_existing_retained_checkout_scopes_identity_and_claims_wit
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{claim}");
-    let (status, foreign) =
-        call_legacy_create(&router, Some(&token), "/v1/sessions", session_body).await;
+    let (status, foreign) = legacy_session_fixture_json(&runtime, session_body).await;
     assert_eq!(status, StatusCode::OK, "{foreign}");
     let foreign_id = foreign["id"].as_str().unwrap();
     let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
@@ -130,8 +127,7 @@ async fn legacy_create_existing_retained_checkout_scopes_identity_and_claims_wit
     let before_rows = count("managed_worktrees");
     let before_claims = count("managed_worktree_claims");
     let before_provider = provider.create_call_count();
-    let (status, reused) =
-        call_legacy_create(&router, Some(&token), "/v1/worktrees", body.clone()).await;
+    let (status, reused) = legacy_worktree_fixture_json(&app, body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{reused}");
     assert_eq!(reused["worktree"]["id"], worktree_id);
     assert_eq!(reused["created"], false);
@@ -143,8 +139,7 @@ async fn legacy_create_existing_retained_checkout_scopes_identity_and_claims_wit
 
     let mut conflicting_policy = body.clone();
     conflicting_policy["deletion_policy"] = serde_json::json!("delete_on_last_claim");
-    let (conflict, _) =
-        call_legacy_create(&router, Some(&token), "/v1/worktrees", conflicting_policy).await;
+    let (conflict, _) = legacy_worktree_fixture_json(&app, conflicting_policy).await;
     assert_eq!(conflict, StatusCode::CONFLICT);
     let (unauthorized, _) = call_legacy_create(&router, None, "/v1/worktrees", body).await;
     assert_eq!(unauthorized, StatusCode::UNAUTHORIZED);

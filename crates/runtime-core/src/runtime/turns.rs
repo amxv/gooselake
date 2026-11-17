@@ -182,6 +182,15 @@ impl RuntimeSessionManager {
             ));
         }
         let session = self.get_session(session_id).await?;
+        if let Some(operation_id) = self
+            .store
+            .unresolved_workspace_interrupt_for_session(session_id)?
+        {
+            return Err(RuntimeError::operation_unresolved(
+                operation_id,
+                "an earlier workspace interrupt has an unresolved native outcome; no new turn may be submitted",
+            ));
+        }
         if self
             .store
             .operator_native_policy_reattachment_pending(session_id)?

@@ -133,17 +133,9 @@ native identity; the operator token cannot call `/v2/mcp`.
 
 ## Legacy `/v1` sessions and turns
 
-Create a session:
-
-```bash
-SESSION_JSON=$(curl -fsS -X POST \
-  "${AUTH[@]}" \
-  -H "Content-Type: application/json" \
-  -d '{"provider":"codex","model":"gpt-6-astra","cwd":"/workspace/repo"}' \
-  "$BASE_URL/v1/sessions")
-
-SESSION_ID=$(echo "$SESSION_JSON" | jq -r '.id')
-```
+Raw legacy session create/resume/close and interrupt mutations are unsupported.
+For retained reads, `SESSION_ID` is an existing historical ID or the `AGENT_ID`
+created through the workspace workflow above; no new unowned session is created.
 
 Send a turn:
 
@@ -164,22 +156,16 @@ curl -N "${AUTH[@]}" \
   "$BASE_URL/v1/sessions/$SESSION_ID/events/stream?after_seq=0"
 ```
 
-Interrupt a running turn:
+Interrupt active workspace turns using the durable workspace operation:
 
 ```bash
-curl -fsS -X POST "${AUTH[@]}" \
-  "$BASE_URL/v1/sessions/$SESSION_ID/turns/$TURN_ID/interrupt"
+curl -fsS -X POST "${AUTH[@]}" -H "Idempotency-Key: runbook-interrupt-001" \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/interrupt"
 ```
 
-Close a session:
-
-```bash
-curl -fsS -X POST \
-  "${AUTH[@]}" \
-  -H "Content-Type: application/json" \
-  -d '{"reason":"operator cleanup"}' \
-  "$BASE_URL/v1/sessions/$SESSION_ID/close"
-```
+Archive an agent with `POST /v2/workspaces/$WORKSPACE_ID/agents/$AGENT_ID/archive`.
+Unresolved native actions retain the original operation ID; do not retry with a
+new key or infer completion from a later idle session.
 
 ## Legacy `/v1` event replay and SSE
 
@@ -290,22 +276,16 @@ rebind, use `/v2/workspaces/{workspace_id}/worktrees` and
 manually claim or set the cwd of a workspace agent through these
 legacy endpoints.
 
-Create a managed worktree:
+Create through the durable workspace operation:
 
 ```bash
-curl -fsS -X POST \
-  "${AUTH[@]}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source_session_id":"'"$SESSION_ID"'",
-    "repo_root":"/workspace/repo",
-    "worktree_name":"docs-pass",
-    "branch_prefix":"gg",
-    "base_ref":"main",
-    "run_init_script":false
-  }' \
-  "$BASE_URL/v1/worktrees"
+curl -fsS -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: runbook-worktree-001" \
+  -d '{"worktree_name":"docs-pass","branch_prefix":"gg","base_ref":"main","run_init_script":false}' \
+  "$BASE_URL/v2/workspaces/$WORKSPACE_ID/worktrees"
 ```
+
+The raw legacy create endpoint is unsupported.
 
 Claim, release, and cleanup are explicit operations:
 

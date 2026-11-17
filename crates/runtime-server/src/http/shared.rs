@@ -393,3 +393,12 @@ impl IntoResponse for ApiError {
         response
     }
 }
+
+// Legacy mutation endpoints cannot borrow a supplied operation ID as native
+// execution authority. Keep their refusal independent of mutable target state.
+pub(super) fn legacy_native_refusal(replacement: &str) -> ApiError {
+    RuntimeError::Unsupported(format!(
+        "legacy native mutation is unavailable without durable operation authority; {replacement}"
+    ))
+    .into()
+}

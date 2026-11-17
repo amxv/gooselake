@@ -260,17 +260,24 @@ impl SqliteRuntimeRepository {
                 return Ok(WorkspaceInterruptAdmission::Replay(response));
             }
             if existing.phase != OperationPhase::Requested {
-                return Err(RuntimeError::Conflict(format!(
-                    "workspace interrupt operation {} requires manual recovery in phase {}",
-                    existing.operation_id,
-                    existing.phase.as_str()
-                )));
+                return Err(RuntimeError::operation_unresolved(
+                    &existing.operation_id,
+                    format!(
+                        "workspace interrupt operation {} requires manual recovery in phase {}",
+                        existing.operation_id,
+                        existing.phase.as_str()
+                    ),
+                ));
             }
-            let plan = recover_interrupt_plan(&tx, &existing.operation_id, &command.workspace_id)?;
+            let plan = recover_interrupt_plan(&tx, &existing.operation_id, &command.workspace_id)
+                .map_err(|error| RuntimeError::operation_unresolved(
+                    &existing.operation_id,
+                    format!("workspace interrupt recovery could not certify its original result: {error}"),
+                ))?;
             tx.commit().map_err(|error| {
-                db_error(
-                    "failed committing workspace interrupt recovery admission",
-                    error,
+                RuntimeError::operation_unresolved(
+                    &existing.operation_id,
+                    format!("failed committing original workspace interrupt recovery: {error}"),
                 )
             })?;
             return Ok(WorkspaceInterruptAdmission::Execute(plan));
@@ -397,6 +404,14 @@ impl SqliteRuntimeRepository {
             )));
         }
         Ok(())
+    }
+
+    pub fn unresolved_workspace_interrupt_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<String>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        unresolved_interrupt(&connection, session_id)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -712,7 +727,7 @@ fn recover_interrupt_plan(
                         "started workspace interrupt for {agent_id} has no turn id"
                     ))
                 })?;
-                if interrupt_requested_event_exists(tx, &agent_id, &turn_id)? {
+                if interrupt_requested_event_exists(tx, operation_id, &agent_id, &turn_id)? {
                     recover_finalize_effect(
                         tx,
                         operation_id,
@@ -721,24 +736,15 @@ fn recover_interrupt_plan(
                         true,
                         "recovered_interrupt_request_event",
                     )?;
-                } else if current_active_turn(tx, &agent_id)?.as_deref() != Some(turn_id.as_str()) {
-                    recover_finalize_effect(
-                        tx,
-                        operation_id,
-                        &agent_id,
-                        &turn_id,
-                        false,
-                        "turn_no_longer_active_during_recovery",
-                    )?;
                 } else {
-                    return Err(RuntimeError::Conflict(format!(
+                    return Err(RuntimeError::operation_unresolved(operation_id, format!(
                         "workspace interrupt outcome is unresolved for agent {agent_id}; refusing duplicate provider interrupt"
                     )));
                 }
             }
             "finalized" => {}
             other => {
-                return Err(RuntimeError::Conflict(format!(
+                return Err(RuntimeError::operation_unresolved(operation_id, format!(
                     "workspace interrupt effect for agent {agent_id} requires recovery from phase {other}"
                 )))
             }
@@ -825,33 +831,21 @@ fn interrupt_outcomes(
 
 fn interrupt_requested_event_exists(
     tx: &Transaction<'_>,
+    operation_id: &str,
     agent_id: &str,
     turn_id: &str,
 ) -> Result<bool, RuntimeError> {
     tx.query_row(
         "SELECT 1 FROM runtime_events
          WHERE session_id = ?1 AND turn_id = ?2 AND kind = 'turn.interrupt_requested'
+           AND json_extract(payload_json, '$.operation_id') = ?3
          LIMIT 1",
-        params![agent_id, turn_id],
+        params![agent_id, turn_id, operation_id],
         |_| Ok(()),
     )
     .optional()
     .map(|value| value.is_some())
     .map_err(|error| db_error("failed reading workspace interrupt recovery event", error))
-}
-
-fn current_active_turn(
-    tx: &Transaction<'_>,
-    agent_id: &str,
-) -> Result<Option<String>, RuntimeError> {
-    tx.query_row(
-        "SELECT active_turn_id FROM sessions WHERE id = ?1",
-        params![agent_id],
-        |row| row.get(0),
-    )
-    .optional()
-    .map(|value| value.flatten())
-    .map_err(|error| db_error("failed reading workspace interrupt active turn", error))
 }
 
 fn operation_by_id(
@@ -930,4 +924,33 @@ fn conversion_error(index: usize, message: &str) -> rusqlite::Error {
             message.to_string(),
         )),
     )
+}
+
+pub(crate) fn unresolved_interrupt(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<Option<String>, RuntimeError> {
+    connection
+        .query_row(
+            "SELECT e.operation_id FROM runtime_operation_effects e
+         JOIN runtime_operations o ON o.operation_id=e.operation_id
+         WHERE e.target_id=?1 AND e.effect_kind='workspace_turn_interrupt'
+           AND e.phase IN ('started','uncertain') AND o.kind='workspace_interrupt'
+         ORDER BY e.operation_id LIMIT 1",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| db_error("failed inspecting unresolved workspace interruption", error))
+}
+
+pub(crate) fn guard_unresolved_interrupt(
+    connection: &rusqlite::Connection,
+    session_id: &str,
+) -> Result<(), RuntimeError> {
+    if let Some(operation_id) = unresolved_interrupt(connection, session_id)? {
+        return Err(RuntimeError::operation_unresolved(operation_id,
+            "an earlier workspace interrupt has an unresolved native outcome; native target mutation is withheld"));
+    }
+    Ok(())
 }

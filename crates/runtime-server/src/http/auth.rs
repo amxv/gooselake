@@ -286,92 +286,26 @@ pub(super) async fn provider_auth_status_response(
     Ok(Json(status))
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct ClaudeApiKeyRequest {
-    api_key: String,
+// Credential changes also recycle native provider sessions. Until they have
+// durable global control-plane intent, refuse before reading an upload or key.
+fn claude_auth_mutation_refusal() -> ApiError {
+    RuntimeError::Unsupported(
+        "HTTP credential mutation is unavailable without durable provider control-plane authority; authentication status and configured credential-file consumption remain available".into(),
+    ).into()
 }
 
-pub(super) async fn claude_auth_api_key(
-    State(state): State<AppState>,
-    Json(input): Json<ClaudeApiKeyRequest>,
-) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
-    let status = state
-        .runtime
-        .provider_auth_set_api_key(ProviderKind::Claude, input.api_key)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(status))
+pub(super) async fn claude_auth_api_key() -> Result<StatusCode, ApiError> {
+    Err(claude_auth_mutation_refusal())
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct ClaudeAuthImportJsonRequest {
-    auth_json: Option<Value>,
-    auth_json_text: Option<String>,
+pub(super) async fn claude_auth_import_json() -> Result<StatusCode, ApiError> {
+    Err(claude_auth_mutation_refusal())
 }
 
-pub(super) async fn claude_auth_import_json(
-    State(state): State<AppState>,
-    Json(input): Json<ClaudeAuthImportJsonRequest>,
-) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
-    if let Some(auth_json) = input.auth_json {
-        let status = state
-            .runtime
-            .provider_auth_import_json(ProviderKind::Claude, auth_json)
-            .await
-            .map_err(ApiError::from)?;
-        return Ok(Json(status));
-    }
-    if let Some(auth_json_text) = input.auth_json_text {
-        let status = state
-            .runtime
-            .provider_auth_import_json_text(ProviderKind::Claude, auth_json_text)
-            .await
-            .map_err(ApiError::from)?;
-        return Ok(Json(status));
-    }
-    Err(ApiError::bad_request(
-        "expected auth_json or auth_json_text".to_string(),
-    ))
+pub(super) async fn claude_auth_import_file() -> Result<StatusCode, ApiError> {
+    Err(claude_auth_mutation_refusal())
 }
 
-pub(super) async fn claude_auth_import_file(
-    State(state): State<AppState>,
-    mut multipart: Multipart,
-) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|error| ApiError::bad_request(format!("invalid multipart payload: {error}")))?
-    {
-        let name = field.name().unwrap_or_default().to_string();
-        if name != "file" {
-            continue;
-        }
-        let bytes = field.bytes().await.map_err(|error| {
-            ApiError::bad_request(format!("failed reading upload field: {error}"))
-        })?;
-        let auth_json_text = String::from_utf8(bytes.to_vec()).map_err(|error| {
-            ApiError::bad_request(format!("uploaded file is not utf-8: {error}"))
-        })?;
-        let status = state
-            .runtime
-            .provider_auth_import_json_text(ProviderKind::Claude, auth_json_text)
-            .await
-            .map_err(ApiError::from)?;
-        return Ok(Json(status));
-    }
-    Err(ApiError::bad_request(
-        "multipart field 'file' is required".to_string(),
-    ))
-}
-
-pub(super) async fn claude_auth_logout(
-    State(state): State<AppState>,
-) -> Result<Json<runtime_core::ProviderAuthStatus>, ApiError> {
-    let status = state
-        .runtime
-        .provider_auth_logout(ProviderKind::Claude)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(status))
+pub(super) async fn claude_auth_logout() -> Result<StatusCode, ApiError> {
+    Err(claude_auth_mutation_refusal())
 }

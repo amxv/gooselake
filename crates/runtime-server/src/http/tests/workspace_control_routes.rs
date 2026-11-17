@@ -836,7 +836,7 @@ async fn create_control_agent(
     .await
 }
 
-async fn create_control_agent_with_permission(
+pub(super) async fn create_control_agent_with_permission(
     router: &Router,
     token: &str,
     workspace_id: &str,

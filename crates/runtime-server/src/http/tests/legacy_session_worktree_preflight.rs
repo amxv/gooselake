@@ -65,19 +65,16 @@ async fn legacy_native_create_preflight_uses_worktree_paths_without_unrelated_se
 
     // A legacy session created inside a managed checkout still guards its
     // owning workspace, but foreign corrupt sessions cannot mask the lookup.
-    let (status, response) = fixture
-        .call(
-            "POST",
-            "/v1/sessions",
-            Some(serde_json::json!({
-                "provider":"codex",
-                "cwd":active_checkout,
-                "permission_mode":null,
-                "metadata":{}
-            })),
-            None,
-        )
-        .await;
+    let (status, response) = legacy_session_fixture_json(
+        &fixture.runtime,
+        serde_json::json!({
+            "provider":"codex",
+            "cwd":active_checkout,
+            "permission_mode":null,
+            "metadata":{}
+        }),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(provider.native_session_count().await, native_before + 1);
     let session_id = response["id"].as_str().expect("legacy session ID");
@@ -88,19 +85,16 @@ async fn legacy_native_create_preflight_uses_worktree_paths_without_unrelated_se
 
     // The retired workspace must remain fenced even though its checkout is
     // outside the registered workspace canonical root. No native retry.
-    let (blocked, body) = fixture
-        .call(
-            "POST",
-            "/v1/sessions",
-            Some(serde_json::json!({
-                "provider":"codex",
-                "cwd":retired_checkout,
-                "permission_mode":null,
-                "metadata":{}
-            })),
-            None,
-        )
-        .await;
+    let (blocked, body) = legacy_session_fixture_json(
+        &fixture.runtime,
+        serde_json::json!({
+            "provider":"codex",
+            "cwd":retired_checkout,
+            "permission_mode":null,
+            "metadata":{}
+        }),
+    )
+    .await;
     assert_eq!(blocked, StatusCode::CONFLICT, "{body}");
     assert_eq!(
         provider.native_session_count().await,

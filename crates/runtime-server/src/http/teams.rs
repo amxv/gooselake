@@ -451,16 +451,8 @@ pub(super) async fn stream_team_events(
     .await
 }
 
-pub(super) async fn interrupt_all_team_turns(
-    State(state): State<AppState>,
-    Path(team_id): Path<String>,
-) -> Result<Json<runtime_core::TeamInterruptAllResponse>, ApiError> {
-    let response = state
-        .app
-        .services
-        .team_comms
-        .interrupt_all_team_turns(TeamInterruptAllRequest { team_id })
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(response))
+pub(super) async fn interrupt_all_team_turns() -> Result<StatusCode, ApiError> {
+    Err(legacy_native_refusal(
+        "use /v2/workspaces/{workspace_id}/interrupt",
+    ))
 }

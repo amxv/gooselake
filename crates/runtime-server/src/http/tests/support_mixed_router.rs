@@ -9,6 +9,20 @@ pub(super) async fn build_mixed_provider_test_router_with_claude() -> (
     Arc<TestClaudeProvider>,
     Arc<RuntimeSessionManager>,
 ) {
+    let (router, token, temp, acp, claude, runtime, _app) =
+        build_mixed_provider_test_router_with_services().await;
+    (router, token, temp, acp, claude, runtime)
+}
+
+pub(super) async fn build_mixed_provider_test_router_with_services() -> (
+    Router,
+    String,
+    tempfile::TempDir,
+    Arc<TestAcpProvider>,
+    Arc<TestClaudeProvider>,
+    Arc<RuntimeSessionManager>,
+    Arc<RuntimeApp>,
+) {
     let temp_dir = tempfile::tempdir().expect("temp dir");
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp_dir.path().join("runtime.sqlite3"),
@@ -108,8 +122,9 @@ pub(super) async fn build_mixed_provider_test_router_with_claude() -> (
     app.initialize().await.expect("initialize app");
     let bearer_token = "mixed-provider-token".to_string();
 
+    let app = Arc::new(app);
     let router = build_router(AppState {
-        app: Arc::new(app),
+        app: app.clone(),
         runtime: runtime.clone(),
         bearer_token: bearer_token.clone(),
         public_base_url: "http://localhost:8080".to_string(),
@@ -123,5 +138,6 @@ pub(super) async fn build_mixed_provider_test_router_with_claude() -> (
         acp_provider,
         claude_provider,
         runtime,
+        app,
     )
 }

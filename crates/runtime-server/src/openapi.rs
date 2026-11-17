@@ -101,7 +101,27 @@ fn build_openapi_yaml() -> String {
     out
 }
 
+fn legacy_native_refused(path: &str, method: HttpMethod) -> bool {
+    method == HttpMethod::Post
+        && matches!(
+            path,
+            "/v1/sessions"
+                | "/v1/sessions/{session_id}/resume"
+                | "/v1/sessions/{session_id}/close"
+                | "/v1/sessions/{session_id}/turns/{turn_id}/interrupt"
+                | "/v1/worktrees"
+                | "/v1/teams/{team_id}/interrupt-all"
+                | "/v1/providers/claude/auth/api-key"
+                | "/v1/providers/claude/auth/import-json"
+                | "/v1/providers/claude/auth/import-file"
+                | "/v1/providers/claude/auth/logout"
+        )
+}
+
 fn operation_summary(path: &str, method: HttpMethod) -> String {
+    if legacy_native_refused(path, method) {
+        return "Unsupported legacy native mutation (no native effect)".into();
+    }
     match (method, path) {
         (HttpMethod::Get, "/health") => "Public health check".to_string(),
         (HttpMethod::Get, "/openapi.yaml") => "Generated OpenAPI schema".to_string(),
@@ -507,7 +527,8 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
 }
 
 fn append_request_body(out: &mut String, path: &str, method: HttpMethod) {
-    if !matches!(method, HttpMethod::Post | HttpMethod::Put) {
+    if legacy_native_refused(path, method) || !matches!(method, HttpMethod::Post | HttpMethod::Put)
+    {
         return;
     }
     let expects_multipart = path == "/v1/providers/claude/auth/import-file";
@@ -614,6 +635,10 @@ fn append_operator_default_error(out: &mut String) {
 }
 
 fn append_response(out: &mut String, path: &str, method: HttpMethod) {
+    if legacy_native_refused(path, method) {
+        out.push_str("      responses:\n        \"400\":\n          description: Unsupported capability; refused before native mutation or credential upload parsing\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/JsonObject'\n        \"401\":\n          description: Missing or invalid operator bearer token\n");
+        return;
+    }
     let operator_v2 = path.starts_with("/v2/") && !path.starts_with("/v2/mcp/");
     let mut headers_started = false;
     let status = if method == HttpMethod::Delete {

@@ -352,50 +352,70 @@ impl RuntimeSessionManager {
             WorkspaceInterruptAdmission::Replay(response) => return Ok(response),
             WorkspaceInterruptAdmission::Execute(plan) => plan,
         };
+        let unresolved = |error: RuntimeError| {
+            RuntimeError::operation_unresolved(
+            &plan.operation_id,
+            format!("workspace interrupt requires inspection; native retry is not authorized: {error}"),
+        )
+        };
 
         for target in plan.targets {
-            self.store.mark_workspace_interrupt_started(
-                &plan.operation_id,
-                &target.agent_id,
-                &target.turn_id,
-                now_ms(),
-            )?;
-            match self
-                .interrupt_turn(target.agent_id.as_str(), target.turn_id.as_str())
-                .await
-            {
-                Ok(()) => self.store.finalize_workspace_interrupt_effect(
+            self.store
+                .mark_workspace_interrupt_started(
                     &plan.operation_id,
                     &target.agent_id,
                     &target.turn_id,
-                    true,
-                    "interrupt_requested",
                     now_ms(),
-                )?,
-                Err(RuntimeError::InvalidState(_)) | Err(RuntimeError::NotFound(_)) => {
-                    self.store.finalize_workspace_interrupt_effect(
+                )
+                .map_err(&unresolved)?;
+            match self
+                .interrupt_turn_for_operation(
+                    target.agent_id.as_str(),
+                    target.turn_id.as_str(),
+                    Some(&plan.operation_id),
+                )
+                .await
+            {
+                Ok(()) => self
+                    .store
+                    .finalize_workspace_interrupt_effect(
                         &plan.operation_id,
                         &target.agent_id,
                         &target.turn_id,
-                        false,
-                        "turn_no_longer_active",
+                        true,
+                        "interrupt_requested",
                         now_ms(),
-                    )?;
+                    )
+                    .map_err(&unresolved)?,
+                Err(RuntimeError::InvalidState(_)) | Err(RuntimeError::NotFound(_)) => {
+                    self.store
+                        .finalize_workspace_interrupt_effect(
+                            &plan.operation_id,
+                            &target.agent_id,
+                            &target.turn_id,
+                            false,
+                            "turn_no_longer_active",
+                            now_ms(),
+                        )
+                        .map_err(&unresolved)?;
                 }
                 Err(error) => {
-                    self.store.mark_workspace_interrupt_uncertain(
-                        &plan.operation_id,
-                        &target.agent_id,
-                        &target.turn_id,
-                        &serde_json::json!({"message": error.to_string()}),
-                        now_ms(),
-                    )?;
-                    return Err(error);
+                    self.store
+                        .mark_workspace_interrupt_uncertain(
+                            &plan.operation_id,
+                            &target.agent_id,
+                            &target.turn_id,
+                            &serde_json::json!({"message": error.to_string()}),
+                            now_ms(),
+                        )
+                        .map_err(&unresolved)?;
+                    return Err(unresolved(error));
                 }
             }
         }
 
         self.store
             .complete_workspace_interrupt(&plan.operation_id, now_ms())
+            .map_err(unresolved)
     }
 }

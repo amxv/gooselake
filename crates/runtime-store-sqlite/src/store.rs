@@ -362,6 +362,13 @@ impl RuntimeStore for SqliteRuntimeStore {
     ) -> Result<WorkspaceInterruptAdmission, RuntimeError> {
         self.repository.begin_workspace_interrupt(command)
     }
+    fn unresolved_workspace_interrupt_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<String>, RuntimeError> {
+        self.repository
+            .unresolved_workspace_interrupt_for_session(session_id)
+    }
     fn mark_workspace_interrupt_started(
         &self,
         operation_id: &str,

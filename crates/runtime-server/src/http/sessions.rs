@@ -1,15 +1,9 @@
 use super::*;
 
-pub(super) async fn create_session(
-    State(state): State<AppState>,
-    Json(input): Json<CreateSessionInput>,
-) -> Result<Json<runtime_core::SessionRecord>, ApiError> {
-    let session = state
-        .runtime
-        .create_session(input)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(session))
+pub(super) async fn create_session() -> Result<StatusCode, ApiError> {
+    Err(legacy_native_refusal(
+        "create a workspace agent through /v2/workspaces/{workspace_id}/agents",
+    ))
 }
 
 pub(super) async fn list_sessions(
@@ -30,42 +24,16 @@ pub(super) async fn get_session(
     Ok(Json(session))
 }
 
-pub(super) async fn resume_session(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-    input: Option<Json<ResumeSessionInput>>,
-) -> Result<Json<runtime_core::SessionRecord>, ApiError> {
-    let input = input
-        .map(|Json(value)| value)
-        .unwrap_or(ResumeSessionInput {
-            provider_session_ref: None,
-            canonical_provider_session_ref: None,
-        });
-    let session = state
-        .runtime
-        .resume_session(session_id.as_str(), input)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(session))
+pub(super) async fn resume_session() -> Result<StatusCode, ApiError> {
+    Err(legacy_native_refusal(
+        "use the workspace agent restore operation",
+    ))
 }
 
-#[derive(Debug, Deserialize)]
-pub(super) struct CloseSessionInput {
-    reason: Option<String>,
-}
-
-pub(super) async fn close_session(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-    input: Option<Json<CloseSessionInput>>,
-) -> Result<Json<runtime_core::SessionRecord>, ApiError> {
-    let reason = input.and_then(|Json(value)| value.reason);
-    let session = state
-        .runtime
-        .close_session(session_id.as_str(), reason)
-        .await
-        .map_err(ApiError::from)?;
-    Ok(Json(session))
+pub(super) async fn close_session() -> Result<StatusCode, ApiError> {
+    Err(legacy_native_refusal(
+        "use the workspace agent archive operation",
+    ))
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -163,16 +131,10 @@ mod tests {
     }
 }
 
-pub(super) async fn interrupt_turn(
-    State(state): State<AppState>,
-    Path((session_id, turn_id)): Path<(String, String)>,
-) -> Result<StatusCode, ApiError> {
-    state
-        .runtime
-        .interrupt_turn(session_id.as_str(), turn_id.as_str())
-        .await
-        .map_err(ApiError::from)?;
-    Ok(StatusCode::ACCEPTED)
+pub(super) async fn interrupt_turn() -> Result<StatusCode, ApiError> {
+    Err(legacy_native_refusal(
+        "use /v2/workspaces/{workspace_id}/interrupt",
+    ))
 }
 
 pub(super) async fn respond_approval(

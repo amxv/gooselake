@@ -835,6 +835,50 @@ fn workspace_interrupt_recovery_uses_durable_interrupt_event_without_redispatch(
             200,
         )
         .expect("mark started");
+    // Missing/foreign receipts and a changed active-turn projection cannot
+    // certify this original dispatched effect as skipped or successful.
+    let db = rusqlite::Connection::open(temp_dir.path().join("runtime.sqlite3")).unwrap();
+    for (ordinal, payload) in [
+        serde_json::json!({}),
+        serde_json::json!({"operation_id":"foreign-operation"}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        repository
+            .append_runtime_event(&NewRuntimeEvent {
+                event_id: format!("evt_unrelated_interrupt_{ordinal}"),
+                scope: RuntimeEventScope::Session,
+                scope_id: active.agent_id.clone(),
+                session_id: Some(active.agent_id.clone()),
+                team_id: None,
+                turn_id: Some("turn_recovery".into()),
+                kind: "turn.interrupt_requested".into(),
+                criticality: RuntimeEventCriticality::Critical,
+                payload,
+                provider: None,
+                provider_seq: None,
+                created_at: 200,
+            })
+            .unwrap();
+        for active_turn in [None, Some("different-turn"), Some("turn_recovery")] {
+            db.execute(
+                "UPDATE sessions SET active_turn_id=?2 WHERE id=?1",
+                rusqlite::params![&active.agent_id, active_turn],
+            )
+            .unwrap();
+            let error = repository.begin_workspace_interrupt(&command).unwrap_err();
+            assert!(
+                matches!(error, runtime_core::RuntimeError::OperationUnresolved {operation_id,..} if operation_id==plan.operation_id)
+            );
+            assert_eq!(
+                repository
+                    .unresolved_workspace_interrupt_for_session(&active.agent_id)
+                    .unwrap(),
+                Some(plan.operation_id.clone())
+            );
+        }
+    }
     repository
         .append_runtime_event(&NewRuntimeEvent {
             event_id: "evt_interrupt_recovery".to_string(),
@@ -845,7 +889,7 @@ fn workspace_interrupt_recovery_uses_durable_interrupt_event_without_redispatch(
             turn_id: Some("turn_recovery".to_string()),
             kind: "turn.interrupt_requested".to_string(),
             criticality: RuntimeEventCriticality::Critical,
-            payload: serde_json::json!({}),
+            payload: serde_json::json!({"operation_id":plan.operation_id}),
             provider: None,
             provider_seq: None,
             created_at: 201,

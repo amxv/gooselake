@@ -124,6 +124,10 @@ impl SqliteRuntimeRepository {
             );
         }
 
+        crate::repository_workspace_control::guard_unresolved_interrupt(
+            &transaction,
+            &command.agent_id,
+        )?;
         let state: Option<(
             String,
             String,

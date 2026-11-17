@@ -82,6 +82,7 @@ impl SqliteRuntimeRepository {
             }
         }
 
+        crate::repository_workspace_control::guard_unresolved_interrupt(&transaction, &session.id)?;
         let active_native_claim: Option<String> = transaction
             .query_row(
                 "SELECT owner_operation_id FROM runtime_operation_resource_claims

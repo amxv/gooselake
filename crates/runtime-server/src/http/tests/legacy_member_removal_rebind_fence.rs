@@ -1,18 +1,15 @@
-use super::workspace_worktree_routes::{call, fixture};
+use super::workspace_worktree_routes::{call, fixture, fixture_with_runtime};
 use super::*;
 
 #[tokio::test]
 async fn legacy_member_removal_does_not_unreserve_unresolved_native_provider_rebind() {
-    let (router, token, temp, provider, workspace, agent, linked) = fixture().await;
-    let (status, lead) = call(
-        &router,
-        &token,
-        "POST",
-        "/v1/sessions",
-        Some(serde_json::json!({
+    let (router, token, temp, provider, workspace, agent, linked, runtime) =
+        fixture_with_runtime().await;
+    let (status, lead) = legacy_session_fixture_json(
+        &runtime,
+        serde_json::json!({
             "provider":"codex", "model":"test-model", "cwd":workspace.canonical_root,
-        })),
-        None,
+        }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{lead}");

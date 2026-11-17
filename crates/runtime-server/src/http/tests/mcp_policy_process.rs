@@ -2,40 +2,30 @@ use super::*;
 
 #[tokio::test]
 async fn mcp_invoke_team_manage_policy_enabled_and_add_idempotency_are_http_visible() {
-    let (router, token, temp_dir) = build_test_router_with_team_policy(TeamMcpPolicy {
-        enabled: true,
-        non_lead_can_add_members: true,
-        non_lead_can_remove_members: true,
-    })
-    .await;
+    let (router, token, temp_dir, _provider, runtime) =
+        build_test_router_with_provider_and_runtime(TeamMcpPolicy {
+            enabled: true,
+            non_lead_can_add_members: true,
+            non_lead_can_remove_members: true,
+        })
+        .await;
     let session_cwd = temp_dir.path().join("mcp-team-policy-cwd");
     std::fs::create_dir_all(&session_cwd).expect("create mcp team cwd");
 
     let create_session = |label: &'static str| {
-        let router = router.clone();
-        let token = token.clone();
+        let runtime = runtime.clone();
         let cwd = session_cwd.display().to_string();
         async move {
-            let response = router
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/v1/sessions")
-                        .header(header::CONTENT_TYPE, "application/json")
-                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                        .body(Body::from(
-                            serde_json::json!({
-                                "provider": "codex",
-                                "model": "test-model",
-                                "cwd": cwd,
-                                "metadata": {"suite": "mcp_team_policy", "label": label}
-                            })
-                            .to_string(),
-                        ))
-                        .unwrap(),
-                )
-                .await
-                .expect("create session");
+            let response = legacy_session_fixture_response(
+                &runtime,
+                serde_json::json!({
+                    "provider": "codex",
+                    "model": "test-model",
+                    "cwd": cwd,
+                    "metadata": {"suite": "mcp_team_policy", "label": label}
+                }),
+            )
+            .await;
             assert_eq!(response.status(), StatusCode::OK);
             let body: serde_json::Value = serde_json::from_slice(
                 &to_bytes(response.into_body(), usize::MAX)
@@ -177,7 +167,7 @@ async fn mcp_invoke_team_manage_policy_enabled_and_add_idempotency_are_http_visi
 
 #[tokio::test]
 async fn process_output_events_are_sampled_while_logs_remain_authoritative() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -186,19 +176,7 @@ async fn process_output_events_are_sampled_while_logs_remain_authoritative() {
         "permission_mode": null,
         "metadata": {}
     });
-    let create_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create session");
+    let create_response = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(create_response.into_body(), usize::MAX)
@@ -340,7 +318,7 @@ async fn process_output_events_are_sampled_while_logs_remain_authoritative() {
 
 #[tokio::test]
 async fn process_http_ownership_enforced_by_session_identity() {
-    let (router, token, _temp_dir) = build_test_router().await;
+    let (router, token, _temp_dir, runtime) = build_test_router_with_runtime().await;
 
     let create_body = serde_json::json!({
         "provider": "codex",
@@ -349,19 +327,7 @@ async fn process_http_ownership_enforced_by_session_identity() {
         "permission_mode": null,
         "metadata": {}
     });
-    let create_one = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create one");
+    let create_one = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     let create_one_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(create_one.into_body(), usize::MAX)
             .await
@@ -373,19 +339,7 @@ async fn process_http_ownership_enforced_by_session_identity() {
         .expect("owner session id")
         .to_string();
 
-    let create_two = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/sessions")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(create_body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .expect("create two");
+    let create_two = legacy_session_fixture_response(&runtime, create_body.clone()).await;
     let create_two_json: serde_json::Value = serde_json::from_slice(
         &to_bytes(create_two.into_body(), usize::MAX)
             .await

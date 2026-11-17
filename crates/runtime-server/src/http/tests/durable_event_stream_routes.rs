@@ -75,8 +75,8 @@ pub(super) async fn observed_sse_ids(response: Response, expected: &[i64]) -> St
 
 #[tokio::test]
 async fn global_session_and_team_sse_follow_durable_commits_without_duplicate_replay() {
-    let (router, token, temp) = build_test_router().await;
-    let session_id = create_test_session(router.clone(), &token, "durable-sse").await;
+    let (router, token, temp, runtime) = build_test_router_with_runtime().await;
+    let session_id = create_test_session(&runtime, "durable-sse").await;
     let team_response = router
         .clone()
         .oneshot(
@@ -232,9 +232,9 @@ async fn committed_event_during_replay_handoff_is_delivered_exactly_once() {
 
 #[tokio::test]
 async fn process_sse_preserves_owner_visibility_and_catches_commits_during_handoff() {
-    let (router, token, temp) = build_test_router().await;
-    let owner = create_test_session(router.clone(), &token, "process-sse-owner").await;
-    let other = create_test_session(router.clone(), &token, "process-sse-other").await;
+    let (router, token, temp, runtime) = build_test_router_with_runtime().await;
+    let owner = create_test_session(&runtime, "process-sse-owner").await;
+    let other = create_test_session(&runtime, "process-sse-other").await;
     let start = router
         .clone()
         .oneshot(

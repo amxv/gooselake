@@ -241,6 +241,7 @@ impl SqliteRuntimeRepository {
                 return Ok((prior, false));
             }
         }
+        crate::repository_workspace_control::guard_unresolved_interrupt(&tx, &operation.agent_id)?;
         if let Some(command) = member {
             crate::repository_member_agent_rebind::validate_member_admission(&tx, command, true)?;
         }

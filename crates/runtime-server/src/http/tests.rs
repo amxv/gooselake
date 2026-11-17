@@ -2,11 +2,11 @@ use super::*;
 use axum::body::to_bytes;
 use axum::http::Request;
 use runtime_core::{
-    ApprovalDecision, ProviderApprovalResponseRequest, ProviderAuthStatus,
+    ApprovalDecision, CreateSessionInput, ProviderApprovalResponseRequest, ProviderAuthStatus,
     ProviderCreateSessionRequest, ProviderInterruptTurnRequest, ProviderMetadata, ProviderModel,
     ProviderResumeSessionRequest, ProviderSendTurnRequest, ProviderSession, ProviderTurnAck,
-    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, RuntimeProvider, RuntimeStore,
-    RuntimeTeamCommsConfig, RuntimeTeamCommsService,
+    ProviderTurnResult, ProviderTurnStatus, ProviderWaitTurnRequest, ResumeSessionInput,
+    RuntimeProvider, RuntimeStore, RuntimeTeamCommsConfig, RuntimeTeamCommsService,
 };
 use runtime_provider_claude::{
     standalone_claude_bridge_command_path, standalone_gg_mcp_server_command_path,
@@ -28,6 +28,8 @@ use tower::ServiceExt;
 use crate::bootstrap::bootstrap_runtime;
 use crate::config::RuntimeServerConfig;
 
+mod support_legacy;
+use support_legacy::*;
 mod support;
 use support::*;
 mod support_mixed_router;
@@ -55,6 +57,7 @@ mod agent_session_controls_compaction;
 mod agent_session_controls_edit_rerun;
 mod legacy_member_removal_claims_preflight;
 mod legacy_member_removal_rebind_fence;
+mod legacy_native_authority;
 mod legacy_session_worktree_preflight;
 mod legacy_team_operation_recovery;
 mod legacy_team_spawn_idempotency;

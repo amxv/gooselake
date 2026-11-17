@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn claude_auth_endpoints_are_runtime_managed() {
+async fn claude_auth_mutations_refuse_before_writes_and_status_remains_available() {
     let prior_bridge_home_override = std::env::var_os("GG_CLAUDE_BRIDGE_HOME");
     let prior_bridge_config_override = std::env::var_os("GG_CLAUDE_BRIDGE_CLAUDE_CONFIG_DIR");
     let temp_dir = tempfile::tempdir().expect("temp dir");
@@ -59,114 +59,49 @@ async fn claude_auth_endpoints_are_runtime_managed() {
     .expect("initial status json");
     assert_eq!(initial_json["authenticated"], false);
 
-    let api_key_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/providers/claude/auth/api-key")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({ "api_key": "sk-ant-test-123" }).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("api-key response");
-    assert_eq!(api_key_response.status(), StatusCode::OK);
-    let api_key_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(api_key_response.into_body(), usize::MAX)
+    // Synthetic files are established directly, never through live auth.
+    fs::create_dir_all(claude_credentials_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(claude_config_path.parent().unwrap()).unwrap();
+    let credentials = br#"{"claudeAiOauth":{"accessToken":"inert-test-value","refreshToken":"inert-test-value"}}"#;
+    let configuration = br#"{"projects":{}}"#;
+    fs::write(&claude_credentials_path, credentials).unwrap();
+    fs::write(&claude_config_path, configuration).unwrap();
+    for route in ["api-key", "import-json", "import-file", "logout"] {
+        // Deliberately invalid body proves no credential parser/upload is run.
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/providers/claude/auth/{route}"))
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::from("this must never be interpreted as a credential"))
+                    .unwrap(),
+            )
             .await
-            .expect("api-key body"),
-    )
-    .expect("api-key json");
-    assert_eq!(api_key_json["authenticated"], true);
-    assert_eq!(api_key_json["mode"], "api_key");
-
-    let import_json_response = router
-        .clone()
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{route}");
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
+                .unwrap();
+        assert!(body["error"]
+            .as_str()
+            .unwrap()
+            .contains("durable provider control-plane authority"));
+        assert_eq!(fs::read(&claude_credentials_path).unwrap(), credentials);
+        assert_eq!(fs::read(&claude_config_path).unwrap(), configuration);
+    }
+    let response = router
         .oneshot(
             Request::builder()
-                .method("POST")
-                .uri("/v1/providers/claude/auth/import-json")
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "auth_json": {
-                            "credentials_json": {
-                                "claudeAiOauth": {
-                                    "accessToken": "runtime-managed-auth",
-                                    "refreshToken": "runtime-managed-auth"
-                                }
-                            },
-                            "config_json": {
-                                "projects": {}
-                            }
-                        }
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("import-json response");
-    assert_eq!(import_json_response.status(), StatusCode::OK);
-    let import_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(import_json_response.into_body(), usize::MAX)
-            .await
-            .expect("import-json body"),
-    )
-    .expect("import-json json");
-    assert_eq!(import_json["authenticated"], true);
-    assert_eq!(import_json["mode"], "claude_code_oauth");
-    assert!(claude_credentials_path.exists());
-    assert!(claude_config_path.exists());
-
-    let boundary = "phase7boundary";
-    let multipart_body = format!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"auth_bundle.json\"\r\nContent-Type: application/json\r\n\r\n{{\"credentials_json\":{{\"claudeAiOauth\":{{\"accessToken\":\"multipart-import\",\"refreshToken\":\"multipart-import\"}}}},\"config_json\":{{\"projects\":{{}}}}}}\r\n--{boundary}--\r\n"
-        );
-    let import_file_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/providers/claude/auth/import-file")
-                .header(
-                    header::CONTENT_TYPE,
-                    format!("multipart/form-data; boundary={boundary}"),
-                )
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(multipart_body))
-                .unwrap(),
-        )
-        .await
-        .expect("import-file response");
-    assert_eq!(import_file_response.status(), StatusCode::OK);
-
-    let logout_response = router
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/providers/claude/auth/logout")
+                .uri("/v1/providers/claude/auth/status")
                 .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
-        .expect("logout response");
-    assert_eq!(logout_response.status(), StatusCode::OK);
-    let logout_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(logout_response.into_body(), usize::MAX)
-            .await
-            .expect("logout body"),
-    )
-    .expect("logout json");
-    assert_eq!(logout_json["authenticated"], false);
-    assert!(!claude_credentials_path.exists());
-    assert!(!claude_config_path.exists());
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 
     match prior_bridge_home_override {
         Some(value) => std::env::set_var("GG_CLAUDE_BRIDGE_HOME", value),

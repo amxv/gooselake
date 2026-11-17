@@ -414,12 +414,12 @@ async fn bridge_spawn_fails_fast_when_runtime_credentials_missing() {
         "expected missing-runtime-credentials fail-fast message, got: {rendered}"
     );
     assert!(
-        rendered.contains("/v1/providers/claude/auth/import-json"),
-        "expected import-json route guidance, got: {rendered}"
+        rendered.contains("configured credential source"),
+        "expected configured-source guidance, got: {rendered}"
     );
     assert!(
-        rendered.contains("/v1/providers/claude/auth/import-file"),
-        "expected import-file route guidance, got: {rendered}"
+        rendered.contains("HTTP credential mutations are unavailable"),
+        "expected truthful HTTP capability boundary, got: {rendered}"
     );
 }
 

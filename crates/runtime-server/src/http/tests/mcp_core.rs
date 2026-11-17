@@ -783,6 +783,49 @@ async fn mcp_invoke_team_tools_share_http_team_services() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{historical}");
+    // The historical seeder writes no in-memory projections. Reopen all
+    // consumers over the same database and provider registry before checking
+    // the saved Add result, current roster, and subsequent effectful Remove.
+    let (router, _reopened_runtime, _reopened_app) =
+        reopen_test_router_with_services(&app, temp_dir.path(), &token, TeamMcpPolicy::default())
+            .await;
+    let invoke = |caller_agent_id: String,
+                  tool_name: &'static str,
+                  invocation_id: Option<&'static str>,
+                  args: serde_json::Value| {
+        let router = router.clone();
+        let token = token.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/v1/mcp/invoke")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .body(Body::from(
+                            serde_json::json!({
+                                "namespace": "gg_team",
+                                "tool_name": tool_name,
+                                "caller_agent_id": caller_agent_id,
+                                "invocation_id": invocation_id,
+                                "args": args,
+                            })
+                            .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .expect("mcp invoke");
+            assert_eq!(response.status(), StatusCode::OK);
+            serde_json::from_slice::<serde_json::Value>(
+                &to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .expect("mcp body"),
+            )
+            .expect("mcp json")
+        }
+    };
 
     let add_json = invoke(
         lead_session_id.clone(),

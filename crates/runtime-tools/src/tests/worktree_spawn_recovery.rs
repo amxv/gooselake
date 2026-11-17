@@ -1,3 +1,4 @@
+use super::legacy_spawn_history::{HistoricalSpawnSeed, HistoricalWorktreeAssignment};
 use super::*;
 use runtime_core::{TeamCommsService, TeamMemberSpawnRequest, WorktreeService};
 use std::process::Command;
@@ -83,7 +84,7 @@ impl SpawnFixture {
             title: None,
             prompt: None,
             permission_mode: None,
-            metadata: Some(json!({"__test_force_claim_failure_after_join": true})),
+            metadata: None,
             worktree: None,
             creator_agent_id: None,
             creator_compaction_subscription: None,
@@ -104,13 +105,76 @@ impl SpawnFixture {
     }
 }
 
-#[tokio::test]
-async fn invalid_requested_provider_never_creates_native_git_checkout() {
-    let fixture = fixture().await;
-    let repo = fixture._temp.path();
-    for args in [
-        vec!["init", "--quiet"],
-        vec![
+impl SpawnFixture {
+    pub(super) fn history(
+        &self,
+        request: &TeamMemberSpawnRequest,
+        assignment: Option<HistoricalWorktreeAssignment>,
+    ) -> HistoricalSpawnSeed {
+        let state = self.store.hydrate_runtime_state().unwrap();
+        let source = state
+            .sessions
+            .iter()
+            .find(|s| s.id == request.source_session_id)
+            .unwrap()
+            .clone();
+        let team = runtime_core::TeamWithMembers {
+            team: state
+                .teams
+                .iter()
+                .find(|t| t.id == request.team_id)
+                .unwrap()
+                .clone(),
+            members: state
+                .team_members
+                .into_iter()
+                .filter(|m| m.team_id == request.team_id)
+                .collect(),
+        };
+        let digest =
+            runtime_core::normalized_json_hash(&serde_json::to_value(request).unwrap()).unwrap();
+        HistoricalSpawnSeed::for_request(
+            request.clone(),
+            source,
+            team,
+            &format!("op_spawn_history_{digest}"),
+            &format!("historical_child_{digest}"),
+            assignment,
+            1000,
+        )
+        .unwrap()
+    }
+
+    pub(super) fn onboarding_history(
+        &self,
+        request: &TeamMemberSpawnRequest,
+        assignment: Option<HistoricalWorktreeAssignment>,
+    ) -> HistoricalSpawnSeed {
+        let seed = self.history(request, assignment);
+        seed.seed_to_onboarding_sent(self.store.as_ref(), 1000, 1001)
+            .unwrap();
+        seed
+    }
+
+    pub(super) fn completed_history(
+        &self,
+        request: &TeamMemberSpawnRequest,
+        assignment: Option<HistoricalWorktreeAssignment>,
+    ) -> runtime_core::TeamMemberSpawnResponse {
+        let seed = self.onboarding_history(request, assignment);
+        seed.complete_seed(self.store.as_ref(), 1002).unwrap();
+        seed.response
+    }
+
+    pub(super) fn keyed_request(&self, key: &str) -> TeamMemberSpawnRequest {
+        let mut request = self.request();
+        request.idempotency_key = Some(key.into());
+        request
+    }
+
+    pub(super) fn init_git(&self) {
+        self.git(&["init", "--quiet"]);
+        self.git(&[
             "-c",
             "user.name=Fixture",
             "-c",
@@ -120,12 +184,14 @@ async fn invalid_requested_provider_never_creates_native_git_checkout() {
             "--quiet",
             "-m",
             "initial",
-        ],
-    ] {
+        ]);
+    }
+
+    pub(super) fn git(&self, args: &[&str]) -> Vec<u8> {
         let output = Command::new("git")
             .arg("-C")
-            .arg(repo)
-            .args(&args)
+            .arg(self._temp.path())
+            .args(args)
             .output()
             .unwrap();
         assert!(
@@ -133,283 +199,276 @@ async fn invalid_requested_provider_never_creates_native_git_checkout() {
             "git {args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        output.stdout
     }
+
+    pub(super) fn prepared_checkout(
+        &self,
+        request: &TeamMemberSpawnRequest,
+        created: bool,
+    ) -> ManagedWorktreeRecord {
+        let digest =
+            runtime_core::normalized_json_hash(&serde_json::to_value(request).unwrap()).unwrap();
+        let name = request.worktree.as_ref().unwrap().name.as_deref().unwrap();
+        let root = self._temp.path().join("historical-checkouts");
+        std::fs::create_dir_all(&root).unwrap();
+        let cwd = root.join(name);
+        let branch = format!("historical/{name}");
+        self.git(&[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            &branch,
+            cwd.to_str().unwrap(),
+            "HEAD",
+        ]);
+        ManagedWorktreeRecord {
+            id: format!("wt_history_{digest}"),
+            repo_root: self._temp.path().display().to_string(),
+            worktree_root: root.display().to_string(),
+            worktree_cwd: cwd.display().to_string(),
+            branch_name: branch,
+            worktree_name: name.into(),
+            unified_workspace_path: "historical-fixture".into(),
+            deletion_policy: "delete_on_last_claim".into(),
+            created_by_session_id: Some(request.source_session_id.clone()),
+            created_by_operation_id: Some(if created {
+                format!("op_spawn_history_{digest}")
+            } else {
+                "op_prior_checkout_history".into()
+            }),
+            created_at: 900,
+            updated_at: 900,
+        }
+    }
+
+    pub(super) fn stage_history(
+        &self,
+        operation_id: &str,
+        stage: &str,
+        payload: serde_json::Value,
+    ) {
+        let mut journal = self
+            .store
+            .get_team_operation_journal(operation_id)
+            .unwrap()
+            .unwrap();
+        journal.stage = stage.into();
+        journal.payload = payload;
+        journal.updated_at = 1002;
+        self.store.upsert_team_operation_journal(&journal).unwrap();
+    }
+
+    pub(super) async fn assert_unresolved_without_effects(
+        &self,
+        request: TeamMemberSpawnRequest,
+        operation_id: &str,
+    ) {
+        let before = self.store.hydrate_runtime_state().unwrap();
+        let effects = self
+            .provider
+            .effect_calls
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let error = self.service.spawn_team_member(request).await.unwrap_err();
+        assert!(
+            matches!(error,RuntimeError::OperationUnresolved{operation_id:ref id,..} if id==operation_id),
+            "{error:?}"
+        );
+        assert_eq!(self.store.hydrate_runtime_state().unwrap(), before);
+        assert_eq!(
+            self.provider
+                .effect_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            effects
+        );
+    }
+}
+
+#[tokio::test]
+async fn invalid_requested_provider_never_creates_native_git_checkout() {
+    let fixture = fixture().await;
+    fixture.init_git();
     let mut request = fixture.request();
-    request.metadata = None;
     request.provider = Some("not-a-provider".into());
-    request.worktree = Some(runtime_core::TeamMemberSpawnWorktreeInput {
-        mode: Some("create".into()),
-        name: Some("must-not-exist".into()),
-        branch_prefix: None,
-        base_ref: None,
-        run_init_script: Some(true),
-    });
+    request.worktree = Some(worktree_input("create", "must-not-exist"));
+    let before = fixture.store.hydrate_runtime_state().unwrap();
+    let git_before = fixture.git(&["worktree", "list", "--porcelain"]);
     let error = fixture
         .service
         .spawn_team_member(request)
         .await
         .unwrap_err();
-    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error:?}");
-    assert!(fixture
-        .store
-        .hydrate_runtime_state()
-        .unwrap()
-        .managed_worktrees
-        .is_empty());
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("must-not-exist"));
+    assert!(matches!(error, RuntimeError::Unsupported(_)), "{error:?}");
+    assert_eq!(fixture.store.hydrate_runtime_state().unwrap(), before);
+    assert_eq!(
+        fixture.git(&["worktree", "list", "--porcelain"]),
+        git_before
+    );
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
 }
 
 #[tokio::test]
-async fn invalid_source_git_root_does_not_consume_keyed_spawn_before_native_work() {
+async fn corrected_source_git_root_still_cannot_consume_a_fresh_legacy_spawn_key() {
     let fixture = fixture().await;
-    let mut request = fixture.request();
-    request.metadata = None;
-    request.idempotency_key = Some("source-not-yet-a-git-repository".into());
-    request.worktree = Some(runtime_core::TeamMemberSpawnWorktreeInput {
-        mode: Some("create".into()),
-        name: Some("first-checkout".into()),
+    let mut request = fixture.keyed_request("source-not-yet-a-git-repository");
+    request.worktree = Some(worktree_input("create", "first-checkout"));
+    let before = fixture.store.hydrate_runtime_state().unwrap();
+    for initialized in [false, true] {
+        if initialized {
+            fixture.init_git();
+        }
+        assert!(matches!(
+            fixture.service.spawn_team_member(request.clone()).await,
+            Err(RuntimeError::Unsupported(_))
+        ));
+        assert_eq!(fixture.store.hydrate_runtime_state().unwrap(), before);
+    }
+    let conn = rusqlite::Connection::open(&fixture.database_path).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT count(*) FROM team_spawn_admissions", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
+}
+
+pub(super) fn worktree_input(mode: &str, name: &str) -> runtime_core::TeamMemberSpawnWorktreeInput {
+    runtime_core::TeamMemberSpawnWorktreeInput {
+        mode: Some(mode.into()),
+        name: Some(name.into()),
         branch_prefix: None,
         base_ref: None,
         run_init_script: Some(false),
-    });
-
-    // The source directory exists but is not a Git checkout. This is a
-    // read-only preflight failure, not a native-admitted unresolved operation.
-    let error = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .unwrap_err();
-    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error:?}");
-    let conn = rusqlite::Connection::open(&fixture.database_path).unwrap();
-    let admissions: i64 = conn
-        .query_row("SELECT COUNT(*) FROM team_spawn_admissions", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(
-        admissions, 0,
-        "invalid source must not consume the caller key"
-    );
-    assert!(fixture
-        .store
-        .list_team_operation_journal(Some(&fixture.team_id))
-        .unwrap()
-        .is_empty());
-    assert!(fixture
-        .store
-        .hydrate_runtime_state()
-        .unwrap()
-        .managed_worktrees
-        .is_empty());
-    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
-
-    // Fixing the *same source* must allow the exact same request/key to
-    // execute once. No stranded planned admission may force manual repair.
-    let repo = fixture._temp.path();
-    for args in [
-        vec!["init", "--quiet"],
-        vec![
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.invalid",
-            "commit",
-            "--allow-empty",
-            "--quiet",
-            "-m",
-            "initial",
-        ],
-    ] {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(&args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
     }
-    let completed = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .expect("same key may execute after pure preflight is corrected");
-    assert_eq!(completed.journal_stage, "completed");
-    assert_eq!(fixture.fresh_journal().operation_id, completed.operation_id);
-    let replay = fixture.service.spawn_team_member(request).await.unwrap();
-    assert_eq!(replay.operation_id, completed.operation_id);
-    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 2);
 }
 
 #[tokio::test]
-async fn spawn_rollback_receipts_are_durable_only_after_confirmed_compensations() {
+async fn historical_compensation_labels_never_authorize_legacy_reexecution() {
     let fixture = fixture().await;
-    let error = fixture
-        .service
-        .spawn_team_member(fixture.request())
-        .await
-        .unwrap_err();
-    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error:?}");
-    let journal = fixture.fresh_journal();
-    assert_eq!(journal.stage, "rolled_back");
-    assert_eq!(
-        journal.payload["compensation_outcomes"]["team_remove"],
-        "confirmed"
+    let request = fixture.keyed_request("weak-compensation-labels");
+    let seed = fixture.onboarding_history(&request, None);
+    fixture.stage_history(
+        &seed.response.operation_id,
+        "rolled_back",
+        json!({
+            "spawned_session_id":seed.response.spawned_session.id,
+            "compensation_outcomes":{"team_remove":"confirmed","session_close":"confirmed"},
+        }),
     );
-    assert_eq!(
-        journal.payload["compensation_outcomes"]["session_close"],
-        "confirmed"
-    );
+    fixture
+        .assert_unresolved_without_effects(request, &seed.response.operation_id)
+        .await;
+    assert_eq!(fixture.fresh_journal().stage, "rolled_back");
     assert_eq!(
         fixture
-            .comms
-            .get_team(&fixture.team_id)
-            .await
+            .store
+            .hydrate_runtime_state()
             .unwrap()
-            .members
-            .len(),
-        1
-    );
-    let hydrated = fixture.store.hydrate_runtime_state().unwrap();
-    assert_eq!(hydrated.sessions.len(), 2);
-    assert!(hydrated
-        .sessions
-        .iter()
-        .any(|row| row.id != fixture.source_session_id && row.status == "closed"));
-}
-
-#[tokio::test]
-async fn rollback_intent_fault_leaves_joined_native_session_unmodified_for_review() {
-    let fixture = fixture().await;
-    rusqlite::Connection::open(&fixture.database_path).unwrap().execute_batch(
-        "CREATE TRIGGER fail_rollback_intent BEFORE UPDATE ON team_operation_journal
-         WHEN NEW.stage='rollback_pending' BEGIN SELECT RAISE(ABORT,'injected rollback intent failure'); END;"
-    ).unwrap();
-    let error = fixture
-        .service
-        .spawn_team_member(fixture.request())
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(error, RuntimeError::OperationUnresolved { .. }),
-        "{error:?}"
-    );
-    assert_eq!(fixture.fresh_journal().stage, "session_created");
-    assert_eq!(
-        fixture
-            .comms
-            .get_team(&fixture.team_id)
-            .await
-            .unwrap()
-            .members
+            .sessions
             .len(),
         2
     );
 }
 
 #[tokio::test]
-async fn rollback_final_receipt_failure_keeps_pending_review_intent() {
+async fn historical_lost_rollback_intent_preserves_joined_session_for_review() {
     let fixture = fixture().await;
-    rusqlite::Connection::open(&fixture.database_path).unwrap().execute_batch(
-        "CREATE TRIGGER fail_rollback_final BEFORE UPDATE ON team_operation_journal
-         WHEN NEW.stage='rolled_back' BEGIN SELECT RAISE(ABORT,'injected rollback final failure'); END;"
-    ).unwrap();
-    let error = fixture
-        .service
-        .spawn_team_member(fixture.request())
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(error, RuntimeError::OperationUnresolved { .. }),
-        "{error:?}"
+    let request = fixture.keyed_request("lost-rollback-intent");
+    let seed = fixture.onboarding_history(&request, None);
+    fixture.stage_history(
+        &seed.response.operation_id,
+        "session_created",
+        json!({
+            "spawned_session_id":seed.response.spawned_session.id,"provider":"codex",
+            "provider_session_ref":seed.response.spawned_session.provider_session_ref,
+        }),
     );
-    let journal = fixture.fresh_journal();
-    assert_eq!(journal.stage, "rollback_pending");
-    assert!(journal.payload["spawned_session_id"].is_string());
+    fixture
+        .assert_unresolved_without_effects(request, &seed.response.operation_id)
+        .await;
+    assert_eq!(fixture.fresh_journal().stage, "session_created");
     assert_eq!(
         fixture
-            .comms
-            .get_team(&fixture.team_id)
-            .await
+            .store
+            .hydrate_runtime_state()
             .unwrap()
-            .members
+            .team_members
             .len(),
-        1
+        2
     );
 }
 
 #[tokio::test]
-async fn diagnostic_failure_never_certifies_complete_rollback() {
+async fn historical_lost_rollback_receipt_preserves_pending_intent() {
     let fixture = fixture().await;
+    let request = fixture.keyed_request("lost-rollback-receipt");
+    let seed = fixture.onboarding_history(&request, None);
+    fixture.stage_history(
+        &seed.response.operation_id,
+        "rollback_pending",
+        json!({
+            "spawned_session_id":seed.response.spawned_session.id,"worktree_id":null,
+        }),
+    );
+    fixture
+        .assert_unresolved_without_effects(request, &seed.response.operation_id)
+        .await;
+    assert_eq!(fixture.fresh_journal().stage, "rollback_pending");
+}
+
+#[tokio::test]
+async fn historical_diagnostic_loss_keeps_original_uncertainty_without_writing_more_evidence() {
+    let fixture = fixture().await;
+    let request = fixture.keyed_request("lost-rollback-diagnostic");
+    let seed = fixture.onboarding_history(&request, None);
+    fixture.stage_history(&seed.response.operation_id,"rollback_review_required",json!({
+        "spawned_session_id":seed.response.spawned_session.id,"uncertainties":["rollback_diagnostic_write"],
+    }));
     rusqlite::Connection::open(&fixture.database_path)
         .unwrap()
         .execute_batch(
             "CREATE TRIGGER fail_rollback_diagnostic BEFORE INSERT ON team_operation_diagnostics
-         BEGIN SELECT RAISE(ABORT,'injected diagnostic failure'); END;",
+         BEGIN SELECT RAISE(ABORT,'fixture evidence sink unavailable'); END;",
         )
         .unwrap();
-    let error = fixture
-        .service
-        .spawn_team_member(fixture.request())
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(error, RuntimeError::OperationUnresolved { .. }),
-        "{error:?}"
-    );
-    let journal = fixture.fresh_journal();
-    assert_eq!(journal.stage, "rollback_review_required");
-    assert!(journal.payload["uncertainties"]
+    fixture
+        .assert_unresolved_without_effects(request, &seed.response.operation_id)
+        .await;
+    assert!(fixture.fresh_journal().payload["uncertainties"]
         .to_string()
         .contains("rollback_diagnostic_write"));
 }
 
 #[tokio::test]
-async fn postnative_team_join_journal_fault_returns_operation_coordinate_not_retryable_error() {
+async fn historical_join_receipt_gap_never_rejoins_or_creates_another_session() {
     let fixture = fixture().await;
-    rusqlite::Connection::open(&fixture.database_path).unwrap().execute_batch(
-        "CREATE TRIGGER fail_join_receipt BEFORE UPDATE ON team_operation_journal
-         WHEN NEW.stage='team_joined' BEGIN SELECT RAISE(ABORT,'injected join receipt failure'); END;"
-    ).unwrap();
-    let mut request = fixture.request();
-    request.metadata = None;
-    let error = fixture
-        .service
-        .spawn_team_member(request)
-        .await
-        .unwrap_err();
-    let operation_id = match error {
-        RuntimeError::OperationUnresolved { operation_id, .. } => operation_id,
-        error => panic!("expected unresolved native join, got {error:?}"),
-    };
-    let journal = fixture.fresh_journal();
-    assert_eq!(journal.stage, "session_created");
-    assert_eq!(journal.operation_id, operation_id);
+    let request = fixture.keyed_request("lost-join-receipt");
+    let seed = fixture.onboarding_history(&request, None);
+    fixture.stage_history(
+        &seed.response.operation_id,
+        "session_created",
+        json!({
+            "spawned_session_id":seed.response.spawned_session.id,"worktree_id":null,
+        }),
+    );
+    fixture
+        .assert_unresolved_without_effects(request, &seed.response.operation_id)
+        .await;
     assert_eq!(
         fixture
-            .comms
-            .get_team(&fixture.team_id)
-            .await
+            .store
+            .hydrate_runtime_state()
             .unwrap()
-            .members
+            .team_members
             .len(),
         2
     );
 }
 
 #[tokio::test]
-async fn independent_spawn_services_allocate_distinct_durable_operation_ids() {
+async fn independent_shared_services_refuse_without_allocating_operation_ids() {
     let fixture = fixture().await;
     let other = RuntimeWorktreeService::new(
         fixture.store.clone(),
@@ -418,253 +477,134 @@ async fn independent_spawn_services_allocate_distinct_durable_operation_ids() {
         fixture.service.config.clone(),
     )
     .unwrap();
-    assert!(matches!(
-        fixture.service.spawn_team_member(fixture.request()).await,
-        Err(RuntimeError::InvalidState(_))
-    ));
-    assert!(matches!(
-        other.spawn_team_member(fixture.request()).await,
-        Err(RuntimeError::InvalidState(_))
-    ));
-    let rows = fixture
+    let before = fixture.store.hydrate_runtime_state().unwrap();
+    for service in [&fixture.service, &other] {
+        for request in [
+            fixture.request(),
+            fixture.keyed_request("no-operation-allocation"),
+        ] {
+            assert!(matches!(
+                service.spawn_team_member(request).await,
+                Err(RuntimeError::Unsupported(_))
+            ));
+        }
+    }
+    assert_eq!(fixture.store.hydrate_runtime_state().unwrap(), before);
+    assert!(fixture
         .store
         .list_team_operation_journal(Some(&fixture.team_id))
-        .unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_ne!(rows[0].operation_id, rows[1].operation_id);
-    assert!(rows.iter().all(|row| row.stage == "rolled_back"));
+        .unwrap()
+        .is_empty());
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
 }
 
 #[tokio::test]
-async fn native_git_checkout_survives_lost_spawn_stage_receipt_for_operator_review() {
+async fn prepared_checkout_survives_a_missing_historical_stage_receipt() {
     let fixture = fixture().await;
-    let repo = fixture._temp.path();
-    let git = |args: &[&str]| {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
-    git(&["init", "--quiet"]);
-    git(&[
-        "-c",
-        "user.name=Fixture",
-        "-c",
-        "user.email=fixture@example.invalid",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "init",
-        "--quiet",
-    ]);
-    rusqlite::Connection::open(&fixture.database_path).unwrap().execute_batch(
-        "CREATE TRIGGER fail_native_checkout_stage BEFORE UPDATE ON team_operation_journal
-         WHEN NEW.stage='worktree_created' BEGIN SELECT RAISE(ABORT,'injected worktree stage failure'); END;"
-    ).unwrap();
-    let mut request = fixture.request();
-    request.metadata = None;
-    request.worktree = Some(runtime_core::TeamMemberSpawnWorktreeInput {
-        mode: Some("create".into()),
-        name: Some("pending-checkout".into()),
-        branch_prefix: None,
-        base_ref: None,
-        run_init_script: Some(false),
-    });
-    request.idempotency_key = Some("git-stage-lost-reply".into());
-    let error = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .unwrap_err();
-    let operation_id = match error {
-        RuntimeError::OperationUnresolved { operation_id, .. } => operation_id,
-        error => panic!("native Git stage must report unresolved operation, got {error:?}"),
-    };
-    let journal = fixture.fresh_journal();
-    assert_eq!(journal.stage, "planned");
-    assert_eq!(journal.operation_id, operation_id);
-    let worktrees = fixture
-        .store
-        .hydrate_runtime_state()
-        .unwrap()
-        .managed_worktrees;
-    assert_eq!(worktrees.len(), 1);
-    assert_eq!(
-        worktrees[0].created_by_operation_id.as_deref(),
-        Some(operation_id.as_str())
-    );
-    assert!(std::path::Path::new(&worktrees[0].worktree_cwd).is_dir());
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .unwrap();
-    assert!(String::from_utf8_lossy(&output.stdout).contains(&worktrees[0].worktree_cwd));
-    // The original keyed request is still pending, even if Git has a real
-    // checkout and a new worker cannot see the native stage acknowledgment.
-    let retry = fixture
-        .service
-        .spawn_team_member(request)
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(retry, RuntimeError::OperationUnresolved { operation_id: id, .. } if id == operation_id)
-    );
+    fixture.init_git();
+    let mut request = fixture.keyed_request("git-stage-lost-reply");
+    request.worktree = Some(worktree_input("create", "pending-checkout"));
+    let record = fixture.prepared_checkout(&request, true);
+    let operation_id = record.created_by_operation_id.clone().unwrap();
+    fixture.store.upsert_managed_worktree(&record).unwrap();
+    let hash =
+        runtime_core::normalized_json_hash(&serde_json::to_value(&request).unwrap()).unwrap();
+    assert!(matches!(
+        fixture
+            .store
+            .admit_team_member_spawn(&operation_id, &request, &hash, 1000)
+            .unwrap(),
+        runtime_core::TeamMemberSpawnAdmission::Execute { .. }
+    ));
+    let inventory = fixture.git(&["worktree", "list", "--porcelain"]);
+    fixture
+        .assert_unresolved_without_effects(request, &operation_id)
+        .await;
+    assert_eq!(fixture.fresh_journal().stage, "planned");
     assert_eq!(
         fixture
             .store
             .hydrate_runtime_state()
             .unwrap()
-            .managed_worktrees
-            .len(),
-        1
+            .managed_worktrees,
+        vec![record.clone()]
     );
+    assert!(std::path::Path::new(&record.worktree_cwd).is_dir());
+    assert_eq!(fixture.git(&["worktree", "list", "--porcelain"]), inventory);
 }
 
 #[tokio::test]
-async fn postjoin_rollback_preserves_dirty_checkout_and_requires_review() {
+async fn prepared_dirty_checkout_history_never_runs_automatic_compensation() {
     let fixture = fixture().await;
-    let repo = fixture._temp.path();
-    let run_git = |args: &[&str]| {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
-    run_git(&["init", "--quiet"]);
-    run_git(&[
-        "-c",
-        "user.name=Fixture",
-        "-c",
-        "user.email=fixture@example.invalid",
-        "commit",
-        "--allow-empty",
-        "--quiet",
-        "-m",
-        "initial",
-    ]);
-    let mut request = fixture.request();
-    request.metadata = Some(json!({
-        "__test_force_onboarding_failure_after_join": true,
-        "__test_dirty_checkout_before_rollback": true,
-    }));
-    request.worktree = Some(runtime_core::TeamMemberSpawnWorktreeInput {
-        mode: Some("create".into()),
-        name: Some("dirty-retained".into()),
-        branch_prefix: None,
-        base_ref: None,
-        run_init_script: Some(false),
-    });
-    let error = fixture
-        .service
-        .spawn_team_member(request)
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(error, RuntimeError::OperationUnresolved { .. }),
-        "{error:?}"
+    fixture.init_git();
+    let mut request = fixture.keyed_request("dirty-retained-history");
+    request.worktree = Some(worktree_input("create", "dirty-retained"));
+    let record = fixture.prepared_checkout(&request, true);
+    let seed = fixture.onboarding_history(
+        &request,
+        Some(HistoricalWorktreeAssignment::Created(record.clone())),
     );
-    let journal = fixture.fresh_journal();
-    assert_eq!(journal.stage, "rollback_review_required");
-    assert!(journal.payload["uncertainties"]
-        .to_string()
-        .contains("worktree_cleanup_not_deleted"));
-    let worktrees = fixture
+    fixture.stage_history(
+        &seed.response.operation_id,
+        "rollback_review_required",
+        json!({
+            "spawned_session_id":seed.response.spawned_session.id,"worktree_id":record.id,
+            "uncertainties":["worktree_cleanup_not_deleted"],
+        }),
+    );
+    let edited = std::path::Path::new(&record.worktree_cwd).join("preserve-operator-edit.txt");
+    std::fs::write(&edited, "uncommitted operator content\n").unwrap();
+    let inventory = fixture.git(&["worktree", "list", "--porcelain"]);
+    fixture
+        .assert_unresolved_without_effects(request, &seed.response.operation_id)
+        .await;
+    assert_eq!(
+        std::fs::read_to_string(edited).unwrap(),
+        "uncommitted operator content\n"
+    );
+    assert_eq!(fixture.git(&["worktree", "list", "--porcelain"]), inventory);
+    assert!(fixture
         .store
         .hydrate_runtime_state()
         .unwrap()
-        .managed_worktrees;
-    assert_eq!(worktrees.len(), 1);
-    let edited_file =
-        std::path::Path::new(&worktrees[0].worktree_cwd).join("preserve-operator-edit.txt");
-    assert_eq!(
-        std::fs::read_to_string(edited_file).unwrap(),
-        "uncommitted operator content\n"
-    );
+        .managed_worktree_claims
+        .iter()
+        .all(|c| c.released_at.is_none()));
 }
 
 #[tokio::test]
-async fn unconfirmed_provider_close_preserves_checkout_and_claim_for_review() {
+async fn local_closed_projection_never_proves_historical_native_close() {
     let fixture = fixture().await;
-    let repo = fixture._temp.path();
-    for args in [
-        vec!["init", "--quiet"],
-        vec![
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.invalid",
-            "commit",
-            "--allow-empty",
-            "--quiet",
-            "-m",
-            "initial",
-        ],
-    ] {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(&args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    fixture.init_git();
+    let mut request = fixture.keyed_request("unconfirmed-close-history");
+    request.worktree = Some(worktree_input("create", "unconfirmed-close"));
+    let record = fixture.prepared_checkout(&request, true);
+    let seed = fixture.onboarding_history(
+        &request,
+        Some(HistoricalWorktreeAssignment::Created(record.clone())),
+    );
+    fixture.stage_history(&seed.response.operation_id,"rollback_review_required",json!({
+        "spawned_session_id":seed.response.spawned_session.id,"worktree_id":record.id,
+        "compensation_outcomes":{"session_close":"unknown","worktree_release":"deferred","worktree_cleanup":"deferred"},
+    }));
+    rusqlite::Connection::open(&fixture.database_path)
+        .unwrap()
+        .execute(
+            "UPDATE sessions SET status='closed',closed_at=1002 WHERE id=?1",
+            [&seed.response.spawned_session.id],
+        )
+        .unwrap();
     fixture
-        .provider
-        .fail_close
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    let mut request = fixture.request();
-    request.metadata = Some(json!({"__test_force_onboarding_failure_after_join": true}));
-    request.worktree = Some(runtime_core::TeamMemberSpawnWorktreeInput {
-        mode: Some("create".into()),
-        name: Some("unconfirmed-close".into()),
-        branch_prefix: None,
-        base_ref: None,
-        run_init_script: Some(false),
-    });
-    let error = fixture
-        .service
-        .spawn_team_member(request)
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(error, RuntimeError::OperationUnresolved { .. }),
-        "{error:?}"
-    );
-    let journal = fixture.fresh_journal();
-    assert_eq!(journal.stage, "rollback_review_required");
-    assert_eq!(
-        journal.payload["compensation_outcomes"]["worktree_release"],
-        "deferred"
-    );
-    assert_eq!(
-        journal.payload["compensation_outcomes"]["worktree_cleanup"],
-        "deferred"
-    );
+        .assert_unresolved_without_effects(request, &seed.response.operation_id)
+        .await;
     let state = fixture.store.hydrate_runtime_state().unwrap();
-    assert_eq!(state.managed_worktrees.len(), 1);
-    assert!(std::path::Path::new(&state.managed_worktrees[0].worktree_cwd).exists());
+    assert!(state
+        .sessions
+        .iter()
+        .any(|s| s.id == seed.response.spawned_session.id && s.status == "closed"));
     assert!(state
         .managed_worktree_claims
         .iter()
-        .any(|row| row.released_at.is_none()));
+        .any(|c| c.session_id == seed.response.spawned_session.id && c.released_at.is_none()));
+    assert!(std::path::Path::new(&record.worktree_cwd).is_dir());
 }

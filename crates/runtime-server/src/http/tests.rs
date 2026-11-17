@@ -28,9 +28,16 @@ use tower::ServiceExt;
 use crate::bootstrap::bootstrap_runtime;
 use crate::config::RuntimeServerConfig;
 
+#[path = "../../../test-support/legacy_spawn.rs"]
+mod legacy_spawn_history;
 mod support_legacy;
 use support_legacy::*;
+mod support_router;
+use support_router::*;
+mod support_checkout_history;
+use support_checkout_history::*;
 mod support;
+mod support_acp_worktree;
 use support::*;
 mod support_mixed_router;
 use support_mixed_router::*;

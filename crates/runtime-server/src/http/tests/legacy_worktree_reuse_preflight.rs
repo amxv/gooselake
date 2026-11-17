@@ -29,7 +29,7 @@ async fn call_legacy(
 }
 
 #[tokio::test]
-async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new_git_effect() {
+async fn historical_reuse_receipt_ignores_unrelated_corrupt_session_without_native_effects() {
     let (router, token, temp, provider, runtime, app) =
         build_test_router_with_services(TeamMcpPolicy::default()).await;
     let repo = temp.path().join("source-repository");
@@ -89,11 +89,45 @@ async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new
     let (status, foreign) = legacy_session_fixture_json(&runtime, create_session).await;
     assert_eq!(status, StatusCode::OK, "{foreign}");
     let foreign_id = foreign["id"].as_str().unwrap();
+    let body = serde_json::json!({
+        "source_session_id":source,
+        "title":"Reuse existing managed checkout",
+        "prompt":"Use the existing checkout",
+        "worktree":{
+            "mode":"use_existing", "name":"reuse-corrupt-history",
+            "branch_prefix":"gg", "run_init_script":false,
+        },
+    });
+    let before_seed = provider.create_call_count();
+    let (status, spawned) = legacy_spawn_fixture_with_assignment_json(
+        &app,
+        team_id,
+        Some("reuse-foreign-history-key"),
+        body.clone(),
+        Some(
+            super::legacy_spawn_history::HistoricalWorktreeAssignment::Reused(
+                serde_json::from_value(created["worktree"].clone()).unwrap(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{spawned}");
+    assert_eq!(
+        provider.create_call_count(),
+        before_seed,
+        "history seeding cannot create another provider attachment"
+    );
+    assert_eq!(spawned["journal_stage"], "completed");
+    assert_eq!(spawned["worktree_assignment_mode"], "reused");
+    assert_eq!(spawned["worktree"]["id"], worktree_id);
+    assert_eq!(spawned["worktree_created_by_operation"], false);
+    let (router, _reopened_runtime, _reopened_app) =
+        reopen_test_router_with_services(&app, temp.path(), &token, TeamMcpPolicy::default()).await;
     let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
     assert_eq!(
         db.execute(
             "UPDATE sessions SET metadata_json='{bad-foreign-session-json' WHERE id=?1",
-            [foreign_id]
+            [foreign_id],
         )
         .unwrap(),
         1
@@ -102,7 +136,6 @@ async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new
         database_path: temp.path().join("runtime.sqlite3"),
     });
     assert!(store.hydrate_runtime_state().is_err());
-
     let native_inventory = || {
         let result = std::process::Command::new("git")
             .arg("-C")
@@ -124,36 +157,6 @@ async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new
     let previous_claims = count("managed_worktree_claims");
     let previous_provider = provider.create_call_count();
     let uri = format!("/v1/teams/{team_id}/members/spawn");
-    let body = serde_json::json!({
-        "source_session_id":source,
-        "title":"Reuse existing managed checkout",
-        "prompt":"Use the existing checkout",
-        "worktree":{
-            "mode":"use_existing", "name":"reuse-corrupt-history",
-            "branch_prefix":"gg", "run_init_script":false,
-        },
-    });
-    let (status, spawned) = legacy_spawn_fixture_json(
-        &app,
-        team_id,
-        Some("reuse-foreign-history-key"),
-        body.clone(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{spawned}");
-    assert_eq!(spawned["journal_stage"], "completed");
-    assert_eq!(spawned["worktree_assignment_mode"], "reused");
-    assert_eq!(spawned["worktree"]["id"], worktree_id);
-    assert_eq!(spawned["worktree_created_by_operation"], false);
-    assert_eq!(
-        native_inventory(),
-        previous_git,
-        "reuse must not mutate native Git inventory"
-    );
-    assert_eq!(count("managed_worktrees"), previous_worktrees);
-    assert_eq!(count("managed_worktree_claims"), previous_claims + 1);
-    assert_eq!(provider.create_call_count(), previous_provider + 1);
-
     let (status, replay) = call_legacy(
         &router,
         Some(&token),
@@ -164,9 +167,14 @@ async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{replay}");
-    assert_eq!(replay, spawned, "lost-reply replay must be exact");
-    assert_eq!(provider.create_call_count(), previous_provider + 1);
-    assert_eq!(count("managed_worktree_claims"), previous_claims + 1);
+    assert_eq!(
+        replay, spawned,
+        "lost-reply inspection returns the exact saved response"
+    );
+    assert_eq!(provider.create_call_count(), previous_provider);
+    assert_eq!(native_inventory(), previous_git);
+    assert_eq!(count("managed_worktrees"), previous_worktrees);
+    assert_eq!(count("managed_worktree_claims"), previous_claims);
     let (unauthorized, _) = call_legacy(
         &router,
         None,
@@ -177,6 +185,8 @@ async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new
     )
     .await;
     assert_eq!(unauthorized, StatusCode::UNAUTHORIZED);
+    assert_eq!(provider.create_call_count(), previous_provider);
     assert_eq!(native_inventory(), previous_git);
+    assert_eq!(count("managed_worktree_claims"), previous_claims);
     assert!(store.hydrate_runtime_state().is_err());
 }

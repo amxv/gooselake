@@ -21,7 +21,7 @@ async fn invoke(router: &Router, token: Option<&str>, body: Value) -> (StatusCod
 
 #[tokio::test]
 async fn legacy_spawn_mcp_inspection_survives_closed_caller_and_disabled_current_policy() {
-    let (router, token, temp, provider, runtime, app) =
+    let (_initial_router, token, temp, provider, runtime, app) =
         build_test_router_with_services(TeamMcpPolicy {
             enabled: false,
             non_lead_can_add_members: false,
@@ -62,6 +62,21 @@ async fn legacy_spawn_mcp_inspection_survives_closed_caller_and_disabled_current
     provider.allow_lifecycle_close_for_test();
     runtime.close_session(source, None).await.unwrap();
     assert_eq!(runtime.get_session(source).await.unwrap().status, "closed");
+    let (router, reopened_runtime, _reopened_app) = reopen_test_router_with_services(
+        &app,
+        temp.path(),
+        &token,
+        TeamMcpPolicy {
+            enabled: false,
+            non_lead_can_add_members: false,
+            non_lead_can_remove_members: false,
+        },
+    )
+    .await;
+    assert_eq!(
+        reopened_runtime.get_session(source).await.unwrap().status,
+        "closed"
+    );
     let creates = provider.create_call_count();
     let call = |args: Value| {
         json!({"namespace":"gg_team","tool_name":"gg_team_manage",
@@ -117,7 +132,7 @@ async fn legacy_spawn_mcp_inspection_survives_closed_caller_and_disabled_current
 
 #[tokio::test]
 async fn legacy_spawn_mcp_inspection_preserves_original_coordinate_after_preset_drift_or_removal() {
-    let (router, token, temp, provider, runtime, app) =
+    let (_initial_router, token, temp, provider, runtime, app) =
         build_test_router_with_services(TeamMcpPolicy {
             enabled: false,
             non_lead_can_add_members: false,
@@ -167,6 +182,21 @@ async fn legacy_spawn_mcp_inspection_preserves_original_coordinate_after_preset_
     }
     provider.allow_lifecycle_close_for_test();
     runtime.close_session(source, None).await.unwrap();
+    let (router, reopened_runtime, _reopened_app) = reopen_test_router_with_services(
+        &app,
+        temp.path(),
+        &token,
+        TeamMcpPolicy {
+            enabled: false,
+            non_lead_can_add_members: false,
+            non_lead_can_remove_members: false,
+        },
+    )
+    .await;
+    assert_eq!(
+        reopened_runtime.get_session(source).await.unwrap().status,
+        "closed"
+    );
     let creates = provider.create_call_count();
     for (id, name, saved) in originals {
         let (status, result) = invoke(&router, Some(&token), json!({

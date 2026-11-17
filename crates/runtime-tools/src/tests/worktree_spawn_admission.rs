@@ -1,7 +1,6 @@
 use super::worktree_spawn_recovery::fixture;
 use super::*;
 use runtime_core::{TeamCommsService, WorktreeService};
-use std::process::Command;
 
 fn keyed_request(
     fixture: &super::worktree_spawn_recovery::SpawnFixture,
@@ -30,18 +29,18 @@ fn onboarding_stage_payload(response: &runtime_core::TeamMemberSpawnResponse) ->
 async fn exact_keyed_completion_replays_original_receipt_without_native_work() {
     let fixture = fixture().await;
     let request = keyed_request(&fixture, "caller-roundtrip-1");
-    let first = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .unwrap();
+    let native_before = fixture
+        .provider
+        .effect_calls
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let first = fixture.completed_history(&request, None);
     assert_eq!(first.journal_stage, "completed");
     let journal = fixture.fresh_journal();
     assert_eq!(journal.stage, "completed");
     assert_eq!(journal.operation_id, first.operation_id);
     let first_bytes = serde_json::to_vec(&first).unwrap();
 
-    // An exact HTTP/tool replay after a successful native spawn returns the
+    // An exact replay of independently seeded, validated history returns the
     // original team snapshot and session, never a newly hydrated projection.
     let same = fixture
         .service
@@ -65,11 +64,10 @@ async fn exact_keyed_completion_replays_original_receipt_without_native_work() {
     assert_eq!(state.sessions.len(), 2);
     assert_eq!(
         fixture
-            .comms
-            .get_team(&fixture.team_id)
-            .await
+            .store
+            .hydrate_runtime_state()
             .unwrap()
-            .members
+            .team_members
             .len(),
         2
     );
@@ -99,35 +97,28 @@ async fn exact_keyed_completion_replays_original_receipt_without_native_work() {
             .len(),
         2
     );
+    assert_eq!(
+        fixture
+            .provider
+            .effect_calls
+            .load(std::sync::atomic::Ordering::SeqCst),
+        native_before
+    );
 }
 
 #[tokio::test]
 async fn completed_key_cannot_bind_a_foreign_member_message_or_unverified_native_stage() {
     let fixture = fixture().await;
     let request = keyed_request(&fixture, "original-native-receipt-authority");
-    let first = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .unwrap();
+    let seed = fixture.onboarding_history(&request, None);
+    let first = seed.response;
     let original_id = &first.operation_id;
     let message_id = first.onboarding["message_id"].as_str().unwrap();
     let delivery_id = first.onboarding["delivery_ids"][0].as_str().unwrap();
     let stage_payload = onboarding_stage_payload(&first);
-    // Simulate loss of the atomic terminal response on disposable SQLite
-    // *after* the fake native session, real team join and onboarding admit.
-    // Do not resubmit the provider action to repair this evidence.
+    // The fixture has never held a completed response. Each fault is checked
+    // before the first real DB-only completion transaction.
     let connection = rusqlite::Connection::open(&fixture.database_path).unwrap();
-    connection
-        .execute(
-            "UPDATE team_spawn_admissions SET completed_response_json=NULL WHERE operation_id=?1",
-            [original_id],
-        )
-        .unwrap();
-    connection.execute(
-        "UPDATE team_operation_journal SET stage='onboarding_sent',payload_json=?2 WHERE operation_id=?1",
-        rusqlite::params![original_id, stage_payload.to_string()],
-    ).unwrap();
     let reopened = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: fixture.database_path.clone(),
     });
@@ -274,15 +265,18 @@ async fn completed_key_cannot_bind_a_foreign_member_message_or_unverified_native
     );
     assert_eq!(fixture.fresh_journal().stage, "completed");
     let native_sessions = fixture.provider.state.lock().await;
-    assert_eq!(native_sessions.sessions.len(), 2); // original caller + one spawn
-    assert_eq!(
-        native_sessions.sessions.get(&first.spawned_session.id),
-        Some(&format!("test-thread-{}", first.spawned_session.id))
+    assert_eq!(native_sessions.sessions.len(), 1); // only the real inert-provider caller
+    assert!(
+        native_sessions
+            .sessions
+            .get(&first.spawned_session.id)
+            .is_none(),
+        "historical database seeding never dispatches a native create"
     );
 }
 
 #[tokio::test]
-async fn independent_workers_racing_one_key_never_launch_duplicate_provider_session() {
+async fn independent_workers_refuse_fresh_shared_calls_and_store_admission_has_one_winner() {
     let fixture = fixture().await;
     let other = RuntimeWorktreeService::new(
         fixture.store.clone(),
@@ -292,56 +286,69 @@ async fn independent_workers_racing_one_key_never_launch_duplicate_provider_sess
     )
     .unwrap();
     let request = keyed_request(&fixture, "race-20-workers");
+    let before = fixture.store.hydrate_runtime_state().unwrap();
     let mut workers = tokio::task::JoinSet::new();
-    for index in 0..20 {
-        let service = if index % 2 == 0 {
+    for i in 0..20 {
+        let service = if i % 2 == 0 {
             fixture.service.clone()
         } else {
             other.clone()
         };
-        let input = request.clone();
-        workers.spawn(async move { service.spawn_team_member(input).await });
+        let request = request.clone();
+        workers.spawn(async move { service.spawn_team_member(request).await });
     }
-    let mut outcomes = Vec::new();
-    while let Some(outcome) = workers.join_next().await {
-        outcomes.push(outcome.unwrap());
+    while let Some(result) = workers.join_next().await {
+        assert!(matches!(result.unwrap(), Err(RuntimeError::Unsupported(_))));
     }
-    let completed = outcomes.iter().filter(|outcome| outcome.is_ok()).count();
-    assert!(completed >= 1, "at least the initial worker must settle");
-    let original_id = fixture.fresh_journal().operation_id;
+    assert_eq!(fixture.store.hydrate_runtime_state().unwrap(), before);
+    // The retained DB-only import/settlement authority still admits one
+    // original coordinate across genuinely independent SQLite connections.
+    let hash =
+        runtime_core::normalized_json_hash(&serde_json::to_value(&request).unwrap()).unwrap();
+    let mut threads = Vec::new();
+    for i in 0..12 {
+        let path = fixture.database_path.clone();
+        let request = request.clone();
+        let hash = hash.clone();
+        threads.push(std::thread::spawn(move || {
+            SqliteRuntimeStore::new(SqliteStoreConfig {
+                database_path: path,
+            })
+            .admit_team_member_spawn(&format!("op_spawn_race_{i}"), &request, &hash, 1000)
+            .unwrap()
+        }));
+    }
+    let outcomes = threads
+        .into_iter()
+        .map(|t| t.join().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|r| matches!(r, runtime_core::TeamMemberSpawnAdmission::Execute { .. }))
+            .count(),
+        1
+    );
+    let original = fixture.fresh_journal().operation_id;
     for outcome in outcomes {
         match outcome {
-            Ok(response) => assert_eq!(response.operation_id, original_id),
-            Err(RuntimeError::OperationUnresolved { operation_id, .. }) => {
-                assert_eq!(operation_id, original_id);
+            runtime_core::TeamMemberSpawnAdmission::Execute { operation_id }
+            | runtime_core::TeamMemberSpawnAdmission::Unresolved { operation_id } => {
+                assert_eq!(operation_id, original)
             }
-            Err(error) => panic!("incorrect concurrent spawn authority: {error:?}"),
+            other => panic!("unexpected history admission {other:?}"),
         }
     }
+    fixture
+        .assert_unresolved_without_effects(request, &original)
+        .await;
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
     assert_eq!(
         fixture
             .store
             .hydrate_runtime_state()
             .unwrap()
             .sessions
-            .len(),
-        2
-    );
-    assert_eq!(
-        fixture
-            .comms
-            .get_team(&fixture.team_id)
-            .await
-            .unwrap()
-            .members
-            .len(),
-        2
-    );
-    assert_eq!(
-        fixture
-            .store
-            .list_team_operation_journal(Some(&fixture.team_id))
-            .unwrap()
             .len(),
         1
     );
@@ -355,6 +362,8 @@ async fn failed_terminal_receipt_quarantines_original_key_across_restart() {
          WHEN NEW.stage='completed' BEGIN SELECT RAISE(ABORT,'simulated terminal receipt loss'); END;"
     ).unwrap();
     let request = keyed_request(&fixture, "lost-final-ack");
+    let seed = fixture.onboarding_history(&request, None);
+    assert!(seed.complete_seed(fixture.store.as_ref(), 2000).is_err());
     let first = fixture
         .service
         .spawn_team_member(request.clone())
@@ -390,11 +399,10 @@ async fn failed_terminal_receipt_quarantines_original_key_across_restart() {
     );
     assert_eq!(
         fixture
-            .comms
-            .get_team(&fixture.team_id)
-            .await
+            .store
+            .hydrate_runtime_state()
             .unwrap()
-            .members
+            .team_members
             .len(),
         2
     );
@@ -415,6 +423,8 @@ async fn ignored_final_response_write_never_certifies_native_success() {
         )
         .unwrap();
     let request = keyed_request(&fixture, "ignore-receipt-write");
+    let seed = fixture.onboarding_history(&request, None);
+    assert!(seed.complete_seed(fixture.store.as_ref(), 2000).is_err());
     let first = fixture
         .service
         .spawn_team_member(request.clone())
@@ -430,35 +440,19 @@ async fn ignored_final_response_write_never_certifies_native_success() {
         fixture.service.spawn_team_member(request).await,
         Err(RuntimeError::OperationUnresolved { operation_id: id, .. }) if id == operation_id
     ));
-    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 2);
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
 }
 
 #[tokio::test]
 async fn original_onboarding_completion_rejects_extra_deliveries_at_bounded_fanout() {
     let fixture = fixture().await;
     let request = keyed_request(&fixture, "original-bounded-onboarding");
-    let first = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .unwrap();
+    let seed = fixture.onboarding_history(&request, None);
+    let first = seed.response;
     let operation_id = &first.operation_id;
     let message_id = first.onboarding["message_id"].as_str().unwrap();
     let delivery_id = first.onboarding["delivery_ids"][0].as_str().unwrap();
     let mut connection = rusqlite::Connection::open(&fixture.database_path).unwrap();
-    connection
-        .execute(
-            "UPDATE team_spawn_admissions SET completed_response_json=NULL WHERE operation_id=?1",
-            [operation_id],
-        )
-        .unwrap();
-    connection
-        .execute(
-            "UPDATE team_operation_journal SET stage='onboarding_sent',payload_json=?2
-             WHERE operation_id=?1",
-            rusqlite::params![operation_id, onboarding_stage_payload(&first).to_string()],
-        )
-        .unwrap();
     let transaction = connection.transaction().unwrap();
     // Synthetic corrupt historical fan-out: never contact the native
     // provider/Git again just because one terminal response was lost.
@@ -491,7 +485,7 @@ async fn original_onboarding_completion_rejects_extra_deliveries_at_bounded_fano
     ));
     assert_eq!(fixture.fresh_journal().stage, "onboarding_sent");
     let native_count = fixture.provider.state.lock().await.sessions.len();
-    assert_eq!(native_count, 2); // original caller + one native spawn
+    assert_eq!(native_count, 1); // only the original inert-provider caller
     connection
         .execute(
             "DELETE FROM team_deliveries WHERE id LIKE 'extra_spawn_delivery_%'",
@@ -519,26 +513,42 @@ async fn original_onboarding_completion_rejects_extra_deliveries_at_bounded_fano
 }
 
 #[tokio::test]
-async fn admission_sql_fault_rolls_back_planned_stage_before_native_session() {
+async fn admission_sql_fault_rolls_back_planned_stage_without_native_session() {
     let fixture = fixture().await;
     let connection = rusqlite::Connection::open(&fixture.database_path).unwrap();
     connection
         .execute_batch(
             "CREATE TRIGGER deny_spawn_key BEFORE INSERT ON team_spawn_admissions
-         BEGIN SELECT RAISE(ABORT,'simulated keyed admission failure'); END;",
+        BEGIN SELECT RAISE(ABORT,'simulated keyed admission failure'); END;",
         )
         .unwrap();
     let request = keyed_request(&fixture, "fault-before-native");
-    assert!(fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .is_err());
+    let hash =
+        runtime_core::normalized_json_hash(&serde_json::to_value(&request).unwrap()).unwrap();
+    let before = fixture.store.hydrate_runtime_state().unwrap();
     assert!(fixture
         .store
-        .list_team_operation_journal(Some(&fixture.team_id))
-        .unwrap()
-        .is_empty());
+        .admit_team_member_spawn("op_spawn_admission_sql_fault", &request, &hash, 1000)
+        .is_err());
+    assert_eq!(fixture.store.hydrate_runtime_state().unwrap(), before);
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM team_spawn_admissions", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    connection
+        .execute_batch("DROP TRIGGER deny_spawn_key;")
+        .unwrap();
+    assert!(matches!(
+        fixture
+            .store
+            .admit_team_member_spawn("op_spawn_admission_sql_fault", &request, &hash, 1000)
+            .unwrap(),
+        runtime_core::TeamMemberSpawnAdmission::Execute { .. }
+    ));
+    assert_eq!(fixture.fresh_journal().stage, "planned");
     assert_eq!(
         fixture
             .store
@@ -548,38 +558,22 @@ async fn admission_sql_fault_rolls_back_planned_stage_before_native_session() {
             .len(),
         1
     );
-    connection
-        .execute_batch("DROP TRIGGER deny_spawn_key;")
-        .unwrap();
-    let first = fixture.service.spawn_team_member(request).await.unwrap();
-    assert_eq!(first.journal_stage, "completed");
-    assert_eq!(
-        fixture
-            .store
-            .hydrate_runtime_state()
-            .unwrap()
-            .sessions
-            .len(),
-        2
-    );
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
 }
 
 #[tokio::test]
-async fn confirmed_rollback_consumes_original_key_and_returns_recovery_coordinate() {
+async fn weak_rolled_back_history_retains_original_key_and_recovery_coordinate() {
     let fixture = fixture().await;
-    let mut request = keyed_request(&fixture, "rolled-back-still-consumed");
-    request.metadata = Some(json!({"__test_force_claim_failure_after_join":true}));
-    let first = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .unwrap_err();
-    let original = fixture.fresh_journal();
-    assert_eq!(original.stage, "rolled_back");
-    assert!(
-        matches!(first, RuntimeError::OperationUnresolved { operation_id, .. }
-        if operation_id == original.operation_id)
+    let request = keyed_request(&fixture, "rolled-back-still-consumed");
+    let seed = fixture.onboarding_history(&request, None);
+    fixture.stage_history(
+        &seed.response.operation_id,
+        "rolled_back",
+        json!({"spawned_session_id":seed.response.spawned_session.id}),
     );
+    fixture
+        .assert_unresolved_without_effects(request.clone(), &seed.response.operation_id)
+        .await;
     let other = RuntimeWorktreeService::new(
         fixture.store.clone(),
         fixture.runtime.clone(),
@@ -587,30 +581,13 @@ async fn confirmed_rollback_consumes_original_key_and_returns_recovery_coordinat
         fixture.service.config.clone(),
     )
     .unwrap();
-    let second = other.spawn_team_member(request).await.unwrap_err();
+    let before = fixture.store.hydrate_runtime_state().unwrap();
+    let error = other.spawn_team_member(request).await.unwrap_err();
     assert!(
-        matches!(second, RuntimeError::OperationUnresolved { operation_id, .. }
-        if operation_id == original.operation_id)
+        matches!(error,RuntimeError::OperationUnresolved{operation_id,..} if operation_id==seed.response.operation_id)
     );
-    assert_eq!(
-        fixture
-            .store
-            .hydrate_runtime_state()
-            .unwrap()
-            .sessions
-            .len(),
-        2
-    );
-    assert_eq!(
-        fixture
-            .comms
-            .get_team(&fixture.team_id)
-            .await
-            .unwrap()
-            .members
-            .len(),
-        1
-    );
+    assert_eq!(fixture.store.hydrate_runtime_state().unwrap(), before);
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
 }
 
 #[tokio::test]
@@ -658,11 +635,7 @@ async fn forged_terminal_stage_without_original_success_response_cannot_replay()
 async fn caller_scoped_key_never_replays_to_a_different_source_session() {
     let fixture = fixture().await;
     let request = keyed_request(&fixture, "caller-scope-key");
-    let first = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .unwrap();
+    let first = fixture.completed_history(&request, None);
     let mut foreign = request;
     foreign.source_session_id = "foreign-source-session".into();
     let error = fixture
@@ -670,7 +643,7 @@ async fn caller_scoped_key_never_replays_to_a_different_source_session() {
         .spawn_team_member(foreign)
         .await
         .unwrap_err();
-    assert!(matches!(error, RuntimeError::NotFound(_)), "{error:?}");
+    assert!(matches!(error, RuntimeError::Unsupported(_)), "{error:?}");
     assert_eq!(
         fixture
             .store
@@ -684,7 +657,7 @@ async fn caller_scoped_key_never_replays_to_a_different_source_session() {
 }
 
 #[tokio::test]
-async fn stale_team_cache_cannot_admit_new_native_work_after_sqlite_deletion() {
+async fn stale_team_cache_cannot_bypass_store_admission_after_sqlite_deletion() {
     let fixture = fixture().await;
     let connection = rusqlite::Connection::open(&fixture.database_path).unwrap();
     connection
@@ -694,12 +667,39 @@ async fn stale_team_cache_cannot_admit_new_native_work_after_sqlite_deletion() {
         )
         .unwrap();
     let request = keyed_request(&fixture, "deleted-team-not-dispatched");
+    let hash =
+        runtime_core::normalized_json_hash(&serde_json::to_value(&request).unwrap()).unwrap();
+    assert!(matches!(
+        fixture.service.spawn_team_member(request.clone()).await,
+        Err(RuntimeError::Unsupported(_))
+    ));
     let error = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
+        .store
+        .admit_team_member_spawn("op_spawn_deleted_team", &request, &hash, 1000)
         .unwrap_err();
     assert!(matches!(error, RuntimeError::Conflict(_)), "{error:?}");
+    assert!(fixture
+        .store
+        .list_team_operation_journal(Some(&fixture.team_id))
+        .unwrap()
+        .is_empty());
+    connection
+        .execute(
+            "UPDATE teams SET deleted_at=NULL WHERE id=?1",
+            [&fixture.team_id],
+        )
+        .unwrap();
+    assert!(matches!(
+        fixture.service.spawn_team_member(request.clone()).await,
+        Err(RuntimeError::Unsupported(_))
+    ));
+    assert!(matches!(
+        fixture
+            .store
+            .admit_team_member_spawn("op_spawn_deleted_team", &request, &hash, 1000)
+            .unwrap(),
+        runtime_core::TeamMemberSpawnAdmission::Execute { .. }
+    ));
     assert_eq!(
         fixture
             .store
@@ -709,28 +709,7 @@ async fn stale_team_cache_cannot_admit_new_native_work_after_sqlite_deletion() {
             .len(),
         1
     );
-    assert!(fixture
-        .store
-        .list_team_operation_journal(Some(&fixture.team_id))
-        .unwrap()
-        .is_empty());
-    // Failed read-only preflight did not consume the key. A restored team
-    // may admit its first actual operation, rather than replay a fake one.
-    connection
-        .execute(
-            "UPDATE teams SET deleted_at=NULL WHERE id=?1",
-            [&fixture.team_id],
-        )
-        .unwrap();
-    assert_eq!(
-        fixture
-            .service
-            .spawn_team_member(request)
-            .await
-            .unwrap()
-            .journal_stage,
-        "completed"
-    );
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
 }
 
 #[tokio::test]
@@ -774,9 +753,9 @@ async fn legacy_delete_service_keeps_cache_and_critical_tombstone_untouched_duri
         .all(|event| event.kind != "team.deleted"));
     assert_eq!(fixture.fresh_journal().stage, "planned");
 
-    // The test never created a native provider session. A confirmed rollback
-    // of the original reservation can subsequently allow the same service to
-    // commit the real deletion and its Critical journal atomically.
+    // This is the existing logical deletion interlock, not native clearance.
+    // Its historical terminal label may allow a Critical tombstone while the
+    // original spawn key still remains unresolved and cannot execute again.
     let mut journal = fixture.fresh_journal();
     journal.stage = "rolled_back".into();
     fixture
@@ -804,154 +783,8 @@ async fn legacy_delete_service_keeps_cache_and_critical_tombstone_untouched_duri
             .count(),
         1
     );
-}
-
-#[tokio::test]
-async fn real_disposable_git_checkout_and_fake_provider_replay_from_reopened_sqlite() {
-    let fixture = fixture().await;
-    let repo = fixture._temp.path();
-    for args in [
-        vec!["init", "--quiet"],
-        vec![
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.invalid",
-            "commit",
-            "--allow-empty",
-            "--quiet",
-            "-m",
-            "initial",
-        ],
-    ] {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(&args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    let mut request = keyed_request(&fixture, "native-git-once");
-    request.worktree = Some(runtime_core::TeamMemberSpawnWorktreeInput {
-        mode: Some("create".into()),
-        name: Some("git-once".into()),
-        branch_prefix: None,
-        base_ref: None,
-        run_init_script: Some(false),
-    });
-    let first = fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .unwrap();
-    let cwd = first.worktree.as_ref().unwrap().worktree_cwd.clone();
-    assert!(std::path::Path::new(&cwd).is_dir());
-    let first_git = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .unwrap();
-    assert!(first_git.status.success());
-    assert!(String::from_utf8_lossy(&first_git.stdout).contains(&cwd));
-
-    let reopened = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
-        database_path: fixture.database_path.clone(),
-    }));
-    // Claim/checkout provenance is independently enforced at terminal
-    // certification. Native Git and provider already ran; no retry may run
-    // those effects merely because a completion receipt was lost.
-    let connection = rusqlite::Connection::open(&fixture.database_path).unwrap();
-    connection
-        .execute(
-            "UPDATE team_spawn_admissions SET completed_response_json=NULL WHERE operation_id=?1",
-            [&first.operation_id],
-        )
-        .unwrap();
-    connection
-        .execute(
-            "UPDATE team_operation_journal SET stage='onboarding_sent',payload_json=?2 WHERE operation_id=?1",
-            rusqlite::params![first.operation_id, onboarding_stage_payload(&first).to_string()],
-        )
-        .unwrap();
-    connection
-        .execute(
-            "UPDATE managed_worktree_claims SET released_at=1234 WHERE worktree_id=?1 AND session_id=?2",
-            rusqlite::params![first.worktree.as_ref().unwrap().id, first.spawned_session.id],
-        )
-        .unwrap();
-    assert!(matches!(
-        reopened.complete_team_member_spawn(&first.operation_id, &first, 2000),
-        Err(RuntimeError::Conflict(_))
-    ));
-    let mut forged_creation = first.clone();
-    forged_creation.worktree_created_by_operation = false;
-    assert!(matches!(
-        reopened.complete_team_member_spawn(&first.operation_id, &forged_creation, 2000),
-        Err(RuntimeError::Conflict(_))
-    ));
-    connection
-        .execute(
-            "UPDATE managed_worktree_claims SET released_at=NULL WHERE worktree_id=?1 AND session_id=?2",
-            rusqlite::params![first.worktree.as_ref().unwrap().id, first.spawned_session.id],
-        )
-        .unwrap();
-    reopened
-        .complete_team_member_spawn(&first.operation_id, &first, 2000)
-        .unwrap();
-    let mut registry = ProviderRegistry::new();
-    registry.register(fixture.provider.clone()).unwrap();
-    let restarted_runtime =
-        Arc::new(RuntimeSessionManager::new(reopened.clone(), Arc::new(registry), 512).unwrap());
-    let restarted_comms = RuntimeTeamCommsService::new(
-        reopened.clone(),
-        restarted_runtime.clone(),
-        RuntimeTeamCommsConfig {
-            enabled: true,
-            max_pending_deliveries: 1_000,
-        },
-    )
-    .unwrap();
-    let worker = RuntimeWorktreeService::new(
-        reopened,
-        restarted_runtime,
-        restarted_comms,
-        fixture.service.config.clone(),
-    )
-    .unwrap();
-    let replay = worker.spawn_team_member(request).await.unwrap();
-    assert_eq!(
-        serde_json::to_value(&replay).unwrap(),
-        serde_json::to_value(&first).unwrap()
-    );
-    let replay_git = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["worktree", "list", "--porcelain"])
-        .output()
-        .unwrap();
-    assert_eq!(first_git.stdout, replay_git.stdout);
-    assert_eq!(
-        fixture
-            .store
-            .hydrate_runtime_state()
-            .unwrap()
-            .managed_worktrees
-            .len(),
-        1
-    );
-    assert_eq!(
-        fixture
-            .store
-            .hydrate_runtime_state()
-            .unwrap()
-            .sessions
-            .len(),
-        2
-    );
+    fixture
+        .assert_unresolved_without_effects(request, operation_id)
+        .await;
+    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 1);
 }

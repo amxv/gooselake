@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn authenticated_legacy_spawn_key_replays_exact_http_response_and_conflicts_on_change() {
-    let (router, token, temp, _provider, runtime, app) =
+    let (router, token, temp, provider, runtime, app) =
         build_test_router_with_services(TeamMcpPolicy::default()).await;
     let lead = legacy_session_fixture_response(
         &runtime,
@@ -61,9 +61,17 @@ async fn authenticated_legacy_spawn_key_replays_exact_http_response_and_conflict
         .unwrap();
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
+    let creates_before_seed = provider.create_call_count();
     let (status, saved) =
         legacy_spawn_fixture_json(&app, team_id, Some("http-once"), body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(
+        provider.create_call_count(),
+        creates_before_seed,
+        "historical seed is database-only"
+    );
+    let (router, _reopened_runtime, _reopened_app) =
+        reopen_test_router_with_services(&app, temp.path(), &token, TeamMcpPolicy::default()).await;
 
     let first = router
         .clone()

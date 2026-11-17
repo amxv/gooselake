@@ -11,9 +11,9 @@ use runtime_core::{
 
 mod core;
 mod member_create;
+mod member_removed;
 mod native_create;
 mod service;
-mod spawn;
 mod spawn_guard;
 mod workspace_create;
 
@@ -23,10 +23,8 @@ mod startup_atomic_tests;
 pub struct RuntimeWorktreeService {
     pub(super) store: Arc<dyn RuntimeStore>,
     pub(super) runtime: Arc<RuntimeSessionManager>,
-    pub(super) team_comms: Arc<dyn TeamCommsService>,
     pub(super) config: WorktreeServiceConfig,
     pub(super) next_worktree_id: AtomicU64,
-    pub(super) next_operation_id: AtomicU64,
     pub(super) event_id_nonce: String,
 }
 
@@ -44,7 +42,7 @@ impl RuntimeWorktreeService {
     pub fn new(
         store: Arc<dyn RuntimeStore>,
         runtime: Arc<RuntimeSessionManager>,
-        team_comms: Arc<dyn TeamCommsService>,
+        _team_comms: Arc<dyn TeamCommsService>,
         config: WorktreeServiceConfig,
     ) -> Result<Arc<Self>, RuntimeError> {
         let hydrated = store.hydrate_runtime_state()?;
@@ -60,23 +58,11 @@ impl RuntimeWorktreeService {
                 max_worktree_seq = max_worktree_seq.max(seq);
             }
         }
-        let mut max_op_seq = 0_u64;
-        for row in hydrated.team_operation_journal {
-            if let Some(seq) = row
-                .operation_id
-                .strip_prefix("op_spawn_")
-                .and_then(|value| value.parse::<u64>().ok())
-            {
-                max_op_seq = max_op_seq.max(seq);
-            }
-        }
         Ok(Arc::new(Self {
             store,
             runtime,
-            team_comms,
             config,
             next_worktree_id: AtomicU64::new(max_worktree_seq + 1),
-            next_operation_id: AtomicU64::new(max_op_seq + 1),
             event_id_nonce: format!("{:032x}", rand::random::<u128>()),
         }))
     }
@@ -395,16 +381,6 @@ impl RuntimeWorktreeService {
             (Some(value), None) | (None, Some(value)) => Some(value),
             (Some(left), Some(right)) => Some(left.min(right)),
         }
-    }
-
-    #[cfg(test)]
-    pub(super) fn spawn_test_flag(metadata: &Option<serde_json::Value>, key: &str) -> bool {
-        metadata
-            .as_ref()
-            .and_then(|value: &serde_json::Value| value.as_object())
-            .and_then(|object: &serde_json::Map<String, serde_json::Value>| object.get(key))
-            .and_then(|value: &serde_json::Value| value.as_bool())
-            .unwrap_or(false)
     }
 
     pub(super) fn ensure_enabled(&self) -> Result<(), RuntimeError> {

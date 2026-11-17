@@ -556,7 +556,7 @@ impl WorktreeService for RuntimeWorktreeService {
         &self,
         request: runtime_core::TeamMemberSpawnRequest,
     ) -> Result<runtime_core::TeamMemberSpawnResponse, RuntimeError> {
-        self.spawn_team_member_guarded(request).await
+        self.inspect_legacy_spawn_receipt(&request)
     }
 
     async fn on_member_removed(

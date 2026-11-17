@@ -13,13 +13,9 @@ async fn completed(
     fixture: &SpawnFixture,
     request: &TeamMemberSpawnRequest,
 ) -> TeamMemberSpawnResponse {
-    // Explicit disposable history setup through the old internal service.
-    // Public mutation paths never receive this execution authority.
-    fixture
-        .service
-        .spawn_team_member(request.clone())
-        .await
-        .unwrap()
+    // Seed inert historical database lineage and use the real completion
+    // validator; there is no shared native spawn executor in test setup.
+    fixture.completed_history(request, None)
 }
 
 fn inspect(
@@ -288,7 +284,11 @@ async fn legacy_spawn_inspection_key_scope_and_hash_never_grant_execution() {
             .as_deref(),
         Some(first.operation_id.as_str())
     );
-    assert_eq!(fixture.provider.state.lock().await.sessions.len(), 2);
+    assert_eq!(
+        fixture.provider.state.lock().await.sessions.len(),
+        1,
+        "only the original caller has an inert-provider attachment; history seeding adds none"
+    );
     assert_eq!(
         fixture
             .store

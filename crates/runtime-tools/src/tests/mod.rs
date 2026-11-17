@@ -19,6 +19,7 @@ use crate::*;
 
 mod canonical_team_preflight;
 mod gateway_basics;
+mod legacy_spawn_history_validation;
 mod process;
 mod team_hook_execution;
 mod team_manage;
@@ -26,8 +27,13 @@ mod worktree;
 mod worktree_cleanup_recovery;
 mod worktree_retirement;
 mod worktree_spawn_admission;
+mod worktree_spawn_history_git;
 mod worktree_spawn_inspection;
 mod worktree_spawn_recovery;
+mod worktree_spawn_refusal;
+
+#[path = "../../../test-support/legacy_spawn.rs"]
+mod legacy_spawn_history;
 
 #[derive(Default)]
 struct WorktreeTestProviderState {

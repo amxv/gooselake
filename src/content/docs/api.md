@@ -2127,6 +2127,10 @@ and source session, returns `400` unsupported capability. Use workspace-owned
 agent creation or canonical `gg_team` Add for new work. Changing the key after
 an uncertain historical call cannot authorize another legacy spawn.
 
+The shared spawn service uses this same historical inspector. Its fresh native
+executor and automatic compensation path are retired. Workspace-owned operations
+govern new creation and its native outcome recovery.
+
 Supply the single original `Idempotency-Key` header (1–512 printable UTF-8
 bytes with no surrounding whitespace) and the original request body. The
 saved admission binds that key to its original team, `source_session_id` and

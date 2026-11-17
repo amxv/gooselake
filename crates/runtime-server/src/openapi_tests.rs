@@ -63,7 +63,11 @@ fn generated_openapi_includes_core_surface() {
         .unwrap();
     assert!(keyed_spawn.contains("        - name: Idempotency-Key\n"));
     assert!(keyed_spawn.contains("          required: false\n"));
-    assert!(keyed_spawn.contains("never rerun Git or provider effects"));
+    assert!(keyed_spawn.contains("summary: Inspect original keyed legacy spawn receipt"));
+    assert!(keyed_spawn.contains("Original certified historical spawn response; no native effects"));
+    assert!(keyed_spawn.contains("missing or new keys return 400 without native work"));
+    assert!(keyed_spawn.contains("Fresh legacy spawn unsupported or invalid original request"));
+    assert!(keyed_spawn.contains("no native retry authorized"));
     assert!(yaml.contains("  /v1/diagnostics/team-operations/{operation_id}:"));
     assert!(yaml.contains("  /v1/mcp/invoke:"));
     assert!(yaml.contains("  /v2/mcp/invoke:"));

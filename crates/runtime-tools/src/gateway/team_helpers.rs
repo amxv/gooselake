@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 pub(super) struct TeamToolFailure {
     pub(super) code: &'static str,
     pub(super) message: String,
+    inspection: Option<Value>,
 }
 
 impl TeamToolFailure {
@@ -12,6 +13,34 @@ impl TeamToolFailure {
         Self {
             code,
             message: message.into(),
+            inspection: None,
+        }
+    }
+
+    pub(super) fn from_legacy_spawn(error: RuntimeError) -> Self {
+        match &error {
+            RuntimeError::OperationUnresolved { operation_id, .. } => Self {
+                code: "outcome_unresolved",
+                message: error.to_string(),
+                inspection: Some(json!({
+                    "operation_id": operation_id,
+                    "inspection_path": format!("/v1/diagnostics/team-operations/{operation_id}"),
+                    "native_retry_authorized": false,
+                })),
+            },
+            RuntimeError::Conflict(_) => Self::new("conflict", error.to_string()),
+            RuntimeError::Unsupported(_) => Self::new("unsupported_capability", error.to_string()),
+            RuntimeError::InvalidState(_) => Self::new("bad_request", error.to_string()),
+            _ => Self::from_runtime(error),
+        }
+    }
+
+    pub(super) fn into_response(self) -> Value {
+        match self.inspection {
+            Some(details) => json!({"ok":false,"error":{
+                "code":self.code,"message":self.message,"retryable":false,"details":details,
+            }}),
+            None => team_tool_error(self.code, self.message),
         }
     }
 

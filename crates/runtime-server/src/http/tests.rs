@@ -59,6 +59,8 @@ mod legacy_member_removal_claims_preflight;
 mod legacy_member_removal_rebind_fence;
 mod legacy_native_authority;
 mod legacy_session_worktree_preflight;
+mod legacy_spawn_mcp_inspection;
+mod legacy_spawn_public_refusal;
 mod legacy_team_operation_recovery;
 mod legacy_team_spawn_idempotency;
 mod legacy_worktree_claim_projection;

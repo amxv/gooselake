@@ -2,7 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn authenticated_legacy_spawn_key_replays_exact_http_response_and_conflicts_on_change() {
-    let (router, token, temp, runtime) = build_test_router_with_runtime().await;
+    let (router, token, temp, _provider, runtime, app) =
+        build_test_router_with_services(TeamMcpPolicy::default()).await;
     let lead = legacy_session_fixture_response(
         &runtime,
         serde_json::json!({
@@ -60,6 +61,10 @@ async fn authenticated_legacy_spawn_key_replays_exact_http_response_and_conflict
         .unwrap();
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 
+    let (status, saved) =
+        legacy_spawn_fixture_json(&app, team_id, Some("http-once"), body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+
     let first = router
         .clone()
         .oneshot(
@@ -77,6 +82,7 @@ async fn authenticated_legacy_spawn_key_replays_exact_http_response_and_conflict
     assert_eq!(first.status(), StatusCode::OK);
     let first: Value =
         serde_json::from_slice(&to_bytes(first.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(first, saved, "HTTP exposes the original saved receipt");
     assert_eq!(first["journal_stage"], "completed");
     let original_id = first["operation_id"].as_str().unwrap();
     assert!(original_id.starts_with("op_spawn_"));

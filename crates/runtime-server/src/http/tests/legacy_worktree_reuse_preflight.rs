@@ -133,13 +133,11 @@ async fn legacy_keyed_member_reuse_ignores_unrelated_corrupt_session_without_new
             "branch_prefix":"gg", "run_init_script":false,
         },
     });
-    let (status, spawned) = call_legacy(
-        &router,
-        Some(&token),
-        "POST",
-        &uri,
-        body.clone(),
+    let (status, spawned) = legacy_spawn_fixture_json(
+        &app,
+        team_id,
         Some("reuse-foreign-history-key"),
+        body.clone(),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{spawned}");

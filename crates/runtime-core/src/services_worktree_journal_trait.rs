@@ -63,6 +63,19 @@ pub(crate) use default_worktree_record_journal;
 
 macro_rules! default_team_spawn_admission {
     () => {
+        /// A coordinate is inspection evidence only, never success or native
+        /// execution authority when an old preset expansion cannot be proved.
+        fn find_team_member_spawn_operation(
+            &self,
+            _team_id: &str,
+            _source_session_id: &str,
+            _idempotency_key: &str,
+        ) -> Result<Option<String>, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "durable caller-bound team spawn coordinate lookup unavailable".into(),
+            ))
+        }
+
         /// Replayed callers must find the exact original durable record before
         /// inspecting mutable roster/session state, otherwise fail closed.
         fn replay_team_member_spawn(

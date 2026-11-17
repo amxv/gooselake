@@ -131,7 +131,7 @@ pub(super) async fn spawn_team_member(
         .app
         .services
         .worktrees
-        .spawn_team_member(TeamMemberSpawnRequest {
+        .inspect_legacy_team_member_spawn(&TeamMemberSpawnRequest {
             team_id,
             source_session_id: input.source_session_id,
             idempotency_key,
@@ -145,7 +145,6 @@ pub(super) async fn spawn_team_member(
             creator_agent_id: input.creator_agent_id,
             creator_compaction_subscription: input.creator_compaction_subscription,
         })
-        .await
         .map_err(ApiError::from)?;
     Ok(Json(response))
 }

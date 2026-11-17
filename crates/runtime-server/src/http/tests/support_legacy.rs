@@ -38,6 +38,23 @@ pub(super) async fn legacy_worktree_fixture_json(
     legacy_fixture_result(result).await
 }
 
+/// Explicit inert-provider historical setup; public legacy spawn stays inspection-only.
+pub(super) async fn legacy_spawn_fixture_json(
+    app: &Arc<RuntimeApp>,
+    team_id: &str,
+    key: Option<&str>,
+    mut input: Value,
+) -> (StatusCode, Value) {
+    input["team_id"] = serde_json::json!(team_id);
+    input["idempotency_key"] = serde_json::json!(key);
+    let result = app
+        .services
+        .worktrees
+        .spawn_team_member(serde_json::from_value(input).expect("historical spawn fixture"))
+        .await;
+    legacy_fixture_result(result).await
+}
+
 async fn legacy_fixture_result<T: serde::Serialize>(
     result: Result<T, RuntimeError>,
 ) -> (StatusCode, Value) {

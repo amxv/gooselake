@@ -236,7 +236,7 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Get, "/v1/teams/{team_id}") => "Get team".to_string(),
         (HttpMethod::Delete, "/v1/teams/{team_id}") => "Delete team".to_string(),
         (HttpMethod::Post, "/v1/teams/{team_id}/members") => "Join team member".to_string(),
-        (HttpMethod::Post, "/v1/teams/{team_id}/members/spawn") => "Spawn team member".to_string(),
+        (HttpMethod::Post, "/v1/teams/{team_id}/members/spawn") => "Inspect original keyed legacy spawn receipt".to_string(),
         (HttpMethod::Delete, "/v1/teams/{team_id}/members/{agent_id}") => {
             "Remove team member".to_string()
         }
@@ -512,7 +512,7 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
             "          required: false\n"
         });
         if path == "/v1/teams/{team_id}/members/spawn" {
-            out.push_str("          description: Original team/source caller-bound immutable spawn receipt; completed exact retries replay, unresolved native stages return 409 and never rerun Git or provider effects\n");
+            out.push_str("          description: Original team/source caller-bound immutable spawn key; exact saved completion replays, uncertain history returns 409, missing or new keys return 400 without native work\n");
         }
         out.push_str("          schema:\n");
         out.push_str("            type: string\n");
@@ -635,6 +635,10 @@ fn append_operator_default_error(out: &mut String) {
 }
 
 fn append_response(out: &mut String, path: &str, method: HttpMethod) {
+    if method == HttpMethod::Post && path == "/v1/teams/{team_id}/members/spawn" {
+        out.push_str("      responses:\n        \"200\":\n          description: Original certified historical spawn response; no native effects\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/JsonObject'\n        \"400\":\n          description: Fresh legacy spawn unsupported or invalid original request\n        \"401\":\n          description: Missing or invalid operator bearer token\n        \"409\":\n          description: Original outcome unresolved or immutable keyed request conflict; no native retry authorized\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/JsonObject'\n");
+        return;
+    }
     if legacy_native_refused(path, method) {
         out.push_str("      responses:\n        \"400\":\n          description: Unsupported capability; refused before native mutation or credential upload parsing\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/JsonObject'\n        \"401\":\n          description: Missing or invalid operator bearer token\n");
         return;

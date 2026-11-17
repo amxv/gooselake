@@ -9,6 +9,24 @@ use crate::SqliteRuntimeRepository;
 const KIND: &str = "spawn_member_with_worktree";
 
 impl SqliteRuntimeRepository {
+    pub fn find_team_member_spawn_operation(
+        &self,
+        team_id: &str,
+        source_session_id: &str,
+        idempotency_key: &str,
+    ) -> Result<Option<String>, RuntimeError> {
+        let connection = open_connection(&self.database_path)?;
+        connection
+            .query_row(
+                "SELECT operation_id FROM team_spawn_admissions
+             WHERE team_id=?1 AND source_session_id=?2 AND idempotency_key=?3",
+                params![team_id, source_session_id, idempotency_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| db_error("failed reading original spawn coordinate", error))
+    }
+
     /// Return the original immutable receipt, including after source session
     /// retirement. A missing or damaged terminal journal is never a green
     /// light to repeat provider/Git/onboarding effects.
@@ -504,27 +522,35 @@ fn lookup_spawn_admission(
             "spawn key already belongs to a different immutable request ({operation_id})"
         )));
     }
-    if stage.as_deref() == Some("completed")
-        && journal_team.as_deref() == Some(team_id)
-        && kind.as_deref() == Some(KIND)
-    {
-        if let Some(json) = response_json {
-            let response: TeamMemberSpawnResponse =
-                serde_json::from_str(&json).map_err(|error| {
-                    RuntimeError::Conflict(format!(
-                        "invalid certified spawn {operation_id} receipt: {error}"
-                    ))
-                })?;
-            if response.operation_id != operation_id
-                || response.team.team.id != team_id
-                || response.journal_stage != "completed"
-            {
-                return Err(RuntimeError::Conflict(format!(
-                    "certified spawn {operation_id} receipt identity mismatch"
-                )));
-            }
-            return Ok(Some(TeamMemberSpawnAdmission::Replay { response }));
-        }
+    if let Some(response) = certified_spawn_response(
+        &operation_id,
+        team_id,
+        response_json.as_deref(),
+        stage.as_deref(),
+        journal_team.as_deref(),
+        kind.as_deref(),
+    ) {
+        return Ok(Some(TeamMemberSpawnAdmission::Replay { response }));
     }
     Ok(Some(TeamMemberSpawnAdmission::Unresolved { operation_id }))
+}
+
+/// Saved receipt classification never depends on today's session or roster.
+/// Damaged evidence retains the coordinate; it cannot authorize a fresh spawn.
+pub(crate) fn certified_spawn_response(
+    operation_id: &str,
+    team_id: &str,
+    response_json: Option<&str>,
+    stage: Option<&str>,
+    journal_team: Option<&str>,
+    kind: Option<&str>,
+) -> Option<TeamMemberSpawnResponse> {
+    if stage != Some("completed") || journal_team != Some(team_id) || kind != Some(KIND) {
+        return None;
+    }
+    let response: TeamMemberSpawnResponse = serde_json::from_str(response_json?).ok()?;
+    (response.operation_id == operation_id
+        && response.team.team.id == team_id
+        && response.journal_stage == "completed")
+        .then_some(response)
 }

@@ -2,7 +2,8 @@ use super::*;
 
 #[tokio::test]
 async fn phase6_spawn_member_with_created_worktree_and_cleanup_on_remove() {
-    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, temp_dir, _provider, runtime, app) =
+        build_test_router_with_services(TeamMcpPolicy::default()).await;
     let repo_dir = temp_dir.path().join("repo");
     std::fs::create_dir_all(&repo_dir).expect("create repo dir");
     std::fs::write(repo_dir.join("README.md"), "phase6\n").expect("write readme");
@@ -87,38 +88,23 @@ async fn phase6_spawn_member_with_created_worktree_and_cleanup_on_remove() {
         .expect("team id")
         .to_string();
 
-    let spawn_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/teams/{team_id}/members/spawn"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "source_session_id": lead_session_id,
-                        "title": "Phase 6 Implementer",
-                        "prompt": "Implement phase 6.",
-                        "worktree": {
-                            "mode": "create",
-                            "name": "phase6-worker",
-                            "run_init_script": false
-                        }
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("spawn response");
-    assert_eq!(spawn_response.status(), StatusCode::OK);
-    let spawn_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(spawn_response.into_body(), usize::MAX)
-            .await
-            .expect("spawn body"),
+    let (status, spawn_json) = legacy_spawn_fixture_json(
+        &app,
+        &team_id,
+        None,
+        serde_json::json!({
+            "source_session_id": lead_session_id,
+            "title": "Phase 6 Implementer",
+            "prompt": "Implement phase 6.",
+            "worktree": {
+                "mode": "create",
+                "name": "phase6-worker",
+                "run_init_script": false
+            }
+        }),
     )
-    .expect("spawn json");
+    .await;
+    assert_eq!(status, StatusCode::OK, "{spawn_json}");
     let spawned_session_id = spawn_json["spawned_session"]["id"]
         .as_str()
         .expect("spawned session id")
@@ -322,39 +308,24 @@ async fn phase6_spawn_member_use_existing_mode_reuses_existing_worktree() {
         .expect("existing worktree id")
         .to_string();
 
-    let spawn_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/teams/{team_id}/members/spawn"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "source_session_id": lead_session_id,
-                        "title": "Phase 6 Existing",
-                        "prompt": "Use existing worktree.",
-                        "worktree": {
-                            "mode": "use_existing",
-                            "name": "phase6-existing-worker",
-                            "branch_prefix": "gg",
-                            "run_init_script": false
-                        }
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("spawn response");
-    assert_eq!(spawn_response.status(), StatusCode::OK);
-    let spawn_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(spawn_response.into_body(), usize::MAX)
-            .await
-            .expect("spawn body"),
+    let (status, spawn_json) = legacy_spawn_fixture_json(
+        &app,
+        &team_id,
+        None,
+        serde_json::json!({
+            "source_session_id": lead_session_id,
+            "title": "Phase 6 Existing",
+            "prompt": "Use existing worktree.",
+            "worktree": {
+                "mode": "use_existing",
+                "name": "phase6-existing-worker",
+                "branch_prefix": "gg",
+                "run_init_script": false
+            }
+        }),
     )
-    .expect("spawn json");
+    .await;
+    assert_eq!(status, StatusCode::OK, "{spawn_json}");
     assert_eq!(
         spawn_json["worktree_assignment_mode"].as_str(),
         Some("reused"),
@@ -373,8 +344,8 @@ async fn phase6_spawn_member_use_existing_mode_reuses_existing_worktree() {
 
 #[tokio::test]
 async fn phase6_spawn_acp_member_with_created_worktree_assigns_runtime_cwd_and_cleanup_on_remove() {
-    let (router, token, temp_dir, acp_provider, runtime) =
-        build_mixed_provider_test_router_with_runtime().await;
+    let (router, token, temp_dir, acp_provider, _claude, runtime, app) =
+        build_mixed_provider_test_router_with_services().await;
     let repo_dir = temp_dir.path().join("repo");
     std::fs::create_dir_all(&repo_dir).expect("create repo dir");
     std::fs::write(repo_dir.join("README.md"), "phase6 acp\n").expect("write readme");
@@ -459,39 +430,24 @@ async fn phase6_spawn_acp_member_with_created_worktree_assigns_runtime_cwd_and_c
         .expect("team id")
         .to_string();
 
-    let spawn_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/teams/{team_id}/members/spawn"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "source_session_id": lead_session_id,
-                        "provider": "acp",
-                        "title": "Phase 6 ACP Implementer",
-                        "prompt": "Implement phase 6 for ACP.",
-                        "worktree": {
-                            "mode": "create",
-                            "name": "phase6-acp-worker",
-                            "run_init_script": false
-                        }
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("spawn response");
-    assert_eq!(spawn_response.status(), StatusCode::OK);
-    let spawn_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(spawn_response.into_body(), usize::MAX)
-            .await
-            .expect("spawn body"),
+    let (status, spawn_json) = legacy_spawn_fixture_json(
+        &app,
+        &team_id,
+        None,
+        serde_json::json!({
+            "source_session_id": lead_session_id,
+            "provider": "acp",
+            "title": "Phase 6 ACP Implementer",
+            "prompt": "Implement phase 6 for ACP.",
+            "worktree": {
+                "mode": "create",
+                "name": "phase6-acp-worker",
+                "run_init_script": false
+            }
+        }),
     )
-    .expect("spawn json");
+    .await;
+    assert_eq!(status, StatusCode::OK, "{spawn_json}");
     let spawned_session_id = spawn_json["spawned_session"]["id"]
         .as_str()
         .expect("spawned session id")

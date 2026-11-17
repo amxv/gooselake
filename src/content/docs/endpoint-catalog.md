@@ -256,7 +256,7 @@ must never be inferred from ambiguous proxy-provided headers.
 - `GET /v1/teams/{team_id}` (Bearer)
 - `DELETE /v1/teams/{team_id}` (Bearer, returns `204` after atomic Critical tombstone and pre-native delivery cancellations; rejects unresolved native `injecting` outcomes)
 - `POST /v1/teams/{team_id}/members` (Bearer)
-- `POST /v1/teams/{team_id}/members/spawn` (Bearer)
+- `POST /v1/teams/{team_id}/members/spawn` (Bearer; original keyed historical receipt inspection only: saved completion `200`, unresolved/conflicting history `409`, fresh/unkeyed requests `400`; no native effects)
 - `DELETE /v1/teams/{team_id}/members/{agent_id}` (Bearer)
 - `POST /v1/teams/{team_id}/lead` (Bearer)
 - `POST /v1/teams/{team_id}/messages` (Bearer)

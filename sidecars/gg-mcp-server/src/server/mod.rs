@@ -164,7 +164,7 @@ impl GgMcpServer {
     }
 
     #[tool(
-        description = "Manage team membership. Provide `remove_agent_ids` (array format, for example [\"agent_1\", \"agent_2\"]) to remove existing members. Omit `remove_agent_ids` to add one member with optional `title`, optional `prompt`, optional `image_paths`, optional `model_preset`, optional `creator_compaction_subscription`, optional `worktree_name`, and optional `use_existing_worktree`. For add calls, onboarding instructions from `prompt` are delivered as a canonical direct TeamMessage to the spawned member. `creator_compaction_subscription` defaults to `auto`; set `unsubscribed` to suppress creator-recipient compaction notices for the new member. When `worktree_name` is provided, native branch/worktree/cwd derivation is runtime-owned and `pre_teammate_add` hook `spawn_template_mutation.cwd` is ignored. `post_teammate_remove` hooks run for both `agent_tool` and `ui_command` removals."
+        description = "Provide `remove_agent_ids` (for example [\"agent_1\", \"agent_2\"]) to remove existing members. With that field omitted, this legacy tool only inspects an original keyed Add request using its original caller, team, invocation ID and inputs. Fresh Add requests are unavailable; use workspace-authoritative `gg_team` add. Removed or changed presets may return the original operation as unresolved; this never authorizes native retry."
     )]
     async fn gg_team_manage(
         &self,
@@ -319,7 +319,6 @@ impl GgMcpServer {
             .find(|tool| tool.name.as_ref() == "gg_team_manage")
         {
             tool.description = Some(build_team_manage_description(&model_presets).into());
-            inject_team_manage_model_preset_enum_schema(tool, model_presets.as_slice());
         }
 
         tools
@@ -577,43 +576,6 @@ impl GgMcpServer {
 
         envelope_to_call_tool_result(envelope)
     }
-}
-
-fn inject_team_manage_model_preset_enum_schema(tool: &mut Tool, model_presets: &[String]) {
-    if model_presets.is_empty() {
-        return;
-    }
-
-    let mut input_schema = (*tool.input_schema).clone();
-
-    let Some(properties) = input_schema
-        .get_mut("properties")
-        .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
-    let Some(model_preset_schema) = properties
-        .get_mut("model_preset")
-        .and_then(Value::as_object_mut)
-    else {
-        return;
-    };
-
-    model_preset_schema.insert(
-        "anyOf".to_string(),
-        json!([
-            {
-                "type": "string",
-                "minLength": 1,
-                "enum": model_presets,
-            },
-            {
-                "type": "null",
-            }
-        ]),
-    );
-
-    tool.input_schema = Arc::new(input_schema);
 }
 
 impl ServerHandler for GgMcpServer {

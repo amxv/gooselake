@@ -49,3 +49,9 @@ pub(crate) fn non_empty_string_array_schema(
         }
     })
 }
+
+#[cfg(test)]
+#[path = "../tests/support/schema.rs"]
+mod test_support;
+#[cfg(test)]
+pub(crate) use test_support::string_enum_values as test_string_enum_values;

@@ -26,6 +26,7 @@ mod worktree;
 mod worktree_cleanup_recovery;
 mod worktree_retirement;
 mod worktree_spawn_admission;
+mod worktree_spawn_inspection;
 mod worktree_spawn_recovery;
 
 #[derive(Default)]
@@ -37,6 +38,7 @@ struct WorktreeTestProviderState {
 struct WorktreeTestProvider {
     state: AsyncMutex<WorktreeTestProviderState>,
     fail_close: std::sync::atomic::AtomicBool,
+    effect_calls: std::sync::atomic::AtomicUsize,
 }
 
 #[async_trait]
@@ -77,6 +79,8 @@ impl RuntimeProvider for WorktreeTestProvider {
         &self,
         req: ProviderCreateSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
+        self.effect_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut state = self.state.lock().await;
         let provider_ref = format!("test-thread-{}", req.runtime_session_id);
         state
@@ -93,6 +97,8 @@ impl RuntimeProvider for WorktreeTestProvider {
         &self,
         req: ProviderResumeSessionRequest,
     ) -> Result<ProviderSession, RuntimeError> {
+        self.effect_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut state = self.state.lock().await;
         state.sessions.insert(
             req.runtime_session_id.clone(),
@@ -109,6 +115,8 @@ impl RuntimeProvider for WorktreeTestProvider {
         &self,
         req: ProviderSendTurnRequest,
     ) -> Result<ProviderTurnAck, RuntimeError> {
+        self.effect_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(ProviderTurnAck {
             runtime_session_id: req.runtime_session_id,
             turn_id: req.turn_id,
@@ -135,10 +143,14 @@ impl RuntimeProvider for WorktreeTestProvider {
     }
 
     async fn interrupt_turn(&self, _req: ProviderInterruptTurnRequest) -> Result<(), RuntimeError> {
+        self.effect_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
     async fn close_session(&self, req: ProviderCloseSessionRequest) -> Result<(), RuntimeError> {
+        self.effect_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.fail_close.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(RuntimeError::Io(
                 "injected ambiguous native provider close".into(),

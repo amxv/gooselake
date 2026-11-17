@@ -122,40 +122,25 @@ async fn phase6_spawn_acp_member_use_existing_mode_reuses_existing_worktree() {
         .expect("existing worktree cwd")
         .to_string();
 
-    let spawn_response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/teams/{team_id}/members/spawn"))
-                .header(header::CONTENT_TYPE, "application/json")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                .body(Body::from(
-                    serde_json::json!({
-                        "source_session_id": lead_session_id,
-                        "provider": "acp",
-                        "title": "Phase 6 ACP Existing",
-                        "prompt": "Use existing worktree.",
-                        "worktree": {
-                            "mode": "use_existing",
-                            "name": "phase6-acp-existing-worker",
-                            "branch_prefix": "gg",
-                            "run_init_script": false
-                        }
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("spawn response");
-    assert_eq!(spawn_response.status(), StatusCode::OK);
-    let spawn_json: serde_json::Value = serde_json::from_slice(
-        &to_bytes(spawn_response.into_body(), usize::MAX)
-            .await
-            .expect("spawn body"),
+    let (status, spawn_json) = legacy_spawn_fixture_json(
+        &app,
+        &team_id,
+        None,
+        serde_json::json!({
+            "source_session_id": lead_session_id,
+            "provider": "acp",
+            "title": "Phase 6 ACP Existing",
+            "prompt": "Use existing worktree.",
+            "worktree": {
+                "mode": "use_existing",
+                "name": "phase6-acp-existing-worker",
+                "branch_prefix": "gg",
+                "run_init_script": false
+            }
+        }),
     )
-    .expect("spawn json");
+    .await;
+    assert_eq!(status, StatusCode::OK, "{spawn_json}");
     let spawned_session_id = spawn_json["spawned_session"]["id"]
         .as_str()
         .expect("spawned session id")

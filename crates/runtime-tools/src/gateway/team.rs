@@ -7,7 +7,6 @@ use serde_json::{json, Value};
 
 use crate::{now_ms, GG_TEAM_MANAGE, GG_TEAM_MESSAGE, GG_TEAM_STATUS};
 
-use super::presets::ResolvedModelPreset;
 use super::team_helpers::{
     ensure_team_member, latest_message_for_member, member_last_message_output,
     reject_image_paths_for_provider, status_state_for_session, team_tool_error,
@@ -15,9 +14,21 @@ use super::team_helpers::{
 };
 use super::RuntimeToolGateway;
 
+mod spawn_replay;
+
 impl RuntimeToolGateway {
     pub(super) async fn invoke_team_tool(&self, request: ToolInvokeRequest) -> Value {
-        if !self.team_policy.enabled {
+        let tool_name = request.tool_name.trim().to_string();
+        let args = match request.args {
+            Value::Object(map) => map,
+            _ => {
+                return team_tool_error("bad_request", "tool args must be an object");
+            }
+        };
+
+        let legacy_spawn_inspection =
+            tool_name == GG_TEAM_MANAGE && !args.contains_key("remove_agent_ids");
+        if !self.team_policy.enabled && !legacy_spawn_inspection {
             return json!({
                 "ok": false,
                 "error": {
@@ -26,14 +37,6 @@ impl RuntimeToolGateway {
                 }
             });
         }
-
-        let tool_name = request.tool_name.trim().to_string();
-        let args = match request.args {
-            Value::Object(map) => map,
-            _ => {
-                return team_tool_error("bad_request", "tool args must be an object");
-            }
-        };
 
         let result = match tool_name.as_str() {
             GG_TEAM_STATUS => {
@@ -64,7 +67,7 @@ impl RuntimeToolGateway {
 
         match result {
             Ok(result) => json!({ "ok": true, "result": result }),
-            Err(error) => team_tool_error(error.code, error.message),
+            Err(error) => error.into_response(),
         }
     }
 
@@ -266,118 +269,10 @@ impl RuntimeToolGateway {
                 .await;
         }
 
-        // A process-local cache is not retry authority after a tool response
-        // is lost or a worker restarts. Let the shared SQLite store admit the
-        // invocation identity and reject different inputs under that key.
+        // The shared SQLite store inspects the original durable admission.
+        // A lost response or restart never authorizes fresh legacy execution.
         self.invoke_team_manage_add(caller_session_id, team_id, invocation_id, args)
             .await
-    }
-
-    async fn invoke_team_manage_add(
-        &self,
-        caller_session_id: &str,
-        team_id: String,
-        invocation_id: Option<String>,
-        args: &serde_json::Map<String, Value>,
-    ) -> Result<Value, TeamToolFailure> {
-        self.ensure_caller_can_manage_membership(
-            team_id.as_str(),
-            caller_session_id,
-            self.team_policy.non_lead_can_add_members,
-            "add members to",
-        )
-        .await?;
-
-        let title = optional_string_arg(args, "title")?;
-        let prompt = optional_string_arg(args, "prompt")?;
-        let image_paths = optional_string_array_arg(args, "image_paths")?;
-        let resolved_model_preset = match optional_string_arg(args, "model_preset")? {
-            Some(model_preset) => {
-                let Some(resolved) = self.team_model_presets.resolve(model_preset.as_str()) else {
-                    return Err(TeamToolFailure::new(
-                        "unknown_model_preset",
-                        format!(
-                            "Unknown model_preset `{}` for gg_team_manage. Available presets: {}",
-                            model_preset,
-                            self.team_model_presets.all_names().join(", ")
-                        ),
-                    ));
-                };
-                Some(resolved)
-            }
-            None => None,
-        };
-        let creator_compaction_subscription =
-            optional_creator_compaction_subscription_arg(args, "creator_compaction_subscription")?;
-        self.ensure_manage_add_images_supported(
-            caller_session_id,
-            resolved_model_preset.as_ref(),
-            &image_paths,
-        )
-        .await?;
-        let worktree_name = optional_string_arg(args, "worktree_name")?;
-        let use_existing_worktree =
-            optional_bool_arg(args, "use_existing_worktree")?.unwrap_or(false);
-        if use_existing_worktree && worktree_name.is_none() {
-            return Err(TeamToolFailure::new(
-                "bad_request",
-                "worktree_name is required when use_existing_worktree is true",
-            ));
-        }
-        let worktree = worktree_name.map(|name| runtime_core::TeamMemberSpawnWorktreeInput {
-            mode: Some(if use_existing_worktree {
-                "reuse".to_string()
-            } else {
-                "create".to_string()
-            }),
-            name: Some(name),
-            branch_prefix: None,
-            base_ref: None,
-            run_init_script: None,
-        });
-        let metadata = build_manage_add_metadata(resolved_model_preset.as_ref(), &image_paths);
-
-        let spawn = self
-            .worktrees
-            .spawn_team_member(runtime_core::TeamMemberSpawnRequest {
-                team_id: team_id.clone(),
-                source_session_id: caller_session_id.to_string(),
-                idempotency_key: invocation_id
-                    .filter(|id| !id.trim().is_empty())
-                    .map(|id| format!("gg_team_manage:{id}")),
-                provider: resolved_model_preset
-                    .as_ref()
-                    .map(|preset| preset.provider.as_str().to_string()),
-                model: resolved_model_preset
-                    .as_ref()
-                    .map(|preset| preset.model.clone()),
-                title,
-                prompt,
-                permission_mode: None,
-                metadata,
-                worktree,
-                creator_agent_id: Some(caller_session_id.to_string()),
-                creator_compaction_subscription,
-            })
-            .await
-            .map_err(TeamToolFailure::from_runtime)?;
-
-        Ok(json!({
-            "operation": "add",
-            "team_id": team_id,
-            "operation_id": spawn.operation_id,
-            "spawned_agent_id": spawn.spawned_session.id,
-            "spawned_session": spawn.spawned_session,
-            "spawned_member": spawn.spawned_member,
-            "team": spawn.team,
-            "worktree": spawn.worktree,
-            "worktree_assignment_mode": spawn.worktree_assignment_mode,
-            "worktree_created_by_operation": spawn.worktree_created_by_operation,
-            "onboarding": spawn.onboarding,
-            "journal_stage": spawn.journal_stage,
-            "model_preset": resolved_model_preset.as_ref().map(|preset| preset.name.clone()),
-            "image_count": image_paths.len(),
-        }))
     }
 
     async fn invoke_team_manage_remove(
@@ -524,30 +419,6 @@ impl RuntimeToolGateway {
         Ok(())
     }
 
-    async fn ensure_manage_add_images_supported(
-        &self,
-        caller_session_id: &str,
-        resolved_model_preset: Option<&ResolvedModelPreset>,
-        image_paths: &[String],
-    ) -> Result<(), TeamToolFailure> {
-        if image_paths.is_empty() {
-            return Ok(());
-        }
-
-        if let Some(preset) = resolved_model_preset {
-            return reject_image_paths_for_provider(preset.provider.as_str(), "gg_team_manage");
-        }
-
-        let Some(runtime) = self.runtime.as_ref() else {
-            return Ok(());
-        };
-        let session = runtime
-            .get_session(caller_session_id)
-            .await
-            .map_err(TeamToolFailure::from_runtime)?;
-        reject_image_paths_for_provider(session.provider.as_str(), "gg_team_manage")
-    }
-
     async fn context_window_remaining_percentage(&self, session_id: &str) -> Value {
         let Some(runtime) = self.runtime.as_ref() else {
             return Value::Null;
@@ -676,52 +547,6 @@ fn optional_bool_arg(
             format!("{field} must be a boolean when provided"),
         )
     })
-}
-
-fn optional_creator_compaction_subscription_arg(
-    args: &serde_json::Map<String, Value>,
-    field: &'static str,
-) -> Result<Option<String>, TeamToolFailure> {
-    let Some(value) = optional_string_arg(args, field)? else {
-        return Ok(None);
-    };
-    match value.as_str() {
-        "auto" | "unsubscribed" => Ok(Some(value)),
-        _ => Err(TeamToolFailure::new(
-            "bad_request",
-            format!("{field} must be either auto or unsubscribed"),
-        )),
-    }
-}
-
-fn build_manage_add_metadata(
-    preset: Option<&ResolvedModelPreset>,
-    image_paths: &[String],
-) -> Option<Value> {
-    let mut object = serde_json::Map::new();
-    if let Some(preset) = preset {
-        object.insert(
-            "model_preset".to_string(),
-            Value::String(preset.name.clone()),
-        );
-        if let Some(thinking_effort) = preset.thinking_effort.as_deref() {
-            object.insert(
-                "thinking_effort".to_string(),
-                Value::String(thinking_effort.to_string()),
-            );
-        }
-    }
-    if !image_paths.is_empty() {
-        object.insert(
-            "gg_team_manage_add_image_paths".to_string(),
-            Value::Array(image_paths.iter().cloned().map(Value::String).collect()),
-        );
-    }
-    if object.is_empty() {
-        None
-    } else {
-        Some(Value::Object(object))
-    }
 }
 
 fn context_remaining_percentage_from_usage(usage: &Value) -> Option<u8> {

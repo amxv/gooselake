@@ -23,7 +23,7 @@ pub(crate) fn build_team_manage_description(model_presets: &[String]) -> String 
         GG_TEAM_MANAGE_BASE_DESCRIPTION.to_string()
     } else {
         format!(
-            "{GG_TEAM_MANAGE_BASE_DESCRIPTION} Available model_preset values: {}.",
+            "{GG_TEAM_MANAGE_BASE_DESCRIPTION} Current configured presets (advisory; historical names are also accepted): {}.",
             model_presets.join(", ")
         )
     }

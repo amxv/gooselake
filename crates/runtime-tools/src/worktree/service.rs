@@ -545,6 +545,13 @@ impl WorktreeService for RuntimeWorktreeService {
         Ok(response)
     }
 
+    fn inspect_legacy_team_member_spawn(
+        &self,
+        request: &runtime_core::TeamMemberSpawnRequest,
+    ) -> Result<runtime_core::TeamMemberSpawnResponse, RuntimeError> {
+        self.inspect_legacy_spawn_receipt(request)
+    }
+
     async fn spawn_team_member(
         &self,
         request: runtime_core::TeamMemberSpawnRequest,

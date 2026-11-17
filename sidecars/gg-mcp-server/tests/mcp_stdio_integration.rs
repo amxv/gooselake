@@ -10,6 +10,8 @@ use rmcp::{
 };
 use serde_json::{Value, json};
 
+#[path = "support/schema.rs"]
+mod schema_support;
 mod support;
 
 use support::{
@@ -263,15 +265,11 @@ async fn stdio_server_exposes_team_manage_schema_without_legacy_unsubscribe_flag
         .get("creator_compaction_subscription")
         .ok_or("gg_team_manage.creator_compaction_subscription schema should be present")?;
     assert!(!creator_compaction_subscription_schema.is_null());
-    let creator_compaction_subscription_schema_json =
-        serde_json::to_string(creator_compaction_subscription_schema)?;
-    assert!(
-        creator_compaction_subscription_schema_json.contains("auto"),
-        "gg_team_manage.creator_compaction_subscription schema should include `auto`"
-    );
-    assert!(
-        creator_compaction_subscription_schema_json.contains("unsubscribed"),
-        "gg_team_manage.creator_compaction_subscription schema should include `unsubscribed`"
+    let schema_root = Value::Object(team_manage_tool.input_schema.as_ref().clone());
+    assert_eq!(
+        schema_support::string_enum_values(&schema_root, creator_compaction_subscription_schema),
+        vec!["auto".to_string(), "unsubscribed".to_string()],
+        "actual stdio schema must declare the exact enum through its local reference",
     );
 
     let _ = service.cancel().await?;
@@ -830,141 +828,6 @@ async fn stdio_server_returns_backend_unavailable_for_non_json_gateway_response(
     let payload = extract_json_payload(&result.content)?;
     assert_eq!(payload["ok"], json!(false));
     assert_eq!(payload["error"]["code"], json!("backend_unavailable"));
-
-    let _ = service.cancel().await?;
-    gateway_handle.abort();
-    Ok(())
-}
-
-#[tokio::test]
-async fn stdio_server_injects_model_presets_into_team_manage_metadata_on_initial_tools_list()
--> Result<(), Box<dyn std::error::Error>> {
-    let auth_token = "integration_token";
-    let gateway_state = stub_gateway_state(
-        auth_token,
-        vec!["claude-sonnet-5".to_string(), "gpt-5".to_string()],
-    );
-    let capabilities_calls = Arc::clone(&gateway_state.capabilities_calls);
-    let app = Router::new()
-        .route("/capabilities", get(capabilities_stub))
-        .route("/invoke", post(invoke_stub))
-        .with_state(gateway_state);
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-    let gateway_addr = listener.local_addr()?;
-    let gateway_handle = tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, app).await {
-            panic!("Stub gateway exited unexpectedly: {error}");
-        }
-    });
-
-    let gateway_url = format!("http://{}:{}", gateway_addr.ip(), gateway_addr.port());
-    let service = ()
-        .serve(TokioChildProcess::new(mcp_server_command().configure(
-            |command| {
-                command.env("GG_MCP_GATEWAY_URL", gateway_url);
-                command.env("GG_MCP_GATEWAY_TOKEN", auth_token);
-                command.env("GG_MCP_CALLER_AGENT_ID", "sess_mcp_integration");
-            },
-        ))?)
-        .await?;
-
-    let initial_tools = service.peer().list_tools(None).await?;
-    let initial_manage_tool = initial_tools
-        .tools
-        .iter()
-        .find(|tool| tool.name.as_ref() == "gg_team_manage")
-        .ok_or("missing gg_team_manage from tools/list")?;
-    let initial_description = initial_manage_tool
-        .description
-        .as_deref()
-        .ok_or("gg_team_manage description missing")?;
-    assert!(
-        !initial_description.contains("unsubscribe_from_compaction_notifications"),
-        "initial gg_team_manage description should not reference removed unsubscribe flag"
-    );
-    assert!(
-        initial_description.contains("optional `worktree_name`"),
-        "expected worktree_name guidance in initial gg_team_manage description"
-    );
-    assert!(
-        initial_description.contains("optional `image_paths`"),
-        "expected image_paths guidance in initial gg_team_manage description"
-    );
-    assert!(
-        initial_description.contains("optional `use_existing_worktree`"),
-        "expected use_existing_worktree guidance in initial gg_team_manage description"
-    );
-    assert!(
-        initial_description.contains("optional `creator_compaction_subscription`"),
-        "expected creator_compaction_subscription guidance in initial gg_team_manage description"
-    );
-    assert!(
-        initial_description.contains("defaults to `auto`"),
-        "expected default auto guidance in initial gg_team_manage description"
-    );
-    assert!(
-        initial_description.contains("set `unsubscribed`"),
-        "expected unsubscribed guidance in initial gg_team_manage description"
-    );
-    assert!(
-        initial_description.contains("Available model_preset values: claude-sonnet-5, gpt-5."),
-        "tools/list should include model preset values from capabilities; got {initial_description}"
-    );
-    assert!(
-        capabilities_calls.load(Ordering::SeqCst) >= 1,
-        "capabilities endpoint should be called during initial tools/list"
-    );
-    let initial_model_preset_schema = initial_manage_tool
-        .input_schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .and_then(|properties| properties.get("model_preset"))
-        .and_then(Value::as_object)
-        .ok_or("gg_team_manage.model_preset schema should be present")?;
-    let initial_model_preset_schema_json = serde_json::to_string(initial_model_preset_schema)?;
-    assert!(
-        initial_model_preset_schema_json.contains("claude-sonnet-5"),
-        "expected model_preset enum to include claude-sonnet-5"
-    );
-    assert!(
-        initial_model_preset_schema_json.contains("gpt-5"),
-        "expected model_preset enum to include gpt-5"
-    );
-
-    let result = service
-        .peer()
-        .call_tool(CallToolRequestParams {
-            meta: None,
-            name: "gg_team_status".into(),
-            arguments: json!({
-                "team_id": "team_integration",
-            })
-            .as_object()
-            .cloned(),
-            task: None,
-        })
-        .await?;
-    assert_eq!(result.is_error, Some(false));
-
-    assert!(
-        capabilities_calls.load(Ordering::SeqCst) >= 1,
-        "capabilities endpoint should remain callable while handling tools/call"
-    );
-
-    let tools = service.peer().list_tools(None).await?;
-    let manage_tool = tools
-        .tools
-        .iter()
-        .find(|tool| tool.name.as_ref() == "gg_team_manage")
-        .ok_or("missing gg_team_manage from tools/list after first tool call")?;
-    let description = manage_tool
-        .description
-        .as_deref()
-        .ok_or("gg_team_manage description missing after first tool call")?;
-    assert!(
-        description.contains("Available model_preset values: claude-sonnet-5, gpt-5."),
-        "expected dynamic model_preset values after tools/call; got {description}"
-    );
 
     let _ = service.cancel().await?;
     gateway_handle.abort();

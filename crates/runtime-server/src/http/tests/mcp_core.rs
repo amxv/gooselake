@@ -583,7 +583,8 @@ async fn mcp_process_run_and_logs_share_runtime_process_service() {
 
 #[tokio::test]
 async fn mcp_invoke_team_tools_share_http_team_services() {
-    let (router, token, temp_dir, runtime) = build_test_router_with_runtime().await;
+    let (router, token, temp_dir, _provider, runtime, app) =
+        build_test_router_with_services(TeamMcpPolicy::default()).await;
     let session_cwd = temp_dir.path().join("mcp-team-cwd");
     std::fs::create_dir_all(&session_cwd).expect("create mcp team cwd");
 
@@ -770,8 +771,18 @@ async fn mcp_invoke_team_tools_share_http_team_services() {
     assert_eq!(non_lead_manage_json["ok"].as_bool(), Some(false));
     assert_eq!(
         non_lead_manage_json["error"]["code"].as_str(),
-        Some("unauthorized")
+        Some("unsupported_capability")
     );
+
+    let (status, historical) = legacy_spawn_fixture_json(
+        &app,
+        &team_id,
+        Some("gg_team_manage:mcp_add_1"),
+        serde_json::json!({"source_session_id": lead_session_id,
+            "creator_agent_id": lead_session_id, "title":"MCP Spawned"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{historical}");
 
     let add_json = invoke(
         lead_session_id.clone(),

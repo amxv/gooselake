@@ -68,6 +68,17 @@ pub trait WorktreeService: Send + Sync {
         request: WorktreeCleanupRequest,
     ) -> Result<WorktreeCleanupResponse, RuntimeError>;
 
+    /// Inspect only the original caller-bound historical receipt. This path
+    /// never admits or resumes legacy provider, Git, hook or onboarding work.
+    fn inspect_legacy_team_member_spawn(
+        &self,
+        _request: &TeamMemberSpawnRequest,
+    ) -> Result<TeamMemberSpawnResponse, RuntimeError> {
+        Err(RuntimeError::Unsupported(
+            "legacy team spawn inspection unavailable".into(),
+        ))
+    }
+
     async fn spawn_team_member(
         &self,
         request: TeamMemberSpawnRequest,

@@ -1,9 +1,9 @@
 use super::*;
 
 #[tokio::test]
-async fn mcp_invoke_team_manage_policy_enabled_and_add_idempotency_are_http_visible() {
-    let (router, token, temp_dir, _provider, runtime) =
-        build_test_router_with_provider_and_runtime(TeamMcpPolicy {
+async fn mcp_invoke_team_manage_historical_add_and_enabled_remove_are_http_visible() {
+    let (router, token, temp_dir, _provider, runtime, app) =
+        build_test_router_with_services(TeamMcpPolicy {
             enabled: true,
             non_lead_can_add_members: true,
             non_lead_can_remove_members: true,
@@ -107,6 +107,16 @@ async fn mcp_invoke_team_manage_policy_enabled_and_add_idempotency_are_http_visi
             .expect("mcp json")
         }
     };
+
+    let (status, historical) = legacy_spawn_fixture_json(
+        &app,
+        &team_id,
+        Some("gg_team_manage:mcp_policy_add_once"),
+        serde_json::json!({"source_session_id": non_lead_session_id,
+            "creator_agent_id": non_lead_session_id, "title":"Non-lead Spawn"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{historical}");
 
     let add_args = serde_json::json!({
         "team_id": team_id.clone(),

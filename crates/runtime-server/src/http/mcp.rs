@@ -62,16 +62,25 @@ pub(super) async fn mcp_invoke(
     if request.tool_name.trim().is_empty() {
         return Err(ApiError::bad_request("tool_name is required".to_string()));
     }
-    let caller_session = state
-        .runtime
-        .get_session(caller_session_id)
-        .await
-        .map_err(ApiError::from)?;
-    if matches!(caller_session.status.as_str(), "closed" | "failed") {
-        return Err(ApiError::bad_request(format!(
-            "caller session {} is not active (status={})",
-            caller_session_id, caller_session.status
-        )));
+    // Only historical split Add is read-only inspection. Presence of the
+    // Remove key (even null/empty) keeps ordinary caller activity checks.
+    let legacy_spawn_inspection = request.tool_name.trim() == "gg_team_manage"
+        && request
+            .args
+            .as_object()
+            .is_some_and(|args| !args.contains_key("remove_agent_ids"));
+    if !legacy_spawn_inspection {
+        let caller_session = state
+            .runtime
+            .get_session(caller_session_id)
+            .await
+            .map_err(ApiError::from)?;
+        if matches!(caller_session.status.as_str(), "closed" | "failed") {
+            return Err(ApiError::bad_request(format!(
+                "caller session {} is not active (status={})",
+                caller_session_id, caller_session.status
+            )));
+        }
     }
     let result = state
         .app

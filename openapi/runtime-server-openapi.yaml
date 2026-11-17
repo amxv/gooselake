@@ -912,7 +912,7 @@ paths:
                 $ref: "#/components/schemas/JsonObject"
   /v1/teams/{team_id}/members/spawn:
     post:
-      summary: Spawn team member
+      summary: Inspect original keyed legacy spawn receipt
       parameters:
         - name: team_id
           in: path
@@ -922,7 +922,7 @@ paths:
         - name: Idempotency-Key
           in: header
           required: false
-          description: Original team/source caller-bound immutable spawn receipt; completed exact retries replay, unresolved native stages return 409 and never rerun Git or provider effects
+          description: Original team/source caller-bound immutable spawn key; exact saved completion replays, uncertain history returns 409, missing or new keys return 400 without native work
           schema:
             type: string
       requestBody:
@@ -933,11 +933,21 @@ paths:
               $ref: "#/components/schemas/JsonObject"
       responses:
         "200":
-          description: JSON response
+          description: Original certified historical spawn response; no native effects
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/JsonObject"
+                $ref: '#/components/schemas/JsonObject'
+        "400":
+          description: Fresh legacy spawn unsupported or invalid original request
+        "401":
+          description: Missing or invalid operator bearer token
+        "409":
+          description: Original outcome unresolved or immutable keyed request conflict; no native retry authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonObject'
   /v1/teams/{team_id}/members/{agent_id}:
     delete:
       summary: Remove team member

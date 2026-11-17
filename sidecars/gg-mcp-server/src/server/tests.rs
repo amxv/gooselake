@@ -119,18 +119,11 @@ fn annotate_envelope_with_caller_agent_id_sets_top_level_and_result_fields() {
 fn team_manage_description_includes_model_presets_when_available() {
     let description =
         build_team_manage_description(&["claude-sonnet-5".to_string(), "gpt-5".to_string()]);
-    assert!(description.contains("optional `worktree_name`"));
-    assert!(description.contains("optional `image_paths`"));
-    assert!(description.contains("optional `use_existing_worktree`"));
-    assert!(description.contains("optional `creator_compaction_subscription`"));
-    assert!(description.contains("optional `prompt`"));
-    assert!(description.contains("defaults to `auto`"));
-    assert!(description.contains("set `unsubscribed`"));
-    assert!(description.contains("canonical direct TeamMessage"));
-    assert!(description.contains("runtime-owned"));
-    assert!(description.contains("ui_command"));
-    assert!(description.contains("[\"agent_1\", \"agent_2\"]"));
-    assert!(description.contains("Available model_preset values: claude-sonnet-5, gpt-5."));
+    assert!(description.contains("remove existing members"));
+    assert!(description.contains("original keyed Add request"));
+    assert!(description.contains("Fresh Add requests are unavailable"));
+    assert!(description.contains("never authorizes native retry"));
+    assert!(description.contains("Current configured presets (advisory; historical names are also accepted): claude-sonnet-5, gpt-5."));
 }
 
 #[test]
@@ -301,16 +294,12 @@ async fn team_manage_tool_schema_exposes_remove_agent_ids_as_array() {
         .as_ref()
         .map(|description| description.as_ref())
         .expect("team manage description should be present");
-    assert!(description.contains("optional `prompt`"));
-    assert!(description.contains("optional `image_paths`"));
-    assert!(description.contains("optional `worktree_name`"));
-    assert!(description.contains("optional `use_existing_worktree`"));
-    assert!(description.contains("optional `creator_compaction_subscription`"));
-    assert!(description.contains("defaults to `auto`"));
-    assert!(description.contains("set `unsubscribed`"));
-    assert!(description.contains("canonical direct TeamMessage"));
-    assert!(description.contains("runtime-owned"));
-    assert!(description.contains("ui_command"));
+    assert!(description.contains("Provide `remove_agent_ids`"));
+    assert!(description.contains("original keyed Add request"));
+    assert!(description.contains("original caller, team, invocation ID and inputs"));
+    assert!(description.contains("Fresh Add requests are unavailable"));
+    assert!(description.contains("workspace-authoritative `gg_team` add"));
+    assert!(description.contains("never authorizes native retry"));
 
     let worktree_name_schema = team_manage_tool
         .input_schema
@@ -352,16 +341,14 @@ async fn team_manage_tool_schema_exposes_remove_agent_ids_as_array() {
         !creator_compaction_subscription_schema.is_null(),
         "creator_compaction_subscription schema should not be null"
     );
-    let creator_compaction_subscription_schema_json =
-        serde_json::to_string(creator_compaction_subscription_schema)
-            .expect("creator_compaction_subscription schema should serialize");
-    assert!(
-        creator_compaction_subscription_schema_json.contains("auto"),
-        "creator_compaction_subscription schema should include `auto`"
-    );
-    assert!(
-        creator_compaction_subscription_schema_json.contains("unsubscribed"),
-        "creator_compaction_subscription schema should include `unsubscribed`"
+    let schema_root = Value::Object(team_manage_tool.input_schema.as_ref().clone());
+    assert_eq!(
+        crate::schema::test_string_enum_values(
+            &schema_root,
+            creator_compaction_subscription_schema
+        ),
+        vec!["auto".to_string(), "unsubscribed".to_string()],
+        "subscription schema must resolve its actual enum, not merely mention variants in prose"
     );
 
     let remove_agent_ids_schema = team_manage_tool
@@ -410,7 +397,7 @@ async fn team_manage_tool_schema_exposes_remove_agent_ids_as_array() {
 }
 
 #[tokio::test]
-async fn team_manage_tool_schema_injects_model_preset_enum_from_cached_capabilities() {
+async fn team_manage_tool_schema_accepts_historical_presets_outside_current_catalog() {
     let server = GgMcpServer {
         tool_router: GgMcpServer::tool_router(),
         gateway_client_config: None,
@@ -442,20 +429,25 @@ async fn team_manage_tool_schema_injects_model_preset_enum_from_cached_capabilit
         .get("anyOf")
         .and_then(Value::as_array)
         .expect("model_preset.anyOf should be present");
-    let enum_values = any_of
-        .iter()
-        .find_map(|variant| variant.get("enum"))
-        .and_then(Value::as_array)
-        .expect("model_preset string variant should include enum values");
+    assert!(any_of.iter().all(|variant| variant.get("enum").is_none()));
     assert!(
-        enum_values
+        any_of
             .iter()
-            .any(|entry| entry.as_str() == Some("planner"))
+            .any(|variant| variant["type"] == "string" && variant["minLength"] == 1)
     );
-    assert!(
-        enum_values
-            .iter()
-            .any(|entry| entry.as_str() == Some("designer"))
+    // RMCP's locked AddNullable transform replaces type:null with this
+    // equivalent nullable constant; absence is not a null branch.
+    assert!(any_of.iter().any(|variant| {
+        variant.get("const") == Some(&Value::Null)
+            && variant.get("nullable") == Some(&Value::Bool(true))
+    }));
+    let original: crate::tool_params::GgTeamManageRequest = serde_json::from_value(json!({
+        "team_id":"historical-team", "model_preset":"removed-original-preset",
+    }))
+    .unwrap();
+    assert_eq!(
+        original.model_preset.as_deref(),
+        Some("removed-original-preset")
     );
 }
 

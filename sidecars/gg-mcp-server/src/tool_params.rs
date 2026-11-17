@@ -119,40 +119,56 @@ pub(crate) struct GgTeamManageRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         schema_with = "crate::schema::nullable_non_empty_string_schema",
-        description = "Optional role instructions for add mode. This content is embedded in the canonical onboarding TeamMessage sent to the spawned member."
+        description = "Original role instructions from the historical Add request; inspection never delivers onboarding."
     )]
     pub(crate) prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         schema_with = "crate::schema::non_empty_string_array_schema",
-        description = "Optional image attachment paths for add mode onboarding. Paths are validated and attached in-order after the onboarding text."
+        description = "Original ordered image paths from the historical Add request. Inspection does not reopen or validate files."
     )]
     pub(crate) image_paths: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "crate::schema::nullable_non_empty_string_schema")]
+    #[schemars(
+        schema_with = "crate::schema::nullable_non_empty_string_schema",
+        description = "Original historical preset name, including removed presets. Missing or changed expansion can leave the original operation unresolved."
+    )]
     pub(crate) model_preset: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Optional creator-scoped compaction subscription override for add mode. Defaults to `auto`; set `unsubscribed` to suppress creator-recipient compaction notices for this new member."
+        description = "Original creator compaction subscription input from the historical Add request; inspection does not change subscriptions."
     )]
     pub(crate) creator_compaction_subscription: Option<CreatorCompactionSubscription>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         schema_with = "crate::schema::nullable_non_empty_string_schema",
-        description = "Optional worktree slug for add mode. Omit, null, or blank to skip native worktree creation. When provided, value is normalized to lowercase and must match `[a-z0-9][a-z0-9-_]*`. Runtime derives native branch/worktree/cwd from settings and the source session repo; hook metadata fields are readable but are not a control plane for native branch/cwd selection."
+        description = "Original worktree name from the historical Add request. Inspection never creates or validates a native checkout."
     )]
     pub(crate) worktree_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
-        description = "Optional add-mode switch for existing-worktree reuse semantics. When true, `worktree_name` targets an already-existing managed worktree instead of creating a new one."
+        description = "Original existing-worktree selection from the historical Add request; reproduce its original value for receipt inspection."
     )]
     pub(crate) use_existing_worktree: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_remove_agent_ids"
+    )]
     #[schemars(schema_with = "crate::schema::non_empty_string_array_min1_schema")]
     pub(crate) remove_agent_ids: Option<Vec<String>>,
     #[serde(default, flatten)]
     #[schemars(skip)]
     pub(crate) tool_call_metadata: ToolCallMetadata,
+}
+
+// An omitted Remove field selects historical Add inspection. Explicit null
+// must fail before serialization can erase its presence and change that mode.
+fn present_remove_agent_ids<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -258,7 +274,7 @@ pub(crate) struct GgMarkdownOpenRequest {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
     use super::{GgMarkdownOpenRequest, GgTeamManageRequest, GgTeamMessageRequest};
 
@@ -301,6 +317,36 @@ mod tests {
     }
 
     #[test]
+    fn legacy_remove_field_presence_is_never_reinterpreted_as_add() {
+        let absent: GgTeamManageRequest =
+            serde_json::from_value(json!({"team_id":"team"})).unwrap();
+        assert!(absent.remove_agent_ids.is_none());
+        assert!(
+            serde_json::to_value(absent)
+                .unwrap()
+                .get("remove_agent_ids")
+                .is_none()
+        );
+        assert!(
+            serde_json::from_value::<GgTeamManageRequest>(json!({
+                "team_id":"team", "remove_agent_ids":null,
+            }))
+            .is_err()
+        );
+        for ids in [json!([]), json!(["agent"])] {
+            let request: GgTeamManageRequest = serde_json::from_value(json!({
+                "team_id":"team", "remove_agent_ids":ids,
+            }))
+            .unwrap();
+            assert!(request.remove_agent_ids.is_some());
+            assert_eq!(
+                serde_json::to_value(request).unwrap()["remove_agent_ids"],
+                ids
+            );
+        }
+    }
+
+    #[test]
     fn gg_team_manage_schema_includes_add_and_remove_fields() {
         let schema_value =
             serde_json::to_value(schemars::schema_for!(GgTeamManageRequest)).expect("schema");
@@ -315,7 +361,7 @@ mod tests {
                 .get("description")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-                .contains("canonical onboarding TeamMessage")
+                .contains("Original role instructions")
         );
         let prompt_variants = prompt_schema
             .get("anyOf")
@@ -357,7 +403,7 @@ mod tests {
                 .get("description")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-                .contains("attached in-order")
+                .contains("Original ordered image paths")
         );
         let worktree_name_schema = schema_value
             .get("properties")
@@ -377,7 +423,7 @@ mod tests {
                 .get("description")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-                .contains("not a control plane")
+                .contains("Inspection never creates")
         );
         let worktree_name_variants = worktree_name_schema
             .get("anyOf")
@@ -430,7 +476,7 @@ mod tests {
                 .get("description")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-                .contains("existing-worktree reuse")
+                .contains("Original existing-worktree selection")
         );
         let creator_compaction_subscription_schema = schema_value
             .get("properties")
@@ -443,18 +489,15 @@ mod tests {
                 .get("description")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-                .contains("creator-scoped compaction subscription override")
+                .contains("Original creator compaction subscription input")
         );
-        let subscription_schema_json =
-            serde_json::to_string(creator_compaction_subscription_schema)
-                .expect("creator_compaction_subscription schema should serialize");
-        assert!(
-            subscription_schema_json.contains("auto"),
-            "creator_compaction_subscription schema should include the `auto` variant"
-        );
-        assert!(
-            subscription_schema_json.contains("unsubscribed"),
-            "creator_compaction_subscription schema should include the `unsubscribed` variant"
+        assert_eq!(
+            crate::schema::test_string_enum_values(
+                &schema_value,
+                &Value::Object(creator_compaction_subscription_schema.clone()),
+            ),
+            vec!["auto".to_string(), "unsubscribed".to_string()],
+            "subscription variants must exist in the resolved enum"
         );
 
         let remove_agent_ids_schema = schema_value

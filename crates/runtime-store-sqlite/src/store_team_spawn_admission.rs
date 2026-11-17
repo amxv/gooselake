@@ -3,6 +3,19 @@
 /// transaction implementation rather than in an in-process cache.
 macro_rules! delegate_team_spawn_admission {
     () => {
+        fn find_team_member_spawn_operation(
+            &self,
+            team_id: &str,
+            source_session_id: &str,
+            idempotency_key: &str,
+        ) -> Result<Option<String>, runtime_core::RuntimeError> {
+            self.repository().find_team_member_spawn_operation(
+                team_id,
+                source_session_id,
+                idempotency_key,
+            )
+        }
+
         fn replay_team_member_spawn(
             &self,
             team_id: &str,

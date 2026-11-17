@@ -2117,70 +2117,72 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
 
 Team delivery fields make multi-agent coordination inspectable: `pending`, `deferred`, `injecting`, `injected`, `failed`, or `cancelled` states are stored as records and replayed through team events.
 
-The `/v1/teams` HTTP routes and historical split MCP tools (`gg_team_status`, `gg_team_message`, `gg_team_manage`) are **operator-only compatibility surfaces** backed by the legacy team services. They remain available during migration but are not advertised to provider models. Current model agents instead use workspace-authoritative `gg_team` and `gg_message` operations through the scoped `/v2/mcp` endpoint or native Codex tools; the canonical workspace agent/message records are separate from legacy `TeamRecord` membership.
+The `/v1/teams` HTTP routes and historical split MCP tools (`gg_team_status`, `gg_team_message`, `gg_team_manage`) are **operator-only compatibility surfaces** backed by the legacy team services. They remain available during legacy retirement but are not advertised to provider models. Current model agents instead use workspace-authoritative `gg_team` and `gg_message` operations through the scoped `/v2/mcp` endpoint or native Codex tools; the canonical workspace agent/message records are separate from legacy `TeamRecord` membership.
 
-The legacy `POST /v1/teams/{team_id}/members/spawn` workflow has a separate
-`op_spawn_*` operation journal. Successful native Git checkout, provider-session,
-team-join and onboarding effects that fail their next journal write return an
-**unresolved operation** with its original ID, not a safe-to-retry spawn error.
-If post-join onboarding or worktree-claim compensation begins, the runtime
-records `rollback_pending` with the exact session and worktree targets
-**before** cleanup. Only independently confirmed compensation results plus
-the rollback diagnostic can produce `rolled_back`; dirty worktrees, incomplete
-native session close, failed cleanup, or missing diagnostic evidence yield
-`rollback_review_required`. A failed final receipt leaves `rollback_pending`
-for manual inspection. An uncertain provider *creation* also preserves the
-possibly used worktree and records `session_create_review_required` rather than
-guessing that no native session exists. The legacy
-`GET /v1/diagnostics/team-operations?operation_id=...` endpoint exposes
-diagnostics only, **not** the authoritative journal stage. Use the
-operator-authenticated
-`GET /v1/diagnostics/team-operations/{operation_id}` to inspect the original
-indexed journal row, exact stage/payload, associated diagnostics,
-`requires_manual_review` and `native_retry_authorized:false` after a lost
-response or server restart. An unknown/nonexistent ID returns 404 and no
-anonymous caller can inspect journal contents. Neither the inspection API nor
-the general `/v2/operations/{operation_id}` endpoint converts a legacy spawn
-intent into an executable or repeatable native operation.
-These statuses are **review coordinates**, not permission to rerun Git or
-provider effects. The legacy spawn POST now optionally accepts a single
-`Idempotency-Key` HTTP header (1–512 printable UTF-8 bytes, no surrounding
-whitespace). That key is permanently bound to the **original team,
-source_session_id and full immutable request body**. The first call atomically
-commits the keyed admission and `planned` journal before any Git checkout,
-provider session or onboarding; a simultaneous second worker cannot execute
-the same key. Admission rejects an already-deleted legacy team even when an
-in-memory roster cache is stale. A concurrent team deletion now competes for
-that same SQLite write lock and cannot tombstone an admitted spawn until its
-exact completion receipt is committed or its native compensation is certified
-`rolled_back`. This is a deletion fence, **not** automatic native recovery.
-For `worktree.mode: "reuse"` or `"use_existing"`, the post-admission
-managed-checkout identity lookup uses only the exact SQLite natural key,
-without decoding unrelated historical session metadata. This preserves
-existing checkout validation, keyed replay, claims and native uncertainty
-fences; it does not authorize an unresolved spawn to be run again.
-Before a caller-bound completion becomes an exact replay receipt, its SQLite
-transaction verifies the original calling session, persisted spawned native
-provider identity, joined team member, onboarding message and delivery,
-and (when assigned) worktree and active claim against the staged evidence.
-A missing or mismatched record leaves the operation unresolved rather than
-converting an unverified native outcome into success.
-An exact retry of a completed
-spawn returns the original stored
-response and `operation_id` (including after a lost HTTP reply or restart),
-without contacting Git or a provider. An exact retry of a pending, failed,
-rolled-back or uncertain spawn returns `409 outcome_unresolved` with its
-original operation ID for inspection, **not** authorization to retry native
-effects. Reusing the key with different request content returns `409 conflict`.
-Historical unkeyed calls retain compatibility but have **no caller-bound
-replay guarantee**; adding a new key after an unknown earlier call also starts
-a separate operation, so never use it to retry an ambiguous unkeyed spawn.
-Legacy `gg_team_manage` add invocations use the same SQLite-backed authority,
-scoped to their original calling session and invocation ID; the prior
-process-local duplicate-call cache is no longer treated as durable recovery.
-Native recovery remains manual where independently verified Git/provider
-evidence is unavailable; these receipts do **not** make the overall worktree
-spawn lifecycle or automatic rollback exactly-once.
+The legacy `POST /v1/teams/{team_id}/members/spawn` route is now an
+**inspection-only historical receipt surface**. It cannot create a provider
+session, checkout, membership, onboarding message or hook. A request without
+an original key, or with a key that has no admission for the original team
+and source session, returns `400` unsupported capability. Use workspace-owned
+agent creation or canonical `gg_team` Add for new work. Changing the key after
+an uncertain historical call cannot authorize another legacy spawn.
+
+Supply the single original `Idempotency-Key` header (1–512 printable UTF-8
+bytes with no surrounding whitespace) and the original request body. The
+saved admission binds that key to its original team, `source_session_id` and
+full immutable request. Inspection reads that authority **before** mutable
+session status, roster membership, feature policy, provider availability or
+filesystem checks. A completed, correctly typed and identity-matched receipt
+returns its original response and `op_spawn_*` ID, including its original team
+snapshot, after a lost reply or restart. No native operation runs again.
+
+Pending, rolled-back, uncertain, missing-journal or damaged-receipt history
+returns `409 outcome_unresolved` with the original operation ID. A completed
+stage label alone is insufficient without its matching saved receipt. A
+changed immutable request under the original key returns `409 conflict`.
+Neither error repairs history, admits a replacement operation, or permits
+native retry. Unkeyed historical calls have no caller-bound receipt lookup;
+inspect their known operation ID directly instead.
+
+Historical stages describe what an earlier executor recorded: `planned`,
+`worktree_created`, `session_created`, `team_joined`, `onboarding_sent`,
+`session_create_review_required`, `rollback_pending`,
+`rollback_review_required`, `rolled_back` and `completed`. They are evidence
+coordinates. In particular, failed compensation or missing native receipts
+must not be inferred safe merely from current session, claim or checkout
+state. Terminal certification independently checks the original calling
+session, spawned provider identity, joined member, onboarding message and
+delivery, and assigned worktree/claim against its staged evidence before
+saving an exact successful response.
+
+Use operator-authenticated
+`GET /v1/diagnostics/team-operations/{operation_id}` to inspect a saved legacy
+journal and its diagnostics. The list endpoint with `?operation_id=...`
+returns diagnostics, not authoritative journal stage. Unknown IDs return
+404; bearer authentication remains required. These inspection surfaces and
+the general `/v2/operations/{operation_id}` API never convert a legacy intent
+into repeatable native authority. Native outcome review remains separately
+scoped where independently verified Git/provider evidence is unavailable.
+
+Historical split MCP `gg_team_manage` Add follows the same inspection-only
+contract through operator `/v1/mcp/invoke`. It uses the original caller and
+invocation ID, preserving the historical `gg_team_manage:` key translation.
+A saved request remains inspectable after its caller closes or current team
+policy is disabled. Fresh Add is `unsupported_capability`; canonical scoped
+`gg_team` Add remains the new-work path. Split-tool Remove still has its
+current authorization and active-caller checks, including requests carrying
+null or empty `remove_agent_ids`; it does not acquire Add's inspection exception. The legacy sidecar rejects an explicit null Remove field before forwarding; an empty array remains a Remove-shaped request.
+
+Supply original preset names and inputs. The legacy sidecar accepts removed
+historical preset names and preserves the original invocation metadata.
+Current configured presets are advisory. If the old expanded request cannot
+be certified because a preset was removed or its expansion/input changed,
+the gateway returns `outcome_unresolved`, the caller-bound original operation
+ID, `/v1/diagnostics/team-operations/{operation_id}`, and
+`native_retry_authorized:false` with `retryable:false`. A key-only lookup can
+supply an inspection coordinate, never a successful receipt or execution
+permission. Operator bearer, namespace, and scoped-tool boundaries remain
+in force.
 
 Legacy team **create, join, member removal and lead change** now commit their
 roster mutation together with one Critical canonical team event in an atomic

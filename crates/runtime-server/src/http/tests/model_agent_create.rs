@@ -3,6 +3,7 @@ use super::*;
 use serde_json::{json, Value};
 
 mod hooks;
+mod legacy_native_recovery;
 mod routes;
 
 struct Fixture {

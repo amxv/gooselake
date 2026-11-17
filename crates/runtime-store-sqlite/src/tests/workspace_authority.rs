@@ -112,15 +112,21 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
             )
             .expect("seed generation-one worktree");
     }
-    repository
-        .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
-            worktree_id: "wt_legacy".to_string(),
-            session_id: session.id.clone(),
-            claim_role: "primary".to_string(),
-            created_at: 105,
-            released_at: None,
-        })
-        .expect("worktree claim");
+    // This is generation-one history, before the current transactional
+    // claim writer's legacy-obligation tables exist. Seed its original schema
+    // directly, as for the historical worktree above; do not bypass guards in
+    // the production writer or change any migration preservation assertions.
+    {
+        let connection = Connection::open(&db_path).expect("open legacy claim schema");
+        connection
+            .execute(
+                "INSERT INTO managed_worktree_claims
+             (worktree_id,session_id,claim_role,created_at,released_at)
+             VALUES('wt_legacy',?1,'primary',105,NULL)",
+                [session.id.as_str()],
+            )
+            .expect("seed generation-one worktree claim");
+    }
     repository
         .upsert_process(&ProcessRecord {
             id: "process_legacy".to_string(),

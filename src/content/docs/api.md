@@ -2174,9 +2174,9 @@ Malformed, non-text or oversized JSON retains its record metadata and reports
 still reject malformed data; inspection never repairs it. Invalid UTF-8 in
 SQLite TEXT is retained as an explicit decode error too. Startup continues to
 use strict full hydration and may refuse to start over damaged legacy history.
-This endpoint can inspect damage while the runtime is already available;
-restart access remains pending the legacy native and maintenance safeguards.
-Inspection does not certify recovery, close, claim repair or checkout cleanup.
+This endpoint can inspect damage while the runtime is already available.
+Inspection does not relax strict startup validation or certify recovery, close,
+claim repair or checkout cleanup.
 
 Use `limit=1..100` (default 50) and nonnegative `after_diagnostic_id` to page
 forward. Supply the returned `next_diagnostic_id` for the next page; a null
@@ -2212,6 +2212,16 @@ The common runtime session fence also refuses unresolved historical evidence.
 A dispatch claim must match the complete persisted pending turn and can be won
 by only one writer. Supplied session identity cannot redirect that claim.
 
+Checkout-sensitive authority also checks historical obligations inside its writer
+transaction. This covers both previous and destination routes for rebind, managed
+Git creation and cleanup admission, the actual route at provider-create freeze,
+and the workspace root at a hook's first native claim. Changed worktree records,
+claim/release transitions and startup repair batches use the same checks. A known
+different child session does not establish an unrelated checkout: missing or
+unverifiable checkout scope can still withhold the action. These checks do not
+certify physical checkout aliases or authorize history repair. Exact no-op and
+completed-receipt replay retain their existing authority.
+
 Only an original, correctly typed and identity-matched saved spawn completion
 clears the historical obligation. Missing journals, malformed evidence and weak
 terminal labels remain unresolved. A known child can establish that a different
@@ -2221,8 +2231,7 @@ The bounded classifier examines keyed admissions and all spawn journal stages
 from one snapshot. If its row, metadata or copied-evidence allowance is exhausted,
 it withholds new work rather than treating omitted history as empty. The default
 allowances are implementation limits, not a measured workload or latency guarantee.
-Startup still uses the strict behavior described above while the remaining
-maintenance safeguards are being completed.
+These checks do not relax the strict startup hydration described above.
 
 A refusal before canonical admission returns HTTP `409 outcome_unresolved` with
 `error.details.operation_id` naming the original legacy operation and
@@ -2246,6 +2255,24 @@ Saved restoration verifies the matching original Critical event too. A missing
 or incompatible pair reports inspection unavailable without repairing either
 record. Raw carrier evidence may remain visible as `unverified_legacy_recoveries`;
 it is not a verified saved observation or permission for native work.
+
+Agent creation retains the original cause when a pre-add hook or the provider
+launch freeze refuses work. Operator replay restores it from the verified saved
+pair. Scoped `gg_team` Add preserves the canonical parent, reserved child and
+original historical cause separately; a refusal before child admission records
+only the real parent carrier and reports the child as `not_admitted`. It does not
+invent a child operation or native claim. A later history change or runtime
+restart does not authorize another attempt for that original invocation.
+
+Member-removal diagnostics keep the current removal team in the outer context
+and `removal_team_id`, while nested `legacy_recovery` names the original team
+and operation. An incomplete scan never gains a fabricated operation coordinate.
+If diagnostic persistence fails, the original typed refusal remains the error;
+the storage failure is also reported. Withheld claim release cannot proceed to
+checkout cleanup. The hook worker likewise attempts bounded application of
+already-saved terminal outputs after withholding a new native hook. A secondary
+application failure preserves the original typed refusal and leaves the saved
+output pending for its own database-only settlement.
 
 An incomplete scan returns HTTP `409 legacy_native_scan_incomplete` before
 admission, with `legacy_recovery.kind: "scan_incomplete"` and the scan's bounded

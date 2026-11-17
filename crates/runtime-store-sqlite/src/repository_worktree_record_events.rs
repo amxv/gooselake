@@ -239,6 +239,7 @@ impl SqliteRuntimeRepository {
             .map_err(|error| {
                 db_error("failed beginning historical worktree repair batch", error)
             })?;
+        crate::repository_legacy_native_targets::guard_legacy_native_repairs(&tx, repairs, &[])?;
         repair_historical_records_in_transaction(&tx, repairs)?;
         tx.commit().map_err(|error| {
             db_error("failed committing historical worktree repair batch", error)

@@ -147,7 +147,19 @@ impl RuntimeSessionManager {
             }
             MemberAgentCreateRoute::New { .. } => {}
         }
-        match self.store.admit_member_agent_create(&command)? {
+        let admission = match self.store.admit_member_agent_create(&command) {
+            Ok(admission) => admission,
+            Err(error) => {
+                self.preserve_legacy_native_recovery(
+                    &command.intent.parent_operation_id,
+                    "model_member_create",
+                    &command.operation.reserved_agent_id,
+                    error.legacy_native_recovery(),
+                )?;
+                return Err(error);
+            }
+        };
+        match admission {
             OperatorAgentCreateAdmission::Execute { .. } => {}
             prior => return self.member_create_replay(&command, prior),
         }
@@ -187,9 +199,17 @@ impl RuntimeSessionManager {
                 {
                     return self.store.member_agent_create_result(&command);
                 }
-                Err(self.quarantine_operator_agent_create(
+                self.preserve_legacy_native_recovery(
+                    &command.intent.parent_operation_id,
+                    "model_member_create",
+                    &command.operation.reserved_agent_id,
+                    error.legacy_native_recovery(),
+                )?;
+                Err(self.quarantine_operator_agent_create_with_legacy_recovery(
                     &command.operation.operation_id,
+                    &command.operation.reserved_agent_id,
                     &format!("member creation stage outcome requires inspection: {error}"),
+                    error.legacy_native_recovery(),
                 ))
             }
         }
@@ -205,7 +225,9 @@ impl RuntimeSessionManager {
                 self.store.member_agent_create_result(command)
             }
             other => {
-                other.into_replay_result()?;
+                other
+                    .into_replay_result()
+                    .map_err(|error| self.restore_legacy_native_recovery(error))?;
                 Err(RuntimeError::ProtocolViolation(
                     "unexpected member create replay".into(),
                 ))

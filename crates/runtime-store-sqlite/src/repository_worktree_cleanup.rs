@@ -250,6 +250,11 @@ impl SqliteRuntimeRepository {
             ));
         }
 
+        let mut legacy_targets =
+            crate::repository_legacy_native_targets::LegacyNativeTargetBatch::default();
+        legacy_targets.worktree(worktree)?;
+        legacy_targets.guard(&tx)?;
+
         let input = serde_json::json!({
             "worktree_id": worktree.id,
             "worktree_created_at": worktree.created_at,

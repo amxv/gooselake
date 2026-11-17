@@ -69,6 +69,17 @@ impl RuntimeSessionManager {
         }
     }
 
+    /// Replay the exact admitted receipt, retaining its verified historical
+    /// cause when the original native outcome still requires inspection.
+    pub fn workspace_agent_create_replay_result(
+        &self,
+        admission: OperatorAgentCreateAdmission,
+    ) -> Result<(WorkspaceAgentRecord, String), RuntimeError> {
+        admission
+            .into_replay_result()
+            .map_err(|error| self.restore_legacy_native_recovery(error))
+    }
+
     /// Only the caller holding the newly admitted operation may dispatch.
     /// A provider error, lost reply, or SQLite CAS failure is not proof of
     /// non-execution. Preserve the original immutable native claim for
@@ -88,11 +99,33 @@ impl RuntimeSessionManager {
             .await;
         match result {
             Ok(agent) => Ok((agent, command.operation_id)),
-            Err(error) => Err(self.quarantine_operator_agent_create(
+            Err(error) => Err(self.quarantine_operator_agent_create_with_legacy_recovery(
                 &command.operation_id,
+                &command.reserved_agent_id,
                 &format!("provider/Git/hooks/atomic creation outcome cannot be retried: {error}"),
+                error.legacy_native_recovery(),
             )),
         }
+    }
+
+    pub fn quarantine_operator_agent_create_with_legacy_recovery(
+        &self,
+        operation_id: &str,
+        reserved_agent_id: &str,
+        reason: &str,
+        recovery: Option<crate::legacy_spawn_obligations::LegacyNativeRecovery>,
+    ) -> RuntimeError {
+        if let Err(error) = self.preserve_legacy_native_recovery(
+            operation_id,
+            "provider_session_create",
+            reserved_agent_id,
+            recovery.clone(),
+        ) {
+            // The existing requested operation/claims remain unresolved.
+            return error;
+        }
+        self.quarantine_operator_agent_create(operation_id, reason)
+            .with_legacy_native_recovery(recovery)
     }
 
     pub fn quarantine_operator_agent_create(

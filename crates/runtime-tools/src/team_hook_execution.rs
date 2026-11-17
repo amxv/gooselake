@@ -171,6 +171,7 @@ pub async fn execute_team_hook_effect(
 /// application transaction provides the separate exactly-once notice receipt.
 pub async fn dispatch_team_hook_effects(store: &dyn RuntimeStore) -> Result<usize, RuntimeError> {
     let mut settled = 0;
+    let mut legacy_refusal = None;
     for effect in store.list_dispatchable_team_hook_effects(64)? {
         let admission = TeamHookEffectAdmission {
             workspace_id: effect.workspace_id,
@@ -184,13 +185,31 @@ pub async fn dispatch_team_hook_effects(store: &dyn RuntimeStore) -> Result<usiz
             // An approval or workspace can be revoked between admission and
             // claim. Do not run the command through an alternate path.
             Err(RuntimeError::Conflict(_)) => {}
+            Err(error @ RuntimeError::LegacyNativeObligationBlocked { .. })
+            | Err(error @ RuntimeError::LegacyNativeScanIncomplete { .. }) => {
+                // Withhold new native attempts, but still settle already
+                // observed results below. Return the original typed cause
+                // after that bounded database-only application work.
+                legacy_refusal = Some(error);
+                break;
+            }
             Err(error) => return Err(error),
         }
     }
-    for effect in store.list_unapplied_team_hook_effects(64)? {
-        store.apply_team_hook_effect_output(&effect, now_ms())?;
-        settled += 1;
+    let application = (|| {
+        for effect in store.list_unapplied_team_hook_effects(64)? {
+            store.apply_team_hook_effect_output(&effect, now_ms())?;
+            settled += 1;
+        }
+        Ok::<(), RuntimeError>(())
+    })();
+    if let Some(error) = legacy_refusal {
+        if let Err(failure) = application {
+            eprintln!("team-hook saved output application failed while native work remained withheld: {failure}");
+        }
+        return Err(error);
     }
+    application?;
     Ok(settled)
 }
 

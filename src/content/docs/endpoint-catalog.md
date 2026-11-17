@@ -330,6 +330,11 @@ Historical native-obligation refusals preserve the original diagnostic coordinat
 separately from any admitted canonical operation. An incomplete scan has no
 invented operation ID. See [Historical obligations before new native work](/docs/api#historical-obligations-before-new-native-work)
 for the typed HTTP/MCP recovery details and verified saved-observation contract.
+Checkout-sensitive rebind, Git/create/cleanup, hook first claim and changed
+worktree maintenance authority also withhold unresolved historical scope.
+Create replay preserves the canonical parent/child identities separately from
+that historical cause; a child refused before admission remains `not_admitted`.
+Known receipts and database-only settlement do not grant another native attempt.
 
 Diagnostics query parameters:
 - team operations: `team_id`, `operation_id`

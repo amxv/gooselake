@@ -196,6 +196,11 @@ impl SqliteRuntimeRepository {
                     error,
                 )
             })?;
+        crate::repository_legacy_native_targets::guard_legacy_native_repairs(
+            &transaction,
+            &[],
+            repairs,
+        )?;
         repair_historical_claims_in_transaction(&transaction, originals, repairs)?;
         transaction.commit().map_err(|error| {
             db_error(
@@ -465,6 +470,14 @@ impl SqliteRuntimeRepository {
                 }
             }
         };
+
+        let mut legacy_targets =
+            crate::repository_legacy_native_targets::LegacyNativeTargetBatch::default();
+        legacy_targets.claim(&transaction, &updated)?;
+        if let Some((_, observed_cwd)) = explicit_release_snapshot {
+            legacy_targets.route(&transaction, Some(&record.worktree_id), Some(observed_cwd))?;
+        }
+        legacy_targets.guard(&transaction)?;
 
         transaction
             .execute(

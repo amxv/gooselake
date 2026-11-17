@@ -534,8 +534,22 @@ fn schema_upgrade_from_27_retains_legacy_worktrees_claims_and_events() {
         created_at: 30,
         released_at: Some(40),
     };
-    repository
-        .upsert_managed_worktree_claim(&legacy_claim)
+    // Seed the historical schema directly; the current writer requires newer
+    // native-obligation authority tables that this migration fixture predates.
+    Connection::open(&database_path)
+        .unwrap()
+        .execute(
+            "INSERT INTO managed_worktree_claims
+             (worktree_id, session_id, claim_role, created_at, released_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                legacy_claim.worktree_id,
+                legacy_claim.session_id,
+                legacy_claim.claim_role,
+                legacy_claim.created_at,
+                legacy_claim.released_at,
+            ],
+        )
         .unwrap();
     repository
         .append_runtime_event(&NewRuntimeEvent {

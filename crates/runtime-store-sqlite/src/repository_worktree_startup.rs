@@ -26,6 +26,11 @@ impl SqliteRuntimeRepository {
             .map_err(|error| {
                 db_error("failed beginning historical worktree startup repair", error)
             })?;
+        crate::repository_legacy_native_targets::guard_legacy_native_repairs(
+            &tx,
+            record_repairs,
+            claim_repairs,
+        )?;
         // Both helpers compare their source rows while this writer lock is
         // held. A later claim/source/destination/SQL failure rolls back ALL
         // earlier worktree record writes and every claim write.

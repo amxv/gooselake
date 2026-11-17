@@ -241,6 +241,20 @@ impl SqliteRuntimeRepository {
                 return Ok((prior, false));
             }
         }
+        let mut legacy_targets =
+            crate::repository_legacy_native_targets::LegacyNativeTargetBatch::default();
+        legacy_targets.session(&operation.agent_id)?;
+        legacy_targets.route(
+            &tx,
+            operation.previous_worktree_id.as_deref(),
+            Some(&operation.previous_cwd),
+        )?;
+        legacy_targets.route(
+            &tx,
+            operation.destination_worktree_id.as_deref(),
+            Some(&operation.destination_cwd),
+        )?;
+        legacy_targets.guard(&tx)?;
         crate::repository_workspace_control::guard_unresolved_interrupt(&tx, &operation.agent_id)?;
         if let Some(command) = member {
             crate::repository_member_agent_rebind::validate_member_admission(&tx, command, true)?;

@@ -25,6 +25,7 @@ mod team_hook_execution;
 mod team_manage;
 mod worktree;
 mod worktree_cleanup_recovery;
+mod worktree_member_removed_legacy;
 mod worktree_retirement;
 mod worktree_spawn_admission;
 mod worktree_spawn_history_git;

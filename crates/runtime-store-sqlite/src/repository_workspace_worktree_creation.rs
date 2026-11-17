@@ -149,6 +149,16 @@ impl SqliteRuntimeRepository {
             );
         }
 
+        let mut legacy_targets =
+            crate::repository_legacy_native_targets::LegacyNativeTargetBatch::default();
+        legacy_targets.checkout(
+            None,
+            Some(&command.checkout_path),
+            Some(&command.repository_root),
+            Some(&command.branch_name),
+        )?;
+        legacy_targets.guard(&transaction)?;
+
         let workspace = workspace_by_id(&transaction, &command.workspace_id)?
             .ok_or_else(|| RuntimeError::NotFound(format!("workspace {}", command.workspace_id)))?;
         let frozen: bool = transaction

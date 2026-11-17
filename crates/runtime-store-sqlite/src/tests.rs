@@ -28,6 +28,8 @@ mod event_subject_reconciliation;
 mod event_subject_scale;
 mod event_subject_scopes;
 mod legacy_native_boundaries;
+mod legacy_native_launch_guards;
+mod legacy_native_maintenance;
 mod legacy_native_turn_guards;
 mod legacy_operation_inspection;
 mod legacy_team_cancellation;

@@ -237,7 +237,7 @@ fn valid_id(value: &str) -> bool {
         && value.len() <= METADATA_CELL_BYTES
         && !value.chars().any(char::is_control)
 }
-fn targets_within_budget(targets: &[LegacyNativeTarget]) -> bool {
+pub(crate) fn targets_within_budget(targets: &[LegacyNativeTarget]) -> bool {
     if targets.len() > TARGET_COUNT_LIMIT {
         return false;
     }

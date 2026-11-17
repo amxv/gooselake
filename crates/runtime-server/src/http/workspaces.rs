@@ -619,7 +619,9 @@ pub(super) async fn create_workspace_agent(
     let mut command = match command {
         Some(command) => command,
         None => {
-            let (agent, operation_id) = admission.into_replay_result()?;
+            let (agent, operation_id) = state
+                .runtime
+                .workspace_agent_create_replay_result(admission)?;
             return Ok(with_operation_id(
                 revisioned_response(agent.revision, agent),
                 &operation_id,
@@ -669,10 +671,14 @@ pub(super) async fn create_workspace_agent(
             )
             .await
             .map_err(|error| {
-                state.runtime.quarantine_operator_agent_create(
-                    &command.operation_id,
-                    &format!("native child worktree outcome is unverified: {error}"),
-                )
+                state
+                    .runtime
+                    .quarantine_operator_agent_create_with_legacy_recovery(
+                        &command.operation_id,
+                        &command.reserved_agent_id,
+                        &format!("native child worktree outcome is unverified: {error}"),
+                        error.legacy_native_recovery(),
+                    )
             })?;
         command.worktree_operation_id = Some(result.operation_id);
         request.worktree = Some(WorkspaceAgentInitialRoute::Existing {

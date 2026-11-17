@@ -189,14 +189,16 @@ fn migration_25_builds_live_claim_index_without_discarding_version_24_rows() {
     std::fs::create_dir_all(&root).unwrap();
     let row = worktree("wt_legacy_24", &root.display().to_string(), temp.path());
     repository.upsert_managed_worktree(&row).unwrap();
-    repository
-        .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
-            worktree_id: row.id.clone(),
-            session_id: "session_1".into(),
-            claim_role: "owner".into(),
-            created_at: 110,
-            released_at: None,
-        })
+    // This row belongs to schema 24, before the current claim writer's
+    // native-obligation authority tables exist.
+    Connection::open(&path)
+        .unwrap()
+        .execute(
+            "INSERT INTO managed_worktree_claims
+             (worktree_id, session_id, claim_role, created_at, released_at)
+             VALUES (?1, 'session_1', 'owner', 110, NULL)",
+            rusqlite::params![row.id],
+        )
         .unwrap();
 
     repository.initialize_schema().unwrap();

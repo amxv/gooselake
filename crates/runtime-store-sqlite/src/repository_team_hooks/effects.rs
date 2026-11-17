@@ -249,6 +249,17 @@ impl SqliteRuntimeRepository {
             ));
         }
         crate::repository_member_agent_create_hooks::authorize_hook_claim(&tx, &current)?;
+        let execution_cwd: String = tx
+            .query_row(
+                "SELECT canonical_root FROM workspaces WHERE workspace_id=?1",
+                [workspace_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| db_error("failed reading guarded hook execution root", error))?;
+        let mut legacy_targets =
+            crate::repository_legacy_native_targets::LegacyNativeTargetBatch::default();
+        legacy_targets.checkout(None, Some(&execution_cwd), None, None)?;
+        legacy_targets.guard(&tx)?;
         tx.execute(
             "UPDATE workspace_hook_effects SET phase='started',attempt_count=attempt_count+1,updated_at_ms=?5
              WHERE workspace_id=?1 AND parent_event_id=?2 AND event_name=?3 AND hook_name=?4 AND phase='intended'",

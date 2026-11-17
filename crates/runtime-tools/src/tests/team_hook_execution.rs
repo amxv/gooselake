@@ -715,3 +715,149 @@ async fn competing_dispatchers_can_launch_at_most_one_hook() {
     assert_eq!(latest.attempt_count, 1);
     assert_eq!(std::fs::read_to_string(marker_path).unwrap(), "x");
 }
+
+#[tokio::test]
+async fn legacy_launch_refusal_still_applies_saved_terminal_hook_output() {
+    for inject_application_fault in [false, true] {
+        for incomplete in [false, true] {
+            let marker_dir = tempfile::tempdir().unwrap();
+            let marker = marker_dir.path().join("must-not-launch");
+            let (_temp, store, original) = fixture(
+                format!("printf x >> '{}'; printf '{{}}'", marker.display()),
+                5_000,
+            );
+            let sql = rusqlite::Connection::open(store.database_path()).unwrap();
+            let admit = |event_id: &str, at: i64| {
+                let mut admission = original.clone();
+                admission.parent_event_id = event_id.into();
+                admission.created_at_ms = at;
+                admission.input = json!({
+                    "schema_version":1,"workspace_id":"ws_hooks",
+                    "event_id":event_id,"hook_event":"post_teammate_add",
+                    "actor_agent_id":null,
+                    "subject":{"kind":"member","member_agent_id":"sess_test"},
+                    "eligible_target_agent_ids":[],
+                });
+                sql.execute(
+                "INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at)
+                 VALUES(?1,'workspace','ws_hooks',
+                   (SELECT COALESCE(MAX(seq),0)+1 FROM runtime_events WHERE scope='workspace' AND scope_id='ws_hooks'),
+                   'workspace.hook_parent',0,?2,?3)",
+                rusqlite::params![event_id, admission.input.to_string(), at],
+            ).unwrap();
+                store.admit_team_hook_effect(&admission).unwrap();
+                admission
+            };
+            let terminal = admit("evt_known_terminal_hook", 10);
+            store
+                .claim_team_hook_effect(
+                    "ws_hooks",
+                    &terminal.parent_event_id,
+                    terminal.hook.event_name,
+                    &terminal.hook.name,
+                    11,
+                )
+                .unwrap();
+            // An explicitly injected known shell result, never a shell execution.
+            let saved = store
+                .finish_team_hook_effect(
+                    "ws_hooks",
+                    &terminal.parent_event_id,
+                    terminal.hook.event_name,
+                    &terminal.hook.name,
+                    TeamHookEffectPhase::Succeeded,
+                    TeamHookEffectReceipt {
+                        validated_output: Some(json!({})),
+                        error_code: None,
+                    },
+                    12,
+                )
+                .unwrap();
+            assert_eq!(saved.application_state, "pending");
+            let intended = admit("evt_blocked_intended_hook", 20);
+            let legacy_id = if incomplete {
+                "x".repeat(4097)
+            } else {
+                "original-other-team-operation".into()
+            };
+            sql.execute(
+            "INSERT INTO team_operation_journal(operation_id,team_id,kind,stage,payload_json,created_at,updated_at)
+             VALUES(?1,'original-other-team','spawn_member_with_worktree','rolled_back','{}',1,2)",
+            [&legacy_id],
+        ).unwrap();
+            let reopened = SqliteRuntimeStore::new(SqliteStoreConfig {
+                database_path: store.database_path().to_path_buf(),
+            });
+            let mut after_first = None;
+            if inject_application_fault {
+                sql.execute_batch("CREATE TRIGGER refuse_known_hook_output BEFORE UPDATE OF application_state ON workspace_hook_effects
+                WHEN OLD.parent_event_id='evt_known_terminal_hook'
+                BEGIN SELECT RAISE(ABORT,'injected known output application fault'); END;").unwrap();
+            }
+            for attempt in 0..3 {
+                let error = dispatch_team_hook_effects(&reopened).await.unwrap_err();
+                if incomplete {
+                    assert!(
+                        matches!(error, RuntimeError::LegacyNativeScanIncomplete { .. }),
+                        "{error:?}"
+                    );
+                } else {
+                    assert!(
+                        matches!(error, RuntimeError::LegacyNativeObligationBlocked { ref coordinate, .. }
+                    if coordinate.operation_id == legacy_id && coordinate.team_id == "original-other-team"),
+                        "{error:?}"
+                    );
+                }
+                let blocked = reopened
+                    .get_team_hook_effect(
+                        "ws_hooks",
+                        &intended.parent_event_id,
+                        intended.hook.event_name,
+                        &intended.hook.name,
+                    )
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(blocked.phase, TeamHookEffectPhase::Intended);
+                assert_eq!(blocked.attempt_count, 0);
+                let applied = reopened
+                    .get_team_hook_effect(
+                        "ws_hooks",
+                        &terminal.parent_event_id,
+                        terminal.hook.event_name,
+                        &terminal.hook.name,
+                    )
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(applied.phase, TeamHookEffectPhase::Succeeded);
+                if inject_application_fault && attempt == 0 {
+                    assert_eq!(applied.application_state, "pending");
+                    assert_eq!(applied.attempt_count, 1);
+                    assert!(!marker.exists(), "blocked hook ran during output fault");
+                    sql.execute_batch("DROP TRIGGER refuse_known_hook_output")
+                        .unwrap();
+                    continue;
+                }
+                assert_eq!(applied.application_state, "applied");
+                assert_eq!(applied.attempt_count, 1);
+                assert!(!marker.exists(), "blocked native hook ran");
+                assert!(reopened
+                    .list_unapplied_team_hook_effects(64)
+                    .unwrap()
+                    .is_empty());
+                let notices: i64 = sql
+                    .query_row("SELECT COUNT(*) FROM workspace_system_notices", [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap();
+                let events: i64 = sql
+                    .query_row("SELECT COUNT(*) FROM runtime_events", [], |row| row.get(0))
+                    .unwrap();
+                let snapshot = (applied, notices, events);
+                if let Some(previous) = after_first.as_ref() {
+                    assert_eq!(&snapshot, previous, "known terminal output was reapplied");
+                }
+                after_first = Some(snapshot);
+            }
+        }
+    }
+}

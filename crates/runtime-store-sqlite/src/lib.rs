@@ -23,6 +23,7 @@ mod repository_event_history;
 mod repository_hydration;
 mod repository_legacy_canonical_mirror_guard;
 mod repository_legacy_native_recovery;
+mod repository_legacy_native_targets;
 mod repository_legacy_operation_inspection;
 mod repository_legacy_spawn_obligations;
 mod repository_legacy_team_cancellation;

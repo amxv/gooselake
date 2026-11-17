@@ -426,6 +426,15 @@ impl SqliteRuntimeRepository {
                 "agent create launch snapshot already frozen or changed".into(),
             ));
         }
+        let mut legacy_targets =
+            crate::repository_legacy_native_targets::LegacyNativeTargetBatch::default();
+        legacy_targets.session(&snapshot.session.id)?;
+        legacy_targets.route(
+            &tx,
+            snapshot.session.worktree_id.as_deref(),
+            snapshot.session.cwd.as_deref(),
+        )?;
+        legacy_targets.guard(&tx)?;
         let evidence = json!({
             "reserved_agent_id":command.reserved_agent_id,
             "provider":snapshot.session.provider,

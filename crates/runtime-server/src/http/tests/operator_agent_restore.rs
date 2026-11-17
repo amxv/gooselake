@@ -1,3 +1,4 @@
+use super::native_review_refusal::{assert_refusal, refuse_prose_variants};
 use super::operator_native_policy::operator_policy_fixture;
 use super::workspace_worktree_routes::call;
 use super::*;
@@ -175,7 +176,7 @@ async fn restore_sqlite_revision_ceiling_rejects_before_native_resume() {
 }
 
 #[tokio::test]
-async fn restore_review_refresh_ignores_unrelated_corrupt_session() {
+async fn restore_prose_refusal_ignores_unrelated_corrupt_session() {
     let (router, token, temp, provider, runtime, workspace, agent_id, revision) =
         archived_fixture().await;
     let original = runtime.get_session(&agent_id).await.unwrap();
@@ -211,16 +212,13 @@ async fn restore_review_refresh_ignores_unrelated_corrupt_session() {
     let uri =
         format!("/v2/workspaces/{workspace}/agents/{agent_id}/restores/{operation_id}/resolve");
     let input = review_input(&original, revision, "resumed");
-    let (status, first) = call(&router, &token, "POST", &uri, Some(input.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{first:?}");
-    assert_eq!(first["resolution"], "resumed");
+    let original_operation = store.get_operation(operation_id).unwrap().unwrap();
+    refuse_prose_variants(&router, &token, &db, &uri, operation_id, vec![input]).await;
     assert_eq!(
-        runtime.get_session(&agent_id).await.unwrap().status,
-        "restore_recovery_required"
+        store.get_operation(operation_id).unwrap().unwrap(),
+        original_operation
     );
-    let (status, repeated) = call(&router, &token, "POST", &uri, Some(input), None).await;
-    assert_eq!(status, StatusCode::OK, "{repeated:?}");
-    assert_eq!(repeated, first);
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), original);
     assert_eq!(provider.restore_call_count().await, baseline);
     assert!(store.hydrate_runtime_state().is_err());
 }
@@ -323,7 +321,7 @@ async fn operator_restore_key_replays_exact_atomic_roster_receipt_without_native
 }
 
 #[tokio::test]
-async fn unknown_restore_consumes_key_and_not_resumed_review_permits_new_attempt_only() {
+async fn not_resumed_prose_keeps_original_restore_key_and_claim() {
     let (router, token, temp, provider, runtime, workspace, agent_id, revision) =
         archived_fixture().await;
     let original = runtime.get_session(&agent_id).await.unwrap();
@@ -400,19 +398,28 @@ async fn unknown_restore_consumes_key_and_not_resumed_review_permits_new_attempt
     let (status, rejected) =
         call(&router, &token, "POST", &uri, Some(wrong_attachment), None).await;
     assert_eq!(status, StatusCode::CONFLICT, "{rejected:?}");
-    let (status, result) = call(&router, &token, "POST", &uri, Some(evidence.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{result:?}");
-    assert_eq!(result["resolution"], "not_resumed");
-    assert_eq!(result["restart_required"], false);
-    let (status, same) = call(&router, &token, "POST", &uri, Some(evidence.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{same:?}");
-    assert_eq!(result, same);
-    let mut contradictory = evidence;
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let original_operation = store.get_operation(op_id).unwrap().unwrap();
+
+    let mut contradictory = evidence.clone();
     contradictory["resolution"] = serde_json::json!("resumed");
     contradictory["observed_provider_session_ref"] =
         serde_json::json!(original.provider_session_ref);
-    let (status, _) = call(&router, &token, "POST", &uri, Some(contradictory), None).await;
-    assert_eq!(status, StatusCode::CONFLICT);
+    contradictory["observed_canonical_provider_session_ref"] =
+        serde_json::json!(original.canonical_provider_session_ref);
+    refuse_prose_variants(
+        &router,
+        &token,
+        &db,
+        &uri,
+        op_id,
+        vec![evidence, contradictory],
+    )
+    .await;
+
     let (status, old, _) = restore_http(
         &router,
         &token,
@@ -421,25 +428,33 @@ async fn unknown_restore_consumes_key_and_not_resumed_review_permits_new_attempt
         Some("unknown-restore-key"),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{old:?}");
-    assert_eq!(old["error"]["code"], "operator_verified_not_resumed");
-    assert_eq!(provider.restore_call_count().await, baseline + 1);
+    assert_refusal(status, &old, op_id);
     provider.set_restore_failure_mode(0);
-    let (status, restored, _) = restore_http(
+    let (status, blocked, _) = restore_http(
         &router,
         &token,
         &workspace,
         &agent_id,
-        Some("after-reviewed-not-resumed"),
+        Some("after-refused-not-resumed"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{restored:?}");
-    assert_eq!(restored["revision"], revision + 1);
-    assert_eq!(provider.restore_call_count().await, baseline + 2);
+    assert_eq!(status, StatusCode::CONFLICT, "{blocked:?}");
+    assert_eq!(
+        store.get_operation(op_id).unwrap().unwrap(),
+        original_operation
+    );
+    assert_eq!(original_operation.claims.len(), 1);
+    assert_eq!(
+        runtime.get_workspace_agent(&workspace, &agent_id).unwrap(),
+        agent
+    );
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), original);
+    assert!(provider.native_cwd(&agent_id).await.is_some());
+    assert_eq!(provider.restore_call_count().await, baseline + 1);
 }
 
 #[tokio::test]
-async fn reviewed_resumed_restore_is_fenced_until_exact_startup_reattachment() {
+async fn resumed_prose_cannot_authorize_drifted_or_exact_startup_resume() {
     let (router, token, temp, provider, runtime, workspace, agent_id, revision) =
         archived_fixture().await;
     let original = runtime.get_session(&agent_id).await.unwrap();
@@ -459,24 +474,13 @@ async fn reviewed_resumed_restore_is_fenced_until_exact_startup_reattachment() {
         .unwrap();
     let uri = format!("/v2/workspaces/{workspace}/agents/{agent_id}/restores/{op_id}/resolve");
     let evidence = review_input(&original, revision, "resumed");
-    let (status, reviewed) =
-        call(&router, &token, "POST", &uri, Some(evidence.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{reviewed:?}");
-    assert_eq!(reviewed["resolution"], "resumed");
-    assert_eq!(reviewed["restart_required"], true);
-    assert_eq!(reviewed["agent_revision"], revision + 1);
-    assert_eq!(
-        runtime.get_session(&agent_id).await.unwrap().status,
-        "restore_recovery_required"
-    );
-    assert_eq!(
-        runtime
-            .get_workspace_agent(&workspace, &agent_id)
-            .unwrap()
-            .lifecycle_state,
-        runtime_core::WorkspaceAgentLifecycleState::Active
-    );
-    assert_eq!(provider.restore_call_count().await, baseline + 1);
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let original_operation = store.get_operation(op_id).unwrap().unwrap();
+    let agent = runtime.get_workspace_agent(&workspace, &agent_id).unwrap();
+    refuse_prose_variants(&router, &token, &db, &uri, op_id, vec![evidence]).await;
 
     let (status, replay, _) = restore_http(
         &router,
@@ -486,55 +490,38 @@ async fn reviewed_resumed_restore_is_fenced_until_exact_startup_reattachment() {
         Some("known-resume-lost-receipt"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{replay:?}");
-    assert_eq!(replay["lifecycle_state"], "active");
+    assert_refusal(status, &replay, op_id);
     let (status, blocked) = call(
         &router,
         &token,
         "POST",
         &format!("/v2/agents/{agent_id}/turns"),
-        Some(serde_json::json!({"input":[{"type":"text","text":"should be fenced"}]})),
+        Some(serde_json::json!({
+            "input":[{"type":"text","text":"should be fenced"}]
+        })),
         Some("no-native-before-startup"),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{blocked:?}");
     assert_eq!(provider.restore_call_count().await, baseline + 1);
 
-    let (status, same) = call(&router, &token, "POST", &uri, Some(evidence), None).await;
-    assert_eq!(status, StatusCode::OK, "{same:?}");
-    assert_eq!(same, reviewed);
-    provider.set_restore_failure_mode(3);
-    let wrong_attachment = reopen_runtime(&temp, provider.clone()).await;
-    let mismatch = wrong_attachment.recover_startup().await.unwrap();
-    assert!(
-        mismatch
-            .notes
-            .iter()
-            .any(|note| note.contains("still fenced")),
-        "{mismatch:?}"
-    );
-    let still_fenced = wrong_attachment.get_session(&agent_id).await.unwrap();
-    assert_eq!(still_fenced.status, "restore_recovery_required");
-    assert_eq!(
-        still_fenced.failure_code.as_deref(),
-        Some("startup_restore_identity_changed")
-    );
-    assert_eq!(provider.restore_call_count().await, baseline + 2);
-    provider.set_restore_failure_mode(0);
-    let reopened = reopen_runtime(&temp, provider.clone()).await;
-    let recovery = reopened.recover_startup().await.unwrap();
-    assert!(
-        recovery
-            .notes
-            .iter()
-            .any(|note| note.contains("restore reattached with durable settings")),
-        "{recovery:?}"
-    );
-    assert_eq!(
-        reopened.get_session(&agent_id).await.unwrap().status,
-        "ready"
-    );
-    assert_eq!(provider.restore_call_count().await, baseline + 3);
+    for mode in [3, 0] {
+        provider.set_restore_failure_mode(mode);
+        let reopened = reopen_runtime(&temp, provider.clone()).await;
+        reopened.recover_startup().await.unwrap();
+        assert_eq!(reopened.get_session(&agent_id).await.unwrap(), original);
+        assert_eq!(
+            reopened.get_workspace_agent(&workspace, &agent_id).unwrap(),
+            agent
+        );
+        assert_eq!(
+            store.get_operation(op_id).unwrap().unwrap(),
+            original_operation
+        );
+        assert_eq!(provider.restore_call_count().await, baseline + 1);
+    }
+    assert_eq!(original_operation.claims.len(), 1);
+    assert!(provider.native_cwd(&agent_id).await.is_some());
 }
 
 #[tokio::test]

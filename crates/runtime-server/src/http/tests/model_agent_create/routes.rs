@@ -385,6 +385,12 @@ async fn model_add_new_git_receipt_fault_preserves_native_checkout_and_original_
             .is_err());
         assert!(Path::new(&worktree.worktree_cwd).is_dir());
         assert_eq!(f.provider.create_call_count(), baseline);
+        let create_before = f
+            .store()
+            .get_operation(&command.operation.operation_id)
+            .unwrap()
+            .unwrap();
+        let git_before = f.store().get_operation(git_id).unwrap().unwrap();
         super::hooks::review(
             f,
             &command.operation.operation_id,
@@ -401,5 +407,30 @@ async fn model_add_new_git_receipt_fault_preserves_native_checkout_and_original_
         )
         .unwrap();
         assert_eq!(pins, 2);
+        assert_eq!(
+            f.store()
+                .get_operation(&command.operation.operation_id)
+                .unwrap()
+                .unwrap(),
+            create_before
+        );
+        assert_eq!(
+            f.store().get_operation(git_id).unwrap().unwrap(),
+            git_before
+        );
+        assert_eq!(
+            create_before
+                .claims
+                .iter()
+                .filter(|claim| claim.resource_kind == "operator_agent_create_native")
+                .count(),
+            1
+        );
+        assert_eq!(
+            git_before.operation.phase,
+            runtime_core::OperationPhase::ManualReview
+        );
+        assert!(Path::new(&worktree.worktree_cwd).is_dir());
+        assert_eq!(f.provider.create_call_count(), baseline);
     }
 }

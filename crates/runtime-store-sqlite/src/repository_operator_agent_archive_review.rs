@@ -1,21 +1,16 @@
 use runtime_core::{
-    OperationActorKind, OperationPhase, OperationResourceClaimRecord, OperationTransitionRecord,
+    OperationActorKind, OperationPhase, OperationResourceClaimRecord,
     OperatorAgentArchiveResolution, OperatorAgentArchiveReviewCommand,
-    OperatorAgentArchiveReviewResponse, RuntimeError, WorkspaceAgentLifecycleState,
+    OperatorAgentArchiveReviewResponse, RuntimeError,
 };
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 
-use crate::db::{db_error, json_to_string, open_connection};
-use crate::operation_tx::OperationAuthorityTransaction;
-use crate::repository_member_agent_archive::{
-    update_member_archive_parent, validate_member_archive_record,
-};
+use crate::db::{db_error, open_connection};
+use crate::repository_member_agent_archive::validate_member_archive_record;
 use crate::repository_operator_agent_archive::{CLAIM_KIND, EFFECT_KIND, OPERATION_KIND};
-use crate::repository_operator_agent_restore::{restore_state, restored_session_snapshot};
+use crate::repository_operator_agent_restore::restore_state;
 use crate::repository_workspace::operation_by_id;
-use crate::repository_workspace_agent::update_session;
-use crate::repository_workspace_agent_lifecycle::apply_workspace_agent_lifecycle_tx;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
@@ -30,11 +25,8 @@ impl SqliteRuntimeRepository {
         ).map_err(|error| db_error("failed checking independently reviewed archive reattachment", error))
     }
 
-    /// Independent evidence settles one quarantined provider close without
-    /// dispatching any native provider work. A closed attachment may archive
-    /// the roster atomically. A verified-not-closed attachment remains active,
-    /// but new native work is frozen until a *fresh* startup proves exact
-    /// provider identity again.
+    /// Return an exact retained historical review without creating new authority.
+    /// Fresh prose preserves the original uncertain effect and its native claim.
     pub fn resolve_operator_agent_archive_review(
         &self,
         command: &OperatorAgentArchiveReviewCommand,
@@ -59,7 +51,7 @@ impl SqliteRuntimeRepository {
                     || input.observed_canonical_provider_session_ref.is_some()))
         {
             return Err(RuntimeError::InvalidState(
-                "operator archive review requires exact original attachment and independently verified evidence".into(),
+                "operator archive review requires exact original attachment and 8–2048 evidence bytes".into(),
             ));
         }
         let mut normalized_input = input.clone();
@@ -180,7 +172,7 @@ impl SqliteRuntimeRepository {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).optional().map_err(|error| db_error("failed reading archive review fence", error))?
             .ok_or_else(|| RuntimeError::Conflict("archive review no longer owns native claim".into()))?;
-        let claim = OperationResourceClaimRecord {
+        let _claim = OperationResourceClaimRecord {
             resource_kind: CLAIM_KIND.into(),
             resource_id: command.agent_id.clone(),
             claim_mode: "exclusive".into(),
@@ -190,124 +182,9 @@ impl SqliteRuntimeRepository {
             })?,
             acquired_at,
         };
-        let closed = input.resolution == OperatorAgentArchiveResolution::Closed;
-        let changed_at = command
-            .reviewed_at
-            .max(state.session_updated_at.saturating_add(1));
-        let mut session = restored_session_snapshot(&tx, &command.agent_id)?;
-        let (new_revision, terminal_result) = if closed {
-            session.status = "closed".into();
-            session.closed_at = Some(changed_at);
-            session.active_turn_id = None;
-            session.updated_at = changed_at;
-            let reason = record.normalized_request["reason"].as_str();
-            let updated = apply_workspace_agent_lifecycle_tx(
-                &tx,
-                &session,
-                &command.agent_id,
-                WorkspaceAgentLifecycleState::Archived,
-                reason,
-                changed_at,
-                (record.actor.kind == OperationActorKind::Agent)
-                    .then_some(record.actor.identifier.as_str()),
-                Some(&command.operation_id),
-            )?;
-            (
-                updated.revision,
-                serde_json::to_value(updated).map_err(|error| {
-                    RuntimeError::Bootstrap(format!("invalid archive review result: {error}"))
-                })?,
-            )
-        } else {
-            session.status = "archive_recovery_required".into();
-            session.provider_session_ref = input.observed_provider_session_ref.clone();
-            session.canonical_provider_session_ref =
-                input.observed_canonical_provider_session_ref.clone();
-            session.closed_at = None;
-            session.active_turn_id = None;
-            session.failure_code = Some("operator_verified_archive_reattachment_pending".into());
-            session.failure_message = Some(
-                "independently verified provider remained open; require fresh startup reattachment"
-                    .into(),
-            );
-            session.updated_at = changed_at;
-            update_session(&tx, &session)?;
-            (
-                input.expected_revision,
-                json!({
-                    "operation_id":command.operation_id,
-                    "code":"operator_verified_not_closed",
-                    "agent_revision":input.expected_revision,
-                    "restart_required":true,
-                }),
-            )
-        };
-        let response = OperatorAgentArchiveReviewResponse {
-            operation_id: command.operation_id.clone(),
-            agent_id: command.agent_id.clone(),
-            resolution: input.resolution,
-            agent_revision: new_revision,
-            restart_required: !closed,
-            reviewed_at_ms: command.reviewed_at,
-        };
-        let review = json!({
-            "input": input_json, "response": response,
-            "actor": command.actor, "reviewed_at_ms": command.reviewed_at,
-        });
-        let effect_update = tx.execute(
-            "UPDATE runtime_operation_effects SET phase='finalized',evidence_json=?2,updated_at=?3
-             WHERE operation_id=?1 AND effect_kind=?4 AND phase='uncertain'",
-            params![command.operation_id, json_to_string(&json!({
-                "original_intent": effect, "operator_review": review,
-            }))?, changed_at, EFFECT_KIND],
-        ).map_err(|error| db_error("failed recording exact independent archive evidence", error))?;
-        if effect_update != 1 {
-            return Err(RuntimeError::Conflict(
-                "native archive review effect raced".into(),
-            ));
-        }
-        let final_phase = if closed {
-            OperationPhase::Completed
-        } else {
-            OperationPhase::Failed
-        };
-        let authority = OperationAuthorityTransaction::new(&tx);
-        authority.terminalize(
-            &command.operation_id,
-            OperationPhase::ManualReview,
-            final_phase,
-            Some(&command.workspace_id),
-            &terminal_result,
-            (!closed).then_some("operator_verified_not_closed"),
-            (!closed)
-                .then_some("operator independently verified original native close never occurred"),
-            changed_at,
-        )?;
-        authority.append_transition(&OperationTransitionRecord {
-            operation_id: command.operation_id.clone(),
-            sequence: 3,
-            from_phase: Some(OperationPhase::ManualReview),
-            to_phase: final_phase,
-            evidence: Some(json!({
-                "review_resolution":input.resolution,
-                "restart_required":!closed,
-            })),
-            created_at: changed_at,
-        })?;
-        authority.release_claim(&claim)?;
-        update_member_archive_parent(
-            &tx,
-            &record,
-            "finalized",
-            if closed {
-                "native_close_confirmed"
-            } else {
-                "verified_not_closed"
-            },
-            changed_at,
-        )?;
-        tx.commit()
-            .map_err(|error| db_error("failed committing exact native archive review", error))?;
-        Ok(response)
+        Err(RuntimeError::operation_unresolved(
+            command.operation_id.clone(),
+            "prose assertions cannot settle an uncertain native archive; inspect the original operation; native retry is not authorized",
+        ))
     }
 }

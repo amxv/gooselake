@@ -27,6 +27,8 @@ pub(crate) fn verified_prior_close(
            AND op.kind='workspace_retirement' AND op.phase='completed'
            AND e.effect_kind='workspace_provider_close' AND e.phase='finalized'
            AND json_extract(e.evidence_json,'$.verified')=1
+          AND json_extract(e.evidence_json,'$.proof_kind') IN
+              ('native_session_close_acknowledged','native_process_terminated')
            AND s.status='closed' AND s.active_turn_id IS NULL
            AND (a.session_id IS NULL OR a.lifecycle_state='archived')
            AND json_extract(e.evidence_json,'$.provider')=s.provider

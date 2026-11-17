@@ -474,6 +474,8 @@ impl SqliteRuntimeRepository {
                     COALESCE(SUM(CASE WHEN effect_kind='workspace_provider_close'
                         AND phase='finalized'
                         AND json_extract(evidence_json,'$.verified')=1
+          AND json_extract(evidence_json,'$.proof_kind') IN
+              ('native_session_close_acknowledged','native_process_terminated')
                         THEN 1 ELSE 0 END),0)
              FROM runtime_operation_effects WHERE operation_id=?1",
                 [operation_id],

@@ -98,7 +98,7 @@ fn retirement_turn_claim_requires_signed_attempt_headroom_before_native_interrup
 }
 
 #[test]
-fn restarted_operator_close_settles_exact_active_turn_without_rewriting_unknown_dispatch() {
+fn restarted_prose_close_cannot_settle_exact_active_turn_or_unknown_dispatch() {
     active_turn_review_case("dispatched");
 }
 
@@ -225,8 +225,7 @@ fn active_turn_review_case(initial_dispatch: &str) {
         dispatch_error_json='{\"code\":\"native_ack_lost\",\"provider_dispatch_outcome\":\"unknown\"}'
         WHERE turn_id='active-review-turn'",[]).unwrap();
 
-    // Reopen without reattaching or replaying any native operation. The
-    // operator has independently closed the exact attachment named below.
+    // Reopen without native replay. Prose about the exact attachment is not a close receipt.
     let restarted = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
     restarted.initialize_schema().unwrap();
     let original = restarted
@@ -257,15 +256,23 @@ fn active_turn_review_case(initial_dispatch: &str) {
     for active in [None, Some("different-turn".into())] {
         let mut stale = identity.clone();
         stale.active_turn_id = active;
-        assert!(restarted
-            .reconcile_workspace_retirement(&prepare(stale, "stale-active-turn"))
-            .is_err());
+        assert!(matches!(
+            restarted.reconcile_workspace_retirement(&prepare(stale, "stale-active-turn")),
+            Err(runtime_core::RuntimeError::Conflict(_))
+        ));
     }
     let valid = prepare(identity, "closed-active-attachment");
     assert!(
-        restarted.reconcile_workspace_retirement(&valid).is_err(),
-        "provider closure cannot imply an independent managed process has exited"
+        matches!(restarted.reconcile_workspace_retirement(&valid),Err(runtime_core::RuntimeError::OperationUnresolved {operation_id,..}) if operation_id==command.operation_id)
     );
+    let running_process: String = db
+        .query_row(
+            "SELECT status FROM managed_processes WHERE process_id='independent-native-process'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(running_process, "running");
     assert_eq!(
         restarted
             .get_operation(&command.operation_id)
@@ -303,86 +310,37 @@ fn active_turn_review_case(initial_dispatch: &str) {
             .receipt
             .settled
     );
-    let reviewed = restarted.reconcile_workspace_retirement(&valid).unwrap();
-    assert_eq!(reviewed.resume_command, Some(command.clone()));
-    let (turn_status,dispatch,prior_dispatch,active,status):(String,String,String,Option<String>,String)=db.query_row(
-        "SELECT t.status,a.dispatch_state,json_extract(a.dispatch_error_json,'$.prior_dispatch_error.code'),
-            s.active_turn_id,s.status FROM turns t JOIN turn_admissions a ON a.turn_id=t.id
-            JOIN sessions s ON s.id=t.session_id WHERE t.id='active-review-turn'",[],
-        |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap();
-    assert_eq!(turn_status, "interrupted");
+    let after_process = restarted
+        .get_operation(&command.operation_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(after_process.operation.phase, OperationPhase::ManualReview);
+    let before = super::legacy_native_turn_guards::raw_state(&db);
+    for _ in 0..2 {
+        assert!(
+            matches!(restarted.reconcile_workspace_retirement(&valid),Err(runtime_core::RuntimeError::OperationUnresolved {operation_id,..}) if operation_id==command.operation_id)
+        );
+        assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
+    }
+    let(turn_status,dispatch,original_error,active,status):(String,String,String,Option<String>,String)=db.query_row("SELECT t.status,a.dispatch_state,json_extract(a.dispatch_error_json,'$.code'),s.active_turn_id,s.status FROM turns t JOIN turn_admissions a ON a.turn_id=t.id JOIN sessions s ON s.id=t.session_id WHERE t.id='active-review-turn'",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).unwrap();
+    assert_eq!(turn_status, "running");
     assert_eq!(dispatch, "unknown");
-    assert_eq!(prior_dispatch, "native_ack_lost");
-    assert_eq!(active, None);
-    assert_eq!(status, "closed");
-    let approvals: i64 = db
-        .query_row(
-            "SELECT COUNT(*) FROM approvals WHERE status='cancelled'
-        AND json_extract(response_json,'$.prior_response.decision')='allow'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(approvals, 2);
-    let proof_count: i64 = db
-        .query_row(
-            "SELECT COUNT(*) FROM workspace_retirement_closed_turns
-        WHERE turn_id='active-review-turn'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(proof_count, 1);
-    restarted
-        .settle_passive_workspace_retirement(&command.operation_id, 112)
-        .unwrap();
-    restarted
-        .finalize_settled_workspace_retirement(&command.operation_id, 113)
-        .unwrap()
-        .unwrap();
+    assert_eq!(original_error, "native_ack_lost");
+    assert_eq!(active, Some("active-review-turn".into()));
+    assert_eq!(status, session.status);
+    let approvals:(i64,i64)=db.query_row("SELECT (SELECT COUNT(*) FROM approvals WHERE id='undecided-approval' AND status='pending' AND json_extract(response_json,'$.decision')='allow'),(SELECT COUNT(*) FROM approvals WHERE id='decided-approval' AND status='decision_pending' AND json_extract(response_json,'$.decision')='allow')",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+    assert_eq!(approvals, (1, 1));
+    let proof_count:i64=db.query_row("SELECT COUNT(*) FROM workspace_retirement_closed_turns WHERE turn_id='active-review-turn'",[],|row|row.get(0)).unwrap();
+    assert_eq!(proof_count, 0);
+    assert!(matches!(
+        restarted.finalize_settled_workspace_retirement(&command.operation_id, 113),
+        Err(runtime_core::RuntimeError::Conflict(_))
+    ));
+    assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
     assert_eq!(
-        restarted
-            .get_operation(&command.operation_id)
-            .unwrap()
-            .unwrap()
-            .operation
-            .phase,
-        OperationPhase::Completed
+        restarted.get_operation(&command.operation_id).unwrap(),
+        Some(after_process)
     );
-    assert_eq!(
-        restarted
-            .reconcile_workspace_retirement(&valid)
-            .unwrap()
-            .receipt,
-        reviewed.receipt
-    );
-
-    // A later explicit restore creates a new attachment generation. It must
-    // invalidate current close reuse without reviving a resolved historical turn.
-    let active_workspace = register(
-        &restarted,
-        std::path::Path::new(&workspace.canonical_root),
-        "after-active-review",
-    );
-    db.execute(
-        "UPDATE workspace_agents SET lifecycle_state='active',archived_at=NULL,
-        revision=revision+1 WHERE session_id=?1",
-        [&session.id],
-    )
-    .unwrap();
-    session.active_turn_id = None;
-    session.status = "ready".into();
-    session.updated_at = valid.reviewed_at + 1;
-    restarted.upsert_session(&session).unwrap();
-    let next = retirement_command(&active_workspace, "new-generation-retirement");
-    restarted.admit_workspace_retirement(&next).unwrap();
-    let close = restarted
-        .get_operation(&next.operation_id)
-        .unwrap()
-        .unwrap()
-        .effects
-        .into_iter()
-        .find(|effect| effect.effect_kind == "workspace_provider_close")
-        .unwrap();
-    assert_eq!(close.phase, "intended");
 }
+
+mod known_close;

@@ -469,19 +469,42 @@ A frozen retirement blocks further SQLite admission and native process launch au
 
 #### Reconciling an uncertain retirement
 
-An operator can reconcile one exact quarantined effect through `POST /v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile`. This route requires operator bearer authentication and an `Idempotency-Key`; it is not available through the model tool surface. Read the effect ID and any recorded native identity from `GET /v2/operations/{operation_id}` before reviewing it. Inspect the current agent revision through `GET /v2/workspaces/{workspace_id}/agents/{agent_id}` and the exact session references, timestamp, and active turn through `GET /v1/sessions/{agent_id}`. The request includes `effect_id`, a bounded `evidence` explanation (8–2048 UTF-8 bytes), and one of these typed resolutions:
+An operator can inspect or recheck one exact quarantined effect through
+`POST /v2/workspaces/{workspace_id}/retirement/{operation_id}/reconcile`.
+Operator bearer authentication and an `Idempotency-Key` are required. Read the
+original effect and identity through `GET /v2/operations/{operation_id}` first.
+The strict request includes `effect_id`, an `evidence` explanation of 8–2048
+UTF-8 bytes, and a typed `resolution`:
 
-- `{"kind":"provider_closed","identity":{"agent_id":"...","provider":"codex","provider_session_ref":"...","canonical_provider_session_ref":null,"agent_revision":0,"session_updated_at":0,"active_turn_id":null}}` asserts that the operator independently verified closure of that exact native attachment. Replace every example value with the current recorded identity. Provider, native and canonical references, agent revision, session timestamp, and active logical turn must match; an old assertion cannot authorize a changed or restored attachment. Verified attachment closure can settle its exact snapshotted logical turn and pending approvals after a restart, while preserving any historical uncertainty about whether input was dispatched. Managed processes still require their own terminal evidence. This records an audited close receipt and archives the attachment without sending another native close request.
-- `{"kind":"recheck_settled"}` asks the runtime to verify durable settlement facts for the exact turn, process, delivery, notice, or hook effect. The explanation alone cannot authorize a result. If the required proof is still missing, the receipt reports `settled:false` and the retirement stays quarantined.
+- `{"kind":"provider_closed","identity":{...}}` retains its historical request
+  shape, including the exact agent/provider/native references, revision,
+  session timestamp and active turn. A fresh, well-formed assertion returns
+  `409 outcome_unresolved` with the original operation ID, inspection path and
+  `native_retry_authorized:false`. Matching identity and prose do not establish
+  native closure. No close receipt, review row, archive, turn or approval
+  settlement, claim release, or background continuation is created.
+- `{"kind":"recheck_settled"}` verifies existing durable terminal facts for
+  the original turn, process, delivery, notice or hook. The explanation cannot
+  supply missing proof. A receipt with `settled:false` keeps the retirement
+  quarantined. A real terminal fact may settle its own obligation while other
+  unknown effects remain fenced.
 
-The response is an immutable review receipt with `settled`, `operation_phase`, and `unresolved_effect_ids`. Repeating the same review key and input returns that receipt; changing the input with the same key returns a conflict. Once the uncertain effects are resolved, the original retirement operation returns to `requested` and its background worker continues the remaining admitted work. A successful review response does not itself mean the workspace is retired: inspect the original operation until it reaches `completed`. The resource fence remains in place throughout reconciliation.
+Exact historical review receipts remain readable with the same key and input;
+changing that input conflicts. Historical replay never starts the worker.
+For a successful current durable-fact recheck, the immutable receipt reports
+`settled`, `operation_phase` and `unresolved_effect_ids`. Only after every
+required effect is independently settled can the original operation resume
+its remaining admitted work. Inspect that operation for terminal completion.
 
-After an operator's retirement review commits, the runtime refreshes only the
-affected native-close attachment and its turns, approvals, and dispatch
-admissions from a consistent SQLite read snapshot. Malformed unrelated
-historical session or input data cannot mask a committed review receipt with a
-post-commit projection error. A corrupt *affected* attachment is not silently
-repaired, and no unknown native action is retried or inferred complete.
+Close receipts used for retirement completion, reuse, reactivation, or
+cancellation of an undispatched pending input must use supported strong proof:
+`native_session_close_acknowledged` or `native_process_terminated`, with the
+existing exact attachment and generation checks. Historical
+`operator_verified_closed`, missing and unknown proof kinds remain inspectable
+but cannot supply this authority. An external observation, a new key, a
+restart or cleanup does not authorize repeating an uncertain native effect.
+Existing terminal input facts and exact dispatched admissions can settle
+independently of close proof.
 
 Native close proof is provider-specific. Codex retirement waits for its isolated app-server child to exit. Claude retirement seals the session against new SDK subprocesses and waits for every child owned by that session to exit. ACP requires the negotiated close capability and a valid acknowledgement from the same connection. Unsupported, malformed, or timed-out outcomes remain recoverable `manual_review` state instead of being treated as successful closure.
 
@@ -657,21 +680,21 @@ Git/hooks/provider calls for them. Inspect
 `GET /v2/operations/{operation_id}` for the reserved agent ID, effect evidence
 and frozen original launch snapshot.
 
-For an independently verified provider outcome, resolve that exact intent via
-`POST /v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve`.
-Supply `resolution` (`created` or `not_created`), substantive `evidence` (8–2048
-bytes), the original `reserved_agent_id` and `provider`. For `created`, also
-supply the independently observed `observed_provider_session_ref` and nullable
-`observed_canonical_provider_session_ref`: a **durably frozen pre-provider
-launch snapshot is required** to reconstruct approved session/agent/onboarding
-authority, with no provider call. The restored agent stays in
-`create_recovery_required` until a fresh startup successfully reattaches the
-exact observed native identity. A mismatched/failed reattachment leaves it
-fenced. Verified `not_created` permanently consumes the original key with
-`409 operator_verified_not_created`, preserves any previously created Git
-checkout for separate audited cleanup, and permits a distinct caller key for
-a new creation. The evidence-only review rejects `Idempotency-Key`, `If-Match`
-and extra JSON fields, and an identical review replays its stored receipt.
+The historical review route
+`POST /v2/workspaces/{workspace_id}/agents/creations/{operation_id}/resolve`
+retains strict `resolution` (`created` or `not_created`), 8–2048-byte `evidence`,
+the original `reserved_agent_id` and `provider`, plus observed native references
+for `created`. It rejects `Idempotency-Key`, `If-Match` and unknown fields.
+Identity, claim, member-route and frozen launch validation still apply.
+
+A fresh valid prose review returns `409 outcome_unresolved` for the original
+operation, with its inspection path and `native_retry_authorized:false`.
+It cannot reconstruct a session or agent, consume onboarding/hook context,
+release native or checkout/branch claims, clear the original key, or authorize
+another native call. Exact terminal reviews retained from older versions can
+still be inspected with identical input; they create no new authority.
+Keep an uncertain creation and its original reservations intact until a
+supported independent settlement mechanism is available.
 
 The agent creation and archive requests reject unknown fields before native
 provider or lifecycle effects. Nested `current_preferences` and onboarding
@@ -735,69 +758,34 @@ On startup, any durable policy intent lacking a terminal native receipt is
 quarantined as `manual_review` with its original claim retained. Recovery
 does not guess whether the provider call happened or silently resubmit it.
 
-### Resolve an uncertain native policy without a second provider call
+### Inspect an uncertain native policy
 
-Use `GET /v2/operations/{operation_id}` to inspect the **exact** original
-provider/agent identity, expected agent revision, original session timestamp,
-and effect intent. Independently examine that very same native provider
-attachment and determine whether the originally requested preferences or
-permission intent **actually applied** (`applied`) or **did not apply**
-(`not_applied`). If this cannot be established, leave the operation in
-`manual_review`: guessing can silently discard a provider-side change.
+Use `GET /v2/operations/{operation_id}` to inspect the original provider/agent
+identity, revision, session timestamp and effect. Keep the original operation
+in `manual_review` when a durable native result is missing.
 
 The operator-only
-`POST /v2/agents/{agent_id}/native-policy/{operation_id}/resolve` accepts a
-strict JSON object with `resolution`, `evidence` (8–2048 bytes), `provider`,
-`provider_session_ref`, `canonical_provider_session_ref` (`null` when absent),
-`expected_revision`, and `session_updated_at`. All identity fields must match
-the original immutable native-effect intent and the **currently unchanged**
-workspace/agent attachment. The optional strong `If-Match` must match
-`expected_revision`. This endpoint deliberately rejects `Idempotency-Key`,
-since the existing `operation_id` is the immutable review target; retry the
-same review request to receive its original durable response. Different or
-conflicting evidence is rejected. `X-Operation-ID` identifies the reviewed
-operation. No native provider call is made by this endpoint.
+`POST /v2/agents/{agent_id}/native-policy/{operation_id}/resolve` retains its
+strict historical shape: `resolution` (`applied` or `not_applied`), `evidence`
+of 8–2048 bytes, `provider`, `provider_session_ref`, nullable
+`canonical_provider_session_ref`, `expected_revision` and `session_updated_at`.
+Identity must match both the admitted intent and current attachment. An optional
+strong `If-Match` must match the revision; `Idempotency-Key` is rejected.
 
-An `applied` review atomically commits the exact originally requested policy,
-increments its revision, and completes the original mutation operation. A
-repeat of its **original** idempotency key subsequently returns the confirmed
-success receipt without native redispatch. A `not_applied` review preserves
-the previous policy/revision, marks the operation failed, and permanently
-consumes the original key: repeat calls return nonretryable
-`409 operator_verified_not_applied` with the original `operation_id`.
-The operator evidence, prior uncertainty, final effect and terminal transition
-remain in `GET /v2/operations/{operation_id}`.
+Both fresh resolutions return `409 outcome_unresolved`, preserving the original
+operation ID, inspection path and `native_retry_authorized:false`. Prose cannot
+change policy, advance a revision, mark the effect terminal, release a claim,
+or authorize a new native attempt. Refusal remains valid at the signed revision
+ceiling. Normal acknowledgements still commit through the existing atomic
+native receipt path and exact successful keys still replay their receipts.
 
-After a native-policy, archive, restore or verified native-creation operator
-review commits, the live runtime refreshes only the reviewed session from
-SQLite. An unrelated malformed historical session payload does not turn an
-already-committed review into an
-HTTP error or cause another provider invocation. This does **not** imply that
-the entire store, a corrupted reviewed session, or subsequent startup can be
-recovered automatically.
-
-**Both outcomes leave the agent's runtime session in
-`policy_recovery_required`.** New turns and provider-native operations remain
-blocked even after the review releases its exclusive resource claim. Restart
-the runtime only after independent review. On the next startup, a successful
-native resume using the reconciled durable policy transitions the session to
-`ready`. If native reattachment fails, its recovery gate stays closed and
-another startup can retry the same exact identity. A review receipt is *not*
-permission to keep using a possibly stale in-process provider attachment.
-
-Example after inspecting the original operation/effect and obtaining its
-precise original identity (replace the placeholder values with the record's
-actual values, not a different session):
-
-```bash
-curl -fsS -X POST "$BASE_URL/v2/agents/$AGENT_ID/native-policy/$OPERATION_ID/resolve" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"resolution":"applied",
-       "evidence":"Verified the exact native session policy independently",
-       "provider":"codex","provider_session_ref":"<original-native-session-ref>",
-       "canonical_provider_session_ref":null,
-       "expected_revision":0,"session_updated_at":123456789}'
-```
+An identical historical terminal review can return its stored response without
+changing durable state or invoking a provider; different input conflicts.
+Historical policy/archive/restore/create review inspection refreshes only the
+current persisted target session when needed. It does not copy an old response
+into current authority. Unrelated malformed session history does not obscure
+the original target's valid refusal. A historical prose receipt is not evidence
+that an uncertain native effect is safe to repeat.
 
 Unkeyed `/v2` preference/permission requests now also create a durable one-shot
 native intent using a server-generated key and return `X-Operation-ID`. This
@@ -812,10 +800,10 @@ idempotency journals. Caller `Idempotency-Key` enables replay of the exact
 original receipt across restart and lost HTTP responses, while omitted keys
 create durable one-shot intents that cannot be identified by a later unkeyed
 HTTP retry. Both transitions check unresolved native policy, user-turn,
-restore and archive claims inside the SQLite write transaction. Independently
-reviewed open attachments remain fenced until startup verifies exact native
-reattachment, including when a stale manager or direct persistence caller
-tries to skip the normal gate.
+restore and archive claims inside the SQLite write transaction. Retained
+recovery-required statuses also block direct lifecycle persistence; stale
+managers cannot bypass those guards. Inspection of an old review supplies no
+fresh execution grant.
 
 ```bash
 curl -fsS -H "Authorization: Bearer $TOKEN" \
@@ -917,7 +905,7 @@ review routes reject `Idempotency-Key` with `400 idempotency_not_supported`
 instead of silently ignoring a requested replay guarantee; after an uncertain
 response, inspect the corresponding GET resource before deciding next steps.
 
-`GET /v2/agents/{agent_id}/edits/{operation_id}` returns the durable operation, child identity and replacement turn (if any). A crash or uncertain provider fork is `manual_review`, **never automatically retried**. While an edit remains unresolved, ordinary new turns, native compaction and worktree reassignment are blocked. An operator who has independently established a verified child attachment with no admitted replacement turn can record evidence at `POST /v2/agents/{agent_id}/edits/{operation_id}/resolve` using `{"evidence":"Provider child verified, no replacement admitted"}`; this settles the operation as failed without repeating the native effect. Unknown native child identity cannot be dismissed by an unverified assertion and remains fenced for explicit external recovery. The provider-native edit path is capability-gated; unsupported providers do not silently emulate it. **A provider conversation fork does not undo filesystem writes, commands or external tool side effects from superseded turns.**
+`GET /v2/agents/{agent_id}/edits/{operation_id}` returns the durable operation, child identity and replacement turn (if any). A crash or uncertain provider fork is `manual_review`, **never automatically retried**. While an edit remains unresolved, ordinary new turns, native compaction and worktree reassignment are blocked. When the runtime has already durably committed the provider-verified child attachment, an operator can record review context at `POST /v2/agents/{agent_id}/edits/{operation_id}/resolve` using `{"evidence":"Provider child verified, no replacement admitted"}`. Under the SQLite write transaction, the runtime rechecks that exact current idle child and the absence of any replacement admission tied to the original edit. Only then can it mark the edit failed without repeating the native effect. The prose does not establish the child identity or erase unknown native execution. Here `failed` means the combined fork-and-replacement request was abandoned before replacement admission; the already committed child attachment, supersession history and rebuilt transcript remain. Unknown native child identity cannot be dismissed by an unverified assertion and remains fenced for explicit external recovery. The provider-native edit path is capability-gated; unsupported providers do not silently emulate it. **A provider conversation fork does not undo filesystem writes, commands or external tool side effects from superseded turns.**
 
 ### Workspace worktree routes
 
@@ -1130,22 +1118,20 @@ quarantined in `manual_review` with its exclusive claim. The request returns
 `GET /v2/operations/{operation_id}` is required. Startup does not redispatch
 the original close or implicitly resume its uncertain native attachment.
 
-To reconcile independently verified provider state, use
+The historical route
 `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve`
-with `resolution` (`closed` or `not_closed`), 8–2048 bytes of explanatory
-`evidence`, `provider`, the exact `original_provider_session_ref`, nullable
-`original_canonical_provider_session_ref`, `expected_revision`, and
-`session_updated_at` from the admitted operation. For `not_closed`, also
-supply the independently observed `observed_provider_session_ref` and
-nullable `observed_canonical_provider_session_ref`; omit both for `closed`.
-This review endpoint never calls the provider; it accepts an optional matching
-strong `If-Match` but not `Idempotency-Key`, and identical reviews return the
-same durable receipt. Verified `closed` settles the original archive without
-another native request. Verified `not_closed` consumes the original key with
-nonretryable `409 operator_verified_not_closed`, preserves the active agent,
-and sets `archive_recovery_required`: only a new startup that reattaches to
-the independently observed native identity may reenable native work. A failed
-or changed reattachment remains fenced until corrected.
+accepts the strict original review shape: `resolution` (`closed` or
+`not_closed`), 8–2048-byte `evidence`, `provider`,
+`original_provider_session_ref`, nullable `original_canonical_provider_session_ref`,
+`expected_revision` and `session_updated_at`. `not_closed` requires observed
+native references; `closed` omits them. An optional matching strong `If-Match`
+is accepted and `Idempotency-Key` is rejected.
+
+Fresh prose returns `409 outcome_unresolved` with the original operation ID,
+inspection path and `native_retry_authorized:false`. It preserves the active
+roster, session, original key, target claim and any model parent outcome.
+It cannot declare closure or replace the native attachment. Exact historical
+terminal reviews remain readable without another native call or new authority.
 
 Agent restoration is a provider-native operation protected by a **pre-dispatch
 durable intent**, an exact per-agent resource claim, and a single SQLite
@@ -1168,22 +1154,19 @@ native operation leaves `manual_review` and never automatically dispatches
 another restore. An unresolved restore also fences other native turns,
 settings, reassignment and lifecycle changes across concurrent instances.
 
-After **independently verifying** the original native provider session, an
-operator can resolve a quarantined restore without contacting the provider.
-Send `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve`
-with `resolution` (`resumed` or `not_resumed`), substantive `evidence`, exact
-`provider`, `original_provider_session_ref`, nullable
-`original_canonical_provider_session_ref`, `expected_revision`, and
-`session_updated_at` from the original intent. For `resumed`, also supply the
-independently verified `observed_provider_session_ref` and nullable
-`observed_canonical_provider_session_ref`. This evidence-only endpoint accepts
-optional matching strong `If-Match`, rejects `Idempotency-Key`, and replays an
-identical review receipt. Verified `not_resumed` consumes the original key
-permanently with `409 operator_verified_not_resumed`; a distinct key can start
-a new restore. Verified `resumed` settles the durable roster/receipt but
-requires **a fresh runtime startup with successful exact provider identity
-reattachment** before any further native work. A changed attachment remains
-fenced under `restore_recovery_required` until corrected.
+The historical route
+`POST /v2/workspaces/{workspace_id}/agents/{agent_id}/restores/{operation_id}/resolve`
+retains `resolution` (`resumed` or `not_resumed`), 8–2048-byte `evidence`, exact
+original provider/native references, revision and session timestamp. `resumed`
+also requires the observed native references. Optional matching strong
+`If-Match` is accepted; `Idempotency-Key` and unknown fields are rejected.
+
+Both fresh prose resolutions return `409 outcome_unresolved` with the original
+operation ID, inspection path and `native_retry_authorized:false`. They leave
+the archived roster, session, original restore key and exclusive claim intact.
+A new key or restart cannot turn this refusal into a fresh restore attempt.
+Exact terminal review records from earlier versions remain inspectable with
+identical input, without native execution or a new settlement receipt.
 
 An archived agent is removed from the default active roster and its underlying runtime session rejects new turns. History, workspace ownership, alias, recreation policy, and provider identity remain durable. Restore returns the same agent ID and alias and resumes the provider from the stored policy; it does not implicitly assign any future workspace role such as lead.
 
@@ -2508,25 +2491,36 @@ or substituted hook receipt cannot authorize a provider launch or settle an
 already-admitted creation.
 
 An incomplete Add exposes its original parent and reserved child in
-`error.details.targets`, with statuses `not_admitted`, `native_admitted`,
-`outcome_unresolved`, `native_create_confirmed` or `verified_not_created`.
-Ambiguous Git, shell or provider outcomes are not retried. Startup quarantines
-an unreceipted native create without creating or resuming its reserved session.
-An authenticated Operator may use the agent-creation evidence-review route
-for the original child; review preserves the Agent actor and records the
-reviewer separately. A `created` review requires the exact saved launch and
-independent attachment evidence, then requires fresh exact reattachment.
-A `not_created` review releases the provider-session reservation and rejects
-unapplied hook context, but preserves an unresolved Git operation and retains
-checkout/branch reservations if an attempted pre-add shell still has an unknown
-outcome. Its saved evidence identifies the reservation owner and hook parent.
-Provider absence alone does not authorize checkout cleanup, and a late shell
-receipt cannot revive rejected context. Reviewing a child does not manufacture
-a missing whole-tool receipt or authorize another native call.
+`error.details.targets`, including the current target outcome. Ambiguous Git,
+shell or provider effects are not retried. Startup quarantines an unreceipted
+create without creating or resuming its reserved session. The original Agent
+actor, frozen launch, target operation and route reservations remain inspectable.
+
+Fresh `created` and `not_created` prose reviews return the original unresolved
+child coordinate. They do not materialize an agent, consume pending hook output,
+change the parent result, release a native claim or release checkout/branch
+reservations. A real late hook receipt may finish its own record; it does not
+prove the enclosing create outcome or authorize cleanup. Historical
+`verified_not_created` results remain history, not a fresh execution grant.
+Known native creation receipts still settle atomically under their original
+authority, including when later caller/grant revocation prevents unconsumed
+hook context from being applied.
 
 For `gg_team remove`, the runtime freezes the complete target set beneath the original invocation, then admits each native close separately under the actual Agent identity and current workspace membership/lead policy. Removal succeeds only when every original target has a confirmed native close and an atomic archived-agent receipt. The result retains `removed` and `preserve_worktrees: true`, adds the parent `operation_id`, and includes each target's child `operation_id` and `native_close: "confirmed"`. A target whose provider outcome is unknown stays active and exclusively fenced; the runtime does not advance to later targets or repeat the close.
 
-An incomplete removal returns the original parent coordinate in `error.details.operation_id` and an ordered `targets` projection containing each `agent_id`, child `operation_id` and status: `not_admitted`, `rejected_before_dispatch`, `admitted`, `outcome_unresolved`, `native_close_confirmed` or `verified_not_closed`. A partial batch or missing aggregate receipt returns non-retryable `outcome_unresolved`, even if earlier targets closed successfully. If inspection itself is unavailable, the same parent coordinate is retained with `inspection: "unavailable"`. Operators can inspect the existing operation records and use the archive evidence-review route for an uncertain child; review records the Operator separately and preserves the original Agent actor. Settling a child does not authorize unfinished targets or manufacture a missing whole-tool receipt. Startup quarantines an admitted but unreceipted child without native replay, and worktrees remain preserved.
+An incomplete removal returns the original parent coordinate in
+`error.details.operation_id` and ordered target outcomes, including each
+`agent_id` and child `operation_id`. Partial batches and missing aggregate
+receipts remain nonretryable `outcome_unresolved`, even when earlier targets
+closed successfully. If inspection is unavailable, the original parent is
+retained with `inspection:"unavailable"`.
+
+Fresh archive prose cannot settle an uncertain child, change its Agent actor or
+parent result, or release its claim. Exact historical `verified_not_closed`
+receipts remain inspectable. A real known close receipt still settles through
+the atomic native path without authorizing unfinished targets or manufacturing
+a missing whole-tool receipt. Startup quarantines admitted but unreceipted
+children without native replay, and worktrees remain preserved.
 
 An active model caller can remove or reassign an idle peer while its own turn is running. Caller eligibility follows current workspace membership and lead policy; the target must still be idle, active and free of unresolved native effects. A running caller cannot use removal or reassignment to bypass those restrictions on its own target session.
 

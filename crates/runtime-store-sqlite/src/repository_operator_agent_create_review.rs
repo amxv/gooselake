@@ -1,13 +1,11 @@
 use runtime_core::{
-    OperationActorKind, OperationPhase, OperationTransitionRecord, OperatorAgentCreateCommand,
-    OperatorAgentCreateResolution, OperatorAgentCreateReviewCommand,
-    OperatorAgentCreateReviewResponse, RuntimeError,
+    OperationActorKind, OperationPhase, OperatorAgentCreateCommand, OperatorAgentCreateResolution,
+    OperatorAgentCreateReviewCommand, OperatorAgentCreateReviewResponse, RuntimeError,
 };
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use crate::db::{db_error, json_to_string, open_connection};
-use crate::operation_tx::OperationAuthorityTransaction;
+use crate::db::{db_error, open_connection};
 use crate::repository_operator_agent_create::{
     read_frozen_create_plan, EFFECT_KIND, OPERATION_KIND,
 };
@@ -16,10 +14,8 @@ use crate::repository_workspace::operation_by_id;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
-    /// Evidence-only reconciliation for one opaque reserved agent identity.
-    /// Never call Git, shell hooks or the provider from here; an operator must
-    /// independently verify native session identity. Created sessions remain
-    /// fenced until a fresh startup verifies exact native reattachment.
+    /// Inspect exact historical review receipts. Fresh prose cannot settle an
+    /// uncertain create, reconstruct an agent, consume hook output, or release claims.
     pub fn resolve_operator_agent_create_review(
         &self,
         command: &OperatorAgentCreateReviewCommand,
@@ -43,7 +39,7 @@ impl SqliteRuntimeRepository {
                     || input.observed_canonical_provider_session_ref.is_some()))
         {
             return Err(RuntimeError::InvalidState(
-                "native agent creation review requires independently verified 8–2048-byte evidence and exact native identity".into(),
+                "native agent creation review requires 8–2048 evidence bytes and exact native identity".into(),
             ));
         }
         let mut normalized = input.clone();
@@ -157,190 +153,21 @@ impl SqliteRuntimeRepository {
                 requested_at: record.created_at,
                 worktree_operation_id: None,
             });
-        let claim = exact_create_claim(&tx, &admitted)?;
-        let created = input.resolution == OperatorAgentCreateResolution::Created;
-        let (exact, restart_required) = if created {
+        exact_create_claim(&tx, &admitted)?;
+        if input.resolution == OperatorAgentCreateResolution::Created {
             if let Some(member) = member.as_ref() {
                 crate::repository_member_agent_create_routes::validate_route(&tx, member, true)?;
             }
-            // Without a durably frozen launch policy, claiming a native
-            // attachment is not enough to reconstruct an authorized agent.
-            let snapshot = read_frozen_create_plan(&tx, &admitted)?.ok_or_else(|| {
+            read_frozen_create_plan(&tx, &admitted)?.ok_or_else(|| {
                 RuntimeError::Conflict(
                     "no durable pre-provider launch snapshot; cannot reconcile a created agent"
                         .into(),
                 )
             })?;
-            let mut session = snapshot.session;
-            let mut agent = snapshot.agent;
-            session.provider_session_ref = input.observed_provider_session_ref.clone();
-            session.canonical_provider_session_ref =
-                input.observed_canonical_provider_session_ref.clone();
-            session.status = "create_recovery_required".into();
-            session.closed_at = None;
-            session.failure_code = Some("operator_verified_create_reattachment_pending".into());
-            session.failure_message = Some(
-                "operator verified native creation; fresh exact provider reattachment required"
-                    .into(),
-            );
-            session.updated_at = command
-                .reviewed_at
-                .max(session.created_at.saturating_add(1));
-            agent.provider_session_ref = session.provider_session_ref.clone();
-            agent.canonical_provider_session_ref = session.canonical_provider_session_ref.clone();
-            agent.updated_at = session.updated_at;
-            self.persist_workspace_agent_create_tx(
-                &tx,
-                &session,
-                &agent,
-                Some(&snapshot.onboarding),
-                snapshot.hooks.as_ref(),
-                Some(&command.operation_id),
-            )?;
-            let exact = serde_json::to_value(agent).map_err(|error| {
-                RuntimeError::Bootstrap(format!("invalid reviewed agent creation: {error}"))
-            })?;
-            (exact, true)
-        } else {
-            // A previously completed child Git checkout is intentionally NOT
-            // deleted as part of declaring this provider session absent.
-            // Its independent operation/worktree ID remains inspectable.
-            // A successfully executed pre-add script is historical evidence,
-            // but its unconsumed output cannot ever target an agent whose
-            // native creation was verified absent. Settle only that exact
-            // reserved member's context application, retaining the script
-            // receipt itself for auditing and Git/manual cleanup.
-            tx.execute(
-                "UPDATE workspace_hook_effects
-                 SET application_state='rejected',
-                     application_error_code='operator_verified_agent_not_created',
-                     updated_at_ms=?3
-                 WHERE workspace_id=?1 AND event_name='pre_teammate_add'
-                   AND parent_event_id=?4
-                   AND application_state IN ('not_ready','pending')
-                   AND json_extract(input_json,'$.subject.member_agent_id')=?2",
-                params![
-                    command.workspace_id,
-                    input.reserved_agent_id,
-                    command.reviewed_at,
-                    format!("workspace-hook:pre-add:{}", input.reserved_agent_id)
-                ],
-            )
-            .map_err(|error| {
-                db_error(
-                    "failed settling orphaned pre-add context for absent native agent",
-                    error,
-                )
-            })?;
-            (
-                json!({"operation_id":command.operation_id,
-                    "code":"operator_verified_not_created",
-                    "reserved_agent_id":input.reserved_agent_id}),
-                false,
-            )
-        };
-        let final_phase = if created {
-            OperationPhase::Completed
-        } else {
-            OperationPhase::Failed
-        };
-        let response = OperatorAgentCreateReviewResponse {
-            operation_id: command.operation_id.clone(),
-            reserved_agent_id: input.reserved_agent_id.clone(),
-            resolution: input.resolution,
-            restart_required,
-            reviewed_at_ms: command.reviewed_at,
-        };
-        let review = json!({
-            "input":request_json, "response":response,
-            "actor":command.actor, "reviewed_at_ms":command.reviewed_at,
-        });
-        let retained_route_reservations = if let Some(member) = member.as_ref() {
-            if !created
-                && member.intent.route.worktree().is_some()
-                && crate::repository_member_agent_create_hooks::unresolved_execution(&tx, member)?
-            {
-                Some(json!({"reason":"pre_add_execution_outcome_unresolved",
-                    "owner_operation_id":member.operation.operation_id,
-                    "hook_parent_event_id":format!("workspace-hook:pre-add:{}",member.operation.reserved_agent_id)}))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        let effect = json!({
-            "reserved_agent_id":input.reserved_agent_id,
-            "provider":input.provider,
-            "original_intent":original_effect,
-            "operator_review":review,
-            "retained_route_reservations":retained_route_reservations,
-        });
-        let changed = tx.execute(
-            "UPDATE runtime_operation_effects SET phase='finalized',updated_at=?2,evidence_json=?3
-             WHERE operation_id=?1 AND effect_kind=?4 AND phase='uncertain'",
-            params![command.operation_id,command.reviewed_at,json_to_string(&effect)?,EFFECT_KIND],
-        ).map_err(|error| db_error("failed persisting independent native create evidence", error))?;
-        if changed != 1 {
-            return Err(RuntimeError::Conflict(
-                "creation evidence was already terminalized".into(),
-            ));
         }
-        let authority = OperationAuthorityTransaction::new(&tx);
-        authority.terminalize(
-            &command.operation_id,
-            OperationPhase::ManualReview,
-            final_phase,
-            Some(&command.workspace_id),
-            &exact,
-            (!created).then_some("operator_verified_not_created"),
-            (!created).then_some(
-                "operator independently verified native provider session was never created",
-            ),
-            command.reviewed_at,
-        )?;
-        authority.append_transition(&OperationTransitionRecord {
-            operation_id: command.operation_id.clone(),
-            sequence: 3,
-            from_phase: Some(OperationPhase::ManualReview),
-            to_phase: final_phase,
-            evidence: Some(
-                json!({"review_resolution":input.resolution,"restart_required":restart_required}),
-            ),
-            created_at: command.reviewed_at,
-        })?;
-        authority.release_claim(&claim)?;
-        if let Some(member) = member.as_ref() {
-            crate::repository_member_agent_create_routes::release_create_pins(
-                &tx, member, !created,
-            )?;
-            if created {
-                let agent = serde_json::from_value(exact.clone()).map_err(|error| {
-                    RuntimeError::Bootstrap(format!("invalid reviewed member receipt: {error}"))
-                })?;
-                crate::repository_member_agent_create::complete_parent(
-                    &tx,
-                    member,
-                    &agent,
-                    command.reviewed_at,
-                )?;
-            } else {
-                crate::repository_member_agent_create::record_outcome(
-                    &tx,
-                    member,
-                    "finalized",
-                    "verified_not_created",
-                    None,
-                    command.reviewed_at,
-                )?;
-            }
-        }
-        tx.commit().map_err(|error| {
-            db_error(
-                "failed committing independently verified agent creation",
-                error,
-            )
-        })?;
-        Ok(response)
+        Err(RuntimeError::operation_unresolved(
+            command.operation_id.clone(),
+            "prose assertions cannot settle uncertain native creation; inspect the original operation; native retry is not authorized",
+        ))
     }
 }

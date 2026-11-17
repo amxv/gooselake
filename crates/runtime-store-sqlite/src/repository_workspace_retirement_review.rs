@@ -1,6 +1,5 @@
 use runtime_core::{
-    OperationActor, OperationActorKind, OperationPhase, OperationTransitionRecord,
-    ProviderRetirementCloseProofKind, RuntimeError, WorkspaceRetirementCloseAttempt,
+    OperationActor, OperationActorKind, OperationPhase, OperationTransitionRecord, RuntimeError,
     WorkspaceRetirementCommand, WorkspaceRetirementNativeIdentity,
     WorkspaceRetirementReviewCommand, WorkspaceRetirementReviewOutcome,
     WorkspaceRetirementReviewReceipt, WorkspaceRetirementReviewResolution,
@@ -10,15 +9,14 @@ use serde_json::{json, Value};
 
 use crate::db::{db_error, json_to_string, open_connection, string_to_json};
 use crate::operation_tx::OperationAuthorityTransaction;
-use crate::repository_workspace_retirement_close_receipt::{
-    archive_verified_close, current_native_identity,
-};
+use crate::repository_workspace_retirement_close_receipt::current_native_identity;
 use crate::repository_workspace_retirement_review_settlement::independently_settled;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
-    /// Operator evidence settles one exact effect. This transaction never calls
-    /// native code, deletes a fence, resamples a retirement, or creates new work.
+    /// Inspect historical reviews or recheck independently durable terminal facts.
+    /// Fresh provider-close prose is refused without changing the original effect.
+    /// This transaction never calls native code or resamples the retirement.
     pub fn reconcile_workspace_retirement(
         &self,
         command: &WorkspaceRetirementReviewCommand,
@@ -100,21 +98,10 @@ impl SqliteRuntimeRepository {
                 if attempts > 0 {
                     verify_claimed_identity(&prior, &current)?;
                 }
-                archive_verified_close(
-                    &tx,
-                    &WorkspaceRetirementCloseAttempt {
-                        operation_id: command.operation_id.clone(),
-                        agent_id: target,
-                        provider: identity.provider.as_str().into(),
-                        provider_session_ref: identity.provider_session_ref.clone(),
-                    },
-                    identity,
-                    &phase,
-                    ProviderRetirementCloseProofKind::OperatorVerifiedClosed,
-                    json!({"prior_evidence":prior,"operator_review":review}),
-                    command.reviewed_at,
-                )?;
-                true
+                return Err(RuntimeError::operation_unresolved(
+                    command.operation_id.clone(),
+                    "prose assertions cannot settle an uncertain retirement close; inspect the original operation and effect; native retry is not authorized",
+                ));
             }
             WorkspaceRetirementReviewResolution::RecheckSettled => {
                 let observed = independently_settled(

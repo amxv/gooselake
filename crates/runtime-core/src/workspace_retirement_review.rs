@@ -8,8 +8,8 @@ use crate::{
     WorkspaceRetirementCommand,
 };
 
-/// The exact attachment inspected by the operator. A restore, rebind, archive,
-/// or concurrent session settlement invalidates an older assertion.
+/// The exact attachment named by a historical review. Identity alone is not
+/// native closure proof; changed attachments cannot borrow an earlier receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRetirementNativeIdentity {
@@ -25,8 +25,8 @@ pub struct WorkspaceRetirementNativeIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkspaceRetirementReviewResolution {
-    /// Explicit operator assertion about an independently verified native
-    /// close. This never invokes a provider adapter or repeats a close request.
+    /// Historical provider-close assertion. Fresh prose is refused without
+    /// changing the original effect, claim, attachment, turn or approval.
     ProviderClosed {
         identity: WorkspaceRetirementNativeIdentity,
     },

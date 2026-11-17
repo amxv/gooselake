@@ -1,18 +1,16 @@
 use runtime_core::{
-    OperationActorKind, OperationPhase, OperationResourceClaimRecord, OperationTransitionRecord,
+    OperationActorKind, OperationPhase, OperationResourceClaimRecord,
     OperatorAgentRestoreResolution, OperatorAgentRestoreReviewCommand,
-    OperatorAgentRestoreReviewResponse, RuntimeError, WorkspaceAgentLifecycleState,
+    OperatorAgentRestoreReviewResponse, RuntimeError,
 };
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 
-use crate::db::{db_error, json_to_string, open_connection};
-use crate::operation_tx::OperationAuthorityTransaction;
+use crate::db::{db_error, open_connection};
 use crate::repository_operator_agent_restore::{
-    restore_state, restored_session_snapshot, CLAIM_KIND, EFFECT_KIND, OPERATION_KIND,
+    restore_state, CLAIM_KIND, EFFECT_KIND, OPERATION_KIND,
 };
 use crate::repository_workspace::operation_by_id;
-use crate::repository_workspace_agent_lifecycle::apply_workspace_agent_lifecycle_tx;
 use crate::SqliteRuntimeRepository;
 
 impl SqliteRuntimeRepository {
@@ -27,9 +25,8 @@ impl SqliteRuntimeRepository {
         ).map_err(|error| db_error("failed checking reviewed native restore reattachment", error))
     }
 
-    /// An independently verified native result consumes the original restore
-    /// attempt without redispatch. A resumed attachment is kept on a durable
-    /// startup-reattachment gate; a not-resumed attachment remains archived.
+    /// Return an exact retained historical review without creating new authority.
+    /// Fresh prose preserves the original uncertain effect and its native claim.
     pub fn resolve_operator_agent_restore_review(
         &self,
         command: &OperatorAgentRestoreReviewCommand,
@@ -54,7 +51,7 @@ impl SqliteRuntimeRepository {
                     || input.observed_canonical_provider_session_ref.is_some()))
         {
             return Err(RuntimeError::InvalidState(
-                "operator restore review requires exact original attachment and independently verified evidence".into(),
+                "operator restore review requires exact original attachment and 8–2048 evidence bytes".into(),
             ));
         }
         let mut normalized_input = input.clone();
@@ -171,7 +168,7 @@ impl SqliteRuntimeRepository {
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).optional().map_err(|error| db_error("failed reading restore review fence", error))?
             .ok_or_else(|| RuntimeError::Conflict("restore review no longer owns native claim".into()))?;
-        let claim = OperationResourceClaimRecord {
+        let _claim = OperationResourceClaimRecord {
             resource_kind: CLAIM_KIND.into(),
             resource_id: command.agent_id.clone(),
             claim_mode: "exclusive".into(),
@@ -182,103 +179,9 @@ impl SqliteRuntimeRepository {
             acquired_at,
         };
 
-        let resumed = input.resolution == OperatorAgentRestoreResolution::Resumed;
-        let changed_at = command
-            .reviewed_at
-            .max(state.session_updated_at.saturating_add(1));
-        let (new_revision, terminal_result) = if resumed {
-            let mut session = restored_session_snapshot(&tx, &command.agent_id)?;
-            session.status = "restore_recovery_required".into();
-            session.provider_session_ref = input.observed_provider_session_ref.clone();
-            session.canonical_provider_session_ref =
-                input.observed_canonical_provider_session_ref.clone();
-            session.closed_at = None;
-            session.active_turn_id = None;
-            session.failure_code = Some("operator_verified_restore_reattachment_pending".into());
-            session.failure_message = Some(
-                "independently verified provider restoration requires fresh startup reattachment"
-                    .into(),
-            );
-            session.updated_at = changed_at;
-            let updated = apply_workspace_agent_lifecycle_tx(
-                &tx,
-                &session,
-                &command.agent_id,
-                WorkspaceAgentLifecycleState::Active,
-                None,
-                changed_at,
-                None,
-                Some(&command.operation_id),
-            )?;
-            (
-                updated.revision,
-                serde_json::to_value(updated).map_err(|error| {
-                    RuntimeError::Bootstrap(format!(
-                        "invalid operator restore review result: {error}"
-                    ))
-                })?,
-            )
-        } else {
-            (
-                input.expected_revision,
-                json!({"operation_id":command.operation_id,
-                    "code":"operator_verified_not_resumed", "agent_revision":input.expected_revision}),
-            )
-        };
-        let response = OperatorAgentRestoreReviewResponse {
-            operation_id: command.operation_id.clone(),
-            agent_id: command.agent_id.clone(),
-            resolution: input.resolution,
-            agent_revision: new_revision,
-            restart_required: resumed,
-            reviewed_at_ms: command.reviewed_at,
-        };
-        let review = json!({
-            "input": input_json, "response": response,
-            "actor": command.actor, "reviewed_at_ms": command.reviewed_at,
-        });
-        let effect_update = tx.execute(
-            "UPDATE runtime_operation_effects SET phase='finalized',evidence_json=?2,updated_at=?3
-             WHERE operation_id=?1 AND effect_kind=?4 AND phase='uncertain'",
-            params![command.operation_id, json_to_string(&json!({
-                "original_intent": effect, "operator_review": review,
-            }))?, changed_at, EFFECT_KIND],
-        ).map_err(|error| db_error("failed recording exact independent restore evidence", error))?;
-        if effect_update != 1 {
-            return Err(RuntimeError::Conflict(
-                "native restore review effect raced".into(),
-            ));
-        }
-        let final_phase = if resumed {
-            OperationPhase::Completed
-        } else {
-            OperationPhase::Failed
-        };
-        let authority = OperationAuthorityTransaction::new(&tx);
-        authority.terminalize(
-            &command.operation_id,
-            OperationPhase::ManualReview,
-            final_phase,
-            Some(&command.workspace_id),
-            &terminal_result,
-            (!resumed).then_some("operator_verified_not_resumed"),
-            (!resumed).then_some("operator verified original native restore never occurred"),
-            changed_at,
-        )?;
-        authority.append_transition(&OperationTransitionRecord {
-            operation_id: command.operation_id.clone(),
-            sequence: 3,
-            from_phase: Some(OperationPhase::ManualReview),
-            to_phase: final_phase,
-            evidence: Some(json!({
-                "review_resolution":input.resolution,
-                "restart_required":resumed,
-            })),
-            created_at: changed_at,
-        })?;
-        authority.release_claim(&claim)?;
-        tx.commit()
-            .map_err(|error| db_error("failed committing exact native restore review", error))?;
-        Ok(response)
+        Err(RuntimeError::operation_unresolved(
+            command.operation_id.clone(),
+            "prose assertions cannot settle an uncertain native restore; inspect the original operation; native retry is not authorized",
+        ))
     }
 }

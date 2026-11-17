@@ -1,3 +1,4 @@
+use super::native_review_refusal::{assert_refusal, database_snapshot, refuse_prose_variants};
 use super::workspace_worktree_routes::call;
 use super::*;
 
@@ -69,7 +70,7 @@ pub(super) async fn reopened_runtime(
 }
 
 #[tokio::test]
-async fn reviewed_native_create_is_not_masked_by_unrelated_corrupt_session() {
+async fn create_prose_refusal_is_not_masked_by_unrelated_corrupt_session() {
     let (router, token, temp, provider, runtime, workspace) = fixture().await;
     let input = serde_json::json!({"provider":"codex","model":"test-model"});
     let (status, unrelated, _) = create_http(
@@ -121,25 +122,21 @@ async fn reviewed_native_create_is_not_masked_by_unrelated_corrupt_session() {
         "observed_provider_session_ref":format!("test-thread-{reserved}"),
         "observed_canonical_provider_session_ref":null,
     });
-    let (status, reviewed) = call(
+    let original_operation = store.get_operation(operation_id).unwrap().unwrap();
+    refuse_prose_variants(
         &router,
         &token,
-        "POST",
+        &db,
         &path,
-        Some(review_input.clone()),
-        None,
+        operation_id,
+        vec![review_input],
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{reviewed:?}");
-    assert_eq!(reviewed["resolution"], "created");
-    assert_eq!(reviewed["restart_required"], true);
     assert_eq!(
-        runtime.get_session(&reserved).await.unwrap().status,
-        "create_recovery_required"
+        store.get_operation(operation_id).unwrap().unwrap(),
+        original_operation
     );
-    let (status, repeated) = call(&router, &token, "POST", &path, Some(review_input), None).await;
-    assert_eq!(status, StatusCode::OK, "{repeated:?}");
-    assert_eq!(repeated, reviewed);
+    assert!(runtime.get_session(&reserved).await.is_err());
     assert_eq!(provider.create_call_count(), baseline);
     assert!(store.hydrate_runtime_state().is_err());
 }
@@ -288,8 +285,7 @@ async fn ambiguous_native_create_keeps_reserved_identity_and_never_resubmits() {
     let reserved = details.claims[0].resource_id.clone();
     assert!(reserved.starts_with("sess_"));
 
-    // The operator must independently verify the exact reserved native ref;
-    // review does not invoke the provider a second time.
+    // Exact reserved identity and prose cannot settle the original unknown attempt.
     let review_uri = format!("/v2/workspaces/{workspace}/agents/creations/{op}/resolve");
     let reviewed_input = serde_json::json!({
         "resolution":"created",
@@ -299,59 +295,26 @@ async fn ambiguous_native_create_keeps_reserved_identity_and_never_resubmits() {
         "observed_provider_session_ref":format!("test-thread-{reserved}"),
         "observed_canonical_provider_session_ref":null,
     });
-    let (status, review) = call(
-        &router,
-        &token,
-        "POST",
-        &review_uri,
-        Some(reviewed_input.clone()),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{review:?}");
-    assert_eq!(review["restart_required"], true);
-    assert_eq!(review["resolution"], "created");
-    assert_eq!(provider.create_call_count(), baseline + 1);
-    assert_eq!(
-        runtime.get_session(&reserved).await.unwrap().status,
-        "create_recovery_required"
-    );
-    let (status, replay, _) = create_http(
-        &router,
-        &token,
-        &workspace,
-        input.clone(),
-        Some("native-ack-lost"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{replay:?}");
-    assert_eq!(replay["agent_id"], reserved);
-    assert_eq!(provider.create_call_count(), baseline + 1);
-    let (status, blocked) = call(
-        &router,
-        &token,
-        "POST",
-        &format!("/v2/agents/{reserved}/turns"),
-        Some(serde_json::json!({"input":[{"type":"text","text":"blocked before reattachment"}]})),
-        Some("no-early-turn"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{blocked:?}");
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    refuse_prose_variants(&router, &token, &db, &review_uri, op, vec![reviewed_input]).await;
+    let (status, replay, _) =
+        create_http(&router, &token, &workspace, input, Some("native-ack-lost")).await;
+    assert_refusal(status, &replay, op);
+    assert!(runtime.get_session(&reserved).await.is_err());
+    assert!(runtime
+        .list_workspace_agents(&workspace, None)
+        .unwrap()
+        .is_empty());
+    assert_eq!(store.get_operation(op).unwrap().unwrap(), details);
+    assert!(provider.native_cwd(&reserved).await.is_some());
 
+    let resumes = provider.restore_call_count().await;
     provider.set_create_failure_mode(0);
     let reopened = reopened_runtime(&temp, provider.clone()).await;
-    let recovered = reopened.recover_startup().await.unwrap();
-    assert!(
-        recovered
-            .notes
-            .iter()
-            .any(|note| note.contains("create reattached with durable settings")),
-        "{recovered:?}"
-    );
-    assert_eq!(
-        reopened.get_session(&reserved).await.unwrap().status,
-        "ready"
-    );
+    reopened.recover_startup().await.unwrap();
+    assert!(reopened.get_session(&reserved).await.is_err());
+    assert_eq!(store.get_operation(op).unwrap().unwrap(), details);
+    assert_eq!(provider.restore_call_count().await, resumes);
     assert_eq!(provider.create_call_count(), baseline + 1);
 }
 
@@ -462,7 +425,7 @@ async fn keyed_agent_new_worktree_journals_parent_before_git_and_never_creates_t
 }
 
 #[tokio::test]
-async fn verified_absent_native_create_consumes_original_key_and_allows_new_key() {
+async fn not_created_prose_preserves_original_key_and_claim() {
     let (router, token, temp, provider, runtime, workspace) = fixture().await;
     let input = serde_json::json!({"provider":"codex","model":"test-model"});
     provider.set_create_failure_mode(4);
@@ -493,29 +456,8 @@ async fn verified_absent_native_create_consumes_original_key_and_allows_new_key(
         "provider":"codex",
         "evidence":"Independent inspection verified no provider session exists with the original reserved identity",
     });
-    let (status, verified) = call(
-        &router,
-        &token,
-        "POST",
-        &review_uri,
-        Some(evidence.clone()),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{verified:?}");
-    assert_eq!(verified["resolution"], "not_created");
-    assert_eq!(verified["restart_required"], false);
-    let (status, same_review) = call(
-        &router,
-        &token,
-        "POST",
-        &review_uri,
-        Some(evidence.clone()),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{same_review:?}");
-    assert_eq!(same_review, verified);
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    refuse_prose_variants(&router, &token, &db, &review_uri, op, vec![evidence]).await;
     let (status, original_key, _) = create_http(
         &router,
         &token,
@@ -524,33 +466,34 @@ async fn verified_absent_native_create_consumes_original_key_and_allows_new_key(
         Some("confirmed-not-created"),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{original_key:?}");
-    assert_eq!(
-        original_key["error"]["code"],
-        "operator_verified_not_created"
-    );
+    assert_refusal(status, &original_key, op);
+    assert_eq!(store.get_operation(op).unwrap().unwrap(), details);
     assert!(runtime
         .list_workspace_agents(&workspace, None)
         .unwrap()
         .is_empty());
+    assert!(provider.native_cwd(reserved).await.is_none());
     assert_eq!(provider.create_call_count(), baseline + 1);
 
-    provider.set_create_failure_mode(0);
+    // Independent positive authority belongs to a separate clean fixture.
+    let (clean_router, clean_token, _clean_temp, clean_provider, _, clean_workspace) =
+        fixture().await;
     let (status, new_created, _) = create_http(
-        &router,
-        &token,
-        &workspace,
+        &clean_router,
+        &clean_token,
+        &clean_workspace,
         input,
-        Some("new-after-verified-absence"),
+        Some("clean-new-create"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{new_created:?}");
     assert_ne!(new_created["agent_id"].as_str(), Some(reserved.as_str()));
-    assert_eq!(provider.create_call_count(), baseline + 2);
+    assert_eq!(clean_provider.create_call_count(), 1);
+    assert_eq!(store.get_operation(op).unwrap().unwrap(), details);
 }
 
 #[tokio::test]
-async fn sql_commit_failure_after_native_create_remains_quarantined_until_exact_review() {
+async fn sql_commit_failure_after_native_create_cannot_be_cleared_by_prose() {
     let (router, token, temp, provider, runtime, workspace) = fixture().await;
     let input = serde_json::json!({"provider":"codex","model":"test-model"});
     let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
@@ -620,6 +563,7 @@ async fn sql_commit_failure_after_native_create_remains_quarantined_until_exact_
         "observed_provider_session_ref":format!("test-thread-{reserved}"),
         "observed_canonical_provider_session_ref":null,
     });
+    let before = database_snapshot(&db);
     let (status, blocked) = call(
         &router,
         &token,
@@ -629,34 +573,21 @@ async fn sql_commit_failure_after_native_create_remains_quarantined_until_exact_
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{blocked:?}");
+    assert_refusal(status, &blocked, op);
+    assert_eq!(database_snapshot(&db), before);
     assert_eq!(
         db.query_row::<i64, _, _>(
             "SELECT COUNT(*) FROM workspace_agents WHERE session_id=?1",
             [&reserved],
-            |row| row.get(0)
+            |row| row.get(0),
         )
         .unwrap(),
         0
     );
+
     db.execute_batch("DROP TRIGGER deny_agent_create_receipt")
         .unwrap();
-    let (status, reviewed) = call(
-        &router,
-        &token,
-        "POST",
-        &review_uri,
-        Some(evidence.clone()),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{reviewed:?}");
-    assert_eq!(reviewed["resolution"], "created");
-    assert_eq!(reviewed["restart_required"], true);
-    assert_eq!(
-        runtime.get_session(&reserved).await.unwrap().status,
-        "create_recovery_required"
-    );
+    refuse_prose_variants(&router, &token, &db, &review_uri, op, vec![evidence]).await;
     let (status, replay, _) = create_http(
         &router,
         &token,
@@ -665,22 +596,29 @@ async fn sql_commit_failure_after_native_create_remains_quarantined_until_exact_
         Some("native-succeeded-sql-failed"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{replay:?}");
-    assert_eq!(replay["agent_id"], reserved);
-    assert_eq!(provider.create_call_count(), baseline + 1);
-    let reopened = reopened_runtime(&temp, provider.clone()).await;
-    let recovery = reopened.recover_startup().await.unwrap();
-    assert!(
-        recovery
-            .notes
-            .iter()
-            .any(|note| note.contains("create reattached with durable settings")),
-        "{recovery:?}"
-    );
+    assert_refusal(status, &replay, op);
+    assert!(runtime.get_session(&reserved).await.is_err());
+    assert!(provider.native_cwd(&reserved).await.is_some());
+
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let original_operation = store.get_operation(op).unwrap().unwrap();
     assert_eq!(
-        reopened.get_session(&reserved).await.unwrap().status,
-        "ready"
+        original_operation.operation.phase,
+        runtime_core::OperationPhase::ManualReview
     );
+    assert_eq!(original_operation.claims.len(), 1);
+    let resumes = provider.restore_call_count().await;
+    let reopened = reopened_runtime(&temp, provider.clone()).await;
+    reopened.recover_startup().await.unwrap();
+    assert!(reopened.get_session(&reserved).await.is_err());
+    assert_eq!(
+        store.get_operation(op).unwrap().unwrap(),
+        original_operation
+    );
+    assert_eq!(provider.restore_call_count().await, resumes);
+    assert_eq!(provider.create_call_count(), baseline + 1);
 }
 
 #[tokio::test]
@@ -772,9 +710,19 @@ async fn restart_quarantines_admitted_agent_create_without_reexecuting_any_nativ
         "reserved_agent_id":command.reserved_agent_id,
         "evidence":"Independent provider inspection showed no native session was ever launched",
     });
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let before = database_snapshot(&db);
     let (status, final_review) = call(&router, &token, "POST", &uri, Some(not_created), None).await;
-    assert_eq!(status, StatusCode::OK, "{final_review:?}");
-    assert_eq!(final_review["restart_required"], false);
+    assert_refusal(status, &final_review, &command.operation_id);
+    assert_eq!(database_snapshot(&db), before);
+    assert_eq!(
+        store
+            .repository()
+            .get_operation(&command.operation_id)
+            .unwrap()
+            .unwrap(),
+        persisted
+    );
     assert!(reopened
         .get_session(&command.reserved_agent_id)
         .await

@@ -1,15 +1,12 @@
 use runtime_core::{
-    OperationActorKind, OperationPhase, OperationResourceClaimRecord, OperationTransitionRecord,
-    OperatorNativePolicyKind, OperatorNativePolicyReviewCommand,
-    OperatorNativePolicyReviewResolution, OperatorNativePolicyReviewResponse,
-    ProviderPermissionIntent, ProviderPermissionMutationResult, ProviderSessionPreferences,
-    ProviderSessionPreferencesMutationResult, RuntimeError, WorkspaceAgentRecreationPolicy,
+    OperationActorKind, OperationPhase, OperationResourceClaimRecord, OperatorNativePolicyKind,
+    OperatorNativePolicyReviewCommand, OperatorNativePolicyReviewResponse, RuntimeError,
+    WorkspaceAgentRecreationPolicy,
 };
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::{json, Value};
 
-use crate::db::{db_error, json_to_string, open_connection};
-use crate::operation_tx::OperationAuthorityTransaction;
+use crate::db::{db_error, open_connection};
 use crate::repository_operator_native_policy::{CLAIM_KIND, EFFECT_KIND, OPERATION_KIND};
 use crate::repository_workspace::operation_by_id;
 use crate::SqliteRuntimeRepository;
@@ -34,9 +31,8 @@ impl SqliteRuntimeRepository {
         })
     }
 
-    /// An independent operator assertion closes only the exact manual-review
-    /// policy intent. A verified native outcome and any durable policy update
-    /// commit atomically; neither resolution invokes the provider again.
+    /// Return an exact historical review receipt without changing policy authority.
+    /// Fresh prose cannot consume an uncertain effect, advance revision, or clear its claim.
     pub fn resolve_operator_native_policy_review(
         &self,
         command: &OperatorNativePolicyReviewCommand,
@@ -257,7 +253,7 @@ impl SqliteRuntimeRepository {
             .ok_or_else(|| {
                 RuntimeError::Conflict("native policy review lost its resource claim".into())
             })?;
-        let claim = OperationResourceClaimRecord {
+        let _claim = OperationResourceClaimRecord {
             resource_kind: CLAIM_KIND.into(),
             resource_id: command.agent_id.clone(),
             claim_mode: "exclusive".into(),
@@ -267,169 +263,9 @@ impl SqliteRuntimeRepository {
             acquired_at,
         };
 
-        let mut revised_policy = policy;
-        let applied = input.resolution == OperatorNativePolicyReviewResolution::Applied;
-        // A pre-fix durable manual-review intent may have admitted revision
-        // i64::MAX. Only Applied consumes another revision; NotApplied must
-        // remain resolvable without a revision bump at the signed ceiling.
-        if applied && expected_revision >= i64::MAX {
-            return Err(RuntimeError::InvalidState(
-                "verified native policy review cannot advance signed SQLite revision".into(),
-            ));
-        }
-        let new_revision = if applied {
-            input
-                .expected_revision
-                .checked_add(1)
-                .ok_or_else(|| RuntimeError::InvalidState("agent revision overflow".into()))?
-        } else {
-            input.expected_revision
-        };
-        let mut permission_mode_change: Option<Option<String>> = None;
-        let exact_result = if applied {
-            match kind {
-                OperatorNativePolicyKind::Preferences => {
-                    let preferences: ProviderSessionPreferences = serde_json::from_value(
-                        record.normalized_request["current_preferences"].clone(),
-                    )
-                    .map_err(|error| {
-                        RuntimeError::Bootstrap(format!(
-                            "invalid admitted native preferences: {error}"
-                        ))
-                    })?;
-                    revised_policy.current_preferences = preferences.clone();
-                    json!(ProviderSessionPreferencesMutationResult {
-                        revision: new_revision,
-                        current_preferences: preferences,
-                    })
-                }
-                OperatorNativePolicyKind::Permission => {
-                    let intent: ProviderPermissionIntent = serde_json::from_value(
-                        record.normalized_request["permission_intent"].clone(),
-                    )
-                    .map_err(|error| {
-                        RuntimeError::Bootstrap(format!(
-                            "invalid admitted native permission: {error}"
-                        ))
-                    })?;
-                    permission_mode_change = Some(intent.resolved_mode());
-                    revised_policy.permission_intent = intent.clone();
-                    json!(ProviderPermissionMutationResult {
-                        revision: new_revision,
-                        permission_intent: intent,
-                    })
-                }
-            }
-        } else {
-            json!({"operation_id": command.operation_id,
-                "code":"operator_verified_not_applied", "agent_revision":new_revision})
-        };
-        let changed_at = command
-            .reviewed_at
-            .max(session_updated_at.saturating_add(1));
-        let updated = tx
-            .execute(
-                "UPDATE sessions SET status='policy_recovery_required',updated_at=?2,
-                 permission_mode=CASE WHEN ?4 THEN ?5 ELSE permission_mode END
-             WHERE id=?1 AND updated_at=?3 AND status NOT IN ('closed','failed')
-               AND active_turn_id IS NULL",
-                params![
-                    command.agent_id,
-                    changed_at,
-                    session_updated_at,
-                    permission_mode_change.is_some(),
-                    permission_mode_change.flatten()
-                ],
-            )
-            .map_err(|error| {
-                db_error(
-                    "failed fencing policy reattachment after operator review",
-                    error,
-                )
-            })?;
-        if updated != 1 {
-            return Err(RuntimeError::Conflict(
-                "native policy review session changed".into(),
-            ));
-        }
-        if applied {
-            let changed = tx
-                .execute(
-                    "UPDATE workspace_agents SET recreation_policy_json=?3,
-                 revision=revision+1,updated_at=?4
-                 WHERE session_id=?1 AND revision=?2 AND lifecycle_state='active'",
-                    params![
-                        command.agent_id,
-                        expected_revision,
-                        json_to_string(&json!(revised_policy))?,
-                        changed_at
-                    ],
-                )
-                .map_err(|error| db_error("failed committing verified native policy", error))?;
-            if changed != 1 {
-                return Err(RuntimeError::Conflict(
-                    "native policy review revision changed".into(),
-                ));
-            }
-        }
-        let response = OperatorNativePolicyReviewResponse {
-            operation_id: command.operation_id.clone(),
-            agent_id: command.agent_id.clone(),
-            resolution: input.resolution,
-            agent_revision: new_revision,
-            restart_required: true,
-            reviewed_at_ms: command.reviewed_at,
-        };
-        let review = json!({"input":request_json,"response":response,
-            "actor":command.actor, "reviewed_at_ms":command.reviewed_at});
-        let updated = tx
-            .execute(
-                "UPDATE runtime_operation_effects SET phase='finalized',evidence_json=?2,
-             updated_at=?3 WHERE operation_id=?1 AND effect_kind=?4 AND phase='uncertain'",
-                params![
-                    command.operation_id,
-                    json_to_string(&json!({
-                        "outcome":format!("operator_verified_{}",input.resolution.as_str()),
-                        "prior_evidence":old_effect,"operator_review":review,
-                    }))?,
-                    changed_at,
-                    EFFECT_KIND
-                ],
-            )
-            .map_err(|error| db_error("failed recording exact native review evidence", error))?;
-        if updated != 1 {
-            return Err(RuntimeError::Conflict(
-                "native policy review intent changed".into(),
-            ));
-        }
-        let authority = OperationAuthorityTransaction::new(&tx);
-        let terminal = if applied {
-            OperationPhase::Completed
-        } else {
-            OperationPhase::Failed
-        };
-        authority.terminalize(
-            &command.operation_id,
-            OperationPhase::ManualReview,
-            terminal,
-            Some(&workspace_id),
-            &exact_result,
-            (!applied).then_some("operator_verified_not_applied"),
-            (!applied).then_some("operator verified native policy is not applied"),
-            changed_at,
-        )?;
-        authority.append_transition(&OperationTransitionRecord {
-            operation_id: command.operation_id.clone(),
-            sequence: 3,
-            from_phase: Some(OperationPhase::ManualReview),
-            to_phase: terminal,
-            evidence: Some(json!({"receipt":"operator_verified_native_policy",
-                "resolution":input.resolution.as_str(), "reviewed_at_ms":command.reviewed_at})),
-            created_at: changed_at,
-        })?;
-        authority.release_claim(&claim)?;
-        tx.commit()
-            .map_err(|error| db_error("failed committing exact native policy review", error))?;
-        Ok(response)
+        Err(RuntimeError::operation_unresolved(
+            command.operation_id.clone(),
+            "prose assertions cannot settle an uncertain native policy change; inspect the original operation; native retry is not authorized",
+        ))
     }
 }

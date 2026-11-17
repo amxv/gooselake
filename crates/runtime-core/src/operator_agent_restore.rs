@@ -75,8 +75,7 @@ pub struct OperatorAgentRestoreReviewInput {
     pub original_canonical_provider_session_ref: Option<String>,
     pub expected_revision: u64,
     pub session_updated_at: i64,
-    /// A verified resumed provider attachment may have different native refs
-    /// from the pre-dispatch session. The operator must supply what was seen.
+    /// Retained historical observation; fresh prose cannot establish resume authority.
     pub observed_provider_session_ref: Option<String>,
     pub observed_canonical_provider_session_ref: Option<String>,
 }

@@ -19,7 +19,7 @@ fn request(
 }
 
 #[test]
-fn operator_review_binds_identity_revision_and_replays_exact_receipt_without_extra_effects() {
+fn prose_review_binds_identity_but_cannot_settle_the_original_unknown_close() {
     let (temp, repository, workspace) = setup();
     let (session, agent) = workspace_agent_fixture(&workspace, "review-agent", "review-heron");
     repository.create_workspace_agent(&session, &agent).unwrap();
@@ -63,9 +63,10 @@ fn operator_review_binds_identity_revision_and_replays_exact_receipt_without_ext
     .unwrap();
     let mut unauthorized = review.clone();
     unauthorized.actor.kind = OperationActorKind::Agent;
-    assert!(repository
-        .reconcile_workspace_retirement(&unauthorized)
-        .is_err());
+    assert!(matches!(
+        repository.reconcile_workspace_retirement(&unauthorized),
+        Err(runtime_core::RuntimeError::Conflict(_))
+    ));
     for (index, mut changed) in [
         identity.clone(),
         identity.clone(),
@@ -89,7 +90,10 @@ fn operator_review_binds_identity_revision_and_replays_exact_receipt_without_ext
             Some(format!("mismatch-{index}")),
         )
         .unwrap();
-        assert!(repository.reconcile_workspace_retirement(&invalid).is_err());
+        assert!(matches!(
+            repository.reconcile_workspace_retirement(&invalid),
+            Err(runtime_core::RuntimeError::Conflict(_))
+        ));
     }
     assert_eq!(
         repository
@@ -98,16 +102,18 @@ fn operator_review_binds_identity_revision_and_replays_exact_receipt_without_ext
             .unwrap(),
         original
     );
-    let reviewed = repository.reconcile_workspace_retirement(&review).unwrap();
-    assert!(reviewed.receipt.settled);
-    assert_eq!(reviewed.receipt.operation_phase, OperationPhase::Requested);
-    assert_eq!(reviewed.resume_command, Some(command.clone()));
-    let replay = repository.reconcile_workspace_retirement(&review).unwrap();
-    assert_eq!(replay.receipt, reviewed.receipt);
-    assert!(replay.resume_command.is_none());
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let before = super::legacy_native_turn_guards::raw_state(&db);
+    let reopened = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    for candidate in [&repository, &reopened] {
+        assert!(
+            matches!(candidate.reconcile_workspace_retirement(&review),Err(runtime_core::RuntimeError::OperationUnresolved {operation_id,..}) if operation_id==command.operation_id)
+        );
+        assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
+    }
     let mut changed = request(&effect.effect_id, identity);
-    changed.evidence = "Different assertion cannot reuse the original review key".into();
-    let conflict = prepare_workspace_retirement_review(
+    changed.evidence = "Different prose still cannot establish native closure".into();
+    let another = prepare_workspace_retirement_review(
         &workspace.workspace_id,
         &command.operation_id,
         changed,
@@ -115,60 +121,27 @@ fn operator_review_binds_identity_revision_and_replays_exact_receipt_without_ext
         Some("verified-close".into()),
     )
     .unwrap();
-    assert!(repository
-        .reconcile_workspace_retirement(&conflict)
-        .is_err());
-    repository
-        .settle_passive_workspace_retirement(&command.operation_id, 203)
-        .unwrap();
-    repository
-        .finalize_settled_workspace_retirement(&command.operation_id, 204)
-        .unwrap()
-        .unwrap();
-    let completed = repository
-        .get_operation(&command.operation_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(completed.effects.len(), original.effects.len());
-    assert_eq!(completed.effects[0].attempt_count, 1);
-    let proof = completed.effects[0].evidence.as_ref().unwrap();
-    assert_eq!(proof["proof_kind"], "operator_verified_closed");
-    assert_eq!(
-        proof["prior_evidence"]["reason"],
-        "transport_timeout_after_dispatch"
+    assert!(
+        matches!(reopened.reconcile_workspace_retirement(&another),Err(runtime_core::RuntimeError::OperationUnresolved {operation_id,..}) if operation_id==command.operation_id)
     );
-    assert_eq!(proof["prior_evidence"]["prior_evidence"]["started_at"], 200);
-    assert_eq!(completed.transitions.len(), 3);
+    assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
+    assert!(matches!(
+        reopened.finalize_settled_workspace_retirement(&command.operation_id, 204),
+        Err(runtime_core::RuntimeError::Conflict(_))
+    ));
+    assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
     assert_eq!(
-        completed.transitions[1].from_phase,
-        Some(OperationPhase::ManualReview)
+        reopened.get_operation(&command.operation_id).unwrap(),
+        Some(original.clone())
     );
-    assert_eq!(completed.transitions[1].to_phase, OperationPhase::Requested);
-    assert_eq!(completed.transitions[2].sequence, 3);
-    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
-    let (reviews, archives): (i64, i64) = db
-        .query_row(
-            "SELECT
-        (SELECT COUNT(*) FROM workspace_retirement_reviews),
-        (SELECT COUNT(*) FROM runtime_events WHERE kind='session.archived')",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!((reviews, archives), (1, 1));
-    let replay = repository.reconcile_workspace_retirement(&review).unwrap();
-    assert_eq!(replay.receipt, reviewed.receipt);
-    assert_eq!(
-        repository
-            .get_operation(&command.operation_id)
-            .unwrap()
-            .unwrap(),
-        completed
-    );
-    assert!(db
-        .execute("DELETE FROM workspace_retirement_reviews", [])
-        .is_err());
+    assert_eq!(original.operation.phase, OperationPhase::ManualReview);
+    assert_eq!(original.effects[0].attempt_count, 1);
+    assert!(!original.claims.is_empty());
+    let(reviews,archives):(i64,i64)=db.query_row("SELECT (SELECT COUNT(*) FROM workspace_retirement_reviews),(SELECT COUNT(*) FROM runtime_events WHERE kind='session.archived')",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+    assert_eq!((reviews, archives), (0, 0));
 }
+
+mod history;
 
 #[test]
 fn operator_recheck_only_releases_independently_terminal_obligations_and_preserves_other_unknowns()

@@ -40,131 +40,167 @@ fn recheck(
 
 #[test]
 fn pre_admission_delivery_and_notice_claims_cancel_only_behind_verified_native_closure() {
-    let (temp, repository, workspace) = setup();
-    let (session, agent) =
-        workspace_agent_fixture(&workspace, "review-input-agent", "review-input-heron");
-    repository.create_workspace_agent(&session, &agent).unwrap();
-    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
-    db.execute("INSERT INTO agent_messages(id,scope,context_kind,workspace_id,sender_agent_id,
+    for strong_close in [false, true] {
+        let (temp, repository, workspace) = setup();
+        let (session, agent) =
+            workspace_agent_fixture(&workspace, "review-input-agent", "review-input-heron");
+        repository.create_workspace_agent(&session, &agent).unwrap();
+        let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+        db.execute("INSERT INTO agent_messages(id,scope,context_kind,workspace_id,sender_agent_id,
         recipient_agent_ids_json,input_json,image_paths_json,priority,policy,created_at)
         VALUES('claimed-message','direct','workspace_team',?1,?2,'[]','[]','[]','normal','non_interrupting',101)",
         params![workspace.workspace_id,session.id]).unwrap();
-    db.execute("INSERT INTO agent_deliveries(id,message_id,recipient_agent_id,provider,status,created_at,updated_at)
+        db.execute("INSERT INTO agent_deliveries(id,message_id,recipient_agent_id,provider,status,created_at,updated_at)
         VALUES('claimed-delivery','claimed-message',?1,'codex','injecting',101,101)",[&session.id]).unwrap();
-    db.execute("INSERT INTO workspace_system_notices(notice_id,workspace_id,recipient_agent_id,kind,
+        db.execute("INSERT INTO workspace_system_notices(notice_id,workspace_id,recipient_agent_id,kind,
         correlation_id,input_json,state,created_at_ms,updated_at_ms)
         VALUES('claimed-notice',?1,?2,'membership','claimed-notice-correlation','[]','injecting',101,101)",
         params![workspace.workspace_id,session.id]).unwrap();
-    let workspace = repository
-        .get_workspace(&workspace.workspace_id)
-        .unwrap()
-        .unwrap();
-    let command = retirement_command(&workspace, "claimed-input-review");
-    repository.admit_workspace_retirement(&command).unwrap();
-    repository
-        .settle_passive_workspace_retirement(&command.operation_id, 102)
-        .unwrap();
-    assert!(
-        !recheck(
-            &repository,
-            &command,
-            "workspace_delivery_settle",
-            "before-closure-delivery"
-        )
-        .receipt
-        .settled
-    );
-    assert!(
-        !recheck(
+        let workspace = repository
+            .get_workspace(&workspace.workspace_id)
+            .unwrap()
+            .unwrap();
+        let command = retirement_command(&workspace, "claimed-input-review");
+        repository.admit_workspace_retirement(&command).unwrap();
+        if strong_close {
+            let attempt = repository
+                .claim_workspace_retirement_native_close(&command.operation_id, &session.id, 102)
+                .unwrap();
+            repository
+                .finalize_workspace_retirement_native_close(
+                    &attempt,
+                    &ProviderRetirementCloseEvidence {
+                        runtime_session_id: session.id.clone(),
+                        provider_session_ref: session.provider_session_ref.clone().unwrap(),
+                        proof_kind: ProviderRetirementCloseProofKind::NativeProcessTerminated,
+                    },
+                    103,
+                )
+                .unwrap();
+        }
+        repository
+            .settle_passive_workspace_retirement(&command.operation_id, 104)
+            .unwrap();
+        if !strong_close {
+            for (kind, key) in [
+                ("workspace_delivery_settle", "before-closure-delivery"),
+                ("workspace_notice_settle", "before-closure-notice"),
+            ] {
+                assert!(!recheck(&repository, &command, kind, key).receipt.settled);
+            }
+            let close = repository
+                .get_operation(&command.operation_id)
+                .unwrap()
+                .unwrap()
+                .effects
+                .into_iter()
+                .find(|effect| effect.effect_kind == "workspace_provider_close")
+                .unwrap();
+            let review = prepare_workspace_retirement_review(
+                &workspace.workspace_id,
+                &command.operation_id,
+                WorkspaceRetirementReviewRequest {
+                    effect_id: close.effect_id,
+                    evidence: "Operator claims the exact provider attachment is closed".into(),
+                    resolution: WorkspaceRetirementReviewResolution::ProviderClosed {
+                        identity: WorkspaceRetirementNativeIdentity {
+                            agent_id: agent.agent_id.clone(),
+                            provider: ProviderKind::Codex,
+                            provider_session_ref: session.provider_session_ref.clone().unwrap(),
+                            canonical_provider_session_ref: session
+                                .canonical_provider_session_ref
+                                .clone(),
+                            agent_revision: Some(agent.revision),
+                            session_updated_at: session.updated_at,
+                            active_turn_id: None,
+                        },
+                    },
+                },
+                OperationActor::operator("recovery-operator"),
+                Some("close-verified".into()),
+            )
+            .unwrap();
+            let before = super::legacy_native_turn_guards::raw_state(&db);
+            assert!(
+                matches!(repository.reconcile_workspace_retirement(&review),Err(runtime_core::RuntimeError::OperationUnresolved {operation_id,..}) if operation_id==command.operation_id)
+            );
+            assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
+            for (kind, key) in [
+                ("workspace_delivery_settle", "after-prose-delivery"),
+                ("workspace_notice_settle", "after-prose-notice"),
+            ] {
+                let outcome = recheck(&repository, &command, kind, key);
+                assert!(!outcome.receipt.settled);
+                assert_eq!(
+                    outcome.receipt.operation_phase,
+                    OperationPhase::ManualReview
+                );
+                assert!(outcome.resume_command.is_none());
+            }
+            let states:(String,String)=db.query_row("SELECT (SELECT status FROM agent_deliveries WHERE id='claimed-delivery'),(SELECT state FROM workspace_system_notices WHERE notice_id='claimed-notice')",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+            assert_eq!(states, ("injecting".into(), "injecting".into()));
+            assert!(matches!(
+                repository.finalize_settled_workspace_retirement(&command.operation_id, 201),
+                Err(runtime_core::RuntimeError::Conflict(_))
+            ));
+            assert!(repository
+                .claim_workspace_retirement_native_close(&command.operation_id, &session.id, 202)
+                .is_err());
+            let retained = repository
+                .get_operation(&command.operation_id)
+                .unwrap()
+                .unwrap();
+            let close = retained
+                .effects
+                .iter()
+                .find(|effect| effect.effect_kind == "workspace_provider_close")
+                .unwrap();
+            assert_eq!(close.attempt_count, 0);
+            assert!(!retained.claims.is_empty());
+            continue;
+        }
+        assert!(
+            recheck(
+                &repository,
+                &command,
+                "workspace_delivery_settle",
+                "after-closure-delivery"
+            )
+            .receipt
+            .settled
+        );
+        let last = recheck(
             &repository,
             &command,
             "workspace_notice_settle",
-            "before-closure-notice"
-        )
-        .receipt
-        .settled
-    );
-    let close = repository
-        .get_operation(&command.operation_id)
-        .unwrap()
-        .unwrap()
-        .effects
-        .into_iter()
-        .find(|effect| effect.effect_kind == "workspace_provider_close")
-        .unwrap();
-    let review = prepare_workspace_retirement_review(
-        &workspace.workspace_id,
-        &command.operation_id,
-        WorkspaceRetirementReviewRequest {
-            effect_id: close.effect_id,
-            evidence:
-                "Operator independently terminated and verified the exact provider attachment"
-                    .into(),
-            resolution: WorkspaceRetirementReviewResolution::ProviderClosed {
-                identity: WorkspaceRetirementNativeIdentity {
-                    agent_id: agent.agent_id.clone(),
-                    provider: ProviderKind::Codex,
-                    provider_session_ref: session.provider_session_ref.clone().unwrap(),
-                    canonical_provider_session_ref: None,
-                    agent_revision: Some(agent.revision),
-                    session_updated_at: session.updated_at,
-                    active_turn_id: None,
-                },
-            },
-        },
-        OperationActor::operator("recovery-operator"),
-        Some("close-verified".into()),
-    )
-    .unwrap();
-    let result = repository.reconcile_workspace_retirement(&review).unwrap();
-    assert_eq!(result.receipt.operation_phase, OperationPhase::ManualReview);
-    assert!(result.resume_command.is_none());
-    assert!(
-        recheck(
-            &repository,
-            &command,
-            "workspace_delivery_settle",
-            "after-closure-delivery"
-        )
-        .receipt
-        .settled
-    );
-    let last = recheck(
-        &repository,
-        &command,
-        "workspace_notice_settle",
-        "after-closure-notice",
-    );
-    assert!(last.receipt.settled);
-    assert_eq!(last.resume_command, Some(command.clone()));
-    let states: (String, String) = db
-        .query_row(
-            "SELECT (SELECT status FROM agent_deliveries WHERE id='claimed-delivery'),
-        (SELECT state FROM workspace_system_notices WHERE notice_id='claimed-notice')",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .unwrap();
-    assert_eq!(states, ("cancelled".into(), "cancelled".into()));
-    repository
-        .settle_passive_workspace_retirement(&command.operation_id, 200)
-        .unwrap();
-    assert!(repository
-        .finalize_settled_workspace_retirement(&command.operation_id, 201)
-        .unwrap()
-        .is_some());
-    let close = repository
-        .get_operation(&command.operation_id)
-        .unwrap()
-        .unwrap()
-        .effects
-        .into_iter()
-        .find(|effect| effect.effect_kind == "workspace_provider_close")
-        .unwrap();
-    assert_eq!(
-        close.attempt_count, 0,
-        "operator verification never issues a runtime native close"
-    );
+            "after-closure-notice",
+        );
+        assert!(last.receipt.settled);
+        assert_eq!(last.resume_command, Some(command.clone()));
+        let states:(String,String)=db.query_row("SELECT (SELECT status FROM agent_deliveries WHERE id='claimed-delivery'),(SELECT state FROM workspace_system_notices WHERE notice_id='claimed-notice')",[],|row|Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(states, ("cancelled".into(), "cancelled".into()));
+        repository
+            .settle_passive_workspace_retirement(&command.operation_id, 200)
+            .unwrap();
+        assert!(repository
+            .finalize_settled_workspace_retirement(&command.operation_id, 201)
+            .unwrap()
+            .is_some());
+        let completed = repository
+            .get_operation(&command.operation_id)
+            .unwrap()
+            .unwrap();
+        let close = completed
+            .effects
+            .iter()
+            .find(|effect| effect.effect_kind == "workspace_provider_close")
+            .unwrap();
+        assert_eq!(close.attempt_count, 1);
+        assert_eq!(
+            close.evidence.as_ref().unwrap()["proof_kind"],
+            "native_process_terminated"
+        );
+    }
 }
 
 #[test]

@@ -79,74 +79,114 @@ fn direct_lifecycle_writes_cannot_bypass_native_policy_intent_or_review_reattach
     );
     assert_eq!(unchanged.revision, 0);
 
+    let review = OperatorNativePolicyReviewCommand {
+        operation_id: command.operation_id.clone(),
+        agent_id: agent.agent_id.clone(),
+        actor,
+        input: OperatorNativePolicyReviewInput {
+            resolution: OperatorNativePolicyReviewResolution::NotApplied,
+            evidence: "Native session independently claimed to have old policy".into(),
+            provider: "codex".into(),
+            provider_session_ref: session.provider_session_ref.clone().unwrap(),
+            canonical_provider_session_ref: None,
+            expected_revision: 0,
+            session_updated_at: 100,
+        },
+        reviewed_at: 203,
+    };
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let before = super::legacy_native_turn_guards::raw_state(&db);
+    for _ in 0..2 {
+        assert!(
+            matches!(repository.resolve_operator_native_policy_review(&review),Err(RuntimeError::OperationUnresolved {operation_id,..}) if operation_id==command.operation_id)
+        );
+        assert!(
+            matches!(try_archive(),Err(RuntimeError::OperationUnresolved {operation_id,..}) if operation_id==command.operation_id)
+        );
+        assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
+    }
+    // Separate retained historical status; original uncertain owner stays untouched.
+    let (mut historical_session, historical_agent) =
+        super::workspace_agent::workspace_agent_fixture(
+            &workspace,
+            "sess_historical_policy_fence",
+            "historical-policy-fence",
+        );
     repository
-        .resolve_operator_native_policy_review(&OperatorNativePolicyReviewCommand {
-            operation_id: command.operation_id,
-            agent_id: agent.agent_id.clone(),
-            actor,
-            input: OperatorNativePolicyReviewInput {
-                resolution: OperatorNativePolicyReviewResolution::NotApplied,
-                evidence: "Native session independently verified to have old policy".into(),
-                provider: "codex".into(),
-                provider_session_ref: session.provider_session_ref.clone().unwrap(),
-                canonical_provider_session_ref: None,
-                expected_revision: 0,
-                session_updated_at: 100,
-            },
-            reviewed_at: 203,
-        })
+        .create_workspace_agent(&historical_session, &historical_agent)
         .unwrap();
-    assert!(
-        matches!(try_archive(), Err(RuntimeError::Conflict(message)) if message.contains("reattached"))
-    );
-
-    // Only a new verified provider attachment can clear this state in the
-    // running product; the test simulates that successful startup receipt.
-    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
-    db.execute(
-        "UPDATE sessions SET status='ready' WHERE id=?1",
-        [&agent.agent_id],
-    )
-    .unwrap();
-    drop(db);
-    assert_eq!(
-        try_archive().unwrap().lifecycle_state,
-        WorkspaceAgentLifecycleState::Archived
-    );
-
-    // The same transactional guard applies to restoration, including a
-    // stale direct persistence caller that bypasses manager validation.
-    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
     db.execute(
         "UPDATE sessions SET status='policy_recovery_required' WHERE id=?1",
-        [&agent.agent_id],
+        [&historical_agent.agent_id],
     )
     .unwrap();
-    drop(db);
-    session.status = "ready".into();
-    session.closed_at = None;
-    session.updated_at = 300;
+    assert!(repository
+        .unresolved_operator_native_policy_for_agent(&historical_agent.agent_id)
+        .unwrap()
+        .is_none());
+    historical_session.status = "closed".into();
+    historical_session.closed_at = Some(250);
+    historical_session.updated_at = 250;
     assert!(
-        matches!(repository.set_workspace_agent_lifecycle(&session, &agent.agent_id, WorkspaceAgentLifecycleState::Active, None, 300), Err(RuntimeError::Conflict(message)) if message.contains("reattached"))
+        matches!(repository.set_workspace_agent_lifecycle(&historical_session,&historical_agent.agent_id,WorkspaceAgentLifecycleState::Archived,Some("historical status cannot authorize archive"),250),Err(RuntimeError::Conflict(message)) if message.contains("reattached"))
     );
-    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
-    db.execute(
-        "UPDATE sessions SET status='closed' WHERE id=?1",
-        [&agent.agent_id],
-    )
-    .unwrap();
+    db.execute("UPDATE workspace_agents SET lifecycle_state='archived',archived_at=250 WHERE session_id=?1",[&historical_agent.agent_id]).unwrap();
+    historical_session.status = "ready".into();
+    historical_session.closed_at = None;
+    historical_session.updated_at = 300;
+    assert!(
+        matches!(repository.set_workspace_agent_lifecycle(&historical_session,&historical_agent.agent_id,WorkspaceAgentLifecycleState::Active,None,300),Err(RuntimeError::Conflict(message)) if message.contains("reattached"))
+    );
+    assert!(repository
+        .operator_native_policy_reattachment_pending(&historical_agent.agent_id)
+        .unwrap());
+    // Independent clean owner retains the ordinary persistence positive control.
+    let (mut clean_session, clean_agent) = super::workspace_agent::workspace_agent_fixture(
+        &workspace,
+        "sess_clean_lifecycle",
+        "clean-lifecycle",
+    );
+    repository
+        .create_workspace_agent(&clean_session, &clean_agent)
+        .unwrap();
+    clean_session.status = "closed".into();
+    clean_session.closed_at = Some(301);
+    clean_session.updated_at = 301;
     assert_eq!(
         repository
             .set_workspace_agent_lifecycle(
-                &session,
-                &agent.agent_id,
+                &clean_session,
+                &clean_agent.agent_id,
+                WorkspaceAgentLifecycleState::Archived,
+                Some("ordinary lifecycle fixture"),
+                301
+            )
+            .unwrap()
+            .lifecycle_state,
+        WorkspaceAgentLifecycleState::Archived
+    );
+    clean_session.status = "ready".into();
+    clean_session.closed_at = None;
+    clean_session.updated_at = 302;
+    assert_eq!(
+        repository
+            .set_workspace_agent_lifecycle(
+                &clean_session,
+                &clean_agent.agent_id,
                 WorkspaceAgentLifecycleState::Active,
                 None,
-                300
+                302
             )
             .unwrap()
             .lifecycle_state,
         WorkspaceAgentLifecycleState::Active
+    );
+    assert_eq!(
+        repository
+            .unresolved_operator_native_policy_for_agent(&agent.agent_id)
+            .unwrap()
+            .as_deref(),
+        Some(command.operation_id.as_str())
     );
 }
 
@@ -302,20 +342,60 @@ fn native_archive_claim_fences_stale_persistence_policy_lifecycle_and_compaction
         },
         reviewed_at: 203,
     };
-    let reviewed = reopened
-        .resolve_operator_agent_archive_review(&review)
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let before = super::legacy_native_turn_guards::raw_state(&db);
+    for _ in 0..2 {
+        assert!(
+            matches!(reopened.resolve_operator_agent_archive_review(&review),Err(RuntimeError::OperationUnresolved {operation_id,..}) if operation_id==command.operation_id)
+        );
+        assert!(
+            matches!(reopened.begin_session_compaction(&compaction),Err(RuntimeError::OperationUnresolved {operation_id,..}) if operation_id==command.operation_id)
+        );
+        assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
+    }
+    assert_eq!(
+        reopened
+            .unresolved_operator_agent_archive_for_agent(&agent.agent_id)
+            .unwrap()
+            .as_deref(),
+        Some(command.operation_id.as_str())
+    );
+    let (historical_session, historical_agent) = super::workspace_agent::workspace_agent_fixture(
+        &workspace,
+        "sess_historical_archive_fence",
+        "historical-archive-fence",
+    );
+    reopened
+        .create_workspace_agent(&historical_session, &historical_agent)
         .unwrap();
-    assert!(reviewed.restart_required);
-    assert_eq!(reviewed.agent_revision, 0);
+    db.execute(
+        "UPDATE sessions SET status='archive_recovery_required' WHERE id=?1",
+        [&historical_agent.agent_id],
+    )
+    .unwrap();
     assert!(reopened
-        .unresolved_operator_agent_archive_for_agent(&agent.agent_id)
+        .unresolved_operator_agent_archive_for_agent(&historical_agent.agent_id)
         .unwrap()
         .is_none());
     assert!(reopened
-        .operator_agent_archive_reattachment_pending(&agent.agent_id)
+        .operator_agent_archive_reattachment_pending(&historical_agent.agent_id)
         .unwrap());
+    let mut historical_compaction = compaction.clone();
+    historical_compaction.run_id = "cmp_historical_archive_fence".into();
+    historical_compaction.agent_id = historical_agent.agent_id;
+    historical_compaction.provider_session_ref = historical_session.provider_session_ref.unwrap();
+    historical_compaction.canonical_provider_session_ref =
+        historical_session.canonical_provider_session_ref;
+    historical_compaction.agent_revision = historical_agent.revision;
+    historical_compaction.expected_session_updated_at = historical_session.updated_at;
+    historical_compaction.idempotency_key = Some("historical-archive-compaction".into());
+    let historical_before = super::legacy_native_turn_guards::raw_state(&db);
     assert!(matches!(
-        reopened.begin_session_compaction(&compaction),
+        reopened.begin_session_compaction(&historical_compaction),
         Err(RuntimeError::Conflict(_))
     ));
+    assert_eq!(
+        super::legacy_native_turn_guards::raw_state(&db),
+        historical_before
+    );
 }

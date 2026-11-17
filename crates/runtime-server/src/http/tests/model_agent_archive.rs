@@ -1,3 +1,6 @@
+use super::native_review_refusal::{
+    assert_refusal as assert_prose_refusal, database_snapshot as review_snapshot,
+};
 mod legacy_native_recovery;
 
 use super::operator_native_policy::operator_policy_fixture;
@@ -525,16 +528,13 @@ fn review_input(original: &runtime_core::SessionRecord, revision: u64, resolutio
 }
 
 #[tokio::test]
-async fn model_remove_operator_evidence_settles_original_agent_after_caller_revocation() {
-    for (mode, resolution, outcome) in [
-        (2, "closed", "native_close_confirmed"),
-        (4, "not_closed", "verified_not_closed"),
-    ] {
+async fn model_remove_operator_prose_cannot_settle_after_caller_revocation() {
+    for (mode, resolution) in [(2, "closed"), (4, "not_closed")] {
         let fixture = Fixture::new(1).await;
         let target = &fixture.targets[0];
         let original = fixture.runtime.get_session(&target.agent_id).await.unwrap();
         fixture.provider.set_archive_close_mode(mode);
-        let before = fixture.provider.archive_close_count();
+        let before_calls = fixture.provider.archive_close_count();
         let result = fixture
             .remove("review-original-agent", &[target.agent_id.clone()])
             .await;
@@ -543,73 +543,87 @@ async fn model_remove_operator_evidence_settles_original_agent_after_caller_revo
         let child_id = result["error"]["details"]["targets"][0]["operation_id"]
             .as_str()
             .unwrap();
-        fixture
-            .db()
-            .execute(
-                "UPDATE workspace_agents SET lifecycle_state='archived',archived_at=1000 WHERE session_id=?1",
-                [&fixture.caller],
-            )
+        fixture.db().execute("UPDATE workspace_agents SET lifecycle_state='archived',archived_at=1000 WHERE session_id=?1",[&fixture.caller]).unwrap();
+        let store = fixture.store();
+        let original_agent = store
+            .get_workspace_agent_by_id(&target.agent_id)
+            .unwrap()
             .unwrap();
+        let original_child = store.get_operation(child_id).unwrap().unwrap();
+        let original_parent = store.get_operation(parent_id).unwrap().unwrap();
+        assert_eq!(
+            original_child.operation.phase,
+            runtime_core::OperationPhase::ManualReview
+        );
+        assert_eq!(original_child.claims.len(), 1);
+        assert_eq!(original_parent.effects[0].phase, "uncertain");
+        assert_eq!(
+            original_parent.effects[0].evidence.as_ref().unwrap()["outcome"]["status"],
+            "outcome_unresolved"
+        );
+        let before = review_snapshot(&fixture.db());
         let uri = format!(
             "/v2/workspaces/{}/agents/{}/archives/{child_id}/resolve",
             fixture.workspace, target.agent_id
         );
         let input = review_input(&original, target.revision, resolution);
-        let (status, review) = call(
-            &fixture.router,
-            &fixture.token,
-            "POST",
-            &uri,
-            Some(input.clone()),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{review}");
-        let (status, repeated) = call(
-            &fixture.router,
-            &fixture.token,
-            "POST",
-            &uri,
-            Some(input),
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{repeated}");
-        assert_eq!(repeated, review);
-        assert_eq!(fixture.provider.archive_close_count(), before + 1);
-        let store = fixture.store();
+        let mut first = None;
+        for changed_prose in [false, false, true] {
+            let mut body = input.clone();
+            if changed_prose {
+                body["evidence"] = json!(
+                    "A different assertion supplies no independently verified native receipt"
+                );
+            }
+            let (status, response) = call(
+                &fixture.router,
+                &fixture.token,
+                "POST",
+                &uri,
+                Some(body),
+                None,
+            )
+            .await;
+            assert_prose_refusal(status, &response, child_id);
+            if !changed_prose {
+                if let Some(first) = &first {
+                    assert_eq!(&response["error"], first);
+                } else {
+                    first = Some(response["error"].clone());
+                }
+            }
+            assert_eq!(review_snapshot(&fixture.db()), before);
+        }
         let child = store.get_operation(child_id).unwrap().unwrap();
+        assert_eq!(child, original_child);
+        assert_eq!(
+            store.get_operation(parent_id).unwrap().unwrap(),
+            original_parent
+        );
         assert_eq!(
             child.operation.actor.kind,
             runtime_core::OperationActorKind::Agent
         );
         assert_eq!(child.operation.actor.identifier, fixture.caller);
-        assert!(child.claims.is_empty());
+        assert_eq!(child.claims.len(), 1);
+        assert!(child.effects[0].evidence.as_ref().unwrap()["operator_review"].is_null());
+        let current = store
+            .get_workspace_agent_by_id(&target.agent_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(current, original_agent);
         assert_eq!(
-            child.effects[0].evidence.as_ref().unwrap()["operator_review"]["actor"]["kind"],
-            "operator"
+            fixture.runtime.get_session(&target.agent_id).await.unwrap(),
+            original
         );
-        let parent = store.get_operation(parent_id).unwrap().unwrap();
-        assert_eq!(
-            parent.operation.phase,
-            runtime_core::OperationPhase::Requested
-        );
-        assert_eq!(
-            parent.effects[0].evidence.as_ref().unwrap()["outcome"]["status"],
-            outcome
-        );
+        assert_eq!(fixture.provider.archive_close_count(), before_calls + 1);
         assert_eq!(
             fixture
-                .runtime
-                .get_session(&target.agent_id)
+                .provider
+                .native_cwd(&target.agent_id)
                 .await
-                .unwrap()
-                .status,
-            if resolution == "closed" {
-                "closed"
-            } else {
-                "archive_recovery_required"
-            }
+                .is_some(),
+            mode == 4
         );
     }
 }

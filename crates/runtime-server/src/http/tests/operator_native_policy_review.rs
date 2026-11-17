@@ -1,10 +1,13 @@
+use super::native_review_refusal::{assert_refusal, database_snapshot, refuse_prose_variants};
 use super::operator_native_policy::{
     claude_permission_fixture, operator_policy_fixture, permission_body, preference_body,
 };
 use super::workspace_worktree_routes::call;
 use super::*;
 
-struct ChangedNativePolicyAttachmentProvider;
+struct ChangedNativePolicyAttachmentProvider {
+    resume_calls: std::sync::atomic::AtomicUsize,
+}
 
 #[async_trait::async_trait]
 impl RuntimeProvider for ChangedNativePolicyAttachmentProvider {
@@ -28,6 +31,8 @@ impl RuntimeProvider for ChangedNativePolicyAttachmentProvider {
         &self,
         req: runtime_core::ProviderResumeSessionPolicyRequest,
     ) -> Result<ProviderSession, RuntimeError> {
+        self.resume_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(ProviderSession {
             runtime_session_id: req.runtime_session_id,
             provider_session_ref: format!("{}-unexpected-new-attachment", req.provider_session_ref),
@@ -113,7 +118,7 @@ fn policy_intent_without_native_dispatch(
 }
 
 #[tokio::test]
-async fn native_policy_review_refresh_is_isolated_from_unrelated_corrupt_session_metadata() {
+async fn native_policy_prose_refusal_is_isolated_from_unrelated_corrupt_metadata() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;
     let agent = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
@@ -146,16 +151,17 @@ async fn native_policy_review_refresh_is_isolated_from_unrelated_corrupt_session
     let baseline_native_calls = provider.preferences_mutation_calls();
     let body = review_body(&runtime, &agent_id, revision, "not_applied").await;
     let path = format!("/v2/agents/{agent_id}/native-policy/{operation_id}/resolve");
-    let (status, first) = call(&router, &token, "POST", &path, Some(body.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{first:?}");
-    assert_eq!(first["resolution"], "not_applied");
+    let original_operation = store.get_operation(operation_id).unwrap().unwrap();
+    refuse_prose_variants(&router, &token, &db, &path, operation_id, vec![body]).await;
     assert_eq!(
-        runtime.get_session(&agent_id).await.unwrap().status,
-        "policy_recovery_required"
+        store.get_operation(operation_id).unwrap().unwrap(),
+        original_operation
     );
-    let (status, again) = call(&router, &token, "POST", &path, Some(body), None).await;
-    assert_eq!(status, StatusCode::OK, "{again:?}");
-    assert_eq!(again, first);
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), session);
+    assert_eq!(
+        runtime.get_active_workspace_agent_by_id(&agent_id).unwrap(),
+        agent
+    );
     assert_eq!(provider.preferences_mutation_calls(), baseline_native_calls);
     assert!(
         store.hydrate_runtime_state().is_err(),
@@ -164,7 +170,7 @@ async fn native_policy_review_refresh_is_isolated_from_unrelated_corrupt_session
 }
 
 #[tokio::test]
-async fn reviewed_applied_native_policy_commits_once_and_requires_verified_reattachment() {
+async fn concurrent_applied_policy_prose_keeps_original_unknown_authority() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;
     provider.set_preferences_mutation_mode(2);
@@ -188,6 +194,14 @@ async fn reviewed_applied_native_policy_commits_once_and_requires_verified_reatt
 
     let input = review_body(&runtime, &agent_id, revision, "applied").await;
     let review_uri = format!("/v2/agents/{agent_id}/native-policy/{op_id}/resolve");
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let original_operation = store.get_operation(op_id).unwrap().unwrap();
+    let agent_before = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
+    let session_before = runtime.get_session(&agent_id).await.unwrap();
+    let before = database_snapshot(&db);
     let (a, b) = tokio::join!(
         call(
             &router,
@@ -206,59 +220,60 @@ async fn reviewed_applied_native_policy_commits_once_and_requires_verified_reatt
             None
         ),
     );
-    assert_eq!(a.0, StatusCode::OK, "{:?}", a.1);
-    assert_eq!(b.0, StatusCode::OK, "{:?}", b.1);
+    assert_refusal(a.0, &a.1, op_id);
+    assert_refusal(b.0, &b.1, op_id);
     assert_eq!(
-        a.1, b.1,
-        "duplicate reviews replay the exact durable receipt"
+        a.1["error"], b.1["error"],
+        "concurrent prose requests retain the same original unresolved coordinate"
     );
-    assert_eq!(a.1["resolution"], "applied");
-    assert_eq!(a.1["agent_revision"], revision + 1);
-    assert_eq!(a.1["restart_required"], true);
-    let agent = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
-    assert_eq!(agent.revision, revision + 1);
+    assert_eq!(database_snapshot(&db), before);
     assert_eq!(
-        agent.recreation_policy.current_preferences.thinking_effort,
-        Some(runtime_core::ProviderThinkingEffort::High)
+        store.get_operation(op_id).unwrap().unwrap(),
+        original_operation
     );
     assert_eq!(
-        runtime.get_session(&agent_id).await.unwrap().status,
-        "policy_recovery_required"
+        runtime.get_active_workspace_agent_by_id(&agent_id).unwrap(),
+        agent_before
     );
-    let (status, original) = call(
+    assert_eq!(
+        runtime.get_session(&agent_id).await.unwrap(),
+        session_before
+    );
+
+    let (status, original_key) = call(
         &router,
         &token,
         "POST",
         &uri,
-        Some(body.clone()),
+        Some(body),
         Some("applied-review-key"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{original:?}");
-    assert_eq!(original["current_preferences"]["thinking_effort"], "high");
-    assert_eq!(original["revision"], revision + 1);
+    assert_refusal(status, &original_key, op_id);
     let (status, blocked) = call(
         &router,
         &token,
         "POST",
         &format!("/v2/agents/{agent_id}/turns"),
-        Some(serde_json::json!({"input":[{"type":"text","text":"no stale native dispatch"}]})),
+        Some(serde_json::json!({
+            "input":[{"type":"text","text":"no stale native dispatch"}]
+        })),
         Some("turn-before-policy-reattachment"),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{blocked:?}");
-    assert_eq!(blocked["error"]["code"], "conflict");
     assert_eq!(provider.preferences_mutation_calls(), native_calls + 1);
 
-    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
-    let (phase,effect_phase,claim_count,transitions): (String,String,i64,i64) = db.query_row(
-        "SELECT o.phase,e.phase,
-          (SELECT COUNT(*) FROM runtime_operation_resource_claims WHERE owner_operation_id=o.operation_id),
-          (SELECT COUNT(*) FROM runtime_operation_transitions WHERE operation_id=o.operation_id)
-         FROM runtime_operations o JOIN runtime_operation_effects e ON e.operation_id=o.operation_id
-         WHERE o.operation_id=?1", [op_id],
-        |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
-    ).unwrap();
+    let (phase, effect_phase, claim_count, transitions): (String, String, i64, i64) =
+        db.query_row(
+            "SELECT o.phase,e.phase,
+             (SELECT COUNT(*) FROM runtime_operation_resource_claims WHERE owner_operation_id=o.operation_id),
+             (SELECT COUNT(*) FROM runtime_operation_transitions WHERE operation_id=o.operation_id)
+             FROM runtime_operations o JOIN runtime_operation_effects e ON e.operation_id=o.operation_id
+             WHERE o.operation_id=?1",
+            [op_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
     assert_eq!(
         (
             phase.as_str(),
@@ -266,28 +281,32 @@ async fn reviewed_applied_native_policy_commits_once_and_requires_verified_reatt
             claim_count,
             transitions
         ),
-        ("completed", "finalized", 0, 3)
+        ("manual_review", "uncertain", 1, 2)
     );
-    drop(db);
 
+    let resumes = provider.restore_call_count().await;
     let reopened = reopened_runtime(&temp, provider.clone()).await;
-    let summary = reopened.recover_startup().await.unwrap();
-    assert!(
-        summary
-            .notes
-            .iter()
-            .any(|note| note.contains("policy reattached with durable settings")),
-        "{summary:?}"
+    reopened.recover_startup().await.unwrap();
+    assert_eq!(
+        reopened.get_session(&agent_id).await.unwrap(),
+        session_before
     );
     assert_eq!(
-        reopened.get_session(&agent_id).await.unwrap().status,
-        "ready"
+        reopened
+            .get_active_workspace_agent_by_id(&agent_id)
+            .unwrap(),
+        agent_before
     );
+    assert_eq!(
+        store.get_operation(op_id).unwrap().unwrap(),
+        original_operation
+    );
+    assert_eq!(provider.restore_call_count().await, resumes);
     assert_eq!(provider.preferences_mutation_calls(), native_calls + 1);
 }
 
 #[tokio::test]
-async fn reviewed_not_applied_policy_consumes_original_key_without_native_dispatch() {
+async fn not_applied_prose_preserves_original_policy_claim_without_dispatch() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;
     let agent = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
@@ -304,14 +323,14 @@ async fn reviewed_not_applied_policy_consumes_original_key_without_native_dispat
     let native_calls = provider.preferences_mutation_calls();
     let input = review_body(&runtime, &agent_id, revision, "not_applied").await;
     let path = format!("/v2/agents/{agent_id}/native-policy/{op_id}/resolve");
-    let (status, reviewed) = call(&router, &token, "POST", &path, Some(input.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{reviewed:?}");
-    assert_eq!(reviewed["resolution"], "not_applied");
-    assert_eq!(reviewed["agent_revision"], revision);
-    let (status, again) = call(&router, &token, "POST", &path, Some(input.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{again:?}");
-    assert_eq!(again, reviewed);
-    let (status, original) = call(
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let original_operation = store.get_operation(op_id).unwrap().unwrap();
+    refuse_prose_variants(&router, &token, &db, &path, op_id, vec![input]).await;
+
+    let (status, original_key) = call(
         &router,
         &token,
         "POST",
@@ -320,21 +339,14 @@ async fn reviewed_not_applied_policy_consumes_original_key_without_native_dispat
         Some("review-not-applied-key"),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{original:?}");
-    assert_eq!(original["error"]["code"], "operator_verified_not_applied");
-    assert_eq!(original["error"]["details"]["operation_id"], op_id);
+    assert_refusal(status, &original_key, op_id);
     assert_eq!(provider.preferences_mutation_calls(), native_calls);
     assert_eq!(
-        runtime
-            .get_active_workspace_agent_by_id(&agent_id)
-            .unwrap()
-            .revision,
-        revision
+        runtime.get_active_workspace_agent_by_id(&agent_id).unwrap(),
+        agent
     );
-    assert_eq!(
-        runtime.get_session(&agent_id).await.unwrap().status,
-        "policy_recovery_required"
-    );
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), session);
+
     let (status, blocked) = call(
         &router,
         &token,
@@ -347,24 +359,27 @@ async fn reviewed_not_applied_policy_consumes_original_key_without_native_dispat
     assert_eq!(status, StatusCode::CONFLICT, "{blocked:?}");
     assert_eq!(provider.preferences_mutation_calls(), native_calls);
 
+    let resumes = provider.restore_call_count().await;
     let reopened = reopened_runtime(&temp, provider.clone()).await;
     reopened.recover_startup().await.unwrap();
-    assert_eq!(
-        reopened.get_session(&agent_id).await.unwrap().status,
-        "ready"
-    );
+    assert_eq!(reopened.get_session(&agent_id).await.unwrap(), session);
     assert_eq!(
         reopened
             .get_active_workspace_agent_by_id(&agent_id)
-            .unwrap()
-            .revision,
-        revision
+            .unwrap(),
+        agent
     );
+    assert_eq!(
+        store.get_operation(op_id).unwrap().unwrap(),
+        original_operation
+    );
+    assert_eq!(original_operation.claims.len(), 1);
+    assert_eq!(provider.restore_call_count().await, resumes);
     assert_eq!(provider.preferences_mutation_calls(), native_calls);
 }
 
 #[tokio::test]
-async fn native_policy_review_rejects_wrong_attachment_and_rolls_back_failed_receipt() {
+async fn native_policy_review_rejects_wrong_attachment_and_never_reaches_write_trigger() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;
     provider.set_preferences_mutation_mode(2);
@@ -400,29 +415,35 @@ async fn native_policy_review_rejects_wrong_attachment_and_rolls_back_failed_rec
         BEGIN SELECT RAISE(ABORT,'test policy review transaction failure'); END;",
     )
     .unwrap();
-    let (status, _failed) = call(&router, &token, "POST", &path, Some(input.clone()), None).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    let (phase,claim_count,session_status):(String,i64,String)=db.query_row(
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let original_operation = store.get_operation(op_id).unwrap().unwrap();
+    let before = database_snapshot(&db);
+    let (status, failed) = call(&router, &token, "POST", &path, Some(input.clone()), None).await;
+    assert_refusal(status, &failed, op_id);
+    assert_eq!(database_snapshot(&db), before);
+
+    let (phase, claim_count, session_status): (String, i64, String) = db.query_row(
         "SELECT o.phase,
          (SELECT COUNT(*) FROM runtime_operation_resource_claims WHERE owner_operation_id=o.operation_id),
          (SELECT s.status FROM sessions s WHERE s.id=?2)
          FROM runtime_operations o WHERE o.operation_id=?1",
-        rusqlite::params![op_id,agent_id],
-        |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+        rusqlite::params![op_id, agent_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).unwrap();
     assert_eq!(
         (phase.as_str(), claim_count, session_status.as_str()),
         ("manual_review", 1, "ready")
     );
+
     db.execute_batch("DROP TRIGGER deny_native_policy_review")
         .unwrap();
-    let (status, verified) = call(&router, &token, "POST", &path, Some(input.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{verified:?}");
-    let mut altered = input.clone();
-    altered["evidence"] =
-        serde_json::json!("Another different independently checked provider report");
-    let (status, rejected) = call(&router, &token, "POST", &path, Some(altered), None).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{rejected:?}");
+    refuse_prose_variants(&router, &token, &db, &path, op_id, vec![input]).await;
+    assert_eq!(
+        store.get_operation(op_id).unwrap().unwrap(),
+        original_operation
+    );
     assert_eq!(provider.preferences_mutation_calls(), native_calls);
 }
 
@@ -531,7 +552,7 @@ async fn unkeyed_public_native_policies_are_one_shot_journaled_instead_of_untrac
 }
 
 #[tokio::test]
-async fn operator_can_confirm_applied_claude_permission_after_lost_native_receipt() {
+async fn claude_permission_prose_cannot_settle_a_lost_native_receipt() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         claude_permission_fixture().await;
     provider.set_permission_mutation_mode(2);
@@ -554,15 +575,15 @@ async fn operator_can_confirm_applied_claude_permission_after_lost_native_receip
     input["evidence"] =
         serde_json::json!("Checked exact Claude session's native permission mode after lost reply");
     let path = format!("/v2/agents/{agent_id}/native-policy/{id}/resolve");
-    let (status, confirmed) = call(&router, &token, "POST", &path, Some(input), None).await;
-    assert_eq!(status, StatusCode::OK, "{confirmed:?}");
-    assert_eq!(confirmed["agent_revision"], revision + 1);
-    assert_eq!(confirmed["restart_required"], true);
-    let policy = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
-    assert_eq!(
-        policy.recreation_policy.permission_intent,
-        runtime_core::ProviderPermissionIntent::InheritProviderConfiguration
-    );
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let original_operation = store.get_operation(id).unwrap().unwrap();
+    let agent_before = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
+    let session_before = runtime.get_session(&agent_id).await.unwrap();
+    refuse_prose_variants(&router, &token, &db, &path, id, vec![input]).await;
+
     let (status, replay) = call(
         &router,
         &token,
@@ -572,22 +593,32 @@ async fn operator_can_confirm_applied_claude_permission_after_lost_native_receip
         Some("claude-manual-review-applied"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{replay:?}");
-    assert_eq!(replay["revision"], revision + 1);
+    assert_refusal(status, &replay, id);
+    let policy = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
+    assert_eq!(policy, agent_before);
+    assert_eq!(policy.revision, revision);
+    assert_eq!(
+        policy.recreation_policy.permission_intent,
+        runtime_core::ProviderPermissionIntent::ProviderDefault
+    );
+    assert_eq!(
+        runtime.get_session(&agent_id).await.unwrap(),
+        session_before
+    );
+    assert_eq!(
+        store.get_operation(id).unwrap().unwrap(),
+        original_operation
+    );
+    assert_eq!(
+        original_operation.operation.phase,
+        runtime_core::OperationPhase::ManualReview
+    );
+    assert_eq!(original_operation.claims.len(), 1);
     assert_eq!(provider.permission_mutation_calls(), old_calls + 1);
-    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
-    let db_phase: String = db
-        .query_row(
-            "SELECT phase FROM runtime_operations WHERE operation_id=?1",
-            [id],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(db_phase, "completed");
 }
 
 #[tokio::test]
-async fn reviewed_policy_recovery_refuses_provider_identity_drift_until_exact_reattachment() {
+async fn policy_prose_cannot_authorize_drifted_or_exact_startup_attachment() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;
     provider.set_preferences_mutation_mode(2);
@@ -605,22 +636,23 @@ async fn reviewed_policy_recovery_refuses_provider_identity_drift_until_exact_re
         .as_str()
         .unwrap();
     let body = review_body(&runtime, &agent_id, revision, "applied").await;
-    let (status, resolved) = call(
-        &router,
-        &token,
-        "POST",
-        &format!("/v2/agents/{agent_id}/native-policy/{op_id}/resolve"),
-        Some(body),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{resolved:?}");
+    let path = format!("/v2/agents/{agent_id}/native-policy/{op_id}/resolve");
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let original_operation = store.get_operation(op_id).unwrap().unwrap();
+    let original_session = runtime.get_session(&agent_id).await.unwrap();
+    let original_agent = runtime.get_active_workspace_agent_by_id(&agent_id).unwrap();
+    refuse_prose_variants(&router, &token, &db, &path, op_id, vec![body]).await;
     let native_calls = provider.preferences_mutation_calls();
+    let resumes = provider.restore_call_count().await;
 
+    let probe = Arc::new(ChangedNativePolicyAttachmentProvider {
+        resume_calls: std::sync::atomic::AtomicUsize::new(0),
+    });
     let mut registry = runtime_core::ProviderRegistry::new();
-    registry
-        .register(Arc::new(ChangedNativePolicyAttachmentProvider))
-        .unwrap();
+    registry.register(probe.clone()).unwrap();
     let changed = Arc::new(
         RuntimeSessionManager::new(
             Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
@@ -631,38 +663,41 @@ async fn reviewed_policy_recovery_refuses_provider_identity_drift_until_exact_re
         )
         .unwrap(),
     );
-    let summary = changed.recover_startup().await.unwrap();
-    assert!(
-        summary
-            .notes
-            .iter()
-            .any(|note| note.contains("still fenced")),
-        "{summary:?}"
-    );
-    let withheld = changed.get_session(&agent_id).await.unwrap();
-    assert_eq!(withheld.status, "policy_recovery_required");
+    changed.recover_startup().await.unwrap();
     assert_eq!(
-        withheld.failure_code.as_deref(),
-        Some("startup_policy_identity_changed")
+        probe.resume_calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "an unresolved policy cannot authorize even a drift-capable resume"
     );
-    assert!(!withheld
-        .provider_session_ref
-        .as_deref()
-        .unwrap()
-        .contains("unexpected-new"));
+    assert_eq!(
+        changed.get_session(&agent_id).await.unwrap(),
+        original_session
+    );
+    assert_eq!(
+        changed.get_active_workspace_agent_by_id(&agent_id).unwrap(),
+        original_agent
+    );
+    assert_eq!(
+        store.get_operation(op_id).unwrap().unwrap(),
+        original_operation
+    );
 
     let reopened = reopened_runtime(&temp, provider.clone()).await;
-    let recovered = reopened.recover_startup().await.unwrap();
-    assert!(
-        recovered
-            .notes
-            .iter()
-            .any(|note| note.contains("policy reattached with durable settings")),
-        "{recovered:?}"
+    reopened.recover_startup().await.unwrap();
+    assert_eq!(
+        reopened.get_session(&agent_id).await.unwrap(),
+        original_session
     );
     assert_eq!(
-        reopened.get_session(&agent_id).await.unwrap().status,
-        "ready"
+        reopened
+            .get_active_workspace_agent_by_id(&agent_id)
+            .unwrap(),
+        original_agent
     );
+    assert_eq!(
+        store.get_operation(op_id).unwrap().unwrap(),
+        original_operation
+    );
+    assert_eq!(provider.restore_call_count().await, resumes);
     assert_eq!(provider.preferences_mutation_calls(), native_calls);
 }

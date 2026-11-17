@@ -39,6 +39,7 @@ mod legacy_team_delivery_result;
 mod legacy_team_delivery_transition;
 mod legacy_team_events;
 mod legacy_team_messages;
+mod native_review_refusal;
 mod operator_event_pages;
 mod operator_process_pages;
 mod pre_dispatch_decline;

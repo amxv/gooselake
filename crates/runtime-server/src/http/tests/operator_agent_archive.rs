@@ -1,3 +1,4 @@
+use super::native_review_refusal::{assert_refusal, database_snapshot, refuse_prose_variants};
 use super::operator_native_policy::operator_policy_fixture;
 use super::workspace_worktree_routes::call;
 use super::*;
@@ -146,7 +147,7 @@ async fn archive_sqlite_revision_ceiling_rejects_before_native_close() {
 }
 
 #[tokio::test]
-async fn archive_review_refresh_ignores_unrelated_corrupt_session() {
+async fn archive_prose_refusal_ignores_unrelated_corrupt_session() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;
     let workspace = runtime
@@ -187,16 +188,13 @@ async fn archive_review_refresh_ignores_unrelated_corrupt_session() {
     let uri =
         format!("/v2/workspaces/{workspace}/agents/{agent_id}/archives/{operation_id}/resolve");
     let input = review_input(&original, revision, "closed");
-    let (status, first) = call(&router, &token, "POST", &uri, Some(input.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{first:?}");
-    assert_eq!(first["resolution"], "closed");
+    let original_operation = store.get_operation(operation_id).unwrap().unwrap();
+    refuse_prose_variants(&router, &token, &db, &uri, operation_id, vec![input]).await;
     assert_eq!(
-        runtime.get_session(&agent_id).await.unwrap().status,
-        "closed"
+        store.get_operation(operation_id).unwrap().unwrap(),
+        original_operation
     );
-    let (status, repeated) = call(&router, &token, "POST", &uri, Some(input), None).await;
-    assert_eq!(status, StatusCode::OK, "{repeated:?}");
-    assert_eq!(repeated, first);
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), original);
     assert_eq!(provider.archive_close_count(), before);
     assert!(store.hydrate_runtime_state().is_err());
 }
@@ -427,16 +425,8 @@ async fn native_archive_unknown_stays_active_and_key_is_not_redispatched() {
     invalid["original_provider_session_ref"] = serde_json::json!("wrong-native-ref");
     let (status, wrong) = call(&router, &token, "POST", &uri, Some(invalid), None).await;
     assert_eq!(status, StatusCode::CONFLICT, "{wrong:?}");
-    let (status, reviewed) =
-        call(&router, &token, "POST", &uri, Some(evidence.clone()), None).await;
-    assert_eq!(status, StatusCode::OK, "{reviewed:?}");
-    assert_eq!(reviewed["resolution"], "closed");
-    assert_eq!(reviewed["restart_required"], false);
-    assert_eq!(reviewed["agent_revision"], revision + 1);
-    assert_eq!(provider.archive_close_count(), baseline + 1);
-    let (status, duplicate) = call(&router, &token, "POST", &uri, Some(evidence), None).await;
-    assert_eq!(status, StatusCode::OK, "{duplicate:?}");
-    assert_eq!(duplicate, reviewed);
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    refuse_prose_variants(&router, &token, &db, &uri, op_id, vec![evidence]).await;
     let (status, original_key, _) = archive_http(
         &router,
         &token,
@@ -446,22 +436,26 @@ async fn native_archive_unknown_stays_active_and_key_is_not_redispatched() {
         Some("lost-close-ack"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{original_key:?}");
-    assert_eq!(original_key["lifecycle_state"], "archived");
-    assert_eq!(original_key["revision"], revision + 1);
-    assert_eq!(provider.archive_close_count(), baseline + 1);
+    assert_refusal(status, &original_key, op_id);
+    assert_eq!(store.get_operation(op_id).unwrap().unwrap(), operation);
+    assert_eq!(
+        runtime.get_active_workspace_agent_by_id(&agent_id).unwrap(),
+        agent
+    );
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), original);
+    assert!(provider.native_cwd(&agent_id).await.is_none());
 
+    let resumes = provider.restore_call_count().await;
     let reopened = reopen_runtime(&temp, provider.clone()).await;
     reopened.recover_startup().await.unwrap();
-    assert_eq!(
-        reopened.get_session(&agent_id).await.unwrap().status,
-        "closed"
-    );
+    assert_eq!(reopened.get_session(&agent_id).await.unwrap(), original);
+    assert_eq!(store.get_operation(op_id).unwrap().unwrap(), operation);
+    assert_eq!(provider.restore_call_count().await, resumes);
     assert_eq!(provider.archive_close_count(), baseline + 1);
 }
 
 #[tokio::test]
-async fn not_closed_review_consumes_key_and_requires_verified_native_reattachment() {
+async fn not_closed_prose_keeps_original_archive_claim_across_restart() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;
     let workspace = runtime
@@ -488,49 +482,12 @@ async fn not_closed_review_consumes_key_and_requires_verified_native_reattachmen
     let review_uri =
         format!("/v2/workspaces/{workspace}/agents/{agent_id}/archives/{operation_id}/resolve");
     let body = review_input(&original, revision, "not_closed");
-    let (status, reviewed) = call(
-        &router,
-        &token,
-        "POST",
-        &review_uri,
-        Some(body.clone()),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{reviewed:?}");
-    assert_eq!(reviewed["resolution"], "not_closed");
-    assert_eq!(reviewed["agent_revision"], revision);
-    assert_eq!(reviewed["restart_required"], true);
-    assert_eq!(
-        runtime.get_session(&agent_id).await.unwrap().status,
-        "archive_recovery_required"
-    );
-
-    let (status, replay) = call(
-        &router,
-        &token,
-        "POST",
-        &review_uri,
-        Some(body.clone()),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{replay:?}");
-    assert_eq!(replay, reviewed);
-    let mut changed_evidence = body;
-    changed_evidence["evidence"] =
-        serde_json::json!("A different purported observation of the same native session");
-    let (status, wrong) = call(
-        &router,
-        &token,
-        "POST",
-        &review_uri,
-        Some(changed_evidence),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{wrong:?}");
-
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let operation = store.get_operation(operation_id).unwrap().unwrap();
+    refuse_prose_variants(&router, &token, &db, &review_uri, operation_id, vec![body]).await;
     let (status, old, _) = archive_http(
         &router,
         &token,
@@ -540,8 +497,7 @@ async fn not_closed_review_consumes_key_and_requires_verified_native_reattachmen
         Some("unproven-close"),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{old:?}");
-    assert_eq!(old["error"]["code"], "operator_verified_not_closed");
+    assert_refusal(status, &old, operation_id);
     let (status, blocked, _) = archive_http(
         &router,
         &token,
@@ -552,48 +508,30 @@ async fn not_closed_review_consumes_key_and_requires_verified_native_reattachmen
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{blocked:?}");
-    assert_eq!(provider.archive_close_count(), baseline + 1);
 
-    provider.set_restore_failure_mode(3); // Provider unexpectedly changes native attachment.
-    let drifted = reopen_runtime(&temp, provider.clone()).await;
-    let drift_note = drifted.recover_startup().await.unwrap();
-    assert!(
-        drift_note
-            .notes
-            .iter()
-            .any(|note| note.contains("still fenced")),
-        "{drift_note:?}"
-    );
-    assert_eq!(
-        drifted.get_session(&agent_id).await.unwrap().status,
-        "archive_recovery_required"
-    );
-    assert_eq!(
-        drifted
-            .get_session(&agent_id)
-            .await
-            .unwrap()
-            .failure_code
-            .as_deref(),
-        Some("startup_archive_identity_changed")
-    );
+    let resumes = provider.restore_call_count().await;
+    for mode in [3, 0] {
+        provider.set_restore_failure_mode(mode);
+        let reopened = reopen_runtime(&temp, provider.clone()).await;
+        reopened.recover_startup().await.unwrap();
+        assert_eq!(reopened.get_session(&agent_id).await.unwrap(), original);
+        assert_eq!(
+            reopened
+                .get_active_workspace_agent_by_id(&agent_id)
+                .unwrap()
+                .revision,
+            revision
+        );
+        assert_eq!(
+            store.get_operation(operation_id).unwrap().unwrap(),
+            operation
+        );
+        assert_eq!(provider.restore_call_count().await, resumes);
+    }
 
-    provider.set_restore_failure_mode(0);
-    let reattached = reopen_runtime(&temp, provider.clone()).await;
-    let recovery = reattached.recover_startup().await.unwrap();
-    assert!(
-        recovery
-            .notes
-            .iter()
-            .any(|note| note.contains("archive reattached with durable settings")),
-        "{recovery:?}"
-    );
-    assert_eq!(
-        reattached.get_session(&agent_id).await.unwrap().status,
-        "ready"
-    );
     provider.set_archive_close_mode(0);
-    let (archived, _) = reattached
+    let reopened = reopen_runtime(&temp, provider.clone()).await;
+    let denied = reopened
         .archive_workspace_agent_operator(
             &workspace,
             &agent_id,
@@ -601,13 +539,18 @@ async fn not_closed_review_consumes_key_and_requires_verified_native_reattachmen
             runtime_core::OperationActor::operator("runtime_operator"),
             "new-key-after-startup".into(),
         )
-        .await
-        .unwrap();
-    assert_eq!(
-        archived.lifecycle_state,
-        runtime_core::WorkspaceAgentLifecycleState::Archived
+        .await;
+    assert!(
+        denied.is_err(),
+        "the original uncertain close still owns native authority"
     );
-    assert_eq!(provider.archive_close_count(), baseline + 2);
+    assert_eq!(
+        store.get_operation(operation_id).unwrap().unwrap(),
+        operation
+    );
+    assert_eq!(operation.claims.len(), 1);
+    assert!(provider.native_cwd(&agent_id).await.is_some());
+    assert_eq!(provider.archive_close_count(), baseline + 1);
 }
 
 #[tokio::test]
@@ -696,7 +639,7 @@ async fn startup_quarantines_admitted_archive_intent_without_native_close_retry(
 }
 
 #[tokio::test]
-async fn native_close_receipt_sql_failure_keeps_active_roster_and_reconciliation_is_atomic() {
+async fn native_close_receipt_sql_failure_keeps_authority_despite_prose() {
     let (router, token, temp, provider, runtime, agent_id, revision) =
         operator_policy_fixture().await;
     let workspace = runtime
@@ -756,12 +699,11 @@ async fn native_close_receipt_sql_failure_keeps_active_roster_and_reconciliation
     let uri =
         format!("/v2/workspaces/{workspace}/agents/{agent_id}/archives/{operation_id}/resolve");
     let body = review_input(&original, revision, "closed");
+    let before = database_snapshot(&db);
     let (status, failure) = call(&router, &token, "POST", &uri, Some(body.clone()), None).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{failure:?}");
-    assert_eq!(
-        runtime.get_session(&agent_id).await.unwrap().status,
-        "ready"
-    );
+    assert_refusal(status, &failure, operation_id);
+    assert_eq!(database_snapshot(&db), before);
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), original);
     assert_eq!(
         runtime
             .get_active_workspace_agent_by_id(&agent_id)
@@ -769,15 +711,16 @@ async fn native_close_receipt_sql_failure_keeps_active_roster_and_reconciliation
             .revision,
         revision
     );
+
     db.execute_batch("DROP TRIGGER deny_native_archive_receipt;")
         .unwrap();
-    let (status, reconciled) = call(&router, &token, "POST", &uri, Some(body), None).await;
-    assert_eq!(status, StatusCode::OK, "{reconciled:?}");
-    assert_eq!(reconciled["resolution"], "closed");
+    refuse_prose_variants(&router, &token, &db, &uri, operation_id, vec![body]).await;
     assert_eq!(
-        runtime.get_session(&agent_id).await.unwrap().status,
-        "closed"
+        store.get_operation(operation_id).unwrap().unwrap(),
+        operation
     );
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), original);
+    assert!(provider.native_cwd(&agent_id).await.is_none());
     assert_eq!(provider.archive_close_count(), baseline + 1);
 }
 
@@ -994,6 +937,17 @@ async fn archive_review_rejects_stale_etag_and_unknown_evidence_fields_before_mu
         )
         .await
         .unwrap();
-    assert_eq!(success.status(), StatusCode::OK);
+    let status = success.status();
+    let bytes = to_bytes(success.into_body(), usize::MAX).await.unwrap();
+    let refused: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_refusal(status, &refused, op_id);
     assert_eq!(provider.archive_close_count(), baseline);
+    assert_eq!(runtime.get_session(&agent_id).await.unwrap(), original);
+    assert_eq!(
+        runtime
+            .get_active_workspace_agent_by_id(&agent_id)
+            .unwrap()
+            .revision,
+        revision
+    );
 }

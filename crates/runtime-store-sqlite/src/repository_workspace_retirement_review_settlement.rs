@@ -243,6 +243,8 @@ fn closed_without_dispatch(
           AND f.phase IN ('frozen','manual_review') AND (a.session_id IS NULL OR a.lifecycle_state='archived')
           AND e.effect_kind='workspace_provider_close' AND e.phase='finalized'
           AND json_extract(e.evidence_json,'$.verified')=1
+          AND json_extract(e.evidence_json,'$.proof_kind') IN
+              ('native_session_close_acknowledged','native_process_terminated')
           AND json_extract(e.evidence_json,'$.provider')=s.provider
           AND json_extract(e.evidence_json,'$.provider_session_ref')=s.provider_session_ref
           AND json_extract(e.evidence_json,'$.canonical_provider_session_ref') IS s.canonical_provider_session_ref

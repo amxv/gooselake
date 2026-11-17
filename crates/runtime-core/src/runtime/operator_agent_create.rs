@@ -149,7 +149,7 @@ impl RuntimeSessionManager {
         )
     }
 
-    /// Human-reviewed evidence only. No provider, Git or shell call occurs.
+    /// Historical review inspection or fresh prose refusal; no native call occurs.
     pub async fn resolve_operator_agent_create_review(
         self: &Arc<Self>,
         workspace_id: &str,

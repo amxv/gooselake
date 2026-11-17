@@ -44,9 +44,8 @@ impl OperatorPolicySelection {
 }
 
 impl RuntimeSessionManager {
-    /// A manual outcome assertion never re-invokes the native provider. Both
-    /// the original key and any later model work consume the reconciled durable
-    /// result only after an explicit provider reattachment on next startup.
+    /// Inspect an exact retained review or refuse a fresh prose assertion.
+    /// Neither path invokes the provider or creates new native authority.
     pub async fn resolve_operator_native_policy_review(
         self: &Arc<Self>,
         agent_id: &str,

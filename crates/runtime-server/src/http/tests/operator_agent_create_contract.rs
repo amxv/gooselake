@@ -1,3 +1,4 @@
+use super::native_review_refusal::{assert_refusal, database_snapshot, refuse_prose_variants};
 use super::operator_agent_create::{create_http, fixture, reopened_runtime};
 use super::workspace_worktree_routes::call;
 use super::*;
@@ -77,7 +78,7 @@ async fn concurrent_same_key_agent_creation_never_launches_a_second_session() {
 
 #[tokio::test]
 async fn native_create_auth_strict_inputs_and_review_guards_precede_side_effects() {
-    let (router, token, _temp, provider, runtime, workspace) = fixture().await;
+    let (router, token, temp, provider, runtime, workspace) = fixture().await;
     let uri = format!("/v2/workspaces/{workspace}/agents");
     let without_auth = router
         .clone()
@@ -210,13 +211,20 @@ async fn native_create_auth_strict_inputs_and_review_guards_precede_side_effects
         .list_workspace_agents(&workspace, None)
         .unwrap()
         .is_empty());
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let before = database_snapshot(&db);
     let (status, valid) = call(&router, &token, "POST", &review_uri, Some(evidence), None).await;
-    assert_eq!(status, StatusCode::OK, "{valid:?}");
-    assert_eq!(valid["resolution"], "not_created");
+    assert_refusal(status, &valid, op);
+    assert_eq!(database_snapshot(&db), before);
+    assert_eq!(provider.create_call_count(), 1);
+    assert!(runtime
+        .list_workspace_agents(&workspace, None)
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
-async fn independently_verified_created_native_attachment_rejects_drift_then_reattaches() {
+async fn create_prose_cannot_authorize_either_drifted_or_exact_startup_attachment() {
     let (router, token, temp, provider, runtime, workspace) = fixture().await;
     provider.set_create_failure_mode(2);
     let input = serde_json::json!({"provider":"codex","model":"test-model"});
@@ -253,44 +261,28 @@ async fn independently_verified_created_native_attachment_rejects_drift_then_rea
         "evidence":"Independently observed the original native session after provider acknowledged nothing",
     });
     let path = format!("/v2/workspaces/{workspace}/agents/creations/{op}/resolve");
-    let (status, verified) = call(&router, &token, "POST", &path, Some(review), None).await;
-    assert_eq!(status, StatusCode::OK, "{verified:?}");
-    assert_eq!(
-        runtime.get_session(&reserved).await.unwrap().status,
-        "create_recovery_required"
-    );
-    provider.set_restore_failure_mode(3);
-    let changed = reopened_runtime(&temp, provider.clone()).await;
-    let first_recovery = changed.recover_startup().await.unwrap();
-    assert!(
-        first_recovery
-            .notes
-            .iter()
-            .any(|note| note.contains("still fenced")),
-        "{first_recovery:?}"
-    );
-    let still_blocked = changed.get_session(&reserved).await.unwrap();
-    assert_eq!(still_blocked.status, "create_recovery_required");
-    assert_eq!(
-        still_blocked.failure_code.as_deref(),
-        Some("startup_create_identity_changed")
-    );
-    assert_eq!(provider.create_call_count(), baseline + 1);
-    provider.set_restore_failure_mode(0);
-    let correct = reopened_runtime(&temp, provider.clone()).await;
-    let recovery = correct.recover_startup().await.unwrap();
-    assert!(
-        recovery
-            .notes
-            .iter()
-            .any(|note| note.contains("create reattached with durable settings")),
-        "{recovery:?}"
-    );
-    assert_eq!(
-        correct.get_session(&reserved).await.unwrap().status,
-        "ready"
-    );
-    assert_eq!(provider.create_call_count(), baseline + 1);
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: temp.path().join("runtime.sqlite3"),
+    });
+    let original_operation = store.get_operation(op).unwrap().unwrap();
+    refuse_prose_variants(&router, &token, &db, &path, op, vec![review]).await;
+    assert!(runtime.get_session(&reserved).await.is_err());
+
+    let resumes = provider.restore_call_count().await;
+    for mode in [3, 0] {
+        provider.set_restore_failure_mode(mode);
+        let reopened = reopened_runtime(&temp, provider.clone()).await;
+        reopened.recover_startup().await.unwrap();
+        assert!(reopened.get_session(&reserved).await.is_err());
+        assert_eq!(
+            store.get_operation(op).unwrap().unwrap(),
+            original_operation
+        );
+        assert_eq!(provider.restore_call_count().await, resumes);
+        assert_eq!(provider.create_call_count(), baseline + 1);
+        assert!(provider.native_cwd(&reserved).await.is_some());
+    }
 }
 
 #[tokio::test]
@@ -451,15 +443,43 @@ async fn preprovider_create_reservation_blocks_workspace_retirement_across_sqlit
         "provider":"codex",
         "evidence":"Independent provider inspection confirmed no session ever launched",
     });
-    let (status, reviewed) = call(&router, &token, "POST", &uri, Some(independent), None).await;
-    assert_eq!(status, StatusCode::OK, "{reviewed:?}");
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let original_operation = store.get_operation(&command.operation_id).unwrap().unwrap();
+    refuse_prose_variants(
+        &router,
+        &token,
+        &db,
+        &uri,
+        &command.operation_id,
+        vec![independent],
+    )
+    .await;
     let preflight = second_store
         .repository()
         .workspace_retirement_preflight(&workspace)
         .unwrap();
-    assert!(!preflight
+    assert!(preflight
         .blockers
         .iter()
-        .any(|blocker| blocker.code == "operations_unresolved"));
+        .any(|blocker| { blocker.code == "operations_unresolved" }));
+    assert_eq!(
+        store.get_operation(&command.operation_id).unwrap().unwrap(),
+        original_operation
+    );
+    assert_eq!(original_operation.claims.len(), 1);
     assert_eq!(provider.create_call_count(), 0);
+
+    let (_, _, clean_temp, clean_provider, _, clean_workspace) = fixture().await;
+    let clean_store = SqliteRuntimeStore::new(SqliteStoreConfig {
+        database_path: clean_temp.path().join("runtime.sqlite3"),
+    });
+    let clean = clean_store
+        .repository()
+        .workspace_retirement_preflight(&clean_workspace)
+        .unwrap();
+    assert!(!clean
+        .blockers
+        .iter()
+        .any(|blocker| { blocker.code == "operations_unresolved" }));
+    assert_eq!(clean_provider.create_call_count(), 0);
 }

@@ -83,6 +83,7 @@ mod model_agent_rebind;
 mod model_member_caller_lifecycle;
 mod native_approval_journal_http;
 mod native_dispatch_outcome_journal_http;
+mod native_review_refusal;
 mod operator_agent_archive;
 mod operator_agent_archive_lead_ceiling;
 mod operator_agent_create;

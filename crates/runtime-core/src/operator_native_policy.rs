@@ -87,7 +87,7 @@ impl OperatorNativePolicyAdmission {
     }
 }
 
-/// Operator-verified native state, not a request to invoke the provider again.
+/// Historical review resolution shape. Fresh prose supplies no native authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OperatorNativePolicyReviewResolution {
@@ -104,8 +104,8 @@ impl OperatorNativePolicyReviewResolution {
     }
 }
 
-/// The operator must verify the *exact* immutable native attachment recorded
-/// in the original operation, rather than asserting that any session changed.
+/// Retained exact-identity review request. Fresh assertions preserve the unknown
+/// operation; only an identical historical terminal review can replay its response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorNativePolicyReviewInput {
@@ -133,8 +133,8 @@ pub struct OperatorNativePolicyReviewResponse {
     pub agent_id: String,
     pub resolution: OperatorNativePolicyReviewResolution,
     pub agent_revision: u64,
-    /// Fresh provider reattachment must consume the reconciled durable policy
-    /// before any additional native effects or user turns are permitted.
+    /// Retained historical response flag; it does not authorize provider
+    /// reattachment or clear a recovery gate.
     pub restart_required: bool,
     pub reviewed_at_ms: i64,
 }

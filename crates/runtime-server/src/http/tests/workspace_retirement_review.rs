@@ -1,9 +1,12 @@
+use super::native_review_refusal::{
+    assert_refusal as assert_prose_refusal, database_snapshot as review_snapshot,
+};
 use super::workspace_retirement_support::*;
 use super::*;
 use std::sync::atomic::Ordering;
 
 #[tokio::test]
-async fn operator_verified_retirement_close_receipt_ignores_unrelated_corrupt_session() {
+async fn retirement_prose_refusal_preserves_coordinate_despite_unrelated_corruption() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("retirement-review-target");
     let unrelated_root = temp.path().join("retirement-review-unrelated");
@@ -80,55 +83,62 @@ async fn operator_verified_retirement_close_receipt_ignores_unrelated_corrupt_se
         "/v2/workspaces/{}/retirement/{}/reconcile",
         workspace.workspace_id, unknown.operation.operation_id
     );
-    let (status, receipt) = fixture
-        .call(
-            "POST",
-            &uri,
-            Some(input.clone()),
-            Some("review-corrupt-history"),
+    let before = review_snapshot(&db);
+    for _ in 0..2 {
+        let (status, response) = fixture
+            .call(
+                "POST",
+                &uri,
+                Some(input.clone()),
+                Some("review-corrupt-history"),
+            )
+            .await;
+        assert_prose_refusal(status, &response, &unknown.operation.operation_id);
+        assert_eq!(review_snapshot(&db), before);
+        assert_eq!(
+            fixture
+                .store
+                .get_operation(&unknown.operation.operation_id)
+                .unwrap()
+                .unwrap(),
+            unknown
+        );
+        assert_eq!(
+            fixture.runtime.get_session(&agent.agent_id).await.unwrap(),
+            session
+        );
+        assert_eq!(
+            fixture
+                .runtime
+                .get_workspace_agent(&workspace.workspace_id, &agent.agent_id)
+                .unwrap(),
+            current_agent
+        );
+        assert!(fixture.store.hydrate_runtime_state().is_err());
+    }
+    let reviews: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM workspace_retirement_reviews WHERE operation_id=?1",
+            [&unknown.operation.operation_id],
+            |row| row.get(0),
         )
-        .await;
-    let committed = fixture
-        .store
-        .get_operation(&unknown.operation.operation_id)
-        .unwrap()
         .unwrap();
+    assert_eq!(reviews, 0);
+    assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.resumes.load(Ordering::SeqCst), 0);
     assert_eq!(
-        committed
+        unknown
             .effects
             .iter()
             .find(|row| row.effect_id == effect.effect_id)
             .unwrap()
             .phase,
-        "finalized",
-        "native operator review must be durably committed independently of HTTP projection"
+        "manual_review"
     );
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "committed receipt returned {status}: {receipt}"
-    );
-    assert_eq!(receipt["settled"], true);
-    assert_eq!(
-        fixture
-            .runtime
-            .get_session(&agent.agent_id)
-            .await
-            .unwrap()
-            .status,
-        "closed"
-    );
-    let (status, replay) = fixture
-        .call("POST", &uri, Some(input), Some("review-corrupt-history"))
-        .await;
-    assert_eq!(status, StatusCode::OK, "{replay}");
-    assert_eq!(replay, receipt);
-    assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
-    assert!(fixture.store.hydrate_runtime_state().is_err());
 }
 
 #[tokio::test]
-async fn operator_reconciles_unknown_native_close_after_restart_and_resumes_original_retirement() {
+async fn retirement_prose_refusal_after_restart_keeps_original_unknown_owner() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("review-workspace");
     fs::create_dir_all(&root).unwrap();
@@ -159,8 +169,8 @@ async fn operator_reconciles_unknown_native_close_after_restart_and_resumes_orig
     assert_eq!(effect.phase, "manual_review");
     assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
 
-    // Independent provider control verifies the close. Runtime review must not
-    // replay the unknown native request, including from a restarted manager.
+    // This external observation is not a structured receipt supplied to the review.
+    // Restart cannot turn identity plus prose into settlement authority.
     provider
         .externally_close_for_operator_review(&agent.agent_id)
         .await;
@@ -270,113 +280,104 @@ async fn operator_reconciles_unknown_native_close_after_restart_and_resumes_orig
         unknown
     );
 
-    let (status, receipt) = restarted
-        .call("POST", &uri, Some(input.clone()), Some("operator-review"))
-        .await;
-    assert_eq!(status, StatusCode::OK, "{receipt}");
-    assert_eq!(receipt["operation_id"], unknown.operation.operation_id);
-    assert_eq!(receipt["operation_phase"], "requested");
-    assert_eq!(receipt["settled"], true);
-    assert_eq!(
-        restarted
-            .runtime
-            .get_session(&agent.agent_id)
-            .await
-            .unwrap()
-            .status,
-        "closed"
-    );
-    let completed = timeout(Duration::from_secs(10), async {
-        let mut tick = tokio::time::interval(Duration::from_millis(20));
-        loop {
-            let operation = restarted
-                .store
-                .get_operation(&unknown.operation.operation_id)
-                .unwrap()
-                .unwrap();
-            if operation.operation.phase == runtime_core::OperationPhase::Completed {
-                break operation;
-            }
-            assert_eq!(
-                operation.operation.phase,
-                runtime_core::OperationPhase::Requested,
-                "{operation:?}"
-            );
-            tick.tick().await;
-        }
-    })
-    .await
-    .expect("review did not resume the exact original retirement worker");
-    assert_eq!(
-        completed.operation.operation_id,
-        unknown.operation.operation_id
-    );
-    assert_eq!(
-        completed.operation.idempotency_key,
-        unknown.operation.idempotency_key
-    );
-    assert_eq!(
-        completed.operation.normalized_request,
-        unknown.operation.normalized_request
-    );
-    assert_eq!(completed.effects.len(), unknown.effects.len());
-    let close = completed
-        .effects
-        .iter()
-        .find(|effect| effect.effect_id == receipt["effect_id"].as_str().unwrap())
-        .unwrap();
-    assert_eq!(close.attempt_count, 1);
-    assert_eq!(
-        close.evidence.as_ref().unwrap()["proof_kind"],
-        "operator_verified_closed"
-    );
-    assert_eq!(
-        close.evidence.as_ref().unwrap()["prior_evidence"]["outcome"],
-        "native_close_unresolved"
-    );
-    assert!(
-        close.evidence.as_ref().unwrap()["prior_evidence"]["prior_evidence"]["started_at"]
-            .is_number()
-    );
-    assert_eq!(
-        restarted
-            .workspace(&workspace.workspace_id)
-            .await
-            .lifecycle_state,
-        runtime_core::WorkspaceLifecycleState::Retired
-    );
-    assert_eq!(restarted_provider.closes.load(Ordering::SeqCst), 0);
-    assert_eq!(restarted_provider.resumes.load(Ordering::SeqCst), 0);
-    assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    let before = review_snapshot(&db);
     let events = restarted
         .store
         .list_runtime_events(None, None, 512)
         .unwrap();
-    let (status, replay) = restarted
-        .call("POST", &uri, Some(input.clone()), Some("operator-review"))
-        .await;
-    assert_eq!(status, StatusCode::OK, "{replay}");
-    assert_eq!(replay, receipt);
+    for (key, changed_prose) in [
+        ("operator-review", false),
+        ("operator-review", false),
+        ("operator-review", true),
+        ("different-operator-review", false),
+    ] {
+        let mut body = input.clone();
+        if changed_prose {
+            body["evidence"] = serde_json::json!(
+                "Different evidence text still supplies no independent native receipt"
+            );
+        }
+        let (status, response) = restarted.call("POST", &uri, Some(body), Some(key)).await;
+        assert_prose_refusal(status, &response, &unknown.operation.operation_id);
+        assert_eq!(review_snapshot(&db), before);
+        assert_eq!(
+            restarted
+                .store
+                .get_operation(&unknown.operation.operation_id)
+                .unwrap()
+                .unwrap(),
+            unknown
+        );
+        assert_eq!(
+            restarted
+                .store
+                .list_runtime_events(None, None, 512)
+                .unwrap(),
+            events
+        );
+        assert_eq!(
+            restarted
+                .runtime
+                .get_session(&agent.agent_id)
+                .await
+                .unwrap(),
+            session
+        );
+        assert_eq!(
+            restarted
+                .runtime
+                .get_workspace_agent(&workspace.workspace_id, &agent.agent_id)
+                .unwrap(),
+            current_agent
+        );
+        assert_eq!(
+            restarted
+                .workspace(&workspace.workspace_id)
+                .await
+                .lifecycle_state,
+            runtime_core::WorkspaceLifecycleState::Active
+        );
+    }
+    let retained = restarted
+        .store
+        .get_operation(&unknown.operation.operation_id)
+        .unwrap()
+        .unwrap();
+    let close = retained
+        .effects
+        .iter()
+        .find(|row| row.effect_id == effect.effect_id)
+        .unwrap();
+    assert_eq!(close.phase, "manual_review");
+    assert_eq!(close.attempt_count, 1);
+    let evidence = close.evidence.as_ref().unwrap();
+    assert_eq!(evidence["outcome"], "native_close_unresolved");
+    assert!(evidence["prior_evidence"]["started_at"].is_number());
+    assert!(evidence["operator_review"].is_null());
+    assert!(!retained.claims.is_empty());
+    let reviews: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM workspace_retirement_reviews WHERE operation_id=?1",
+            [&unknown.operation.operation_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(reviews, 0);
+    assert_eq!(restarted_provider.closes.load(Ordering::SeqCst), 0);
+    assert_eq!(restarted_provider.resumes.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.closes.load(Ordering::SeqCst), 1);
+    let again_provider = RetirementProvider::new(ProviderKind::Codex);
+    let again = retirement_fixture(temp.path(), &[again_provider.clone()]).await;
+    again.runtime.recover_startup().await.unwrap();
     assert_eq!(
-        restarted
+        again
             .store
             .get_operation(&unknown.operation.operation_id)
             .unwrap()
             .unwrap(),
-        completed
+        unknown
     );
-    assert_eq!(
-        restarted
-            .store
-            .list_runtime_events(None, None, 512)
-            .unwrap(),
-        events
-    );
-    let mut conflict = input;
-    conflict["evidence"] =
-        serde_json::json!("Different evidence cannot overwrite the original receipt");
-    let (status, _) = restarted
-        .call("POST", &uri, Some(conflict), Some("operator-review"))
-        .await;
-    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(again_provider.closes.load(Ordering::SeqCst), 0);
+    assert_eq!(again_provider.resumes.load(Ordering::SeqCst), 0);
 }

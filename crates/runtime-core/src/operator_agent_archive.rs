@@ -75,8 +75,7 @@ pub struct OperatorAgentArchiveReviewInput {
     pub original_canonical_provider_session_ref: Option<String>,
     pub expected_revision: u64,
     pub session_updated_at: i64,
-    /// A not-closed native attachment may only be accepted as live after an
-    /// independent observation and a fresh verified startup reattachment.
+    /// Retained historical observation. Fresh prose cannot establish native liveness.
     pub observed_provider_session_ref: Option<String>,
     pub observed_canonical_provider_session_ref: Option<String>,
 }

@@ -1,4 +1,7 @@
 use super::*;
+use crate::http::tests::native_review_refusal::{
+    assert_refusal as assert_prose_refusal, database_snapshot as review_snapshot,
+};
 use runtime_core::{
     TeamHookApprovalUpdate, TeamHookEffectAdmission, TeamHookEffectPhase, TeamHookEffectReceipt,
     TeamHookEffectRecord, TeamHookEventName, TeamHookResolvedEntry, TeamHookScope,
@@ -149,15 +152,11 @@ fn revoke_after_launch(f: &Fixture, caller: bool, grant: bool) {
 }
 
 pub(super) async fn review(f: &Fixture, child: &str, reserved: &str, created: bool) -> Value {
-    let (status,result)=super::super::workspace_worktree_routes::call(&f.router,&f.token,"POST",
-        &format!("/v2/workspaces/{}/agents/creations/{child}/resolve",f.workspace),Some(json!({
-            "resolution":if created{"created"}else{"not_created"},"reserved_agent_id":reserved,"provider":"codex",
-            "evidence":"Independent inert-provider inspection of the exact reserved attachment",
-            "observed_provider_session_ref":created.then(||format!("test-thread-{reserved}")),
-            "observed_canonical_provider_session_ref":null,
-        })),None).await;
-    assert_eq!(status, StatusCode::OK, "{result}");
-    result
+    let before = review_snapshot(&f.db());
+    let(status,result)=super::super::workspace_worktree_routes::call(&f.router,&f.token,"POST",&format!("/v2/workspaces/{}/agents/creations/{child}/resolve",f.workspace),Some(json!({"resolution":if created{"created"}else{"not_created"},"reserved_agent_id":reserved,"provider":"codex","evidence":"Operator assertion about the exact reserved attachment","observed_provider_session_ref":created.then(||format!("test-thread-{reserved}")),"observed_canonical_provider_session_ref":null})),None).await;
+    assert_prose_refusal(status, &result, child);
+    assert_eq!(review_snapshot(&f.db()), before);
+    result["error"].clone()
 }
 
 #[tokio::test]
@@ -250,7 +249,7 @@ async fn member_hook_substituted_receipt_cannot_settle_admitted_provider_or_revi
 }
 
 #[tokio::test]
-async fn member_native_receipt_and_created_review_settle_after_caller_and_grant_revocation() {
+async fn member_known_receipt_settles_but_prose_cannot_after_revocation() {
     for lost_ack in [false, true] {
         for (caller, grant) in [(true, false), (false, true)] {
             let f = Arc::new(Fixture::new().await);
@@ -268,16 +267,58 @@ async fn member_native_receipt_and_created_review_settle_after_caller_and_grant_
             revoke_after_launch(&f, caller, grant);
             release.notify_one();
             let result = task.await.unwrap();
-            let (child, reserved) = if lost_ack {
+            if lost_ack {
                 assert_eq!(result["ok"], false, "{result}");
                 let target = &result["error"]["details"]["targets"][0];
-                let child = target["operation_id"].as_str().unwrap().to_owned();
-                let reserved = target["agent_id"].as_str().unwrap().to_owned();
-                let reviewed = review(&f, &child, &reserved, true).await;
-                assert_eq!(reviewed["restart_required"], true);
-                assert_eq!(review(&f, &child, &reserved, true).await, reviewed);
-                (child, reserved)
-            } else {
+                let child = target["operation_id"].as_str().unwrap();
+                let reserved = target["agent_id"].as_str().unwrap();
+                let parent = f.parent("member-after-provider-revocation");
+                let store = f.store();
+                let original_child = store.get_operation(child).unwrap().unwrap();
+                let original_parent = store.get_operation(&parent).unwrap().unwrap();
+                assert_eq!(
+                    original_child.operation.phase,
+                    runtime_core::OperationPhase::ManualReview
+                );
+                assert_eq!(original_child.claims.len(), 1);
+                assert_eq!(
+                    original_child.operation.actor.kind,
+                    runtime_core::OperationActorKind::Agent
+                );
+                assert_eq!(original_child.operation.actor.identifier, f.caller);
+                let(phase,application,profiles,notices):(String,String,i64,i64)=f.db().query_row("SELECT phase,application_state,(SELECT COUNT(*) FROM workspace_agent_profiles WHERE session_id=?1),(SELECT COUNT(*) FROM workspace_system_notices WHERE recipient_agent_id=?1 OR input_json LIKE '%private caller hook text%') FROM workspace_hook_effects WHERE event_name='pre_teammate_add'",[reserved],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+                assert_eq!(
+                    (phase.as_str(), application.as_str(), profiles, notices),
+                    ("succeeded", "pending", 0, 0)
+                );
+                assert!(f.provider.native_cwd(reserved).await.is_some());
+                assert!(store.get_persisted_session(reserved).unwrap().is_none());
+                let refused = review(&f, child, reserved, true).await;
+                assert_eq!(review(&f, child, reserved, true).await, refused);
+                assert_eq!(store.get_operation(child).unwrap().unwrap(), original_child);
+                assert_eq!(
+                    store.get_operation(&parent).unwrap().unwrap(),
+                    original_parent
+                );
+                f.provider.set_create_failure_mode(0);
+                let resumed = f.provider.resumed_requests().await.len();
+                let fresh = reopened_runtime(&f.temp, f.provider.clone()).await;
+                fresh.recover_startup().await.unwrap();
+                assert!(store.get_persisted_session(reserved).unwrap().is_none());
+                assert!(f.provider.resumed_requests().await[resumed..]
+                    .iter()
+                    .all(|request| request.runtime_session_id != reserved));
+                assert_eq!(store.get_operation(child).unwrap().unwrap(), original_child);
+                assert_eq!(
+                    store.get_operation(&parent).unwrap().unwrap(),
+                    original_parent
+                );
+                assert_eq!(hooks.calls.load(Ordering::SeqCst), 1);
+                assert_eq!(f.provider.create_call_count(), baseline + 1);
+                assert!(f.provider.native_cwd(reserved).await.is_some());
+                continue;
+            }
+            let (child, reserved) = {
                 assert_eq!(result["ok"], true, "{result}");
                 let reserved = result["result"]["agent_id"].as_str().unwrap().to_owned();
                 let child=f.db().query_row("SELECT source_operation_id FROM workspace_session_ownership WHERE session_id=?1",[&reserved],|r|r.get::<_,String>(0)).unwrap();
@@ -317,19 +358,19 @@ async fn member_native_receipt_and_created_review_settle_after_caller_and_grant_
                 )
                 .unwrap();
             assert_eq!(actor, "agent");
-            if lost_ack {
-                f.provider.set_create_failure_mode(0);
-                let fresh = reopened_runtime(&f.temp, f.provider.clone()).await;
-                fresh.recover_startup().await.unwrap();
-                assert_eq!(fresh.get_session(&reserved).await.unwrap().status, "ready");
-                assert_eq!(f.provider.create_call_count(), baseline + 1);
-            }
+            let known = f.store().get_operation(&child).unwrap().unwrap();
+            assert_eq!(
+                known.operation.phase,
+                runtime_core::OperationPhase::Completed
+            );
+            assert!(known.claims.is_empty());
+            assert_eq!(known.operation.actor.identifier, f.caller);
         }
     }
 }
 
 #[tokio::test]
-async fn member_not_created_review_rejects_context_without_reexecuting_hooks() {
+async fn member_not_created_prose_preserves_context_and_original_claim() {
     let f = Fixture::new().await;
     let hooks = install(&f, 0, 1).await;
     let baseline = f.provider.create_call_count();
@@ -340,15 +381,25 @@ async fn member_not_created_review_rejects_context_without_reexecuting_hooks() {
     let child = target["operation_id"].as_str().unwrap();
     let reserved = target["agent_id"].as_str().unwrap();
     revoke_after_launch(&f, true, true);
-    let reviewed = review(&f, child, reserved, false).await;
-    assert_eq!(reviewed["restart_required"], false);
-    assert_eq!(review(&f, child, reserved, false).await, reviewed);
-    let (phase,state,claims,agents):(String,String,i64,i64)=f.db().query_row(
-        "SELECT phase,application_state,(SELECT COUNT(*) FROM runtime_operation_resource_claims WHERE owner_operation_id=?1),(SELECT COUNT(*) FROM sessions WHERE id=?2) FROM workspace_hook_effects WHERE event_name='pre_teammate_add'",
-        rusqlite::params![child,reserved],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+    let original = f.store().get_operation(child).unwrap().unwrap();
+    let parent = f.parent("member-review-not-created");
+    let original_parent = f.store().get_operation(&parent).unwrap().unwrap();
+    assert_eq!(
+        original.operation.phase,
+        runtime_core::OperationPhase::ManualReview
+    );
+    assert_eq!(original.claims.len(), 1);
+    let refused = review(&f, child, reserved, false).await;
+    assert_eq!(review(&f, child, reserved, false).await, refused);
+    assert_eq!(f.store().get_operation(child).unwrap().unwrap(), original);
+    assert_eq!(
+        f.store().get_operation(&parent).unwrap().unwrap(),
+        original_parent
+    );
+    let(phase,state,claims,agents):(String,String,i64,i64)=f.db().query_row("SELECT phase,application_state,(SELECT COUNT(*) FROM runtime_operation_resource_claims WHERE owner_operation_id=?1),(SELECT COUNT(*) FROM sessions WHERE id=?2) FROM workspace_hook_effects WHERE event_name='pre_teammate_add'",rusqlite::params![child,reserved],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
     assert_eq!(
         (phase.as_str(), state.as_str(), claims, agents),
-        ("succeeded", "rejected", 0, 0)
+        ("succeeded", "pending", 1, 0)
     );
     assert_eq!(hooks.calls.load(Ordering::SeqCst), 1);
     assert_eq!(f.provider.create_call_count(), baseline + 1);
@@ -378,6 +429,8 @@ async fn member_late_critical_receipt_fault_never_compensates_native_create() {
         (phase.as_str(), application.as_str(), notices),
         ("succeeded", "pending", 0)
     );
+    // The still-faulting receipt writer must be unreachable from prose review.
+    let refused = review(&f, child, reserved, true).await;
     f.db()
         .execute_batch("DROP TRIGGER fail_member_create_receipt")
         .unwrap();
@@ -385,9 +438,13 @@ async fn member_late_critical_receipt_fault_never_compensates_native_create() {
         f.add("member-late-create-receipt").await["error"]["details"],
         result["error"]["details"]
     );
-    review(&f, child, reserved, true).await;
+    assert_eq!(review(&f, child, reserved, true).await, refused);
+    let(application,agents,claims,notices):(String,i64,i64,i64)=f.db().query_row("SELECT application_state,(SELECT COUNT(*) FROM sessions WHERE id=?1),(SELECT COUNT(*) FROM runtime_operation_resource_claims WHERE owner_operation_id=?2),(SELECT COUNT(*) FROM workspace_system_notices WHERE recipient_agent_id=?1 OR input_json LIKE '%private caller hook text%') FROM workspace_hook_effects WHERE event_name='pre_teammate_add'",rusqlite::params![reserved,child],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).unwrap();
+    assert_eq!(
+        (application.as_str(), agents, claims, notices),
+        ("pending", 0, 1, 0)
+    );
+    assert!(f.provider.native_cwd(reserved).await.is_some());
     assert_eq!(f.provider.create_call_count(), baseline + 1);
     assert_eq!(hooks.calls.load(Ordering::SeqCst), 1);
-    let application:String=f.db().query_row("SELECT application_state FROM workspace_hook_effects WHERE event_name='pre_teammate_add'",[],|r|r.get(0)).unwrap();
-    assert_eq!(application, "applied");
 }

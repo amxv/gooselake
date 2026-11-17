@@ -84,7 +84,7 @@ pub enum OperatorAgentCreateResolution {
 #[serde(deny_unknown_fields)]
 pub struct OperatorAgentCreateReviewInput {
     pub resolution: OperatorAgentCreateResolution,
-    /// Independent native-session observation, not a provider RPC request.
+    /// Historical review text; fresh prose cannot settle an unknown native effect.
     pub evidence: String,
     pub reserved_agent_id: String,
     pub provider: String,

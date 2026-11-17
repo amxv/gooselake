@@ -244,6 +244,7 @@ impl SqliteRuntimeRepository {
                 session.id, active_turn_id
             )));
         }
+        validate_selected_turn_thinking(&transaction, admission)?;
 
         if let Some(command) = command {
             let authority = OperationAuthorityTransaction::new(&transaction);
@@ -480,19 +481,17 @@ fn validate_operator_user_turn_command(
             "invalid trusted operator user turn input or admission identity".into(),
         ));
     }
-    let authority: Option<(String, String, String, String)> = transaction
+    let authority: Option<(String, String, String)> = transaction
         .query_row(
-            "SELECT a.workspace_id, a.lifecycle_state, w.lifecycle_state,
-                    a.recreation_policy_json
+            "SELECT a.workspace_id, a.lifecycle_state, w.lifecycle_state
              FROM workspace_agents a JOIN workspaces w ON w.workspace_id=a.workspace_id
              WHERE a.session_id=?1",
             [&command.agent_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|error| db_error("failed verifying operator turn workspace owner", error))?;
-    let Some((workspace_id, agent_state, workspace_state, recreation_policy_json)) = authority
-    else {
+    let Some((workspace_id, agent_state, workspace_state)) = authority else {
         return Err(RuntimeError::NotFound(format!(
             "active workspace agent {}",
             command.agent_id
@@ -506,17 +505,6 @@ fn validate_operator_user_turn_command(
             "operator turn agent or workspace authority changed before admission".into(),
         ));
     }
-    if let Some(effort) = admission.dispatch_policy.turn_settings.thinking_effort {
-        let policy: runtime_core::WorkspaceAgentRecreationPolicy =
-            serde_json::from_str(&recreation_policy_json).map_err(|error| {
-                RuntimeError::Bootstrap(format!("invalid durable agent policy: {error}"))
-            })?;
-        if policy.current_preferences.thinking_effort != Some(effort) {
-            return Err(RuntimeError::Conflict(
-                "agent thinking preference changed before keyed operator turn admission".into(),
-            ));
-        }
-    }
     let frozen: bool = transaction
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM workspace_retirement_fences WHERE workspace_id=?1)",
@@ -527,6 +515,40 @@ fn validate_operator_user_turn_command(
     if frozen {
         return Err(RuntimeError::Conflict(
             "operator turn blocked by workspace retirement".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_selected_turn_thinking(
+    transaction: &Transaction<'_>,
+    admission: &TurnAdmissionRecord,
+) -> Result<(), RuntimeError> {
+    let Some(effort) = admission.dispatch_policy.turn_settings.thinking_effort else {
+        return Ok(());
+    };
+    let policy_json: Option<String> = transaction
+        .query_row(
+            "SELECT a.recreation_policy_json FROM workspace_agents a
+             JOIN workspaces w ON w.workspace_id=a.workspace_id
+             WHERE a.session_id=?1 AND a.lifecycle_state='active' AND w.lifecycle_state='active'",
+            [&admission.session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| db_error("failed verifying selected turn thinking policy", error))?;
+    let policy_json = policy_json.ok_or_else(|| {
+        RuntimeError::Unsupported(
+            "turn-selected thinking requires active durable workspace agent policy".into(),
+        )
+    })?;
+    let policy: runtime_core::WorkspaceAgentRecreationPolicy = serde_json::from_str(&policy_json)
+        .map_err(|error| {
+        RuntimeError::Bootstrap(format!("invalid durable agent policy: {error}"))
+    })?;
+    if policy.current_preferences.thinking_effort != Some(effort) {
+        return Err(RuntimeError::Conflict(
+            "agent thinking preference changed before turn admission".into(),
         ));
     }
     Ok(())

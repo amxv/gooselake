@@ -104,6 +104,20 @@ impl TestProvider {
 }
 
 impl TestProvider {
+    pub(crate) fn inject_missing_session_send(&self) -> Result<(), RuntimeError> {
+        if self
+            .send_failure_mode
+            .compare_exchange(3, 0, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return Err(RuntimeError::provider_not_dispatched(
+                "session_not_found",
+                "fixture lost its local provider attachment before send",
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn enable_thinking_mutation(&self) {
         self.supports_thinking
             .store(true, std::sync::atomic::Ordering::SeqCst);

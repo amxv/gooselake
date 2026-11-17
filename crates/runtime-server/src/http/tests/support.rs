@@ -452,6 +452,7 @@ impl RuntimeProvider for TestProvider {
     ) -> Result<ProviderTurnAck, RuntimeError> {
         self.send_invocations
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inject_missing_session_send()?;
         match self
             .send_failure_mode
             .load(std::sync::atomic::Ordering::SeqCst)

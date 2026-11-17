@@ -252,7 +252,7 @@ async fn public_agent_session_controls_are_authenticated_revisioned_and_capabili
 }
 
 #[tokio::test]
-async fn thinking_selected_on_a_turn_is_revisioned_and_inherited_on_later_turns() {
+async fn turn_thinking_matches_revisioned_policy_and_later_turns_inherit_it() {
     let (router, token, temp, provider, runtime) =
         build_test_router_with_provider_and_runtime(TeamMcpPolicy::default()).await;
     provider.enable_thinking_mutation();
@@ -284,19 +284,39 @@ async fn thinking_selected_on_a_turn_is_revisioned_and_inherited_on_later_turns(
     let initial_revision = agent["revision"].as_u64().unwrap();
     let turns_uri = format!("/v2/agents/{agent_id}/turns");
 
-    let (status, selected) = call(
+    let input = serde_json::json!({
+        "input":[{"type":"text","text":"select high"}],
+        "turn_settings":{"thinking_effort":"high","codex_collaboration_mode":"plan"}
+    });
+    let (status, rejected) = call(
         &router,
         &token,
         "POST",
         &turns_uri,
-        Some(serde_json::json!({
-            "input":[{"type":"text","text":"select high"}],
-            "turn_settings":{"thinking_effort":"high","codex_collaboration_mode":"plan"}
-        })),
+        Some(input.clone()),
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "first turn must admit");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
+    let (status, preference) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v2/agents/{agent_id}/preferences"),
+        Some(serde_json::json!({
+            "expected_revision":initial_revision,
+            "current_preferences":{"thinking_effort":"high"}
+        })),
+        Some("selected-thinking-policy"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preference}");
+    let (status, selected) = call(&router, &token, "POST", &turns_uri, Some(input), None).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "matching turn must admit: {selected}"
+    );
     assert!(selected["turn_id"].is_string());
     let (status, updated) = call(
         &router,

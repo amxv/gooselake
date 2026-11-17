@@ -1,16 +1,15 @@
 use crate::{
-    ProviderCapabilitySupport, ProviderKind, ProviderSessionPreferences,
-    ProviderSessionPreferencesMutationRequest, ProviderThinkingEffort, ProviderTurnSettings,
+    ProviderCapabilitySupport, ProviderKind, ProviderThinkingEffort, ProviderTurnSettings,
     RuntimeError, SessionRecord,
 };
 
 use super::RuntimeSessionManager;
 
 impl RuntimeSessionManager {
-    /// The caller holds the session-policy mutation guard. Explicit thinking
-    /// selection becomes revisioned current preference before admission;
-    /// omitting it leaves the persisted policy unchanged.
-    pub(super) async fn persist_selected_turn_thinking(
+    /// A turn cannot implicitly perform a separate native policy mutation.
+    /// Explicit selection must match current policy, which admission rechecks
+    /// transactionally; omitting it leaves the persisted policy unchanged.
+    pub(super) fn validate_selected_turn_thinking(
         &self,
         session_id: &str,
         selected: Option<ProviderThinkingEffort>,
@@ -30,15 +29,9 @@ impl RuntimeSessionManager {
         if agent.recreation_policy.current_preferences.thinking_effort == Some(effort) {
             return Ok(session);
         }
-        self.mutate_workspace_agent_preferences_locked(ProviderSessionPreferencesMutationRequest {
-            runtime_session_id: session_id.into(),
-            expected_revision: Some(agent.revision),
-            current_preferences: ProviderSessionPreferences {
-                thinking_effort: Some(effort),
-            },
-        })
-        .await?;
-        self.get_session(session_id).await
+        Err(RuntimeError::Unsupported(
+            "turn-selected thinking must match the durable agent preference; update the revisioned preferences endpoint before submitting a turn".into(),
+        ))
     }
 
     pub(super) fn validate_turn_settings(

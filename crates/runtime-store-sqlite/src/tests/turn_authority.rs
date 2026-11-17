@@ -1,7 +1,7 @@
 use super::*;
 use runtime_core::{
     PersistedUserInputSnapshot, PersistedUserInputSnapshotImageRef,
-    PersistedUserInputSnapshotInvocation, TurnAdmissionRecord, TurnCorrelationState,
+    PersistedUserInputSnapshotInvocation, RuntimeError, TurnAdmissionRecord, TurnCorrelationState,
     TurnDispatchPolicySnapshot, TurnDispatchState, TurnInputProjectionSource,
 };
 
@@ -577,6 +577,106 @@ fn pending_pre_dispatch_approval_journal_failure_rolls_back_waiting_turn_session
         .all(|event| event.criticality == RuntimeEventCriticality::Critical));
 }
 
+#[test]
+fn explicit_turn_thinking_rechecks_policy_changed_after_runtime_preparation() {
+    use super::workspace_agent::{registered_workspace, workspace_agent_fixture};
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let root = temp.path().join("turn-thinking-policy");
+    std::fs::create_dir_all(&root).unwrap();
+    let workspace = registered_workspace(&repository, &root);
+    let (base_session, agent) =
+        workspace_agent_fixture(&workspace, "session_admission", "thinking-authority-target");
+    repository
+        .create_workspace_agent(&base_session, &agent)
+        .unwrap();
+    let mut turn = admission_turn();
+    turn.started_at = Some(200);
+    let mut prepared_session = base_session;
+    prepared_session.status = "turn_admitted".into();
+    prepared_session.active_turn_id = Some(turn.id.clone());
+    prepared_session.updated_at = 200;
+    let mut prepared = admission_record();
+    prepared.dispatch_policy.turn_settings.thinking_effort =
+        Some(runtime_core::ProviderThinkingEffort::High);
+    prepared.admitted_at = 200;
+    prepared.updated_at = 200;
+    // Independent policy commit after the manager prepared an explicit High
+    // selection. The IMMEDIATE turn admission must read current authority.
+    let independent = open_connection(&repository.database_path).unwrap();
+    independent
+        .execute(
+            "UPDATE workspace_agents SET recreation_policy_json=
+        json_set(recreation_policy_json,'$.current_preferences.thinking_effort','low'),
+        revision=revision+1,updated_at=150 WHERE session_id=?1",
+            [&agent.agent_id],
+        )
+        .unwrap();
+    let counts = || {
+        [
+            "turns",
+            "turn_admissions",
+            "runtime_operations",
+            "runtime_events",
+        ]
+        .map(|table| {
+            independent
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap()
+        })
+    };
+    let before = counts();
+    assert!(
+        matches!(
+            repository.admit_turn(&prepared, &turn, &prepared_session, None),
+            Err(RuntimeError::Conflict(_))
+        ),
+        "stale thinking selection entered durable dispatch"
+    );
+    assert_eq!(counts(), before);
+    let active: Option<String> = independent
+        .query_row(
+            "SELECT active_turn_id FROM sessions WHERE id=?1",
+            [&agent.agent_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(active.is_none());
+    prepared.dispatch_policy.turn_settings.thinking_effort =
+        Some(runtime_core::ProviderThinkingEffort::Low);
+    repository
+        .admit_turn(&prepared, &turn, &prepared_session, None)
+        .unwrap();
+    assert_eq!(repository.list_turn_admissions().unwrap(), vec![prepared]);
+}
+
+#[test]
+fn explicit_turn_thinking_requires_workspace_policy_while_omitted_selection_stays_valid() {
+    let temp = tempfile::tempdir().unwrap();
+    let repository = repo(&temp);
+    repository.initialize_schema().unwrap();
+    let mut session = admission_session();
+    repository.upsert_session(&session).unwrap();
+    let turn = admission_turn();
+    session.status = "turn_admitted".into();
+    session.active_turn_id = Some(turn.id.clone());
+    session.updated_at = 11;
+    let mut admission = admission_record();
+    admission.dispatch_policy.turn_settings.thinking_effort =
+        Some(runtime_core::ProviderThinkingEffort::High);
+    assert!(repository
+        .admit_turn(&admission, &turn, &session, None)
+        .is_err());
+    assert!(repository.list_turn_admissions().unwrap().is_empty());
+    admission.dispatch_policy.turn_settings.thinking_effort = None;
+    repository
+        .admit_turn(&admission, &turn, &session, None)
+        .unwrap();
+}
+
 fn admission_session() -> SessionRecord {
     SessionRecord {
         id: "session_admission".to_string(),
@@ -657,7 +757,7 @@ fn admission_record() -> TurnAdmissionRecord {
             permission_mode: None,
             pre_dispatch_approval_required: false,
             turn_settings: runtime_core::ProviderTurnSettings {
-                thinking_effort: Some(runtime_core::ProviderThinkingEffort::High),
+                thinking_effort: None,
                 codex_collaboration_mode: Some(runtime_core::CodexCollaborationMode::Plan),
             },
         },

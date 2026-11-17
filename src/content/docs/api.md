@@ -833,7 +833,7 @@ curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
 
 The permission endpoint is Claude-only. These controls do not rewrite earlier turns.
 
-`POST /v2/agents/{agent_id}/turns` admits a new user-visible turn, preserving its typed `turn_settings` in the durable dispatch-policy snapshot even if the runtime has to recover an admitted-but-not-dispatched turn after restart. Explicit `thinking_effort` selects and durably updates the agent's revisioned current thinking preference **before turn admission**; subsequent turns inherit that preference until it is changed again. Omit it to use the existing preference without a revision change. Codex also accepts `codex_collaboration_mode: "default" | "plan"` on a specific turn, without turning that selection into permission or a persistent session default. Claude accepts thinking changes without Codex collaboration. Unsupported ACP preferences or cross-provider collaboration modes fail before turn admission.
+`POST /v2/agents/{agent_id}/turns` admits a new user-visible turn, preserving its typed `turn_settings` in the durable dispatch-policy snapshot even if the runtime has to recover an admitted-but-not-dispatched turn after restart. Explicit `thinking_effort` must match the agent's existing revisioned current preference; the admission transaction checks that policy again before committing the turn. To change the preference, use the durable preferences endpoint first. Omit it to inherit the existing preference without a revision change. Codex also accepts `codex_collaboration_mode: "default" | "plan"` on a specific turn, without turning that selection into permission or a persistent session default. Claude supports the same thinking-policy check without Codex collaboration. Unsupported ACP preferences or cross-provider collaboration modes fail before turn admission.
 
 For operator automation, include an optional `Idempotency-Key`. The trusted
 operator, agent identity, normalized input, expected turn, permission override
@@ -860,12 +860,20 @@ than relying on a possibly stale in-memory active-turn marker. Exact replay of
 an already completed, independently journaled mutation is still allowed; a
 restore request that is already a no-op does not change the native attachment.
 
-For keyed turns, an explicit `thinking_effort` must already match the agent's
-current persisted preference; selecting a *different* effort would itself
-invoke a separate native provider mutation before turn admission and is
-therefore rejected. Update the agent's thinking preference through its
-revisioned policy endpoint before submitting a keyed turn. Unkeyed turns retain
-their existing optional thinking-selection behavior.
+The thinking-policy rule applies to keyed and unkeyed turns, including the
+v1 session-turn compatibility endpoint. A changed explicit selection fails
+before native policy mutation or turn admission. A matching selection and an
+omitted selection remain supported; standalone sessions without durable agent
+policy must omit the selection.
+
+If a provider definitively reports that its local session attachment is
+missing before send, the admitted turn may reattach the original native
+session once. A lost resume acknowledgement or a returned attachment with a
+different runtime or native identity leaves the original turn unresolved; it
+does not authorize a second send. Startup withholds native resume and send
+for a turn whose dispatch or approval-decision outcome is unknown, including
+a dispatch whose final Critical-event receipt could not commit. Inspect and
+resolve the original durable turn or operation before further native work.
 
 ```bash
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \

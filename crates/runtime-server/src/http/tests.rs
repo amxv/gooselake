@@ -108,6 +108,7 @@ mod session_lifecycle_journal_http;
 mod session_terminal_journal_http;
 mod sse_cursor_headers;
 mod team_routes;
+mod turn_native_boundaries;
 mod workspace_agent_routes;
 mod workspace_control_routes;
 mod workspace_migration_routes;

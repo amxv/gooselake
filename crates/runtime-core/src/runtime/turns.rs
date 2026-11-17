@@ -252,8 +252,11 @@ impl RuntimeSessionManager {
             // its matching durable policy is rechecked transactionally below.
             session
         } else {
-            self.persist_selected_turn_thinking(session_id, turn_settings.thinking_effort, session)
-                .await?
+            self.validate_selected_turn_thinking(
+                session_id,
+                turn_settings.thinking_effort,
+                session,
+            )?
         };
         let turn_id = self.allocate_id("turn", provider_kind.as_str());
         let now = now_ms();
@@ -649,15 +652,26 @@ impl RuntimeSessionManager {
                             resume_error.to_string(),
                         )
                     })?;
-                provider
+                let resumed = provider
                     .resume_session_with_policy(resume_request)
                     .await
                     .map_err(|resume_error| {
-                        RuntimeError::provider_not_dispatched(
-                            "provider_resume_failed",
-                            resume_error.to_string(),
+                        RuntimeError::provider_dispatch_unknown(
+                            "outcome_unresolved",
+                            format!("native resume outcome is unknown for session {}: {resume_error}; inspect the original admitted turn before any retry", session.id),
                         )
                     })?;
+                if resumed.runtime_session_id != session.id
+                    || session.provider_session_ref.as_deref()
+                        != Some(resumed.provider_session_ref.as_str())
+                    || session.canonical_provider_session_ref
+                        != resumed.canonical_provider_session_ref
+                {
+                    return Err(RuntimeError::provider_dispatch_unknown(
+                        "outcome_unresolved",
+                        format!("native resume changed the original attachment for session {}; no follow-up send is safe", session.id),
+                    ));
+                }
                 provider
                     .send_turn(request)
                     .await

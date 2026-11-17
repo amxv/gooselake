@@ -170,9 +170,31 @@ impl RuntimeSessionManager {
                 .as_ref()
                 .and_then(|turn_id| admissions_snapshot.get(turn_id))
                 .cloned();
-            let mut provider_resume_ready = true;
+            let approval_decision_pending_for_turn = |turn_id: &str| -> bool {
+                approvals_snapshot.values().any(|approval| {
+                    approval.turn_id == turn_id
+                        && approval.session_id == session.id
+                        && approval.status == "decision_pending"
+                })
+            };
+            let ambiguous_native = active_admission.as_ref().is_some_and(|admission| {
+                matches!(
+                    admission.dispatch_state,
+                    TurnDispatchState::Dispatching | TurnDispatchState::Unknown
+                )
+            }) || session
+                .active_turn_id
+                .as_deref()
+                .is_some_and(approval_decision_pending_for_turn);
+            let mut provider_resume_ready = !ambiguous_native;
+            if ambiguous_native {
+                summary.notes.push(format!(
+                    "session {} native resume withheld while the original turn or approval decision has an unknown outcome",
+                    session.id
+                ));
+            }
 
-            if !matches!(session.status.as_str(), "closed" | "failed") {
+            if !ambiguous_native && !matches!(session.status.as_str(), "closed" | "failed") {
                 if let Some(provider_session_ref) = session.provider_session_ref.clone() {
                     let provider_kind = ProviderKind::from_str(session.provider.as_str())
                         .ok_or_else(|| {
@@ -393,13 +415,6 @@ impl RuntimeSessionManager {
                     approval.turn_id == turn_id
                         && approval.session_id == session.id
                         && approval.status == "pending"
-                })
-            };
-            let approval_decision_pending_for_turn = |turn_id: &str| -> bool {
-                approvals_snapshot.values().any(|approval| {
-                    approval.turn_id == turn_id
-                        && approval.session_id == session.id
-                        && approval.status == "decision_pending"
                 })
             };
             let pre_dispatch_approval_status_for_turn = |turn_id: &str| -> Option<&str> {

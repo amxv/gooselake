@@ -475,3 +475,118 @@ async fn edit_reconstructs_ordered_persisted_images_and_codex_skill_for_native_f
     assert_eq!(captured[0][3]["name"], "audit");
     assert_eq!(captured[0][3]["path"], skill.to_string_lossy().as_ref());
 }
+
+#[tokio::test]
+async fn signed_agent_revision_ceiling_rejects_native_edit_before_fake_hard_fork() {
+    let (router, token, temp, provider, agent_id, turn_id) = ready_edit_agent(1).await;
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+        rusqlite::params![i64::MAX, agent_id],
+    )
+    .unwrap();
+    let original_attachment: String = db
+        .query_row(
+            "SELECT provider_session_ref FROM sessions WHERE id=?1",
+            [&agent_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let (status, response) = call(
+        &router,
+        &token,
+        "POST",
+        &format!("/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun"),
+        Some(serde_json::json!({"edited_snapshot":{
+            "prompt_text":"edit at signed revision ceiling",
+            "image_refs":[],"invocation":null
+        }})),
+        Some("edit-signed-ceiling"),
+    )
+    .await;
+    assert_eq!(
+        provider.edit_calls(),
+        0,
+        "signed ceiling must never invoke native hard fork: {status} {response}"
+    );
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    assert_eq!(response["error"]["code"], "invalid_state");
+    let (revision, revision_type, attachment, intents): (i64, String, String, i64) = db
+        .query_row(
+            "SELECT a.revision,typeof(a.revision),s.provider_session_ref,
+                    (SELECT COUNT(*) FROM session_edit_reruns)
+             FROM workspace_agents a JOIN sessions s ON s.id=a.session_id
+             WHERE a.session_id=?1",
+            [&agent_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (revision, revision_type, attachment, intents),
+        (i64::MAX, "integer".into(), original_attachment, 0)
+    );
+}
+
+#[tokio::test]
+async fn edit_last_signed_successor_commits_then_exact_key_replays_without_native_fork() {
+    let (router, token, temp, provider, agent_id, turn_id) = ready_edit_agent(1).await;
+    let db = rusqlite::Connection::open(temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+        rusqlite::params![i64::MAX - 1, agent_id],
+    )
+    .unwrap();
+    let path = format!("/v2/agents/{agent_id}/turns/{turn_id}/edit-rerun");
+    let input = serde_json::json!({"edited_snapshot":{
+        "prompt_text":"last signed edit",
+        "image_refs":[],"invocation":null
+    }});
+    let (status, committed) = call(
+        &router,
+        &token,
+        "POST",
+        &path,
+        Some(input.clone()),
+        Some("last-signed-edit"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{committed}");
+    assert_eq!(committed["phase"], "completed");
+    assert_eq!(provider.edit_calls(), 1);
+    let (revision, kind): (i64, String) = db
+        .query_row(
+            "SELECT revision,typeof(revision) FROM workspace_agents WHERE session_id=?1",
+            [&agent_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((revision, kind), (i64::MAX, "integer".into()));
+    let (status, replay) = call(
+        &router,
+        &token,
+        "POST",
+        &path,
+        Some(input.clone()),
+        Some("last-signed-edit"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay, committed);
+    assert_eq!(
+        provider.edit_calls(),
+        1,
+        "same-key replay cannot fork twice"
+    );
+    let (status, rejected) = call(
+        &router,
+        &token,
+        "POST",
+        &path,
+        Some(input),
+        Some("new-signed-edit"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
+    assert_eq!(rejected["error"]["code"], "invalid_state");
+    assert_eq!(provider.edit_calls(), 1);
+}

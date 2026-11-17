@@ -259,6 +259,14 @@ impl SqliteRuntimeRepository {
                 "edit requires an idle current agent and an unsuperseded completed user turn with native identity".into()
             ));
         }
+        // The native fork changes the session attachment only if this agent
+        // can advance one signed SQLite revision. Fence direct/cross-process
+        // callers in the same IMMEDIATE admission transaction.
+        if operation.agent_revision >= i64::MAX as u64 {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         let pending: i64 = tx.query_row(
             "SELECT (SELECT COUNT(*) FROM session_compaction_runs
                WHERE session_id=?1
@@ -335,6 +343,14 @@ impl SqliteRuntimeRepository {
             {
                 return Err(RuntimeError::ProtocolViolation(
                     "fork returned missing, foreign or unchanged native identity".into(),
+                ));
+            }
+            // An old pre-fix native_started intent may survive an upgrade at
+            // this signed ceiling. Do not commit a REAL-valued revision or
+            // change the session attachment when completing its receipt.
+            if operation.agent_revision >= i64::MAX as u64 {
+                return Err(RuntimeError::InvalidState(
+                    "agent revision cannot advance beyond SQLite signed integer range".into(),
                 ));
             }
             let monotonic = now.max(operation.expected_session_updated_at.saturating_add(1));

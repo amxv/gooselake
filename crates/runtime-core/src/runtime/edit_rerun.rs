@@ -134,6 +134,14 @@ impl RuntimeSessionManager {
         }
         self.fence_unresolved_operator_turn_native_effect(agent_id)?;
         let agent = self.get_active_workspace_agent_by_id(agent_id)?;
+        // A verified native fork must advance this SQLite signed revision.
+        // An exhausted roster revision cannot commit its child attachment;
+        // fail before admitting the intent or dispatching the hard fork.
+        if agent.revision >= i64::MAX as u64 {
+            return Err(RuntimeError::InvalidState(
+                "agent revision cannot advance beyond SQLite signed integer range".into(),
+            ));
+        }
         let session = self.get_session(agent_id).await?;
         if session.status != "ready" || session.active_turn_id.is_some() {
             return Err(RuntimeError::Conflict(

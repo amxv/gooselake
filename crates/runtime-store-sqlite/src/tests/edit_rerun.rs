@@ -2,6 +2,191 @@ use super::workspace_agent::{registered_workspace, workspace_agent_fixture};
 use super::*;
 use runtime_core::{ProviderKind, RuntimeError};
 
+fn signed_edit_revision_fixture(
+    temp: &tempfile::TempDir,
+) -> (
+    SqliteRuntimeRepository,
+    SessionRecord,
+    runtime_core::WorkspaceAgentRecord,
+    runtime_core::SessionEditRerunOperation,
+) {
+    use runtime_core::{
+        PersistedUserInputSnapshot, SessionEditRerunOperation, TurnAdmissionRecord,
+        TurnCorrelationState, TurnDispatchPolicySnapshot, TurnDispatchState,
+        TurnInputProjectionSource, TurnRecord,
+    };
+    let root = temp.path().join("signed-edit-revision-root");
+    std::fs::create_dir_all(&root).unwrap();
+    let repo = repo(temp);
+    repo.initialize_schema().unwrap();
+    let workspace = registered_workspace(&repo, &root);
+    let (session, agent) =
+        workspace_agent_fixture(&workspace, "signed_edit_agent", "signed-edit-fox");
+    repo.create_workspace_agent(&session, &agent).unwrap();
+    let turn = TurnRecord {
+        id: "signed_edit_target".into(),
+        session_id: session.id.clone(),
+        provider_turn_ref: Some("native-turn".into()),
+        status: "completed".into(),
+        input: serde_json::json!([{"type":"text","text":"initial request"}]),
+        source: Some("user".into()),
+        started_at: Some(101),
+        completed_at: Some(103),
+        usage: None,
+        error: None,
+    };
+    repo.upsert_turn(&turn).unwrap();
+    repo.upsert_turn_admission(&TurnAdmissionRecord {
+        turn_id: turn.id.clone(),
+        session_id: session.id.clone(),
+        provider: "codex".into(),
+        projection_source: TurnInputProjectionSource::UserVisible,
+        user_input_snapshot: PersistedUserInputSnapshot {
+            prompt_text: "initial request".into(),
+            ..Default::default()
+        },
+        dispatch_policy: TurnDispatchPolicySnapshot {
+            permission_mode: None,
+            pre_dispatch_approval_required: false,
+            turn_settings: Default::default(),
+        },
+        correlation: TurnCorrelationState::default(),
+        dispatch_state: TurnDispatchState::Dispatched,
+        provider_native_turn_id: Some("native-turn".into()),
+        dispatch_error: None,
+        admitted_at: 101,
+        updated_at: 103,
+    })
+    .unwrap();
+    let operation = SessionEditRerunOperation {
+        operation_id: "signed_edit_intent".into(),
+        agent_id: session.id.clone(),
+        target_turn_id: turn.id,
+        provider: ProviderKind::Codex,
+        source_provider_session_ref: session.provider_session_ref.clone().unwrap(),
+        source_canonical_provider_session_ref: session.canonical_provider_session_ref.clone(),
+        agent_revision: agent.revision,
+        expected_session_updated_at: session.updated_at,
+        request_hash: "d".repeat(64),
+        idempotency_key: Some("signed-edit-key".into()),
+        edited_snapshot: PersistedUserInputSnapshot {
+            prompt_text: "edited".into(),
+            ..Default::default()
+        },
+        phase: "intended".into(),
+        child_provider_session_ref: None,
+        child_canonical_provider_session_ref: None,
+        replacement_turn_id: None,
+        error_code: None,
+        review_evidence: None,
+        created_at_ms: 104,
+        updated_at_ms: 104,
+    };
+    (repo, session, agent, operation)
+}
+
+#[test]
+fn direct_sqlite_edit_intent_refuses_exhausted_signed_agent_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let (repo, session, _agent, mut operation) = signed_edit_revision_fixture(&temp);
+    let connection = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    connection
+        .execute(
+            "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+            params![i64::MAX, session.id],
+        )
+        .unwrap();
+    operation.agent_revision = i64::MAX as u64;
+    let error = repo.begin_session_edit_rerun(&operation).unwrap_err();
+    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error}");
+    assert!(repo
+        .get_session_edit_rerun(&operation.operation_id)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn direct_sqlite_edit_fork_receipt_rolls_back_legacy_signed_ceiling_intent() {
+    use runtime_core::ProviderSession;
+    let temp = tempfile::tempdir().unwrap();
+    let (repo, session, _agent, operation) = signed_edit_revision_fixture(&temp);
+    assert_eq!(
+        repo.begin_session_edit_rerun(&operation).unwrap().phase,
+        "intended"
+    );
+    repo.advance_session_edit_rerun(
+        &operation.operation_id,
+        "native_started",
+        None,
+        None,
+        None,
+        105,
+    )
+    .unwrap();
+    let connection = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    connection
+        .execute(
+            "UPDATE workspace_agents SET revision=?1 WHERE session_id=?2",
+            params![i64::MAX, session.id],
+        )
+        .unwrap();
+    // Model a historical pre-fix native_started intent originally admitted at
+    // the signed ceiling. The new finalization path must never forge a receipt.
+    let mut historical = operation.clone();
+    historical.agent_revision = i64::MAX as u64;
+    historical.phase = "native_started".into();
+    connection
+        .execute(
+            "UPDATE session_edit_reruns SET record_json=?1 WHERE operation_id=?2",
+            params![
+                serde_json::to_string(&historical).unwrap(),
+                operation.operation_id
+            ],
+        )
+        .unwrap();
+    let child = ProviderSession {
+        runtime_session_id: session.id.clone(),
+        provider_session_ref: "signed-ceiling-child".into(),
+        canonical_provider_session_ref: Some("signed-ceiling-child".into()),
+    };
+    let error = repo
+        .advance_session_edit_rerun(
+            &operation.operation_id,
+            "fork_observed",
+            Some(&child),
+            None,
+            None,
+            106,
+        )
+        .unwrap_err();
+    assert!(matches!(error, RuntimeError::InvalidState(_)), "{error}");
+    let (revision, revision_type, attached, superseded): (i64, String, String, i64) = connection
+        .query_row(
+            "SELECT a.revision,typeof(a.revision),s.provider_session_ref,
+                (SELECT COUNT(*) FROM session_edit_rerun_superseded_turns)
+         FROM workspace_agents a JOIN sessions s ON s.id=a.session_id WHERE a.session_id=?1",
+            [&session.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (revision, revision_type, attached, superseded),
+        (
+            i64::MAX,
+            "integer".into(),
+            session.provider_session_ref.unwrap(),
+            0
+        )
+    );
+    assert_eq!(
+        repo.get_session_edit_rerun(&operation.operation_id)
+            .unwrap()
+            .unwrap()
+            .phase,
+        "native_started"
+    );
+}
+
 #[test]
 fn historical_edit_fork_admission_and_replacement_are_atomic_and_replay_safe() {
     use runtime_core::{

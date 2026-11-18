@@ -22,6 +22,20 @@ macro_rules! event_history_methods {
             ))
         }
 
+        /// Validate journal identity, exact collection and anchor in the same
+        /// read snapshot as the bounded page. Never downgrade to numeric reads.
+        fn list_operator_events_page_bound(
+            &self,
+            _collection: &crate::EventCollection,
+            _after: Option<&crate::EventCursor>,
+            _limit: usize,
+        ) -> Result<crate::BoundEventPage<crate::OperatorEventSummary>, crate::EventReadError> {
+            Err(crate::RuntimeError::Unsupported(
+                "journal-bound operator event history unavailable".into(),
+            )
+            .into())
+        }
+
         fn get_operator_event(
             &self,
             _event_id: &str,

@@ -22,6 +22,7 @@ mod repository_delivery_native;
 mod repository_edit_rerun;
 mod repository_edit_rerun_authority;
 mod repository_edit_rerun_receipt;
+mod repository_event_cursor;
 mod repository_event_history;
 mod repository_hydration;
 mod repository_legacy_canonical_mirror_guard;

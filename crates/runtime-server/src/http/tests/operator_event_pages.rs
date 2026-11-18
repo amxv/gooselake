@@ -1,11 +1,16 @@
+use super::operator_event_test_support::{
+    assert_error, different_hex, fixture_cursor, replace_field,
+};
 use super::*;
+use runtime_core::{EventCollection, EventCursor};
+use runtime_store_sqlite::SqliteRuntimeRepository;
 use std::collections::HashSet;
 
 async fn operator_event_get(
     router: &Router,
     token: Option<&str>,
     uri: &str,
-) -> (StatusCode, Option<i64>, serde_json::Value) {
+) -> (StatusCode, Option<String>, serde_json::Value) {
     let mut request = Request::builder().uri(uri);
     if let Some(token) = token {
         request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
@@ -19,10 +24,22 @@ async fn operator_event_get(
     let cursor = response
         .headers()
         .get("x-next-cursor")
-        .map(|header| header.to_str().unwrap().parse::<i64>().unwrap());
+        .map(|header| header.to_str().unwrap().to_owned());
     let body =
         serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
     (status, cursor, body)
+}
+
+fn assert_next_cursor(next: Option<&str>, body: &serde_json::Value, collection: &EventCollection) {
+    if let Some(raw) = next {
+        let row = body.as_array().unwrap().last().unwrap();
+        let cursor = EventCursor::decode(raw).unwrap();
+        assert_eq!(cursor.collection(), collection);
+        assert_eq!(cursor.position(), row["row_id"].as_i64().unwrap());
+        cursor
+            .validate_anchor(Some(row["event_id"].as_str().unwrap()))
+            .unwrap();
+    }
 }
 
 #[tokio::test]
@@ -59,18 +76,19 @@ async fn operator_event_history_scopes_are_indexed_bounded_and_detail_is_explici
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(unauth["error"]["code"], "unauthorized");
 
-    let mut cursor = None;
+    let mut cursor: Option<String> = None;
     let mut last_id = 0;
     let mut seen = HashSet::new();
     for _ in 0..100 {
-        let uri = cursor.map_or_else(
-            || "/v2/events?limit=2".to_string(),
-            |value| format!("/v2/events?limit=2&cursor={value}"),
+        let limit = if cursor.is_none() { 2 } else { 3 };
+        let uri = cursor.as_deref().map_or_else(
+            || format!("/v2/events?limit={limit}"),
+            |value| format!("/v2/events?limit={limit}&cursor={value}"),
         );
         let (status, next, body) = operator_event_get(&router, Some(&token), &uri).await;
         assert_eq!(status, StatusCode::OK);
         let rows = body.as_array().unwrap();
-        assert!(!rows.is_empty() && rows.len() <= 2);
+        assert!(!rows.is_empty() && rows.len() <= limit);
         for row in rows {
             let id = row["row_id"].as_i64().unwrap();
             assert!(id > last_id);
@@ -87,6 +105,11 @@ async fn operator_event_history_scopes_are_indexed_bounded_and_detail_is_explici
                 assert!(row.get(field).is_none(), "leaked {field}");
             }
         }
+        assert_next_cursor(
+            next.as_deref(),
+            &body,
+            &EventCollection::history(None).unwrap(),
+        );
         cursor = next;
         if cursor.is_none() {
             break;
@@ -96,14 +119,15 @@ async fn operator_event_history_scopes_are_indexed_bounded_and_detail_is_explici
     assert!(seen.contains("evt_operator_0"));
     assert!(seen.contains("evt_operator_7"));
 
-    let mut cursor = None;
+    let mut cursor: Option<String> = None;
     let mut scoped_seen = HashSet::new();
     for _ in 0..10 {
-        let uri = cursor.map_or_else(
-            || "/v2/events?scope=workspace&scope_id=ws_operator_alpha&limit=2".to_owned(),
+        let limit = if cursor.is_none() { 2 } else { 3 };
+        let uri = cursor.as_deref().map_or_else(
+            || format!("/v2/events?scope=workspace&scope_id=ws_operator_alpha&limit={limit}"),
             |value| {
                 format!(
-                    "/v2/events?scope=workspace&scope_id=ws_operator_alpha&limit=2&cursor={value}"
+                    "/v2/events?scope=workspace&scope_id=ws_operator_alpha&limit={limit}&cursor={value}"
                 )
             },
         );
@@ -115,6 +139,15 @@ async fn operator_event_history_scopes_are_indexed_bounded_and_detail_is_explici
             assert_eq!(row["scope_id"], "ws_operator_alpha");
             assert!(scoped_seen.insert(row["event_id"].as_str().unwrap().to_string()));
         }
+        assert_next_cursor(
+            next.as_deref(),
+            &body,
+            &EventCollection::history(Some((
+                RuntimeEventScope::Workspace,
+                "ws_operator_alpha".into(),
+            )))
+            .unwrap(),
+        );
         cursor = next;
         if cursor.is_none() {
             break;
@@ -136,22 +169,102 @@ async fn operator_event_history_scopes_are_indexed_bounded_and_detail_is_explici
             |row| row.get(0),
         )
         .unwrap();
-    for invalid in [
-        format!("/v2/events?cursor={}", process_cursor + 10_000),
-        format!("/v2/events?scope=workspace&scope_id=ws_operator_alpha&cursor={process_cursor}"),
-        format!("/v2/events?scope=process&scope_id=proc_operator_beta&cursor={workspace_cursor}"),
+    let repository = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
+    let workspace_row = repository
+        .get_operator_event("evt_operator_0")
+        .unwrap()
+        .unwrap();
+    let process_row = repository
+        .get_operator_event("evt_operator_7")
+        .unwrap()
+        .unwrap();
+    assert_eq!(workspace_row.row_id, workspace_cursor);
+    assert_eq!(process_row.row_id, process_cursor);
+    let global = EventCollection::history(None).unwrap();
+    let workspace = EventCollection::history(Some((
+        RuntimeEventScope::Workspace,
+        "ws_operator_alpha".into(),
+    )))
+    .unwrap();
+    let process = EventCollection::history(Some((
+        RuntimeEventScope::Process,
+        "proc_operator_beta".into(),
+    )))
+    .unwrap();
+    let workspace_stream = EventCollection::stream(Some((
+        RuntimeEventScope::Workspace,
+        "ws_operator_alpha".into(),
+    )))
+    .unwrap();
+    let global_token = fixture_cursor(&repository, &global, &process_row);
+    let wrong_epoch = different_hex(global_token.split('.').nth(1).unwrap());
+    let wrong_digest = different_hex(global_token.split('.').nth(6).unwrap());
+    for (uri, status, code) in [
+        (
+            format!(
+                "/v2/events?cursor={}",
+                replace_field(&global_token, 5, &(process_cursor + 10_000).to_string())
+            ),
+            StatusCode::BAD_REQUEST,
+            "event_cursor_anchor_mismatch",
+        ),
+        (
+            format!(
+                "/v2/events?scope=workspace&scope_id=ws_operator_alpha&cursor={}",
+                fixture_cursor(&repository, &process, &process_row)
+            ),
+            StatusCode::BAD_REQUEST,
+            "event_cursor_collection_mismatch",
+        ),
+        (
+            format!(
+                "/v2/events?scope=workspace&scope_id=ws_operator_alpha&cursor={}",
+                fixture_cursor(&repository, &workspace, &process_row)
+            ),
+            StatusCode::BAD_REQUEST,
+            "event_cursor_anchor_mismatch",
+        ),
+        (
+            format!(
+                "/v2/events?scope=workspace&scope_id=ws_operator_alpha&cursor={}",
+                fixture_cursor(&repository, &workspace_stream, &workspace_row)
+            ),
+            StatusCode::BAD_REQUEST,
+            "event_cursor_collection_mismatch",
+        ),
+        (
+            format!(
+                "/v2/events?cursor={}",
+                replace_field(&global_token, 1, &wrong_epoch)
+            ),
+            StatusCode::CONFLICT,
+            "event_cursor_epoch_mismatch",
+        ),
+        (
+            format!(
+                "/v2/events?cursor={}",
+                replace_field(&global_token, 6, &wrong_digest)
+            ),
+            StatusCode::BAD_REQUEST,
+            "event_cursor_anchor_mismatch",
+        ),
     ] {
-        let (status, _, body) = operator_event_get(&router, Some(&token), &invalid).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}");
-        assert_eq!(body["error"]["code"], "invalid_state");
+        assert_error(&router, &token, &uri, &[], status, code).await;
     }
-    for valid in [
+    for uri in [
+        "/v2/events?cursor=",
         "/v2/events?cursor=0",
         "/v2/events?scope=workspace&scope_id=ws_operator_alpha&cursor=0",
     ] {
-        let (status, _, body) = operator_event_get(&router, Some(&token), valid).await;
-        assert_eq!(status, StatusCode::OK, "{valid}");
-        assert!(!body.as_array().unwrap().is_empty());
+        assert_error(
+            &router,
+            &token,
+            uri,
+            &[],
+            StatusCode::BAD_REQUEST,
+            "event_cursor_invalid",
+        )
+        .await;
     }
 
     let (status, _, detail) =

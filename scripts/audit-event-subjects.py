@@ -9,27 +9,18 @@ It never opens a database for writing and never manufactures missing events.
 from __future__ import annotations
 
 import argparse
-from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
 import sys
+sys.dont_write_bytecode = True
+
+from snapshot_inspection import schema_observation, sealed_database
 from typing import Any
 
 
 SUBJECT_SCOPES = frozenset({"turn", "message", "operation"})
 SAMPLE_LIMIT = 12
-
-
-def isolated_snapshot(path: Path) -> None:
-    if not path.is_file() or any(part.is_symlink() for part in (path, *path.parents)):
-        raise ValueError("snapshot must be a regular file without symlink components")
-    for suffix in ("-wal", "-shm", "-journal"):
-        if path.with_name(path.name + suffix).exists():
-            raise ValueError(
-                "snapshot has SQLite journal sidecars; provide a consistently "
-                "checkpointed isolated copy, not a live database"
-            )
 
 
 def verify_source_schema(connection: sqlite3.Connection) -> int:
@@ -68,12 +59,11 @@ def verify_source_schema(connection: sqlite3.Connection) -> int:
         ).fetchone()
         if found is None or found[0].strip().rstrip(";") != expected.strip().rstrip(";"):
             raise ValueError(f"snapshot lacks canonical migration27 {name} SQL definition")
-    migrations = [row[0] for row in connection.execute(
-        "SELECT version FROM schema_migrations ORDER BY version"
-    )]
-    if not migrations or 27 not in migrations or migrations != list(range(1, max(migrations) + 1)):
+    schema = schema_observation(connection)
+    version = schema["snapshot_version"]
+    if version is None or version < 27 or not schema["complete_prefix"]:
         raise ValueError("snapshot lacks complete applied migration chain through schema27")
-    return max(migrations)
+    return version
 
 
 def source_links(
@@ -125,7 +115,8 @@ def source_links(
 def inspect(connection: sqlite3.Connection, schema_version: int) -> dict[str, Any]:
     # One SQLite read transaction covers *both* independent scans; the input
     # file is immutable and offline. No loaded set grows with the database.
-    connection.execute("BEGIN")
+    if not connection.in_transaction:
+        raise ValueError("event observations require the owner's read transaction")
     event_count = projected_count = expected_count = 0
     missing_count = unexpected_count = malformed_count = structured_count = 0
     global_first_row_id = global_row_high_water = 0
@@ -190,7 +181,7 @@ def inspect(connection: sqlite3.Connection, schema_version: int) -> dict[str, An
     last_seq = 0
     scoped_events = connection.execute(
         "SELECT id,scope,scope_id,seq FROM runtime_events "
-        "ORDER BY scope,scope_id,seq"
+        "ORDER BY scope COLLATE BINARY,scope_id COLLATE BINARY,seq"
     )
     for row_id, scope, scope_id, seq in scoped_events:
         checked_scope_rows += 1
@@ -220,7 +211,6 @@ def inspect(connection: sqlite3.Connection, schema_version: int) -> dict[str, An
                 "reason": reason,
             })
 
-    connection.execute("COMMIT")
     consistent = not (
         missing_count or unexpected_count or malformed_count or structured_count
         or missing_sequence_slots or invalid_sequences or repeated_sequences
@@ -278,15 +268,10 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
-        isolated_snapshot(args.snapshot)
-        with closing(sqlite3.connect(
-            args.snapshot.absolute().as_uri() + "?mode=ro&immutable=1", uri=True
-        )) as connection:
-            connection.execute("PRAGMA query_only=ON")
-            if connection.execute("PRAGMA query_only").fetchone()[0] != 1:
-                raise ValueError("SQLite did not enter query-only mode")
+        with sealed_database(args.snapshot) as (connection, source):
             version = verify_source_schema(connection)
             report = inspect(connection, version)
+            report["snapshot"] = {"sha256": source.sha256, "bytes": source.size}
     except (OSError, ValueError, sqlite3.Error) as error:
         print(f"event subject audit refused: {error}", file=sys.stderr)
         return 2

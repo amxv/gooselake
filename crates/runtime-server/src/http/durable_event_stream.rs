@@ -1,14 +1,16 @@
+use super::durable_event_cursor::{StreamCursor, StreamPage};
 use super::*;
 use runtime_core::{
-    EventCommitSubscription, EventObservationFailure, EventObserverHealth,
-    RuntimeEventReplayReader, RuntimeStore,
+    EventCollection, EventCommitSubscription, EventCursor, EventCursorRejection,
+    EventObservationFailure, EventObserverHealth, EventReadError, RuntimeEventReplayReader,
+    RuntimeStore,
 };
 use std::convert::Infallible;
 use tokio::sync::watch;
 
 type Frame = Result<Event, Infallible>;
 
-/// Legacy cursor policy is preserved; operator streams use the checked wrapper.
+/// Legacy numeric cursor behavior remains unchanged.
 pub(super) async fn durable_event_stream(
     store: Arc<dyn RuntimeStore>,
     scope: Option<(RuntimeEventScope, String)>,
@@ -16,17 +18,30 @@ pub(super) async fn durable_event_stream(
     page_size: usize,
     headers: &HeaderMap,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Frame>>, ApiError> {
-    open_stream(store, scope, after, page_size, headers, false).await
+    open_stream(
+        store,
+        StreamCursor::Legacy { scope, after },
+        page_size,
+        headers,
+    )
+    .await
 }
 
 pub(super) async fn checked_durable_event_stream(
     store: Arc<dyn RuntimeStore>,
-    scope: Option<(RuntimeEventScope, String)>,
-    after: Option<i64>,
+    collection: EventCollection,
+    after: Option<EventCursor>,
     page_size: usize,
     headers: &HeaderMap,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Frame>>, ApiError> {
-    open_stream(store, scope, after, page_size, headers, true).await
+    collection.require_stream()?;
+    open_stream(
+        store,
+        StreamCursor::Bound { collection, after },
+        page_size,
+        headers,
+    )
+    .await
 }
 
 fn observer_failure(
@@ -46,14 +61,27 @@ fn observer_failure(
 
 enum ReadFailure {
     Journal(RuntimeError),
+    Cursor(EventCursorRejection),
+    InvalidContinuation(RuntimeError),
     Observer(EventObservationFailure),
     InvalidRecord,
+}
+
+impl From<EventReadError> for ReadFailure {
+    fn from(error: EventReadError) -> Self {
+        match error {
+            EventReadError::Cursor(error) => Self::Cursor(error),
+            EventReadError::Runtime(error) => Self::Journal(error),
+        }
+    }
 }
 
 impl ReadFailure {
     fn into_api(self) -> ApiError {
         match self {
             Self::Journal(error) => error.into(),
+            Self::Cursor(error) => error.into(),
+            Self::InvalidContinuation(error) => error.into(),
             Self::Observer(failure) => failure.runtime_error().into(),
             Self::InvalidRecord => RuntimeError::Bootstrap(
                 "durable event kind contains an invalid SSE line break".into(),
@@ -65,21 +93,14 @@ impl ReadFailure {
 
 async fn read_page(
     replay: Arc<dyn RuntimeEventReplayReader>,
-    scope: Option<(RuntimeEventScope, String)>,
-    after: Option<i64>,
+    cursor: StreamCursor,
     page_size: usize,
     health: &mut watch::Receiver<EventObserverHealth>,
-) -> Result<Vec<RuntimeEventRecord>, ReadFailure> {
+) -> Result<StreamPage, ReadFailure> {
     if let Some(failure) = observer_failure(health) {
         return Err(ReadFailure::Observer(failure));
     }
-    let mut read = tokio::task::spawn_blocking(move || {
-        replay.list_runtime_events(
-            scope.as_ref().map(|(kind, id)| (*kind, id.as_str())),
-            after,
-            page_size,
-        )
-    });
+    let mut read = tokio::task::spawn_blocking(move || cursor.read(replay.as_ref(), page_size));
     loop {
         if let Some(failure) = observer_failure(health) {
             return Err(ReadFailure::Observer(failure));
@@ -94,7 +115,7 @@ async fn read_page(
             result = &mut read => {
                 if let Some(failure) = observer_failure(health) { return Err(ReadFailure::Observer(failure)); }
                 return result.map_err(|_| ReadFailure::Journal(RuntimeError::Bootstrap("event replay worker failed".into())))?
-                    .map_err(ReadFailure::Journal);
+                    .map_err(ReadFailure::from);
             }
         }
     }
@@ -102,11 +123,9 @@ async fn read_page(
 
 async fn open_stream(
     store: Arc<dyn RuntimeStore>,
-    scope: Option<(RuntimeEventScope, String)>,
-    after: Option<i64>,
+    cursor: StreamCursor,
     page_size: usize,
     headers: &HeaderMap,
-    check_cursor: bool,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Frame>>, ApiError> {
     #[cfg(test)]
     let stream_control = super::durable_event_stream_test_control::from_headers(headers);
@@ -131,36 +150,9 @@ async fn open_stream(
         })
         .await?;
     }
-    let use_row_id = scope
-        .as_ref()
-        .is_none_or(|(kind, _)| kind.is_subject_projection());
-    if let Some(cursor) = after.filter(|cursor| check_cursor && *cursor > 0) {
-        let selected = read_page(
-            subscription.replay.clone(),
-            scope.clone(),
-            Some(cursor - 1),
-            1,
-            &mut subscription.health,
-        )
-        .await
-        .map_err(ReadFailure::into_api)?;
-        let valid = selected.first().is_some_and(|event| {
-            if use_row_id {
-                event.row_id == cursor
-            } else {
-                event.seq == cursor
-            }
-        });
-        if !valid {
-            return Err(ApiError::bad_request(
-                "event stream cursor is not in the selected collection".into(),
-            ));
-        }
-    }
     let first_page = read_page(
         subscription.replay.clone(),
-        scope.clone(),
-        after,
+        cursor.clone(),
         page_size,
         &mut subscription.health,
     )
@@ -196,17 +188,13 @@ async fn open_stream(
     tokio::spawn(async move {
         #[cfg(test)]
         let _producer = stream_control.as_ref().map(|control| control.start());
-        let mut cursor = after.unwrap_or(0);
+        let mut cursor = cursor;
         let mut page = first_page;
         loop {
-            let count = page.len();
-            for record in page {
-                let next = if use_row_id {
-                    record.row_id
-                } else {
-                    record.seq
-                };
-                if next <= cursor {
+            let count = page.rows.len();
+            for record in page.rows {
+                let next = cursor.record_position(&record);
+                if next <= cursor.position() {
                     continue;
                 }
                 // Generic journal writers can persist arbitrary text. Axum's
@@ -232,8 +220,16 @@ async fn open_stream(
                         return;
                     }
                 };
+                let (event_id, next_cursor) =
+                    match cursor.frame_cursor(page.epoch.as_ref(), &record) {
+                        Ok(next) => next,
+                        Err(error) => {
+                            terminal_error(&terminal_tx, ReadFailure::InvalidContinuation(error));
+                            return;
+                        }
+                    };
                 let event = Event::default()
-                    .id(next.to_string())
+                    .id(event_id)
                     .event(record.kind)
                     .data(payload);
                 let reservation = tx.reserve();
@@ -269,7 +265,7 @@ async fn open_stream(
                                 return;
                             }
                             permit.send(Ok(event));
-                            cursor = next;
+                            cursor = next_cursor;
                             break;
                         }
                     }
@@ -311,7 +307,7 @@ async fn open_stream(
             }
             let next = tokio::select! {
                 _ = tx.closed() => return,
-                next = read_page(replay.clone(), scope.clone(), Some(cursor), page_size, &mut health) => next,
+                next = read_page(replay.clone(), cursor.clone(), page_size, &mut health) => next,
             };
             page = match next {
                 Ok(page) => page,
@@ -329,6 +325,14 @@ async fn open_stream(
 
 fn terminal_error(tx: &mpsc::Sender<Frame>, failure: ReadFailure) {
     let payload = match failure {
+        ReadFailure::Cursor(error) => serde_json::json!({
+            "code":error.code(), "retryable":false, "message":error.to_string(),
+            "continuation":"inspect journal lineage and retained anchor before choosing a new continuation"
+        }),
+        ReadFailure::InvalidContinuation(_) => serde_json::json!({
+            "code":"journal_record_invalid", "retryable":false,
+            "message":"durable replay could not bind a valid continuation; inspect the journal before resuming"
+        }),
         ReadFailure::Journal(_) => serde_json::json!({
             "code":"journal_unavailable", "retryable":true,
             "message":"durable event replay interrupted; reconnect with the last received event ID"

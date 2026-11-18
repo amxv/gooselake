@@ -228,8 +228,9 @@ list operations for workspaces, managed worktrees, agents, operations,
 processes, operator events, migration status/preview, hook effects and message
 deliveries advertise the conditional `X-Next-Cursor` **response header**.
 `GET /v2/messages` instead returns `next_cursor` in its JSON body. Event SSE
-streams are not keyset lists: they expose `after_seq`, bounded `limit`, and
-the optional `Last-Event-ID` header fallback, never `X-Next-Cursor`.
+streams expose `after_seq`, bounded `limit`, and optional `Last-Event-ID`,
+never `X-Next-Cursor`. On `/v2`, continuation values are opaque journal-bound
+strings; a supplied query cursor and nonempty header must agree.
 
 Two Bearer schemes are intentionally distinct in OpenAPI: `bearerAuth` is
 the owner/operator token on operator and legacy routes, whereas
@@ -1805,18 +1806,17 @@ Replay endpoints:
 - `GET /v1/teams/{team_id}/events`
 - `GET /v1/processes/{process_id}/events`
 
-The new **operator-only** `GET /v2/events` lists lightweight, redacted event
-metadata in **global row ID ascending** order. It accepts `cursor` (a
-nonnegative global row ID), `limit` (1–100, default 50), and an optional
-**paired** `scope` / `scope_id` filter. Valid scopes are `session`, `workspace`,
-`team`, `process`, `worktree`, `system`, `turn`, `message`, and `operation`. The cursor is always the global
-`row_id`, **including within scoped filters**; it is never the per-scope
-`seq`. The `X-Next-Cursor` response header is present when further rows exist.
-Positive cursors must identify a real event row in the selected global or
-`scope`/`scope_id` collection; unknown, deleted, or cross-scope anchors return
-HTTP `400` instead of silently skipping history. `cursor=0` is accepted as a
-beginning-of-history sentinel.
-Separate global and scoped SQLite indexes back the bounded reads.
+The **operator-only** `GET /v2/events` lists lightweight, redacted event
+metadata in **global row ID ascending** order. It accepts an opaque `cursor`,
+`limit` (1–100, default 50), and an optional **paired** `scope` / `scope_id`
+filter. Valid scopes are `session`, `workspace`, `team`, `process`, `worktree`,
+`system`, `turn`, `message`, and `operation`. Omit `cursor` to start; empty
+values and numeric values, including zero, are rejected. When further rows
+exist, pass `X-Next-Cursor` unchanged into the next request. It identifies the
+last returned row, never the lookahead row, and remains valid if page size
+changes. Each page validates its anchor and reads rows and journal epoch in
+one SQLite read transaction; separate requests do not freeze the whole list.
+Separate global and scoped indexes back the bounded reads.
 `turn`, `message`, and `operation` select indexed subject links to canonical
 parent-scoped journal rows rather than generating copies or new per-subject
 sequence numbers. The response retains the event's **original** primary
@@ -1829,35 +1829,43 @@ Each summary includes only `row_id`, `event_id`, `scope`, `scope_id`, `seq`,
 `kind`, `criticality`, and `created_at`. Payloads, provider/native metadata,
 and per-session/turn IDs are not selected for list pages. Inspect the complete
 authenticated event, including its payload, with
-`GET /v2/events/{event_id}`. This is a read-only history contract, separate
-from the four operator-only `/v2` SSE routes above. **History page `cursor` is
-not an SSE resume token.** The global `/v2/events/stream` accepts `after_seq`
-as a global row ID; resource streams use `after_seq` as their scoped sequence,
-where an agent stream maps to the canonical session event scope. All four
-allow `Last-Event-ID` when `after_seq` is omitted, require nonnegative cursors
-and a stream page `limit` between 1 and 10000 (default 2000), and reject
-unknown query fields or duplicate `Last-Event-ID` headers. They check the
-referenced workspace, agent or managed process exists before opening a stream;
-the operator bearer credential is required even for archived/terminal history.
-The global `/v2/events/stream` additionally accepts paired `scope` and
-`scope_id` to follow a single subject or primary scope. For `turn`, `message`,
-and `operation` subjects the SSE event ID and resume cursor are global row IDs
-across the original parent scopes; for other primary scopes, the cursor
-remains the scope-local sequence. Resource-specific streams reject query-level
-scope overrides. **Positive `/v2` SSE resume cursors must belong to the exact
-selected event collection**: global and turn/message/operation cursors identify
-an existing global event row, while workspace/agent/process and other primary
-scope cursors identify an existing sequence in that scope. A nonexistent,
-future, or foreign-scope/subject cursor returns HTTP `400` at handshake rather
-than opening a stream that could silently skip events. `after_seq=0` remains a
-beginning-of-history sentinel, and `after_seq` takes precedence over the
-`Last-Event-ID` fallback. The check uses a single indexed journal lookup on
-the same ready, generation-bound reader as subsequent replay; it does not
-scan historical events or authorize event pruning. Observer readiness and
-the initial replay must succeed before the HTTP stream opens. Existing `/v1`
-cursor behavior is unchanged.
-Legacy `/v1` cursor policy remains unchanged during migration; the observer
-readiness and failure rules below also apply to its durable streams.
+`GET /v2/events/{event_id}`.
+
+All `/v2` event continuations use canonical `ev1` strings binding the persisted
+journal epoch, exact collection, coordinate kind, positive position, and a
+SHA-256 digest of the original event ID. They are continuation coordinates,
+not authorization or signatures. Treat them as opaque values. History always
+uses a global row coordinate, including filtered pages. Global and subject
+SSE streams use global row coordinates; primary scoped SSE streams use that
+scope's sequence. An agent stream maps to the canonical session scope. Tokens
+with a different collection or coordinate kind cannot be interchanged; obtain
+SSE continuation IDs from the stream being consumed.
+
+The four operator SSE routes accept `after_seq` or `Last-Event-ID` and a page
+`limit` of 1–10000 (default 2000). Omit both continuation inputs to start. One
+exactly empty `Last-Event-ID` means absent; a present empty query value is
+invalid. Nonempty inputs are never trimmed. If both are supplied they must
+decode to the same cursor, otherwise HTTP `400 event_cursor_conflict` is
+returned. Duplicate headers, including identical or empty duplicates, and
+duplicate/unknown query fields are rejected. Tokens are at most 1024 ASCII
+bytes; the entire raw event query is at most 4096 bytes. Scope IDs are exact
+UTF-8 strings of 1–256 bytes, without leading/trailing whitespace; internal
+spaces and case are preserved.
+
+The global `/v2/events/stream` accepts paired `scope` / `scope_id` for a single
+primary scope or `turn`, `message`, or `operation` subject. Resource routes
+reject scope overrides and require an existing workspace, agent, or managed
+process. Archived/terminal history still requires the operator bearer.
+The initial replay validates epoch, exact anchor membership and event identity
+and reads the first page in one transaction on the same pinned observer reader.
+Readiness, initial replay, and retained health must succeed before HTTP 200.
+Malformed values return `400 event_cursor_invalid`; wrong collection/axis
+returns `400 event_cursor_collection_mismatch`; missing, future, deleted or
+changed anchors return `400 event_cursor_anchor_mismatch`; another epoch
+returns `409 event_cursor_epoch_mismatch`. These client errors are nonretryable
+and do not poison a healthy peer subscriber. Inspect lineage before choosing
+to start a new continuation. Legacy `/v1` numeric cursor policy is unchanged;
+the observer readiness and failure rules below also apply to its streams.
 
 Behavior:
 
@@ -1881,8 +1889,9 @@ Behavior:
   write-hint queue overflow catches up through that journal. Loss or overflow
   of the separate filesystem lifecycle evidence fails the generation closed,
   because continuity can no longer be verified.
-- observer baseline/high-water queries, positive-cursor validation and replay
-  are separate reads; there is no fixed query count per committed event.
+- observer baseline/probe work is separate from replay. Each bound replay
+  reads epoch, anchor and page in one snapshot; there is no fixed query count
+  per committed event.
   Instrumented real-SQLite tests check **zero additional observer probes,
   high-water reads and replay reads while idle**, including a complete interval
   between actual ten-second HTTP keepalives. Keepalives never poll SQLite.
@@ -1944,8 +1953,8 @@ Behavior:
   into a retryable admission. A real authenticated workspace interrupt/approval
   test verifies exactly one ordered `turn.admitted` / `approval.requested`
   pair for a waiting turn; provider-native approvals remain a separate audit.
-- `after_seq` query param takes precedence
-- otherwise stream endpoints use the `Last-Event-ID` header
+- legacy `/v1` uses `after_seq` when present, otherwise `Last-Event-ID`;
+  `/v2` requires both inputs to agree when both are present
 - invalid `Last-Event-ID` returns HTTP `400`
 - duplicate `Last-Event-ID` headers also return HTTP `400`, including with
   an explicit `after_seq`, rather than silently choosing a resume position
@@ -1962,7 +1971,8 @@ Stream errors have distinct continuation rules:
 | Error code | `retryable` | Client action |
 | --- | --- | --- |
 | `journal_unavailable` | `true` | Reconnect with the last successfully processed event ID after a same-generation replay interruption. Unread retained rows remain available. |
-| `event_observer_unavailable`, `event_observer_barrier_failed` or `journal_generation_changed` | `false` | Inspect observer health and database identity before resuming. Do not blindly reuse a numeric cursor against an unverified dataset. |
+| `event_observer_unavailable`, `event_observer_barrier_failed` or `journal_generation_changed` | `false` | Inspect observer health, epoch and snapshot lineage before resuming. |
+| `event_cursor_epoch_mismatch`, `event_cursor_collection_mismatch` or `event_cursor_anchor_mismatch` | `false` | Inspect the saved continuation and retained journal; it cannot continue this page safely. |
 | `journal_record_invalid` | `false` | Inspect the durable record whose event kind contains CR or LF. The invalid record receives no SSE ID; the last valid cursor is preserved. |
 
 Readiness, retained observer failure and initial replay errors before the
@@ -1985,11 +1995,21 @@ Normal PASSIVE, RESTART and TRUNCATE checkpoints retain subsequent liveness.
 
 Canonical ancestors and the local mount must remain stable; nonrecursive
 filesystem watches do not prove continuity across every ancestor or overmount
-change. Numeric cursors do not encode a durable database epoch: after a
-replacement plus full runtime restart, a matching number alone cannot prove
-that the retained dataset is the original one. Same-database replay and the
-verified failure checks add no power-loss durability guarantee and no
-universal exactly-once network-delivery guarantee.
+change. The persisted epoch is also checked during observer initialization,
+actual commit probes and replay, including same-head changes. Missing or
+malformed metadata fails closed; it is never repaired by a read. An epoch
+change fails the old observer even when event IDs have not advanced. No epoch
+queries run on idle timers or control-only wakes.
+
+Ordinary restarts retain the epoch. An unprepared byte-identical copy also
+retains it and cannot be distinguished from that restart. A separately
+prepared replacement needs a distinct epoch; only disposable test preparation
+exists here, with no production restore/rotation/activation command. An
+externally pinned sealed-snapshot manifest can detect changes after capture,
+but cannot recover or detect evidence already missing before capture. See
+[snapshot limits](/docs/events-and-recovery#sealed-snapshots-epochs-and-retained-witnesses).
+Legacy numeric IDs lack the `/v2` epoch/anchor binding. These checks add no
+power-loss durability guarantee or universal exactly-once network delivery.
 
 The runtime currently **does not prune committed event-journal rows**. This is
 intentional: pending operations, delivery recovery, audit history, and SSE
@@ -2003,7 +2023,7 @@ history.
 
 SSE event envelope:
 
-- `id`: global row ID for global/subject streams, or scope-local sequence for primary scoped streams
+- `id`: opaque journal-bound `ev1` token on `/v2`; numeric global row ID or primary scope-local sequence on legacy `/v1`
 - `event`: runtime event kind
 - `data`: JSON-serialized `RuntimeEventRecord`
 

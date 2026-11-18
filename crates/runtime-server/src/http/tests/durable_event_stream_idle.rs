@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 
+mod bound;
 mod cancellation;
 mod control;
 mod handoffs;
@@ -21,7 +22,7 @@ mod health;
 use control::{ReadPhase, ReplayControl};
 
 /// Test-only proxy over the *real* SQLite runtime store. The observed counter
-/// measures every journal SELECT requested by the actual SSE path, so a
+/// measures every replay call requested by the actual SSE path, so a
 /// regression to 250ms polling fails without fake/manual event feeds.
 struct CountingEventStore {
     sqlite: Arc<SqliteRuntimeStore>,
@@ -57,6 +58,29 @@ impl RuntimeEventReplayReader for CountingReplayReader {
             ))
         } else {
             self.inner.list_runtime_events(scope, after_seq, limit)
+        };
+        if let Some(control) = &self.control {
+            control.visit(ReadPhase::After(call));
+        }
+        result
+    }
+
+    fn list_runtime_events_bound(
+        &self,
+        collection: &runtime_core::EventCollection,
+        after: Option<&runtime_core::EventCursor>,
+        limit: usize,
+    ) -> Result<runtime_core::BoundEventPage<RuntimeEventRecord>, runtime_core::EventReadError>
+    {
+        let call = self.reads.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(control) = &self.control {
+            control.visit(ReadPhase::Before(call));
+        }
+        let result = if self.fail_next_read.swap(false, Ordering::SeqCst) {
+            Err(RuntimeError::Bootstrap("test-injected durable journal read failure".into()).into())
+        } else {
+            self.inner
+                .list_runtime_events_bound(collection, after, limit)
         };
         if let Some(control) = &self.control {
             control.visit(ReadPhase::After(call));

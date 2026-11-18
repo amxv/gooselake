@@ -21,6 +21,19 @@ macro_rules! delegate_event_history {
         ) -> Result<Option<runtime_core::RuntimeEventRecord>, runtime_core::RuntimeError> {
             self.repository.get_operator_event(event_id)
         }
+
+        fn list_operator_events_page_bound(
+            &self,
+            collection: &runtime_core::EventCollection,
+            after: Option<&runtime_core::EventCursor>,
+            limit: usize,
+        ) -> Result<
+            runtime_core::BoundEventPage<runtime_core::OperatorEventSummary>,
+            runtime_core::EventReadError,
+        > {
+            self.repository
+                .list_operator_events_page_bound(collection, after, limit)
+        }
     };
 }
 

@@ -322,6 +322,16 @@ fn v2_query_projection_matches_axum_handler_types_and_real_cursor_headers() {
         "\"enum\":[\"session\",\"workspace\",\"team\",\"process\",\"worktree\",\"system\",\"turn\",\"message\",\"operation\"]"
     ));
     assert!(events.contains("Scope and scope_id must be supplied together"));
+    let event_cursor = events
+        .split("        - name: cursor\n")
+        .nth(1)
+        .unwrap()
+        .split("        - name: ")
+        .next()
+        .unwrap();
+    assert!(event_cursor.contains("\"type\":\"string\""));
+    assert!(event_cursor.contains("\"minLength\":1"));
+    assert!(event_cursor.contains("\"maxLength\":1024"));
 
     for path in [
         "/v2/events/stream",
@@ -335,6 +345,30 @@ fn v2_query_projection_matches_axum_handler_types_and_real_cursor_headers() {
         assert!(op.contains("\"maximum\":10000"));
         assert!(op.contains("\"default\":2000"));
         assert!(op.contains("        - name: Last-Event-ID\n"));
+        let after = op
+            .split("        - name: after_seq\n")
+            .nth(1)
+            .unwrap()
+            .split("        - name: ")
+            .next()
+            .unwrap();
+        assert!(after.contains("\"type\":\"string\""), "{path}");
+        assert!(after.contains("\"minLength\":1"), "{path}");
+        assert!(after.contains("\"maxLength\":1024"), "{path}");
+        let last = op
+            .split("        - name: Last-Event-ID\n")
+            .nth(1)
+            .unwrap()
+            .split("      responses:\n")
+            .next()
+            .unwrap();
+        assert!(last.contains("type: string"), "{path}");
+        assert!(last.contains("maxLength: 1024"), "{path}");
+        assert!(
+            !last.contains("minLength"),
+            "empty header is absent: {path}"
+        );
+        assert!(last.contains("both cursors must be equal"), "{path}");
         assert!(
             !op.contains("X-Next-Cursor:"),
             "SSE streams are not keyset lists"

@@ -1,8 +1,8 @@
 use runtime_core::{
-    OperatorEventSummary, RuntimeError, RuntimeEventCriticality, RuntimeEventRecord,
-    RuntimeEventScope,
+    BoundEventPage, EventCollection, EventCursor, EventReadError, OperatorEventSummary,
+    RuntimeError, RuntimeEventCriticality, RuntimeEventRecord, RuntimeEventScope,
 };
-use rusqlite::{params, types::Type};
+use rusqlite::{params, types::Type, Connection, TransactionBehavior};
 
 use crate::db::{collect_rows, db_error, fetch_runtime_event_by_event_id, open_connection};
 use crate::SqliteRuntimeRepository;
@@ -59,68 +59,18 @@ impl SqliteRuntimeRepository {
                 ));
             }
         }
-        let is_subject = scope.is_some_and(|(kind, _)| kind.is_subject_projection());
-        let (source, where_clause, order) = if is_subject {
-            (
-                "runtime_event_subjects s JOIN runtime_events e ON e.id = s.event_row_id",
-                if after_id.is_some() {
-                    "WHERE s.subject_scope = ?1 AND s.subject_id = ?2 AND s.event_row_id > ?3"
-                } else {
-                    "WHERE s.subject_scope = ?1 AND s.subject_id = ?2"
-                },
-                "s.event_row_id",
-            )
-        } else {
-            (
-                "runtime_events e",
-                match (scope.is_some(), after_id.is_some()) {
-                    (true, true) => "WHERE e.scope = ?1 AND e.scope_id = ?2 AND e.id > ?3",
-                    (true, false) => "WHERE e.scope = ?1 AND e.scope_id = ?2",
-                    (false, true) => "WHERE e.id > ?3",
-                    (false, false) => "",
-                },
-                "e.id",
-            )
-        };
-        let sql = format!(
-            "SELECT e.id, e.event_id, e.scope, e.scope_id, e.seq, e.kind, e.critical, e.created_at \
-             FROM {source} {where_clause} ORDER BY {order} ASC LIMIT ?4"
-        );
-        let mut statement = connection
-            .prepare(&sql)
-            .map_err(|error| db_error("failed preparing operator event history", error))?;
-        let rows = statement
-            .query_map(
-                params![
-                    scope.as_ref().map(|(kind, _)| kind.as_str()),
-                    scope.map(|(_, id)| id),
-                    after_id,
-                    limit as i64,
-                ],
-                |row| {
-                    let scope_text: String = row.get(2)?;
-                    let scope = RuntimeEventScope::from_str(&scope_text).ok_or_else(|| {
-                        invalid_enum(2, format!("unknown event scope {scope_text}"))
-                    })?;
-                    let critical: i64 = row.get(6)?;
-                    let criticality =
-                        RuntimeEventCriticality::from_i64(critical).ok_or_else(|| {
-                            invalid_enum(6, format!("invalid criticality {critical}"))
-                        })?;
-                    Ok(OperatorEventSummary {
-                        row_id: row.get(0)?,
-                        event_id: row.get(1)?,
-                        scope,
-                        scope_id: row.get(3)?,
-                        seq: row.get(4)?,
-                        kind: row.get(5)?,
-                        criticality,
-                        created_at: row.get(7)?,
-                    })
-                },
-            )
-            .map_err(|error| db_error("failed querying operator event history", error))?;
-        collect_rows(rows)
+        query_page(&connection, scope, after_id, limit)
+    }
+
+    /// The epoch, original anchor and payload-free rows are one read snapshot.
+    pub fn list_operator_events_page_bound(
+        &self,
+        collection: &EventCollection,
+        after: Option<&EventCursor>,
+        limit: usize,
+    ) -> Result<BoundEventPage<OperatorEventSummary>, EventReadError> {
+        let mut connection = open_connection(&self.database_path)?;
+        read_bound_history(&mut connection, collection, after, limit, || {})
     }
 
     pub fn get_operator_event(
@@ -130,6 +80,107 @@ impl SqliteRuntimeRepository {
         let connection = open_connection(&self.database_path)?;
         fetch_runtime_event_by_event_id(&connection, event_id)
     }
+}
+
+/// The callback is a deterministic test seam after the first snapshot read;
+/// the production entry point always supplies an empty callback.
+pub(crate) fn read_bound_history(
+    connection: &mut Connection,
+    collection: &EventCollection,
+    after: Option<&EventCursor>,
+    limit: usize,
+    after_epoch: impl FnOnce(),
+) -> Result<BoundEventPage<OperatorEventSummary>, EventReadError> {
+    collection.require_history()?;
+    if !(1..=101).contains(&limit) {
+        return Err(RuntimeError::InvalidState(
+            "operator event history limit must be between 1 and 101".into(),
+        )
+        .into());
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .map_err(|error| db_error("failed starting bound event history snapshot", error))?;
+    let epoch = crate::repository_event_cursor::read_journal_epoch(&transaction)?;
+    after_epoch();
+    crate::repository_event_cursor::validate_cursor(&transaction, &epoch, collection, after)?;
+    let rows = query_page(
+        &transaction,
+        collection.scope(),
+        after.map(EventCursor::position),
+        limit,
+    )?;
+    transaction
+        .commit()
+        .map_err(|error| db_error("failed completing bound event history snapshot", error))?;
+    Ok(BoundEventPage { epoch, rows })
+}
+
+fn query_page(
+    connection: &Connection,
+    scope: Option<(RuntimeEventScope, &str)>,
+    after_id: Option<i64>,
+    limit: usize,
+) -> Result<Vec<OperatorEventSummary>, RuntimeError> {
+    let is_subject = scope.is_some_and(|(kind, _)| kind.is_subject_projection());
+    let (source, where_clause, order) = if is_subject {
+        (
+            "runtime_event_subjects s JOIN runtime_events e ON e.id = s.event_row_id",
+            if after_id.is_some() {
+                "WHERE s.subject_scope = ?1 AND s.subject_id = ?2 AND s.event_row_id > ?3"
+            } else {
+                "WHERE s.subject_scope = ?1 AND s.subject_id = ?2"
+            },
+            "s.event_row_id",
+        )
+    } else {
+        (
+            "runtime_events e",
+            match (scope.is_some(), after_id.is_some()) {
+                (true, true) => "WHERE e.scope = ?1 AND e.scope_id = ?2 AND e.id > ?3",
+                (true, false) => "WHERE e.scope = ?1 AND e.scope_id = ?2",
+                (false, true) => "WHERE e.id > ?3",
+                (false, false) => "",
+            },
+            "e.id",
+        )
+    };
+    let sql = format!(
+        "SELECT e.id, e.event_id, e.scope, e.scope_id, e.seq, e.kind, e.critical, e.created_at \
+         FROM {source} {where_clause} ORDER BY {order} ASC LIMIT ?4"
+    );
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| db_error("failed preparing operator event history", error))?;
+    let rows = statement
+        .query_map(
+            params![
+                scope.as_ref().map(|(kind, _)| kind.as_str()),
+                scope.map(|(_, id)| id),
+                after_id,
+                limit as i64,
+            ],
+            |row| {
+                let scope_text: String = row.get(2)?;
+                let scope = RuntimeEventScope::from_str(&scope_text)
+                    .ok_or_else(|| invalid_enum(2, format!("unknown event scope {scope_text}")))?;
+                let critical: i64 = row.get(6)?;
+                let criticality = RuntimeEventCriticality::from_i64(critical)
+                    .ok_or_else(|| invalid_enum(6, format!("invalid criticality {critical}")))?;
+                Ok(OperatorEventSummary {
+                    row_id: row.get(0)?,
+                    event_id: row.get(1)?,
+                    scope,
+                    scope_id: row.get(3)?,
+                    seq: row.get(4)?,
+                    kind: row.get(5)?,
+                    criticality,
+                    created_at: row.get(7)?,
+                })
+            },
+        )
+        .map_err(|error| db_error("failed querying operator event history", error))?;
+    collect_rows(rows)
 }
 
 fn invalid_enum(index: usize, reason: String) -> rusqlite::Error {

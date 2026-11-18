@@ -17,4 +17,6 @@ tokio.workspace = true
 libc = "0.2.186"
 
 [dev-dependencies]
+ring.workspace = true
+rusqlite = { version = "0.32", features = ["backup"] }
 tempfile = "3.23"

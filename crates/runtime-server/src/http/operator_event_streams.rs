@@ -1,4 +1,5 @@
 use super::*;
+use runtime_core::{EventCollection, EventCursor};
 
 /// Operator-only live projections use the same committed journal as `/v1`,
 /// without exposing a separate per-workspace or per-agent event bus. An agent
@@ -6,8 +7,9 @@ use super::*;
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OperatorEventStreamQuery {
-    #[schemars(range(min = 0))]
-    after_seq: Option<i64>,
+    /// Opaque ev1 continuation; must equal a nonempty Last-Event-ID if supplied.
+    #[schemars(length(min = 1, max = 1024))]
+    after_seq: Option<String>,
     #[schemars(range(min = 1, max = 10000))]
     limit: Option<usize>,
 }
@@ -17,8 +19,9 @@ pub(crate) struct OperatorEventStreamQuery {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OperatorGlobalEventStreamQuery {
-    #[schemars(range(min = 0))]
-    after_seq: Option<i64>,
+    /// Opaque ev1 continuation; must equal a nonempty Last-Event-ID if supplied.
+    #[schemars(length(min = 1, max = 1024))]
+    after_seq: Option<String>,
     #[schemars(range(min = 1, max = 10000))]
     limit: Option<usize>,
     scope: Option<RuntimeEventScope>,
@@ -57,14 +60,8 @@ impl OperatorGlobalEventStreamQuery {
 }
 
 impl OperatorEventStreamQuery {
-    fn parse(&self, headers: &HeaderMap) -> Result<(Option<i64>, usize), ApiError> {
-        let last_event_id = parse_last_event_id_header(headers)?;
-        let cursor = self.after_seq.or(last_event_id);
-        if cursor.is_some_and(|value| value < 0) {
-            return Err(ApiError::bad_request(
-                "after_seq must be a non-negative event cursor".into(),
-            ));
-        }
+    fn parse(&self, headers: &HeaderMap) -> Result<(Option<EventCursor>, usize), ApiError> {
+        let cursor = resolve_operator_stream_cursor(self.after_seq.as_deref(), headers)?;
         let page_size = self.limit.unwrap_or(2_000);
         if !(1..=10_000).contains(&page_size) {
             return Err(ApiError::bad_request(
@@ -83,11 +80,11 @@ async fn operator_event_stream(
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError>
 {
     let (cursor, page_size) = query.parse(&headers)?;
-    // Validate the exact observed-collection cursor through the same pinned
-    // generation as replay, after observer readiness and before HTTP success.
+    let collection = EventCollection::stream(scope)?;
+    // One pinned epoch/anchor/page snapshot completes before HTTP success.
     checked_durable_event_stream(
         state.app.services.store.clone(),
-        scope,
+        collection,
         cursor,
         page_size,
         &headers,
@@ -97,7 +94,7 @@ async fn operator_event_stream(
 
 pub(super) async fn stream_operator_global_events(
     State(state): State<AppState>,
-    Query(query): Query<OperatorGlobalEventStreamQuery>,
+    BoundedEventQuery(query): BoundedEventQuery<OperatorGlobalEventStreamQuery>,
     headers: HeaderMap,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError>
 {
@@ -108,7 +105,7 @@ pub(super) async fn stream_operator_global_events(
 pub(super) async fn stream_operator_workspace_events(
     State(state): State<AppState>,
     Path(workspace_id): Path<String>,
-    Query(query): Query<OperatorEventStreamQuery>,
+    BoundedEventQuery(query): BoundedEventQuery<OperatorEventStreamQuery>,
     headers: HeaderMap,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError>
 {
@@ -130,7 +127,7 @@ pub(super) async fn stream_operator_workspace_events(
 pub(super) async fn stream_operator_agent_events(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-    Query(query): Query<OperatorEventStreamQuery>,
+    BoundedEventQuery(query): BoundedEventQuery<OperatorEventStreamQuery>,
     headers: HeaderMap,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError>
 {
@@ -152,7 +149,7 @@ pub(super) async fn stream_operator_agent_events(
 pub(super) async fn stream_operator_process_events(
     State(state): State<AppState>,
     Path(process_id): Path<String>,
-    Query(query): Query<OperatorEventStreamQuery>,
+    BoundedEventQuery(query): BoundedEventQuery<OperatorEventStreamQuery>,
     headers: HeaderMap,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError>
 {

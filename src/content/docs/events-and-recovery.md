@@ -80,9 +80,12 @@ publication, native effect settlement, or future live database integrity.
 
 `GET /v2/events` is an operator-authenticated, bounded history index. It can
 list the entire durable journal or filter by an exact `scope` and `scope_id`
-pair. The cursor is **always the global event row ID** (`row_id`), not the
-per-scope `seq`, and `limit` defaults to 50 with a maximum of 100. Pass the
-returned `X-Next-Cursor` header verbatim to retrieve another page.
+pair. Its opaque `ev1` cursor binds a **global event row coordinate** (`row_id`),
+the exact collection, persisted journal epoch and original event ID digest.
+`limit` defaults to 50 with a maximum of 100. Omit the cursor to start, then
+pass `X-Next-Cursor` verbatim to retrieve another page. Numeric/empty cursors
+are rejected. The continuation names the last returned row, not lookahead;
+changing page size does not change its identity.
 
 The eight-field list projection excludes payloads and provider-native details
 even for events with large/private diagnostic bodies. Inspect an exact event
@@ -98,12 +101,12 @@ The operator can subscribe to the same committed journal through
 `/v2/processes/{process_id}/events/stream`. These routes require the operator
 bearer credential and an existing workspace/agent/process for resource
 streams; archived agents and terminal processes remain inspectable. Use
-`after_seq` (or the `Last-Event-ID` header) rather than the **history list's**
-`cursor`. On the global stream it is a SQLite event row ID; on resource
-streams it is a scoped sequence. Agent events use the canonical session scope.
+`after_seq` or `Last-Event-ID` with an opaque ID actually consumed from that
+stream. Its encoded coordinate is a SQLite event row ID for the global stream
+and a scoped sequence for resource streams. Agent events use the session scope.
 The global operator stream additionally accepts paired `scope` and `scope_id`.
-When following a `turn`, `message`, or `operation` subject, `after_seq` and
-`Last-Event-ID` are **global row IDs**, never parent-scoped sequence numbers;
+When following a `turn`, `message`, or `operation` subject, tokens bind
+**global row coordinates**, never parent-scoped sequence numbers;
 the resource-specific streams reject an overriding query scope.
 `/v1` and `/v2` SSE clients preserve their last received IDs across reconnects.
 
@@ -455,8 +458,8 @@ A robust client reconnects like this:
 Session, global, team, workspace, agent, and process streams subscribe to
 **committed SQLite event notifications** before reading the first replay page.
 Observer readiness and initial replay must succeed before the HTTP stream
-opens. Positive operator cursors are validated through the same
-generation-bound reader used for replay. Streams read ordered journal rows in
+opens. Operator cursor epoch, anchor and page are read in one transaction
+through the same pinned, generation-bound reader. Streams read ordered rows in
 bounded pages, then wait for notification hints without periodically querying
 SQLite while idle. Hints contain no event payload or cursor authority; delayed,
 coalesced, or lagged hints trigger indexed catch-up from the stream's current
@@ -494,8 +497,9 @@ same database.
 The instrumented real-SQLite idle regression checks that observer probes,
 high-water reads, and replay reads remain unchanged across a complete interval
 between actual ten-second HTTP keepalives. Keepalives are network heartbeats
-and never poll SQLite. Observer baseline reads, positive-cursor validation,
-and replay are separate operations; there is no fixed query count per commit.
+and never poll SQLite. Observer baseline/probe work is separate from replay;
+bound replay reads epoch, anchor and page together. There is no fixed query
+count per commit.
 
 Concurrency/recovery regression exercises independent SQLite connections
 contending for the same workspace/process scope, verifies unique gap-free
@@ -523,18 +527,118 @@ write or a timing assumption about observer startup.
 
 ## Cursor rules
 
-The runtime supports both explicit query cursors and the SSE `Last-Event-ID` header.
+On `/v2`, pass opaque `ev1` continuations unchanged. Omit continuation inputs
+to start at retained history; zero and empty query values are invalid. One
+exactly empty `Last-Event-ID` means absent. Nonempty values are never trimmed,
+and a query cursor plus a nonempty header must identify the same cursor.
+Conflicts return `400 event_cursor_conflict`. Duplicate headers are rejected
+even when equal or empty. Tokens are limited to 1024 ASCII bytes, the entire
+raw event query to 4096 bytes, and exact scope IDs to 256 UTF-8 bytes with no
+leading/trailing whitespace. Unknown/duplicate query fields are rejected.
 
-- `after_seq` query parameter wins when provided.
-- otherwise `Last-Event-ID` is used.
-- invalid `Last-Event-ID` values are rejected with `400`.
-- duplicate `Last-Event-ID` headers return `400` (even if identical or an
-  explicit `after_seq` is present); the runtime never guesses which resume
-  cursor a proxy or client intended.
-- session, team, and process stream IDs are scoped sequence numbers.
-- global stream IDs are global runtime event row IDs.
+The token binds an epoch, exact collection, coordinate kind, positive
+position, and SHA-256 event-ID digest. History uses a global row coordinate;
+SSE uses a global row for global/subject collections and a local sequence for
+primary scoped collections. A wrong collection/axis, missing anchor or changed
+event identity returns HTTP 400 before streaming; a different epoch returns
+HTTP 409. Both are nonretryable inspection outcomes. A bad client token does
+not make the shared observer unhealthy. The token is neither a signature nor
+an access credential, and it does not prove history completeness.
 
-The name `after_seq` is convenient but slightly overloaded. On scoped endpoints it means scoped sequence. On global endpoints it means the global event row ID.
+Legacy `/v1` retains its numeric contract: the query wins when supplied,
+otherwise the header is used; global IDs are row IDs and primary scoped IDs
+are local sequences. Invalid or duplicate headers return 400. All clients
+checkpoint the last event they processed, independently of server buffering.
+
+## Sealed snapshots, epochs, and retained witnesses
+
+The runtime does not prune committed journal rows. Original event identities,
+subjects, unresolved native receipts, worktree lifetimes and reservations stay
+available. No automated retention, repair, restore, activation or deletion is
+introduced by the snapshot tools.
+
+Schema 53 creates one random 128-bit journal epoch atomically with its
+migration marker. Ordinary restarts preserve it. Current databases with a
+missing, malformed, unmarked or structurally different epoch carrier fail
+initialization and bound reads; readers never adopt or repair that state.
+Observer initialization, actual commit probes and replay compare the epoch,
+including changes with an unchanged event head. A committed change makes the
+old observer fail closed; a rolled-back change does not establish a new epoch.
+
+A byte-identical copy preserves the epoch and is indistinguishable from the
+original restart through a cursor alone. A replacement intended as a different
+journal incarnation needs separately authorized preparation before activation.
+The offline fixtures rotate only a distinct, inactive target and prove old
+cursors reject it; there is no production epoch-rotation or restore writer.
+Changing an epoch says nothing about whether unknown native work finished.
+
+Consistent acquisition is a prerequisite, outside the inspector. An authorized
+acquisition must use SQLite's backup mechanism from a stable read snapshot, or
+a fully closed, consistently checkpointed copy. A plain copy of an active WAL
+database is not a consistent backup. The current acceptance exercises only
+owned disposable databases and never opens a user database or live WAL.
+
+For an already sealed offline copy, the manifest CLI captures canonical JSON
+on stdout and prints its SHA-256 to stderr. Retain that hash independently of
+the manifest; verification requires it explicitly:
+
+```bash
+python3 scripts/audit-snapshot-manifest.py capture \
+  --snapshot /path/to/owned-offline-copy.sqlite3 > /path/to/new-manifest.json
+python3 scripts/audit-snapshot-manifest.py verify \
+  --snapshot /path/to/owned-offline-copy.sqlite3 \
+  --manifest /path/to/new-manifest.json \
+  --expected-manifest-sha256 "$MANIFEST_SHA256"
+```
+
+Capture and verify perform only reads. They reject symlink ancestors/leaves,
+lexical `..`, hard-link aliases, and any entry at the `-wal`, `-shm` or
+`-journal` sidecar names, including dangling links, directories and FIFOs.
+They hold a file descriptor, hash the complete bytes, and recheck file/path
+identity, size, timestamps, bytes and sidecars before a report escapes. One
+immutable read-only SQLite connection and one read transaction serve schema,
+inventory and event observers; an authorizer denies writes and transaction
+termination by those observers. These checks detect observed changes; they
+are not a lock against a hostile writer or proof of acquisition consistency.
+
+The witness binds whole-file bytes, the complete typed migration chain and
+epoch, schema SQL, global retained heads/allocation, framed per-scope heads in
+explicit binary order, subject/sequence consistency and unresolved counts.
+A retained witness detects later missing tails or whole scopes, even if the
+remaining rows pass the ordinary subject audit. It also detects payload-only
+changes that leave every event head unchanged. A newly captured witness after
+loss agrees with the remaining data and **cannot establish the absent past**.
+The hash is an externally retained comparison value, not a signature or proof
+of the original database's authenticity.
+
+Successful verification means the presented copy matches those captured
+bytes and observations. It may still report inconsistent retained history or
+unresolved work. Source and prepared-target witnesses are distinct. The
+disposable seven-family fixture preserves every original table/value, event,
+subject and row identity across additive migration, SQLite backup and repository
+reopen, then verifies the shipped manifest observer against that real schema.
+It constructs no provider, process manager or hook executor.
+
+| Unresolved family | Retained boundary |
+| --- | --- |
+| Turn dispatch | Original logical admission and native dispatch uncertainty; no new send grant. |
+| Process completion | Original completion attempt and correlated turn; no duplicated injection. |
+| Approval decision | Original pending native response attempt; no inferred acceptance. |
+| Hook | Original started effect, attempt and unapplied result; quarantine cannot replay it. |
+| Historical edit | Original native-started operation and source history; no fabricated child. |
+| Rebind | Original intended effect and claim lifetimes; no route change from assertion. |
+| Retirement | Original close grant, unknown result and retirement fence; no inferred close. |
+
+Missing older relations remain `null`/unknown, not observed zero. NULL,
+nontext or unknown states count as unresolved where the carrier is present.
+Counts stay separate by carrier because two rows may describe one operation.
+Repository recovery may quarantine supported families while retaining their
+original attempts and fences; opening a repository or matching a manifest
+does not run full manager recovery or settle a native effect. Unsupported
+outcomes require independent original evidence and separate authority; prose,
+absence, cleanup and another invocation cannot supply that evidence.
+All inspector reports retain `cutover_authorized: false`; manifest reports
+also keep restore and native retry authorization false.
 
 ## Startup recovery
 
@@ -610,15 +714,14 @@ The best operator habit is to read diagnostics before guessing.
 
 ## Inspect a legacy SQLite snapshot without changing it
 
-Before considering a migration or removing compatibility paths, inventory a
-**consistently checkpointed, isolated copy** of the original SQLite database:
+For offline inventory of a **consistently checkpointed, isolated copy**, use:
 
 ```bash
 python3 ./scripts/audit-legacy-snapshot.py --snapshot /path/to/offline-copy.sqlite3
 ```
 
 This is a counts-only preflight, **not** the migration preview/apply endpoint.
-It opens the snapshot with SQLite's immutable/read-only mode and explicitly
+It uses the shared sealed-input guard and one immutable/read-only transaction,
 enables query-only access, runs fixed aggregation queries, and never starts
 the runtime, providers, or native worktree/process actions. It refuses
 symbolic links and files with SQLite `-wal`, `-shm`, or `-journal`
@@ -640,10 +743,11 @@ Only aggregate counts and metric names are printed, not prompts, credentials,
 file paths, or member identities.
 
 The report **always** sets `cutover_authorized: false`, including when every
-reported count is zero. Inspect the original data's ownership/legacy lineage,
-review every unknown or outstanding obligation, rehearse ordered migrations
-and restart on a separate writable copy, and obtain explicit cutover approval
-before irreversible changes. The snapshot audit cannot establish those proofs.
+reported count is zero. It includes whole-copy SHA-256/size, typed migration
+observations, a current epoch when available, and the seven-family inventory.
+It supplies no actual-data migration or cutover path. Current acceptance uses
+clean stores and disposable historical fixtures; any future data operation
+requires its own authority and acquisition/recovery evidence.
 
 ### Session-control recovery observations
 

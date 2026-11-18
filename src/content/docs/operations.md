@@ -172,8 +172,19 @@ new key or infer completion from a later idle session.
 For current operator history, use `GET /v2/events?limit=50`
 (redacted index, conditional `X-Next-Cursor` header), or
 `GET /v2/events/{event_id}` for full detail. Global/workspace/agent/process
-`/v2` SSE streams use `after_seq` or `Last-Event-ID` for replay, not
-keyset list cursors.
+`/v2` SSE streams use an opaque `ev1` ID actually consumed from the stream in
+`after_seq` or `Last-Event-ID`. Omit both to start. If both are supplied they
+must agree; exactly one empty header is absent, while empty/numeric query
+values are invalid. History pages use their returned `X-Next-Cursor` unchanged.
+Epoch mismatch returns 409; a wrong collection/axis or missing/changed anchor
+returns 400. Inspect retained lineage before starting a new continuation.
+The query-precedence rules below apply to legacy `/v1`.
+
+For offline snapshot inventory and externally pinned manifest comparison,
+follow [sealed snapshot limits](/docs/events-and-recovery#sealed-snapshots-epochs-and-retained-witnesses).
+These tools read already sealed copies and do not acquire a backup, restore,
+activate, repair, prune, or authorize native retries. Current acceptance uses
+owned disposable fixtures only.
 
 Global replay:
 

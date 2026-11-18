@@ -19,6 +19,7 @@ pub(crate) enum Phase {
     AfterHead,
     AfterRollback,
     BeforeReplay,
+    AfterReplayEpoch,
     AfterReplay,
     BeforeWait,
 }

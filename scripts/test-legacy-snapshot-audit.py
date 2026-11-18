@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -17,7 +18,7 @@ import unittest
 SCRIPT = Path(__file__).with_name("audit-legacy-snapshot.py")
 # Deliberately pinned fixture expectation: bump with each additive source
 # migration, independently of the audit script's source-version discovery.
-EXPECTED_SOURCE_SCHEMA_VERSION = 52
+EXPECTED_SOURCE_SCHEMA_VERSION = 53
 
 
 def run_audit(path: Path) -> subprocess.CompletedProcess[str]:
@@ -36,7 +37,7 @@ class LegacySnapshotAuditTests(unittest.TestCase):
     def test_pending_native_worktree_cleanup_is_a_nonlive_cutover_blocker(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-snapshot-cleanup-") as root:
             snapshot = Path(root) / "consistent-schema28.sqlite3"
-            with sqlite3.connect(snapshot) as db:
+            with closing(sqlite3.connect(snapshot)) as db, db:
                 db.executescript(
                     "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);"
                     "CREATE TABLE managed_worktree_cleanup_receipts(phase TEXT);"
@@ -61,7 +62,7 @@ class LegacySnapshotAuditTests(unittest.TestCase):
     def test_populated_snapshot_reports_counts_only_and_cannot_authorize_cutover(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-snapshot-audit-") as root:
             snapshot = Path(root) / "consistent-copy.sqlite3"
-            with sqlite3.connect(snapshot) as db:
+            with closing(sqlite3.connect(snapshot)) as db, db:
                 db.executescript(
                     """
                     CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);
@@ -143,7 +144,7 @@ class LegacySnapshotAuditTests(unittest.TestCase):
     def test_older_schema_must_report_unknown_not_zero_for_absent_tables(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-snapshot-old-") as root:
             snapshot = Path(root) / "generation-one.sqlite3"
-            with sqlite3.connect(snapshot) as db:
+            with closing(sqlite3.connect(snapshot)) as db, db:
                 db.executescript(
                     "CREATE TABLE sessions (id TEXT PRIMARY KEY,status TEXT);"
                     "CREATE TABLE teams (id TEXT PRIMARY KEY);"
@@ -166,7 +167,7 @@ class LegacySnapshotAuditTests(unittest.TestCase):
     def test_keyed_spawn_admission_and_unsettled_native_journal_block_cutover(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-snapshot-spawn-recovery-") as root:
             snapshot = Path(root) / "consistent-schema30.sqlite3"
-            with sqlite3.connect(snapshot) as db:
+            with closing(sqlite3.connect(snapshot)) as db, db:
                 db.executescript(
                     "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);"
                     "CREATE TABLE team_spawn_admissions(completed_response_json TEXT);"
@@ -174,6 +175,7 @@ class LegacySnapshotAuditTests(unittest.TestCase):
                     "INSERT INTO team_spawn_admissions VALUES (NULL),('{}');"
                     "INSERT INTO team_operation_journal VALUES "
                     "('spawn_member_with_worktree','rollback_review_required'),"
+                    "('spawn_member_with_worktree',NULL),"
                     "('spawn_member_with_worktree','completed'),"
                     "('team_deleted','pending');"
                 )
@@ -187,7 +189,7 @@ class LegacySnapshotAuditTests(unittest.TestCase):
             self.assertEqual(report["schema"]["snapshot_version"], 30)
             self.assertEqual(report["schema"]["missing_applied_versions"], list(range(31, EXPECTED_SOURCE_SCHEMA_VERSION + 1)))
             self.assertEqual(report["counts"]["unsettled_keyed_team_spawns"], 1)
-            self.assertEqual(report["counts"]["unsettled_team_spawn_journals"], 1)
+            self.assertEqual(report["counts"]["unsettled_team_spawn_journals"], 2)
             self.assertIn("unsettled_keyed_team_spawns", report["observed_outstanding_obligations"])
             self.assertIn("unsettled_team_spawn_journals", report["observed_outstanding_obligations"])
             self.assertFalse(report["cutover_authorized"])
@@ -196,7 +198,7 @@ class LegacySnapshotAuditTests(unittest.TestCase):
     def test_gapped_migration_chain_is_reported_without_changing_snapshot(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-snapshot-gap-") as root:
             snapshot = Path(root) / "gapped.sqlite3"
-            with sqlite3.connect(snapshot) as db:
+            with closing(sqlite3.connect(snapshot)) as db, db:
                 db.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)")
                 db.executemany(
                     "INSERT INTO schema_migrations VALUES (?)", [(1,), (3,), (27,)]
@@ -214,7 +216,7 @@ class LegacySnapshotAuditTests(unittest.TestCase):
     def test_wal_and_journal_sidecars_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gg-snapshot-sidecar-") as root:
             snapshot = Path(root) / "snapshot.sqlite3"
-            with sqlite3.connect(snapshot) as db:
+            with closing(sqlite3.connect(snapshot)) as db, db:
                 db.execute("CREATE TABLE sessions(id TEXT)")
             before = digest(snapshot)
             for extension in ("-wal", "-shm", "-journal"):

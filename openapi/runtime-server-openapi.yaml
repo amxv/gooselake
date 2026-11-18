@@ -1506,7 +1506,7 @@ paths:
         - name: after_seq
           in: query
           required: false
-          schema: {"format":"int64","minimum":0,"type":"integer"}
+          schema: {"description":"Opaque ev1 continuation; must equal a nonempty Last-Event-ID if supplied.","maxLength":1024,"minLength":1,"type":"string"}
         - name: limit
           in: query
           required: false
@@ -1514,10 +1514,10 @@ paths:
         - name: Last-Event-ID
           in: header
           required: false
-          description: Durable event cursor, overridden by after_seq when both are present
+          description: An exactly empty value is absent; otherwise supply one canonical ev1 journal-bound cursor without surrounding whitespace. When after_seq is also supplied both cursors must be equal.
           schema:
-            type: integer
-            minimum: 0
+            type: string
+            maxLength: 1024
       responses:
         "200":
           description: SSE stream
@@ -1908,7 +1908,7 @@ paths:
         - name: cursor
           in: query
           required: false
-          schema: {"type":"string"}
+          schema: {"description":"Opaque ev1 continuation for this exact collection and journal incarnation.","maxLength":1024,"minLength":1,"type":"string"}
         - name: limit
           in: query
           required: false
@@ -1955,7 +1955,7 @@ paths:
         - name: after_seq
           in: query
           required: false
-          schema: {"format":"int64","minimum":0,"type":"integer"}
+          schema: {"description":"Opaque ev1 continuation; must equal a nonempty Last-Event-ID if supplied.","maxLength":1024,"minLength":1,"type":"string"}
         - name: limit
           in: query
           required: false
@@ -1971,10 +1971,10 @@ paths:
         - name: Last-Event-ID
           in: header
           required: false
-          description: Durable event cursor, overridden by after_seq when both are present
+          description: An exactly empty value is absent; otherwise supply one canonical ev1 journal-bound cursor without surrounding whitespace. When after_seq is also supplied both cursors must be equal.
           schema:
-            type: integer
-            minimum: 0
+            type: string
+            maxLength: 1024
       responses:
         "200":
           description: SSE stream
@@ -2564,7 +2564,7 @@ paths:
         - name: after_seq
           in: query
           required: false
-          schema: {"format":"int64","minimum":0,"type":"integer"}
+          schema: {"description":"Opaque ev1 continuation; must equal a nonempty Last-Event-ID if supplied.","maxLength":1024,"minLength":1,"type":"string"}
         - name: limit
           in: query
           required: false
@@ -2572,10 +2572,10 @@ paths:
         - name: Last-Event-ID
           in: header
           required: false
-          description: Durable event cursor, overridden by after_seq when both are present
+          description: An exactly empty value is absent; otherwise supply one canonical ev1 journal-bound cursor without surrounding whitespace. When after_seq is also supplied both cursors must be equal.
           schema:
-            type: integer
-            minimum: 0
+            type: string
+            maxLength: 1024
       responses:
         "200":
           description: SSE stream
@@ -3510,7 +3510,7 @@ paths:
         - name: after_seq
           in: query
           required: false
-          schema: {"format":"int64","minimum":0,"type":"integer"}
+          schema: {"description":"Opaque ev1 continuation; must equal a nonempty Last-Event-ID if supplied.","maxLength":1024,"minLength":1,"type":"string"}
         - name: limit
           in: query
           required: false
@@ -3518,10 +3518,10 @@ paths:
         - name: Last-Event-ID
           in: header
           required: false
-          description: Durable event cursor, overridden by after_seq when both are present
+          description: An exactly empty value is absent; otherwise supply one canonical ev1 journal-bound cursor without surrounding whitespace. When after_seq is also supplied both cursors must be equal.
           schema:
-            type: integer
-            minimum: 0
+            type: string
+            maxLength: 1024
       responses:
         "200":
           description: SSE stream

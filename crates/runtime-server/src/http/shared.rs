@@ -258,6 +258,14 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, "invalid_request", message)
     }
 
+    pub(super) fn conflicting_event_cursors() -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            "event_cursor_conflict",
+            "after_seq and Last-Event-ID must identify the same event cursor".into(),
+        )
+    }
+
     pub(super) fn not_found(message: String) -> Self {
         Self::new(StatusCode::NOT_FOUND, "not_found", message)
     }
@@ -287,6 +295,25 @@ impl ApiError {
                 error
             }
             other => Self::from(other),
+        }
+    }
+}
+
+impl From<runtime_core::EventCursorRejection> for ApiError {
+    fn from(error: runtime_core::EventCursorRejection) -> Self {
+        let status = match error {
+            runtime_core::EventCursorRejection::EpochMismatch => StatusCode::CONFLICT,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        Self::new(status, error.code(), error.to_string())
+    }
+}
+
+impl From<runtime_core::EventReadError> for ApiError {
+    fn from(error: runtime_core::EventReadError) -> Self {
+        match error {
+            runtime_core::EventReadError::Cursor(error) => error.into(),
+            runtime_core::EventReadError::Runtime(error) => error.into(),
         }
     }
 }

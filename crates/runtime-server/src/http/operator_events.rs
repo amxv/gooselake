@@ -1,21 +1,23 @@
 use super::*;
+use runtime_core::{EventCollection, EventCursor};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OperatorEventHistoryQuery {
     scope: Option<RuntimeEventScope>,
     scope_id: Option<String>,
+    /// Opaque ev1 continuation for this exact collection and journal incarnation.
+    #[schemars(length(min = 1, max = 1024))]
     cursor: Option<String>,
     #[schemars(range(min = 1, max = 100))]
     limit: Option<usize>,
 }
 
-/// The cursor is the global durable row ID in both global and scoped views.
-/// Per-scope `seq` is retained for historical/native event stream clients,
-/// but is never confused with this operator collection's pagination cursor.
+/// History uses a global row coordinate inside an opaque journal-bound cursor.
+/// Derive the requested collection independently of the supplied cursor.
 pub(super) async fn list_operator_events(
     State(state): State<AppState>,
-    Query(query): Query<OperatorEventHistoryQuery>,
+    BoundedEventQuery(query): BoundedEventQuery<OperatorEventHistoryQuery>,
 ) -> Result<Response, ApiError> {
     let limit = query.limit.unwrap_or(50);
     if !(1..=100).contains(&limit) {
@@ -37,32 +39,30 @@ pub(super) async fn list_operator_events(
             "scope_id must be a nonempty exact scope identifier".into(),
         ));
     }
-    let after_id = query
-        .cursor
-        .as_deref()
-        .map(|cursor| {
-            cursor
-                .parse::<i64>()
-                .ok()
-                .filter(|value| *value >= 0)
-                .ok_or_else(|| ApiError::bad_request("invalid event history cursor".into()))
-        })
-        .transpose()?;
-
-    let mut rows = state.app.services.store.list_operator_events_page(
-        query.scope.zip(query.scope_id.as_deref()),
-        after_id,
+    let after = parse_operator_cursor(query.cursor.as_deref())?;
+    let collection = EventCollection::history(query.scope.zip(query.scope_id))?;
+    let mut page = state.app.services.store.list_operator_events_page_bound(
+        &collection,
+        after.as_ref(),
         limit + 1,
     )?;
-    let has_more = rows.len() > limit;
-    rows.truncate(limit);
-    let mut response = Json(&rows).into_response();
+    let has_more = page.rows.len() > limit;
+    page.rows.truncate(limit);
+    let mut response = Json(&page.rows).into_response();
     if has_more {
-        if let Some(row) = rows.last() {
+        if let Some(row) = page.rows.last() {
+            // The lookahead row must never become the continuation.
+            let cursor = EventCursor::for_event(
+                &page.epoch,
+                &collection,
+                row.row_id,
+                row.seq,
+                &row.event_id,
+            )?;
             response.headers_mut().insert(
                 "x-next-cursor",
-                axum::http::HeaderValue::from_str(&row.row_id.to_string())
-                    .expect("positive SQLite row ID is valid header text"),
+                axum::http::HeaderValue::from_str(&cursor.encode())
+                    .expect("canonical event cursor is ASCII header text"),
             );
         }
     }

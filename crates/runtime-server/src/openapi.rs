@@ -494,8 +494,8 @@ fn append_parameters(out: &mut String, path: &str, method: HttpMethod) {
         out.push_str("        - name: Last-Event-ID\n");
         out.push_str("          in: header\n");
         out.push_str("          required: false\n");
-        out.push_str("          description: Durable event cursor, overridden by after_seq when both are present\n");
-        out.push_str("          schema:\n            type: integer\n            minimum: 0\n");
+        out.push_str("          description: An exactly empty value is absent; otherwise supply one canonical ev1 journal-bound cursor without surrounding whitespace. When after_seq is also supplied both cursors must be equal.\n");
+        out.push_str("          schema:\n            type: string\n            maxLength: 1024\n");
     }
     if accepts_tool_invocation_id {
         out.push_str("        - name: x-gg-tool-invocation-id\n");

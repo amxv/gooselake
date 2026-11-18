@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -32,7 +33,7 @@ def run_audit(path: Path) -> subprocess.CompletedProcess[str]:
 
 
 def create_snapshot(path: Path, count: int = 1) -> None:
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.executescript(
             "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);"
             "CREATE TABLE runtime_events("
@@ -75,7 +76,7 @@ class EventSubjectAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gg-event-audit-scale-") as root:
             path = Path(root) / "checkpoint.sqlite3"
             create_snapshot(path, 2_600)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 plan = " ".join(row[3] for row in db.execute(
                     "EXPLAIN QUERY PLAN SELECT 1 FROM runtime_event_subjects "
                     "WHERE subject_scope='message' AND subject_id='msg_fixture' AND event_row_id=100"
@@ -121,7 +122,7 @@ class EventSubjectAuditTests(unittest.TestCase):
             ) as root:
                 path = Path(root) / "checkpoint.sqlite3"
                 create_snapshot(path, 30)
-                with sqlite3.connect(path) as db:
+                with closing(sqlite3.connect(path)) as db, db:
                     db.execute("PRAGMA foreign_keys=ON")
                     db.execute("DELETE FROM runtime_events WHERE id=?", (deleted_id,))
                     self.assertEqual(db.execute(
@@ -147,7 +148,7 @@ class EventSubjectAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gg-event-audit-seq-") as root:
             path = Path(root) / "checkpoint.sqlite3"
             create_snapshot(path, 6)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.execute(
                     "INSERT INTO runtime_events(event_id,scope,scope_id,seq,kind,critical,payload_json,created_at) "
                     "VALUES ('invalid_seq','workspace','workspace_fixture',0,'test.invalid',1,'{}',99)"
@@ -166,7 +167,7 @@ class EventSubjectAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gg-event-audit-tail-limit-") as root:
             path = Path(root) / "checkpoint.sqlite3"
             create_snapshot(path, 6)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.execute("PRAGMA foreign_keys=ON")
                 db.execute("DELETE FROM runtime_events WHERE id=6")
             before = digest(path)
@@ -184,7 +185,7 @@ class EventSubjectAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gg-event-audit-corrupt-") as root:
             path = Path(root) / "checkpoint.sqlite3"
             create_snapshot(path, 3)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.execute(
                     "DELETE FROM runtime_event_subjects WHERE subject_scope='message' "
                     "AND subject_id='msg_fixture' AND event_row_id=1"
@@ -210,7 +211,7 @@ class EventSubjectAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gg-event-audit-structured-") as root:
             path = Path(root) / "checkpoint.sqlite3"
             create_snapshot(path, 1)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.execute(
                     "INSERT INTO runtime_events(event_id,scope,scope_id,turn_id,seq,kind,critical,payload_json,created_at) "
                     "VALUES ('structured','workspace','workspace_fixture',NULL,2,'test.structured',1,?1,42)",
@@ -234,7 +235,7 @@ class EventSubjectAuditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="gg-event-audit-fault-") as root:
             path = Path(root) / "checkpoint.sqlite3"
             create_snapshot(path, 1)
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.executescript(
                     "CREATE TRIGGER fixture_fault BEFORE INSERT ON runtime_event_subjects "
                     "WHEN NEW.subject_scope='message' AND NEW.subject_id='msg_fault' "
@@ -265,7 +266,7 @@ class EventSubjectAuditTests(unittest.TestCase):
             ) as root:
                 path = Path(root) / "checkpoint.sqlite3"
                 create_snapshot(path, 1)
-                with sqlite3.connect(path) as db:
+                with closing(sqlite3.connect(path)) as db, db:
                     db.execute(damage)
                 original = digest(path)
                 result = run_audit(path)
@@ -280,7 +281,7 @@ class EventSubjectAuditTests(unittest.TestCase):
             ) as root:
                 path = Path(root) / "checkpoint.sqlite3"
                 create_snapshot(path, 12)
-                with sqlite3.connect(path) as db:
+                with closing(sqlite3.connect(path)) as db, db:
                     links = db.execute(
                         "SELECT subject_scope,subject_id,event_row_id "
                         "FROM runtime_event_subjects ORDER BY 1,2,3"

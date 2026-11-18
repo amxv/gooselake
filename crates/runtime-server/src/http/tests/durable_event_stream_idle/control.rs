@@ -1,5 +1,5 @@
 use super::*;
-use runtime_core::{EventObservationFailure, EventObserverHealth};
+use runtime_core::{EventCollection, EventCursor, EventObservationFailure, EventObserverHealth};
 use std::sync::{Condvar, Mutex};
 use std::time::Instant;
 use tokio::sync::{watch, Notify};
@@ -251,6 +251,40 @@ impl Fixture {
             .await
             .unwrap()
             .into_response()
+    }
+
+    pub(super) fn bound_anchor(&self, record: &RuntimeEventRecord) -> EventCursor {
+        let page = self
+            .store
+            .sqlite
+            .list_operator_events_page_bound(&EventCollection::history(None).unwrap(), None, 1)
+            .unwrap();
+        EventCursor::for_event(
+            &page.epoch,
+            &EventCollection::stream(None).unwrap(),
+            record.row_id,
+            record.seq,
+            &record.event_id,
+        )
+        .unwrap()
+    }
+
+    pub(super) async fn open_bound(
+        &self,
+        after: Option<EventCursor>,
+        page: usize,
+        headers: &HeaderMap,
+    ) -> Response {
+        checked_durable_event_stream(
+            self.store.clone(),
+            EventCollection::stream(None).unwrap(),
+            after,
+            page,
+            headers,
+        )
+        .await
+        .unwrap()
+        .into_response()
     }
 }
 

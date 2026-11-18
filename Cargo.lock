@@ -747,6 +747,7 @@ version = "0.1.6"
 dependencies = [
  "async-trait",
  "libc",
+ "ring",
  "runtime-core",
  "rusqlite",
  "serde",

@@ -241,7 +241,7 @@ def run(runtime: OfflineRuntime) -> None:
     runtime.call("GET", f"/v2/workspaces/{workspace_a}/events/stream?after_seq=-1",
                  status=400)
     sse_request = Request(
-        runtime.url + f"/v2/workspaces/{workspace_a}/events/stream?after_seq=0",
+        runtime.url + f"/v2/workspaces/{workspace_a}/events/stream",
         headers={"Authorization": f"Bearer {runtime.token}"},
     )
     with urlopen(sse_request, timeout=5) as stream:

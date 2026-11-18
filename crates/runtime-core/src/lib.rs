@@ -2,6 +2,7 @@ pub mod agent_comms;
 pub mod app;
 pub mod edit_rerun;
 pub mod error;
+pub mod event_cursor;
 pub mod event_observation;
 pub mod harness;
 pub mod legacy_operation_inspection;
@@ -54,6 +55,10 @@ pub use agent_comms::{
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
 pub use edit_rerun::{EditAndRerunRequest, EditRerunTransitionReceipt, SessionEditRerunOperation};
 pub use error::{ProviderDispatchOutcome, RuntimeError};
+pub use event_cursor::{
+    BoundEventPage, EventCollection, EventCursor, EventCursorRejection, EventEpoch,
+    EventPositionKind, EventReadError, MAX_EVENT_CURSOR_BYTES, MAX_EVENT_SCOPE_ID_BYTES,
+};
 pub use event_observation::{
     EventCommitSubscription, EventObservationCounters, EventObservationFailure,
     EventObserverHealth, RuntimeEventReplayReader,
@@ -243,3 +248,6 @@ pub use session_transcript::{
 };
 pub use startup_projection::startup_projection_refusal;
 pub use startup_reattachment::*;
+
+#[cfg(test)]
+mod event_cursor_tests;

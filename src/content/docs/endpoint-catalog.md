@@ -230,14 +230,17 @@ Session event query parameters:
 
 ## Global Runtime Events
 
-- `GET /v2/events/stream` (Bearer; global durable SSE, global SQLite row ID cursor)
+- `GET /v2/events/stream` (Bearer; global durable SSE, opaque journal-bound cursor)
 - `GET /v2/workspaces/{workspace_id}/events/stream` (Bearer; workspace-scoped durable SSE, requires workspace record)
 - `GET /v2/agents/{agent_id}/events/stream` (Bearer; agent/session-scoped durable SSE, requires workspace-owned agent)
 - `GET /v2/processes/{process_id}/events/stream` (Bearer; process-scoped durable SSE, requires managed process)
 
-The `/v2` streams accept optional `after_seq` (nonnegative), `limit=1..10000`
-(default 2000), and `Last-Event-ID` fallback. The global stream ID is the
-durable event row ID; the three resource streams use their own scoped event
+The `/v2` streams accept optional opaque `ev1` `after_seq`, `limit=1..10000`
+(default 2000), and `Last-Event-ID`. If both continuation inputs are supplied,
+their decoded cursors must agree. Omit them to start; an exactly empty single
+header means absent, while empty/numeric query values are invalid. Tokens bind
+the persisted epoch, exact collection, coordinate kind and event anchor.
+The global stream uses a row coordinate; resource streams use their scoped
 sequence. The global `/v2/events/stream` additionally accepts optional paired
 `scope` and `scope_id` filters (including derived `turn`, `message`, and
 `operation` subjects); subject streams resume using the global row ID while
@@ -249,16 +252,18 @@ nonexistent resource IDs fail before the stream opens. The operator bearer is
 required. The older `/v1` routes remain during migration.
 
 Live streams wait for observer readiness and use the same generation-bound
-reader for positive-cursor validation and replay. On the verified Linux local
+reader for epoch/anchor validation and page replay in one read transaction. On the verified Linux local
 SQLite WAL backend, separate-process commits wake idle streams without periodic
 database reads. Journal replay failures after opening emit an unsequenced
 retryable `stream.error`; observer/generation failures and invalid CR/LF event
 kinds emit nonretryable terminal errors. Retained failure before opening is an
-HTTP error. Resume from the last consumed ID only after confirming the same
-database; a numeric cursor alone cannot identify a replacement dataset. See
+HTTP error. Wrong epoch returns HTTP 409; wrong collection/axis/anchor returns
+HTTP 400 before streaming, without failing healthy peer subscribers. Resume
+from the last consumed ID after inspecting any lineage failure. Unprepared
+byte-identical copies preserve the epoch and are indistinguishable from restart. See
 [SSE behavior and observer limits](/docs/api#sse-and-replay-model) in the API guide.
 
-- `GET /v2/events` (Bearer; indexed global-row-ID ascending, optional paired `scope` and `scope_id` including derived turn/message/operation subjects, numeric `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for next page, eight-field redacted rows; positive cursor must identify an existing row in the selected global/scoped collection; zero starts from the beginning)
+- `GET /v2/events` (Bearer; indexed global-row-ID ascending, paired optional scope filters including turn/message/operation, opaque epoch/collection/anchor-bound `cursor`, `limit=1..100` default 50; omit cursor to start; pass `X-Next-Cursor` unchanged; eight-field redacted rows)
 - `GET /v2/events/{event_id}` (Bearer; full event payload/provider diagnostic metadata, exact immutable event ID)
 - `GET /v1/events` (Bearer)
 - `GET /v1/events/stream` (Bearer, SSE)

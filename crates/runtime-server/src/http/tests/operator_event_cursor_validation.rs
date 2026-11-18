@@ -1,35 +1,10 @@
+use super::durable_event_stream_routes::new_event;
+use super::operator_event_test_support::{
+    assert_error, fixture_cursor, observe, replace_field, request, stream,
+};
 use super::*;
-use runtime_core::ManagedProcessAdmission;
+use runtime_core::{EventCollection, ManagedProcessAdmission};
 use runtime_store_sqlite::SqliteRuntimeRepository;
-
-use super::durable_event_stream_routes::{new_event, observed_sse_ids, stream};
-
-async fn assert_cursor_status(
-    router: &Router,
-    token: &str,
-    uri: &str,
-    last_event_id: Option<i64>,
-    expected: StatusCode,
-) {
-    let mut request = Request::builder()
-        .uri(uri)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"));
-    if let Some(id) = last_event_id {
-        request = request.header("last-event-id", id.to_string());
-    }
-    let response = router
-        .clone()
-        .oneshot(request.body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(response.status(), expected, "{uri} / {last_event_id:?}");
-    if expected == StatusCode::BAD_REQUEST {
-        let error: serde_json::Value =
-            serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap())
-                .unwrap();
-        assert_eq!(error["error"]["code"], "invalid_request", "{uri}: {error}");
-    }
-}
 
 #[tokio::test]
 async fn operator_sse_subject_and_global_resume_cursors_must_be_observed_journal_rows() {
@@ -67,79 +42,110 @@ async fn operator_sse_subject_and_global_resume_cursors_must_be_observed_journal
     let second = repository.append_runtime_event(&second).unwrap();
     assert_eq!(foreign.row_id + 1, second.row_id);
 
-    // A global row is a valid global anchor, even when it has no subject
-    // links; the same row is NOT a valid anchor for a filtered subject.
     for (scope, subject_id) in [
         ("turn", "turn_cursor_subject"),
         ("message", "msg_cursor_subject"),
         ("operation", "op_cursor_subject"),
     ] {
+        let collection = EventCollection::stream(Some((
+            RuntimeEventScope::from_str(scope).unwrap(),
+            subject_id.into(),
+        )))
+        .unwrap();
         let base = format!("/v2/events/stream?scope={scope}&scope_id={subject_id}&limit=1");
-        let resume = format!("{base}&after_seq={}", first.row_id);
-        observed_sse_ids(
-            stream(&router, &token, &resume, None, None).await,
-            &[second.row_id],
+        let observed = observe(
+            stream(&router, &token, &base, None, None).await,
+            &collection,
+            &[(first.row_id, &first), (second.row_id, &second)],
         )
         .await;
-        observed_sse_ids(
-            stream(&router, &token, &base, None, Some(first.row_id)).await,
-            &[second.row_id],
-        )
-        .await;
-        for cursor in [foreign.row_id, second.row_id + 10_000] {
-            assert_cursor_status(
-                &router,
-                &token,
-                &format!("{base}&after_seq={cursor}"),
-                None,
-                StatusCode::BAD_REQUEST,
-            )
-            .await;
-            assert_cursor_status(
-                &router,
-                &token,
-                &base,
-                Some(cursor),
-                StatusCode::BAD_REQUEST,
+        let first_token = &observed.tokens[0];
+        let second_token = &observed.tokens[1];
+        for (uri, last) in [
+            (format!("{base}&after_seq={first_token}"), None),
+            (base.clone(), Some(first_token.as_str())),
+            (
+                format!("{base}&after_seq={first_token}"),
+                Some(first_token.as_str()),
+            ),
+        ] {
+            observe(
+                stream(&router, &token, &uri, None, last).await,
+                &collection,
+                &[(second.row_id, &second)],
             )
             .await;
         }
-        assert_cursor_status(
+        // The global row exists, but carries none of this subject's membership.
+        for invalid in [
+            fixture_cursor(&repository, &collection, &foreign),
+            replace_field(second_token, 5, &(second.row_id + 10_000).to_string()),
+        ] {
+            assert_error(
+                &router,
+                &token,
+                &format!("{base}&after_seq={invalid}"),
+                &[],
+                StatusCode::BAD_REQUEST,
+                "event_cursor_anchor_mismatch",
+            )
+            .await;
+            assert_error(
+                &router,
+                &token,
+                &base,
+                &[&invalid],
+                StatusCode::BAD_REQUEST,
+                "event_cursor_anchor_mismatch",
+            )
+            .await;
+        }
+        assert_error(
             &router,
             &token,
             &format!("{base}&after_seq=0"),
-            None,
-            StatusCode::OK,
-        )
-        .await;
-        assert_cursor_status(
-            &router,
-            &token,
-            &format!("{base}&after_seq={}", first.row_id),
-            Some(second.row_id + 10_000),
-            StatusCode::OK,
-        )
-        .await;
-    }
-
-    for (uri, cursor, expected) in [
-        ("/v2/events/stream", foreign.row_id, StatusCode::OK),
-        (
-            "/v2/events/stream",
-            second.row_id + 10_000,
+            &[],
             StatusCode::BAD_REQUEST,
-        ),
-        ("/v2/events/stream", 0, StatusCode::OK),
-    ] {
-        assert_cursor_status(
+            "event_cursor_invalid",
+        )
+        .await;
+        assert_error(
             &router,
             &token,
-            &format!("{uri}?after_seq={cursor}"),
-            None,
-            expected,
+            &format!("{base}&after_seq={first_token}"),
+            &[second_token],
+            StatusCode::BAD_REQUEST,
+            "event_cursor_conflict",
         )
         .await;
     }
+    let global = EventCollection::stream(None).unwrap();
+    let foreign_token = fixture_cursor(&repository, &global, &foreign);
+    observe(
+        stream(
+            &router,
+            &token,
+            "/v2/events/stream",
+            None,
+            Some(&foreign_token),
+        )
+        .await,
+        &global,
+        &[(second.row_id, &second)],
+    )
+    .await;
+    assert_error(
+        &router,
+        &token,
+        &format!(
+            "/v2/events/stream?after_seq={}",
+            replace_field(&foreign_token, 5, &(second.row_id + 10_000).to_string())
+        ),
+        &[],
+        StatusCode::BAD_REQUEST,
+        "event_cursor_anchor_mismatch",
+    )
+    .await;
     // A restart does not create a secondary cursor authority or silently
     // reclassify a row belonging to a different subject.
     let reopened = SqliteRuntimeRepository::new(path);
@@ -224,55 +230,68 @@ async fn operator_sse_resource_streams_validate_local_sequence_not_global_row_id
             .unwrap()
             .clone();
         assert!(anchor.row_id > anchor.seq);
+        let collection = EventCollection::stream(Some((kind, id.into()))).unwrap();
+        let history = EventCollection::history(Some((kind, id.into()))).unwrap();
+        let cursor = fixture_cursor(&repository, &collection, &anchor);
+        let wrong_axis = fixture_cursor(&repository, &history, &anchor);
         let scoped = format!("/v2/events/stream?scope={scope}&scope_id={id}");
         for base in [scoped.as_str(), resource.as_str()] {
             let separator = if base.contains('?') { '&' } else { '?' };
-            for valid in [0, anchor.seq] {
-                assert_cursor_status(
-                    &router,
-                    &token,
-                    &format!("{base}{separator}after_seq={valid}"),
-                    None,
-                    StatusCode::OK,
-                )
-                .await;
+            for (uri, last) in [
+                (base.to_owned(), None),
+                (base.to_owned(), Some("")),
+                (format!("{base}{separator}after_seq={cursor}"), None),
+                (base.to_owned(), Some(cursor.as_str())),
+                (
+                    format!("{base}{separator}after_seq={cursor}"),
+                    Some(cursor.as_str()),
+                ),
+            ] {
+                drop(stream(&router, &token, &uri, None, last).await);
             }
-            for invalid in [anchor.row_id, anchor.seq + 1_000, anchor.row_id + 10_000] {
-                assert_cursor_status(
+            assert_error(
+                &router,
+                &token,
+                &format!("{base}{separator}after_seq={wrong_axis}"),
+                &[],
+                StatusCode::BAD_REQUEST,
+                "event_cursor_collection_mismatch",
+            )
+            .await;
+            for position in [anchor.row_id, anchor.seq + 1_000, anchor.row_id + 10_000] {
+                let invalid = replace_field(&cursor, 5, &position.to_string());
+                assert_error(
                     &router,
                     &token,
                     &format!("{base}{separator}after_seq={invalid}"),
-                    None,
+                    &[],
                     StatusCode::BAD_REQUEST,
+                    "event_cursor_anchor_mismatch",
                 )
                 .await;
-                assert_cursor_status(
+                assert_error(
                     &router,
                     &token,
                     base,
-                    Some(invalid),
+                    &[&invalid],
                     StatusCode::BAD_REQUEST,
+                    "event_cursor_anchor_mismatch",
                 )
                 .await;
             }
-            assert_cursor_status(
+            assert_error(
                 &router,
                 &token,
-                &format!("{base}{separator}after_seq={}", anchor.seq),
-                Some(anchor.seq + 1000),
-                StatusCode::OK,
+                &format!("{base}{separator}after_seq=0"),
+                &[],
+                StatusCode::BAD_REQUEST,
+                "event_cursor_invalid",
             )
             .await;
         }
     }
     // This deliberately stays a /v2-only rule while /v1 compatibility is
     // active: old global clients may resume at an arbitrary future offset.
-    assert_cursor_status(
-        &router,
-        &token,
-        "/v1/events/stream?after_seq=99999999",
-        None,
-        StatusCode::OK,
-    )
-    .await;
+    let response = request(&router, &token, "/v1/events/stream?after_seq=99999999", &[]).await;
+    assert_eq!(response.status(), StatusCode::OK);
 }

@@ -62,6 +62,17 @@ pub trait RuntimeEventReplayReader: Send + Sync {
         limit: usize,
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError>;
 
+    /// Epoch, exact cursor anchor and rows share the pinned read snapshot.
+    /// A rejected client cursor must not poison other subscribers' health.
+    fn list_runtime_events_bound(
+        &self,
+        _collection: &crate::EventCollection,
+        _after: Option<&crate::EventCursor>,
+        _limit: usize,
+    ) -> Result<crate::BoundEventPage<RuntimeEventRecord>, crate::EventReadError> {
+        Err(RuntimeError::Unsupported("journal-bound event replay unavailable".into()).into())
+    }
+
     fn observation_counters(&self) -> EventObservationCounters;
 }
 

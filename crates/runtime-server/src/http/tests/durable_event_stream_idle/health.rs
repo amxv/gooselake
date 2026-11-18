@@ -113,22 +113,31 @@ async fn health_failure_after_initial_sql_read_prevents_http_success() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn checked_cursor_and_first_page_share_the_same_generation_and_health() {
+async fn bound_anchor_and_first_page_use_one_pinned_replay_call() {
     for real_generation_loss in [false, true] {
         let fixture =
             Fixture::new((!real_generation_loss).then_some(EventObserverHealth::Ready)).await;
         let anchor = fixture.append("cursor_anchor");
         fixture.append("cursor_tail");
-        let hold = fixture.control.arm(ReadPhase::Before(2));
+        let cursor = fixture.bound_anchor(&anchor);
+        // One bound call validates the anchor and reads the first page.
+        // Store fixtures independently prove their shared snapshot.
+        let hold = fixture.control.arm(ReadPhase::Before(1));
         let (producer, headers) = register();
         let store = fixture.store.clone();
         let request = tokio::spawn(async move {
-            checked_durable_event_stream(store, None, Some(anchor.row_id), 10, &headers)
-                .await
-                .map(IntoResponse::into_response)
+            checked_durable_event_stream(
+                store,
+                runtime_core::EventCollection::stream(None).unwrap(),
+                Some(cursor),
+                10,
+                &headers,
+            )
+            .await
+            .map(IntoResponse::into_response)
         });
         hold.reached().await;
-        assert_eq!(fixture.store.reads.load(Ordering::SeqCst), 2);
+        assert_eq!(fixture.store.reads.load(Ordering::SeqCst), 1);
         if real_generation_loss {
             std::fs::rename(&fixture.path, fixture.temp.path().join("retired.sqlite3")).unwrap();
         } else {
@@ -146,6 +155,40 @@ async fn checked_cursor_and_first_page_share_the_same_generation_and_health() {
             .wait_count(&fixture.control.dropped, 1)
             .await;
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bound_health_failure_after_combined_read_prevents_http_success() {
+    let fixture = Fixture::new(Some(EventObserverHealth::Ready)).await;
+    fixture.append("bound_initial_in_flight");
+    let hold = fixture.control.arm(ReadPhase::After(1));
+    let (producer, headers) = register();
+    let store = fixture.store.clone();
+    let request = tokio::spawn(async move {
+        checked_durable_event_stream(
+            store,
+            runtime_core::EventCollection::stream(None).unwrap(),
+            None,
+            10,
+            &headers,
+        )
+        .await
+        .map(IntoResponse::into_response)
+    });
+    hold.reached().await;
+    fixture.control.fail();
+    assert!(timeout(Duration::from_secs(3), request)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    assert!(!producer.has_started());
+    assert_eq!(fixture.control.live.load(Ordering::SeqCst), 1);
+    hold.release();
+    fixture
+        .control
+        .wait_count(&fixture.control.dropped, 1)
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -108,6 +108,7 @@ pub(crate) fn apply_schema(connection: &mut Connection) -> Result<(), RuntimeErr
 
     verify_migration_chain(connection)?;
     verify_event_subject_projection_schema(connection)?;
+    crate::repository_event_cursor::read_journal_epoch(connection)?;
     Ok(())
 }
 
@@ -228,10 +229,10 @@ fn reject_newer_schema(connection: &Connection) -> Result<(), RuntimeError> {
 
 fn verify_migration_chain(connection: &Connection) -> Result<(), RuntimeError> {
     let mut statement = connection
-        .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
+        .prepare("SELECT version FROM schema_migrations ORDER BY version ASC LIMIT ?1")
         .map_err(|error| db_error("failed preparing migration verification", error))?;
     let versions = statement
-        .query_map([], |row| row.get::<_, i64>(0))
+        .query_map([SCHEMA_VERSION + 1], |row| row.get::<_, i64>(0))
         .map_err(|error| db_error("failed reading applied migrations", error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| db_error("failed collecting applied migrations", error))?;

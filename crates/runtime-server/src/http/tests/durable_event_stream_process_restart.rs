@@ -3,6 +3,7 @@
 //! from another OS process. Only disposable, marker-bound fixture data is used.
 use super::*;
 use axum::response::IntoResponse;
+use runtime_core::{EventCollection, EventCursor};
 use runtime_store_sqlite::SqliteRuntimeRepository;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -98,14 +99,13 @@ impl Frames {
         .expect("bounded external reader SSE delivery")
     }
 
-    async fn record(&mut self) -> (i64, serde_json::Value) {
+    async fn record(&mut self) -> (String, serde_json::Value) {
         let frame = self.next(Duration::from_secs(3)).await;
         let id = frame
             .lines()
             .find_map(|line| line.strip_prefix("id: "))
             .expect("data frame must have a durable cursor")
-            .parse()
-            .unwrap();
+            .to_owned();
         let data = frame
             .lines()
             .find_map(|line| line.strip_prefix("data: "))
@@ -139,11 +139,40 @@ async fn consume_pair(
     assert_eq!(global_record["scope"], "workspace");
     assert_eq!(global_record["scope_id"], WORKSPACE);
     assert_eq!(global_record["seq"], seq);
-    assert_eq!(global_record["row_id"], global_id);
-    assert_eq!(scoped_id, seq);
-    assert_ne!(global_id, scoped_id);
+    let global_cursor = EventCursor::decode(&global_id).unwrap();
+    let scoped_cursor = EventCursor::decode(&scoped_id).unwrap();
+    assert_eq!(
+        global_cursor.collection(),
+        &EventCollection::stream(None).unwrap()
+    );
+    assert_eq!(
+        scoped_cursor.collection(),
+        &EventCollection::stream(Some((RuntimeEventScope::Workspace, WORKSPACE.into()))).unwrap()
+    );
+    assert_eq!(global_cursor.epoch(), scoped_cursor.epoch());
+    global_cursor.validate_anchor(Some(event)).unwrap();
+    scoped_cursor.validate_anchor(Some(event)).unwrap();
+    assert_eq!(global_record["row_id"], global_cursor.position());
+    assert_eq!(scoped_cursor.position(), seq);
+    assert_ne!(global_cursor.position(), scoped_cursor.position());
+    // Publish the exact wire bytes, never freshly encoded replacement tokens.
     serde_json::json!({"pid":std::process::id(),"global_cursor":global_id,
         "scoped_cursor":scoped_id,"record":global_record})
+}
+
+fn saved_cursor(name: &str) -> Option<EventCursor> {
+    let raw = std::env::var(name).unwrap();
+    if raw.is_empty() {
+        None
+    } else {
+        Some(EventCursor::decode(&raw).unwrap())
+    }
+}
+
+fn observed_position(report: &serde_json::Value, key: &str) -> i64 {
+    EventCursor::decode(report[key].as_str().unwrap())
+        .unwrap()
+        .position()
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -153,8 +182,8 @@ async fn reader_child() {
     };
     let role = std::env::var(ROLE_ENV).unwrap();
     assert!(["a", "b"].contains(&role.as_str()));
-    let global_after: i64 = std::env::var(GLOBAL_ENV).unwrap().parse().unwrap();
-    let scoped_after: i64 = std::env::var(SCOPED_ENV).unwrap().parse().unwrap();
+    let global_after = saved_cursor(GLOBAL_ENV);
+    let scoped_after = saved_cursor(SCOPED_ENV);
     let store = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: root.join("data/runtime.sqlite3"),
     }));
@@ -162,16 +191,23 @@ async fn reader_child() {
     // subscriptions bind the existing generation, including cursor checks.
     let headers = HeaderMap::new();
     let mut global = Frames::new(
-        checked_durable_event_stream(store.clone(), None, Some(global_after), 10, &headers)
-            .await
-            .unwrap()
-            .into_response(),
+        checked_durable_event_stream(
+            store.clone(),
+            EventCollection::stream(None).unwrap(),
+            global_after,
+            10,
+            &headers,
+        )
+        .await
+        .unwrap()
+        .into_response(),
     );
     let mut scoped = Frames::new(
         checked_durable_event_stream(
             store,
-            Some((RuntimeEventScope::Workspace, WORKSPACE.into())),
-            Some(scoped_after),
+            EventCollection::stream(Some((RuntimeEventScope::Workspace, WORKSPACE.into())))
+                .unwrap(),
+            scoped_after,
             10,
             &headers,
         )
@@ -183,7 +219,7 @@ async fn reader_child() {
         &root,
         &format!("{role}-opened"),
         &serde_json::json!({
-            "pid":std::process::id(), "global_after":global_after, "scoped_after":scoped_after,
+            "pid":std::process::id(), "global_after":std::env::var(GLOBAL_ENV).unwrap(), "scoped_after":std::env::var(SCOPED_ENV).unwrap(),
         }),
     );
     if role == "a" {
@@ -210,7 +246,13 @@ struct OwnedChild {
 }
 
 impl OwnedChild {
-    fn spawn(root: &Path, test: &str, role: &str, global: i64, scoped: i64) -> Self {
+    fn spawn(
+        root: &Path,
+        test: &str,
+        role: &str,
+        global: Option<&str>,
+        scoped: Option<&str>,
+    ) -> Self {
         let label = if test == READER { "reader" } else { "writer" };
         let log = root.join("control").join(format!("{label}-{role}.log"));
         let output = OpenOptions::new()
@@ -222,8 +264,8 @@ impl OwnedChild {
             .args(["--exact", test, "--nocapture"])
             .env(ROOT_ENV, root)
             .env(ROLE_ENV, role)
-            .env(GLOBAL_ENV, global.to_string())
-            .env(SCOPED_ENV, scoped.to_string())
+            .env(GLOBAL_ENV, global.unwrap_or_default())
+            .env(SCOPED_ENV, scoped.unwrap_or_default())
             .stdout(Stdio::from(output.try_clone().unwrap()))
             .stderr(Stdio::from(output))
             .spawn()
@@ -287,7 +329,7 @@ impl Drop for OwnedChild {
 }
 
 async fn write_external(root: &Path, event: &str) -> serde_json::Value {
-    let mut writer = OwnedChild::spawn(root, WRITER, event, 0, 0);
+    let mut writer = OwnedChild::spawn(root, WRITER, event, None, None);
     writer.success().await;
     serde_json::from_reader(
         File::open(root.join("control").join(format!("{event}-written.json"))).unwrap(),
@@ -320,10 +362,17 @@ async fn killed_reader_process_resumes_consumed_global_and_scoped_cursors_then_r
     let identity = std::fs::metadata(&path).unwrap();
     let identity = (identity.dev(), identity.ino());
 
-    let mut first = OwnedChild::spawn(root, READER, "a", seed.row_id, 0);
+    let seed_cursor = super::operator_event_test_support::fixture_cursor(
+        &repository,
+        &EventCollection::stream(None).unwrap(),
+        &seed,
+    );
+    let mut first = OwnedChild::spawn(root, READER, "a", Some(&seed_cursor), None);
     let first_pid = first.child.id();
     let opened = first.message(root, "a-opened").await;
     assert_eq!(opened["pid"], first_pid);
+    assert_eq!(opened["global_after"], seed_cursor);
+    assert_eq!(opened["scoped_after"], "");
     let a = write_external(root, "a").await;
     let consumed = first.message(root, "a-consumed").await;
     assert_eq!(consumed["record"], a);
@@ -331,11 +380,14 @@ async fn killed_reader_process_resumes_consumed_global_and_scoped_cursors_then_r
     assert!(first.child.try_wait().unwrap().is_some());
 
     let b = write_external(root, "b").await;
-    let global_cursor = consumed["global_cursor"].as_i64().unwrap();
-    let scoped_cursor = consumed["scoped_cursor"].as_i64().unwrap();
+    let global_cursor = consumed["global_cursor"].as_str().unwrap();
+    let scoped_cursor = consumed["scoped_cursor"].as_str().unwrap();
     assert_ne!(global_cursor, scoped_cursor);
-    let mut second = OwnedChild::spawn(root, READER, "b", global_cursor, scoped_cursor);
+    let mut second = OwnedChild::spawn(root, READER, "b", Some(global_cursor), Some(scoped_cursor));
     assert_ne!(second.child.id(), first_pid);
+    let reopened = second.message(root, "b-opened").await;
+    assert_eq!(reopened["global_after"], global_cursor);
+    assert_eq!(reopened["scoped_after"], scoped_cursor);
     let catchup = second.message(root, "b-caught-up").await;
     assert_eq!(catchup["record"], b);
     assert_eq!(catchup["pid"], second.child.id());
@@ -360,9 +412,9 @@ async fn killed_reader_process_resumes_consumed_global_and_scoped_cursors_then_r
     );
     assert_eq!(
         [
-            consumed["global_cursor"].as_i64().unwrap(),
-            catchup["global_cursor"].as_i64().unwrap(),
-            live["global_cursor"].as_i64().unwrap()
+            observed_position(&consumed, "global_cursor"),
+            observed_position(&catchup, "global_cursor"),
+            observed_position(&live, "global_cursor")
         ],
         oracle
             .iter()
@@ -372,9 +424,9 @@ async fn killed_reader_process_resumes_consumed_global_and_scoped_cursors_then_r
     );
     assert_eq!(
         [
-            consumed["scoped_cursor"].as_i64().unwrap(),
-            catchup["scoped_cursor"].as_i64().unwrap(),
-            live["scoped_cursor"].as_i64().unwrap()
+            observed_position(&consumed, "scoped_cursor"),
+            observed_position(&catchup, "scoped_cursor"),
+            observed_position(&live, "scoped_cursor")
         ],
         [1, 2, 3]
     );

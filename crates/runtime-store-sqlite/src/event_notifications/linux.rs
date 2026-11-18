@@ -9,17 +9,17 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::thread::{self, JoinHandle};
 
 use runtime_core::{
-    EventCommitSubscription, EventObservationCounters, EventObservationFailure as Failure,
-    EventObserverHealth, RuntimeError, RuntimeEventRecord, RuntimeEventReplayReader,
-    RuntimeEventScope,
+    EventCommitSubscription, EventEpoch, EventObservationCounters,
+    EventObservationFailure as Failure, EventObserverHealth,
 };
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 use std::time::Duration;
 use tokio::sync::{broadcast, watch as health_watch};
 
-use crate::repository::list_runtime_events_on_connection;
+use crate::repository_event_cursor::read_journal_epoch;
 
 mod database;
+mod replay;
 #[cfg(test)]
 pub(crate) mod test_control;
 #[cfg(test)]
@@ -63,6 +63,7 @@ struct State {
     watch: Watch,
     dirty: bool,
     head: Option<i64>,
+    epoch: Option<EventEpoch>,
 }
 
 #[derive(Debug)]
@@ -223,6 +224,7 @@ pub(super) fn observer_for(path: &Path) -> Result<Arc<EventObserver>, Failure> {
                 watch,
                 dirty: first_scan.dirty || final_scan.dirty,
                 head: None,
+                epoch: None,
             }),
             health,
             commits,
@@ -320,55 +322,18 @@ impl Drop for EventObserver {
     }
 }
 
-impl RuntimeEventReplayReader for EventObserver {
-    fn list_runtime_events(
-        &self,
-        scope: Option<(RuntimeEventScope, &str)>,
-        after_seq: Option<i64>,
-        limit: usize,
-    ) -> Result<Vec<RuntimeEventRecord>, RuntimeError> {
-        if !matches!(*self.shared.health.borrow(), EventObserverHealth::Ready) {
-            return Err(self
-                .shared
-                .healthy()
-                .err()
-                .unwrap_or_else(|| Failure::unavailable("event observer is not ready"))
-                .runtime_error());
-        }
-        let mut state = self.shared.state.lock().map_err(|_| {
-            let failure = Failure::unavailable("event observer state poisoned");
-            self.shared.fail(failure.clone());
-            failure.runtime_error()
-        })?;
-        self.shared
-            .scan(&mut state, true)
-            .map_err(|failure| failure.runtime_error())?;
-        self.shared
-            .counters
-            .replay_reads
-            .fetch_add(1, Ordering::AcqRel);
-        #[cfg(test)]
-        self.shared
-            .control
-            .checkpoint(Phase::BeforeReplay)
-            .map_err(|failure| failure.runtime_error())?;
-        let rows = list_runtime_events_on_connection(&state.connection, scope, after_seq, limit);
-        #[cfg(test)]
-        self.shared
-            .control
-            .checkpoint(Phase::AfterReplay)
-            .map_err(|failure| failure.runtime_error())?;
-        // Even a query error must leave consumed write hints pending, and no
-        // page may escape if replacement occurred while the query ran.
-        self.shared
-            .scan(&mut state, true)
-            .map_err(|failure| failure.runtime_error())?;
-        rows
+fn verified_epoch(
+    connection: &Connection,
+    expected: Option<&EventEpoch>,
+) -> Result<EventEpoch, Failure> {
+    let epoch = read_journal_epoch(connection)
+        .map_err(|error| unavailable("read required journal epoch", error))?;
+    if expected.is_some_and(|expected| expected != &epoch) {
+        return Err(Failure::generation_changed(
+            "persisted journal epoch changed",
+        ));
     }
-
-    fn observation_counters(&self) -> EventObservationCounters {
-        self.shared.counters.snapshot()
-    }
+    Ok(epoch)
 }
 
 fn begin_barrier<'a>(
@@ -421,6 +386,7 @@ fn probe(shared: &Shared, state: &mut State) -> Result<bool, Failure> {
             r.get(0)
         })
         .map_err(|error| unavailable("read committed event high-water", error))?;
+    let epoch = verified_epoch(&tx, state.epoch.as_ref())?;
     #[cfg(test)]
     shared.control.checkpoint(Phase::AfterHead)?;
     // The RAII transaction also rolls back on error/panic. This empty writer
@@ -437,6 +403,7 @@ fn probe(shared: &Shared, state: &mut State) -> Result<bool, Failure> {
     }
     let advanced = state.head.is_some_and(|previous| head > previous);
     state.head = Some(head);
+    state.epoch = Some(epoch);
     Ok(advanced)
 }
 

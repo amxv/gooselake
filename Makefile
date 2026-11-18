@@ -88,6 +88,10 @@ check-legacy-snapshot-audit: ## Test the immutable counts-only legacy SQLite sna
 check-event-subject-audit: ## Test immutable retained-event subject reconciliation (offline fixtures only)
 	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test-event-subject-audit.py -v
 
+.PHONY: check-sealed-snapshot-manifest
+check-sealed-snapshot-manifest: ## Test sealed snapshot witnesses and refusal boundaries (offline fixtures only)
+	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test-sealed-snapshot-manifest.py -v
+
 .PHONY: check-goldengoose-parity-fixtures
 check-goldengoose-parity-fixtures: ## Test static GG parity audit drift and fail-closed behavior without a GG checkout
 	PYTHONDONTWRITEBYTECODE=1 python3 ./scripts/test-goldengoose-source-parity.py -v
@@ -111,6 +115,7 @@ check: ## Run repo-wide lint, format, API docs, workspace tests, and sidecar tes
 	$(MAKE) api-docs-check
 	$(MAKE) check-legacy-snapshot-audit
 	$(MAKE) check-event-subject-audit
+	$(MAKE) check-sealed-snapshot-manifest
 	$(MAKE) check-goldengoose-parity-fixtures
 	$(MAKE) check-api-docs-smoke
 	$(MAKE) check-release-layout

@@ -6,54 +6,61 @@ use std::time::Instant;
 
 #[tokio::test(flavor = "current_thread")]
 async fn blocked_replay_keeps_only_worker_lease_after_health_failure_or_body_drop() {
-    for after_read in [false, true] {
-        for fail_health in [false, true] {
-            let fixture = Fixture::new(Some(EventObserverHealth::Ready)).await;
-            let (producer, headers) = register();
-            let response = fixture.open(0, 10, &headers).await;
-            let mut chunks = Some(response.into_body().into_data_stream());
-            let hold = fixture.control.arm(if after_read {
-                ReadPhase::After(2)
-            } else {
-                ReadPhase::Before(2)
-            });
-            fixture.append(&format!("blocked_{after_read}_{fail_health}"));
-            hold.reached().await;
-            let started = Instant::now();
-            if fail_health {
-                fixture.control.fail();
-            } else {
-                drop(chunks.take());
-            }
-            // This current-thread runtime can service the timer and producer
-            // while its real SQLite read is held on the blocking pool.
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            producer.finished().await;
-            assert!(started.elapsed() < Duration::from_millis(500));
-            assert_eq!(fixture.control.live.load(Ordering::SeqCst), 1);
-            assert_eq!(fixture.control.dropped.load(Ordering::SeqCst), 0);
-            if let Some(chunks) = chunks.as_mut() {
-                let text = drain(chunks).await;
-                assert!(
-                    ids(&text).is_empty(),
-                    "blocked rows cannot escape after failure"
-                );
-                assert_terminal(&text, "event_observer_unavailable");
-            }
-            hold.release();
-            fixture
-                .control
-                .wait_count(&fixture.control.dropped, 1)
-                .await;
-            assert_eq!(fixture.control.live.load(Ordering::SeqCst), 0);
-            if let Some(chunks) = chunks.as_mut() {
-                assert!(
-                    timeout(Duration::from_secs(3), chunks.next())
-                        .await
-                        .unwrap()
-                        .is_none(),
-                    "late blocking results cannot append after terminal EOF"
-                );
+    for bound in [false, true] {
+        for after_read in [false, true] {
+            for fail_health in [false, true] {
+                let fixture = Fixture::new(Some(EventObserverHealth::Ready)).await;
+                let (producer, headers) = register();
+                let response = if bound {
+                    fixture.open_bound(None, 10, &headers).await
+                } else {
+                    fixture.open(0, 10, &headers).await
+                };
+                assert_eq!(fixture.store.reads.load(Ordering::SeqCst), 1);
+                let mut chunks = Some(response.into_body().into_data_stream());
+                let hold = fixture.control.arm(if after_read {
+                    ReadPhase::After(2)
+                } else {
+                    ReadPhase::Before(2)
+                });
+                fixture.append(&format!("blocked_{bound}_{after_read}_{fail_health}"));
+                hold.reached().await;
+                assert_eq!(fixture.store.reads.load(Ordering::SeqCst), 2);
+                let started = Instant::now();
+                if fail_health {
+                    fixture.control.fail();
+                } else {
+                    drop(chunks.take());
+                }
+                // Keep the original current-thread reactor responsiveness oracle.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                producer.finished().await;
+                assert!(started.elapsed() < Duration::from_millis(500));
+                assert_eq!(fixture.control.live.load(Ordering::SeqCst), 1);
+                assert_eq!(fixture.control.dropped.load(Ordering::SeqCst), 0);
+                if let Some(chunks) = chunks.as_mut() {
+                    let text = drain(chunks).await;
+                    assert!(
+                        !text.lines().any(|line| line.starts_with("id:")),
+                        "blocked rows cannot escape after failure: {text}"
+                    );
+                    assert_terminal(&text, "event_observer_unavailable");
+                }
+                hold.release();
+                fixture
+                    .control
+                    .wait_count(&fixture.control.dropped, 1)
+                    .await;
+                assert_eq!(fixture.control.live.load(Ordering::SeqCst), 0);
+                if let Some(chunks) = chunks.as_mut() {
+                    assert!(
+                        timeout(Duration::from_secs(3), chunks.next())
+                            .await
+                            .unwrap()
+                            .is_none(),
+                        "late blocking results cannot append after terminal EOF"
+                    );
+                }
             }
         }
     }

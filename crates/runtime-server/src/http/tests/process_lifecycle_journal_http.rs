@@ -1,8 +1,8 @@
 use super::*;
-use runtime_core::RuntimeEventCriticality;
+use runtime_core::{EventCollection, RuntimeEventCriticality};
 use runtime_store_sqlite::SqliteRuntimeRepository;
 
-use super::durable_event_stream_routes::{observed_sse_ids, stream};
+use super::operator_event_test_support::{observe, stream};
 
 #[tokio::test]
 async fn native_process_lifecycle_is_one_durable_journal_visible_in_operator_sse_after_restart() {
@@ -73,10 +73,21 @@ async fn native_process_lifecycle_is_one_durable_journal_visible_in_operator_sse
         );
     }
 
-    let uri = format!("/v2/processes/{process_id}/events/stream?after_seq=0&limit=1");
-    observed_sse_ids(stream(&router, &token, &uri, None, None).await, &[1, 2, 3]).await;
+    let collection =
+        EventCollection::stream(Some((RuntimeEventScope::Process, process_id.clone()))).unwrap();
     let uri = format!("/v2/processes/{process_id}/events/stream?limit=1");
-    observed_sse_ids(stream(&router, &token, &uri, None, Some(2)).await, &[3]).await;
+    let observed = observe(
+        stream(&router, &token, &uri, None, None).await,
+        &collection,
+        &[(1, &events[0]), (2, &events[1]), (3, &events[2])],
+    )
+    .await;
+    observe(
+        stream(&router, &token, &uri, None, Some(&observed.tokens[1])).await,
+        &collection,
+        &[(3, &events[2])],
+    )
+    .await;
 
     let denied = router
         .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())

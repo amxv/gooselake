@@ -746,6 +746,7 @@ name = "runtime-store-sqlite"
 version = "0.1.6"
 dependencies = [
  "async-trait",
+ "libc",
  "runtime-core",
  "rusqlite",
  "serde",

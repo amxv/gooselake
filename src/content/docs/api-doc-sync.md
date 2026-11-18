@@ -161,7 +161,9 @@ Docs-signal files:
   be expressed by the serde-derived schema alone
 - provider-specific auth/model behavior
 - ACP v1 limitations
-- SSE replay semantics and cursor precedence
+- SSE replay semantics and cursor precedence, generation-bound readiness,
+  supported cross-process observer topology, idle-work bounds, and distinct
+  retryable replay versus nonretryable observer/generation/record failures
 - operational examples and runbooks
 - process scheduling, queue/capture semantics, completion delivery, and process/worktree ownership rules
 - `/v2` workspace canonicalization, idempotency, and durable-operation semantics

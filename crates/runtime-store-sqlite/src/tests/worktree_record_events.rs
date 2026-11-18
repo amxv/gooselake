@@ -247,8 +247,8 @@ fn native_created_managed_row_and_critical_event_rollback_together() {
     let subscriber = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp.path().join("runtime.sqlite3"),
     });
-    // Keep the store alive so the journal notification channel is retained.
-    let mut notifications = subscriber.subscribe_event_commits().unwrap();
+    // Establish the committed baseline before testing journal faults.
+    let mut notifications = observe_commits(&subscriber);
     let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
     db.execute_batch("CREATE TRIGGER reject_create_event BEFORE INSERT ON runtime_events
         WHEN NEW.kind = 'worktree.created' BEGIN SELECT RAISE(FAIL, 'injected event failure'); END;").unwrap();
@@ -265,7 +265,7 @@ fn native_created_managed_row_and_critical_event_rollback_together() {
         .unwrap()
         .is_empty());
     assert!(matches!(
-        notifications.try_recv(),
+        notifications.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 
@@ -275,7 +275,7 @@ fn native_created_managed_row_and_critical_event_rollback_together() {
         .record_managed_worktree_event(&record(), "skipped_disabled", false, None, None)
         .unwrap();
     assert_eq!(effective, record());
-    assert!(notifications.try_recv().is_ok());
+    assert!(notifications.wait().is_ok());
     let restarted = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
     assert_eq!(
         restarted.hydrate_runtime_state().unwrap().managed_worktrees,

@@ -1,6 +1,5 @@
-//! Bounded characterization of the current cross-OS-process SSE wake gap.
-//! The SQLite journal is shared, but its notification registry is not. This
-//! fixture must be revisited when cross-process fan-out gains an explicit design.
+//! Positive cross-OS-process SSE contract: an idle subscriber must receive a
+//! committed event without a second local write or a reconnect.
 
 use super::*;
 use axum::response::IntoResponse;
@@ -30,8 +29,25 @@ fn child_commits_cross_process_sse_event() {
         .expect("child OS process must commit the durable event");
 }
 
+pub(super) fn commit_from_child(path: &std::path::Path) {
+    let child = Command::new(std::env::current_exe().expect("current test executable"))
+        .args([
+            "--exact",
+            "http::tests::durable_event_stream_cross_process::child_commits_cross_process_sse_event",
+        ])
+        .env(CHILD_DB, path)
+        .output()
+        .expect("start independent Rust test process");
+    assert!(
+        child.status.success(),
+        "child process failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&child.stdout),
+        String::from_utf8_lossy(&child.stderr)
+    );
+}
+
 #[tokio::test]
-async fn separate_os_process_commit_is_readable_but_does_not_wake_idle_sse() {
+async fn separate_os_process_commit_wakes_idle_global_and_workspace_sse_without_local_write() {
     let temp = tempfile::tempdir().expect("disposable SQLite fixture");
     let path = temp.path().join("runtime.sqlite3");
     let sqlite = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
@@ -71,20 +87,7 @@ async fn separate_os_process_commit_is_readable_but_does_not_wake_idle_sse() {
     let mut global_chunks = global.into_response().into_body().into_data_stream();
     let mut workspace_chunks = workspace.into_response().into_body().into_data_stream();
 
-    let child = Command::new(std::env::current_exe().expect("current test executable"))
-        .args([
-            "--exact",
-            "http::tests::durable_event_stream_cross_process::child_commits_cross_process_sse_event",
-        ])
-        .env(CHILD_DB, &path)
-        .output()
-        .expect("start independent Rust test process");
-    assert!(
-        child.status.success(),
-        "child process failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&child.stdout),
-        String::from_utf8_lossy(&child.stderr)
-    );
+    commit_from_child(&path);
 
     // This observation is read-side only. It does NOT imply that the SSE
     // subscriber in the parent process received any wakeup notification.
@@ -97,43 +100,19 @@ async fn separate_os_process_commit_is_readable_but_does_not_wake_idle_sse() {
     assert_eq!(external[0].seq, 1);
     assert_eq!(external[0].row_id, seed.row_id + 1);
 
-    // A timeout here is intentionally a *known limitation*, not acceptable
-    // delivery semantics. It differentiates actual idle cross-process SSE
-    // from the separately proven WAL/cursor read and same-process wake tests.
-    let (global_result, workspace_result) = tokio::join!(
-        timeout(Duration::from_millis(450), global_chunks.next()),
-        timeout(Duration::from_millis(450), workspace_chunks.next()),
-    );
-    assert!(
-        global_result.is_err(),
-        "external commit unexpectedly woke global SSE; update this characterization"
-    );
-    assert!(
-        workspace_result.is_err(),
-        "external commit unexpectedly woke workspace SSE; update this characterization"
-    );
-
-    // A subsequent local SQLite commit generates an in-process wakeup. Both
-    // streams must then replay the previously stranded external event first,
-    // without loss or duplication, followed by the local event.
-    let local = reader
-        .append_runtime_event(&super::durable_event_stream_routes::new_event(
-            "local_sse_commit",
-            RuntimeEventScope::Workspace,
-            WORKSPACE_ID,
-        ))
-        .expect("local committed wakeup");
-    let global_expected = [external[0].row_id, local.row_id];
-    let scoped_expected = [external[0].seq, local.seq];
+    // The external commit alone must wake both idle streams. No local append
+    // is allowed to rescue a lost wake, and the first page was empty above.
+    let global_expected = [external[0].row_id];
+    let scoped_expected = [external[0].seq];
     for (chunks, expected) in [
         (&mut global_chunks, global_expected),
         (&mut workspace_chunks, scoped_expected),
     ] {
         let mut observed = Vec::new();
-        for _ in 0..2 {
+        for _ in 0..expected.len() {
             let bytes = timeout(Duration::from_secs(3), chunks.next())
                 .await
-                .expect("local commit must wake SSE")
+                .expect("external commit must wake idle SSE within three seconds")
                 .expect("SSE stream must remain live")
                 .expect("SSE body bytes");
             let data = String::from_utf8_lossy(&bytes);
@@ -149,14 +128,11 @@ async fn separate_os_process_commit_is_readable_but_does_not_wake_idle_sse() {
         );
     }
 
-    // A reopened reader may resume from the external row directly, without
-    // needing either process-local notification channel.
+    // A reopened reader retains the same cursor and finds no invented rescue
+    // event or duplicate, independent of either process's observer lifetime.
     let reopened = SqliteRuntimeRepository::new(path);
-    assert_eq!(
-        reopened
-            .list_runtime_events(None, Some(external[0].row_id), 1)
-            .unwrap()[0]
-            .row_id,
-        local.row_id,
-    );
+    assert!(reopened
+        .list_runtime_events(None, Some(external[0].row_id), 1)
+        .unwrap()
+        .is_empty());
 }

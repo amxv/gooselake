@@ -335,7 +335,7 @@ fn critical_turn_admission_event_rolls_back_authority_on_journal_failure_and_rep
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: repository.database_path.clone(),
     });
-    let mut commits = store.subscribe_event_commits().unwrap();
+    let mut commits = observe_commits(&store);
 
     let connection = open_connection(&repository.database_path).unwrap();
     connection
@@ -369,7 +369,7 @@ fn critical_turn_admission_event_rolls_back_authority_on_journal_failure_and_rep
         .unwrap()
         .is_empty());
     assert!(matches!(
-        commits.try_recv(),
+        commits.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 
@@ -380,7 +380,7 @@ fn critical_turn_admission_event_rolls_back_authority_on_journal_failure_and_rep
     repository
         .admit_turn(&admission, &turn, &admitted, Some(&approval))
         .unwrap();
-    assert!(commits.try_recv().is_ok(), "only committed event wakes SSE");
+    assert!(commits.wait().is_ok(), "only committed event wakes SSE");
     let reopened = SqliteRuntimeRepository::new(repository.database_path.clone());
     let events = reopened
         .list_runtime_events(Some((RuntimeEventScope::Session, &session.id)), None, 10)
@@ -415,7 +415,7 @@ fn critical_turn_admission_event_rolls_back_authority_on_journal_failure_and_rep
         .unwrap();
     assert_eq!(same, events[0]);
     assert!(matches!(
-        commits.try_recv(),
+        commits.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 }

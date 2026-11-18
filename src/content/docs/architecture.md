@@ -114,7 +114,7 @@ High-frequency roster, worktree, context, process, operation and message list AP
 
 The durable event journal includes `session` (public agent), `workspace`, legacy `team`, `process`, `worktree` and `system` scopes. A row has a global journal ID and a per-scope sequence. Operator `GET /v2/events` is a bounded, redacted **history list**; `GET /v2/events/{event_id}` is full detail. Operator global/workspace/agent/process SSE streams expose `after_seq` and `Last-Event-ID` cursor replay. Agent streams use the canonical `session` scope.
 
-Streams **subscribe to committed SQLite notifications before replay**, catch up with indexed journal reads and do not idle-poll the database every 250 ms. A lagged notification is a wakeup to replay from the last delivered durable cursor, not an alternate event source. The notification bus is in-process, not cross-host replication. See [Events and recovery](/docs/events-and-recovery) for cursor semantics and retained journal limits.
+Streams **subscribe before replay** and await observer readiness before opening the HTTP stream. The verified Linux local-WAL observer uses filesystem hints and a bounded SQLite writer barrier to detect committed progress from separate processes. Each process shares a bounded hint ring for the verified database identity; indexed journal replay supplies every event and cursor. Lagged hints trigger catch-up, while observer or generation failure terminates the stream visibly. Idle streams and their keepalives do not poll SQLite. See [Events and recovery](/docs/events-and-recovery) for cursor semantics, failure handling, and the local filesystem support boundary.
 
 ## API, docs and release boundary
 

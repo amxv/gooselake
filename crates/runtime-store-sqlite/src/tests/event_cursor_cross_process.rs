@@ -1,12 +1,11 @@
 //! Real OS-process boundaries, not two SQLite handles in one Rust process.
-//! This proves committed read-side visibility only: the commit notification
-//! broadcast is deliberately process-local and does not wake remote SSE.
+//! A real external WAL commit wakes the pinned observer; replay remains
+//! authoritative across primary scopes and canonical subject projections.
 
 use super::*;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast::error::TryRecvError;
 
 const CHILD_DIR: &str = "GOOSELAKE_CROSS_PROCESS_EVENT_FIXTURE_DIR";
 
@@ -110,7 +109,7 @@ fn separate_process_wal_commit_is_readable_from_live_and_restarted_observers() {
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: path.clone(),
     });
-    let mut wakeups = store.subscribe_event_commits().unwrap();
+    let mut wakeups = observe_commits(&store);
     let reader = SqliteRuntimeRepository::new(path.clone());
 
     let mut child = ChildGuard(
@@ -251,6 +250,7 @@ fn separate_process_wal_commit_is_readable_from_live_and_restarted_observers() {
         .list_runtime_events(None, Some(second[0].row_id), 8)
         .unwrap()
         .is_empty());
-    assert!(matches!(wakeups.try_recv(), Err(TryRecvError::Empty)),
-        "an OS-external commit has no in-process notification; this test proves reads, not cross-process SSE wakeups");
+    wakeups
+        .wait()
+        .expect("external WAL commit wakes without a local rescue write");
 }

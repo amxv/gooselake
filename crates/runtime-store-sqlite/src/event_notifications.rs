@@ -1,61 +1,58 @@
-//! An in-process wakeup for *committed* durable event rows. The SQLite journal,
-//! not this notification channel, is the source of event payloads or ordering.
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+//! Lazy, generation-bound committed-event observation. Store construction may
+//! precede schema initialization; only subscription opens an existing database.
+use std::path::Path;
 
-use tokio::sync::broadcast;
+use runtime_core::{EventCommitSubscription, RuntimeError};
 
-#[derive(Debug)]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) use linux::test_control::TestControl;
+
+#[derive(Debug, Default)]
 pub(crate) struct EventCommitNotifier {
-    sender: broadcast::Sender<()>,
+    #[cfg(target_os = "linux")]
+    observer: std::sync::OnceLock<
+        Result<std::sync::Arc<linux::EventObserver>, runtime_core::EventObservationFailure>,
+    >,
 }
 
 impl EventCommitNotifier {
-    pub(crate) fn subscribe(&self) -> broadcast::Receiver<()> {
-        self.sender.subscribe()
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn test_control(&self) -> std::sync::Arc<TestControl> {
+        self.observer
+            .get()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .test_control()
     }
 
-    pub(crate) fn wake(&self) {
-        // No active subscribers is a normal state, not a persistence failure.
-        let _ = self.sender.send(());
-    }
-}
-
-fn database_identity(path: &Path) -> PathBuf {
-    if let Ok(canonical) = path.canonicalize() {
-        return canonical;
-    }
-    if let Some(parent) = path.parent() {
-        if let Ok(canonical_parent) = parent.canonicalize() {
-            if let Some(name) = path.file_name() {
-                return canonical_parent.join(name);
+    pub(crate) fn subscribe(&self, path: &Path) -> Result<EventCommitSubscription, RuntimeError> {
+        #[cfg(target_os = "linux")]
+        {
+            if self.observer.get().is_none() {
+                let candidate = linux::observer_for(path);
+                // This pre-generation error can clear when a detached worker
+                // exits. Established generation failures stay cached/sticky.
+                if let Err(failure) = &candidate {
+                    if failure.code == "event_observer_stopping" {
+                        return Err(failure.runtime_error());
+                    }
+                }
+                self.observer.get_or_init(|| candidate);
+            }
+            match self.observer.get().expect("observer initialized above") {
+                Ok(observer) => Ok(observer.subscribe()),
+                Err(failure) => Err(failure.runtime_error()),
             }
         }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = path;
+            Err(RuntimeError::Unsupported(
+                "generation-bound SQLite event observation requires supported Linux local WAL primitives".into(),
+            ))
+        }
     }
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    }
-}
-
-/// Independent SQLite store instances for one runtime database share a
-/// notification channel. Weak registry entries do not retain old test/runtime
-/// databases or their subscribers after the last store closes.
-pub(crate) fn notifier_for(path: &Path) -> Arc<EventCommitNotifier> {
-    static REGISTRY: OnceLock<Mutex<HashMap<PathBuf, Weak<EventCommitNotifier>>>> = OnceLock::new();
-    let registry = REGISTRY.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut registry = registry.lock().expect("event notifier registry poisoned");
-    registry.retain(|_, notifier| notifier.strong_count() > 0);
-    let identity = database_identity(path);
-    if let Some(notifier) = registry.get(&identity).and_then(Weak::upgrade) {
-        return notifier;
-    }
-    let (sender, _) = broadcast::channel(256);
-    let notifier = Arc::new(EventCommitNotifier { sender });
-    registry.insert(identity, Arc::downgrade(&notifier));
-    notifier
 }

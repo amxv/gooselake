@@ -33,6 +33,8 @@ mod agent_controls;
 mod auth;
 mod diagnostics;
 mod durable_event_stream;
+#[cfg(test)]
+mod durable_event_stream_test_control;
 mod events;
 mod mcp;
 mod messages;

@@ -237,7 +237,7 @@ async fn operator_sse_resource_streams_validate_local_sequence_not_global_row_id
                 )
                 .await;
             }
-            for invalid in [anchor.seq + 1_000, anchor.row_id + 10_000] {
+            for invalid in [anchor.row_id, anchor.seq + 1_000, anchor.row_id + 10_000] {
                 assert_cursor_status(
                     &router,
                     &token,

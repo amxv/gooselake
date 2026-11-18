@@ -452,22 +452,50 @@ A robust client reconnects like this:
 3. render the replayed backlog
 4. follow the live stream
 
-Session, global, team, workspace, agent, and process streams now subscribe to **committed SQLite event notifications** before reading the first replay page. Each stream reads ordered event rows from the durable journal in bounded pages, then waits for a commit notification instead of polling SQLite every 250 ms while idle. Notifications contain no event payload or authority: a delayed, coalesced, or lagged notification triggers an indexed catch-up query from the last delivered cursor. SQLite writes that roll back never wake subscribers. Legacy process streams verify process visibility through the process manager; operator streams verify bearer identity and resource existence before accessing a scoped journal.
+Session, global, team, workspace, agent, and process streams subscribe to
+**committed SQLite event notifications** before reading the first replay page.
+Observer readiness and initial replay must succeed before the HTTP stream
+opens. Positive operator cursors are validated through the same
+generation-bound reader used for replay. Streams read ordered journal rows in
+bounded pages, then wait for notification hints without periodically querying
+SQLite while idle. Hints contain no event payload or cursor authority; delayed,
+coalesced, or lagged hints trigger indexed catch-up from the stream's current
+cursor. Only committed rows are replayed. Legacy process streams retain their
+process-manager visibility checks, and operator streams retain bearer and
+resource-existence checks.
 
-The in-process commit notification channel is scoped to one runtime database and is not a cross-process replication bus. Clients must preserve the last received event ID and reconnect to replay after network/server failure. A journal-read error closes the SSE stream with a retryable `stream.error` event that does **not** advance the cursor. All streams retain their existing cursor contracts.
+The verified live-delivery boundary is Linux x86_64 with an existing writable
+local SQLite WAL database and the ordinary SQLite Unix VFS. The observer
+watches the database directory before establishing its baseline and uses a
+bounded SQLite writer barrier to establish committed visibility. Separate
+runtime-store processes and valid direct SQLite WAL writers can therefore wake
+idle streams, including while a writer keeps its connection open. Each process
+shares a 256-entry hint ring for the verified database identity. Cross-host
+replication is outside this support boundary. See
+[SSE behavior and observer limits](/docs/api#sse-and-replay-model) for filesystem,
+platform, contention, and generation constraints.
 
-A deterministic injected journal-read fault regression proves `stream.error`
-has no event ID, closes the failed subscription, and allows a new SQLite
-stream to replay the unread committed event from the last acknowledged ID.
+Clients retain the last event ID they actually processed; a frame admitted to
+the server's output queue is not a client acknowledgment. After opening, a
+journal-read failure emits a retryable `stream.error` without an event ID and
+closes the stream. Observer or generation failures, and durable event kinds
+containing CR or LF, produce nonretryable terminal errors requiring inspection
+before resuming. Already queued valid frames drain before the terminal error.
+A reserved terminal slot lets the producer release its reader even when the
+data queue is full; an already running blocking read retains its own reader
+lease until it finishes. Failures during readiness or initial replay produce
+HTTP errors before streaming begins.
 
-The idle behavior is covered by an instrumented real SQLite-store SSE test:
-one initial journal read, **no further SELECT across an idle interval
-longer than the former 250 ms polling cadence**, then exactly one indexed
-catch-up read for each separately committed event. The stream returns to
-the same no-query idle state after delivery; its 10-second SSE keepalive
-is a network heartbeat, not a periodic database scan. This proof covers
-the in-process committed-journal wakeup architecture, not cross-process
-or cross-host event replication.
+A deterministic injected journal-read fault regression verifies that the
+retryable error has no event ID, closes the failed subscription, and permits
+replay of the unread committed event from the last processed cursor on the
+same database.
+
+The instrumented real-SQLite idle regression checks that observer probes,
+high-water reads, and replay reads remain unchanged across a complete interval
+between actual ten-second HTTP keepalives. Keepalives are network heartbeats
+and never poll SQLite. Observer baseline reads, positive-cursor validation,
+and replay are separate operations; there is no fixed query count per commit.
 
 Concurrency/recovery regression exercises independent SQLite connections
 contending for the same workspace/process scope, verifies unique gap-free
@@ -475,12 +503,23 @@ global and per-scope cursors after restart, and reopens fresh stream stores
 to replay and reconnect across global, workspace, agent and process streams.
 The append transaction serializes scope-sequence allocation; retained journal
 rows remain the authority after restart, not the former stream's memory.
+A separate reader-process restart fixture records consumed global and
+workspace cursors, terminates that reader, commits while it is absent, and
+starts a different reader process. The new reader replays the missed row and
+receives another external live commit without an intervening local write.
 
-A bounded-output SSE lag stress regression holds back a client while 320
-independent events commit, proves a separate notification subscriber overran
-the 256-entry broadcast ring, then drains the stream and verifies all 320
-global row IDs arrived exactly once and in journal order. Coalesced or lost
-notification pulses never replace durable replay.
+The bounded-output lag regression commits 129 rows and observes the producer
+blocked on its full 128-frame queue before committing 257 more separately
+acknowledged batches with the client still unread. It observes lag in the
+actual SSE receiver, drains all 386 committed IDs in journal order, and checks
+the next real keepalive for trailing duplicates. The output queue holds at
+most 128 data frames plus one reserved terminal frame; the current replay
+page has its own requested row limit.
+
+A controlled HTTP handoff fixture holds the completed empty initial SQL
+result while a separate OS process commits. Releasing that result delivers
+the committed row once before the next real keepalive, without a local rescue
+write or a timing assumption about observer startup.
 
 ## Cursor rules
 

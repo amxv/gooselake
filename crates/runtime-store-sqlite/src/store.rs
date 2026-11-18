@@ -28,21 +28,21 @@ use runtime_core::{WorkspaceAgentOnboardingRequest, WorkspaceSystemNoticeRecord}
 use serde_json::Value;
 
 use crate::db::{db_error, open_connection};
-use crate::event_notifications::{notifier_for, EventCommitNotifier};
+use crate::event_notifications::EventCommitNotifier;
 use crate::{SqliteRuntimeRepository, SqliteStoreConfig};
 
 #[derive(Debug)]
 pub struct SqliteRuntimeStore {
     config: SqliteStoreConfig,
     repository: SqliteRuntimeRepository,
-    event_commits: std::sync::Arc<EventCommitNotifier>,
+    event_commits: EventCommitNotifier,
 }
 
 impl SqliteRuntimeStore {
     pub fn new(config: SqliteStoreConfig) -> Self {
         let repository = SqliteRuntimeRepository::new(config.database_path.clone());
         Self {
-            event_commits: notifier_for(&config.database_path),
+            event_commits: EventCommitNotifier::default(),
             config,
             repository,
         }
@@ -53,6 +53,13 @@ impl SqliteRuntimeStore {
     }
     pub fn repository(&self) -> &SqliteRuntimeRepository {
         &self.repository
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn event_observer_test_control(
+        &self,
+    ) -> std::sync::Arc<crate::event_notifications::TestControl> {
+        self.event_commits.test_control()
     }
 
     pub fn hydrate_runtime_state(&self) -> Result<RuntimeHydratedState, RuntimeError> {

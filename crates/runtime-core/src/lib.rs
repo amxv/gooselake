@@ -2,6 +2,7 @@ pub mod agent_comms;
 pub mod app;
 pub mod edit_rerun;
 pub mod error;
+pub mod event_observation;
 pub mod harness;
 pub mod legacy_operation_inspection;
 pub mod legacy_spawn_obligations;
@@ -53,6 +54,10 @@ pub use agent_comms::{
 pub use app::{EventQueueLimits, ProcessLimits, RuntimeApp, RuntimeServices, WorktreeSettings};
 pub use edit_rerun::{EditAndRerunRequest, EditRerunTransitionReceipt, SessionEditRerunOperation};
 pub use error::{ProviderDispatchOutcome, RuntimeError};
+pub use event_observation::{
+    EventCommitSubscription, EventObservationCounters, EventObservationFailure,
+    EventObserverHealth, RuntimeEventReplayReader,
+};
 pub use harness::{
     harness_contract_metadata, harness_sections, provider_harness_text, HarnessContractMetadata,
     HarnessInjectionMode, HarnessSections, HARNESS_VERSION,

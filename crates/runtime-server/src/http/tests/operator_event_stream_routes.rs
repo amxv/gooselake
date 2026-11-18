@@ -127,11 +127,24 @@ async fn v2_subject_streams_replay_canonical_rows_across_parent_scopes_and_resta
         ("operation", "op_subject_sse"),
     ] {
         let uri = format!("/v2/events/stream?scope={scope}&scope_id={id}&limit=1&after_seq=0");
-        observed_sse_ids(
+        let envelopes = observed_sse_ids(
             stream(&router, &token, &uri, None, None).await,
             &[first.row_id, second.row_id],
         )
         .await;
+        let payloads: Vec<serde_json::Value> = envelopes
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|data| serde_json::from_str(data).unwrap())
+            .collect();
+        assert_eq!(
+            payloads,
+            [
+                serde_json::to_value(&first).unwrap(),
+                serde_json::to_value(&second).unwrap()
+            ],
+            "subject SSE preserves original primary scope, sequence and canonical envelope"
+        );
         let uri = format!("/v2/events/stream?scope={scope}&scope_id={id}&limit=1");
         observed_sse_ids(
             stream(&router, &token, &uri, None, Some(first.row_id)).await,
@@ -436,6 +449,12 @@ async fn v2_streams_reject_unauthorized_missing_or_invalid_cursors_before_openin
         ),
         (
             workspace_uri.clone(),
+            true,
+            vec![("last-event-id", "1"), ("last-event-id", "2")],
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            format!("{workspace_uri}?after_seq={}", seed.seq),
             true,
             vec![("last-event-id", "1"), ("last-event-id", "2")],
             StatusCode::BAD_REQUEST,

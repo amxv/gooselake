@@ -1,28 +1,21 @@
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use runtime_core::{
     migrate_retired_model, ProviderKind, RuntimeError, RuntimeEventCriticality, RuntimeEventRecord,
     RuntimeEventScope, WorkspaceAgentRecreationPolicy,
 };
-use rusqlite::{
-    hooks::Action, params, Connection, OptionalExtension, Transaction, TransactionBehavior,
-};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde_json::Value;
 
-use crate::event_notifications::{notifier_for, EventCommitNotifier};
 use crate::schema::{MIGRATIONS, SCHEMA_VERSION};
 
-/// Connections are short-lived per repository operation. Send a wakeup only
-/// *after* a connection with committed event inserts has left its transaction
-/// scope. This avoids treating uncommitted SQLite update hooks as event proof.
+/// Repository connections do not own live notification delivery. The observer
+/// independently verifies committed journal progress, including writers that
+/// remain open or die without running a Rust connection destructor.
 pub(crate) struct JournalConnection {
     connection: Connection,
-    notifier: Arc<EventCommitNotifier>,
-    committed_events: Arc<AtomicBool>,
 }
 
 impl Deref for JournalConnection {
@@ -36,14 +29,6 @@ impl Deref for JournalConnection {
 impl DerefMut for JournalConnection {
     fn deref_mut(&mut self) -> &mut Connection {
         &mut self.connection
-    }
-}
-
-impl Drop for JournalConnection {
-    fn drop(&mut self) {
-        if self.committed_events.load(Ordering::Acquire) {
-            self.notifier.wake();
-        }
     }
 }
 
@@ -65,33 +50,7 @@ pub(crate) fn open_connection(path: &Path) -> Result<JournalConnection, RuntimeE
         )
         .map_err(|error| db_error("failed to configure sqlite pragmas", error))?;
 
-    let pending_events = Arc::new(AtomicBool::new(false));
-    let committed_events = Arc::new(AtomicBool::new(false));
-    let pending_on_insert = Arc::clone(&pending_events);
-    connection.update_hook(Some(
-        move |action: Action, _database: &str, table: &str, _rowid: i64| {
-            if action == Action::SQLITE_INSERT && table == "runtime_events" {
-                pending_on_insert.store(true, Ordering::Release);
-            }
-        },
-    ));
-    let pending_on_commit = Arc::clone(&pending_events);
-    let committed_on_commit = Arc::clone(&committed_events);
-    connection.commit_hook(Some(move || {
-        if pending_on_commit.swap(false, Ordering::AcqRel) {
-            committed_on_commit.store(true, Ordering::Release);
-        }
-        false
-    }));
-    connection.rollback_hook(Some(move || {
-        pending_events.store(false, Ordering::Release);
-    }));
-
-    Ok(JournalConnection {
-        connection,
-        notifier: notifier_for(path),
-        committed_events,
-    })
+    Ok(JournalConnection { connection })
 }
 
 pub(crate) fn apply_schema(connection: &mut Connection) -> Result<(), RuntimeError> {

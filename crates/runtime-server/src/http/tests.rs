@@ -54,6 +54,8 @@ mod comms_diagnostics_aggregate;
 mod durable_event_stream_cross_process;
 mod durable_event_stream_idle;
 mod durable_event_stream_lag;
+#[cfg(target_os = "linux")]
+mod durable_event_stream_process_restart;
 mod durable_event_stream_restart;
 mod durable_event_stream_routes;
 use codex_runtime_smoke::{codex_test_model, prepare_codex_smoke_config};

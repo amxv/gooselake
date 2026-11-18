@@ -2,10 +2,11 @@ use super::*;
 use async_trait::async_trait;
 use axum::response::IntoResponse;
 use runtime_core::{
-    ApprovalRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, NewRuntimeEvent,
-    ProcessRecord, RuntimeError, RuntimeEventRecord, RuntimeEventScope, RuntimeHydratedState,
-    SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
+    ApprovalRecord, EventCommitSubscription, EventObservationCounters, ManagedWorktreeClaimRecord,
+    ManagedWorktreeRecord, NewRuntimeEvent, ProcessRecord, RuntimeError, RuntimeEventRecord,
+    RuntimeEventReplayReader, RuntimeEventScope, RuntimeHydratedState, SessionRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+    TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
 use runtime_store_sqlite::{SqliteRuntimeRepository, SqliteRuntimeStore, SqliteStoreConfig};
 use serde_json::Value;
@@ -13,13 +14,59 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 
+mod cancellation;
+mod control;
+mod handoffs;
+mod health;
+use control::{ReadPhase, ReplayControl};
+
 /// Test-only proxy over the *real* SQLite runtime store. The observed counter
 /// measures every journal SELECT requested by the actual SSE path, so a
 /// regression to 250ms polling fails without fake/manual event feeds.
 struct CountingEventStore {
     sqlite: Arc<SqliteRuntimeStore>,
-    reads: AtomicUsize,
-    fail_next_read: AtomicBool,
+    reads: Arc<AtomicUsize>,
+    fail_next_read: Arc<AtomicBool>,
+    control: Option<Arc<ReplayControl>>,
+}
+
+struct CountingReplayReader {
+    inner: Arc<dyn RuntimeEventReplayReader>,
+    reads: Arc<AtomicUsize>,
+    fail_next_read: Arc<AtomicBool>,
+    control: Option<Arc<ReplayControl>>,
+    // Field order matters: acknowledge only after the actual inner replay
+    // lease and every other wrapper field have been dropped.
+    _lifetime: Option<control::ReaderLifetime>,
+}
+
+impl RuntimeEventReplayReader for CountingReplayReader {
+    fn list_runtime_events(
+        &self,
+        scope: Option<(RuntimeEventScope, &str)>,
+        after_seq: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<RuntimeEventRecord>, RuntimeError> {
+        let call = self.reads.fetch_add(1, Ordering::SeqCst) + 1;
+        if let Some(control) = &self.control {
+            control.visit(ReadPhase::Before(call));
+        }
+        let result = if self.fail_next_read.swap(false, Ordering::SeqCst) {
+            Err(RuntimeError::Bootstrap(
+                "test-injected durable journal read failure".into(),
+            ))
+        } else {
+            self.inner.list_runtime_events(scope, after_seq, limit)
+        };
+        if let Some(control) = &self.control {
+            control.visit(ReadPhase::After(call));
+        }
+        result
+    }
+
+    fn observation_counters(&self) -> EventObservationCounters {
+        self.inner.observation_counters()
+    }
 }
 
 impl runtime_core::WorkspaceWorktreeCreationStore for CountingEventStore {}
@@ -35,8 +82,28 @@ impl RuntimeStore for CountingEventStore {
         self.sqlite.healthcheck().await
     }
 
-    fn subscribe_event_commits(&self) -> Option<tokio::sync::broadcast::Receiver<()>> {
-        self.sqlite.subscribe_event_commits()
+    fn subscribe_event_commits(&self) -> Result<EventCommitSubscription, RuntimeError> {
+        if let Some(control) = &self.control {
+            control.visit(ReadPhase::Subscribe);
+        }
+        let mut subscription = self.sqlite.subscribe_event_commits()?;
+        if let Some(control) = &self.control {
+            if let Some(health) = control.health() {
+                subscription.health = health;
+            }
+            control.reader_created();
+        }
+        subscription.replay = Arc::new(CountingReplayReader {
+            inner: subscription.replay,
+            reads: self.reads.clone(),
+            fail_next_read: self.fail_next_read.clone(),
+            control: self.control.clone(),
+            _lifetime: self
+                .control
+                .as_ref()
+                .map(|control| control.reader_lifetime()),
+        });
+        Ok(subscription)
     }
 
     fn append_runtime_event(
@@ -143,10 +210,17 @@ async fn idle_durable_sse_does_not_requery_sqlite_until_a_commit_wakes_replay() 
     sqlite.initialize().await.expect("initialize SQLite");
     let store = Arc::new(CountingEventStore {
         sqlite,
-        reads: AtomicUsize::new(0),
-        fail_next_read: AtomicBool::new(false),
+        reads: Arc::new(AtomicUsize::new(0)),
+        fail_next_read: Arc::new(AtomicBool::new(false)),
+        control: None,
     });
     let runtime_store: Arc<dyn RuntimeStore> = store.clone();
+    // This extra lease is a passive counter meter, used only in the idle test.
+    let mut meter = store.sqlite.subscribe_event_commits().unwrap();
+    timeout(Duration::from_secs(3), meter.ready())
+        .await
+        .unwrap()
+        .unwrap();
 
     // A cursor at zero on an empty journal performs exactly one initial
     // SELECT and then sleeps on the commit notifier, not a 250ms DB timer.
@@ -155,11 +229,25 @@ async fn idle_durable_sse_does_not_requery_sqlite_until_a_commit_wakes_replay() 
         .expect("start global SSE");
     let mut chunks = sse.into_response().into_body().into_data_stream();
     assert_eq!(store.reads.load(Ordering::SeqCst), 1);
-    tokio::time::sleep(Duration::from_millis(650)).await;
+    let first_keepalive = timeout(Duration::from_secs(12), chunks.next())
+        .await
+        .expect("first real HTTP keepalive")
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&first_keepalive).starts_with(':'));
+    let idle_before = meter.replay.observation_counters();
+    let second_keepalive = timeout(Duration::from_secs(12), chunks.next())
+        .await
+        .expect("second real HTTP keepalive")
+        .unwrap()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&second_keepalive).starts_with(':'));
+    assert_eq!(meter.replay.observation_counters(), idle_before,
+        "observer probes, high-water reads and replay reads stay unchanged across a full real keepalive interval");
     assert_eq!(
         store.reads.load(Ordering::SeqCst),
         1,
-        "idle SSE must not periodically SELECT from SQLite"
+        "idle SSE must not periodically SELECT from SQLite, including keepalives"
     );
 
     // An independent SQLite repository connection commits the canonical
@@ -232,8 +320,9 @@ async fn journal_read_failure_emits_unsequenced_retryable_error_before_durable_r
         .unwrap();
     let store = Arc::new(CountingEventStore {
         sqlite,
-        reads: AtomicUsize::new(0),
-        fail_next_read: AtomicBool::new(false),
+        reads: Arc::new(AtomicUsize::new(0)),
+        fail_next_read: Arc::new(AtomicBool::new(false)),
+        control: None,
     });
     let observed: Arc<dyn RuntimeStore> = store.clone();
     let sse = durable_event_stream(observed, None, Some(0), 10, &HeaderMap::new())

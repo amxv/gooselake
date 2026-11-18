@@ -15,17 +15,29 @@ async fn lagged_notifications_and_bounded_stream_backpressure_preserve_all_commi
     }));
     store.initialize().await.unwrap();
     let mut lag_monitor = store.subscribe_event_commits().unwrap();
+    let mut sentinel = store.subscribe_event_commits().unwrap();
+    timeout(Duration::from_secs(3), lag_monitor.ready())
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(Duration::from_secs(3), sentinel.ready())
+        .await
+        .unwrap()
+        .unwrap();
     let runtime: Arc<dyn RuntimeStore> = store.clone();
+    let (producer, headers) = super::super::durable_event_stream_test_control::register();
 
     // Open before commits but deliberately do not read from the SSE client.
     // The server's bounded output queue eventually backpressures the writer
     // while the 256-entry notification ring is overrun by later commits.
-    let response = durable_event_stream(runtime, None, Some(0), 7, &HeaderMap::new())
+    let response = durable_event_stream(runtime, None, Some(0), 7, &headers)
         .await
         .unwrap()
         .into_response();
     let repository = SqliteRuntimeRepository::new(path.clone());
-    const EVENTS: usize = 320;
+    const FILL_ROWS: usize = 129;
+    const LAG_ROWS: usize = 257;
+    const EVENTS: usize = FILL_ROWS + LAG_ROWS;
     let mut expected = Vec::with_capacity(EVENTS);
     for i in 0..EVENTS {
         let committed = repository
@@ -36,6 +48,18 @@ async fn lagged_notifications_and_bounded_stream_backpressure_preserve_all_commi
             ))
             .unwrap();
         expected.push(committed.row_id);
+        // Filesystem hints may coalesce. A real received batch must separate
+        // every append; row count alone cannot prove notification-ring lag.
+        timeout(Duration::from_secs(3), sentinel.recv())
+            .await
+            .expect("actual observer publication for each committed batch")
+            .unwrap();
+        if i + 1 == FILL_ROWS {
+            // No client frame has been consumed. Actual Pending on the
+            // full 128-frame queue fixes the SSE receiver's position before
+            // the next 257 independently observed publication batches.
+            producer.pending().await;
+        }
     }
     assert_eq!(expected, (1..=EVENTS as i64).collect::<Vec<_>>());
     assert!(
@@ -70,6 +94,23 @@ async fn lagged_notifications_and_bounded_stream_backpressure_preserve_all_commi
         received, expected,
         "no gaps, duplicates, or reordering under lag/backpressure"
     );
+    assert!(buffered.is_empty());
+    // This passive acknowledgement belongs to the actual SSE receiver,
+    // not the separate lag monitor, and cannot wake or repair the stream.
+    producer.lagged().await;
+    // Observe the real keepalive only after the full original burst arrived.
+    // Unlike a later database write, it cannot rescue a missing live wake.
+    let tail = timeout(Duration::from_secs(12), chunks.next())
+        .await
+        .expect("post-drain keepalive")
+        .unwrap()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&tail).starts_with(':'),
+        "a trailing duplicate would appear before the keepalive: {tail:?}"
+    );
+    drop(chunks);
+    producer.finished().await;
 
     // A reopened SQLite store has the same retained data and can resume from
     // the final delivered global row ID without depending on the old bus.

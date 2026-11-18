@@ -229,7 +229,7 @@ fn cleanup_admission_fault_rolls_back_intent_journal_and_git_claims() {
     let subscriber = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp.path().join("runtime.sqlite3"),
     });
-    let mut rx = subscriber.subscribe_event_commits().unwrap();
+    let mut rx = observe_commits(&subscriber);
     let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
     db.execute_batch(
         "CREATE TRIGGER reject_worktree_cleanup_intent
@@ -261,7 +261,7 @@ fn cleanup_admission_fault_rolls_back_intent_journal_and_git_claims() {
         None
     );
     assert!(matches!(
-        rx.try_recv(),
+        rx.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 
@@ -271,7 +271,7 @@ fn cleanup_admission_fault_rolls_back_intent_journal_and_git_claims() {
         repository.admit_managed_worktree_cleanup(&command).unwrap(),
         ManagedWorktreeCleanupAdmission::Execute { .. }
     ));
-    assert!(rx.try_recv().is_ok());
+    assert!(rx.wait().is_ok());
     assert_eq!(
         repository
             .get_operation(&command.operation_id)

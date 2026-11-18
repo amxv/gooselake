@@ -706,12 +706,12 @@ fn claim_release_and_reclaim_are_atomic_exact_once_and_restart_safe() {
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp.path().join("runtime.sqlite3"),
     });
-    let mut subscriber = store.subscribe_event_commits().unwrap();
+    let mut subscriber = observe_commits(&store);
     let first = store
         .transition_managed_worktree_claim(&claim, Claim)
         .unwrap();
     assert_eq!(first, claim);
-    assert!(subscriber.try_recv().is_ok(), "committed journal wakes SSE");
+    assert!(subscriber.wait().is_ok(), "committed journal wakes SSE");
 
     let mut duplicate = claim.clone();
     duplicate.created_at = 101;
@@ -722,7 +722,7 @@ fn claim_release_and_reclaim_are_atomic_exact_once_and_restart_safe() {
         claim
     );
     assert!(matches!(
-        subscriber.try_recv(),
+        subscriber.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 
@@ -734,7 +734,7 @@ fn claim_release_and_reclaim_are_atomic_exact_once_and_restart_safe() {
             .unwrap(),
         released
     );
-    assert!(subscriber.try_recv().is_ok());
+    assert!(subscriber.wait().is_ok());
     released.released_at = Some(201);
     let restarted = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
     let prior = restarted
@@ -791,7 +791,7 @@ fn journal_insert_failure_rolls_back_claim_and_release_with_no_notification() {
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: temp.path().join("runtime.sqlite3"),
     });
-    let mut subscriber = store.subscribe_event_commits().unwrap();
+    let mut subscriber = observe_commits(&store);
     let connection = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
     connection.execute_batch("CREATE TRIGGER fail_claim BEFORE INSERT ON runtime_events
         WHEN NEW.kind='worktree.claimed' BEGIN SELECT RAISE(FAIL, 'injected claim journal failure'); END;").unwrap();
@@ -808,7 +808,7 @@ fn journal_insert_failure_rolls_back_claim_and_release_with_no_notification() {
         .unwrap()
         .is_empty());
     assert!(matches!(
-        subscriber.try_recv(),
+        subscriber.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 
@@ -818,7 +818,7 @@ fn journal_insert_failure_rolls_back_claim_and_release_with_no_notification() {
     repository
         .transition_managed_worktree_claim(&claim, Claim)
         .unwrap();
-    assert!(subscriber.try_recv().is_ok());
+    assert!(subscriber.wait().is_ok());
     connection.execute_batch("CREATE TRIGGER fail_release BEFORE INSERT ON runtime_events
         WHEN NEW.kind='worktree.released' BEGIN SELECT RAISE(FAIL, 'injected release journal failure'); END;").unwrap();
     let released = ManagedWorktreeClaimRecord {
@@ -843,7 +843,7 @@ fn journal_insert_failure_rolls_back_claim_and_release_with_no_notification() {
         1
     );
     assert!(matches!(
-        subscriber.try_recv(),
+        subscriber.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
     connection
@@ -855,7 +855,7 @@ fn journal_insert_failure_rolls_back_claim_and_release_with_no_notification() {
             .unwrap(),
         released
     );
-    assert!(subscriber.try_recv().is_ok());
+    assert!(subscriber.wait().is_ok());
 }
 
 #[test]

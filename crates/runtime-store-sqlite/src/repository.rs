@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use runtime_core::{NewRuntimeEvent, RuntimeError, RuntimeEventRecord, RuntimeEventScope};
-use rusqlite::{params, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, Transaction, TransactionBehavior};
 
 use crate::db::{
     apply_schema, collect_rows, db_error, fetch_runtime_event_by_event_id, json_to_string,
@@ -15,7 +15,7 @@ pub struct SqliteRuntimeRepository {
 
 /// Shared insertion primitive for an already-immediate SQLite transaction.
 /// Callers with associated authority mutations must commit both together;
-/// the connection hook wakes SSE subscribers only after a successful commit.
+/// event observation independently wakes subscribers after a visible commit.
 pub(crate) fn insert_runtime_event_in_transaction(
     transaction: &Transaction<'_>,
     event: &NewRuntimeEvent,
@@ -98,37 +98,48 @@ impl SqliteRuntimeRepository {
         limit: usize,
     ) -> Result<Vec<RuntimeEventRecord>, RuntimeError> {
         let connection = open_connection(&self.database_path)?;
-        let limit = i64::try_from(limit).map_err(|_| {
-            RuntimeError::Bootstrap("runtime event query limit overflow".to_string())
-        })?;
+        list_runtime_events_on_connection(&connection, scope, after_seq, limit)
+    }
+}
 
-        // Subject views retain their parent's canonical event identity and
-        // `seq`, but page by the stable global row ID instead. A single event
-        // may be linked to multiple subjects; no duplicate journal writes.
-        if let Some((kind, subject_id)) = scope.filter(|(kind, _)| kind.is_subject_projection()) {
-            let mut statement = connection
-                .prepare(
-                    "SELECT e.id, e.event_id, e.scope, e.scope_id, e.session_id,
+/// Shared indexed replay SQL. Live subscriptions supply their verified resident
+/// connection; ordinary repository callers retain their normal connection scope.
+pub(crate) fn list_runtime_events_on_connection(
+    connection: &Connection,
+    scope: Option<(RuntimeEventScope, &str)>,
+    after_seq: Option<i64>,
+    limit: usize,
+) -> Result<Vec<RuntimeEventRecord>, RuntimeError> {
+    let limit = i64::try_from(limit)
+        .map_err(|_| RuntimeError::Bootstrap("runtime event query limit overflow".to_string()))?;
+
+    // Subject views retain their parent's canonical event identity and
+    // `seq`, but page by the stable global row ID instead. A single event
+    // may be linked to multiple subjects; no duplicate journal writes.
+    if let Some((kind, subject_id)) = scope.filter(|(kind, _)| kind.is_subject_projection()) {
+        let mut statement = connection
+            .prepare(
+                "SELECT e.id, e.event_id, e.scope, e.scope_id, e.session_id,
                             e.team_id, e.turn_id, e.seq, e.kind, e.critical,
                             e.payload_json, e.provider, e.provider_seq, e.created_at
                      FROM runtime_event_subjects s
                      JOIN runtime_events e ON e.id = s.event_row_id
                      WHERE s.subject_scope = ?1 AND s.subject_id = ?2 AND s.event_row_id > ?3
                      ORDER BY s.event_row_id ASC LIMIT ?4",
-                )
-                .map_err(|error| db_error("failed preparing subject event replay", error))?;
-            let rows = statement
-                .query_map(
-                    params![kind.as_str(), subject_id, after_seq.unwrap_or(0), limit],
-                    runtime_event_from_row,
-                )
-                .map_err(|error| db_error("failed querying subject event replay", error))?;
-            return collect_rows(rows);
-        }
+            )
+            .map_err(|error| db_error("failed preparing subject event replay", error))?;
+        let rows = statement
+            .query_map(
+                params![kind.as_str(), subject_id, after_seq.unwrap_or(0), limit],
+                runtime_event_from_row,
+            )
+            .map_err(|error| db_error("failed querying subject event replay", error))?;
+        return collect_rows(rows);
+    }
 
-        match (scope, after_seq) {
-            (Some((scope_value, scope_id)), Some(after)) => {
-                let mut statement = connection
+    match (scope, after_seq) {
+        (Some((scope_value, scope_id)), Some(after)) => {
+            let mut statement = connection
                     .prepare(
                         "SELECT id, event_id, scope, scope_id, session_id, team_id, turn_id,
                                 seq, kind, critical, payload_json, provider, provider_seq, created_at
@@ -138,16 +149,16 @@ impl SqliteRuntimeRepository {
                          LIMIT ?4",
                     )
                     .map_err(|error| db_error("failed preparing scoped event query", error))?;
-                let rows = statement
-                    .query_map(
-                        params![scope_value.as_str(), scope_id, after, limit],
-                        |row| runtime_event_from_row(row),
-                    )
-                    .map_err(|error| db_error("failed querying scoped events", error))?;
-                collect_rows(rows)
-            }
-            (Some((scope_value, scope_id)), None) => {
-                let mut statement = connection
+            let rows = statement
+                .query_map(
+                    params![scope_value.as_str(), scope_id, after, limit],
+                    |row| runtime_event_from_row(row),
+                )
+                .map_err(|error| db_error("failed querying scoped events", error))?;
+            collect_rows(rows)
+        }
+        (Some((scope_value, scope_id)), None) => {
+            let mut statement = connection
                     .prepare(
                         "SELECT id, event_id, scope, scope_id, session_id, team_id, turn_id,
                                 seq, kind, critical, payload_json, provider, provider_seq, created_at
@@ -157,15 +168,15 @@ impl SqliteRuntimeRepository {
                          LIMIT ?3",
                     )
                     .map_err(|error| db_error("failed preparing scoped event query", error))?;
-                let rows = statement
-                    .query_map(params![scope_value.as_str(), scope_id, limit], |row| {
-                        runtime_event_from_row(row)
-                    })
-                    .map_err(|error| db_error("failed querying scoped events", error))?;
-                collect_rows(rows)
-            }
-            (None, Some(after)) => {
-                let mut statement = connection
+            let rows = statement
+                .query_map(params![scope_value.as_str(), scope_id, limit], |row| {
+                    runtime_event_from_row(row)
+                })
+                .map_err(|error| db_error("failed querying scoped events", error))?;
+            collect_rows(rows)
+        }
+        (None, Some(after)) => {
+            let mut statement = connection
                     .prepare(
                         "SELECT id, event_id, scope, scope_id, session_id, team_id, turn_id,
                                 seq, kind, critical, payload_json, provider, provider_seq, created_at
@@ -175,13 +186,13 @@ impl SqliteRuntimeRepository {
                          LIMIT ?2",
                     )
                     .map_err(|error| db_error("failed preparing global event query", error))?;
-                let rows = statement
-                    .query_map(params![after, limit], |row| runtime_event_from_row(row))
-                    .map_err(|error| db_error("failed querying global events", error))?;
-                collect_rows(rows)
-            }
-            (None, None) => {
-                let mut statement = connection
+            let rows = statement
+                .query_map(params![after, limit], |row| runtime_event_from_row(row))
+                .map_err(|error| db_error("failed querying global events", error))?;
+            collect_rows(rows)
+        }
+        (None, None) => {
+            let mut statement = connection
                     .prepare(
                         "SELECT id, event_id, scope, scope_id, session_id, team_id, turn_id,
                                 seq, kind, critical, payload_json, provider, provider_seq, created_at
@@ -190,11 +201,10 @@ impl SqliteRuntimeRepository {
                          LIMIT ?1",
                     )
                     .map_err(|error| db_error("failed preparing global event query", error))?;
-                let rows = statement
-                    .query_map(params![limit], |row| runtime_event_from_row(row))
-                    .map_err(|error| db_error("failed querying global events", error))?;
-                collect_rows(rows)
-            }
+            let rows = statement
+                .query_map(params![limit], |row| runtime_event_from_row(row))
+                .map_err(|error| db_error("failed querying global events", error))?;
+            collect_rows(rows)
         }
     }
 }

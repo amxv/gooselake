@@ -68,13 +68,13 @@ fn process_lifecycle_authority_and_critical_events_commit_together_and_survive_r
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: db_path.clone(),
     });
-    let mut receiver = store.subscribe_event_commits().unwrap();
+    let mut receiver = observe_commits(&store);
 
     repository
         .admit_managed_process(&admission("proc_atomic", "call_atomic"))
         .unwrap();
     assert!(
-        receiver.try_recv().is_ok(),
+        receiver.wait().is_ok(),
         "committed queued event wakes canonical SSE"
     );
     let queued = scoped(&repository, "proc_atomic");
@@ -103,7 +103,7 @@ fn process_lifecycle_authority_and_critical_events_commit_together_and_survive_r
         .unwrap();
     assert_eq!(same, queued[0]);
     assert!(matches!(
-        receiver.try_recv(),
+        receiver.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 
@@ -122,13 +122,13 @@ fn process_lifecycle_authority_and_critical_events_commit_together_and_survive_r
         .unwrap()
         .unwrap();
     assert_eq!(running.status, "running");
-    assert!(receiver.try_recv().is_ok());
+    assert!(receiver.wait().is_ok());
     let requested = repository
         .request_managed_process_cancel("proc_atomic", Some("session_1"), 220)
         .unwrap()
         .unwrap();
     assert!(requested.cancel_requested);
-    assert!(receiver.try_recv().is_ok());
+    assert!(receiver.wait().is_ok());
     assert!(
         repository
             .request_managed_process_cancel("proc_atomic", Some("session_1"), 230)
@@ -137,7 +137,7 @@ fn process_lifecycle_authority_and_critical_events_commit_together_and_survive_r
             .cancel_requested
     );
     assert!(matches!(
-        receiver.try_recv(),
+        receiver.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
     let terminal_record = repository
@@ -145,7 +145,7 @@ fn process_lifecycle_authority_and_critical_events_commit_together_and_survive_r
         .unwrap()
         .unwrap();
     assert_eq!(terminal_record.status, "completed");
-    assert!(receiver.try_recv().is_ok());
+    assert!(receiver.wait().is_ok());
     assert_eq!(
         repository
             .terminalize_managed_process("proc_atomic", &terminal())
@@ -154,7 +154,7 @@ fn process_lifecycle_authority_and_critical_events_commit_together_and_survive_r
         terminal_record
     );
     assert!(matches!(
-        receiver.try_recv(),
+        receiver.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 
@@ -208,7 +208,7 @@ fn process_admission_and_running_and_terminal_event_faults_rollback_authority() 
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: repository.database_path.clone(),
     });
-    let mut rx = store.subscribe_event_commits().unwrap();
+    let mut rx = observe_commits(&store);
     let db = open_connection(&repository.database_path).unwrap();
 
     db.execute_batch(
@@ -226,7 +226,7 @@ fn process_admission_and_running_and_terminal_event_faults_rollback_authority() 
         .is_none());
     assert!(scoped(&repository, "proc_fault").is_empty());
     assert!(matches!(
-        rx.try_recv(),
+        rx.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 
@@ -235,7 +235,7 @@ fn process_admission_and_running_and_terminal_event_faults_rollback_authority() 
     repository
         .admit_managed_process(&admission("proc_fault", "fault_one"))
         .unwrap();
-    assert!(rx.try_recv().is_ok());
+    assert!(rx.wait().is_ok());
     let claim = repository
         .claim_managed_processes(&scheduler(), 150)
         .unwrap();
@@ -264,7 +264,7 @@ fn process_admission_and_running_and_terminal_event_faults_rollback_authority() 
     assert!(pending.pid.is_none());
     assert_eq!(scoped(&repository, "proc_fault").len(), 1);
     assert!(matches!(
-        rx.try_recv(),
+        rx.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
     db.execute_batch("DROP TRIGGER fail_process_running;")
@@ -279,7 +279,7 @@ fn process_admission_and_running_and_terminal_event_faults_rollback_authority() 
         )
         .unwrap()
         .unwrap();
-    assert!(rx.try_recv().is_ok());
+    assert!(rx.wait().is_ok());
 
     db.execute_batch(
         "CREATE TRIGGER fail_process_terminal BEFORE INSERT ON runtime_events
@@ -300,7 +300,7 @@ fn process_admission_and_running_and_terminal_event_faults_rollback_authority() 
     );
     assert_eq!(scoped(&repository, "proc_fault").len(), 2);
     assert!(matches!(
-        rx.try_recv(),
+        rx.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
     db.execute_batch("DROP TRIGGER fail_process_terminal;")
@@ -308,7 +308,7 @@ fn process_admission_and_running_and_terminal_event_faults_rollback_authority() 
     repository
         .terminalize_managed_process("proc_fault", &terminal())
         .unwrap();
-    assert!(rx.try_recv().is_ok());
+    assert!(rx.wait().is_ok());
     let events = scoped(&repository, "proc_fault");
     assert_eq!(
         events

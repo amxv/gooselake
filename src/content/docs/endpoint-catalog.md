@@ -248,6 +248,16 @@ SSE stream; unknown query options, duplicate/invalid `Last-Event-ID` and
 nonexistent resource IDs fail before the stream opens. The operator bearer is
 required. The older `/v1` routes remain during migration.
 
+Live streams wait for observer readiness and use the same generation-bound
+reader for positive-cursor validation and replay. On the verified Linux local
+SQLite WAL backend, separate-process commits wake idle streams without periodic
+database reads. Journal replay failures after opening emit an unsequenced
+retryable `stream.error`; observer/generation failures and invalid CR/LF event
+kinds emit nonretryable terminal errors. Retained failure before opening is an
+HTTP error. Resume from the last consumed ID only after confirming the same
+database; a numeric cursor alone cannot identify a replacement dataset. See
+[SSE behavior and observer limits](/docs/api#sse-and-replay-model) in the API guide.
+
 - `GET /v2/events` (Bearer; indexed global-row-ID ascending, optional paired `scope` and `scope_id` including derived turn/message/operation subjects, numeric `cursor`, `limit=1..100` default 50; `X-Next-Cursor` for next page, eight-field redacted rows; positive cursor must identify an existing row in the selected global/scoped collection; zero starts from the beginning)
 - `GET /v2/events/{event_id}` (Bearer; full event payload/provider diagnostic metadata, exact immutable event ID)
 - `GET /v1/events` (Bearer)

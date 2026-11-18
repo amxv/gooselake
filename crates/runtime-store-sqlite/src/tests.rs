@@ -20,6 +20,8 @@ mod comms_diagnostics_scale;
 mod compaction_critical_authority;
 mod context_status_batch;
 mod event_commit_notifications;
+mod event_notification_support;
+use event_notification_support::observe_commits;
 mod event_cursor_concurrency;
 mod event_cursor_cross_process;
 mod event_cursor_multi_reader;

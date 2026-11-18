@@ -2,9 +2,14 @@
 // existing event APIs without expanding the oversized services.rs trait file.
 macro_rules! event_history_methods {
     () => {
-        /// Commit-only wakeups; consumers reread the durable event journal.
-        fn subscribe_event_commits(&self) -> Option<tokio::sync::broadcast::Receiver<()>> {
-            None
+        /// Fallible generation-bound observation. Consumers await readiness,
+        /// retain health, and replay only through the subscription's reader.
+        fn subscribe_event_commits(
+            &self,
+        ) -> Result<crate::EventCommitSubscription, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported(
+                "durable event observation is unavailable in this store".into(),
+            ))
         }
         fn list_operator_events_page(
             &self,

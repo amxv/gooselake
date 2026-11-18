@@ -1835,10 +1835,13 @@ scope cursors identify an existing sequence in that scope. A nonexistent,
 future, or foreign-scope/subject cursor returns HTTP `400` at handshake rather
 than opening a stream that could silently skip events. `after_seq=0` remains a
 beginning-of-history sentinel, and `after_seq` takes precedence over the
-`Last-Event-ID` fallback. The check uses a single indexed journal lookup; it
-does not scan historical events or authorize event pruning. Existing `/v1`
+`Last-Event-ID` fallback. The check uses a single indexed journal lookup on
+the same ready, generation-bound reader as subsequent replay; it does not
+scan historical events or authorize event pruning. Observer readiness and
+the initial replay must succeed before the HTTP stream opens. Existing `/v1`
 cursor behavior is unchanged.
-Legacy `/v1` contracts remain unchanged during migration.
+Legacy `/v1` cursor policy remains unchanged during migration; the observer
+readiness and failure rules below also apply to its durable streams.
 
 Behavior:
 
@@ -1847,33 +1850,53 @@ Behavior:
   durable pages, and wake on committed SQLite event inserts instead of
   periodically polling while idle; lagged notifications catch up from the last
   delivered cursor without re-emitting it
-- **Cross-process wake limitation:** the current SQLite event-commit broadcast
-  is shared by store instances **within one OS process**, not across server
-  processes. A commit made by a different process is readable through the
-  durable SQLite journal immediately after commit, but it does **not** wake an
-  already-idle SSE subscriber in this process. Reconnecting (with the last
-  received event ID) or a later local commit replays that unread event in
-  order. Ten-second SSE keepalives do not query SQLite or close this gap.
-  Separate-process live fan-out requires its own verified design; do not treat
-  WAL visibility or same-process SSE tests as cross-process wake proof.
-- an instrumented real-SQLite stream regression verifies a single initial
-  journal query, **zero additional reads across idle intervals longer than
-  the old 250 ms polling cadence**, and one catch-up query after each
-  independently committed event; 10-second network keepalives do not
-  poll the database
+- **Cross-process live delivery:** the Linux observer watches the local SQLite
+  database directory before establishing its committed baseline. Separate
+  runtime-store processes and valid direct SQLite WAL writers wake idle
+  subscribers, including when the writer keeps its connection open. A short
+  SQLite writer barrier establishes committed visibility before publishing a
+  hint; uncommitted, rolled-back and abandoned writes do not become events.
+  The SQLite contention wait is bounded at five seconds; this is not an
+  end-to-end handshake or shutdown deadline. Sustained contention terminates
+  observation visibly instead of silently reverting to database polling.
+- commit hints carry no event payload and may coalesce. Each process shares
+  a 256-entry hint ring for the verified database identity; indexed SQLite
+  replay remains the only event and cursor authority. A lagged subscriber or
+  write-hint queue overflow catches up through that journal. Loss or overflow
+  of the separate filesystem lifecycle evidence fails the generation closed,
+  because continuity can no longer be verified.
+- observer baseline/high-water queries, positive-cursor validation and replay
+  are separate reads; there is no fixed query count per committed event.
+  Instrumented real-SQLite tests check **zero additional observer probes,
+  high-water reads and replay reads while idle**, including a complete interval
+  between actual ten-second HTTP keepalives. Keepalives never poll SQLite.
 - deterministic concurrency/restart tests prove independent SQLite writers
   cannot duplicate global or scope-local cursors, and fresh runtime stores
   can resume global, workspace, agent and process SSE streams after restart
+  on the same retained database/history
   without replaying the last acknowledged event
+- an owned reader-process restart test records the actual consumed global and
+  workspace cursors, terminates that reader, commits while it is absent, and
+  starts a different reader process. It verifies missed-row replay followed
+  by another external live commit on the unchanged database, with distinct
+  global and scoped cursor domains and no intervening local rescue write.
 - turn/message/operation subject-filtered streams use the same
   subscribe-before-replay handoff: one committed event can wake all three
   subscriptions while unrelated parent-scoped events remain excluded. A
   subject cursor is the last **delivered global row ID**, so gaps caused by
   events for other subjects are expected and reconnect skips the acknowledged
   boundary without losing a commit that raced initial replay
-- a committed 320-event real SQLite burst proves a bounded SSE output queue
-  and an overrun in-process notification ring cannot lose or duplicate event
-  rows: the stream recovers all IDs in order from indexed journal pages
+- a 386-event real-SQLite fixture first observes the producer blocked on its
+  full 128-frame queue, then commits 257 separately acknowledged hint batches
+  while the client remains unread. It observes lag in the actual SSE receiver
+  and recovers every committed ID in order through indexed pages, followed by
+  a real keepalive with no trailing duplicate. The producer queue holds at most
+  128 data frames, plus one reserved terminal frame; the current replay page is
+  separately bounded by the requested limit.
+- a controlled HTTP handoff fixture holds the completed empty initial SQL
+  result while a separate OS process commits. Releasing that result delivers
+  the committed row exactly once before the next real keepalive, without a
+  local rescue write or a timing assumption about observer startup.
 - process streams check owner/workspace visibility through the process manager
   before opening their scoped journal stream
 - process queued/running/cancel-request/terminal authority commits its critical
@@ -1911,10 +1934,46 @@ Behavior:
 - duplicate `Last-Event-ID` headers also return HTTP `400`, including with
   an explicit `after_seq`, rather than silently choosing a resume position
 - keepalive pings are sent every 10 seconds
-- stream journal failures emit a retryable `stream.error` without a
-  replacement event ID, then close; reconnecting with the last successfully
-  processed `Last-Event-ID` replays unread retained rows rather than skipping
-  them (verified with an injected SQLite read fault)
+- after opening, a failure emits at most one `stream.error` without an event
+  ID, then closes. Already queued valid frames drain before that terminal
+  frame. The reserved terminal slot lets the producer release its reader even
+  when the data queue is full and the client stops reading. A disconnected
+  client is not guaranteed to receive the terminal frame. An already running
+  blocking read retains its own reader lease until that read finishes.
+
+Stream errors have distinct continuation rules:
+
+| Error code | `retryable` | Client action |
+| --- | --- | --- |
+| `journal_unavailable` | `true` | Reconnect with the last successfully processed event ID after a same-generation replay interruption. Unread retained rows remain available. |
+| `event_observer_unavailable`, `event_observer_barrier_failed` or `journal_generation_changed` | `false` | Inspect observer health and database identity before resuming. Do not blindly reuse a numeric cursor against an unverified dataset. |
+| `journal_record_invalid` | `false` | Inspect the durable record whose event kind contains CR or LF. The invalid record receives no SSE ID; the last valid cursor is preserved. |
+
+Readiness, retained observer failure and initial replay errors before the
+stream opens produce HTTP errors instead of SSE frames. Clients checkpoint
+the last event they actually consumed or processed; server queue admission is
+not a client acknowledgment. Network interruption can still require client
+deduplication of an event processed before its cursor was saved.
+
+The verified observer boundary is **Linux x86_64, an existing writable local
+SQLite WAL database, and the ordinary SQLite Unix VFS**. The main database
+must be a regular file with exactly one hard link. Non-Linux builds refuse
+live subscription; other Linux architectures remain unvalidated. Opening
+an observer does not create a missing database or change journal mode.
+Canonical relative/symlink aliases share the same observer; unsafe hardlinks
+are rejected. The main file and its parent directory are pinned and checked
+through startup, cursor validation and every replay page. Main-file
+replacement, removal, an observed move-away-and-back, watch loss, and even
+conservative main-file attribute-change evidence terminate that generation.
+Normal PASSIVE, RESTART and TRUNCATE checkpoints retain subsequent liveness.
+
+Canonical ancestors and the local mount must remain stable; nonrecursive
+filesystem watches do not prove continuity across every ancestor or overmount
+change. Numeric cursors do not encode a durable database epoch: after a
+replacement plus full runtime restart, a matching number alone cannot prove
+that the retained dataset is the original one. Same-database replay and the
+verified failure checks add no power-loss durability guarantee and no
+universal exactly-once network-delivery guarantee.
 
 The runtime currently **does not prune committed event-journal rows**. This is
 intentional: pending operations, delivery recovery, audit history, and SSE
@@ -1928,7 +1987,7 @@ history.
 
 SSE event envelope:
 
-- `id`: runtime sequence id
+- `id`: global row ID for global/subject streams, or scope-local sequence for primary scoped streams
 - `event`: runtime event kind
 - `data`: JSON-serialized `RuntimeEventRecord`
 

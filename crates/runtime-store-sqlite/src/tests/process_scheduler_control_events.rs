@@ -1,7 +1,8 @@
+use super::event_notification_support::observe_commits;
 use crate::{SqliteRuntimeRepository, SqliteRuntimeStore, SqliteStoreConfig};
 use runtime_core::{
     ManagedProcessAdmission, ProcessSchedulerSettings, RuntimeError, RuntimeEventCriticality,
-    RuntimeEventRecord, RuntimeEventScope, RuntimeStore,
+    RuntimeEventRecord, RuntimeEventScope,
 };
 use rusqlite::Connection;
 use serde_json::json;
@@ -163,7 +164,7 @@ fn scheduler_control_event_fault_rolls_back_settings_and_emits_no_commit_notific
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: fixture.path.clone(),
     });
-    let mut notifications = store.subscribe_event_commits().unwrap();
+    let mut notifications = observe_commits(&store);
     fixture.fail_event("process.scheduler_settings_changed");
     let mut requested = previous.clone();
     requested.max_concurrent = 3;
@@ -181,7 +182,7 @@ fn scheduler_control_event_fault_rolls_back_settings_and_emits_no_commit_notific
     assert_eq!(fixture.settings(), previous);
     assert!(fixture.events().is_empty());
     assert!(matches!(
-        notifications.try_recv(),
+        notifications.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 
@@ -193,7 +194,7 @@ fn scheduler_control_event_fault_rolls_back_settings_and_emits_no_commit_notific
             .unwrap(),
         requested
     );
-    assert!(notifications.try_recv().is_ok());
+    assert!(notifications.wait().is_ok());
     let events = fixture.events();
     assert_eq!(events.len(), 1);
     requested.updated_at = 900;
@@ -204,7 +205,7 @@ fn scheduler_control_event_fault_rolls_back_settings_and_emits_no_commit_notific
     assert_eq!(saved.updated_at, 100);
     assert_eq!(fixture.events(), events);
     assert!(matches!(
-        notifications.try_recv(),
+        notifications.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 }
@@ -391,7 +392,7 @@ fn scheduler_ignored_or_damaged_control_receipts_roll_back_both_mutations() {
             let store = SqliteRuntimeStore::new(SqliteStoreConfig {
                 database_path: fixture.path.clone(),
             });
-            let mut notifications = store.subscribe_event_commits().unwrap();
+            let mut notifications = observe_commits(&store);
             let (timing, body) = match damage {
                 None => ("BEFORE", "SELECT RAISE(IGNORE);".to_string()),
                 Some("delete") => (
@@ -441,7 +442,7 @@ fn scheduler_ignored_or_damaged_control_receipts_roll_back_both_mutations() {
             );
             assert_eq!(fixture.events(), before_events);
             assert!(matches!(
-                notifications.try_recv(),
+                notifications.settled_try_recv(),
                 Err(tokio::sync::broadcast::error::TryRecvError::Empty)
             ));
 
@@ -456,7 +457,7 @@ fn scheduler_ignored_or_damaged_control_receipts_roll_back_both_mutations() {
                 saved_events[0].criticality,
                 RuntimeEventCriticality::Critical
             );
-            assert!(notifications.try_recv().is_ok());
+            assert!(notifications.wait().is_ok());
             mutate().unwrap();
             assert_eq!(fixture.settings(), saved_settings);
             assert_eq!(
@@ -465,7 +466,7 @@ fn scheduler_ignored_or_damaged_control_receipts_roll_back_both_mutations() {
             );
             assert_eq!(fixture.events(), saved_events);
             assert!(matches!(
-                notifications.try_recv(),
+                notifications.settled_try_recv(),
                 Err(tokio::sync::broadcast::error::TryRecvError::Empty)
             ));
         }
@@ -494,7 +495,7 @@ fn process_control_event_trigger_cannot_change_its_settings_or_queue_carrier() {
             let store = SqliteRuntimeStore::new(SqliteStoreConfig {
                 database_path: fixture.path.clone(),
             });
-            let mut notifications = store.subscribe_event_commits().unwrap();
+            let mut notifications = observe_commits(&store);
             fixture.db().execute_batch(&format!(
                 "CREATE TRIGGER reject_scheduler_control AFTER INSERT ON runtime_events
                  WHEN NEW.kind='{kind}' AND NEW.scope='system'
@@ -518,7 +519,7 @@ fn process_control_event_trigger_cannot_change_its_settings_or_queue_carrier() {
             assert_eq!(fixture.settings(), before_settings);
             assert_eq!(fixture.repo.list_managed_processes().unwrap(), before_processes);
             assert_eq!(fixture.events(), events);
-            assert!(matches!(notifications.try_recv(),
+            assert!(matches!(notifications.settled_try_recv(),
                 Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
             fixture.allow_event();
             mutate().unwrap();
@@ -526,12 +527,12 @@ fn process_control_event_trigger_cannot_change_its_settings_or_queue_carrier() {
             let saved_processes = fixture.repo.list_managed_processes().unwrap();
             let saved_events = fixture.events();
             assert_eq!(saved_events.len(), 1);
-            assert!(notifications.try_recv().is_ok());
+            assert!(notifications.wait().is_ok());
             mutate().unwrap();
             assert_eq!(fixture.settings(), saved_settings);
             assert_eq!(fixture.repo.list_managed_processes().unwrap(), saved_processes);
             assert_eq!(fixture.events(), saved_events);
-            assert!(matches!(notifications.try_recv(),
+            assert!(matches!(notifications.settled_try_recv(),
                 Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
         }
     }

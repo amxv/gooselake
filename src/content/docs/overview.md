@@ -93,7 +93,9 @@ Gooselake owns these responsibilities because clients are poor places to keep th
 - workspace-owned public agents with friendly aliases, immutable ownership and exact provider recreation policy
 - one-active-turn session coordination, mandatory onboarding and separate provider-native identity
 - durable logical-turn admission before provider dispatch, provenance, snapshots, approvals and terminal states
-- replayable system/workspace/agent/process events plus legacy team scopes
+- replayable system/workspace/agent/process events plus legacy team scopes,
+  with [Linux local-WAL cross-process live delivery](/docs/api#sse-and-replay-model)
+  and SQLite as the event and cursor authority
 - provider auth staging and provider readiness checks
 - durable process admission, scheduling, bounded per-stream log capture, restart reconciliation, and model completion delivery
 - durable agent messages and per-recipient delivery/retry/cancellation state, with legacy team compatibility during migration

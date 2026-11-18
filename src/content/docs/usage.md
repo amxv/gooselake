@@ -47,7 +47,7 @@ A well-behaved client:
 
 ## Reconnect and legacy compatibility
 
-SSE uses `after_seq` or `Last-Event-ID` to replay from the durable journal before live events. Global stream cursors are journal row IDs; scoped streams use per-resource sequence. Streams are **not** keyset list pages. In-process commit wakeups do not by themselves promise cross-process replication.
+SSE uses `after_seq` or `Last-Event-ID` to replay the durable journal before live events. Global and turn/message/operation subject streams use global journal row IDs; primary resource streams use their scope-local sequence. Streams are **not** keyset list pages. On the verified Linux local-WAL backend, separate-process commits wake idle streams without periodic database reads. Clients retain the last processed ID and follow the distinct replay and observer failure rules in [Events and recovery](/docs/events-and-recovery).
 
 The historical `/v1/sessions`, `/v1/teams`, and related tools are operator-facing compatibility surfaces during migration; new clients should not build a second independent team authority around them. Legacy unresolved sessions stay explicit until mapped/archived.
 

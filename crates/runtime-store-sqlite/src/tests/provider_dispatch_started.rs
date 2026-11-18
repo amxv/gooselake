@@ -196,7 +196,7 @@ fn positive_ack_journal_failure_rolls_all_projections_back_then_restart_replays_
     let store = SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: repository.database_path.clone(),
     });
-    let mut notifications = store.subscribe_event_commits().unwrap();
+    let mut notifications = observe_commits(&store);
     let connection = open_connection(&repository.database_path).unwrap();
     connection
         .execute_batch(
@@ -208,7 +208,7 @@ fn positive_ack_journal_failure_rolls_all_projections_back_then_restart_replays_
     assert!(commit(&repository, &bundle).is_err());
     assert_state(&repository, &bundle, false);
     assert!(matches!(
-        notifications.try_recv(),
+        notifications.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
     connection
@@ -219,12 +219,12 @@ fn positive_ack_journal_failure_rolls_all_projections_back_then_restart_replays_
     let first = commit(&restarted, &bundle).unwrap();
     assert_state(&restarted, &bundle, true);
     notifications
-        .try_recv()
+        .wait()
         .expect("committed journal should wake one subscriber");
     let second = commit(&repository, &bundle).unwrap();
     assert_eq!(first, second);
     assert!(matches!(
-        notifications.try_recv(),
+        notifications.settled_try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
 }

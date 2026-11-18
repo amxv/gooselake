@@ -160,6 +160,7 @@ async fn native_worktree_cleanup_is_exactly_receipted_and_replayed_across_restar
     fixture
         .store
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: fixture.worktree.id.clone(),
             session_id: independent_session.id.clone(),
             claim_role: "owner".into(),
@@ -208,7 +209,11 @@ async fn native_worktree_cleanup_is_exactly_receipted_and_replayed_across_restar
         .unwrap();
     assert_eq!(operation.operation.phase, OperationPhase::Completed);
     assert!(operation.claims.is_empty());
-    assert_eq!(operation.effects[0].phase, "finalized");
+    assert_eq!(operation.effects.len(), 2);
+    assert!(operation
+        .effects
+        .iter()
+        .all(|effect| effect.phase == "finalized" && effect.attempt_count == 1));
 
     let restarted = Arc::new(SqliteRuntimeStore::new(SqliteStoreConfig {
         database_path: fixture.temp.path().join("runtime.sqlite3"),
@@ -273,7 +278,7 @@ async fn native_worktree_cleanup_is_exactly_receipted_and_replayed_across_restar
 }
 
 #[tokio::test]
-async fn lost_terminal_sqlite_receipt_never_replays_git_and_reconciles_by_absence() {
+async fn lost_terminal_receipt_remains_unresolved_despite_absence() {
     let fixture = fixture().await;
     let db = rusqlite::Connection::open(fixture.temp.path().join("runtime.sqlite3")).unwrap();
     db.execute_batch(
@@ -314,8 +319,32 @@ async fn lost_terminal_sqlite_receipt_never_replays_git_and_reconciles_by_absenc
         .get_operation(&operation_id)
         .unwrap()
         .unwrap();
-    assert_eq!(pending.operation.phase, OperationPhase::Requested);
+    assert_eq!(pending.operation.phase, OperationPhase::ManualReview);
     assert_eq!(pending.claims.len(), 2);
+    let original: runtime_core::CheckoutRemovalGrant = serde_json::from_value(
+        pending.transitions[0].evidence.as_ref().unwrap()["checkout_grant"].clone(),
+    )
+    .unwrap();
+    assert!(pending.claims.contains(&original.binding.checkout_claim));
+    assert!(pending.claims.contains(&original.binding.branch_claim));
+    assert_eq!(
+        pending
+            .effects
+            .iter()
+            .find(|effect| effect.effect_kind == "git_worktree_remove")
+            .unwrap()
+            .phase,
+        "finalized"
+    );
+    assert_eq!(
+        pending
+            .effects
+            .iter()
+            .find(|effect| effect.effect_kind == "git_branch_delete")
+            .unwrap()
+            .phase,
+        "uncertain"
+    );
     assert!(matches!(
         fixture
             .service
@@ -331,8 +360,8 @@ async fn lost_terminal_sqlite_receipt_never_replays_git_and_reconciles_by_absenc
         Err(RuntimeError::OperationUnresolved { .. })
     ));
 
-    // A dangling symlink is not proof of a removed checkout. The replay
-    // guard must not accept it even with no Git branch left behind.
+    // Neither a dangling symlink nor later complete absence supplies an
+    // original action acknowledgement or releases the retained reservations.
     std::os::unix::fs::symlink("missing-worktree", &fixture.worktree.worktree_cwd).unwrap();
     assert!(matches!(
         fixture
@@ -362,28 +391,22 @@ async fn lost_terminal_sqlite_receipt_never_replays_git_and_reconciles_by_absenc
         },
     )
     .unwrap();
-    let recovered = service
-        .cleanup_worktree(request(&fixture.worktree.id))
-        .await
-        .unwrap();
-    assert_eq!(recovered.status, "deleted");
-    assert_eq!(
-        restarted
-            .repository()
-            .get_operation(&operation_id)
-            .unwrap()
-            .unwrap()
-            .operation
-            .phase,
-        OperationPhase::Completed
-    );
-    assert!(restarted
-        .repository()
-        .get_operation(&operation_id)
-        .unwrap()
-        .unwrap()
-        .claims
-        .is_empty());
+    for _ in 0..2 {
+        let result = service
+            .cleanup_worktree(request(&fixture.worktree.id))
+            .await;
+        assert!(
+            matches!(result,Err(RuntimeError::OperationUnresolved{operation_id: ref id,..}) if id==&operation_id)
+        );
+        assert_eq!(
+            restarted
+                .repository()
+                .get_operation(&operation_id)
+                .unwrap()
+                .unwrap(),
+            pending
+        );
+    }
     let lifecycle = restarted
         .list_runtime_events(
             Some((RuntimeEventScope::Worktree, &fixture.worktree.id)),
@@ -396,15 +419,19 @@ async fn lost_terminal_sqlite_receipt_never_replays_git_and_reconciles_by_absenc
             .iter()
             .filter(|event| event.kind == "worktree.cleaned_up")
             .count(),
-        1
+        0
     );
-    assert_eq!(
-        lifecycle
-            .iter()
-            .filter(|event| event.kind == "worktree.cleanup_admitted")
-            .count(),
-        1
-    );
+    for kind in [
+        "worktree.cleanup_admitted",
+        "worktree.checkout_removed",
+        "worktree.cleanup_held",
+    ] {
+        assert_eq!(
+            lifecycle.iter().filter(|event| event.kind == kind).count(),
+            1,
+            "{kind}"
+        );
+    }
     assert_eq!(cleanup_operation(&restarted), operation_id);
 }
 

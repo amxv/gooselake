@@ -47,6 +47,7 @@ macro_rules! route_table {
                 "/worktrees" => post(create_worktree).get(list_worktrees);
                 "/worktrees/{worktree_id}" => get(get_worktree);
                 "/worktrees/{worktree_id}/claims" => post(claim_worktree);
+                "/worktrees/{worktree_id}/claims/{session_id}" => get(get_worktree_claim);
                 "/worktrees/{worktree_id}/release" => post(release_worktree);
                 "/worktrees/{worktree_id}/cleanup" => post(cleanup_worktree);
                 "/diagnostics" => get(runtime_diagnostics);

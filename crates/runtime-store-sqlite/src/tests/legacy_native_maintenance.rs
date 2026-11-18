@@ -5,7 +5,6 @@ use super::*;
 use runtime_core::{
     ManagedWorktreeClaimTransition::{Claim, Release},
     ManagedWorktreeCleanupAdmission, ManagedWorktreeCleanupCommand, RuntimeError,
-    WorktreeCleanupResponse,
 };
 
 fn blocked(error: RuntimeError) {
@@ -227,25 +226,12 @@ fn first_native_cleanup_authority_refuses_without_releasing_any_history() {
 #[test]
 fn known_cleanup_result_and_exact_receipt_do_not_require_native_reexecution() {
     let (temp, repo, command) = cleanup_fixture();
-    assert!(matches!(
-        repo.admit_managed_worktree_cleanup(&command).unwrap(),
-        ManagedWorktreeCleanupAdmission::Execute { .. }
-    ));
+    let (ack, _) = super::worktree_cleanup_receipts::original_branch_ack(&repo, &command);
     let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    // This late blocker cannot revoke the result of an already granted
+    // original branch invocation. It would prohibit a new branch grant.
     legacy(&db, "planned", "not-json", false);
-    // Inject a known native result through the real settlement writer. This
-    // asserts database receipt behavior, never actual filesystem absence.
-    let receipt = WorktreeCleanupResponse {
-        worktree_id: command.worktree.id.clone(),
-        status: "deleted".into(),
-        deletion_policy: "delete_on_last_claim".into(),
-        active_claim_count: 0,
-        worktree_path_deleted: true,
-        branch_deleted: true,
-        diagnostics: vec![],
-    };
-    repo.complete_managed_worktree_cleanup(&command.operation_id, &receipt, 300)
-        .unwrap();
+    let receipt = repo.acknowledge_managed_branch_deletion(&ack).unwrap();
     let before = raw_state(&db);
     match repo.admit_managed_worktree_cleanup(&command).unwrap() {
         ManagedWorktreeCleanupAdmission::Replay {

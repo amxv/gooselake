@@ -66,7 +66,7 @@ provider rebind and edit records retain their specialized detail routes.
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/onboarding` (Bearer; durable system notice, correlation and dispatch outcome)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree` (Bearer, JSON; mandatory `expected_revision`, optional matching strong `If-Match` with typed `412` mismatch, optional `Idempotency-Key`, revisioned provider-evidence-backed rebind returning new agent `ETag` and `X-Operation-ID`; ambiguous native results return typed `409` with `error.details.operation_id` and `X-Operation-ID`, including same-key retry without redispatch)
 - `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}` (Bearer, durable provider-rebind status)
-- `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup` (Bearer; no request options (`{}` legacy-compatible); rejects `Idempotency-Key` until an exact retry receipt exists; retry pending previous-worktree cleanup after verified rebind, without repeating provider dispatch)
+- `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup` (Bearer; no request options (`{}` legacy-compatible); rejects `Idempotency-Key`; reconsider pre-admission safety blockers or replay completed previous-worktree cleanup after verified rebind; never repeat provider dispatch or redispatch an admitted uncertain Git action)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/archive` (Bearer, strict JSON `{"reason":string|null}`; unknown properties rejected; optional operator-scoped `Idempotency-Key`, durable pre-close native intent, exact successful/no-op receipt and agent `ETag`/`X-Operation-ID` even on one-shot unkeyed requests. Only matching strong native close evidence permits atomic session+roster+lead+notice+receipt commit. An unknown/native-mismatched close, SQL receipt failure or crash retains the original exclusive claim in `manual_review`, returns `409 outcome_unresolved`, and never dispatches a second native close on same-key replay)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/archives/{operation_id}/resolve` (Bearer, strict historical `closed|not_closed` shape, bounded evidence and exact original attachment/revision/time; `not_closed` requires observed native references. Optional matching strong `If-Match`, rejects `Idempotency-Key`. Fresh prose returns original `409 outcome_unresolved` and retains roster/session/claim/parent authority. Exact historical terminal review replay is read-only)
 - `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/restore` (Bearer; no request options (`{}` legacy-compatible); optional operator-scoped `Idempotency-Key`, durable native resume intent and exact success/no-op receipt, agent `ETag`, `X-Operation-ID` even on a server-keyed unkeyed request. An unknown native resume, failed atomic SQL receipt, or crash yields durable `manual_review`, `409 outcome_unresolved` with operation ID, and never re-invokes the provider on a same-key replay)
@@ -334,8 +334,9 @@ Process scheduler mutations are durable. `POST /v1/processes/scheduler` accepts 
 - `GET /v1/worktrees` (Bearer)
 - `GET /v1/worktrees/{worktree_id}` (Bearer)
 - `POST /v1/worktrees/{worktree_id}/claims` (Bearer)
-- `POST /v1/worktrees/{worktree_id}/release` (Bearer)
-- `POST /v1/worktrees/{worktree_id}/cleanup` (Bearer)
+- `GET /v1/worktrees/{worktree_id}/claims/{session_id}` (Bearer; read-only exact current claim and persisted lifetime token; 404 for a missing/tombstoned worktree or missing claim)
+- `POST /v1/worktrees/{worktree_id}/release` (Bearer; required `session_id` and `expected_claim_generation` in `1..=9223372036854775807`; stale lifetime returns 409 before mutation or terminal replay; missing/null token returns 422)
+- `POST /v1/worktrees/{worktree_id}/cleanup` (Bearer; original checkout-removal and branch-deletion receipts are required; pending or `manual_review` operations are not redispatched or settled from absence)
 
 ## Diagnostics
 

@@ -273,9 +273,10 @@ fn stale_explicit_release_must_not_release_newer_journaled_reclaim() {
         created_at: 200,
         ..claim.clone()
     };
-    writer
+    let newer = writer
         .transition_managed_worktree_claim(&newer, Claim)
         .unwrap();
+    assert_eq!(newer.claim_generation, Some(2));
     let stale_release = ManagedWorktreeClaimRecord {
         released_at: Some(300),
         ..observed.clone()
@@ -372,6 +373,7 @@ fn stale_explicit_release_conflicts_with_independent_os_process_reclaim() {
     );
     let newer = ManagedWorktreeClaimRecord {
         created_at: 200,
+        claim_generation: Some(observed.claim_generation.unwrap() + 1),
         ..old.clone()
     };
     let release = ManagedWorktreeClaimRecord {
@@ -537,9 +539,10 @@ fn stale_generic_member_removal_release_must_not_revoke_journaled_reclaim() {
         created_at: 200,
         ..claim.clone()
     };
-    writer
+    let newer = writer
         .transition_managed_worktree_claim(&newer, Claim)
         .unwrap();
+    assert_eq!(newer.claim_generation, Some(2));
 
     let stale_release = ManagedWorktreeClaimRecord {
         released_at: Some(300),
@@ -583,9 +586,10 @@ fn stale_generic_release_rejects_different_claim_role_after_reclaim() {
         claim_role: "consumer".into(),
         ..claim.clone()
     };
-    writer
+    let newer = writer
         .transition_managed_worktree_claim(&newer, Claim)
         .unwrap();
+    assert_eq!(newer.claim_generation, Some(2));
     let stale = ManagedWorktreeClaimRecord {
         released_at: Some(300),
         ..claim.clone()

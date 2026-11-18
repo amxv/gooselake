@@ -132,21 +132,23 @@ pub(crate) fn guard_legacy_native_repairs(
         }
     }
     for claim in claims {
-        let current: Option<(String, i64, Option<i64>)> = connection
+        let current: Option<(String, i64, Option<i64>, i64)> = connection
             .query_row(
-                "SELECT claim_role,created_at,released_at FROM managed_worktree_claims
+                "SELECT claim_role,created_at,released_at,claim_generation FROM managed_worktree_claims
              WHERE worktree_id=?1 AND session_id=?2",
                 params![claim.worktree_id, claim.session_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
             .map_err(|error| db_error("failed comparing guarded historical claim", error))?;
         if current
             .as_ref()
-            .is_some_and(|(role, created_at, released_at)| {
+            .is_some_and(|(role, created_at, released_at, generation)| {
                 role == &claim.claim_role
                     && *created_at == claim.created_at
                     && *released_at == claim.released_at
+                    && *generation > 0
+                    && u64::try_from(*generation).ok() == claim.claim_generation
             })
         {
             continue;

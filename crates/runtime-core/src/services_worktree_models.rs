@@ -114,6 +114,8 @@ pub enum ManagedWorktreeClaimTransition {
 pub struct WorktreeReleaseRequest {
     pub worktree_id: String,
     pub session_id: String,
+    /// Required observed exact-key lifetime; never replaced by a fresh lookup.
+    pub expected_claim_generation: u64,
     pub cleanup_if_last_claim: Option<bool>,
 }
 
@@ -143,7 +145,7 @@ pub struct WorktreeCleanupResponse {
 }
 
 /// One immutable native cleanup intent per managed checkout generation. A
-/// pending receipt fences retries until independent native evidence is read.
+/// pending receipt fences retries; only original action acknowledgements advance it.
 #[derive(Debug, Clone)]
 pub struct ManagedWorktreeCleanupCommand {
     pub operation_id: String,
@@ -155,7 +157,7 @@ pub struct ManagedWorktreeCleanupCommand {
 #[derive(Debug, Clone)]
 pub enum ManagedWorktreeCleanupAdmission {
     Execute {
-        operation_id: String,
+        grant: CheckoutRemovalGrant,
     },
     Unresolved {
         operation_id: String,
@@ -164,6 +166,73 @@ pub enum ManagedWorktreeCleanupAdmission {
         operation_id: String,
         response: WorktreeCleanupResponse,
     },
+}
+
+/// Internal execution authority, never an operator settlement request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagedCleanupTarget {
+    pub worktree_id: String,
+    pub worktree_created_at: i64,
+    pub repo_root: String,
+    pub checkout_path: String,
+    pub branch_name: String,
+    pub deletion_policy: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ManagedCleanupBinding {
+    pub version: u32,
+    pub operation_id: String,
+    pub target: ManagedCleanupTarget,
+    pub reason: Option<String>,
+    pub requested_at: i64,
+    pub normalized_request_hash: String,
+    pub checkout_claim: crate::OperationResourceClaimRecord,
+    pub branch_claim: crate::OperationResourceClaimRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckoutRemovalGrant {
+    pub binding: ManagedCleanupBinding,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckoutRemovalAck {
+    pub grant: CheckoutRemovalGrant,
+    pub exit_code: i32,
+    pub observed_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchDeletionGrant {
+    pub binding: ManagedCleanupBinding,
+    pub checkout_receipt_hash: String,
+    pub granted_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchDeletionAck {
+    pub grant: BranchDeletionGrant,
+    pub exit_code: i32,
+    pub observed_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub enum ManagedCleanupBranchAdmission {
+    Execute { grant: BranchDeletionGrant },
+    Unresolved { operation_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ManagedCleanupAttempt {
+    Checkout(CheckoutRemovalGrant),
+    Branch(BranchDeletionGrant),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ManagedCleanupObservation {
+    Exited { code: i32 },
+    Unknown { diagnostic: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

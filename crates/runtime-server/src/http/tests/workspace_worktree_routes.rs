@@ -526,6 +526,16 @@ async fn ambiguous_or_unverified_rebind_is_durably_fenced_and_cannot_run_another
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(exact["phase"], "manual_review");
+    let (status, observed_claim) = call(
+        &router,
+        &token,
+        "GET",
+        &format!("/v1/worktrees/wt_linked/claims/{}", agent.agent_id),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     let (status, _) = call(
         &router,
         &token,
@@ -533,6 +543,7 @@ async fn ambiguous_or_unverified_rebind_is_durably_fenced_and_cannot_run_another
         "/v1/worktrees/wt_linked/release",
         Some(serde_json::json!({
             "session_id": agent.agent_id,
+            "expected_claim_generation": observed_claim["claim_generation"],
             "cleanup_if_last_claim": true,
         })),
         None,
@@ -835,6 +846,12 @@ async fn unresolved_destination_reservation_survives_worktree_service_restart() 
         .release_worktree(runtime_core::WorktreeReleaseRequest {
             worktree_id: "wt_linked".into(),
             session_id: agent.agent_id.clone(),
+            expected_claim_generation: active
+                .iter()
+                .find(|claim| claim.worktree_id == "wt_linked")
+                .unwrap()
+                .claim_generation
+                .unwrap(),
             cleanup_if_last_claim: Some(true),
         })
         .await;

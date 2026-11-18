@@ -294,8 +294,26 @@ curl -fsS -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
   -d '{"session_id":"'"$SESSION_ID"'","claim_role":"owner"}' \
   "$BASE_URL/v1/worktrees/$WORKTREE_ID/claims"
 
+RELEASE_BODY="$(
+  set -o pipefail
+  curl -fsS "${AUTH[@]}" \
+    "$BASE_URL/v1/worktrees/$WORKTREE_ID/claims/$SESSION_ID" |
+  python3 -c '
+import json, sys
+claim = json.load(sys.stdin)
+generation = claim.get("claim_generation")
+if type(generation) is not int or not 1 <= generation <= 9223372036854775807:
+    raise SystemExit("The observed claim has no valid lifetime token")
+print(json.dumps({
+    "session_id": claim["session_id"],
+    "expected_claim_generation": generation,
+    "cleanup_if_last_claim": True
+}))
+'
+)" || exit 1
+
 curl -fsS -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
-  -d '{"session_id":"'"$SESSION_ID"'","cleanup_if_last_claim":true}' \
+  -d "$RELEASE_BODY" \
   "$BASE_URL/v1/worktrees/$WORKTREE_ID/release"
 
 curl -fsS -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
@@ -303,7 +321,18 @@ curl -fsS -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
   "$BASE_URL/v1/worktrees/$WORKTREE_ID/cleanup"
 ```
 
-Cleanup can delete the worktree path and branch depending on policy and active claims. Diagnostics are returned in the cleanup response; do not ignore them.
+The claim GET prepares a new release request. Retain `RELEASE_BODY` unchanged
+when retrying that request. HTTP 409 means its observed lifetime is stale or
+another safety fence applies; do not silently refresh the token and release a
+newer claim. Missing/null tokens return 422; release requires a positive signed
+64-bit generation. Claim release does not itself prove cleanup completed.
+
+Cleanup requires its original checkout-removal and branch-deletion
+acknowledgments in order. Unknown or incomplete outcomes retain their operation
+and reservations for inspection. Later path or branch absence does not authorize
+completion or another deletion attempt. A pre-admission safety blocker may be
+reconsidered and a completed receipt may be replayed; an admitted unknown action
+is not redispatched. Inspect returned diagnostics and the original operation.
 
 ## Legacy `/v1` teams and deliveries
 

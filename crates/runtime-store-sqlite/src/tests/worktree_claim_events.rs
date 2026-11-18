@@ -27,6 +27,7 @@ pub(super) fn fixture() -> (
         })
         .unwrap();
     let claim = ManagedWorktreeClaimRecord {
+        claim_generation: Some(1),
         worktree_id: "wt_claim_event".into(),
         session_id: "session_1".into(),
         claim_role: "owner".into(),
@@ -190,9 +191,10 @@ fn historical_claim_repair_preserves_journaled_active_reclaim_and_unrelated_lega
         released_at: None,
         ..legacy.clone()
     };
-    repository
+    let reclaimed = repository
         .transition_managed_worktree_claim(&reclaimed, Claim)
         .unwrap();
+    assert_eq!(reclaimed.claim_generation, Some(2));
     let before = repository
         .list_runtime_events(
             Some((RuntimeEventScope::Worktree, &claim.worktree_id)),
@@ -747,12 +749,17 @@ fn claim_release_and_reclaim_are_atomic_exact_once_and_restart_safe() {
         released_at: None,
         ..claim
     };
+    let activated = restarted
+        .transition_managed_worktree_claim(&reclaimed, Claim)
+        .unwrap();
     assert_eq!(
-        restarted
-            .transition_managed_worktree_claim(&reclaimed, Claim)
-            .unwrap(),
-        reclaimed
+        activated,
+        ManagedWorktreeClaimRecord {
+            claim_generation: Some(2),
+            ..reclaimed
+        }
     );
+    let reclaimed = activated;
     let rows = restarted
         .list_runtime_events(
             Some((RuntimeEventScope::Worktree, "wt_claim_event")),

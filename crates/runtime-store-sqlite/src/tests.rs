@@ -82,13 +82,19 @@ mod workspace_retirement_review_turns;
 mod workspace_retirement_routes;
 mod workspace_status_roster;
 mod worktree_claim_events;
+mod worktree_claim_generation;
+mod worktree_claim_generation_limits;
 mod worktree_claim_session_projection_scale;
+mod worktree_cleanup_historical_replay;
+mod worktree_cleanup_protocol;
+mod worktree_cleanup_protocol_faults;
 mod worktree_cleanup_receipts;
 mod worktree_create_snapshot;
 mod worktree_diagnostics_scale;
 mod worktree_explicit_release;
 mod worktree_identity_policy_preflight;
 mod worktree_member_removal_claims_projection;
+mod worktree_rebind_claim_generation;
 mod worktree_record_events;
 mod worktree_status_projection;
 mod worktree_status_stream;
@@ -720,6 +726,7 @@ fn hydrate_runtime_state_round_trips_core_entities() {
         .expect("insert worktree");
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "wt_1".to_string(),
             session_id: session.id.clone(),
             claim_role: "owner".to_string(),

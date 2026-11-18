@@ -150,6 +150,7 @@ async fn startup_repair_normalizes_identity_and_repairs_conflicting_claims() {
     store.upsert_managed_worktree(&loser).expect("loser");
     store
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "wt_1".to_string(),
             session_id: "session_a".to_string(),
             claim_role: "owner".to_string(),
@@ -159,6 +160,7 @@ async fn startup_repair_normalizes_identity_and_repairs_conflicting_claims() {
         .expect("claim winner");
     store
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "wt_2".to_string(),
             session_id: "session_a".to_string(),
             claim_role: "consumer".to_string(),
@@ -219,6 +221,7 @@ async fn healthy_worktree_startup_does_not_rewrite_unchanged_authority_or_claims
     };
     store.upsert_managed_worktree(&worktree).unwrap();
     let claim = ManagedWorktreeClaimRecord {
+        claim_generation: Some(1),
         worktree_id: worktree.id.clone(),
         session_id: session.id,
         claim_role: "owner".into(),

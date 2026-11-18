@@ -256,7 +256,7 @@ async fn persist_test_history(
     assert!(previous.is_none());
 }
 
-async fn build_runtime_and_team_comms(
+pub(crate) async fn build_runtime_and_team_comms(
     store: Arc<SqliteRuntimeStore>,
 ) -> (Arc<RuntimeSessionManager>, Arc<RuntimeTeamCommsService>) {
     build_runtime_and_team_comms_with_history(store, &[]).await

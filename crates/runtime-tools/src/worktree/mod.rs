@@ -9,16 +9,22 @@ use runtime_core::{
     RuntimeStore, TeamCommsService,
 };
 
+mod cleanup_execution;
 mod core;
 mod member_create;
 mod member_removed;
 mod native_create;
 mod service;
 mod spawn_guard;
+mod startup_claims;
 mod workspace_create;
 
 #[cfg(test)]
+mod cleanup_execution_tests;
+#[cfg(test)]
 mod startup_atomic_tests;
+#[cfg(test)]
+mod startup_claims_tests;
 
 pub struct RuntimeWorktreeService {
     pub(super) store: Arc<dyn RuntimeStore>,
@@ -72,11 +78,6 @@ impl RuntimeWorktreeService {
         hydrated: &runtime_core::RuntimeHydratedState,
     ) -> Result<(), RuntimeError> {
         let now = now_ms();
-        let mut session_ids = BTreeSet::new();
-        for session in &hydrated.sessions {
-            session_ids.insert(session.id.trim().to_string());
-        }
-
         let original_records_by_id = hydrated
             .managed_worktrees
             .iter()
@@ -160,14 +161,13 @@ impl RuntimeWorktreeService {
             // A restart is not a new native worktree mutation. Re-upserting
             // unchanged records increments their persisted revisions and can
             // overwrite another writer's newer row after snapshot hydration.
-            let Some(original) = normalized_records_by_id.get(&winner.id) else {
+            let Some(_original) = normalized_records_by_id.get(&winner.id) else {
                 return Err(RuntimeError::Conflict(
                     "historical worktree normalization lost its source record".into(),
                 ));
             };
-            if original == winner {
-                continue;
-            }
+            // Unchanged winners still authorize alias remapping and claim
+            // selection. Validate their raw snapshot; the store skips no-op writes.
             let source = original_records_by_id
                 .get(winner.id.as_str())
                 .ok_or_else(|| {
@@ -203,137 +203,16 @@ impl RuntimeWorktreeService {
             }
         }
 
-        let mut winner_created_at = BTreeMap::<String, i64>::new();
-        for (id, record) in &merged_winners {
-            winner_created_at.insert(id.clone(), record.created_at);
-        }
-
-        let mut claim_by_key = BTreeMap::<(String, String), ManagedWorktreeClaimRecord>::new();
-        let mut claims_changed = Vec::<ManagedWorktreeClaimRecord>::new();
-        for original in &hydrated.managed_worktree_claims {
-            let mut claim = original.clone();
-            claim.worktree_id = claim.worktree_id.trim().to_string();
-            claim.session_id = claim.session_id.trim().to_string();
-            claim.claim_role = claim.claim_role.trim().to_string();
-            if claim.claim_role.is_empty() {
-                claim.claim_role = "consumer".to_string();
-            }
-            if claim.worktree_id.is_empty() || claim.session_id.is_empty() {
-                if claim.released_at.is_none() {
-                    claim.released_at = Some(now);
-                }
-                claims_changed.push(claim);
-                continue;
-            }
-            let original_worktree_id = claim.worktree_id.clone();
-            if let Some(winner_id) = loser_to_winner.get(claim.worktree_id.as_str()) {
-                claim.worktree_id = winner_id.clone();
-                let mut stale_original = claim.clone();
-                stale_original.worktree_id = original_worktree_id;
-                if stale_original.released_at.is_none() {
-                    stale_original.released_at = Some(now);
-                }
-                claims_changed.push(stale_original);
-            }
-            let worktree_exists = merged_winners.contains_key(claim.worktree_id.as_str());
-            let session_exists = session_ids.contains(claim.session_id.as_str());
-            if !(worktree_exists && session_exists) && claim.released_at.is_none() {
-                claim.released_at = Some(now);
-            }
-
-            let key = (claim.worktree_id.clone(), claim.session_id.clone());
-            match claim_by_key.get_mut(&key) {
-                Some(existing) => {
-                    existing.created_at = existing.created_at.min(claim.created_at);
-                    existing.claim_role = Self::merge_claim_role(
-                        existing.claim_role.as_str(),
-                        claim.claim_role.as_str(),
-                    );
-                    existing.released_at =
-                        Self::merge_released_at(existing.released_at, claim.released_at);
-                }
-                None => {
-                    claim_by_key.insert(key, claim);
-                }
-            }
-        }
-
-        let mut active_claims_by_session =
-            BTreeMap::<String, Vec<ManagedWorktreeClaimRecord>>::new();
-        for claim in claim_by_key.values() {
-            if claim.released_at.is_none() {
-                active_claims_by_session
-                    .entry(claim.session_id.clone())
-                    .or_default()
-                    .push(claim.clone());
-            }
-        }
-
-        for claims in active_claims_by_session.values_mut() {
-            claims.sort_by(|left, right| {
-                let left_created_at = winner_created_at
-                    .get(left.worktree_id.as_str())
-                    .copied()
-                    .unwrap_or(i64::MAX);
-                let right_created_at = winner_created_at
-                    .get(right.worktree_id.as_str())
-                    .copied()
-                    .unwrap_or(i64::MAX);
-                left_created_at
-                    .cmp(&right_created_at)
-                    .then_with(|| left.worktree_id.cmp(&right.worktree_id))
-            });
-            // One authoritative previous route and one pending destination
-            // reservation legitimately coexist while a provider rebind is
-            // unresolved. Releasing the reservation here would make an
-            // in-flight/ambiguous native destination eligible for cleanup.
-            let mut saw_primary_claim = false;
-            for losing in claims.iter() {
-                if losing.claim_role == "rebind_reservation" {
-                    continue;
-                }
-                if !saw_primary_claim {
-                    saw_primary_claim = true;
-                    continue;
-                }
-                let key = (losing.worktree_id.clone(), losing.session_id.clone());
-                if let Some(existing) = claim_by_key.get_mut(&key) {
-                    if existing.released_at.is_none() {
-                        existing.released_at = Some(now);
-                    }
-                }
-            }
-        }
-
-        let prior_claims = hydrated
-            .managed_worktree_claims
-            .iter()
-            .map(|claim| {
-                (
-                    (claim.worktree_id.as_str(), claim.session_id.as_str()),
-                    claim,
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        let mut claim_repairs = Vec::<ManagedWorktreeClaimRecord>::new();
-        for claim in claim_by_key.into_values().chain(claims_changed) {
-            // Never rewrite identical historical claim authority on a clean
-            // restart: an independent writer may have since committed a
-            // release or a new rebind reservation. Changed legacy repairs
-            // compare the full raw hydrated claim sources under the writer
-            // lock; value snapshots are not generation-aware ABA protection.
-            if prior_claims.get(&(claim.worktree_id.as_str(), claim.session_id.as_str()))
-                == Some(&&claim)
-            {
-                continue;
-            }
-            claim_repairs.push(claim);
-        }
+        let claim_repairs = startup_claims::plan(hydrated, &merged_winners, &loser_to_winner, now)?;
         // Both plans derive from the same pre-startup hydrate. One SQLite
         // writer transaction must check and commit BOTH changed records and
         // claims or neither; a stale claim must not leave a merged winner or
         // tombstoned loser behind. Native Git is necessarily outside this.
-        if !record_repairs.is_empty() || !claim_repairs.is_empty() {
+        if record_repairs
+            .iter()
+            .any(|(original, repaired)| *original != repaired)
+            || !claim_repairs.is_empty()
+        {
             store.repair_historical_worktree_startup_atomically(
                 &record_repairs,
                 &hydrated.managed_worktree_claims,
@@ -372,14 +251,6 @@ impl RuntimeWorktreeService {
             "owner".to_string()
         } else {
             "consumer".to_string()
-        }
-    }
-
-    fn merge_released_at(left: Option<i64>, right: Option<i64>) -> Option<i64> {
-        match (left, right) {
-            (None, None) => None,
-            (Some(value), None) | (None, Some(value)) => Some(value),
-            (Some(left), Some(right)) => Some(left.min(right)),
         }
     }
 
@@ -584,6 +455,7 @@ mod startup_snapshot_tests {
         };
         reader.upsert_managed_worktree(&record).unwrap();
         let claim = ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: record.id.clone(),
             session_id: "snapshot_session".into(),
             claim_role: "owner".into(),
@@ -668,6 +540,7 @@ mod startup_snapshot_tests {
         };
         reader.upsert_managed_worktree(&worktree).unwrap();
         let legacy_claim = ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: worktree.id.clone(),
             session_id: "changed_session".into(),
             claim_role: " owner ".into(),
@@ -750,6 +623,7 @@ mod startup_snapshot_tests {
         };
         reader.upsert_managed_worktree(&worktree).unwrap();
         let earlier = ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: worktree.id.clone(),
             session_id: "claim_a".into(),
             claim_role: " owner ".into(),
@@ -841,6 +715,7 @@ mod startup_snapshot_tests {
         };
         reader.upsert_managed_worktree(&worktree).unwrap();
         let legacy = ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: worktree.id.clone(),
             session_id: "reclaim_session".into(),
             claim_role: " owner ".into(),
@@ -868,9 +743,10 @@ mod startup_snapshot_tests {
             released_at: None,
             ..legacy
         };
-        writer
+        let reclaimed = writer
             .transition_managed_worktree_claim(&reclaimed, ManagedWorktreeClaimTransition::Claim)
             .unwrap();
+        assert_eq!(reclaimed.claim_generation, Some(2));
         let original_events = writer
             .list_runtime_events(Some((RuntimeEventScope::Worktree, &worktree.id)), None, 10)
             .unwrap();
@@ -925,6 +801,7 @@ mod startup_snapshot_tests {
         };
         reader.upsert_managed_worktree(&worktree).unwrap();
         let legacy = ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: worktree.id.clone(),
             session_id: "unlogged_claim_session".into(),
             claim_role: " owner ".into(),

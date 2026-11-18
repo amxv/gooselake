@@ -236,6 +236,7 @@ async fn unresolved_root_rebind_fences_new_direct_claim_transaction_without_a_de
         database_path: db_path,
     });
     let claim = runtime_core::ManagedWorktreeClaimRecord {
+        claim_generation: Some(1),
         worktree_id: "wt_linked".into(),
         session_id: agent.agent_id.clone(),
         claim_role: "consumer".into(),

@@ -105,6 +105,7 @@ mod repository_workspace_retirement_turns;
 mod repository_workspace_status_roster;
 mod repository_workspace_worktree_creation;
 mod repository_worktree_claim_events;
+mod repository_worktree_claim_generation;
 mod repository_worktree_cleanup;
 mod repository_worktree_diagnostics;
 mod repository_worktree_record_events;

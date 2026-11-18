@@ -546,6 +546,108 @@ fn verified_native_close_and_passive_settlement_are_required_for_retirement_fina
 }
 
 #[test]
+fn retirement_worktree_release_preserves_maximum_claim_lifetime_and_terminal_retry() {
+    let (temp, repo, workspace) = setup();
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    let worktree = ManagedWorktreeRecord {
+        id: "retirement-claim".into(),
+        repo_root: workspace.canonical_root.clone(),
+        worktree_root: format!("{}/managed", workspace.canonical_root),
+        worktree_cwd: format!("{}/managed/retirement", workspace.canonical_root),
+        branch_name: "gg/retirement".into(),
+        worktree_name: "retirement".into(),
+        unified_workspace_path: "retirement".into(),
+        deletion_policy: "retain_on_last_claim".into(),
+        created_by_session_id: None,
+        created_by_operation_id: None,
+        created_at: 10,
+        updated_at: 10,
+    };
+    repo.upsert_managed_worktree(&worktree).unwrap();
+    let native = SessionRecord {
+        cwd: Some(worktree.worktree_cwd.clone()),
+        worktree_id: Some(worktree.id.clone()),
+        status: "ready".into(),
+        active_turn_id: None,
+        provider_session_ref: Some("inert-retirement-native".into()),
+        ..sample_session()
+    };
+    repo.upsert_session(&native).unwrap();
+    db.execute("INSERT INTO workspace_session_ownership(session_id,workspace_id,source,created_at) VALUES(?1,?2,'fixture',1)",
+        params![native.id,workspace.workspace_id]).unwrap();
+    repo.upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+        worktree_id: worktree.id.clone(),
+        session_id: native.id.clone(),
+        claim_role: "owner".into(),
+        created_at: 100,
+        released_at: None,
+        claim_generation: None,
+    })
+    .unwrap();
+    db.execute(
+        "UPDATE managed_worktree_claims SET claim_generation=?1 WHERE worktree_id=?2",
+        params![i64::MAX, worktree.id],
+    )
+    .unwrap();
+    let original = repo
+        .get_managed_worktree_claim(&worktree.id, &native.id)
+        .unwrap()
+        .unwrap();
+    let command = retirement_command(&workspace, "retirement-max-claim");
+    let plan = match repo.admit_workspace_retirement(&command).unwrap() {
+        WorkspaceRetirementAdmission::New(plan) => plan,
+        other => panic!("{other:?}"),
+    };
+    repo.settle_passive_workspace_retirement(&plan.operation_id, 200)
+        .unwrap();
+    assert_eq!(
+        repo.get_managed_worktree_claim(&worktree.id, &native.id)
+            .unwrap(),
+        Some(original.clone())
+    );
+    let attempt = repo
+        .claim_workspace_retirement_native_close(&plan.operation_id, &native.id, 210)
+        .unwrap();
+    repo.finalize_workspace_retirement_native_close(
+        &attempt,
+        &ProviderRetirementCloseEvidence {
+            runtime_session_id: native.id.clone(),
+            provider_session_ref: "inert-retirement-native".into(),
+            proof_kind: ProviderRetirementCloseProofKind::NativeSessionCloseAcknowledged,
+        },
+        220,
+    )
+    .unwrap();
+    repo.settle_passive_workspace_retirement(&plan.operation_id, 230)
+        .unwrap();
+    let released = repo
+        .get_managed_worktree_claim(&worktree.id, &native.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        released,
+        ManagedWorktreeClaimRecord {
+            released_at: Some(230),
+            ..original
+        }
+    );
+    let before = super::legacy_native_turn_guards::raw_state(&db);
+    repo.settle_passive_workspace_retirement(&plan.operation_id, 240)
+        .unwrap();
+    assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
+    assert_eq!(released.claim_generation, Some(i64::MAX as u64));
+    assert!(repo
+        .finalize_settled_workspace_retirement(&plan.operation_id, 250)
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        repo.get_managed_worktree_claim(&worktree.id, &native.id)
+            .unwrap(),
+        Some(released)
+    );
+}
+
+#[test]
 fn unknown_provider_close_stays_frozen_and_cannot_claim_terminal_success() {
     let (temp, repo, workspace) = setup();
     let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();

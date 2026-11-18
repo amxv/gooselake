@@ -102,6 +102,12 @@ async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_
     );
     let store = SqliteRuntimeStore::new(SqliteStoreConfig { database_path });
     assert!(store.hydrate_runtime_state().is_err());
+    let generation = store
+        .get_managed_worktree_claim("wt_guarded", &session_id)
+        .unwrap()
+        .unwrap()
+        .claim_generation
+        .unwrap();
     let count = |table: &str| -> i64 {
         db.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
             row.get(0)
@@ -117,7 +123,7 @@ async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_
     let cases = [
         (
             "/v1/worktrees/wt_not_found/release".to_string(),
-            serde_json::json!({"session_id":session_id, "cleanup_if_last_claim":false}),
+            serde_json::json!({"session_id":session_id, "expected_claim_generation":generation,"cleanup_if_last_claim":false}),
         ),
         (
             "/v1/worktrees/wt_not_found/cleanup".to_string(),
@@ -125,7 +131,7 @@ async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_
         ),
         (
             "/v1/worktrees/wt_tombstoned/release".to_string(),
-            serde_json::json!({"session_id":session_id, "cleanup_if_last_claim":false}),
+            serde_json::json!({"session_id":session_id, "expected_claim_generation":generation,"cleanup_if_last_claim":false}),
         ),
         (
             "/v1/worktrees/wt_tombstoned/cleanup".to_string(),
@@ -133,11 +139,11 @@ async fn missing_legacy_release_and_cleanup_ids_do_not_decode_unrelated_corrupt_
         ),
         (
             "/v1/worktrees/wt_guarded/release".to_string(),
-            serde_json::json!({"session_id":unclaimed_id,"cleanup_if_last_claim":false}),
+            serde_json::json!({"session_id":unclaimed_id,"expected_claim_generation":generation,"cleanup_if_last_claim":false}),
         ),
         (
             "/v1/worktrees/wt_guarded/release".to_string(),
-            serde_json::json!({"session_id":session_id,"cleanup_if_last_claim":false}),
+            serde_json::json!({"session_id":session_id,"expected_claim_generation":generation,"cleanup_if_last_claim":false}),
         ),
         (
             "/v1/worktrees/wt_guarded/cleanup".to_string(),

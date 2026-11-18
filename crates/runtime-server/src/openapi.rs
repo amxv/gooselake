@@ -215,8 +215,9 @@ fn operation_summary(path: &str, method: HttpMethod) -> String {
         (HttpMethod::Get, "/v1/worktrees") => "List worktrees".to_string(),
         (HttpMethod::Get, "/v1/worktrees/{worktree_id}") => "Get worktree".to_string(),
         (HttpMethod::Post, "/v1/worktrees/{worktree_id}/claims") => "Claim worktree".to_string(),
+        (HttpMethod::Get, "/v1/worktrees/{worktree_id}/claims/{session_id}") => "Read exact worktree claim lifetime".to_string(),
         (HttpMethod::Post, "/v1/worktrees/{worktree_id}/release") => {
-            "Release worktree claim".to_string()
+            "Release observed worktree claim lifetime".to_string()
         }
         (HttpMethod::Post, "/v1/worktrees/{worktree_id}/cleanup") => "Cleanup worktree".to_string(),
         (HttpMethod::Get, "/v1/diagnostics") => "Runtime diagnostics summary".to_string(),

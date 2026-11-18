@@ -626,7 +626,7 @@ async fn legacy_release_and_cleanup_refuse_live_nested_checkout_cwd_without_nati
         &token,
         "POST",
         &format!("/v1/worktrees/{}/release", claim.worktree_id),
-        Some(serde_json::json!({"session_id": agent_id, "cleanup_if_last_claim": true})),
+        Some(serde_json::json!({"session_id": agent_id, "expected_claim_generation":claim.claim_generation.unwrap(), "cleanup_if_last_claim": true})),
         None,
     )
     .await;

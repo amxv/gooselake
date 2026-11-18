@@ -240,6 +240,25 @@ macro_rules! delegate_worktree_status {
         ) -> Result<Option<String>, runtime_core::RuntimeError> {
             self.repository.native_worktree_cleanup_owner(repo_root, checkout_path, branch_name)
         }
+
+        fn acknowledge_managed_checkout_removal(
+            &self, ack: &runtime_core::CheckoutRemovalAck,
+        ) -> Result<runtime_core::ManagedCleanupBranchAdmission, runtime_core::RuntimeError> {
+            self.repository.acknowledge_managed_checkout_removal(ack)
+        }
+
+        fn acknowledge_managed_branch_deletion(
+            &self, ack: &runtime_core::BranchDeletionAck,
+        ) -> Result<runtime_core::WorktreeCleanupResponse, runtime_core::RuntimeError> {
+            self.repository.acknowledge_managed_branch_deletion(ack)
+        }
+
+        fn hold_managed_worktree_cleanup(
+            &self, attempt: &runtime_core::ManagedCleanupAttempt,
+            observation: &runtime_core::ManagedCleanupObservation, diagnostic: &str, at_ms: i64,
+        ) -> Result<(), runtime_core::RuntimeError> {
+            self.repository.hold_managed_worktree_cleanup(attempt, observation, diagnostic, at_ms)
+        }
     };
 }
 

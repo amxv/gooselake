@@ -42,7 +42,7 @@ On `POST /v2/workspaces/{workspace_id}/agents`, the `worktree` selector can choo
 
 To move an **idle** agent, call `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/worktree` with `worktree_id` (or `null` for the workspace root), the agent's `expected_revision`, and an `Idempotency-Key`. The provider must confirm the effective cwd and session identity before the runtime commits the changed route; unsupported providers cannot silently rebind. Inspect the durable rebind through `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}`. An ambiguous native outcome blocks further agent work until recovery rather than guessing its cwd or blindly repeating provider dispatch.
 
-Previous checkouts are preserved unless `cleanup_previous_worktree:true` was explicitly requested. After a verified rebind, cleanup refuses dirty, unmerged, foreign, or occupied paths. If cleanup remains pending, `POST /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}/cleanup` retries **only** native cleanup, never the provider rebind. See the [API guide](/docs/api#workspace-worktree-routes) for complete request examples and recovery semantics.
+Previous checkouts are preserved unless `cleanup_previous_worktree:true` was explicitly requested. After a verified rebind, cleanup refuses dirty, unmerged, foreign, or occupied paths. The explicit rebind-cleanup endpoint can reconsider a pre-admission safety blocker or replay an existing completed cleanup receipt. Once native cleanup has been admitted, an unknown outcome remains fenced and neither Git action is redispatched. It never repeats the provider rebind. See the [API guide](/docs/api#workspace-worktree-routes) for complete request examples and recovery semantics.
 
 ## Legacy `/v1` worktree operations
 
@@ -58,6 +58,7 @@ The worktree service owns:
 - creator session/team/member references
 - cleanup policy
 - claims
+- persisted claim lifetime tokens
 - claim release timestamps
 - startup repair of inconsistent records
 - best-effort cleanup diagnostics
@@ -96,14 +97,41 @@ one of these recovery-sensitive reservations.
 
 ## Release a claim
 
+Read the exact current claim once to prepare a release. Its `claim_generation`
+is required as `expected_claim_generation`; the accepted range is
+`1..=9223372036854775807`. The authenticated GET is read-only and returns 404
+for a missing/tombstoned worktree or missing exact-session claim.
+
 ```bash
-curl -X POST "$BASE_URL/v1/worktrees/$WORKTREE_ID/release"   "${AUTH[@]}"   -H 'Content-Type: application/json'   -d '{
-    "session_id": "sess_codex_...",
-    "cleanup_if_last_claim": true
-  }'
+RELEASE_BODY="$(
+  set -o pipefail
+  curl -fsS "${AUTH[@]}" \
+    "$BASE_URL/v1/worktrees/$WORKTREE_ID/claims/$SESSION_ID" |
+  python3 -c '
+import json, sys
+claim = json.load(sys.stdin)
+generation = claim.get("claim_generation")
+if type(generation) is not int or not 1 <= generation <= 9223372036854775807:
+    raise SystemExit("The observed claim has no valid lifetime token")
+print(json.dumps({
+    "session_id": claim["session_id"],
+    "expected_claim_generation": generation,
+    "cleanup_if_last_claim": True
+}))
+'
+)" || exit 1
+
+curl -fsS -X POST "${AUTH[@]}" \
+  -H 'Content-Type: application/json' -d "$RELEASE_BODY" \
+  "$BASE_URL/v1/worktrees/$WORKTREE_ID/release"
 ```
 
-Releasing a claim does not necessarily delete the worktree. Cleanup policy decides what happens next.
+This GET prepares a new release request. Retain `RELEASE_BODY` unchanged when
+retrying that request. HTTP 409 means its observed lifetime is stale or another
+safety fence applies; do not silently refresh the token and release a newer
+claim. Even identical role and timestamp values can belong to a later lifetime.
+An exact terminal retry preserves the original release and appends no additional release event.
+Claim release does not itself prove that checkout cleanup completed.
 
 ## Cleanup
 
@@ -111,33 +139,38 @@ Releasing a claim does not necessarily delete the worktree. Cleanup policy decid
 curl -X POST "$BASE_URL/v1/worktrees/$WORKTREE_ID/cleanup" "${AUTH[@]}"
 ```
 
-Cleanup respects active claims. This is important: the runtime should not delete a room while someone still holds a key.
+Cleanup respects active claims, live native bindings and retention policy. It
+requires its original checkout-removal and branch-deletion acknowledgments in
+order. Unknown or incomplete outcomes retain their operation and reservations
+for inspection. Later path or branch absence does not authorize completion or
+another deletion attempt. A completed receipt replays without running Git.
 
-## Spawn integration
+## Agent creation and historical spawn
 
-Team spawn can create or reuse a worktree for a new member. The spawn operation then:
-
-1. prepares the worktree
-2. creates the provider session with the worktree cwd
-3. joins the session to the team
-4. claims the worktree
-5. sends onboarding instructions
-
-If a later step fails, the runtime attempts rollback and records diagnostics.
+Workspace-owned agent creation uses the durable workspace operation described
+above. Git, initializer and provider actions retain separate original outcome
+evidence. An unknown result does not authorize another execution or destructive
+compensation. The retired legacy team-spawn path only inspects original keyed
+receipts; it does not create new members or replay uncertain native work.
 
 ## Startup repair
 
-The worktree service performs unusually careful startup repair. It can:
+Historical startup normalization can:
 
 - normalize stored paths and fields
 - merge duplicate worktree records by identity
 - rewrite claims from duplicate records to the surviving record
 - release impossible claims
 - merge duplicate claims
-- enforce one active claim per session
+- enforce one active primary claim per session while preserving unresolved rebind reservations
 - preserve diagnostics for operator inspection
 
-This makes worktree state resilient to earlier bugs, interrupted operations, and manual host changes.
+Changed record and claim repairs commit together only while their original
+SQLite snapshot and claim lifetimes still match. The complete claim keyset is
+checked before and after the repair. Existing destination keys retain their own
+tokens; source tokens do not become destination authority. Unchanged rows remain
+untouched, and stale or conflicting plans fail as a whole. This normalization
+does not establish unknown provider or Git outcomes or authorize cleanup.
 
 ## Path model
 

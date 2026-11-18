@@ -402,6 +402,75 @@ fn workspace_agent_create_is_atomic_and_round_trips_exact_policy() {
 }
 
 #[test]
+fn workspace_agent_initial_worktree_claim_cannot_overwrite_a_retained_lifetime() {
+    for terminal in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let repository = repo(&temp);
+        repository.initialize_schema().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let workspace = registered_workspace(&repository, &root);
+        let (mut session, mut agent) =
+            workspace_agent_fixture(&workspace, "initial-owner", "initial-owner");
+        let worktree = ManagedWorktreeRecord {
+            id: "initial-owner-worktree".into(),
+            repo_root: workspace.canonical_root.clone(),
+            worktree_root: temp.path().join("managed").display().to_string(),
+            worktree_cwd: temp.path().join("managed/owner").display().to_string(),
+            branch_name: "gg/owner".into(),
+            worktree_name: "owner".into(),
+            unified_workspace_path: "owner".into(),
+            deletion_policy: "retain_on_last_claim".into(),
+            created_by_session_id: None,
+            created_by_operation_id: None,
+            created_at: 10,
+            updated_at: 10,
+        };
+        repository.upsert_managed_worktree(&worktree).unwrap();
+        session.worktree_id = Some(worktree.id.clone());
+        session.cwd = Some(worktree.worktree_cwd.clone());
+        agent.recreation_policy.authoritative_cwd = worktree.worktree_cwd.clone();
+        let db = open_connection(&repository.database_path).unwrap();
+        // Inject after the session INSERT so this reaches the owner's claim
+        // INSERT, rather than failing earlier on a duplicate session key.
+        let released = if terminal { "99" } else { "NULL" };
+        db.execute_batch(&format!(
+            "CREATE TRIGGER inject_retained_owner AFTER INSERT ON sessions
+            WHEN NEW.id='initial-owner' BEGIN INSERT INTO managed_worktree_claims
+            (worktree_id,session_id,claim_role,created_at,released_at,claim_generation)
+            VALUES('initial-owner-worktree',NEW.id,'consumer',50,{released},9); END;"
+        ))
+        .unwrap();
+        let before = super::legacy_native_turn_guards::raw_state(&db);
+        let error = repository
+            .create_workspace_agent(&session, &agent)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("failed claiming initial managed worktree"),
+            "{error}"
+        );
+        assert_eq!(super::legacy_native_turn_guards::raw_state(&db), before);
+        db.execute_batch("DROP TRIGGER inject_retained_owner;")
+            .unwrap();
+        repository.create_workspace_agent(&session, &agent).unwrap();
+        let claim = repository
+            .get_managed_worktree_claim(&worktree.id, &session.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                claim.claim_generation,
+                claim.claim_role.as_str(),
+                claim.released_at
+            ),
+            (Some(1), "owner", None)
+        );
+    }
+}
+
+#[test]
 fn workspace_agent_alias_is_global_immutable_and_concurrency_safe() {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let root = temp_dir.path().join("workspace");

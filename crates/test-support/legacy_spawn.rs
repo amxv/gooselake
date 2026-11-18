@@ -200,6 +200,7 @@ impl HistoricalSpawnSeed {
             updated_at: historical_at,
         };
         let claim = worktree_id.map(|worktree_id| ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id,
             session_id: child_id.into(),
             claim_role: if created { "owner" } else { "consumer" }.into(),

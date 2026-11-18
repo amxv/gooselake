@@ -87,6 +87,7 @@ fn streamed_worktree_status_is_exact_source_and_route_parity_across_alias_batche
     }
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "wt_0007".into(),
             session_id: "attached_a".into(),
             claim_role: "owner".into(),
@@ -96,6 +97,7 @@ fn streamed_worktree_status_is_exact_source_and_route_parity_across_alias_batche
         .unwrap();
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "wt_0207".into(),
             session_id: "foreign_agent".into(),
             claim_role: "consumer".into(),
@@ -259,6 +261,7 @@ fn streamed_status_query_plans_seek_source_claims_and_selected_active_routes() {
     repository.create_workspace_agent(&session, &agent).unwrap();
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: worktree.id,
             session_id: session.id,
             claim_role: "owner".into(),

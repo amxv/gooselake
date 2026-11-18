@@ -234,6 +234,7 @@ fn contradictory_claims_block_session_mapping() {
         sessions: vec![session("agent", Some("/repo"))],
         managed_worktrees: vec![worktree("other", "/other")],
         managed_worktree_claims: vec![ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "other".to_string(),
             session_id: "agent".to_string(),
             claim_role: "primary".to_string(),

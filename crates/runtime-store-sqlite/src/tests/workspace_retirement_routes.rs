@@ -130,6 +130,7 @@ fn external_managed_routes_classify_legacy_obligations_and_fence_new_native_work
     repository.upsert_session(&legacy).unwrap();
     assert!(repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: worktree.id,
             session_id: legacy.id,
             claim_role: "owner".into(),
@@ -179,6 +180,7 @@ fn frozen_workspace_allows_native_settlement_upserts_but_rejects_reopening() {
     admission.dispatch_state = TurnDispatchState::Dispatching;
     repository.upsert_turn_admission(&admission).unwrap();
     let mut claim = ManagedWorktreeClaimRecord {
+        claim_generation: Some(1),
         worktree_id: worktree.id.clone(),
         session_id: session.id.clone(),
         claim_role: "owner".into(),

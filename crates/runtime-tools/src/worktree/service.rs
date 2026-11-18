@@ -212,6 +212,7 @@ impl WorktreeService for RuntimeWorktreeService {
         }
 
         let claim = ManagedWorktreeClaimRecord {
+            claim_generation: None,
             worktree_id: request.worktree_id.clone(),
             session_id: request.session_id.clone(),
             claim_role,
@@ -229,6 +230,13 @@ impl WorktreeService for RuntimeWorktreeService {
         request: WorktreeReleaseRequest,
     ) -> Result<WorktreeReleaseResponse, RuntimeError> {
         self.ensure_enabled()?;
+        if request.expected_claim_generation == 0
+            || i64::try_from(request.expected_claim_generation).is_err()
+        {
+            return Err(RuntimeError::InvalidState(
+                "expected_claim_generation must be a positive SQLite signed integer".into(),
+            ));
+        }
         if self
             .store
             .unresolved_workspace_agent_rebind(&request.session_id)?
@@ -238,7 +246,8 @@ impl WorktreeService for RuntimeWorktreeService {
             ));
         }
         self.get_worktree(request.worktree_id.as_str()).await?;
-        self.store
+        let observed_claim = self
+            .store
             .get_managed_worktree_claim(&request.worktree_id, &request.session_id)?
             .ok_or_else(|| {
                 RuntimeError::NotFound(format!(
@@ -246,6 +255,11 @@ impl WorktreeService for RuntimeWorktreeService {
                     request.worktree_id, request.session_id
                 ))
             })?;
+        if observed_claim.claim_generation != Some(request.expected_claim_generation) {
+            return Err(RuntimeError::Conflict(
+                "worktree claim lifetime differs from expected_claim_generation".into(),
+            ));
+        }
         let hydrated = self.store.hydrate_runtime_state()?;
         let worktree = self.get_worktree_from_hydrated(request.worktree_id.as_str(), &hydrated)?;
         let repository_lock = self.lock_for_repo(&worktree.repo_root).await;
@@ -280,6 +294,11 @@ impl WorktreeService for RuntimeWorktreeService {
                     request.worktree_id, request.session_id
                 ))
             })?;
+        if existing_claim.claim_generation != Some(request.expected_claim_generation) {
+            return Err(RuntimeError::Conflict(
+                "worktree claim lifetime changed before release".into(),
+            ));
+        }
         if existing_claim.claim_role == "rebind_reservation" && existing_claim.released_at.is_none()
         {
             return Err(RuntimeError::Conflict(
@@ -288,6 +307,7 @@ impl WorktreeService for RuntimeWorktreeService {
             ));
         }
         let released_claim = ManagedWorktreeClaimRecord {
+            claim_generation: Some(request.expected_claim_generation),
             released_at: Some(now_ms()),
             ..existing_claim.clone()
         };
@@ -340,7 +360,7 @@ impl WorktreeService for RuntimeWorktreeService {
         let repo_lock = self.lock_for_repo(&worktree.repo_root).await;
         let _repo_guard = repo_lock.lock().await;
         if let Some(receipt) = self.store.replay_managed_worktree_cleanup(&worktree)? {
-            return self.replay_or_reconcile_managed_cleanup(&worktree, receipt);
+            return self.replay_managed_cleanup(receipt);
         }
         self.ensure_repository_native_mutation_allowed(&worktree.repo_root)?;
         let active_claim_count = self
@@ -458,91 +478,16 @@ impl WorktreeService for RuntimeWorktreeService {
                     reason: request.reason.clone(),
                     requested_at: now_ms(),
                 })?;
-        let operation_id = match admitted {
+        let grant = match admitted {
             ManagedWorktreeCleanupAdmission::Replay { response, .. } => return Ok(response),
             pending @ ManagedWorktreeCleanupAdmission::Unresolved { .. } => {
-                return self.replay_or_reconcile_managed_cleanup(&worktree, pending);
+                return self.replay_managed_cleanup(pending);
             }
-            ManagedWorktreeCleanupAdmission::Execute { operation_id } => operation_id,
+            ManagedWorktreeCleanupAdmission::Execute { grant } => grant,
         };
-
-        let mut diagnostics = Vec::new();
-        let mut worktree_path_deleted = false;
-        let mut branch_deleted = false;
-        if Path::new(worktree.worktree_cwd.as_str()).exists() {
-            match Self::run_git_for_repo(
-                worktree.repo_root.as_str(),
-                &["worktree", "remove", worktree.worktree_cwd.as_str()],
-                &[],
-            ) {
-                Ok(_) => {
-                    worktree_path_deleted = !Path::new(worktree.worktree_cwd.as_str()).exists();
-                }
-                Err(error) => diagnostics.push(error.to_string()),
-            }
-        } else {
-            worktree_path_deleted = true;
-        }
-        if worktree_path_deleted {
-            match Self::run_git_for_repo(
-                worktree.repo_root.as_str(),
-                &[
-                    "show-ref",
-                    "--verify",
-                    "--quiet",
-                    &format!("refs/heads/{}", worktree.branch_name),
-                ],
-                &[1],
-            ) {
-                Ok((_, _, exit_code)) if exit_code == 1 => {
-                    branch_deleted = true;
-                }
-                Ok(_) => match Self::run_git_for_repo(
-                    worktree.repo_root.as_str(),
-                    &["branch", "-d", worktree.branch_name.as_str()],
-                    &[],
-                ) {
-                    Ok((_, _, 0)) => branch_deleted = true,
-                    Ok(_) => diagnostics.push("branch deletion did not complete".into()),
-                    Err(error) => diagnostics.push(error.to_string()),
-                },
-                Err(error) => diagnostics.push(error.to_string()),
-            }
-        } else {
-            diagnostics.push("native worktree removal did not complete; branch retained".into());
-        }
-
-        let status = if diagnostics.is_empty() && worktree_path_deleted && branch_deleted {
-            "deleted".to_string()
-        } else {
-            "cleanup_failed".to_string()
-        };
-        if !diagnostics.is_empty() {
-            let _ = self.store.append_team_operation_diagnostic(
-                Some(&operation_id),
-                None,
-                "worktree_cleanup_failed",
-                "managed worktree cleanup failed",
-                &serde_json::json!({
-                    "worktree_id": worktree.id,
-                    "diagnostics": diagnostics,
-                }),
-                now_ms(),
-            );
-        }
-        let response = WorktreeCleanupResponse {
-            worktree_id: worktree.id,
-            status,
-            deletion_policy: worktree.deletion_policy,
-            active_claim_count,
-            worktree_path_deleted,
-            branch_deleted,
-            diagnostics,
-        };
-        self.store.complete_managed_worktree_cleanup(&operation_id, &response, now_ms())
-            .map_err(|_| RuntimeError::operation_unresolved(operation_id.clone(),
-                format!("native Git result may be committed, but journal settlement is unknown; inspect /v2/operations/{operation_id} before retrying")))?;
-        Ok(response)
+        self.execute_cleanup(grant, |root, args| {
+            Self::run_git_for_repo(root, args, &[]).map(|(_, _, code)| code)
+        })
     }
 
     fn inspect_legacy_team_member_spawn(
@@ -568,56 +513,19 @@ impl WorktreeService for RuntimeWorktreeService {
 }
 
 impl RuntimeWorktreeService {
-    /// An unresolved native cleanup is never dispatched a second time. The
-    /// only automatic settlement allowed after a lost response/restart is an
-    /// evidence-only read proving BOTH the checkout and exact Git branch are
-    /// absent. Partial/dirty/foreign/unknown outcomes stay fenced for review.
-    fn replay_or_reconcile_managed_cleanup(
+    /// Replays only a committed exact result. Native absence cannot settle an
+    /// unknown effect, and a pending receipt never grants another invocation.
+    fn replay_managed_cleanup(
         &self,
-        worktree: &ManagedWorktreeRecord,
         admission: ManagedWorktreeCleanupAdmission,
     ) -> Result<WorktreeCleanupResponse, RuntimeError> {
-        let operation_id = match admission {
-            ManagedWorktreeCleanupAdmission::Replay { response, .. } => return Ok(response),
-            ManagedWorktreeCleanupAdmission::Unresolved { operation_id } => operation_id,
-            ManagedWorktreeCleanupAdmission::Execute { operation_id } => {
-                return Err(RuntimeError::ProtocolViolation(format!(
-                    "native cleanup {operation_id} cannot be dispatched by a replay lookup"
-                )));
-            }
-        };
-        let absent_checkout = std::fs::symlink_metadata(&worktree.worktree_cwd)
-            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
-        let absent_branch = matches!(
-            Self::run_git_for_repo(
-                &worktree.repo_root,
-                &[
-                    "show-ref",
-                    "--verify",
-                    "--quiet",
-                    &format!("refs/heads/{}", worktree.branch_name)
-                ],
-                &[1],
-            ),
-            Ok((_, _, 1))
-        );
-        if absent_checkout && absent_branch && self.native_cleanup_blocker(worktree).is_none() {
-            let response = WorktreeCleanupResponse {
-                worktree_id: worktree.id.clone(),
-                status: "deleted".into(),
-                deletion_policy: worktree.deletion_policy.clone(),
-                active_claim_count: 0,
-                worktree_path_deleted: true,
-                branch_deleted: true,
-                diagnostics: Vec::new(),
-            };
-            self.store.complete_managed_worktree_cleanup(&operation_id, &response, now_ms())
-                .map_err(|_| RuntimeError::operation_unresolved(operation_id.clone(),
-                    format!("verified absent native effects, but durable receipt settlement remains unknown; inspect /v2/operations/{operation_id}")))?;
-            return Ok(response);
+        match admission {
+            ManagedWorktreeCleanupAdmission::Replay {response,..} => Ok(response),
+            ManagedWorktreeCleanupAdmission::Unresolved {operation_id} => Err(RuntimeError::operation_unresolved(operation_id.clone(),
+                format!("native cleanup outcome remains unresolved; inspect /v2/operations/{operation_id}"))),
+            ManagedWorktreeCleanupAdmission::Execute {grant} => Err(RuntimeError::ProtocolViolation(format!(
+                "native cleanup {} cannot be dispatched by a replay lookup",grant.binding.operation_id))),
         }
-        Err(RuntimeError::operation_unresolved(operation_id.clone(),
-            format!("native cleanup may have executed; inspect /v2/operations/{operation_id}; do not retry Git without independent effect evidence")))
     }
 
     // Call while holding the repository lifecycle read lock through the
@@ -683,6 +591,9 @@ impl RuntimeWorktreeService {
 
     fn native_cleanup_blocker(&self, worktree: &ManagedWorktreeRecord) -> Option<&'static str> {
         let worktree_path = Path::new(&worktree.worktree_cwd);
+        if !worktree_path.exists() {
+            return Some("skipped_unverified_native");
+        }
         let trusted_root = match std::fs::canonicalize(&self.config.root_dir) {
             Ok(root) => root,
             Err(_) => return Some("skipped_unverified_native"),
@@ -748,6 +659,9 @@ impl RuntimeWorktreeService {
         ) else {
             return Some("skipped_unverified_native");
         };
+        if exists != 0 {
+            return Some("skipped_unverified_native");
+        }
         if exists == 0 {
             let Ok((_, _, ancestor)) = Self::run_git_for_repo(
                 &worktree.repo_root,

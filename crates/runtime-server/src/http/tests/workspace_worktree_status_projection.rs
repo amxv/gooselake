@@ -36,6 +36,7 @@ async fn operator_worktree_inventory_preserves_alias_claim_blockers_and_restart_
     store.upsert_managed_worktree(&alias_row).unwrap();
     store
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "wt_alias".into(),
             session_id: agent.agent_id.clone(),
             claim_role: "owner".into(),
@@ -53,6 +54,7 @@ async fn operator_worktree_inventory_preserves_alias_claim_blockers_and_restart_
     store.upsert_managed_worktree(&released).unwrap();
     store
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "wt_released".into(),
             session_id: agent.agent_id.clone(),
             claim_role: "owner".into(),

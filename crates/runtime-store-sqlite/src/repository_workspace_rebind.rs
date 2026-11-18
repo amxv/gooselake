@@ -13,6 +13,7 @@ use crate::repository_workspace_notice::{
 };
 use crate::SqliteRuntimeRepository;
 
+mod claims;
 mod cleanup;
 
 const REBIND_CLAIM_KIND: &str = "workspace_agent_rebind";
@@ -373,19 +374,6 @@ impl SqliteRuntimeRepository {
             updated_at: operation.updated_at,
         };
         authority.insert_operation(&canonical)?;
-        authority.append_transition(&OperationTransitionRecord {
-            operation_id: operation.operation_id.clone(),
-            sequence: 1,
-            from_phase: None,
-            to_phase: OperationPhase::Requested,
-            evidence: Some(json!({
-                "agent_id": operation.agent_id,
-                "previous_cwd": operation.previous_cwd,
-                "destination_cwd": operation.destination_cwd,
-                "provider_effect": "not_yet_dispatched",
-            })),
-            created_at: operation.created_at,
-        })?;
         authority.acquire_claim(
             &operation.operation_id,
             REBIND_CLAIM_KIND,
@@ -399,32 +387,21 @@ impl SqliteRuntimeRepository {
             params![operation.operation_id, operation.workspace_id, operation.agent_id,
                     operation.idempotency_key, encode(operation)?, operation.created_at, operation.updated_at],
         ).map_err(|error| db_error("failed admitting worktree rebind intent", error))?;
-        // Claim the destination before native provider work so cleanup sees
-        // an active reservation during the in-flight/recovery-required window.
-        if let Some(target) = operation.destination_worktree_id.as_deref() {
-            let conflicting: i64 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM managed_worktree_claims WHERE session_id = ?1
-                 AND released_at IS NULL AND worktree_id IS NOT ?2",
-                    params![operation.agent_id, operation.previous_worktree_id],
-                    |row| row.get(0),
-                )
-                .map_err(|error| {
-                    db_error("failed checking existing worktree associations", error)
-                })?;
-            if conflicting != 0 {
-                return Err(RuntimeError::Conflict(
-                    "agent already has an unrecognized managed-worktree association".into(),
-                ));
-            }
-            tx.execute(
-                "INSERT INTO managed_worktree_claims(worktree_id, session_id, claim_role, created_at, released_at)
-                 VALUES (?1, ?2, 'rebind_reservation', ?3, NULL)
-                 ON CONFLICT(worktree_id, session_id) DO UPDATE
-                 SET claim_role = 'rebind_reservation', created_at = excluded.created_at, released_at = NULL",
-                params![target, operation.agent_id, operation.created_at],
-            ).map_err(|error| db_error("failed reserving destination managed worktree", error))?;
-        }
+        let claim_fences = claims::reserve(&tx, operation)?;
+        authority.append_transition(&OperationTransitionRecord {
+            operation_id: operation.operation_id.clone(),
+            sequence: 1,
+            from_phase: None,
+            to_phase: OperationPhase::Requested,
+            evidence: Some(json!({
+                "agent_id": operation.agent_id,
+                "previous_cwd": operation.previous_cwd,
+                "destination_cwd": operation.destination_cwd,
+                "provider_effect": "not_yet_dispatched",
+                "claim_fences": claim_fences,
+            })),
+            created_at: operation.created_at,
+        })?;
         crate::repository_member_agent_rebind::update_parent(
             &tx,
             &canonical,
@@ -432,6 +409,11 @@ impl SqliteRuntimeRepository {
             "native_admitted",
             operation.created_at,
         )?;
+        if claims::validate(&tx, operation)? != claim_fences {
+            return Err(RuntimeError::Conflict(
+                "admitted rebind claim evidence changed before commit".into(),
+            ));
+        }
         tx.commit()
             .map_err(|error| db_error("failed committing worktree rebind intent", error))?;
         Ok((operation.clone(), true))
@@ -495,6 +477,11 @@ impl SqliteRuntimeRepository {
                 "worktree rebind already classified; no implicit retry".into(),
             ));
         }
+        let expected_claims = if phase == "rejected" {
+            claims::reject(tx, &current, changed_at)?
+        } else {
+            claims::current_snapshot(tx, &current)?
+        };
         current.phase = phase.to_string();
         current.error_code = Some(error_code.to_string());
         current.updated_at = changed_at;
@@ -517,15 +504,6 @@ impl SqliteRuntimeRepository {
                 Some("native workspace binding rejected before confirmed rebind"),
                 changed_at,
             )?;
-            if let Some(target) = current.destination_worktree_id.as_deref() {
-                tx.execute(
-                    "UPDATE managed_worktree_claims SET released_at = ?3
-                     WHERE worktree_id = ?1 AND session_id = ?2
-                       AND claim_role = 'rebind_reservation' AND released_at IS NULL",
-                    params![target, current.agent_id, changed_at],
-                )
-                .map_err(|error| db_error("failed releasing rejected route reservation", error))?;
-            }
             release_route_claim(&tx, operation_id, &current.agent_id)?;
         } else {
             let rows = tx
@@ -573,6 +551,7 @@ impl SqliteRuntimeRepository {
             },
             changed_at,
         )?;
+        claims::verify(tx, &current, &expected_claims)?;
         Ok(current)
     }
 
@@ -648,6 +627,8 @@ impl SqliteRuntimeRepository {
                 "agent revision cannot advance beyond SQLite signed integer range".into(),
             ));
         }
+        let claim_fences = claims::validate(&tx, &operation)?;
+        claims::require_previous_route(&tx, &operation)?;
         if let Some(target) = operation.destination_worktree_id.as_deref() {
             let destination: Option<(String, String)> = tx
                 .query_row(
@@ -722,23 +703,7 @@ impl SqliteRuntimeRepository {
             ],
         )
         .map_err(|error| db_error("failed committing verified recreation policy", error))?;
-        if let Some(old) = operation.previous_worktree_id.as_deref() {
-            tx.execute(
-                "UPDATE managed_worktree_claims SET released_at = ?3
-                 WHERE worktree_id = ?1 AND session_id = ?2 AND released_at IS NULL",
-                params![old, operation.agent_id, changed_at],
-            )
-            .map_err(|error| db_error("failed releasing previous worktree association", error))?;
-        }
-        if let Some(target) = operation.destination_worktree_id.as_deref() {
-            tx.execute(
-                "INSERT INTO managed_worktree_claims(worktree_id,session_id,claim_role,created_at,released_at)
-                 VALUES (?1, ?2, 'owner', ?3, NULL)
-                 ON CONFLICT(worktree_id,session_id) DO UPDATE SET claim_role = 'owner',
-                    created_at = excluded.created_at, released_at = NULL",
-                params![target, operation.agent_id, changed_at],
-            ).map_err(|error| db_error("failed claiming verified destination worktree", error))?;
-        }
+        let expected_claims = claims::promote(&tx, &claim_fences, changed_at)?;
         operation.phase = "completed".into();
         operation.previous_cleanup_status = Some(
             if operation.cleanup_previous_worktree && operation.previous_worktree_id.is_some() {
@@ -841,6 +806,7 @@ impl SqliteRuntimeRepository {
                 changed_at,
             )?;
         }
+        claims::verify(&tx, &operation, &expected_claims)?;
         tx.commit().map_err(|error| {
             db_error("failed committing verified workspace worktree route", error)
         })?;

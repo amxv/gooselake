@@ -196,8 +196,11 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
         .expect("event");
 
     let before = repository.hydrate_runtime_state().expect("hydrate before");
+    assert_eq!(before.managed_worktree_claims.len(), 1);
+    assert_eq!(before.managed_worktree_claims[0].claim_generation, None);
     let mut expected_after = before.clone();
     expected_after.sessions[0].model = Some("gpt-6.1-sol".to_string());
+    expected_after.managed_worktree_claims[0].claim_generation = Some(1);
     let before_events = repository
         .list_runtime_events(None, None, 100)
         .expect("events before");
@@ -214,7 +217,7 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
     let agent_deliveries = std::mem::take(&mut after.agent_deliveries);
     assert_eq!(
         after, expected_after,
-        "legacy authority must remain unchanged except approved model migration"
+        "legacy authority must remain unchanged except approved model migration and additive claim lifetime"
     );
     assert_eq!(agent_messages.len(), 1, "legacy message is backfilled once");
     assert_eq!(agent_messages[0].id, "msg_legacy");
@@ -233,6 +236,25 @@ fn generation_one_database_upgrades_without_changing_legacy_state() {
     );
     assert_eq!(agent_deliveries[0].id, "delivery_legacy");
     assert_eq!(agent_deliveries[0].status, "pending");
+    let stale_release = ManagedWorktreeClaimRecord {
+        released_at: Some(999),
+        ..before.managed_worktree_claims[0].clone()
+    };
+    let result = repository.transition_managed_worktree_claim(
+        &stale_release,
+        runtime_core::ManagedWorktreeClaimTransition::Release,
+    );
+    assert!(
+        matches!(result, Err(runtime_core::RuntimeError::Conflict(ref message))
+        if message.contains("lifetime")),
+        "{result:?}"
+    );
+    assert_eq!(
+        repository
+            .get_managed_worktree_claim("wt_legacy", &session.id)
+            .unwrap(),
+        Some(expected_after.managed_worktree_claims[0].clone())
+    );
     assert_eq!(
         repository
             .list_runtime_events(None, None, 100)

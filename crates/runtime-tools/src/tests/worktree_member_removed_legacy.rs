@@ -58,6 +58,7 @@ async fn case(history: History) -> Case {
         .store
         .transition_managed_worktree_claim(
             &ManagedWorktreeClaimRecord {
+                claim_generation: Some(1),
                 worktree_id: record.id.clone(),
                 session_id: spawn.source_session_id.clone(),
                 claim_role: "owner".into(),

@@ -20,7 +20,9 @@ use crate::repository_workspace_worktree_creation::{
 use crate::SqliteRuntimeRepository;
 
 const CLEANUP_KIND: &str = "managed_worktree_cleanup";
-const EFFECT_KIND: &str = "git_worktree_cleanup";
+mod legacy;
+mod protocol;
+mod receipts;
 
 #[derive(Debug)]
 struct CleanupReceipt {
@@ -57,6 +59,7 @@ fn receipt_for(
 }
 
 fn classify(
+    tx: &Connection,
     existing: CleanupReceipt,
     worktree: &ManagedWorktreeRecord,
 ) -> Result<ManagedWorktreeCleanupAdmission, RuntimeError> {
@@ -69,14 +72,20 @@ fn classify(
         ));
     }
     if existing.phase == "completed" {
-        let response = existing.response_json.ok_or_else(|| {
+        let response = protocol::verify_replay(tx, &existing.operation_id)?;
+        let stored = existing.response_json.ok_or_else(|| {
             RuntimeError::Bootstrap("completed native cleanup has no exact receipt".into())
         })?;
+        let stored: serde_json::Value = serde_json::from_str(&stored)
+            .map_err(|_| protocol::conflict("invalid completed cleanup receipt"))?;
+        if stored != protocol::value(&response)? {
+            return Err(protocol::conflict(
+                "completed cleanup replay result disagrees",
+            ));
+        }
         return Ok(ManagedWorktreeCleanupAdmission::Replay {
             operation_id: existing.operation_id,
-            response: serde_json::from_str(&response).map_err(|error| {
-                RuntimeError::Bootstrap(format!("corrupt worktree cleanup receipt: {error}"))
-            })?,
+            response,
         });
     }
     Ok(ManagedWorktreeCleanupAdmission::Unresolved {
@@ -143,15 +152,99 @@ fn existing_claim(
     })
 }
 
+fn require_eligible(
+    tx: &Transaction<'_>,
+    target: &runtime_core::ManagedCleanupTarget,
+) -> Result<(), RuntimeError> {
+    // Re-evaluate the original observed generation and all live SQLite
+    // bindings inside the immediate writer lock, not just a prior process
+    // local mutex. A changed native identity needs a fresh preflight.
+    let persisted: Option<(String, String, String, String, i64)> = tx
+        .query_row(
+            "SELECT repo_root, worktree_cwd, branch_name, deletion_policy, created_at
+             FROM managed_worktrees WHERE id=?1",
+            [&target.worktree_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| db_error("failed confirming cleanup native identity", error))?;
+    if persisted
+        != Some((
+            target.repo_root.clone(),
+            target.checkout_path.clone(),
+            target.branch_name.clone(),
+            target.deletion_policy.clone(),
+            target.worktree_created_at,
+        ))
+    {
+        return Err(RuntimeError::Conflict(
+            "managed worktree changed before native cleanup".into(),
+        ));
+    }
+    if target.deletion_policy != "delete_on_last_claim" {
+        return Err(RuntimeError::Conflict(
+            "managed worktree retention policy prohibits native cleanup".into(),
+        ));
+    }
+    let active: i64 = tx
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM managed_worktree_claims
+                     WHERE worktree_id=?1 AND released_at IS NULL)
+                  + (SELECT COUNT(*) FROM sessions
+                     WHERE status!='closed' AND (worktree_id=?1 OR cwd=?2
+                       OR substr(cwd, 1, length(?2) + 1) = ?2 || '/'))",
+            params![target.worktree_id, target.checkout_path],
+            |row| row.get(0),
+        )
+        .map_err(|error| {
+            db_error(
+                "failed confirming no live cleanup claims or sessions",
+                error,
+            )
+        })?;
+    if active > 0 {
+        return Err(RuntimeError::Conflict(
+            "worktree has live claims or session bindings".into(),
+        ));
+    }
+
+    let mut legacy_targets =
+        crate::repository_legacy_native_targets::LegacyNativeTargetBatch::default();
+    legacy_targets.checkout(
+        Some(&target.worktree_id),
+        Some(&target.checkout_path),
+        Some(&target.repo_root),
+        Some(&target.branch_name),
+    )?;
+    legacy_targets.guard(tx)?;
+
+    Ok(())
+}
+
 impl SqliteRuntimeRepository {
     pub fn replay_managed_worktree_cleanup(
         &self,
         worktree: &ManagedWorktreeRecord,
     ) -> Result<Option<ManagedWorktreeCleanupAdmission>, RuntimeError> {
-        let db = open_connection(&self.database_path)?;
-        receipt_for(&*db, worktree)?
-            .map(|row| classify(row, worktree))
-            .transpose()
+        let mut db = open_connection(&self.database_path)?;
+        // All carriers used for read-only replay come from one SQLite snapshot.
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|error| db_error("failed starting cleanup replay snapshot", error))?;
+        let result = receipt_for(&tx, worktree)?
+            .map(|row| classify(&tx, row, worktree))
+            .transpose()?;
+        tx.commit()
+            .map_err(|error| db_error("failed ending cleanup replay snapshot", error))?;
+        Ok(result)
     }
 
     pub fn native_worktree_cleanup_owner(
@@ -187,84 +280,16 @@ impl SqliteRuntimeRepository {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting native cleanup admission", error))?;
         if let Some(existing) = receipt_for(&tx, worktree)? {
-            return classify(existing, worktree);
+            return classify(&tx, existing, worktree);
         }
 
-        // Re-evaluate the original observed generation and all live SQLite
-        // bindings inside the immediate writer lock, not just a prior process
-        // local mutex. A changed native identity needs a fresh preflight.
-        let persisted: Option<(String, String, String, String, i64)> = tx
-            .query_row(
-                "SELECT repo_root, worktree_cwd, branch_name, deletion_policy, created_at
-             FROM managed_worktrees WHERE id=?1",
-                [&worktree.id],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(|error| db_error("failed confirming cleanup native identity", error))?;
-        if persisted
-            != Some((
-                worktree.repo_root.clone(),
-                worktree.worktree_cwd.clone(),
-                worktree.branch_name.clone(),
-                worktree.deletion_policy.clone(),
-                worktree.created_at,
-            ))
-        {
-            return Err(RuntimeError::Conflict(
-                "managed worktree changed before native cleanup".into(),
-            ));
-        }
-        if worktree.deletion_policy != "delete_on_last_claim" {
-            return Err(RuntimeError::Conflict(
-                "managed worktree retention policy prohibits native cleanup".into(),
-            ));
-        }
-        let active: i64 = tx
-            .query_row(
-                "SELECT (SELECT COUNT(*) FROM managed_worktree_claims
-                     WHERE worktree_id=?1 AND released_at IS NULL)
-                  + (SELECT COUNT(*) FROM sessions
-                     WHERE status!='closed' AND (worktree_id=?1 OR cwd=?2
-                       OR substr(cwd, 1, length(?2) + 1) = ?2 || '/'))",
-                params![worktree.id, worktree.worktree_cwd],
-                |row| row.get(0),
-            )
-            .map_err(|error| {
-                db_error(
-                    "failed confirming no live cleanup claims or sessions",
-                    error,
-                )
-            })?;
-        if active > 0 {
-            return Err(RuntimeError::Conflict(
-                "worktree has live claims or session bindings".into(),
-            ));
-        }
+        let target = protocol::target(worktree);
+        require_eligible(&tx, &target)?;
 
-        let mut legacy_targets =
-            crate::repository_legacy_native_targets::LegacyNativeTargetBatch::default();
-        legacy_targets.worktree(worktree)?;
-        legacy_targets.guard(&tx)?;
-
-        let input = serde_json::json!({
-            "worktree_id": worktree.id,
-            "worktree_created_at": worktree.created_at,
-            "repo_root": worktree.repo_root,
-            "checkout_path": worktree.worktree_cwd,
-            "branch_name": worktree.branch_name,
-            "deletion_policy": worktree.deletion_policy,
-            "reason": command.reason,
-        });
+        let input = protocol::input(&target, &command.reason);
         let authority = OperationAuthorityTransaction::new(&tx);
+        // Capture the exact returned reservations. A later lookup cannot
+        // replace these generations when recording an original action.
         authority.insert_operation(&OperationRecord {
             operation_id: command.operation_id.clone(),
             workspace_id: None,
@@ -275,7 +300,7 @@ impl SqliteRuntimeRepository {
             },
             idempotency_key: Some(format!("{}:{}", worktree.id, worktree.created_at)),
             normalized_request_hash: normalized_json_hash(&input)?,
-            normalized_request: input,
+            normalized_request: input.clone(),
             phase: OperationPhase::Requested,
             exact_terminal_result: None,
             error_code: None,
@@ -283,44 +308,34 @@ impl SqliteRuntimeRepository {
             created_at: command.requested_at,
             updated_at: command.requested_at,
         })?;
-        authority.append_transition(&OperationTransitionRecord {
-            operation_id: command.operation_id.clone(),
-            sequence: 1,
-            from_phase: None,
-            to_phase: OperationPhase::Requested,
-            evidence: Some(serde_json::json!({"native_effect":EFFECT_KIND})),
-            created_at: command.requested_at,
-        })?;
-        authority.acquire_claim(
+        let checkout_claim = authority.acquire_claim(
             &command.operation_id,
             CLAIM_KIND,
             &worktree.worktree_cwd,
             command.requested_at,
         )?;
-        authority.acquire_claim(
+        let branch_claim = authority.acquire_claim(
             &command.operation_id,
             BRANCH_CLAIM_KIND,
             &branch_resource_id(&worktree.repo_root, &worktree.branch_name),
             command.requested_at,
         )?;
-        authority.insert_effect(&OperationEffectRecord {
-            effect_id: format!("fx_{}", command.operation_id),
+        let binding = runtime_core::ManagedCleanupBinding {
+            version: 1,
             operation_id: command.operation_id.clone(),
-            effect_kind: EFFECT_KIND.into(),
-            target_kind: "git_checkout".into(),
-            target_id: worktree.worktree_cwd.clone(),
-            phase: "intended".into(),
-            idempotency_key: "native_git_remove_and_branch_delete".into(),
-            evidence: Some(serde_json::json!({
-                "repo_root": worktree.repo_root,
-                "checkout_path": worktree.worktree_cwd,
-                "branch_name": worktree.branch_name,
-                "native_dispatched": "unknown_after_admission",
-            })),
-            attempt_count: 0,
-            created_at: command.requested_at,
-            updated_at: command.requested_at,
-        })?;
+            target,
+            reason: command.reason.clone(),
+            requested_at: command.requested_at,
+            normalized_request_hash: normalized_json_hash(&input)?,
+            checkout_claim,
+            branch_claim,
+        };
+        authority.append_transition(&protocol::admission_transition(&binding))?;
+        let grant = runtime_core::CheckoutRemovalGrant { binding };
+        let checkout = protocol::checkout_started(&grant);
+        let branch = protocol::branch_intended(&grant.binding);
+        authority.insert_effect(&checkout)?;
+        authority.insert_effect(&branch)?;
         tx.execute(
             "INSERT INTO managed_worktree_cleanup_receipts
              (operation_id, worktree_id, worktree_created_at, repo_root, checkout_path,
@@ -349,165 +364,21 @@ impl SqliteRuntimeRepository {
                 "checkout_path": worktree.worktree_cwd, "branch_name": worktree.branch_name}),
             command.requested_at,
         )?;
+        protocol::pending(&tx, &grant.binding)?;
+        protocol::verify_effects(&tx, &command.operation_id, &[checkout, branch])?;
         tx.commit()
             .map_err(|error| db_error("failed committing native cleanup admission", error))?;
-        Ok(ManagedWorktreeCleanupAdmission::Execute {
-            operation_id: command.operation_id.clone(),
-        })
+        Ok(ManagedWorktreeCleanupAdmission::Execute { grant })
     }
 
-    /// Called only after native Git, or after independent read-only evidence
-    /// proves both the exact checkout and branch are already absent. A failed
-    /// terminal DB commit leaves the original reservations and intent intact.
+    /// Historical raw responses are not original action acknowledgements.
+    /// This compatibility entry point grants no settlement authority.
     pub fn complete_managed_worktree_cleanup(
         &self,
-        operation_id: &str,
-        response: &WorktreeCleanupResponse,
-        completed_at: i64,
+        _operation_id: &str,
+        _response: &WorktreeCleanupResponse,
+        _completed_at: i64,
     ) -> Result<(), RuntimeError> {
-        let mut db = open_connection(&self.database_path)?;
-        let tx = db
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| db_error("failed starting native cleanup settlement", error))?;
-        let (worktree_id, repo_root, checkout_path, branch_name, phase): (
-            String,
-            String,
-            String,
-            String,
-            String,
-        ) = tx
-            .query_row(
-                "SELECT worktree_id, repo_root, checkout_path, branch_name, phase
-                 FROM managed_worktree_cleanup_receipts WHERE operation_id=?1",
-                [operation_id],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(|error| db_error("failed reading cleanup intent for settlement", error))?
-            .ok_or_else(|| {
-                RuntimeError::NotFound(format!("native cleanup operation {operation_id}"))
-            })?;
-        if worktree_id != response.worktree_id || phase == "completed" {
-            return Err(RuntimeError::Conflict(
-                "native cleanup receipt already settled or has mismatched identity".into(),
-            ));
-        }
-        let operation = operation_by_id(&tx, operation_id)?
-            .ok_or_else(|| RuntimeError::NotFound(format!("operation {operation_id}")))?;
-        if operation.kind != CLEANUP_KIND
-            || !matches!(
-                operation.phase,
-                OperationPhase::Requested | OperationPhase::ManualReview
-            )
-        {
-            return Err(RuntimeError::Conflict(
-                "native cleanup operation has unexpected authority".into(),
-            ));
-        }
-        let was_review = operation.phase == OperationPhase::ManualReview;
-        let exact = serde_json::to_value(response).map_err(|error| {
-            RuntimeError::Bootstrap(format!("failed encoding cleanup receipt: {error}"))
-        })?;
-        let succeeded = response.status == "deleted"
-            && response.worktree_path_deleted
-            && response.branch_deleted
-            && response.diagnostics.is_empty();
-        if was_review && !succeeded {
-            return Err(RuntimeError::Conflict(
-                "native cleanup in review cannot be retried without independent evidence".into(),
-            ));
-        }
-        let next_phase = if succeeded {
-            "completed"
-        } else {
-            "manual_review"
-        };
-        tx.execute(
-            "UPDATE managed_worktree_cleanup_receipts SET phase=?2, response_json=?3, completed_at=?4
-             WHERE operation_id=?1 AND phase!='completed'",
-            params![operation_id, next_phase, json_to_string(&exact)?, completed_at],
-        ).map_err(|error| db_error("failed persisting native cleanup outcome", error))?;
-        tx.execute(
-            "UPDATE runtime_operation_effects SET phase=?2, attempt_count=1,
-             evidence_json=?3, updated_at=?4 WHERE operation_id=?1 AND effect_kind=?5",
-            params![
-                operation_id,
-                if succeeded { "finalized" } else { "uncertain" },
-                json_to_string(&serde_json::json!({"receipt":exact,"native_evidence":"observed"}))?,
-                completed_at,
-                EFFECT_KIND
-            ],
-        )
-        .map_err(|error| db_error("failed persisting native cleanup effect evidence", error))?;
-        let authority = OperationAuthorityTransaction::new(&tx);
-        if succeeded {
-            authority.terminalize(
-                operation_id,
-                operation.phase,
-                OperationPhase::Completed,
-                None,
-                &exact,
-                None,
-                None,
-                completed_at,
-            )?;
-        } else {
-            tx.execute(
-                "UPDATE runtime_operations SET phase='manual_review',
-                 error_code='native_cleanup_incomplete', error_message='independent native effect review required',
-                 updated_at=?2 WHERE operation_id=?1 AND phase='requested'",
-                params![operation_id, completed_at],
-            ).map_err(|error| db_error("failed recording native cleanup review requirement", error))?;
-        }
-        authority.append_transition(&OperationTransitionRecord {
-            operation_id: operation_id.into(),
-            sequence: if was_review { 3 } else { 2 },
-            from_phase: Some(operation.phase),
-            to_phase: if succeeded {
-                OperationPhase::Completed
-            } else {
-                OperationPhase::ManualReview
-            },
-            evidence: Some(serde_json::json!({"native_cleanup":next_phase})),
-            created_at: completed_at,
-        })?;
-        if succeeded {
-            let branch_key = branch_resource_id(&repo_root, &branch_name);
-            for (kind, key) in [
-                (CLAIM_KIND, checkout_path.as_str()),
-                (BRANCH_CLAIM_KIND, branch_key.as_str()),
-            ] {
-                let claim = existing_claim(&tx, operation_id, kind, key)?;
-                authority.release_claim(&claim)?;
-            }
-        }
-        worktree_event(
-            &tx,
-            &worktree_id,
-            operation_id,
-            if was_review { "reconciled" } else { "settled" },
-            if succeeded {
-                "worktree.cleaned_up"
-            } else {
-                "worktree.cleanup_failed"
-            },
-            serde_json::json!({"operation_id":operation_id, "response":exact,
-                "after_manual_review":was_review}),
-            completed_at,
-        )?;
-        tx.commit().map_err(|error| {
-            db_error(
-                "failed committing native cleanup receipt and journal",
-                error,
-            )
-        })
+        Err(RuntimeError::Unsupported("raw cleanup responses cannot settle native effects; original action acknowledgements required".into()))
     }
 }

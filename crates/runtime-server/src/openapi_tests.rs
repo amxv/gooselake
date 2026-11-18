@@ -5,13 +5,13 @@ fn declarative_route_table_preserves_methods_and_authentication_scopes() {
     let routes = super::collect_routes();
     assert_eq!(
         routes.len(),
-        125,
-        "all v1/v2 and public routes, including exact recovery inspection"
+        126,
+        "all v1/v2 and public routes, including exact recovery and claim inspection"
     );
     let method_count: usize = routes.values().map(|spec| spec.methods.len()).sum();
     assert_eq!(
-        method_count, 138,
-        "multi-method routes and operator recovery read retained"
+        method_count, 139,
+        "multi-method routes and operator recovery and claim reads retained"
     );
 
     let public = routes.get("/health").expect("public health route");
@@ -21,6 +21,7 @@ fn declarative_route_table_preserves_methods_and_authentication_scopes() {
     for path in [
         "/v1/mcp/invoke",
         "/v1/diagnostics/team-operations/{operation_id}",
+        "/v1/worktrees/{worktree_id}/claims/{session_id}",
         "/v2/mcp/invoke",
         "/v2/workspaces/{workspace_id}/worktrees",
         "/v2/workspaces/{workspace_id}/agents/{agent_id}/worktree",
@@ -31,6 +32,10 @@ fn declarative_route_table_preserves_methods_and_authentication_scopes() {
             "{path}"
         );
     }
+    let claim = routes
+        .get("/v1/worktrees/{worktree_id}/claims/{session_id}")
+        .expect("exact worktree claim inspection");
+    assert_eq!(claim.methods, [super::HttpMethod::Get].into());
     let worktrees = routes
         .get("/v2/workspaces/{workspace_id}/worktrees")
         .expect("workspace worktrees");

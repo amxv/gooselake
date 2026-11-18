@@ -65,21 +65,10 @@ fn candidate_ids(db: &Connection, stream: LegacySpawnStream) -> Vec<String> {
 
 #[test]
 fn migration_51_preserves_raw_v50_history_and_indexes_all_candidate_stages() {
-    assert_eq!(
-        crate::schema::SCHEMA_VERSION,
-        51,
-        "this disposable downgrade fixture must be reviewed when later migrations are added"
-    );
     let temp = tempfile::tempdir().unwrap();
     let repository = repo(&temp);
-    repository.initialize_schema().unwrap();
+    super::workspace_agent::apply_schema_through(&repository.database_path, 50);
     let db = open_connection(&repository.database_path).unwrap();
-    // Undo only this index migration in this new disposable fixture.
-    db.execute_batch(
-        "DROP INDEX idx_team_spawn_journal_all_operations;
-         DELETE FROM schema_migrations WHERE version=51;",
-    )
-    .unwrap();
     let stages = [
         "planned",
         "worktree_created",
@@ -145,7 +134,10 @@ fn migration_51_preserves_raw_v50_history_and_indexes_all_candidate_stages() {
         .unwrap()
         .collect::<rusqlite::Result<Vec<_>>>()
         .unwrap();
-    assert_eq!(versions, (1..=51).collect::<Vec<i64>>());
+    assert_eq!(
+        versions,
+        (1..=crate::schema::SCHEMA_VERSION).collect::<Vec<i64>>()
+    );
     let index_sql: String = db
         .query_row(
             "SELECT sql FROM sqlite_master WHERE type='index' AND name=?1",

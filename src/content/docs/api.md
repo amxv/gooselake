@@ -1004,13 +1004,13 @@ descendant directory of the checkout, but not a sibling path prefix) **inside
 that same SQLite writer transaction**. If another SQLite writer binds the native session after
 the service's initial safety read, the release returns a conflict without
 releasing the claim or appending a Critical event. Both the service-observed and
-current durable worktree CWD are checked. The exact hydrated claim row is also
-compared inside the transaction: an earlier explicit release cannot revoke a
-new claim created by another writer's Release→Claim cycle on the same key.
-This is value-snapshot protection, not a generation-aware ABA guarantee.
-Generic claim release used by legacy
-roster member removal retains its separate semantics; this fence does not make
-subsequent native Git cleanup atomic with a release.
+current durable worktree CWD are checked. The exact observed claim and its
+persisted lifetime are also checked inside the transaction. Both explicit
+release and generic legacy member-removal release reject a stale lifetime
+before mutation or terminal replay, even when another writer restores identical
+role and timestamp values. The explicit route retains its additional
+native-binding checks. These SQLite fences do not make subsequent native Git
+cleanup atomic with release.
 Native cleanup admission independently checks *all* live sessions for checkout
 ID, exact CWD or descendant CWD bindings under its own SQLite writer lock;
 preflight alone never authorizes native Git removal.
@@ -1025,23 +1025,30 @@ Public legacy claim admission accepts only `owner` or `consumer` roles;
 by an ordinary claim request, which would otherwise strand a non-releasable
 checkout claim without any matching native rebind operation.
 
-Native managed-worktree **cleanup** (`delete_on_last_claim` only) now admits a
-durable system operation, checkout-path and branch reservations, and a
-`worktree.cleanup_admitted` event **before** removing the checkout or branch.
-The terminal receipt and `worktree.cleaned_up` event commit together, and a
-completed cleanup replays the exact original response without running Git.
-If a process dies or the terminal transaction fails after Git, the pending
-operation remains visible through `GET /v2/operations/{operation_id}` and
-subsequent calls **do not repeat Git**. When the exact checkout and Git branch
-can both be independently proven absent, the runtime can settle that existing
-operation from read-only evidence after restart; ambiguous, partial, foreign,
-dirty or unverified effects remain fenced for operator review. Incomplete
-native cleanup records `manual_review` and preserves reservations rather than
-automatically retrying deletion. A typed `409 outcome_unresolved` is
-non-retryable native authority, not a transient failure inviting a new key.
-Claims cannot be attached to a checkout whose generation has an admitted
-cleanup operation, even through another SQLite writer. This does **not**
-authorize removal of preserved legacy data or unresolved migration state.
+Native managed-worktree **cleanup** (`delete_on_last_claim` only) admits one
+original operation with checkout-path and branch reservations before Git runs.
+Checkout removal must return zero, and its acknowledgment must commit before
+branch deletion is granted. The branch grant binds that original checkout
+receipt. Only the original branch deletion's zero-exit acknowledgment can
+commit the terminal response, `worktree.cleaned_up` event and reservation
+release.
+
+A nonzero exit, unknown result, changed eligibility or lost receipt leaves the
+original operation pending or in `manual_review`. Repeated cleanup requests do
+not dispatch either native action again. A duplicate checkout acknowledgment
+does not grant another branch invocation. Inspect
+`GET /v2/operations/{operation_id}`; `409 outcome_unresolved` does not authorize
+a new attempt or key.
+
+Later checkout or branch absence, raw success responses and operator review
+text do not settle an unknown cleanup or release its reservations. No settlement
+workflow is introduced here. A verified completed cleanup replays its saved
+response without Git. Recognized historical completed receipts remain
+replay-only, with their canonical result, old compound effect, transitions and
+Critical events checked together. Unfinished historical receipts gain no
+execution authority from current filesystem observations. Claims cannot be
+attached to an admitted cleanup generation through another supported SQLite
+writer. Preserved legacy data and unresolved migration state remain protected.
 
 When creating an agent, choose one of these `worktree` selectors in the `POST /v2/workspaces/{workspace_id}/agents` JSON request:
 
@@ -1086,6 +1093,13 @@ curl -fsS -X POST \
 
 `expected_revision` is the current workspace-agent revision, not the workspace revision. Optionally send the matching strong `If-Match: "0"` header; a missing header retains compatibility, but a weak, duplicate or mismatched precondition returns typed `412 revision_precondition_failed` **before** provider work or native intent. A successful verified rebind includes the resulting agent revision `ETag` and `X-Operation-ID`. The agent's public identity and provider session identity remain stable. The runtime persists a worktree-rebind intent **before** calling a provider, and only after provider-native cwd/session evidence is verified does one SQLite transaction update the session cwd, workspace-agent recreation policy/revision, and managed-worktree associations. A repeat with the same `Idempotency-Key` and identical input returns the original completed operation without calling the provider again; conflicting input or revision fails with HTTP `409`.
 
+Rebind admission freezes the original claim observations and allocates the
+destination reservation's lifetime before provider dispatch. Promotion or
+definitive rejection validates that saved authority and preserves the
+reservation token; restoring an earlier role does not revive its older token.
+Historical unfinished intents without saved lifetime evidence remain
+unresolved rather than substituting current claims.
+
 SQLite agent revisions have a signed 64-bit ceiling. At that maximum, a new worktree rebind returns `400 invalid_state` **before** admitting an intent or invoking the native provider, because its verified route change cannot commit another revision. Durable SQLite admission and finalization independently guard the same boundary; a previously completed exact-key receipt remains replayable at the ceiling, with no additional native rebind.
 
 Completed keyed rebind receipts remain readable during a later unresolved
@@ -1099,7 +1113,7 @@ this POST receipt replay.
 
 Response fields include `operation` (ID, source/destination routes, `phase`, native evidence) and the updated `agent`. Inspect a durable in-flight or recovery-required operation with `GET /v2/workspaces/{workspace_id}/agents/{agent_id}/rebinds/{operation_id}`, or inspect its shared operation journal, resource claim, and transitions through `GET /v2/operations/{operation_id}`. If native dispatch or binding is ambiguous, HTTP `409 reassignment_recovery_required` includes `error.details.dispatch_outcome: "unknown"`, `error.details.operation_id` and the exact `X-Operation-ID` header, including on a same-key retry, instead of requiring the caller to parse the ID from prose. Its phase becomes `manual_review`: new turns, restores, archival, and further reassignments are blocked rather than replaying unknown provider work. An explicitly unsupported provider (including current ACP rebind) cannot finalize a changed cwd.
 
-Previous managed checkouts are **preserved by default**. To request cleanup *after* verified native rebinding, add `"cleanup_previous_worktree":true` alongside `worktree_id` and `expected_revision`. This choice is part of the idempotency identity: reusing a key with a changed cleanup policy returns a conflict. The provider route changes first; cleanup can never roll back a verified cwd. The durable operation exposes `previous_cleanup_status` (`preserved`, `pending`, `deleted`, `retained_by_policy`, or `skipped_live_claims`) and an optional `previous_cleanup_diagnostic`. A dirty, unmerged, externally managed or unverifiable worktree remains intact and `pending`, never force-deleted. If cleanup is pending after a restart, or after resolving the safety issue, the operator can retry without re-dispatching provider work:
+Previous managed checkouts are **preserved by default**. To request cleanup *after* verified native rebinding, add `"cleanup_previous_worktree":true` alongside `worktree_id` and `expected_revision`. This choice is part of the idempotency identity: reusing a key with a changed cleanup policy returns a conflict. The provider route changes first; cleanup can never roll back a verified cwd. The durable operation exposes `previous_cleanup_status` (`preserved`, `pending`, `deleted`, `retained_by_policy`, or `skipped_live_claims`) and an optional `previous_cleanup_diagnostic`. A dirty, unmerged, externally managed or unverifiable worktree remains intact and `pending`, never force-deleted. If cleanup has not yet been admitted because of a safety blocker, a later explicit request can reconsider that blocker. If cleanup already completed, it can replay the saved receipt. An admitted operation with an unknown native result remains fenced; the endpoint does not repeat its checkout or branch action:
 
 ```bash
 curl -fsS -X POST \
@@ -1120,7 +1134,9 @@ its saved timestamp and creates no event. These observations do not rewrite
 the original completed provider-rebind receipt. If Git cleanup succeeded but
 recording its rebind observation failed, the explicit retry uses the existing
 completed cleanup receipt; it does not repeat the deletion or provider rebind.
-An unresolved native cleanup still requires its original safety evidence.
+An unresolved admitted cleanup cannot be completed from later filesystem
+absence or resumed by reconstructing a lost grant. The original provider-rebind
+receipt and the original cleanup reservations remain distinct.
 
 Only checkout paths under the configured managed root with verified Git identity/branch, no uncommitted changes, and no unmerged branch commits are eligible for automatic deletion. This retry is a separate cleanup action, not a retry of provider rebinding: replaying the original `Idempotency-Key` does not implicitly retry pending native cleanup, even if the checkout has since become clean. Recovery from an ambiguous provider rebind still requires operator investigation and is not implicitly resolved by this endpoint.
 
@@ -2186,6 +2202,39 @@ decode unrelated historical sessions or messages. This remains an unpaged
 legacy read, not a source of authority for native cleanup or reassignment.
 
 Claims, release, and cleanup are separate endpoints so ownership can be represented explicitly.
+
+Authenticated `GET /v1/worktrees/{worktree_id}/claims/{session_id}` returns the
+exact current claim, including its persisted `claim_generation`, without
+changing the claim or appending an event. A missing or tombstoned worktree, or
+a missing claim for that exact session, returns HTTP 404.
+
+`POST /v1/worktrees/{worktree_id}/release` requires `session_id` and
+`expected_claim_generation`. The generation must be a positive integer no
+greater than `9223372036854775807`. Missing or null generations fail JSON
+extraction with HTTP 422; invalid JSON types also fail extraction. Zero and
+positive values above the SQLite signed range that deserialize as `u64` return
+HTTP 400. The optional `cleanup_if_last_claim` setting retains its behavior.
+
+Prepare a release from an observed claim and preserve that request for retries.
+The runtime carries the caller's expected generation unchanged through service
+preflight and the SQLite writer transaction. A stale generation returns HTTP
+409 before mutation or terminal replay, including after a same-value
+Release→Claim cycle and service reconstruction over the same database. A
+same-generation terminal retry preserves the original claim and does not
+append another release event. Live-binding, unresolved-rebind, reservation and
+cleanup guards still apply.
+
+Each claim lifetime belongs to the exact `(worktree_id, session_id)` key. Its
+generation is independent of timestamps, worktree-record revisions and agent
+revisions. A new lifetime advances the token; an unchanged active Claim and an
+exact terminal Release retry preserve it. Existing lifetimes can settle at
+the signed maximum, but creating a successor at that maximum fails closed.
+Migration assigns generation 1 to existing SQL claim rows without rewriting
+historical event or operation JSON. Older serialized observations with no
+generation remain inspectable but cannot authorize mutation of an existing
+claim. Do not default a missing historical generation to 1 or replace a stale
+request's token with a fresh lookup.
+
 For legacy `POST /v1/worktrees/{worktree_id}/claims`, SQLite reads the exact
 worktree and the first active conflicting claim for the requested session,
 without decoding unrelated historical sessions or messages. An atomic claim
@@ -2214,46 +2263,24 @@ reported as 404 using its exact `(worktree_id, session_id)` key, independent
 of unrelated malformed historical sessions. An **existing** claim continues
 through the original complete live-binding, rebind, claim and cleanup guards;
 the point read cannot authorize a release or any native deletion.
-On a clean runtime restart, unchanged managed-worktree records and claims are
-not re-upserted by startup normalization: this preserves existing worktree
-revisions and avoids overwriting a newer release or route recorded by another
-SQLite writer after startup hydration. Historical duplicate-identity winner
-merges, loser/malformed tombstones and changed claim normalization now share
-**one SQLite `IMMEDIATE` writer transaction**. The record plan first compares
-every affected original row; the claim plan checks every raw hydrated claim
-source key and exact role/creation/release values, including remapped source
-keys, and requires newly introduced destination keys to remain absent. An
-independent claim Release/re-Claim, newer journal-free claim update, unresolved
-native provider rebind, changed record, or SQL fault aborts **both record and
-claim plans**. A failed later claim can no longer leave an earlier winner
-merged or loser tombstoned. Successful historical merges and claim normalization
-commit together, and unchanged retries perform no UPDATE.
+On a clean restart, unchanged managed-worktree records and claims are not
+rewritten. Changed record merges, tombstones and historical claim normalization
+share one SQLite `IMMEDIATE` transaction. Before either plan is applied, the
+transaction compares the complete hydrated claim keyset, raw values and
+lifetime tokens, including for record-only repairs. A newly inserted or changed
+claim invalidates that snapshot. The final complete claim set and participating
+record rows are checked again before commit. A late record, source, destination,
+rebind or SQL conflict rolls back the whole repair.
 
-The combined startup transaction protects only historical SQLite record/claim
-repairs derived from that hydration. It cannot encompass native Git, provider
-rebind/dispatch or later cleanup, and value comparisons are not a
-**generation-aware ABA** guard against a row changed and restored to identical
-values. Unrelated newly inserted records/claims outside the normalized plan
-are not a claim of global snapshot isolation. Historical unscoped upserts and
-explicit journaled Claim/Release retain their separate existing contracts.
-If an agent has an `intended` or `manual_review` native provider rebind,
-historical claim repair UPSERTs are also fenced by an immediate SQLite writer
-transaction. A stale startup snapshot cannot overwrite its recovery-sensitive
-worktree reservation; changed legacy repairs outside this fence are not a full
-cross-process compare-and-swap mechanism.
-Historical claim repair also refuses to rewrite an already **released** claim
-when a second SQLite writer has committed that terminal state after startup
-hydration. Exact terminal repeats are no-ops; reviving a claim, changing its
-release timestamp or rewriting its recorded role/creation time through the
-unjournaled repair path fails closed. A new claim activation must still use
-the journaled worktree Claim transition. The same writer lock also preserves
-**journal-backed active** claims: if an independent writer has journaled a
-Release followed by a new Claim after stale startup hydration, the old
-historical role normalizer cannot overwrite the new role or claim timestamp
-without a Critical event. Exact active retries do not UPDATE; older active
-claims without journaled transitions can still be normalized. The guard is
-scoped to the exact worktree/session journal authority and does not give
-other journal-free active-claim repairs general cross-process CAS authority.
+Claim keys remain opaque identities. Existing destination keys retain their
+own observed lifetime; a still-absent destination receives its initial token.
+A remapped source token is never borrowed as destination authority. Historical
+normalization cannot reactivate a terminal claim or overwrite journal-backed
+active authority. Unresolved native rebinds retain their existing fences.
+
+These checks protect the historical SQLite repair transaction. They do not
+encompass provider dispatch, native Git or subsequent cleanup, and they do not
+certify every unrelated worktree record or unknown native outcome.
 
 For v2 workspace worktree creation with an explicitly specified retention
 policy, the pre-admission policy-conflict check seeks only the existing

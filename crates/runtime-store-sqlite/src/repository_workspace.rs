@@ -580,7 +580,7 @@ fn transitions_for_operation(
     collect_rows(rows)
 }
 
-fn effects_for_operation(
+pub(crate) fn effects_for_operation(
     connection: &Connection,
     operation_id: &str,
 ) -> Result<Vec<OperationEffectRecord>, RuntimeError> {

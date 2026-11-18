@@ -22,7 +22,7 @@ fn worktree() -> ManagedWorktreeRecord {
     }
 }
 
-fn fixture() -> (
+pub(super) fn fixture() -> (
     tempfile::TempDir,
     SqliteRuntimeRepository,
     ManagedWorktreeCleanupCommand,
@@ -308,6 +308,7 @@ fn cleanup_admission_fault_rolls_back_intent_journal_and_git_claims() {
     // after cleanup admission, independent of service-local Git mutexes.
     assert!(new_instance
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: command.worktree.id.clone(),
             session_id: "session_1".into(),
             claim_role: "owner".into(),
@@ -351,27 +352,83 @@ fn cleanup_admission_fault_rolls_back_intent_journal_and_git_claims() {
     );
 }
 
-#[test]
-fn failed_terminal_event_commit_preserves_intent_and_reconciles_once_after_restart() {
-    let (temp, repository, command) = fixture();
-    repository.admit_managed_worktree_cleanup(&command).unwrap();
-    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
-    db.execute_batch(
-        "CREATE TRIGGER reject_worktree_cleanup_receipt
-        BEFORE INSERT ON runtime_events WHEN NEW.kind='worktree.cleaned_up'
-        BEGIN SELECT RAISE(FAIL, 'injected native cleanup terminal failure'); END;",
+pub(super) fn original_branch_ack(
+    repository: &SqliteRuntimeRepository,
+    command: &ManagedWorktreeCleanupCommand,
+) -> (
+    runtime_core::BranchDeletionAck,
+    Vec<runtime_core::OperationResourceClaimRecord>,
+) {
+    let checkout = match repository.admit_managed_worktree_cleanup(command).unwrap() {
+        ManagedWorktreeCleanupAdmission::Execute { grant } => grant,
+        other => panic!("{other:?}"),
+    };
+    let claims = repository
+        .get_operation(&command.operation_id)
+        .unwrap()
+        .unwrap()
+        .claims;
+    let branch = match repository
+        .acknowledge_managed_checkout_removal(&runtime_core::CheckoutRemovalAck {
+            grant: checkout,
+            exit_code: 0,
+            observed_at: 150,
+        })
+        .unwrap()
+    {
+        runtime_core::ManagedCleanupBranchAdmission::Execute { grant } => grant,
+        other => panic!("{other:?}"),
+    };
+    (
+        runtime_core::BranchDeletionAck {
+            grant: branch,
+            exit_code: 0,
+            observed_at: 200,
+        },
+        claims,
     )
-    .unwrap();
-    assert!(repository
-        .complete_managed_worktree_cleanup(&command.operation_id, &success(), 200)
-        .is_err());
+}
+
+#[test]
+fn failed_terminal_event_rolls_back_and_retained_original_ack_can_commit_after_restart() {
+    let (temp, repository, command) = fixture();
+    let (ack, claims) = original_branch_ack(&repository, &command);
+    let db = open_connection(&temp.path().join("runtime.sqlite3")).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_worktree_cleanup_receipt BEFORE INSERT ON runtime_events
+        WHEN NEW.kind='worktree.cleaned_up' BEGIN SELECT RAISE(FAIL,'injected native cleanup terminal failure'); END;").unwrap();
+    let error = repository
+        .acknowledge_managed_branch_deletion(&ack)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("injected native cleanup terminal failure"),
+        "{error}"
+    );
     let pending = repository
         .get_operation(&command.operation_id)
         .unwrap()
         .unwrap();
     assert_eq!(pending.operation.phase, OperationPhase::Requested);
-    assert_eq!(pending.claims.len(), 2);
-    assert_eq!(pending.effects[0].phase, "intended");
+    assert_eq!(pending.claims, claims);
+    assert_eq!(
+        pending
+            .effects
+            .iter()
+            .find(|e| e.effect_kind == "git_worktree_remove")
+            .unwrap()
+            .phase,
+        "finalized"
+    );
+    assert_eq!(
+        pending
+            .effects
+            .iter()
+            .find(|e| e.effect_kind == "git_branch_delete")
+            .unwrap()
+            .phase,
+        "started"
+    );
     assert!(matches!(
         repository
             .replay_managed_worktree_cleanup(&command.worktree)
@@ -383,28 +440,27 @@ fn failed_terminal_event_commit_preserves_intent_and_reconciles_once_after_resta
             .list_runtime_events(Some((RuntimeEventScope::Worktree, "wt_cleanup")), None, 10)
             .unwrap()
             .len(),
-        1
+        2
     );
-
     db.execute_batch("DROP TRIGGER reject_worktree_cleanup_receipt;")
         .unwrap();
     let restarted = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
-    restarted
-        .complete_managed_worktree_cleanup(&command.operation_id, &success(), 300)
-        .unwrap();
+    // This caller still has the exact original acknowledgement. Filesystem
+    // absence or a newly constructed success response cannot replace it.
+    let result = restarted.acknowledge_managed_branch_deletion(&ack).unwrap();
     let terminal = restarted
         .get_operation(&command.operation_id)
         .unwrap()
         .unwrap();
     assert_eq!(terminal.operation.phase, OperationPhase::Completed);
-    assert_eq!(terminal.claims.len(), 0);
-    assert_eq!(terminal.effects[0].phase, "finalized");
-    let replayed = restarted
-        .replay_managed_worktree_cleanup(&command.worktree)
-        .unwrap();
+    assert!(terminal.claims.is_empty());
+    assert!(terminal
+        .effects
+        .iter()
+        .all(|e| e.phase == "finalized" && e.attempt_count == 1));
     assert!(
-        matches!(replayed, Some(ManagedWorktreeCleanupAdmission::Replay { operation_id, response })
-        if operation_id == command.operation_id && response.status == "deleted" && response.branch_deleted)
+        matches!(restarted.replay_managed_worktree_cleanup(&command.worktree).unwrap(),Some(ManagedWorktreeCleanupAdmission::Replay{operation_id,response})
+        if operation_id==command.operation_id && serde_json::to_value(&response).unwrap()==serde_json::to_value(&result).unwrap())
     );
     assert_eq!(
         restarted
@@ -416,61 +472,95 @@ fn failed_terminal_event_commit_preserves_intent_and_reconciles_once_after_resta
             .unwrap(),
         None
     );
-    let worktree_events = restarted
+    let events = restarted
         .list_runtime_events(Some((RuntimeEventScope::Worktree, "wt_cleanup")), None, 10)
         .unwrap();
     assert_eq!(
-        worktree_events
-            .iter()
-            .map(|event| event.kind.as_str())
-            .collect::<Vec<_>>(),
-        ["worktree.cleanup_admitted", "worktree.cleaned_up"]
+        events.iter().map(|e| e.kind.as_str()).collect::<Vec<_>>(),
+        [
+            "worktree.cleanup_admitted",
+            "worktree.checkout_removed",
+            "worktree.cleaned_up"
+        ]
     );
+    for (i, suffix) in ["admitted", "checkout-acknowledged", "settled"]
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(
+            events[i].event_id,
+            format!("{}:event:worktree:{suffix}", command.operation_id)
+        );
+        assert_eq!(events[i].seq, (i + 1) as i64);
+    }
     assert_eq!(
-        worktree_events[0].event_id,
-        format!("{}:event:worktree:admitted", command.operation_id)
+        serde_json::to_value(restarted.acknowledge_managed_branch_deletion(&ack).unwrap()).unwrap(),
+        serde_json::to_value(result).unwrap()
     );
-    assert_eq!(
-        worktree_events[1].event_id,
-        format!("{}:event:worktree:settled", command.operation_id)
-    );
-    assert_eq!(worktree_events[0].seq, 1);
-    assert_eq!(worktree_events[1].seq, 2);
+    let changed = runtime_core::BranchDeletionAck {
+        observed_at: 400,
+        ..ack
+    };
     assert!(restarted
-        .complete_managed_worktree_cleanup(&command.operation_id, &success(), 400)
+        .acknowledge_managed_branch_deletion(&changed)
         .is_err());
+    assert!(matches!(
+        restarted.complete_managed_worktree_cleanup(&command.operation_id, &success(), 400),
+        Err(RuntimeError::Unsupported(_))
+    ));
+    assert_eq!(
+        restarted
+            .get_operation(&command.operation_id)
+            .unwrap()
+            .unwrap(),
+        terminal
+    );
     assert_eq!(
         restarted
             .list_runtime_events(Some((RuntimeEventScope::Worktree, "wt_cleanup")), None, 10)
-            .unwrap()
-            .len(),
-        2
+            .unwrap(),
+        events
     );
 }
 
 #[test]
-fn partial_git_removal_is_manual_review_until_independent_absence_evidence() {
+fn partial_git_removal_stays_held_without_new_settlement_authority() {
     let (temp, repository, command) = fixture();
-    repository.admit_managed_worktree_cleanup(&command).unwrap();
-    let partial = WorktreeCleanupResponse {
-        status: "cleanup_failed".into(),
-        worktree_path_deleted: true,
-        branch_deleted: false,
-        diagnostics: vec!["branch has unmerged history".into()],
-        ..success()
-    };
+    let (ack, claims) = original_branch_ack(&repository, &command);
+    let attempt = runtime_core::ManagedCleanupAttempt::Branch(ack.grant.clone());
+    let observation = runtime_core::ManagedCleanupObservation::Exited { code: 1 };
     repository
-        .complete_managed_worktree_cleanup(&command.operation_id, &partial, 200)
+        .hold_managed_worktree_cleanup(&attempt, &observation, "branch has unmerged history", 200)
         .unwrap();
     let review = repository
         .get_operation(&command.operation_id)
         .unwrap()
         .unwrap();
     assert_eq!(review.operation.phase, OperationPhase::ManualReview);
-    assert_eq!(review.claims.len(), 2);
-    assert_eq!(review.effects[0].phase, "uncertain");
+    assert_eq!(review.claims, claims);
+    assert_eq!(
+        review
+            .effects
+            .iter()
+            .find(|e| e.effect_kind == "git_worktree_remove")
+            .unwrap()
+            .phase,
+        "finalized"
+    );
+    assert_eq!(
+        review
+            .effects
+            .iter()
+            .find(|e| e.effect_kind == "git_branch_delete")
+            .unwrap()
+            .phase,
+        "uncertain"
+    );
+    repository
+        .hold_managed_worktree_cleanup(&attempt, &observation, "branch has unmerged history", 200)
+        .unwrap();
     assert!(repository
-        .complete_managed_worktree_cleanup(&command.operation_id, &partial, 300)
+        .hold_managed_worktree_cleanup(&attempt, &observation, "different evidence", 201)
         .is_err());
     let restarted = SqliteRuntimeRepository::new(temp.path().join("runtime.sqlite3"));
     assert!(matches!(
@@ -479,41 +569,51 @@ fn partial_git_removal_is_manual_review_until_independent_absence_evidence() {
             .unwrap(),
         Some(ManagedWorktreeCleanupAdmission::Unresolved { .. })
     ));
-    // Only the service's independent Git inspection may supply this final
-    // success receipt; SQLite never infers removal from a partial response.
-    restarted
-        .complete_managed_worktree_cleanup(&command.operation_id, &success(), 400)
-        .unwrap();
-    let final_state = restarted
-        .get_operation(&command.operation_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(final_state.operation.phase, OperationPhase::Completed);
-    assert!(final_state.claims.is_empty());
+    for response in [
+        success(),
+        WorktreeCleanupResponse {
+            status: "cleanup_failed".into(),
+            branch_deleted: false,
+            diagnostics: vec!["partial".into()],
+            ..success()
+        },
+    ] {
+        assert!(matches!(
+            restarted.complete_managed_worktree_cleanup(&command.operation_id, &response, 400),
+            Err(RuntimeError::Unsupported(_))
+        ));
+    }
+    assert!(restarted.acknowledge_managed_branch_deletion(&ack).is_err());
     assert_eq!(
-        final_state
+        restarted
+            .get_operation(&command.operation_id)
+            .unwrap()
+            .unwrap(),
+        review
+    );
+    assert_eq!(
+        review
             .transitions
             .iter()
-            .map(|step| step.to_phase)
+            .map(|s| s.to_phase)
             .collect::<Vec<_>>(),
         [
             OperationPhase::Requested,
-            OperationPhase::ManualReview,
-            OperationPhase::Completed
+            OperationPhase::Requested,
+            OperationPhase::ManualReview
         ]
     );
-    let kinds = restarted
-        .list_runtime_events(Some((RuntimeEventScope::Worktree, "wt_cleanup")), None, 10)
-        .unwrap()
-        .into_iter()
-        .map(|event| event.kind)
-        .collect::<Vec<_>>();
     assert_eq!(
-        kinds,
+        restarted
+            .list_runtime_events(Some((RuntimeEventScope::Worktree, "wt_cleanup")), None, 10)
+            .unwrap()
+            .iter()
+            .map(|e| e.kind.as_str())
+            .collect::<Vec<_>>(),
         [
             "worktree.cleanup_admitted",
-            "worktree.cleanup_failed",
-            "worktree.cleaned_up"
+            "worktree.checkout_removed",
+            "worktree.cleanup_held"
         ]
     );
 }
@@ -528,6 +628,7 @@ fn schema_upgrade_from_27_retains_legacy_worktrees_claims_and_events() {
     let worktree = worktree();
     repository.upsert_managed_worktree(&worktree).unwrap();
     let legacy_claim = ManagedWorktreeClaimRecord {
+        claim_generation: Some(1),
         worktree_id: worktree.id.clone(),
         session_id: "session_1".into(),
         claim_role: "owner".into(),

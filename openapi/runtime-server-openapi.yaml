@@ -1128,6 +1128,27 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JsonObject"
+  /v1/worktrees/{worktree_id}/claims/{session_id}:
+    get:
+      summary: Read exact worktree claim lifetime
+      parameters:
+        - name: worktree_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonObject"
   /v1/worktrees/{worktree_id}/cleanup:
     post:
       summary: Cleanup worktree
@@ -1152,7 +1173,7 @@ paths:
                 $ref: "#/components/schemas/JsonObject"
   /v1/worktrees/{worktree_id}/release:
     post:
-      summary: Release worktree claim
+      summary: Release observed worktree claim lifetime
       parameters:
         - name: worktree_id
           in: path

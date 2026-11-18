@@ -33,6 +33,27 @@ pub(super) async fn get_worktree(
     Ok(Json(row))
 }
 
+pub(super) async fn get_worktree_claim(
+    State(state): State<AppState>,
+    Path((worktree_id, session_id)): Path<(String, String)>,
+) -> Result<Json<runtime_core::ManagedWorktreeClaimRecord>, ApiError> {
+    state
+        .app
+        .services
+        .worktrees
+        .get_worktree(&worktree_id)
+        .await?;
+    let claim = state
+        .app
+        .services
+        .store
+        .get_managed_worktree_claim(&worktree_id, &session_id)?
+        .ok_or_else(|| {
+            RuntimeError::NotFound(format!("worktree claim {worktree_id}:{session_id}"))
+        })?;
+    Ok(Json(claim))
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct WorktreeClaimInput {
     session_id: String,
@@ -61,6 +82,7 @@ pub(super) async fn claim_worktree(
 #[derive(Debug, Deserialize)]
 pub(super) struct WorktreeReleaseInput {
     session_id: String,
+    expected_claim_generation: u64,
     cleanup_if_last_claim: Option<bool>,
 }
 
@@ -76,6 +98,7 @@ pub(super) async fn release_worktree(
         .release_worktree(WorktreeReleaseRequest {
             worktree_id,
             session_id: input.session_id,
+            expected_claim_generation: input.expected_claim_generation,
             cleanup_if_last_claim: input.cleanup_if_last_claim,
         })
         .await

@@ -1,9 +1,9 @@
 use runtime_core::{
     AgentDeliveryRecord, AgentMessageContextKind, AgentMessageRecord, ApprovalRecord,
-    CredentialRecord, ManagedWorktreeClaimRecord, ManagedWorktreeRecord, ProcessRecord,
-    RetirementReviewSessionProjection, RetirementSettledTurnProjection, RuntimeError,
-    RuntimeHydratedState, SessionRecord, TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord,
-    TeamOperationDiagnosticRecord, TeamOperationJournalRecord, TeamRecord, TurnRecord,
+    CredentialRecord, ManagedWorktreeRecord, ProcessRecord, RetirementReviewSessionProjection,
+    RetirementSettledTurnProjection, RuntimeError, RuntimeHydratedState, SessionRecord,
+    TeamDeliveryRecord, TeamMemberRecord, TeamMessageRecord, TeamOperationDiagnosticRecord,
+    TeamOperationJournalRecord, TeamRecord, TurnRecord,
 };
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior};
 
@@ -554,37 +554,8 @@ impl SqliteRuntimeRepository {
             collect_rows(rows)?
         };
 
-        let managed_worktree_claims = {
-            let mut statement = connection
-                .prepare(
-                    "SELECT worktree_id, session_id, claim_role, created_at, released_at
-                     FROM managed_worktree_claims
-                     ORDER BY created_at ASC, worktree_id ASC, session_id ASC",
-                )
-                .map_err(|error| {
-                    db_error(
-                        "failed preparing managed worktree claim hydration query",
-                        error,
-                    )
-                })?;
-            let rows = statement
-                .query_map([], |row| {
-                    Ok(ManagedWorktreeClaimRecord {
-                        worktree_id: row.get(0)?,
-                        session_id: row.get(1)?,
-                        claim_role: row.get(2)?,
-                        created_at: row.get(3)?,
-                        released_at: row.get(4)?,
-                    })
-                })
-                .map_err(|error| {
-                    db_error(
-                        "failed running managed worktree claim hydration query",
-                        error,
-                    )
-                })?;
-            collect_rows(rows)?
-        };
+        let managed_worktree_claims =
+            crate::repository_worktree_claim_generation::hydrate(&connection)?;
 
         let team_operation_journal = {
             let mut statement = connection

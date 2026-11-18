@@ -227,7 +227,7 @@ async fn legacy_public_worktree_claim_rejects_internal_rebind_reservations_and_i
         .call(
             "POST",
             "/v1/worktrees/wt_public_claim_role/release",
-            Some(serde_json::json!({"session_id":agent.agent_id,"cleanup_if_last_claim":false})),
+            Some(serde_json::json!({"session_id":agent.agent_id,"expected_claim_generation":owner["claim"]["claim_generation"],"cleanup_if_last_claim":false})),
             None,
         )
         .await;

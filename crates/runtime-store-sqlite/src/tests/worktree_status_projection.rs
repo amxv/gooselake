@@ -39,6 +39,7 @@ fn indexed_worktree_status_projects_only_target_repo_and_live_claims_after_resta
     repository.upsert_session(&session).unwrap();
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: primary.id.clone(),
             session_id: session.id.clone(),
             claim_role: "owner".into(),
@@ -50,6 +51,7 @@ fn indexed_worktree_status_projects_only_target_repo_and_live_claims_after_resta
     repository.upsert_session(&session).unwrap();
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: alias.id.clone(),
             session_id: session.id.clone(),
             claim_role: "consumer".into(),
@@ -307,15 +309,10 @@ fn migration_34_pages_two_thousand_worktrees_with_aliases_claims_and_exact_curso
     drop(connection);
     let repository = SqliteRuntimeRepository::new(path.clone());
     repository.upsert_session(&sample_session()).unwrap();
-    repository
-        .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
-            worktree_id: "worktree_0000".into(),
-            session_id: "session_1".into(),
-            claim_role: "owner".into(),
-            created_at: 2,
-            released_at: None,
-        })
-        .unwrap();
+    // Populate the actual pre-generation schema before applying migrations.
+    Connection::open(&path).unwrap().execute(
+        "INSERT INTO managed_worktree_claims(worktree_id,session_id,claim_role,created_at,released_at)
+         VALUES('worktree_0000','session_1','owner',2,NULL)",[]).unwrap();
 
     let before: i64 = Connection::open(&path)
         .unwrap()
@@ -496,6 +493,7 @@ fn paged_worktree_inventory_preserves_all_aliases_across_bounded_root_batches() 
     repository.upsert_session(&sample_session()).unwrap();
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "alias_0000".into(),
             session_id: "session_1".into(),
             claim_role: "owner".into(),

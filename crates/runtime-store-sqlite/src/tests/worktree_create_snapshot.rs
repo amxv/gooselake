@@ -34,6 +34,7 @@ fn worktree_create_natural_key_and_active_claims_share_indexed_reopenable_sqlite
     repository.upsert_managed_worktree(&target).unwrap();
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: target.id.clone(),
             session_id: "session_1".into(),
             claim_role: "owner".into(),
@@ -43,6 +44,7 @@ fn worktree_create_natural_key_and_active_claims_share_indexed_reopenable_sqlite
         .unwrap();
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: target.id.clone(),
             session_id: "session_2".into(),
             claim_role: "consumer".into(),
@@ -81,6 +83,7 @@ fn worktree_create_natural_key_and_active_claims_share_indexed_reopenable_sqlite
     tx.commit().unwrap();
     repository
         .upsert_managed_worktree_claim(&ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "wt_unrelated_0001".into(),
             session_id: "session_3".into(),
             claim_role: "owner".into(),

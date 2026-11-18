@@ -8,46 +8,28 @@ use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
 use crate::db::{collect_rows, db_error, open_connection};
 use crate::repository::insert_runtime_event_in_transaction;
+use crate::repository_worktree_claim_generation as lifetime;
 use crate::SqliteRuntimeRepository;
 
-/// Validate all raw hydrated claim keys/values and newly created target
-/// absence in the caller's writer transaction, then apply changed historical
-/// claim rows. This is value-snapshot CAS, not generation-aware ABA safety.
+/// Compare exact raw source lifetimes, then preserve each existing destination's
+/// own token or allocate one for a still-absent key. No historical repair may
+/// reactivate a terminal claim or borrow a token from another primary key.
 pub(crate) fn repair_historical_claims_in_transaction(
     transaction: &Transaction<'_>,
     originals: Option<&[ManagedWorktreeClaimRecord]>,
     repairs: &[ManagedWorktreeClaimRecord],
 ) -> Result<(), RuntimeError> {
-    let mut hydrated_keys = BTreeSet::<(String, String)>::new();
+    let mut hydrated_keys = BTreeSet::new();
     if let Some(originals) = originals {
         for original in originals {
+            lifetime::generation(original)?;
             if !hydrated_keys.insert((original.worktree_id.clone(), original.session_id.clone())) {
                 return Err(RuntimeError::Conflict(
                     "historical startup claim snapshot contains duplicate source keys".into(),
                 ));
             }
-            let durable = transaction
-                .query_row(
-                    "SELECT claim_role,created_at,released_at FROM managed_worktree_claims
-                     WHERE worktree_id=?1 AND session_id=?2",
-                    params![original.worktree_id, original.session_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, Option<i64>>(2)?,
-                        ))
-                    },
-                )
-                .optional()
-                .map_err(|error| db_error("failed comparing historical raw claim source", error))?;
-            if durable
-                .as_ref()
-                .is_none_or(|(role, created_at, released_at)| {
-                    role != &original.claim_role
-                        || *created_at != original.created_at
-                        || *released_at != original.released_at
-                })
+            if lifetime::read(transaction, &original.worktree_id, &original.session_id)?.as_ref()
+                != Some(original)
             {
                 return Err(RuntimeError::Conflict(
                     "historical startup claim source changed since hydration".into(),
@@ -55,23 +37,16 @@ pub(crate) fn repair_historical_claims_in_transaction(
             }
         }
     }
+    let mut planned_keys = BTreeSet::new();
+    let mut written = Vec::new();
     for record in repairs {
-        require_no_unresolved_rebind_for_claim_mutation(&transaction, &record.session_id)?;
-        let existing = transaction
-            .query_row(
-                "SELECT claim_role,created_at,released_at FROM managed_worktree_claims
-                 WHERE worktree_id=?1 AND session_id=?2",
-                params![record.worktree_id, record.session_id],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, Option<i64>>(2)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(|error| db_error("failed reading historical claim repair authority", error))?;
+        if !planned_keys.insert((record.worktree_id.clone(), record.session_id.clone())) {
+            return Err(RuntimeError::Conflict(
+                "historical claim repair repeats a destination key".into(),
+            ));
+        }
+        require_no_unresolved_rebind_for_claim_mutation(transaction, &record.session_id)?;
+        let existing = lifetime::read(transaction, &record.worktree_id, &record.session_id)?;
         if originals.is_some()
             && !hydrated_keys.contains(&(record.worktree_id.clone(), record.session_id.clone()))
             && existing.is_some()
@@ -80,39 +55,27 @@ pub(crate) fn repair_historical_claims_in_transaction(
                 "historical startup claim target was created after hydration".into(),
             ));
         }
-        if let Some((prior_role, prior_created_at, prior_released_at)) = existing {
-            // Exact historical retries never UPDATE, including active
-            // journal-backed or terminal rows.
-            if record.released_at == prior_released_at
-                && record.claim_role == prior_role
-                && record.created_at == prior_created_at
-            {
+        let mut updated = record.clone();
+        if let Some(prior) = existing {
+            lifetime::require_observed(record, &prior)?;
+            if record == &prior {
                 continue;
             }
-            if prior_released_at.is_some() {
-                // Only a journaled Claim may reactivate a released row.
+            if prior.released_at.is_some() {
                 return Err(RuntimeError::Conflict(
                     "historical startup claim repair cannot rewrite a terminal claim".into(),
                 ));
             }
-
-            // A committed Release then re-Claim may leave this row active
-            // again. The Critical journal, not old hydration, is authority.
-            // Legacy unjournaled active claims may still be normalized.
             let journaled: bool = transaction
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM runtime_events
-                     WHERE scope = 'worktree' AND scope_id = ?1 AND session_id = ?2
-                       AND critical = 1
-                       AND kind IN ('worktree.claimed','worktree.released'))",
+                 WHERE scope='worktree' AND scope_id=?1 AND session_id=?2 AND critical=1
+                   AND kind IN ('worktree.claimed','worktree.released'))",
                     params![record.worktree_id, record.session_id],
                     |row| row.get(0),
                 )
-                .map_err(|error| {
-                    db_error(
-                        "failed reading active worktree claim journal authority",
-                        error,
-                    )
+                .map_err(|e| {
+                    db_error("failed reading active worktree claim journal authority", e)
                 })?;
             if journaled {
                 return Err(RuntimeError::Conflict(
@@ -120,25 +83,29 @@ pub(crate) fn repair_historical_claims_in_transaction(
                         .into(),
                 ));
             }
+            updated.claim_generation = prior.claim_generation;
+        } else {
+            // None is an unallocated insertion intent. An explicit first-token
+            // fixture/intent may assert 1, but never choose a later generation.
+            if record.claim_generation.is_some_and(|value| value != 1) {
+                return Err(RuntimeError::Conflict(
+                    "new historical claim cannot import another key's lifetime token".into(),
+                ));
+            }
+            updated.claim_generation = Some(1);
         }
-        transaction
-            .execute(
-                "INSERT INTO managed_worktree_claims (
-                    worktree_id, session_id, claim_role, created_at, released_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(worktree_id, session_id) DO UPDATE SET
-                    claim_role = excluded.claim_role,
-                    created_at = excluded.created_at,
-                    released_at = excluded.released_at",
-                params![
-                    record.worktree_id,
-                    record.session_id,
-                    record.claim_role,
-                    record.created_at,
-                    record.released_at,
-                ],
-            )
-            .map_err(|error| db_error("failed upserting managed worktree claim", error))?;
+        lifetime::write(transaction, &updated)?;
+        written.push(updated);
+    }
+    // A later trigger/write must not alter an earlier carrier in this batch.
+    for record in written {
+        if lifetime::read(transaction, &record.worktree_id, &record.session_id)?.as_ref()
+            != Some(&record)
+        {
+            return Err(RuntimeError::Conflict(
+                "historical claim batch carrier changed before commit".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -170,7 +137,7 @@ impl SqliteRuntimeRepository {
     /// Startup's reconstructed role/identity must still be based on the raw
     /// durable source rows it hydrated, even when it remaps a source key.
     /// A new target key must also remain absent until the writer lock.
-    /// This value-snapshot guard is not a generation-aware ABA guarantee.
+    /// Exact lifetime tokens fence same-value release/reclaim as well as value changes.
     pub fn repair_managed_worktree_claims_if_unchanged_atomically(
         &self,
         originals: &[ManagedWorktreeClaimRecord],
@@ -219,24 +186,7 @@ impl SqliteRuntimeRepository {
         session_id: &str,
     ) -> Result<Option<ManagedWorktreeClaimRecord>, RuntimeError> {
         let connection = open_connection(&self.database_path)?;
-        connection
-            .query_row(
-                "SELECT worktree_id,session_id,claim_role,created_at,released_at
-                 FROM managed_worktree_claims
-                 WHERE worktree_id=?1 AND session_id=?2",
-                params![worktree_id, session_id],
-                |row| {
-                    Ok(ManagedWorktreeClaimRecord {
-                        worktree_id: row.get(0)?,
-                        session_id: row.get(1)?,
-                        claim_role: row.get(2)?,
-                        created_at: row.get(3)?,
-                        released_at: row.get(4)?,
-                    })
-                },
-            )
-            .optional()
-            .map_err(|error| db_error("failed reading exact managed worktree claim", error))
+        lifetime::read(&connection, worktree_id, session_id)
     }
 
     /// Legacy best-effort member removal needs only this removed session's
@@ -248,25 +198,12 @@ impl SqliteRuntimeRepository {
         session_id: &str,
     ) -> Result<Vec<ManagedWorktreeClaimRecord>, RuntimeError> {
         let connection = open_connection(&self.database_path)?;
-        let mut statement = connection
-            .prepare(
-                "SELECT worktree_id,session_id,claim_role,created_at,released_at
-                 FROM managed_worktree_claims
-                 WHERE session_id=?1 AND released_at IS NULL
-                 ORDER BY created_at ASC,worktree_id ASC,session_id ASC",
-            )
-            .map_err(|error| db_error("failed preparing removed member's active claims", error))?;
+        let mut statement = connection.prepare(&format!(
+            "{} WHERE session_id=?1 AND released_at IS NULL ORDER BY created_at ASC,worktree_id ASC,session_id ASC",
+            lifetime::SELECT)).map_err(|e| db_error("failed preparing removed member's active claims", e))?;
         let rows = statement
-            .query_map([session_id], |row| {
-                Ok(ManagedWorktreeClaimRecord {
-                    worktree_id: row.get(0)?,
-                    session_id: row.get(1)?,
-                    claim_role: row.get(2)?,
-                    created_at: row.get(3)?,
-                    released_at: row.get(4)?,
-                })
-            })
-            .map_err(|error| db_error("failed reading removed member's active claims", error))?;
+            .query_map([session_id], lifetime::from_row)
+            .map_err(|e| db_error("failed reading removed member's active claims", e))?;
         collect_rows(rows)
     }
 
@@ -308,23 +245,7 @@ impl SqliteRuntimeRepository {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| db_error("failed starting worktree claim event transaction", error))?;
 
-        let existing = transaction
-            .query_row(
-                "SELECT claim_role, created_at, released_at FROM managed_worktree_claims
-                 WHERE worktree_id = ?1 AND session_id = ?2",
-                params![record.worktree_id, record.session_id],
-                |row| {
-                    Ok(ManagedWorktreeClaimRecord {
-                        worktree_id: record.worktree_id.clone(),
-                        session_id: record.session_id.clone(),
-                        claim_role: row.get(0)?,
-                        created_at: row.get(1)?,
-                        released_at: row.get(2)?,
-                    })
-                },
-            )
-            .optional()
-            .map_err(|error| db_error("failed reading worktree claim transition", error))?;
+        let existing = lifetime::read(&transaction, &record.worktree_id, &record.session_id)?;
 
         let updated = match transition {
             ManagedWorktreeClaimTransition::Claim => {
@@ -368,7 +289,10 @@ impl SqliteRuntimeRepository {
                 // service preflight. Serialize claim admission with rebind
                 // intent under this same IMMEDIATE transaction.
                 require_no_unresolved_rebind_for_claim_mutation(&transaction, &record.session_id)?;
-                record.clone()
+                ManagedWorktreeClaimRecord {
+                    claim_generation: Some(lifetime::next(existing.as_ref())?),
+                    ..record.clone()
+                }
             }
             ManagedWorktreeClaimTransition::Release => {
                 let existing = existing.ok_or_else(|| {
@@ -377,7 +301,10 @@ impl SqliteRuntimeRepository {
                         record.worktree_id, record.session_id
                     ))
                 })?;
+                // Lifetime equality precedes terminal replay as well as mutation.
+                lifetime::require_observed(record, &existing)?;
                 if let Some((observed, expected_cwd)) = explicit_release_snapshot {
+                    lifetime::require_observed(observed, &existing)?;
                     // A separate writer may have released and re-claimed the
                     // same PK since the service read its original claim. Do
                     // not let that stale release revoke the newer Critical
@@ -446,7 +373,7 @@ impl SqliteRuntimeRepository {
                 // writer lock. Historical unjournaled trim/case-only role
                 // normalization is equivalent and may race a generic
                 // Release; do not break that long-standing compatibility.
-                // This value guard does not distinguish identical-value ABA.
+                // The token guard above already distinguishes identical-value ABA.
                 if existing.created_at != record.created_at
                     || !existing
                         .claim_role
@@ -479,24 +406,7 @@ impl SqliteRuntimeRepository {
         }
         legacy_targets.guard(&transaction)?;
 
-        transaction
-            .execute(
-                "INSERT INTO managed_worktree_claims (
-                    worktree_id, session_id, claim_role, created_at, released_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(worktree_id, session_id) DO UPDATE SET
-                    claim_role = excluded.claim_role,
-                    created_at = excluded.created_at,
-                    released_at = excluded.released_at",
-                params![
-                    updated.worktree_id,
-                    updated.session_id,
-                    updated.claim_role,
-                    updated.created_at,
-                    updated.released_at,
-                ],
-            )
-            .map_err(|error| db_error("failed persisting worktree claim transition", error))?;
+        lifetime::write(&transaction, &updated)?;
 
         let next_seq: i64 = transaction
             .query_row(
@@ -533,6 +443,13 @@ impl SqliteRuntimeRepository {
             created_at: updated.released_at.unwrap_or(updated.created_at),
         };
         insert_runtime_event_in_transaction(&transaction, &event)?;
+        if lifetime::read(&transaction, &updated.worktree_id, &updated.session_id)?.as_ref()
+            != Some(&updated)
+        {
+            return Err(RuntimeError::Conflict(
+                "worktree claim carrier changed during Critical event publication".into(),
+            ));
+        }
         transaction
             .commit()
             .map_err(|error| db_error("failed committing atomic worktree claim event", error))?;

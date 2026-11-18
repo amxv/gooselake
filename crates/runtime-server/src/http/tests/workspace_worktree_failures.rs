@@ -78,6 +78,7 @@ async fn conflicting_prior_claim_denies_destination_reservation_without_provider
     });
     store
         .upsert_managed_worktree_claim(&runtime_core::ManagedWorktreeClaimRecord {
+            claim_generation: Some(1),
             worktree_id: "wt_linked".into(),
             session_id: agent.agent_id.clone(),
             claim_role: "owner".into(),

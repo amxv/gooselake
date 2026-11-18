@@ -370,8 +370,8 @@ impl SqliteRuntimeRepository {
             }
             tx.execute(
                 "INSERT INTO managed_worktree_claims
-                 (worktree_id,session_id,claim_role,created_at,released_at)
-                 VALUES (?1,?2,'owner',?3,NULL)",
+                 (worktree_id,session_id,claim_role,created_at,released_at,claim_generation)
+                 VALUES (?1,?2,'owner',?3,NULL,1)",
                 params![worktree_id, session.id, session.created_at],
             )
             .map_err(|error| db_error("failed claiming initial managed worktree", error))?;

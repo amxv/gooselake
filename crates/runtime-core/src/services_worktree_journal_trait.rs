@@ -225,8 +225,32 @@ macro_rules! default_worktree_claim_cleanup_journal {
             _completed_at: i64,
         ) -> Result<(), crate::RuntimeError> {
             Err(crate::RuntimeError::Unsupported(
-                "managed-worktree native cleanup settlement unavailable".into(),
+                "raw cleanup responses cannot settle native effects; original action acknowledgements required".into(),
             ))
+        }
+
+        fn acknowledge_managed_checkout_removal(
+            &self,
+            _ack: &crate::CheckoutRemovalAck,
+        ) -> Result<crate::ManagedCleanupBranchAdmission, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported("checkout action receipt unavailable".into()))
+        }
+
+        fn acknowledge_managed_branch_deletion(
+            &self,
+            _ack: &crate::BranchDeletionAck,
+        ) -> Result<crate::WorktreeCleanupResponse, crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported("branch action receipt unavailable".into()))
+        }
+
+        fn hold_managed_worktree_cleanup(
+            &self,
+            _attempt: &crate::ManagedCleanupAttempt,
+            _observation: &crate::ManagedCleanupObservation,
+            _diagnostic: &str,
+            _at_ms: i64,
+        ) -> Result<(), crate::RuntimeError> {
+            Err(crate::RuntimeError::Unsupported("cleanup hold receipt unavailable".into()))
         }
 
         fn native_worktree_cleanup_owner(

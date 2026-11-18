@@ -575,9 +575,22 @@ Team deliveries can be deferred when a recipient is busy. Startup recovery retri
 
 ## Worktree recovery
 
-The worktree service normalizes stored records, repairs duplicate worktree identities, rewrites claims when duplicates are merged, releases impossible claims, and enforces one active claim per session.
+Startup worktree normalization compares the original claim keyset, raw values
+and persisted lifetime tokens before committing changed records and claims
+together. A stale lifetime or conflicting source/destination aborts the whole
+repair. Unchanged records and claims are not rewritten, and terminal claims are
+not reactivated by normalization. Final claim and participating record carriers
+are verified before that SQLite transaction commits.
 
-This is closer to a filesystem check than a normal startup hook. The runtime assumes old state may be messy and tries to make it coherent.
+Native cleanup has separate original-action receipts. Checkout removal must be
+acknowledged durably before branch deletion is granted; its committed
+`worktree.checkout_removed` event records that receipt and grant. Terminal
+completion requires the original branch acknowledgment. An incomplete or
+unknown action remains pending or in `manual_review` with its original
+reservations retained; a successful hold records `worktree.cleanup_held` without
+discarding known earlier evidence. Later checkout or branch absence, raw success
+flags and review prose do not establish completion or authorize another
+invocation. Inspect the original operation and retained evidence.
 
 ## Diagnostics to inspect
 

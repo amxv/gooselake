@@ -74,6 +74,7 @@ mod legacy_spawn_mcp_inspection;
 mod legacy_spawn_public_refusal;
 mod legacy_team_operation_recovery;
 mod legacy_team_spawn_idempotency;
+mod legacy_worktree_claim_generation;
 mod legacy_worktree_claim_projection;
 mod legacy_worktree_create_preflight;
 mod legacy_worktree_list_projection;

@@ -208,6 +208,10 @@ pub struct ManagedWorktreeClaimRecord {
     pub claim_role: String,
     pub created_at: i64,
     pub released_at: Option<i64>,
+    /// Exact-key lifetime allocated by SQLite. Missing historical JSON tokens
+    /// remain inspectable but cannot authorize mutation of an existing claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_generation: Option<u64>,
 }
 
 /// Read-only, bounded diagnostic projection. Never an authority for native
